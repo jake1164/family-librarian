@@ -1,0 +1,9 @@
+.git
+.gitignore
+.env
+bin
+obj
+**/bin
+**/obj
+artifacts
+TestResults

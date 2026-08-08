@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../FamilyLibrarian.Contracts/FamilyLibrarian.Contracts.csproj" />
+    <ProjectReference Include="../FamilyLibrarian.Domain/FamilyLibrarian.Domain.csproj" />
+  </ItemGroup>
+</Project>

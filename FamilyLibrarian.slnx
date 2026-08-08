@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FamilyLibrarian.Domain/FamilyLibrarian.Domain.csproj" />
+    <Project Path="src/FamilyLibrarian.Contracts/FamilyLibrarian.Contracts.csproj" />
+    <Project Path="src/FamilyLibrarian.Application/FamilyLibrarian.Application.csproj" />
+    <Project Path="src/FamilyLibrarian.Infrastructure/FamilyLibrarian.Infrastructure.csproj" />
+    <Project Path="src/FamilyLibrarian.Web.Client/FamilyLibrarian.Web.Client.csproj" />
+    <Project Path="src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FamilyLibrarian.Domain.Tests/FamilyLibrarian.Domain.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,51 @@
+@page "/login"
+@inject ApiAuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
+
+<PageTitle>Sign in | Family Librarian</PageTitle>
+
+<MudPaper Class="mx-auto pa-6" MaxWidth="MaxWidth.Small" Elevation="2">
+    <MudText Typo="Typo.h4" GutterBottom="true">Sign in</MudText>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-4">@errorMessage</MudAlert>
+    }
+
+    <EditForm Model="request" OnValidSubmit="SignInAsync">
+        <DataAnnotationsValidator />
+        <MudTextField @bind-Value="request.Email" Label="Email" InputType="InputType.Email" Required="true" />
+        <MudTextField @bind-Value="request.Password" Label="Password" InputType="InputType.Password" Required="true" Class="mt-3" />
+        <MudCheckBox @bind-Value="request.RememberMe" Label="Keep me signed in" Class="mt-3" />
+        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Disabled="isSubmitting" Class="mt-4">
+            Sign in
+        </MudButton>
+    </EditForm>
+</MudPaper>
+
+@code {
+    private readonly LoginRequest request = new();
+    private bool isSubmitting;
+    private string? errorMessage;
+
+    private async Task SignInAsync()
+    {
+        isSubmitting = true;
+        errorMessage = null;
+
+        try
+        {
+            if (await AuthenticationStateProvider.SignInAsync(request))
+            {
+                Navigation.NavigateTo("/", forceLoad: true);
+                return;
+            }
+
+            errorMessage = "We could not sign you in with those details.";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+}

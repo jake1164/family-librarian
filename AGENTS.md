@@ -12,7 +12,9 @@ file before proposing, changing, or reviewing code.
 
 ## Documentation and dependencies
 
-- Before adding, upgrading, configuring, or using a library, query the Context7 MCP server for its current documentation and compatibility guidance. This includes MudBlazor, EF Core/Npgsql, PostgreSQL-related libraries, test libraries, and any new dependency.
+- When a task needs an external tool or service, first inspect the available `mcpjungle` MCP tools and prefer them when they provide the required capability. `mslearn` and `context7` are available through that bridge.
+- For Microsoft/.NET/C#/ASP.NET Core/Blazor/EF Core topics, use the configured `mcpjungle` Microsoft Learn tools to confirm current official documentation before implementing or advising.
+- Before adding, upgrading, configuring, or using a library, resolve it and retrieve its current documentation through the `mcpjungle` Context7 tools. This includes MudBlazor, EF Core/Npgsql, PostgreSQL-related libraries, test libraries, and any new dependency.
 - If Context7 is unavailable, say so in the work summary and use the library's official documentation as the fallback. Do not invent current APIs or version compatibility.
 - Prefer official Microsoft Learn documentation for .NET/C# framework behavior even when Context7 has a summary.
 - Pin production dependencies to reviewed compatible versions; do not use floating versions.
@@ -26,9 +28,11 @@ file before proposing, changing, or reviewing code.
 
 ## Delivery workflow
 
+- Do not be a yes-person. Give clear, evidence-based feedback and push back when a request conflicts with the architecture, security, current documentation, or the project's stated goals. Explain the trade-off and offer a safer or more maintainable alternative where possible.
+- Never create a Git commit without first asking the user for an explicit yes-or-no confirmation in the current conversation. A general request to implement, finish, publish, or push changes is not commit authorization.
 - The application runs through Docker Compose for development and self-hosted deployment. Keep the default runtime limited to the application host/API and PostgreSQL unless a planned slice requires more.
 - Build locally through Compose. Release images publish to `ghcr.io/jake1164/family-librarian`; keep image tags immutable and publish through the repository's GitHub Actions credentials.
-- Run the relevant build, test, migration, and Compose health checks before reporting implementation work complete.
+- At the end of every relevant source change, run the appropriate build and tests. The project must build with zero warnings and zero errors, and all relevant tests must complete successfully before reporting the work complete. Run migration and Compose health checks whenever the change affects them.
 
 ## Scope discipline
 
