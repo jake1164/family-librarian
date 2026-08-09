@@ -5,7 +5,7 @@ namespace FamilyLibrarian.Web.Client.Catalog;
 
 public sealed class CatalogApiClient(HttpClient httpClient)
 {
-    public async Task<IReadOnlyList<CatalogBookCandidateResponse>> SearchAsync(
+    public async Task<CatalogSearchResponse> SearchAsync(
         string searchText,
         CancellationToken cancellationToken = default)
     {
@@ -13,7 +13,7 @@ public sealed class CatalogApiClient(HttpClient httpClient)
             $"api/v1/catalog/search?q={Uri.EscapeDataString(searchText)}",
             cancellationToken);
 
-        return response?.Results ?? [];
+        return response ?? new CatalogSearchResponse([], []);
     }
 
     public Task<CatalogBookCandidateResponse?> GetCandidateAsync(

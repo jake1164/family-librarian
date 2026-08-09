@@ -129,6 +129,7 @@ static async Task<IResult> GetCurrentUserAsync(
 static async Task<IResult> SearchCatalogAsync(
     string? q,
     IEnumerable<IBookMetadataProvider> providers,
+    ILoggerFactory loggerFactory,
     CancellationToken cancellationToken)
 {
     var searchText = q?.Trim();
@@ -141,17 +142,30 @@ static async Task<IResult> SearchCatalogAsync(
     }
 
     var query = new BookSearchQuery(searchText);
-    var searches = providers.Select(provider => provider.SearchAsync(query, cancellationToken));
-    var results = await Task.WhenAll(searches);
+    var logger = loggerFactory.CreateLogger("FamilyLibrarian.MetadataSearch");
+    var searches = providers.Select(provider =>
+        SearchProviderAsync(provider, query, logger, cancellationToken));
+    var providerResults = await Task.WhenAll(searches);
 
     return Results.Ok(new CatalogSearchResponse(
-        results.SelectMany(candidates => candidates).Select(ToResponse).ToArray()));
+        providerResults
+            .Where(result => result.Succeeded)
+            .SelectMany(result => result.Candidates)
+            .Select(ToResponse)
+            .ToArray(),
+        providerResults
+            .Select(result => new CatalogProviderSearchStatusResponse(
+                result.ProviderId,
+                result.ProviderName,
+                result.Succeeded))
+            .ToArray()));
 }
 
 static async Task<IResult> GetCatalogCandidateAsync(
     string providerId,
     string externalId,
     IEnumerable<IBookMetadataProvider> providers,
+    ILoggerFactory loggerFactory,
     CancellationToken cancellationToken)
 {
     var provider = providers.SingleOrDefault(candidate =>
@@ -161,9 +175,76 @@ static async Task<IResult> GetCatalogCandidateAsync(
         return Results.NotFound();
     }
 
-    var candidate = await provider.GetDetailsAsync(externalId, cancellationToken);
-    return candidate is null ? Results.NotFound() : Results.Ok(ToResponse(candidate));
+    try
+    {
+        var candidate = await provider.GetDetailsAsync(externalId, cancellationToken);
+        return candidate is null ? Results.NotFound() : Results.Ok(ToResponse(candidate));
+    }
+    catch (HttpRequestException exception)
+    {
+        LogProviderFailure(loggerFactory, provider, exception);
+        return Results.Problem(
+            title: "Catalog provider unavailable",
+            detail: "The selected catalog source is temporarily unavailable.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (JsonException exception)
+    {
+        LogProviderFailure(loggerFactory, provider, exception);
+        return Results.Problem(
+            title: "Catalog provider unavailable",
+            detail: "The selected catalog source returned an invalid response.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+    {
+        LogProviderFailure(loggerFactory, provider, exception);
+        return Results.Problem(
+            title: "Catalog provider unavailable",
+            detail: "The selected catalog source timed out.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
 }
+
+static async Task<ProviderSearchResult> SearchProviderAsync(
+    IBookMetadataProvider provider,
+    BookSearchQuery query,
+    ILogger logger,
+    CancellationToken cancellationToken)
+{
+    try
+    {
+        var candidates = await provider.SearchAsync(query, cancellationToken);
+        return new ProviderSearchResult(
+            provider.Id,
+            provider.DisplayName,
+            true,
+            candidates);
+    }
+    catch (HttpRequestException exception)
+    {
+        MetadataProviderLog.SearchUnavailable(logger, provider.Id, exception);
+    }
+    catch (JsonException exception)
+    {
+        MetadataProviderLog.SearchReturnedInvalidJson(logger, provider.Id, exception);
+    }
+    catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+    {
+        MetadataProviderLog.SearchTimedOut(logger, provider.Id, exception);
+    }
+
+    return new ProviderSearchResult(provider.Id, provider.DisplayName, false, []);
+}
+
+static void LogProviderFailure(
+    ILoggerFactory loggerFactory,
+    IBookMetadataProvider provider,
+    Exception exception) =>
+    MetadataProviderLog.CandidateDetailsUnavailable(
+        loggerFactory.CreateLogger("FamilyLibrarian.MetadataSearch"),
+        provider.Id,
+        exception);
 
 static CatalogBookCandidateResponse ToResponse(BookCandidate candidate) => new(
     candidate.ProviderId,
@@ -183,3 +264,48 @@ static CatalogBookCandidateResponse ToResponse(BookCandidate candidate) => new(
         series.Name,
         series.PositionLabel,
         series.IsPrimary)).ToArray());
+
+internal sealed record ProviderSearchResult(
+    string ProviderId,
+    string ProviderName,
+    bool Succeeded,
+    IReadOnlyList<BookCandidate> Candidates);
+
+internal static partial class MetadataProviderLog
+{
+    [LoggerMessage(
+        EventId = 1001,
+        Level = LogLevel.Warning,
+        Message = "Metadata provider {ProviderId} was unavailable during search.")]
+    internal static partial void SearchUnavailable(
+        ILogger logger,
+        string providerId,
+        Exception exception);
+
+    [LoggerMessage(
+        EventId = 1002,
+        Level = LogLevel.Warning,
+        Message = "Metadata provider {ProviderId} returned invalid JSON during search.")]
+    internal static partial void SearchReturnedInvalidJson(
+        ILogger logger,
+        string providerId,
+        Exception exception);
+
+    [LoggerMessage(
+        EventId = 1003,
+        Level = LogLevel.Warning,
+        Message = "Metadata provider {ProviderId} timed out during search.")]
+    internal static partial void SearchTimedOut(
+        ILogger logger,
+        string providerId,
+        Exception exception);
+
+    [LoggerMessage(
+        EventId = 1004,
+        Level = LogLevel.Warning,
+        Message = "Metadata provider {ProviderId} could not return candidate details.")]
+    internal static partial void CandidateDetailsUnavailable(
+        ILogger logger,
+        string providerId,
+        Exception exception);
+}

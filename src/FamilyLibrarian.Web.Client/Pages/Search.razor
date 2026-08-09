@@ -8,7 +8,7 @@
     <div>
         <MudText Typo="Typo.h3">Find a book</MudText>
         <MudText Typo="Typo.body1">
-            Search the sample catalog by title, author, or ISBN. Provider search will be added after the metadata spike.
+            Search enabled catalogs by title, author, or ISBN. Queries may be sent to configured external metadata providers.
         </MudText>
     </div>
 
@@ -34,13 +34,20 @@
         <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
     }
 
+    @if (unavailableProviders.Count > 0)
+    {
+        <MudAlert Severity="Severity.Warning">
+            Some catalog sources are temporarily unavailable: @(string.Join(", ", unavailableProviders)).
+        </MudAlert>
+    }
+
     @if (isSearching)
     {
         <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
     }
     else if (hasSearched && results.Count == 0)
     {
-        <MudAlert Severity="Severity.Info">No sample-catalog matches. Try “Hobbit”, “L'Engle”, or “978”.</MudAlert>
+        <MudAlert Severity="Severity.Info">No matches found. Try a title with its author, or an ISBN.</MudAlert>
     }
     else if (results.Count > 0)
     {
@@ -79,6 +86,7 @@
     private bool hasSearched;
     private bool isSearching;
     private string? errorMessage;
+    private IReadOnlyList<string> unavailableProviders = [];
 
     private async Task SearchAsync()
     {
@@ -92,15 +100,22 @@
         isSearching = true;
         hasSearched = true;
         errorMessage = null;
+        unavailableProviders = [];
 
         try
         {
-            results = await Catalog.SearchAsync(query);
+            var response = await Catalog.SearchAsync(query);
+            results = response.Results;
+            unavailableProviders = response.Providers
+                .Where(provider => !provider.Succeeded)
+                .Select(provider => provider.ProviderName)
+                .ToArray();
         }
         catch (HttpRequestException)
         {
             errorMessage = "The catalog is unavailable. Please try again.";
             results = [];
+            unavailableProviders = [];
         }
         finally
         {

@@ -9,5 +9,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/FamilyLibrarian.Domain.Tests/FamilyLibrarian.Domain.Tests.csproj" />
+    <Project Path="tests/FamilyLibrarian.Infrastructure.Tests/FamilyLibrarian.Infrastructure.Tests.csproj" />
   </Folder>
 </Solution>

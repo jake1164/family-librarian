@@ -8,7 +8,7 @@ COPY ["src/FamilyLibrarian.Application/FamilyLibrarian.Application.csproj", "src
 COPY ["src/FamilyLibrarian.Infrastructure/FamilyLibrarian.Infrastructure.csproj", "src/FamilyLibrarian.Infrastructure/"]
 COPY ["src/FamilyLibrarian.Web.Client/FamilyLibrarian.Web.Client.csproj", "src/FamilyLibrarian.Web.Client/"]
 COPY ["src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj", "src/FamilyLibrarian.Web/"]
-RUN dotnet restore "FamilyLibrarian.slnx"
+RUN dotnet restore "src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj"
 
 COPY . .
 RUN dotnet publish "src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj" --configuration Release --no-restore --output /app/publish /p:UseAppHost=false

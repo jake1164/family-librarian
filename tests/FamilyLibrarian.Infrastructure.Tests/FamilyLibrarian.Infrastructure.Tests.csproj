@@ -1,0 +1,16 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="Sdk.props" Sdk="MSTest.Sdk" />
+
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FamilyLibrarian.Application/FamilyLibrarian.Application.csproj" />
+    <ProjectReference Include="../../src/FamilyLibrarian.Infrastructure/FamilyLibrarian.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <Import Project="Sdk.targets" Sdk="MSTest.Sdk" />
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+</Project>

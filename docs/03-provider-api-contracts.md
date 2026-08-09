@@ -196,6 +196,33 @@ requires-api-key
 manual
 ```
 
+### Future external sourcing providers
+
+External sourcing is a planned extension of the acquisition-provider boundary,
+not part of the initial catalog/search slice. The application should leave room
+for an administrator to enable and configure additional **vetted** sourcing
+providers in the future, alongside built-in providers such as Manual, library
+availability, public-domain, or commercial integrations.
+
+The future integration model should preserve these boundaries:
+
+- a provider has a stable ID, protocol version, declared capabilities, and a
+  server-side configuration schema;
+- an administrator may enable, disable, configure, and test an installed provider,
+  but stored provider credentials and sensitive connection details are never sent
+  back to the browser after submission;
+- search results remain candidates with provider provenance and must not
+  automatically create, download, or import an asset;
+- acquisition remains an explicit, authorized workflow step with audit history,
+  policy checks, and malware/file validation before an item can enter the trusted
+  library; and
+- external implementations communicate over the versioned HTTP protocol or run in
+  isolated containers. The main application does not load arbitrary provider code.
+
+This creates a clear future administration/settings surface for source management
+without committing V1 to acquisition automation, a plugin marketplace, or support
+for unreviewed sources.
+
 ---
 
 ## 5. Acquisition Provider Isolation
@@ -620,6 +647,46 @@ Last Error
 ```
 
 Secrets must never be returned to the browser after storage.
+
+### Credential lifecycle
+
+The normal self-hosted setup path for a provider API key or token is an
+Admin-only Integrations UI backed by same-origin host API commands. A newly entered
+secret necessarily exists transiently in the administrator's browser while being
+submitted over HTTPS; the host must never send a stored secret back to the client.
+
+The UI and API must follow these rules:
+
+- require server-side Admin authorization and anti-forgery protection for enable,
+  disable, create, replace, clear, and test-connection operations;
+- accept a secret only as a write-only value, clear the input after submission,
+  and return only state such as `NotConfigured`, `Configured`, or
+  `ExternallyManaged`, plus a last-changed timestamp;
+- never place secrets in URLs, browser storage, API response DTOs, validation
+  messages, logs, audit payloads, health output, or raw provider snapshots;
+- encrypt application-managed secrets at rest with a deployment-specific,
+  persistent protection key and use purpose separation per provider/secret type;
+- persist and back up the protection key independently of the application
+  container. If ASP.NET Core Data Protection is used, its key ring must survive
+  container replacement and be protected at rest; losing the key ring makes
+  protected provider secrets unrecoverable;
+- audit who changed, cleared, enabled, disabled, or tested an integration without
+  recording the secret value;
+- perform connection tests on the server and return a redacted, actionable status;
+  and
+- support deployment-provided secrets as a read-only alternative. When an
+  environment/secret-manager value takes precedence, show `ExternallyManaged` and
+  do not allow the UI to reveal or overwrite it.
+
+Replacing a credential is the rotation operation. Clearing one disables provider
+calls that require it until a new credential is configured. Provider adapters
+receive only their scoped configuration and never database or unrelated provider
+credentials.
+
+For the .NET 10 host, the protection-key persistence and encryption design must be
+reviewed against the current
+[ASP.NET Core Data Protection guidance](https://learn.microsoft.com/aspnet/core/security/data-protection/configuration/default-settings?view=aspnetcore-10.0),
+especially for Docker deployments.
 
 ---
 

@@ -1,6 +1,13 @@
 namespace FamilyLibrarian.Contracts.Catalog;
 
-public sealed record CatalogSearchResponse(IReadOnlyList<CatalogBookCandidateResponse> Results);
+public sealed record CatalogSearchResponse(
+    IReadOnlyList<CatalogBookCandidateResponse> Results,
+    IReadOnlyList<CatalogProviderSearchStatusResponse> Providers);
+
+public sealed record CatalogProviderSearchStatusResponse(
+    string ProviderId,
+    string ProviderName,
+    bool Succeeded);
 
 public sealed record CatalogBookCandidateResponse(
     string ProviderId,

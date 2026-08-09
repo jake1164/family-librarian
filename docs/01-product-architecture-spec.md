@@ -428,6 +428,13 @@ Provider capabilities should declare whether the provider supports:
 
 The core application should not grant acquisition providers database access.
 
+Future external sourcing integrations should be managed as configured, versioned
+acquisition providers. Administrators can manage approved installed providers and
+their server-side configuration, while search and acquisition preserve provenance
+and still pass through the normal authorization, audit, and file-safety workflow.
+This deliberately leaves room for future sources without making arbitrary plugins
+or automated acquisition part of V1.
+
 ---
 
 ## 13. Security Architecture

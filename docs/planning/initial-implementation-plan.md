@@ -19,9 +19,16 @@ It proves the product's most important foundations—identity, normalized biblio
 
 ### What exists
 
-The repository contains planning documentation only.  There is no solution, application code, database schema, Docker configuration, test project, CI configuration, or running service. The design documents establish the product principles, long-term workflows, proposed provider boundaries, and later roadmap.
+The repository now contains the M1 foundation and M2 catalog-search slice: the
+six-project hosted Blazor WebAssembly solution, local Identity and PostgreSQL
+infrastructure, a baseline migration, Docker Compose deployment, health checks,
+the provider abstraction, a deterministic demo provider, and public development
+search/detail screens. The first M3 increment adds a configurable, throttled Open
+Library adapter and conservative ISBN/edition normalization. Canonical catalog
+persistence, provider candidate grouping/merge decisions, request creation, and
+the Admin Integrations settings surface remain unfinished.
 
-### Documentation issues to resolve before coding
+### Design constraints carried into implementation
 
 - The documents were written under the working name **BookFinder**. The authoritative product name is **Family Librarian** and the repository/runtime slug is `family-librarian`.
 - The existing proposed layout separates `Web`, `Api`, and `Worker` from day one. That is too much deployment and project surface for this slice. A Blazor web host can expose the small HTTP API needed later; there is no background workload yet that warrants a worker.
@@ -169,6 +176,16 @@ Search flow:
 4. On selection, fetch details, then an application command resolves an existing Work by exact external reference/ISBN or creates a new canonical Work, its relationships, and provenance in one transaction.
 5. When sources disagree, retain the selected/provider-preferred value and provenance; flag conflict for admin correction rather than overwrite an edited canonical field. Initial admin correction can be a focused catalog correction action, not a full catalog-management system.
 
+Providers that require an API key or token are disabled until configured. The
+normal product path is a focused Admin Integrations UI: an administrator can
+enable/disable a metadata provider, submit or replace a write-only credential,
+test the connection, and see redacted health/last-use status. Stored secrets are
+encrypted by the host and are never returned to the WebAssembly client or written
+to logs/audit payloads. Deployment-provided secrets remain a supported read-only
+override for operators who use an external secret manager; the UI identifies them
+as externally managed. Detailed lifecycle and Data Protection key-ring requirements
+are defined in `docs/03-provider-api-contracts.md`.
+
 Series risk deserves an explicit UI rule: show a series position only when a source provides it and label uncertain/incomplete context. Do not infer an ordinal from search order. The initial series page should show known entries and gaps, not claim complete series coverage.
 
 ## 9. PostgreSQL and EF Core plan
@@ -182,6 +199,14 @@ requests: book_requests, request_formats, request_status_history
 audit: audit_events
 app: EF migrations history and future integration configuration
 ```
+
+Metadata integration configuration uses an allowlisted schema per installed
+provider. Persist ordinary settings separately from protected secret values; the
+database never contains plaintext provider credentials. The configuration record
+retains provider ID, enabled state, configuration version, protected-value purpose
+and format version, created/changed timestamps, and actor/audit references. Provider
+management routes address known installed provider IDs and do not accept arbitrary
+executable code or unrestricted target URLs.
 
 Key constraints/indexes:
 
@@ -210,12 +235,14 @@ Minimum operations:
 | Fetch candidate details and normalized series context | authenticated query / `GET /api/v1/catalog/candidates/{provider}/{id}` |
 | Resolve selected candidate to canonical Work | authenticated command / `POST /api/v1/works/resolve` |
 | Get Work/author/series context | authenticated query / `GET /api/v1/works/{id}` and series route |
+| List metadata-provider status/configuration | Admin query / `GET /api/v1/admin/integrations/metadata` (secret state only) |
+| Enable/disable, replace/clear credential, test provider | Admin commands under `/api/v1/admin/integrations/metadata/{provider}` |
 | Create request with formats | authenticated command / `POST /api/v1/requests` |
 | List current user's requests and history | authenticated query / `GET /api/v1/me/requests` |
 | List admin queue and request detail | Admin query / `GET /api/v1/admin/requests` and detail route |
 | Change an initial request status | Admin/requester command as allowed / `POST .../transitions` |
 
-The WebAssembly client invokes only these API endpoints through a typed client and shared `Contracts` DTOs; it never invokes application handlers or provider implementations directly. Do not publish a provider-management, acquisition, asset, or delivery API now.
+The WebAssembly client invokes only these API endpoints through a typed client and shared `Contracts` DTOs; it never invokes application handlers or provider implementations directly. Publish only the focused metadata-provider management surface when Admin authorization exists; do not publish acquisition, asset, delivery, arbitrary plugin-installation, or general-purpose configuration APIs now.
 
 ## 11. UI plan
 
@@ -227,7 +254,11 @@ The WebAssembly client invokes only these API endpoints through a typed client a
 - **Series Context:** known position and ordered entries, previous/next only when supported by data, and a gentle warning for earlier known entries; no follow/recommendation controls yet.
 - **Request Confirmation:** select ebook, audiobook, or both; optional short note; duplicate warning; confirmation creates the durable request.
 - **Admin Queue:** authorized list by status/age, requester, Work, requested formats, and concise source/series context.
-- **Admin Request Detail:** status-history timeline, metadata conflict/review information, admin note, and allowed status transitions. Add only this focused detail page; integrations/settings are not required.
+- **Admin Request Detail:** status-history timeline, metadata conflict/review information, admin note, and allowed status transitions.
+- **Admin Metadata Integrations:** focused provider enablement, write-only
+  credential create/replace/clear, test connection, and redacted status/last-use
+  diagnostics. It does not expose stored secrets or a general merge-rule/plugin
+  editor.
 
 Use accessible, responsive MudBlazor components with plain language suitable for a family, and verify keyboard navigation, labels, focus handling, and semantic HTML. Prefer route/component tests around the request confirmation and admin authorization paths.
 
@@ -249,7 +280,12 @@ Configuration is standard ASP.NET Core configuration with validated options at s
 - `Authentication__Local` password/lockout settings;
 - `BootstrapAdmin__Email` and `BootstrapAdmin__Password` (secret, never committed);
 - `Authentication__Oidc__*` only when OIDC is enabled;
-- `MetadataProviders__OpenLibrary__*` and `MetadataProviders__GoogleBooks__*` (API key, if used, is a secret);
+- `MetadataProviders__OpenLibrary__*` and `MetadataProviders__GoogleBooks__*` as
+  deployment-provided, read-only overrides; API keys/tokens are secrets and the
+  normal self-hosted configuration path is the Admin Integrations UI;
+- persistent, backed-up ASP.NET Core Data Protection key-ring configuration for
+  cookies and application-protected provider credentials; production key-ring
+  encryption-at-rest must be explicit when a custom persistence location is used;
 - `ForwardedHeaders`/public base URL configuration for a reverse proxy.
 
 Commit `.env.example` with placeholders and use an ignored `.env`/secret manager for development. Do not put passwords, client secrets, or API keys in Compose. The default stack assumes the reverse proxy terminates HTTPS in external deployments; local development may use HTTP or a trusted development certificate. Document forwarded headers, secure cookies, and the canonical public URL because OIDC callback URLs and cookie security depend on them. Authentik is an optional Compose profile/example, not a default service.
@@ -262,8 +298,8 @@ Commit `.env.example` with placeholders and use an ignored `.env`/secret manager
 | Application tests | duplicate-request behavior, canonicalization decisions, provider fallback/timeouts, conflict handling, ownership and Admin authorization |
 | Provider mapper/contract tests | fixture-based Google Books/Open Library normalization, ISBN matching, missing/contradictory series data, fake provider behavior |
 | PostgreSQL integration tests | migrations from empty database, all unique constraints/indexes, concurrent duplicate attempt, Identity/external-login linking, audit/history transactionality |
-| Web/API tests | unauthenticated redirects/401s, User cannot access admin queue, endpoint validation, anti-forgery, and OIDC callback configuration using a test handler |
-| WebAssembly component/browser tests | MudBlazor component behavior, local login -> search fake/controlled provider -> resolve -> request -> My Requests -> Admin Queue |
+| Web/API tests | unauthenticated redirects/401s, User cannot access admin queue or integration settings, provider secret is never readable after write, Admin integration anti-forgery/validation, endpoint validation, and OIDC callback configuration using a test handler |
+| WebAssembly component/browser tests | MudBlazor component behavior, local login -> Admin configures a fake credential without read-back -> search fake/controlled provider -> resolve -> request -> My Requests -> Admin Queue |
 
 Run database integration tests against disposable PostgreSQL (for example, Testcontainers) rather than an in-memory EF provider. Keep metadata HTTP tests fixture/fake based in CI; provider live smoke tests are opt-in to prevent flaky rate-limited builds. Include an optional Authentik compose smoke test in release validation, proving discovery, login, external identity linkage, and configured Admin mapping without making it a CI/runtime prerequisite.
 
@@ -323,12 +359,16 @@ or ISBN and inspect known editions and series facts without logging in.
 **Objective:** turn a selected provider candidate into a canonical,
 provenance-preserving catalog record.
 
-- Implement catalog entities, mappings, migrations, selected real providers,
-  normalization, candidate grouping, and the conflict policy from M0.
+- Implement catalog entities, mappings, migrations, the selected keyless real
+  provider, provider adapters for later credentialed providers, normalization,
+  candidate grouping, and the conflict policy from M0.
 - Implement resolve/create Work and author/series read queries.
 - Make provider-backed catalog operations authenticated when local Identity is
   introduced for requests; search may remain public only in an explicitly
   development-only configuration.
+
+Credentialed providers remain disabled until the Admin configuration surface is
+available in M4.
 
 **Dependencies:** M1, M0 provider decision. **Acceptance:** a user can search a
 representative title/ISBN, select a candidate, revisit the canonical Work, and
@@ -340,13 +380,18 @@ sees only supported series facts/provenance.
 requests and future administration.
 
 - Configure Identity, roles, first-admin bootstrap, login/logout, policy-based authorization, and audit-friendly last-login update.
-- Build a minimal authenticated shell and Admin-only test page/endpoint.
+- Build a minimal authenticated shell and the focused Admin Metadata Integrations
+  API/UI. Support enable/disable, write-only credential create/replace/clear,
+  server-side connection testing, encrypted storage, external read-only secret
+  overrides, redacted health, and audit events without secret values.
 - Defer generic OIDC configuration, external-login linking/provisioning rules,
   and Authentik setup/smoke-test documentation until the manual request loop is
   proven.
 
 **Dependencies:** M1, M3. **Acceptance:** local login works with no IdP, a
-non-admin is denied admin access, and an admin is allowed.
+non-admin is denied admin access, and an admin can configure and test a
+credentialed metadata provider without any endpoint returning the stored secret;
+the configuration survives a Compose restart with its protected key ring.
 
 ### M5 — Request workflow and user experience
 

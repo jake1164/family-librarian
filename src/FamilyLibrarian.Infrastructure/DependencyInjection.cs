@@ -5,11 +5,14 @@ using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Metadata;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Time;
+using System.Net.Http.Headers;
+using System.Net.Mail;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace FamilyLibrarian.Infrastructure;
 
@@ -75,7 +78,55 @@ public static class DependencyInjection
                 policy => policy.RequireRole(RoleNames.Admin));
 
         services.AddScoped<IClock, SystemClock>();
-        services.AddSingleton<IBookMetadataProvider, DemoBookMetadataProvider>();
+
+        if (configuration.GetValue("MetadataProviders:Demo:Enabled", true))
+        {
+            services.AddSingleton<IBookMetadataProvider, DemoBookMetadataProvider>();
+        }
+
+        services.AddOptions<OpenLibraryMetadataOptions>()
+            .Bind(configuration.GetSection(OpenLibraryMetadataOptions.SectionName))
+            .Validate(options => options.MaxResults is >= 1 and <= 40,
+                "Open Library MaxResults must be between 1 and 40.")
+            .Validate(options => options.TimeoutSeconds is >= 1 and <= 60,
+                "Open Library TimeoutSeconds must be between 1 and 60.")
+            .Validate(options => options.RequestsPerSecond is >= 1 and <= 3,
+                "Open Library RequestsPerSecond must be between 1 and 3.")
+            .Validate(options => string.IsNullOrWhiteSpace(options.ContactEmail) ||
+                MailAddress.TryCreate(options.ContactEmail, out _),
+                "Open Library ContactEmail must be a valid email address when configured.")
+            .Validate(options => options.RequestsPerSecond == 1 ||
+                !string.IsNullOrWhiteSpace(options.ContactEmail),
+                "Open Library requires ContactEmail when RequestsPerSecond is greater than 1.")
+            .ValidateOnStart();
+
+        if (configuration.GetValue<bool>($"{OpenLibraryMetadataOptions.SectionName}:Enabled"))
+        {
+            services.AddSingleton<OpenLibraryRequestGate>();
+            services.AddTransient<OpenLibraryRateLimitHandler>();
+            services.AddHttpClient<OpenLibraryBookMetadataProvider>((serviceProvider, client) =>
+                {
+                    var options = serviceProvider
+                        .GetRequiredService<IOptions<OpenLibraryMetadataOptions>>()
+                        .Value;
+
+                    client.BaseAddress = new Uri("https://openlibrary.org/");
+                    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+                    client.DefaultRequestHeaders.Accept.Add(
+                        new MediaTypeWithQualityHeaderValue("application/json"));
+                    client.DefaultRequestHeaders.UserAgent.Add(
+                        new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+
+                    if (!string.IsNullOrWhiteSpace(options.ContactEmail))
+                    {
+                        client.DefaultRequestHeaders.UserAgent.Add(
+                            new ProductInfoHeaderValue($"({options.ContactEmail})"));
+                    }
+                })
+                .AddHttpMessageHandler<OpenLibraryRateLimitHandler>();
+            services.AddTransient<IBookMetadataProvider>(serviceProvider =>
+                serviceProvider.GetRequiredService<OpenLibraryBookMetadataProvider>());
+        }
 
         return services;
     }
