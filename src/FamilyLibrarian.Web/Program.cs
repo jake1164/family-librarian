@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using System.Text.Json;
 using System.ComponentModel.DataAnnotations;
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Contracts.Authentication;
+using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
@@ -26,7 +28,10 @@ if (args.Contains("--migrate", StringComparer.Ordinal))
     return;
 }
 
-await app.Services.InitializeIdentityAsync(app.Configuration);
+if (app.Configuration.GetValue<bool>("Authentication:EnableLocal"))
+{
+    await app.Services.InitializeIdentityAsync(app.Configuration);
+}
 
 app.UseExceptionHandler("/error");
 app.UseHttpsRedirection();
@@ -38,6 +43,11 @@ app.UseAuthorization();
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }))
     .AllowAnonymous();
 app.MapHealthChecks("/health/ready");
+
+app.MapGet("/api/v1/catalog/search", SearchCatalogAsync)
+    .AllowAnonymous();
+app.MapGet("/api/v1/catalog/candidates/{providerId}/{externalId}", GetCatalogCandidateAsync)
+    .AllowAnonymous();
 
 app.MapPost("/api/auth/login", LoginAsync)
     .AllowAnonymous();
@@ -115,3 +125,61 @@ static async Task<IResult> GetCurrentUserAsync(
         user.Email,
         roles.ToArray()));
 }
+
+static async Task<IResult> SearchCatalogAsync(
+    string? q,
+    IEnumerable<IBookMetadataProvider> providers,
+    CancellationToken cancellationToken)
+{
+    var searchText = q?.Trim();
+    if (string.IsNullOrWhiteSpace(searchText) || searchText.Length is < 2 or > 200)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["q"] = ["Enter between 2 and 200 characters to search the catalog."]
+        });
+    }
+
+    var query = new BookSearchQuery(searchText);
+    var searches = providers.Select(provider => provider.SearchAsync(query, cancellationToken));
+    var results = await Task.WhenAll(searches);
+
+    return Results.Ok(new CatalogSearchResponse(
+        results.SelectMany(candidates => candidates).Select(ToResponse).ToArray()));
+}
+
+static async Task<IResult> GetCatalogCandidateAsync(
+    string providerId,
+    string externalId,
+    IEnumerable<IBookMetadataProvider> providers,
+    CancellationToken cancellationToken)
+{
+    var provider = providers.SingleOrDefault(candidate =>
+        string.Equals(candidate.Id, providerId, StringComparison.OrdinalIgnoreCase));
+    if (provider is null)
+    {
+        return Results.NotFound();
+    }
+
+    var candidate = await provider.GetDetailsAsync(externalId, cancellationToken);
+    return candidate is null ? Results.NotFound() : Results.Ok(ToResponse(candidate));
+}
+
+static CatalogBookCandidateResponse ToResponse(BookCandidate candidate) => new(
+    candidate.ProviderId,
+    candidate.ProviderName,
+    candidate.ExternalId,
+    candidate.Title,
+    candidate.Authors,
+    candidate.Description,
+    candidate.CoverUrl,
+    candidate.PublicationDate,
+    candidate.Editions.Select(edition => new CatalogEditionResponse(
+        edition.Title,
+        edition.Isbn13,
+        edition.Format,
+        edition.PublicationDate)).ToArray(),
+    candidate.Series.Select(series => new CatalogSeriesResponse(
+        series.Name,
+        series.PositionLabel,
+        series.IsPrimary)).ToArray());

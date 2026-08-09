@@ -35,8 +35,6 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__FamilyLibrarian: Host=postgres;Port=5432;Database=family_librarian;Username=family_librarian;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      BootstrapAdmin__Email: ${BOOTSTRAP_ADMIN_EMAIL:?Set BOOTSTRAP_ADMIN_EMAIL in .env}
-      BootstrapAdmin__Password: ${BOOTSTRAP_ADMIN_PASSWORD:?Set BOOTSTRAP_ADMIN_PASSWORD in .env}
     depends_on:
       postgres:
         condition: service_healthy

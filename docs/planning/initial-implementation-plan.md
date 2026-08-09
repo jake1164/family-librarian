@@ -1,6 +1,6 @@
 # Family Librarian — Initial Implementation Plan
 
-**Status:** Proposed implementation plan
+**Status:** Active implementation plan — catalog-first sequencing
 **Scope:** .NET 10/C# 14 hosted Blazor WebAssembly request workflow; no acquisition or delivery runtime
 
 ## 1. Outcome and scope
@@ -269,6 +269,20 @@ Run database integration tests against disposable PostgreSQL (for example, Testc
 
 ## 14. Ordered implementation milestones
 
+### Implementation sequencing decision
+
+The first visible vertical slice is catalog search, not authentication. Local
+Identity remains in the solution but is disabled by default while the catalog is
+being proven; catalog endpoints and UI are intentionally available without a
+session in this development stage. Do not expose this mode to the internet or
+collect family requests in it.
+
+Authentication becomes a required boundary when requests are introduced,
+because request ownership and the future Admin Queue require a server-verified
+user. At that point, enable the existing local Identity path first. Generic
+OIDC, Authentik validation, account linking, and claim mapping remain later
+hardening work rather than prerequisites for search.
+
 ### M0 — Decision record and metadata-series spike
 
 **Objective:** eliminate naming ambiguity and validate the one high-risk input to the first slice.
@@ -290,27 +304,51 @@ Run database integration tests against disposable PostgreSQL (for example, Testc
 
 **Dependencies:** M0 naming. **Acceptance:** `docker compose up` with supplied development secrets produces a healthy app/database and a fresh database is created by reviewed migrations.
 
-### M2 — Local authentication, optional OIDC, and roles
+### M2 — Catalog-search vertical slice (unauthenticated development mode)
 
-**Objective:** local users and administrators can safely use the app; Authentik is optional and proven.
+**Objective:** put useful book discovery on screen before introducing accounts.
 
-- Configure Identity, roles, first-admin bootstrap, login/logout, policy-based authorization, and audit-friendly last-login update.
-- Add generic OIDC configuration, external-login linking/provisioning rules, and Authentik setup/smoke-test documentation.
-- Build a minimal authenticated shell and Admin-only test page/endpoint.
+- Implement the provider interface and a deterministic fake provider that does
+  not send family search terms to a third party.
+- Implement public development-only search and candidate-detail endpoints plus
+  accessible Search Results and Book Detail screens.
+- Keep the UI explicit that no request can be created and that series facts are
+  only as complete as the active provider says they are.
 
-**Dependencies:** M1. **Acceptance:** local login works with no IdP, a non-admin is denied admin access, an admin is allowed, and optional Authentik login works using documented configuration.
+**Dependencies:** M1. **Acceptance:** a local user can search by title, author,
+or ISBN and inspect known editions and series facts without logging in.
 
 ### M3 — Catalog foundation and metadata search
 
-**Objective:** turn a selected provider candidate into a canonical, provenance-preserving catalog record.
+**Objective:** turn a selected provider candidate into a canonical,
+provenance-preserving catalog record.
 
-- Implement catalog entities, mappings, migrations, provider interface, fake provider, selected real providers, normalization, candidate grouping, and conflict policy from M0.
-- Implement authenticated search, candidate detail, resolve/create Work, and author/series read queries.
-- Build Search Results, Book Detail, and Series Context screens.
+- Implement catalog entities, mappings, migrations, selected real providers,
+  normalization, candidate grouping, and the conflict policy from M0.
+- Implement resolve/create Work and author/series read queries.
+- Make provider-backed catalog operations authenticated when local Identity is
+  introduced for requests; search may remain public only in an explicitly
+  development-only configuration.
 
-**Dependencies:** M1, M2, M0 provider decision. **Acceptance:** a user can search a representative title/ISBN, select a candidate, revisit the canonical Work, and sees only supported series facts/provenance.
+**Dependencies:** M1, M0 provider decision. **Acceptance:** a user can search a
+representative title/ISBN, select a candidate, revisit the canonical Work, and
+sees only supported series facts/provenance.
 
-### M4 — Request workflow and user experience
+### M4 — Local authentication and request workflow
+
+**Objective:** introduce the smallest real identity boundary needed for owned
+requests and future administration.
+
+- Configure Identity, roles, first-admin bootstrap, login/logout, policy-based authorization, and audit-friendly last-login update.
+- Build a minimal authenticated shell and Admin-only test page/endpoint.
+- Defer generic OIDC configuration, external-login linking/provisioning rules,
+  and Authentik setup/smoke-test documentation until the manual request loop is
+  proven.
+
+**Dependencies:** M1, M3. **Acceptance:** local login works with no IdP, a
+non-admin is denied admin access, and an admin is allowed.
+
+### M5 — Request workflow and user experience
 
 **Objective:** replace email requests for an identified Work.
 
@@ -318,9 +356,9 @@ Run database integration tests against disposable PostgreSQL (for example, Testc
 - Build request confirmation and My Requests active/history views; add clear cancellation/reopen behavior.
 - Add tests for formats, transitions, duplicates, user ownership, and persistence.
 
-**Dependencies:** M3. **Acceptance:** a user can request ebook, audiobook, or both for a canonical Work; it persists across restart and is visible only to that user with accurate status.
+**Dependencies:** M3, M4. **Acceptance:** a user can request ebook, audiobook, or both for a canonical Work; it persists across restart and is visible only to that user with accurate status.
 
-### M5 — Admin queue and vertical-slice hardening
+### M6 — Admin queue and vertical-slice hardening
 
 **Objective:** finish the promised end-to-end manual review loop.
 
@@ -328,7 +366,7 @@ Run database integration tests against disposable PostgreSQL (for example, Testc
 - Add authorization, concurrency, migration-upgrade, provider-failure, responsive/accessibility, and browser E2E coverage.
 - Document deployment, backup/restore expectation, and a manual Authentik test run.
 
-**Dependencies:** M4. **Acceptance:** an admin sees each new request in the queue, can review/update it within allowed transitions, and the complete login-to-queue flow passes from a clean Compose deployment.
+**Dependencies:** M5. **Acceptance:** an admin sees each new request in the queue, can review/update it within allowed transitions, and the complete login-to-queue flow passes from a clean Compose deployment.
 
 ## 15. Blocking decisions and deferred work
 

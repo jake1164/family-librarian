@@ -5,17 +5,7 @@
 <MudStack Spacing="3" Class="mx-auto" Style="max-width: 48rem;">
     <MudText Typo="Typo.h3">Your family library, thoughtfully organized.</MudText>
     <MudText Typo="Typo.body1">
-        The foundation is ready. Book search and requests will appear here in the next implementation slice.
+        Start by finding a book. Requests and family accounts will follow once the catalog flow is proven.
     </MudText>
-
-    <AuthorizeView>
-        <Authorized Context="authState">
-            <MudAlert Severity="Severity.Success">
-                Signed in as @authState.User.Identity?.Name.
-            </MudAlert>
-        </Authorized>
-        <NotAuthorized>
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="login">Sign in</MudButton>
-        </NotAuthorized>
-    </AuthorizeView>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="search">Find a book</MudButton>
 </MudStack>

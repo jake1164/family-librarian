@@ -1,6 +1,8 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Identity;
+using FamilyLibrarian.Infrastructure.Metadata;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Time;
 using Microsoft.AspNetCore.Http;
@@ -73,6 +75,7 @@ public static class DependencyInjection
                 policy => policy.RequireRole(RoleNames.Admin));
 
         services.AddScoped<IClock, SystemClock>();
+        services.AddSingleton<IBookMetadataProvider, DemoBookMetadataProvider>();
 
         return services;
     }

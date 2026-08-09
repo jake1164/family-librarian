@@ -1,0 +1,82 @@
+@page "/search/{ProviderId}/{ExternalId}"
+@inject CatalogApiClient Catalog
+
+<PageTitle>@(book?.Title ?? "Book") · Family Librarian</PageTitle>
+
+<MudStack Spacing="3" Class="mx-auto" Style="max-width: 56rem;">
+    <MudButton Variant="Variant.Text" Href="search">Back to search</MudButton>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (book is null)
+    {
+        <MudAlert Severity="Severity.Warning">This catalog entry is no longer available.</MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.h3">@book.Title</MudText>
+        <MudText Typo="Typo.h6">@string.Join(", ", book.Authors)</MudText>
+
+        @if (!string.IsNullOrWhiteSpace(book.Description))
+        {
+            <MudText Typo="Typo.body1">@book.Description</MudText>
+        }
+
+        @if (book.Series.Count > 0)
+        {
+            <MudPaper Class="pa-4" Outlined="true">
+                <MudText Typo="Typo.h6">Known series context</MudText>
+                @foreach (var series in book.Series)
+                {
+                    <MudText Typo="Typo.body2">
+                        @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
+                    </MudText>
+                }
+            </MudPaper>
+        }
+
+        <MudPaper Class="pa-4" Outlined="true">
+            <MudText Typo="Typo.h6">Known editions</MudText>
+            @foreach (var edition in book.Editions)
+            {
+                <MudText Typo="Typo.body2">
+                    @edition.Format · @edition.Title@(string.IsNullOrWhiteSpace(edition.Isbn13) ? string.Empty : $" · ISBN {edition.Isbn13}")
+                </MudText>
+            }
+        </MudPaper>
+
+        <MudAlert Severity="Severity.Info">
+            Requesting will be added after the catalog is connected to persistent Works and local accounts.
+        </MudAlert>
+    }
+</MudStack>
+
+@code {
+    [Parameter]
+    public string ProviderId { get; set; } = string.Empty;
+
+    [Parameter]
+    public string ExternalId { get; set; } = string.Empty;
+
+    private CatalogBookCandidateResponse? book;
+    private bool isLoading = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        isLoading = true;
+        try
+        {
+            book = await Catalog.GetCandidateAsync(ProviderId, ExternalId);
+        }
+        catch (HttpRequestException)
+        {
+            book = null;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

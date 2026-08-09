@@ -1,0 +1,113 @@
+@page "/search"
+@inject CatalogApiClient Catalog
+@inject NavigationManager Navigation
+
+<PageTitle>Search · Family Librarian</PageTitle>
+
+<MudStack Spacing="3" Class="mx-auto" Style="max-width: 64rem;">
+    <div>
+        <MudText Typo="Typo.h3">Find a book</MudText>
+        <MudText Typo="Typo.body1">
+            Search the sample catalog by title, author, or ISBN. Provider search will be added after the metadata spike.
+        </MudText>
+    </div>
+
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudTextField @bind-Value="searchText"
+                          Label="Title, author, or ISBN"
+                          Variant="Variant.Outlined"
+                          Immediate="true"
+                          Class="flex-grow-1"
+                          Disabled="@isSearching" />
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       OnClick="SearchAsync"
+                       Disabled="@isSearching">
+                Search
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+    }
+
+    @if (isSearching)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (hasSearched && results.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">No sample-catalog matches. Try “Hobbit”, “L'Engle”, or “978”.</MudAlert>
+    }
+    else if (results.Count > 0)
+    {
+        <MudText Typo="Typo.h5">Results</MudText>
+        @foreach (var result in results)
+        {
+            <MudCard Outlined="true">
+                <MudCardContent>
+                    <MudStack Spacing="1">
+                        <MudText Typo="Typo.h5">@result.Title</MudText>
+                        <MudText Typo="Typo.body1">@string.Join(", ", result.Authors)</MudText>
+                        @if (result.Series.FirstOrDefault(series => series.IsPrimary) is { } series)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · Book {series.PositionLabel}")
+                            </MudText>
+                        }
+                        <MudText Typo="Typo.body2">@result.ProviderName</MudText>
+                    </MudStack>
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Text"
+                               Color="Color.Primary"
+                               OnClick="() => OpenDetails(result)">
+                        View details
+                    </MudButton>
+                </MudCardActions>
+            </MudCard>
+        }
+    }
+</MudStack>
+
+@code {
+    private string searchText = string.Empty;
+    private IReadOnlyList<CatalogBookCandidateResponse> results = [];
+    private bool hasSearched;
+    private bool isSearching;
+    private string? errorMessage;
+
+    private async Task SearchAsync()
+    {
+        var query = searchText.Trim();
+        if (query.Length < 2)
+        {
+            errorMessage = "Enter at least two characters to search.";
+            return;
+        }
+
+        isSearching = true;
+        hasSearched = true;
+        errorMessage = null;
+
+        try
+        {
+            results = await Catalog.SearchAsync(query);
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "The catalog is unavailable. Please try again.";
+            results = [];
+        }
+        finally
+        {
+            isSearching = false;
+        }
+    }
+
+    private void OpenDetails(CatalogBookCandidateResponse result) =>
+        Navigation.NavigateTo($"search/{Uri.EscapeDataString(result.ProviderId)}/{Uri.EscapeDataString(result.ExternalId)}");
+}
