@@ -37,6 +37,8 @@ services:
       ConnectionStrings__FamilyLibrarian: Host=postgres;Port=5432;Database=family_librarian;Username=family_librarian;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       MetadataProviders__OpenLibrary__ContactEmail: ${OPENLIBRARY_CONTACT_EMAIL:-}
       MetadataProviders__OpenLibrary__RequestsPerSecond: ${OPENLIBRARY_REQUESTS_PER_SECOND:-1}
+      MetadataProviders__GoogleBooks__Enabled: ${MetadataProviders__GoogleBooks__Enabled:-false}
+      MetadataProviders__GoogleBooks__ApiKey: ${MetadataProviders__GoogleBooks__ApiKey:-}
     depends_on:
       postgres:
         condition: service_healthy

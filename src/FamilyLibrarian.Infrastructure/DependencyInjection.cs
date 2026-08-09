@@ -128,6 +128,37 @@ public static class DependencyInjection
                 serviceProvider.GetRequiredService<OpenLibraryBookMetadataProvider>());
         }
 
+        services.AddOptions<GoogleBooksMetadataOptions>()
+            .Bind(configuration.GetSection(GoogleBooksMetadataOptions.SectionName))
+            .Validate(options => options.MaxResults is >= 1 and <= 40,
+                "Google Books MaxResults must be between 1 and 40.")
+            .Validate(options => options.TimeoutSeconds is >= 1 and <= 60,
+                "Google Books TimeoutSeconds must be between 1 and 60.")
+            .Validate(options => !options.Enabled || !string.IsNullOrWhiteSpace(options.ApiKey),
+                "Google Books ApiKey is required when the provider is enabled.")
+            .ValidateOnStart();
+
+        if (configuration.GetValue<bool>($"{GoogleBooksMetadataOptions.SectionName}:Enabled"))
+        {
+            services.AddTransient<GoogleBooksApiKeyHandler>();
+            services.AddHttpClient<GoogleBooksBookMetadataProvider>((serviceProvider, client) =>
+                {
+                    var options = serviceProvider
+                        .GetRequiredService<IOptions<GoogleBooksMetadataOptions>>()
+                        .Value;
+
+                    client.BaseAddress = new Uri("https://www.googleapis.com/books/v1/");
+                    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+                    client.DefaultRequestHeaders.Accept.Add(
+                        new MediaTypeWithQualityHeaderValue("application/json"));
+                    client.DefaultRequestHeaders.UserAgent.Add(
+                        new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+                })
+                .AddHttpMessageHandler<GoogleBooksApiKeyHandler>();
+            services.AddTransient<IBookMetadataProvider>(serviceProvider =>
+                serviceProvider.GetRequiredService<GoogleBooksBookMetadataProvider>());
+        }
+
         return services;
     }
 }
