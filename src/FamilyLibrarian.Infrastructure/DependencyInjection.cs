@@ -3,6 +3,7 @@ using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Time;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -46,6 +47,25 @@ public static class DependencyInjection
         services
             .AddAuthentication(IdentityConstants.ApplicationScheme)
             .AddIdentityCookies();
+
+        // The browser app is a Blazor WebAssembly SPA: there is no server-rendered
+        // login page to redirect to, and MapFallbackToFile would answer any such
+        // redirect with index.html, so the client would parse HTML as JSON. Always
+        // answer auth failures with status codes instead.
+        services.ConfigureApplicationCookie(options =>
+        {
+            options.Events.OnRedirectToLogin = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            };
+
+            options.Events.OnRedirectToAccessDenied = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return Task.CompletedTask;
+            };
+        });
 
         services.AddAuthorizationBuilder()
             .AddPolicy(

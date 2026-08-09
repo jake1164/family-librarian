@@ -1,0 +1,8 @@
+{
+  "dotnet.defaultSolution": "FamilyLibrarian.slnx",
+  "dotnet.server.useOmnisharp": false,
+  "files.exclude": {
+    "**/bin": true,
+    "**/obj": true
+  }
+}

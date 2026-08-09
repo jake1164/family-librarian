@@ -1,0 +1,73 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Server-side debugging. Secrets come from .env via `envFile` — never
+      // from this file. `env` below holds only non-secret host settings.
+      "name": ".NET: Launch Family Librarian (server)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "dev: prepare",
+      "program": "${workspaceFolder}/src/FamilyLibrarian.Web/bin/Debug/net10.0/FamilyLibrarian.Web.dll",
+      "cwd": "${workspaceFolder}/src/FamilyLibrarian.Web",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "https://localhost:7080;http://localhost:5080"
+      },
+      "stopAtEntry": false,
+      "console": "internalConsole",
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(https?://\\S+)",
+        "uriFormat": "%s"
+      }
+    },
+    {
+      // Attaches the Blazor WebAssembly debugger to the already-running server.
+      // Use the "Full stack" compound below rather than starting this alone.
+      // The `blazorwasm` debug type has no `envFile` support, which is why the
+      // server is launched by the coreclr config above instead of `hosted:true`.
+      "name": "Blazor WASM: Attach to running app",
+      "type": "blazorwasm",
+      "request": "attach",
+      "url": "https://localhost:7080",
+      "browser": "edge",
+      "timeout": 60000
+    },
+    {
+      // Steps through the EF Core migration path (Program.cs --migrate) and exits.
+      "name": ".NET: Debug EF migrations (--migrate)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "dev-db: up",
+      "program": "${workspaceFolder}/src/FamilyLibrarian.Web/bin/Debug/net10.0/FamilyLibrarian.Web.dll",
+      "args": ["--migrate"],
+      "cwd": "${workspaceFolder}/src/FamilyLibrarian.Web",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    {
+      // Attach to the container from `docker compose up`, or to `dotnet watch`.
+      "name": ".NET: Attach to process",
+      "type": "coreclr",
+      "request": "attach"
+    }
+  ],
+  "compounds": [
+    {
+      // Server + client breakpoints in one session.
+      "name": "Full stack: server + Blazor WASM",
+      "configurations": [
+        ".NET: Launch Family Librarian (server)",
+        "Blazor WASM: Attach to running app"
+      ],
+      "preLaunchTask": "dev: prepare",
+      "stopAll": true
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+# Local F5-debugging database only.
+#
+# `compose.yaml` deliberately keeps PostgreSQL unpublished, so the host process
+# started by the VS Code debugger cannot reach it. This file runs a separate,
+# throwaway PostgreSQL on localhost:5432 using the same credentials that
+# src/FamilyLibrarian.Web/appsettings.Development.json already expects. It is a
+# development-only database with development-only credentials and is never part
+# of `docker compose up`.
+#
+#   docker compose -f compose.debug.yaml up -d --wait
+#   docker compose -f compose.debug.yaml down -v
+name: family-librarian-debug
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: family_librarian
+      POSTGRES_USER: family_librarian
+      POSTGRES_PASSWORD: family_librarian
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U family_librarian -d family_librarian"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - postgres-debug-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-debug-data:
