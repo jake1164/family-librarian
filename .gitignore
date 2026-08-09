@@ -5,4 +5,13 @@ obj/
 .env
 artifacts/
 TestResults/
+.DS_Store
+
+# AI scratch / local agent state (carried between machines by Syncthing, not git)
 .ai_docs
+.claude/
+.codex/
+
+# Syncthing local metadata
+.stfolder/
+.stignore

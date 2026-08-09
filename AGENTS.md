@@ -34,6 +34,13 @@ file before proposing, changing, or reviewing code.
 - Build locally through Compose. Release images publish to `ghcr.io/jake1164/family-librarian`; keep image tags immutable and publish through the repository's GitHub Actions credentials.
 - At the end of every relevant source change, run the appropriate build and tests. The project must build with zero warnings and zero errors, and all relevant tests must complete successfully before reporting the work complete. Run migration and Compose health checks whenever the change affects them.
 
+## AI working files
+
+- Write every agent-generated working file to `.ai_docs/` at the repository root. This covers implementation plans, spikes, design notes and decision records produced during a session, migration or refactor checklists, progress and status trackers, investigation write-ups, and any other scratch markdown an agent creates for its own tracking.
+- Never place these files at the repository root, in `docs/`, or beside the code they describe. `docs/` is curated, human-owned project documentation; `.ai_docs/` is agent scratch space.
+- `.ai_docs/` is gitignored and is not part of the shipped product. Do not reference it from `README.md`, `docs/`, or source comments, and do not treat anything in it as authoritative over `README.md`, `docs/`, or this file.
+- When a document in `.ai_docs/` matures into something the project should keep, propose promoting it into `docs/` explicitly rather than silently moving it.
+
 ## Scope discipline
 
 - Read `README.md` and the relevant documents in `docs/` before changing design-sensitive code.
