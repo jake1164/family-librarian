@@ -54,26 +54,31 @@
     {
       // Starts the existing Compose containers without rebuilding them. The
       // copied vsdbg debugger remains in this reused application container.
+      //
+      // The browser is opened by the last step of the preLaunchTask, not by
+      // `dockerServerReadyAction`: the Containers extension only builds the
+      // `dockerOptions` that the ready-action detector needs in its *launch*
+      // resolver. Its attach resolver returns no `dockerOptions`, so a
+      // `dockerServerReadyAction` here is silently ignored. Opening from the
+      // task is sound because `docker compose up --wait` has already blocked
+      // on the container's healthcheck.
       "name": "Containers: Debug Web GUI (Docker, reuse container)",
       "type": "docker",
       "request": "attach",
-      "preLaunchTask": "compose: reuse container",
+      "preLaunchTask": "containers: reuse container, then open browser",
       "postDebugTask": "compose: stop (preserve containers and data)",
       "containerName": "family-librarian-web",
       "platform": "netCore",
       "netCore": {
         "appProject": "${workspaceFolder}/src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj",
         "justMyCode": true
-      },
-      "dockerServerReadyAction": {
-        "pattern": "\\bNow listening on:\\s+http://",
-        "uriFormat": "http://localhost:8080",
-        "action": "openExternally"
       }
     },
     {
       // DESTRUCTIVE: deletes the Compose PostgreSQL volume before starting and
-      // attaching to a clean stack.
+      // attaching to a clean stack. Its task sequence ends by opening the
+      // browser — see the note on the reuse config above for why the browser is
+      // not opened by `dockerServerReadyAction`.
       "name": "Containers: Debug Web GUI (Docker, force rebuild / fresh start)",
       "type": "docker",
       "request": "attach",
@@ -84,11 +89,6 @@
       "netCore": {
         "appProject": "${workspaceFolder}/src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj",
         "justMyCode": true
-      },
-      "dockerServerReadyAction": {
-        "pattern": "\\bNow listening on:\\s+http://",
-        "uriFormat": "http://localhost:8080",
-        "action": "openExternally"
       }
     },
     {

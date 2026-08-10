@@ -142,6 +142,36 @@
       "problemMatcher": []
     },
     {
+      "label": "dev: open app in browser",
+      "detail": "Open the containerized app at http://localhost:8080 (compose --wait has already confirmed it is healthy)",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "url=http://localhost:8080; if command -v open >/dev/null 2>&1; then open \"$url\"; else xdg-open \"$url\"; fi"
+      ],
+      "windows": {
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "Start-Process 'http://localhost:8080'"
+        ]
+      },
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "silent", "close": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "containers: reuse container, then open browser",
+      "detail": "preLaunchTask for the Docker attach configs: start/reuse the stack, then open the app",
+      "dependsOrder": "sequence",
+      "dependsOn": ["compose: reuse container", "dev: open app in browser"],
+      "problemMatcher": []
+    },
+    {
       "label": "compose: stop (preserve containers and data)",
       "detail": "Stop the full Compose stack while preserving its containers, debugger, and PostgreSQL data",
       "command": "docker",
@@ -175,7 +205,8 @@
       "dependsOn": [
         "dev: check .env",
         "compose: remove stack and database (fresh start)",
-        "compose: force rebuild"
+        "compose: force rebuild",
+        "dev: open app in browser"
       ],
       "problemMatcher": []
     },
