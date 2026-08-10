@@ -121,19 +121,23 @@
     {
       "label": "compose: reuse container",
       "detail": "Build if needed, then start/reuse the full Compose stack without force-recreating containers, with vsdbg mounted into the app container (needs .env)",
-      "command": "docker",
-      "type": "process",
-      "args": ["compose", "-f", "compose.yaml", "-f", "compose.debug-attach.yaml", "up", "-d", "--build", "--wait"],
-      "options": {
-        "cwd": "${workspaceFolder}",
-        "env": { "VSDBG_HOST_DIR": "${env:HOME}/.vsdbg/linux-x64/latest" }
-      },
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "case \"$(uname -m)\" in arm64|aarch64) rid=linux-arm64 ;; *) rid=linux-x64 ;; esac; export VSDBG_HOST_DIR=\"$HOME/.vsdbg/$rid/latest\"; if [ ! -x \"$VSDBG_HOST_DIR/vsdbg\" ]; then echo \"No $rid vsdbg found at $VSDBG_HOST_DIR — run: bash '$HOME/.vsdbg/getvsdbg.sh' -v latest -r $rid -l '$VSDBG_HOST_DIR'\" >&2; exit 1; fi; exec docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --wait"
+      ],
       "windows": {
-        "options": {
-          "cwd": "${workspaceFolder}",
-          "env": { "VSDBG_HOST_DIR": "${env:USERPROFILE}\\.vsdbg\\linux-x64\\latest" }
-        }
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "$env:VSDBG_HOST_DIR = Join-Path $env:USERPROFILE '.vsdbg\\linux-x64\\latest'; docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --wait"
+        ]
       },
+      "options": { "cwd": "${workspaceFolder}" },
       "dependsOn": ["dev: check .env"],
       "problemMatcher": []
     },
@@ -178,19 +182,23 @@
     {
       "label": "compose: force rebuild",
       "detail": "Build and recreate the full Compose stack while preserving the PostgreSQL volume, with vsdbg mounted into the app container (needs .env)",
-      "command": "docker",
-      "type": "process",
-      "args": ["compose", "-f", "compose.yaml", "-f", "compose.debug-attach.yaml", "up", "-d", "--build", "--force-recreate", "--wait"],
-      "options": {
-        "cwd": "${workspaceFolder}",
-        "env": { "VSDBG_HOST_DIR": "${env:HOME}/.vsdbg/linux-x64/latest" }
-      },
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "case \"$(uname -m)\" in arm64|aarch64) rid=linux-arm64 ;; *) rid=linux-x64 ;; esac; export VSDBG_HOST_DIR=\"$HOME/.vsdbg/$rid/latest\"; if [ ! -x \"$VSDBG_HOST_DIR/vsdbg\" ]; then echo \"No $rid vsdbg found at $VSDBG_HOST_DIR — run: bash '$HOME/.vsdbg/getvsdbg.sh' -v latest -r $rid -l '$VSDBG_HOST_DIR'\" >&2; exit 1; fi; exec docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --force-recreate --wait"
+      ],
       "windows": {
-        "options": {
-          "cwd": "${workspaceFolder}",
-          "env": { "VSDBG_HOST_DIR": "${env:USERPROFILE}\\.vsdbg\\linux-x64\\latest" }
-        }
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "$env:VSDBG_HOST_DIR = Join-Path $env:USERPROFILE '.vsdbg\\linux-x64\\latest'; docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --force-recreate --wait"
+        ]
       },
+      "options": { "cwd": "${workspaceFolder}" },
       "dependsOn": ["dev: check .env"],
       "problemMatcher": []
     }

@@ -7,8 +7,14 @@
 # already-downloaded vsdbg folder straight into the container at the path the
 # debug adapter expects, guaranteeing it's there before VS Code even checks.
 # `VSDBG_HOST_DIR` is set by the `compose: reuse container` / `compose: force
-# rebuild` tasks (OS-specific — see tasks.json) and points at the linux-x64
-# vsdbg install VS Code already maintains for you.
+# rebuild` tasks (OS-specific — see tasks.json) and points at the vsdbg install
+# VS Code already maintains for you.
+#
+# It MUST match the container's architecture, not just the OS. Compose builds
+# this image for the host's native platform, so an Apple Silicon Mac gets an
+# arm64 container: mounting the linux-x64 vsdbg there makes the attach die with
+# `rosetta error: failed to open elf at /lib64/ld-linux-x86-64.so.2`. The tasks
+# pick linux-arm64 or linux-x64 from `uname -m` for this reason.
 #
 # Deliberately NOT read-only: VS Code still runs its own "copy the debugger?"
 # check on attach and, if it decides to, `docker cp`s into this path anyway.

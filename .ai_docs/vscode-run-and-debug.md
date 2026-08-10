@@ -108,6 +108,53 @@ if (app.Environment.IsDevelopment())
 
 Left unapplied — it is a change to Program.cs beyond the requested scope.
 
+## Fixed: container attach failed on Apple Silicon
+
+`tasks.json` hard-coded `VSDBG_HOST_DIR` to `~/.vsdbg/linux-x64/latest` for every
+non-Windows host. Compose builds the image for the host's native platform, so an
+arm64 Mac gets an arm64 container, and the x86-64 debugger bind-mounted at
+`/remote_debugger` died with
+`rosetta error: failed to open elf at /lib64/ld-linux-x86-64.so.2`. Windows was
+unaffected because its container is linux/amd64.
+
+`compose: reuse container` and `compose: force rebuild` now select `linux-arm64`
+or `linux-x64` from `uname -m`, and fail with a `getvsdbg.sh` command if that RID
+isn't installed. Both run through `bash -lc`, which also puts Docker Desktop's
+`/usr/local/bin/docker` on `PATH` — a `type: process` task does not get it when
+VS Code is launched from the Dock. Windows keeps its own PowerShell branch.
+
+## Fixed: Data Protection keys died with the container
+
+The key ring defaulted to the file provider, which logged
+`Storing keys in a directory '/home/app/.aspnet/DataProtection-Keys' that may not
+be persisted outside of the container`, and the four first-chance
+`CryptographicException`s in the debug console came with it. Every
+`--force-recreate` discarded the keys and invalidated auth cookies.
+
+`AppDbContext` now implements `IDataProtectionKeyContext`, and
+`AddInfrastructure` calls `PersistKeysToDbContext<AppDbContext>()`, so the key
+ring lives in `identity.data_protection_keys` (migration
+`20260810222849_AddDataProtectionKeys`). A database rather than a mounted volume
+because a named volume at that path would be created root-owned while the
+container runs as `$APP_UID`, and a bind mount would need per-OS host paths.
+
+`SetApplicationName("FamilyLibrarian")` is required, not cosmetic: the key
+discriminator otherwise derives from the content root path — `/app` in the
+container, an OS-specific absolute path under the debugger — so with a shared
+key ring a cookie issued by one host would fail to decrypt in the other.
+
+Still logged: `No XML encryptor configured. Key ... may be persisted to storage
+in unencrypted form.` The keys sit unencrypted in a database only this app can
+reach. Encrypting at rest needs a certificate and is left undone deliberately.
+
+## Known: the Compose stack has no local account
+
+`compose.yaml` passes neither `Authentication__EnableLocal` nor
+`BootstrapAdmin__*`, so `identity.users` is empty in the container stack and
+there is nothing to log in as — only the debugger's `envFile` supplies them.
+Unrelated to the debugger work above; noted because it blocks any end-to-end
+auth check against the containers.
+
 ## Verified
 
 - `dotnet build FamilyLibrarian.slnx` — 0 warnings, 0 errors.

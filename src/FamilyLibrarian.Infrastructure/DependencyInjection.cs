@@ -7,6 +7,7 @@ using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Time;
 using System.Net.Http.Headers;
 using System.Net.Mail;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -30,6 +31,20 @@ public static class DependencyInjection
             options.UseNpgsql(
                 connectionString,
                 npgsql => npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "identity")));
+
+        // Keep the Data Protection key ring in PostgreSQL rather than on disk.
+        // The default file provider writes to the container's own
+        // ~/.aspnet/DataProtection-Keys, so every `docker compose up
+        // --force-recreate` threw the keys away and signed everyone out.
+        //
+        // SetApplicationName pins the key discriminator, which otherwise derives
+        // from the content root path — `/app` in the container but an OS-specific
+        // absolute path under the debugger, so a cookie issued by one would fail
+        // to decrypt in the other. A fixed name keeps container, macOS, and
+        // Windows runs interchangeable against the same database.
+        services.AddDataProtection()
+            .PersistKeysToDbContext<AppDbContext>()
+            .SetApplicationName("FamilyLibrarian");
 
         services
             .AddIdentityCore<AppUser>(options =>
