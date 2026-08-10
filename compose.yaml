@@ -1,3 +1,5 @@
+name: family-librarian
+
 services:
   postgres:
     image: postgres:17.6-alpine
@@ -27,6 +29,9 @@ services:
     restart: "no"
 
   family-librarian:
+    # Stable local-only name used by the VS Code Docker attach configurations.
+    # This service is intentionally not scaled in the development Compose stack.
+    container_name: family-librarian-web
     build:
       context: .
     image: family-librarian:dev

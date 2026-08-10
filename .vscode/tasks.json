@@ -33,16 +33,24 @@
     },
     {
       "label": "watch",
-      "detail": "dotnet watch run with hot reload (no debugger attached)",
-      "command": "dotnet",
-      "type": "process",
-      "args": ["watch", "run", "--project", "${workspaceFolder}/src/FamilyLibrarian.Web"],
-      "options": {
-        "env": {
-          "ASPNETCORE_ENVIRONMENT": "Development",
-          "ASPNETCORE_URLS": "https://localhost:7080;http://localhost:5080"
-        }
+      "detail": "dotnet watch run with hot reload and server-side settings from .env",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -a; . ./.env; set +a; export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS='https://localhost:7080;http://localhost:5080'; exec dotnet watch run --project '${workspaceFolder}/src/FamilyLibrarian.Web'"
+      ],
+      "windows": {
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "$envFile = Join-Path '${workspaceFolder}' '.env'; Get-Content -LiteralPath $envFile | ForEach-Object { if ($_ -match '^\\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }; $env:ASPNETCORE_ENVIRONMENT = 'Development'; $env:ASPNETCORE_URLS = 'https://localhost:7080;http://localhost:5080'; dotnet watch run --project '${workspaceFolder}/src/FamilyLibrarian.Web'"
+        ]
       },
+      "dependsOn": ["dev: check .env"],
       "isBackground": true,
       "problemMatcher": "$msCompile"
     },
@@ -89,6 +97,16 @@
       "detail": "Fail early with a clear message if .env is missing (launch.json envFile needs it)",
       "type": "shell",
       "command": "test -f .env || { echo 'Missing .env — run: cp .env.example .env  then edit the values'; exit 1; }",
+      "windows": {
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "if (-not (Test-Path -LiteralPath (Join-Path '${workspaceFolder}' '.env'))) { Write-Error 'Missing .env — copy .env.example to .env, then edit the values'; exit 1 }"
+        ]
+      },
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
@@ -101,22 +119,79 @@
     },
 
     {
-      "label": "compose: up --build",
-      "detail": "Run the full production-shaped stack (needs .env)",
+      "label": "compose: reuse container",
+      "detail": "Build if needed, then start/reuse the full Compose stack without force-recreating containers, with vsdbg mounted into the app container (needs .env)",
       "command": "docker",
       "type": "process",
-      "args": ["compose", "up", "--build"],
-      "options": { "cwd": "${workspaceFolder}" },
-      "isBackground": true,
+      "args": ["compose", "-f", "compose.yaml", "-f", "compose.debug-attach.yaml", "up", "-d", "--build", "--wait"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "VSDBG_HOST_DIR": "${env:HOME}/.vsdbg/linux-x64/latest" }
+      },
+      "windows": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": { "VSDBG_HOST_DIR": "${env:USERPROFILE}\\.vsdbg\\linux-x64\\latest" }
+        }
+      },
+      "dependsOn": ["dev: check .env"],
       "problemMatcher": []
     },
     {
-      "label": "compose: down",
-      "detail": "Stop the full Compose stack",
+      "label": "compose: stop (preserve containers and data)",
+      "detail": "Stop the full Compose stack while preserving its containers, debugger, and PostgreSQL data",
+      "command": "docker",
+      "type": "process",
+      "args": ["compose", "stop"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "compose: down (preserve data)",
+      "detail": "Stop the full Compose stack without deleting PostgreSQL data",
       "command": "docker",
       "type": "process",
       "args": ["compose", "down"],
       "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "compose: remove stack and database (fresh start)",
+      "detail": "DESTRUCTIVE: removes this Compose project's PostgreSQL volume, all local accounts, and all catalog/request data",
+      "command": "docker",
+      "type": "process",
+      "args": ["compose", "down", "--volumes", "--remove-orphans"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "compose: force rebuild and fresh start",
+      "detail": "DESTRUCTIVE: remove the stack/database, then rebuild and recreate a clean local environment",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "dev: check .env",
+        "compose: remove stack and database (fresh start)",
+        "compose: force rebuild"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "compose: force rebuild",
+      "detail": "Build and recreate the full Compose stack while preserving the PostgreSQL volume, with vsdbg mounted into the app container (needs .env)",
+      "command": "docker",
+      "type": "process",
+      "args": ["compose", "-f", "compose.yaml", "-f", "compose.debug-attach.yaml", "up", "-d", "--build", "--force-recreate", "--wait"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "VSDBG_HOST_DIR": "${env:HOME}/.vsdbg/linux-x64/latest" }
+      },
+      "windows": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": { "VSDBG_HOST_DIR": "${env:USERPROFILE}\\.vsdbg\\linux-x64\\latest" }
+        }
+      },
+      "dependsOn": ["dev: check .env"],
       "problemMatcher": []
     }
   ]

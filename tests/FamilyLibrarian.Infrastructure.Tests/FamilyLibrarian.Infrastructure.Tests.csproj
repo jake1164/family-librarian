@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
     <ProjectReference Include="../../src/FamilyLibrarian.Application/FamilyLibrarian.Application.csproj" />
     <ProjectReference Include="../../src/FamilyLibrarian.Infrastructure/FamilyLibrarian.Infrastructure.csproj" />
   </ItemGroup>

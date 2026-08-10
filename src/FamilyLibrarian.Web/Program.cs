@@ -34,6 +34,12 @@ if (app.Configuration.GetValue<bool>("Authentication:EnableLocal"))
 }
 
 app.UseExceptionHandler("/error");
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseWebAssemblyDebugging();
+}
+
 app.UseHttpsRedirection();
 app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();

@@ -32,7 +32,7 @@
       "type": "blazorwasm",
       "request": "attach",
       "url": "https://localhost:7080",
-      "browser": "edge",
+      "browser": "chrome",
       "timeout": 60000
     },
     {
@@ -52,7 +52,46 @@
       "console": "internalConsole"
     },
     {
-      // Attach to the container from `docker compose up`, or to `dotnet watch`.
+      // Starts the existing Compose containers without rebuilding them. The
+      // copied vsdbg debugger remains in this reused application container.
+      "name": "Containers: Debug Web GUI (Docker, reuse container)",
+      "type": "docker",
+      "request": "attach",
+      "preLaunchTask": "compose: reuse container",
+      "postDebugTask": "compose: stop (preserve containers and data)",
+      "containerName": "family-librarian-web",
+      "platform": "netCore",
+      "netCore": {
+        "appProject": "${workspaceFolder}/src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj",
+        "justMyCode": true
+      },
+      "dockerServerReadyAction": {
+        "pattern": "\\bNow listening on:\\s+http://",
+        "uriFormat": "http://localhost:8080",
+        "action": "openExternally"
+      }
+    },
+    {
+      // DESTRUCTIVE: deletes the Compose PostgreSQL volume before starting and
+      // attaching to a clean stack.
+      "name": "Containers: Debug Web GUI (Docker, force rebuild / fresh start)",
+      "type": "docker",
+      "request": "attach",
+      "preLaunchTask": "compose: force rebuild and fresh start",
+      "postDebugTask": "compose: stop (preserve containers and data)",
+      "containerName": "family-librarian-web",
+      "platform": "netCore",
+      "netCore": {
+        "appProject": "${workspaceFolder}/src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj",
+        "justMyCode": true
+      },
+      "dockerServerReadyAction": {
+        "pattern": "\\bNow listening on:\\s+http://",
+        "uriFormat": "http://localhost:8080",
+        "action": "openExternally"
+      }
+    },
+    {
       "name": ".NET: Attach to process",
       "type": "coreclr",
       "request": "attach"
