@@ -1,0 +1,79 @@
+@page "/works/{WorkId:guid}"
+@inject CatalogApiClient Catalog
+
+<PageTitle>@(work?.Title ?? "Book") · Family Librarian</PageTitle>
+
+<MudStack Spacing="3" Class="mx-auto" Style="max-width: 56rem;">
+    <MudButton Variant="Variant.Text" Href="search">Back to search</MudButton>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (work is null)
+    {
+        <MudAlert Severity="Severity.Warning">This catalog Work could not be found.</MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.h3">@work.Title</MudText>
+        <MudText Typo="Typo.h6">@string.Join(", ", work.Authors)</MudText>
+
+        @if (!string.IsNullOrWhiteSpace(work.Description))
+        {
+            <MudText Typo="Typo.body1">@work.Description</MudText>
+        }
+
+        @if (work.Series.Count > 0)
+        {
+            <MudPaper Class="pa-4" Outlined="true">
+                <MudText Typo="Typo.h6">Known series context</MudText>
+                @foreach (var series in work.Series)
+                {
+                    <MudText Typo="Typo.body2">
+                        @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
+                    </MudText>
+                }
+            </MudPaper>
+        }
+
+        <MudPaper Class="pa-4" Outlined="true">
+            <MudText Typo="Typo.h6">Known editions</MudText>
+            @foreach (var edition in work.Editions)
+            {
+                <MudText Typo="Typo.body2">
+                    @edition.Format · @edition.Title@(string.IsNullOrWhiteSpace(edition.Isbn13) ? string.Empty : $" · ISBN {edition.Isbn13}")
+                </MudText>
+            }
+        </MudPaper>
+
+        <MudAlert Severity="Severity.Info">
+            Requesting will be added after local accounts and the request workflow.
+        </MudAlert>
+    }
+</MudStack>
+
+@code {
+    [Parameter]
+    public Guid WorkId { get; set; }
+
+    private CatalogWorkResponse? work;
+    private bool isLoading = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        isLoading = true;
+        try
+        {
+            work = await Catalog.GetWorkAsync(WorkId);
+        }
+        catch (HttpRequestException)
+        {
+            work = null;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

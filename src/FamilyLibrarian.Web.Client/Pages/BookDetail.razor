@@ -1,5 +1,6 @@
 @page "/search/{ProviderId}/{ExternalId}"
 @inject CatalogApiClient Catalog
+@inject NavigationManager Navigation
 
 <PageTitle>@(book?.Title ?? "Book") · Family Librarian</PageTitle>
 
@@ -47,6 +48,18 @@
             }
         </MudPaper>
 
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="ResolveAsync"
+                   Disabled="@isResolving">
+            @(isResolving ? "Saving…" : "Use this book")
+        </MudButton>
+
+        @if (!string.IsNullOrWhiteSpace(resolveError))
+        {
+            <MudAlert Severity="Severity.Error">@resolveError</MudAlert>
+        }
+
         <MudAlert Severity="Severity.Info">
             Requesting will be added after the catalog is connected to persistent Works and local accounts.
         </MudAlert>
@@ -62,6 +75,8 @@
 
     private CatalogBookCandidateResponse? book;
     private bool isLoading = true;
+    private bool isResolving;
+    private string? resolveError;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -77,6 +92,25 @@
         finally
         {
             isLoading = false;
+        }
+    }
+
+    private async Task ResolveAsync()
+    {
+        isResolving = true;
+        resolveError = null;
+        try
+        {
+            var work = await Catalog.ResolveCandidateAsync(ProviderId, ExternalId);
+            Navigation.NavigateTo($"works/{work.Id}");
+        }
+        catch (HttpRequestException)
+        {
+            resolveError = "This book could not be saved to the catalog. Please try again.";
+        }
+        finally
+        {
+            isResolving = false;
         }
     }
 }

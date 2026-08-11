@@ -64,7 +64,7 @@ public sealed class Work
             return;
         }
 
-        Authors.Add(new WorkAuthor(Id, author.Id, ordinal, role));
+        Authors.Add(new WorkAuthor(this, author, ordinal, role));
     }
 
     public void AddEdition(Edition edition)

@@ -7,25 +7,20 @@ public sealed class SeriesEntry
     }
 
     public SeriesEntry(
-        Guid seriesId,
-        Guid workId,
+        Series series,
+        Work work,
         string? positionLabel,
         decimal? positionSort,
         bool isPrimary,
         DateTimeOffset createdAtUtc)
     {
-        if (seriesId == Guid.Empty)
-        {
-            throw new ArgumentException("A Series ID is required.", nameof(seriesId));
-        }
+        ArgumentNullException.ThrowIfNull(series);
+        ArgumentNullException.ThrowIfNull(work);
 
-        if (workId == Guid.Empty)
-        {
-            throw new ArgumentException("A Work ID is required.", nameof(workId));
-        }
-
-        SeriesId = seriesId;
-        WorkId = workId;
+        SeriesId = series.Id;
+        Series = series;
+        WorkId = work.Id;
+        Work = work;
         PositionLabel = Author.CleanOptionalText(positionLabel);
         PositionSort = positionSort;
         IsPrimary = isPrimary;

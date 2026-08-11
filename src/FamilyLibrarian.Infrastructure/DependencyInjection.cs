@@ -93,6 +93,8 @@ public static class DependencyInjection
                 policy => policy.RequireRole(RoleNames.Admin));
 
         services.AddScoped<IClock, SystemClock>();
+        services.AddScoped<ICatalogRepository, CatalogRepository>();
+        services.AddScoped<CatalogWorkResolver>();
 
         if (configuration.GetValue("MetadataProviders:Demo:Enabled", true))
         {

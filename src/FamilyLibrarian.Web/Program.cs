@@ -54,6 +54,10 @@ app.MapGet("/api/v1/catalog/search", SearchCatalogAsync)
     .AllowAnonymous();
 app.MapGet("/api/v1/catalog/candidates/{providerId}/{externalId}", GetCatalogCandidateAsync)
     .AllowAnonymous();
+app.MapPost("/api/v1/catalog/candidates/{providerId}/{externalId}/resolve", ResolveCatalogCandidateAsync)
+    .AllowAnonymous();
+app.MapGet("/api/v1/catalog/works/{workId:guid}", GetCatalogWorkAsync)
+    .AllowAnonymous();
 
 app.MapPost("/api/auth/login", LoginAsync)
     .AllowAnonymous();
@@ -154,9 +158,10 @@ static async Task<IResult> SearchCatalogAsync(
     var providerResults = await Task.WhenAll(searches);
 
     return Results.Ok(new CatalogSearchResponse(
-        providerResults
+        BookCandidateGrouper.GroupExactIsbnMatches(providerResults
             .Where(result => result.Succeeded)
             .SelectMany(result => result.Candidates)
+            .ToArray())
             .Select(ToResponse)
             .ToArray(),
         providerResults
@@ -210,6 +215,82 @@ static async Task<IResult> GetCatalogCandidateAsync(
             detail: "The selected catalog source timed out.",
             statusCode: StatusCodes.Status503ServiceUnavailable);
     }
+}
+
+static async Task<IResult> ResolveCatalogCandidateAsync(
+    string providerId,
+    string externalId,
+    CatalogWorkResolver resolver,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken)
+{
+    try
+    {
+        var result = await resolver.ResolveAsync(providerId, externalId, cancellationToken);
+        var response = await ToWorkResponseAsync(result.Work, resolver, cancellationToken);
+        return result.WasCreated
+            ? Results.Created($"/api/v1/catalog/works/{result.Work.Id}", response)
+            : Results.Ok(response);
+    }
+    catch (UnknownMetadataProviderException)
+    {
+        return Results.NotFound();
+    }
+    catch (CatalogCandidateNotFoundException)
+    {
+        return Results.NotFound();
+    }
+    catch (ArgumentException)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["providerReference"] = ["The provider reference is invalid."]
+        });
+    }
+    catch (HttpRequestException exception)
+    {
+        MetadataProviderLog.CandidateDetailsUnavailable(
+            loggerFactory.CreateLogger("FamilyLibrarian.MetadataSearch"),
+            providerId,
+            exception);
+        return Results.Problem(
+            title: "Catalog provider unavailable",
+            detail: "The selected catalog source is temporarily unavailable.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (JsonException exception)
+    {
+        MetadataProviderLog.CandidateDetailsUnavailable(
+            loggerFactory.CreateLogger("FamilyLibrarian.MetadataSearch"),
+            providerId,
+            exception);
+        return Results.Problem(
+            title: "Catalog provider unavailable",
+            detail: "The selected catalog source returned an invalid response.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+    {
+        MetadataProviderLog.CandidateDetailsUnavailable(
+            loggerFactory.CreateLogger("FamilyLibrarian.MetadataSearch"),
+            providerId,
+            exception);
+        return Results.Problem(
+            title: "Catalog provider unavailable",
+            detail: "The selected catalog source timed out.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+}
+
+static async Task<IResult> GetCatalogWorkAsync(
+    Guid workId,
+    CatalogWorkResolver resolver,
+    CancellationToken cancellationToken)
+{
+    var work = await resolver.GetWorkAsync(workId, cancellationToken);
+    return work is null
+        ? Results.NotFound()
+        : Results.Ok(await ToWorkResponseAsync(work, resolver, cancellationToken));
 }
 
 static async Task<ProviderSearchResult> SearchProviderAsync(
@@ -270,6 +351,46 @@ static CatalogBookCandidateResponse ToResponse(BookCandidate candidate) => new(
         series.Name,
         series.PositionLabel,
         series.IsPrimary)).ToArray());
+
+static async Task<CatalogWorkResponse> ToWorkResponseAsync(
+    FamilyLibrarian.Domain.Catalog.Work work,
+    CatalogWorkResolver resolver,
+    CancellationToken cancellationToken)
+{
+    var sources = await resolver.GetWorkSourcesAsync(work.Id, cancellationToken);
+    return new CatalogWorkResponse(
+        work.Id,
+        work.CanonicalTitle,
+        work.Authors
+            .OrderBy(author => author.Ordinal)
+            .Select(author => author.Author.CanonicalName)
+            .ToArray(),
+        work.Description,
+        work.CoverUrl,
+        work.FirstPublicationDate,
+        work.Editions
+            .OrderBy(edition => edition.PublicationDate)
+            .ThenBy(edition => edition.Title, StringComparer.Ordinal)
+            .Select(edition => new CatalogEditionResponse(
+                edition.Title,
+                edition.Isbn13,
+                edition.Format.ToString(),
+                edition.PublicationDate))
+            .ToArray(),
+        work.SeriesEntries
+            .OrderByDescending(entry => entry.IsPrimary)
+            .ThenBy(entry => entry.PositionSort)
+            .ThenBy(entry => entry.PositionLabel, StringComparer.Ordinal)
+            .Select(entry => new CatalogSeriesResponse(
+                entry.Series.Name,
+                entry.PositionLabel,
+                entry.IsPrimary))
+            .ToArray(),
+        sources.Select(source => new CatalogWorkSourceResponse(
+            source.ProviderId,
+            source.ExternalId,
+            source.ObservedAtUtc)).ToArray());
+}
 
 internal sealed record ProviderSearchResult(
     string ProviderId,
