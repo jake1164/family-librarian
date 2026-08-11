@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
 using Microsoft.Extensions.Options;
 
@@ -149,8 +150,7 @@ public sealed class GoogleBooksBookMetadataProviderTests
 
     private static HttpClient CreateHttpClient(HttpMessageHandler innerHandler)
     {
-        var handler = new GoogleBooksApiKeyHandler(
-        Options.Create(new GoogleBooksMetadataOptions { ApiKey = "test-api-key" }))
+        var handler = new GoogleBooksApiKeyHandler(new StubCredentialAccessor("test-api-key"))
         {
             InnerHandler = innerHandler
         };
@@ -165,6 +165,14 @@ public sealed class GoogleBooksBookMetadataProviderTests
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json")
     };
+
+    private sealed class StubCredentialAccessor(string? apiKey) : IMetadataCredentialAccessor
+    {
+        public Task<string?> GetCredentialAsync(
+            string providerId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(apiKey);
+    }
 
     private sealed class StubHttpMessageHandler(
         Func<HttpRequestMessage, CancellationToken, HttpResponseMessage> responseFactory)

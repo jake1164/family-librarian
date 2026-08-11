@@ -1,5 +1,7 @@
 using FamilyLibrarian.Infrastructure.Identity;
+using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Integrations;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -27,6 +29,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<ExternalReference> ExternalReferences => Set<ExternalReference>();
 
+    public DbSet<MetadataProviderSetting> MetadataProviderSettings => Set<MetadataProviderSetting>();
+
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         builder.HasDefaultSchema("identity");
@@ -44,6 +50,52 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         builder.Entity<DataProtectionKey>().ToTable("data_protection_keys");
 
         ConfigureCatalog(builder);
+        ConfigureIntegrations(builder);
+        ConfigureAudit(builder);
+    }
+
+    private static void ConfigureIntegrations(ModelBuilder builder)
+    {
+        builder.Entity<MetadataProviderSetting>(entity =>
+        {
+            entity.ToTable("metadata_provider_settings", "app");
+            // The provider id is the natural key: routes address known installed
+            // provider ids, so a surrogate key would add a lookup without adding
+            // any meaning.
+            entity.HasKey(setting => setting.ProviderId);
+            entity.Property(setting => setting.ProviderId).HasColumnName("provider_id").HasMaxLength(128);
+            entity.Property(setting => setting.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(setting => setting.ProtectedCredential).HasColumnName("protected_credential").HasMaxLength(8_192);
+            entity.Property(setting => setting.CredentialFormatVersion).HasColumnName("credential_format_version");
+            entity.Property(setting => setting.CredentialSetAtUtc).HasColumnName("credential_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(setting => setting.CredentialHint).HasColumnName("credential_hint").HasMaxLength(8);
+            entity.Property(setting => setting.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(setting => setting.LastTestSucceeded).HasColumnName("last_test_succeeded");
+            entity.Property(setting => setting.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
+            entity.Property(setting => setting.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(setting => setting.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(setting => setting.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(setting => setting.Version).HasColumnName("xmin").IsRowVersion();
+        });
+    }
+
+    private static void ConfigureAudit(ModelBuilder builder)
+    {
+        builder.Entity<AuditEvent>(entity =>
+        {
+            entity.ToTable("audit_events", "audit");
+            entity.HasKey(auditEvent => auditEvent.Id);
+            entity.Property(auditEvent => auditEvent.Id).HasColumnName("id");
+            entity.Property(auditEvent => auditEvent.Action).HasColumnName("action").HasMaxLength(128).IsRequired();
+            entity.Property(auditEvent => auditEvent.SubjectType).HasColumnName("subject_type").HasMaxLength(128).IsRequired();
+            entity.Property(auditEvent => auditEvent.SubjectId).HasColumnName("subject_id").HasMaxLength(256);
+            entity.Property(auditEvent => auditEvent.ActorUserId).HasColumnName("actor_user_id");
+            entity.Property(auditEvent => auditEvent.ActorDisplayName).HasColumnName("actor_display_name").HasMaxLength(256);
+            entity.Property(auditEvent => auditEvent.Detail).HasColumnName("detail").HasColumnType("jsonb");
+            entity.Property(auditEvent => auditEvent.OccurredAtUtc).HasColumnName("occurred_at_utc").HasColumnType("timestamp with time zone");
+            entity.HasIndex(auditEvent => auditEvent.OccurredAtUtc);
+            entity.HasIndex(auditEvent => new { auditEvent.SubjectType, auditEvent.SubjectId });
+        });
     }
 
     private static void ConfigureCatalog(ModelBuilder builder)

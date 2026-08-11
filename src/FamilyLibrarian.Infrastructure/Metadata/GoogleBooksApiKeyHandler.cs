@@ -1,18 +1,44 @@
-using Microsoft.Extensions.Options;
+using FamilyLibrarian.Infrastructure.Integrations;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
 
-public sealed class GoogleBooksApiKeyHandler(IOptions<GoogleBooksMetadataOptions> options)
+/// <summary>
+/// Appends the Google Books API key to each outbound request.
+/// </summary>
+/// <remarks>
+/// The key is resolved per request rather than captured in the constructor. An
+/// administrator can replace it through the Admin Integrations page at any time,
+/// and <c>HttpMessageHandler</c> instances are pooled and reused for minutes at a
+/// time — a constructor-captured key would keep sending the superseded value
+/// until the pool recycled it.
+/// <para>
+/// The credential arrives through <see cref="IMetadataCredentialAccessor"/>
+/// because pooled handlers outlive any request scope and so cannot hold scoped
+/// services such as the DbContext.
+/// </para>
+/// </remarks>
+public sealed class GoogleBooksApiKeyHandler(IMetadataCredentialAccessor credentials)
     : DelegatingHandler
 {
-    private readonly string _apiKey = options.Value.ApiKey
-        ?? throw new InvalidOperationException("Google Books API key is required when the provider is enabled.");
-
-    protected override Task<HttpResponseMessage> SendAsync(
+    protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request.RequestUri);
+
+        var apiKey = await credentials.GetCredentialAsync(
+            MetadataProviderRegistry.GoogleBooksProviderId,
+            cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            // Reaching here means the provider was resolved as usable but the key
+            // vanished between that check and the call — a cleared credential
+            // racing an in-flight search. Fail loudly rather than sending an
+            // unauthenticated request that returns a confusing 403 from Google.
+            throw new InvalidOperationException(
+                "The Google Books API key is not configured.");
+        }
 
         var separator = string.IsNullOrEmpty(request.RequestUri.Query) ? "?" : "&";
         request.RequestUri = new Uri(
@@ -20,9 +46,9 @@ public sealed class GoogleBooksApiKeyHandler(IOptions<GoogleBooksMetadataOptions
                 request.RequestUri.OriginalString,
                 separator,
                 "key=",
-                Uri.EscapeDataString(_apiKey)),
+                Uri.EscapeDataString(apiKey)),
             UriKind.RelativeOrAbsolute);
 
-        return base.SendAsync(request, cancellationToken);
+        return await base.SendAsync(request, cancellationToken);
     }
 }

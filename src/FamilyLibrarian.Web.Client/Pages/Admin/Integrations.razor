@@ -1,0 +1,258 @@
+@page "/admin/integrations"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Integrations
+@using FamilyLibrarian.Web.Client.Integrations
+@using Microsoft.AspNetCore.Authorization
+@* Named IntegrationsApi, not Integrations: a member may not share the enclosing
+   component's type name. *@
+@inject MetadataIntegrationsApiClient IntegrationsApi
+@inject ISnackbar Snackbar
+
+<PageTitle>Metadata integrations | Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Metadata integrations</MudText>
+<MudText Typo="Typo.body1" Class="mb-6">
+    Choose which sources Family Librarian searches for book information. API keys are
+    stored encrypted and are never shown again after you save them.
+</MudText>
+
+@if (loadFailed)
+{
+    <MudAlert Severity="Severity.Error">We could not load the provider settings.</MudAlert>
+}
+else if (providers is null)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading providers" />
+}
+else
+{
+    <MudStack Spacing="4">
+        @foreach (var provider in providers)
+        {
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                    <MudText Typo="Typo.h6">@provider.DisplayName</MudText>
+
+                    @if (provider.IsExternallyManaged)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                            Managed by this deployment
+                        </MudChip>
+                    }
+                    @if (provider.IsMisconfigured)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                            Needs an API key
+                        </MudChip>
+                    }
+
+                    <MudSpacer />
+
+                    <MudSwitch T="bool"
+                               Value="provider.IsEnabled"
+                               ValueChanged="@(enabled => SetEnabledAsync(provider, enabled))"
+                               Color="Color.Primary"
+                               Disabled="@(provider.IsExternallyManaged || busyProviderId is not null)"
+                               Label="@(provider.IsEnabled ? "Enabled" : "Disabled")" />
+                </MudStack>
+
+                @if (provider.IsExternallyManaged)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true" Class="mt-3">
+                        This provider is configured by the deployment. Change its key and
+                        enabled state where the deployment secrets are managed.
+                    </MudAlert>
+                }
+                else if (provider.RequiresCredential)
+                {
+                    <MudDivider Class="my-3" />
+
+                    <MudText Typo="Typo.subtitle2">API key</MudText>
+                    @if (provider.HasStoredCredential)
+                    {
+                        <MudText Typo="Typo.body2" Class="mb-2">
+                            A key ending in <strong>@provider.CredentialHint</strong> was saved
+                            @(provider.CredentialSetAtUtc?.ToLocalTime().ToString("f")).
+                            Enter a new key to replace it.
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Class="mb-2">No key is stored yet.</MudText>
+                    }
+
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudTextField T="string"
+                                      @bind-Value="credentialDrafts[provider.ProviderId]"
+                                      Label="@(provider.HasStoredCredential ? "Replace API key" : "API key")"
+                                      InputType="InputType.Password"
+                                      Immediate="true"
+                                      Disabled="@(busyProviderId is not null)"
+                                      Class="flex-grow-1" />
+
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Disabled="@(busyProviderId is not null || string.IsNullOrWhiteSpace(credentialDrafts[provider.ProviderId]))"
+                                   OnClick="@(() => SaveCredentialAsync(provider))">
+                            Save key
+                        </MudButton>
+
+                        @if (provider.HasStoredCredential)
+                        {
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Error"
+                                       Disabled="@(busyProviderId is not null)"
+                                       OnClick="@(() => ClearCredentialAsync(provider))">
+                                Remove key
+                            </MudButton>
+                        }
+                    </MudStack>
+                }
+
+                <MudDivider Class="my-3" />
+
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+                    <MudButton Variant="Variant.Outlined"
+                               Disabled="@(busyProviderId is not null)"
+                               OnClick="@(() => TestAsync(provider))">
+                        Test connection
+                    </MudButton>
+
+                    @if (provider.LastTestedAtUtc is not null)
+                    {
+                        <MudText Typo="Typo.body2">
+                            <MudIcon Icon="@(provider.LastTestSucceeded == true ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Error)"
+                                     Color="@(provider.LastTestSucceeded == true ? Color.Success : Color.Error)"
+                                     Size="Size.Small" />
+                            @provider.LastTestMessage
+                            <MudText Typo="Typo.caption" Class="ml-1">
+                                (@provider.LastTestedAtUtc.Value.ToLocalTime().ToString("f"))
+                            </MudText>
+                        </MudText>
+                    }
+                </MudStack>
+            </MudPaper>
+        }
+    </MudStack>
+}
+
+@code {
+    private IReadOnlyList<MetadataProviderStatusResponse>? providers;
+    private readonly Dictionary<string, string?> credentialDrafts = new(StringComparer.OrdinalIgnoreCase);
+    private string? busyProviderId;
+    private bool loadFailed;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            providers = await IntegrationsApi.GetProvidersAsync();
+            foreach (var provider in providers)
+            {
+                credentialDrafts.TryAdd(provider.ProviderId, null);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+    }
+
+    private async Task SetEnabledAsync(MetadataProviderStatusResponse provider, bool enabled)
+    {
+        await RunAsync(provider, () => IntegrationsApi.SetEnabledAsync(provider.ProviderId, enabled));
+    }
+
+    private async Task SaveCredentialAsync(MetadataProviderStatusResponse provider)
+    {
+        var credential = credentialDrafts[provider.ProviderId];
+        if (string.IsNullOrWhiteSpace(credential))
+        {
+            return;
+        }
+
+        var saved = await RunAsync(
+            provider,
+            () => IntegrationsApi.SetCredentialAsync(provider.ProviderId, credential));
+
+        if (saved)
+        {
+            // Drop the plaintext from the component as soon as the host has it,
+            // so it does not linger in the rendered field or component state.
+            credentialDrafts[provider.ProviderId] = null;
+            Snackbar.Add($"Saved the {provider.DisplayName} API key.", Severity.Success);
+        }
+    }
+
+    private async Task ClearCredentialAsync(MetadataProviderStatusResponse provider)
+    {
+        if (await RunAsync(provider, () => IntegrationsApi.ClearCredentialAsync(provider.ProviderId)))
+        {
+            Snackbar.Add($"Removed the {provider.DisplayName} API key.", Severity.Success);
+        }
+    }
+
+    private async Task TestAsync(MetadataProviderStatusResponse provider)
+    {
+        busyProviderId = provider.ProviderId;
+        try
+        {
+            var result = await IntegrationsApi.TestAsync(provider.ProviderId);
+            if (result is null)
+            {
+                Snackbar.Add("The connection test could not be run.", Severity.Error);
+                return;
+            }
+
+            Replace(result.Provider);
+            Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        }
+        finally
+        {
+            busyProviderId = null;
+        }
+    }
+
+    private async Task<bool> RunAsync(
+        MetadataProviderStatusResponse provider,
+        Func<Task<MetadataIntegrationsResult>> action)
+    {
+        busyProviderId = provider.ProviderId;
+        try
+        {
+            var result = await action();
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return false;
+            }
+
+            if (result.Provider is not null)
+            {
+                Replace(result.Provider);
+            }
+
+            return true;
+        }
+        finally
+        {
+            busyProviderId = null;
+        }
+    }
+
+    private void Replace(MetadataProviderStatusResponse updated)
+    {
+        if (providers is null)
+        {
+            return;
+        }
+
+        providers = providers
+            .Select(provider => string.Equals(provider.ProviderId, updated.ProviderId, StringComparison.OrdinalIgnoreCase)
+                ? updated
+                : provider)
+            .ToArray();
+    }
+}

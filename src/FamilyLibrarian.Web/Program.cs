@@ -2,11 +2,14 @@ using System.Security.Claims;
 using System.Text.Json;
 using System.ComponentModel.DataAnnotations;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
+using FamilyLibrarian.Contracts.Integrations;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
+using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web;
 using Microsoft.AspNetCore.Authorization;
@@ -19,6 +22,19 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgresql");
+
+// The WebAssembly client cannot read an HttpOnly cookie, so the request token
+// travels in a header it sets explicitly. The cookie half stays HttpOnly.
+builder.Services.AddAntiforgery(options =>
+{
+    options.HeaderName = AntiforgeryTokenEndpoint.HeaderName;
+    options.Cookie.Name = AntiforgeryTokenEndpoint.CookieName;
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+    // Secure on HTTPS, absent on plain-HTTP local development, so the same
+    // configuration works behind a TLS-terminating proxy and on localhost.
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+});
 
 var app = builder.Build();
 
@@ -45,6 +61,7 @@ app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseAntiforgery();
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }))
     .AllowAnonymous();
@@ -64,10 +81,27 @@ app.MapPost("/api/auth/login", LoginAsync)
 app.MapPost("/api/auth/logout", LogoutAsync)
     .RequireAuthorization();
 
+app.MapGet("/api/v1/antiforgery/token", AntiforgeryTokenEndpoint.GetToken)
+    .RequireAuthorization();
+
 app.MapGet("/api/v1/me", GetCurrentUserAsync)
     .RequireAuthorization();
 app.MapGet("/api/v1/admin/ping", () => Results.Ok(new { status = "ok" }))
     .RequireAuthorization("Admin");
+
+// Admin Metadata Integrations. Every route is Admin-only and addresses a known
+// installed provider id; none accepts an arbitrary target or returns a secret.
+var integrations = app.MapGroup("/api/v1/admin/integrations/metadata")
+    .RequireAuthorization("Admin")
+    // Cookie authentication means a cross-site request would otherwise arrive
+    // already authenticated; every mutation below must carry a matching token.
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+integrations.MapGet("/", ListMetadataProvidersAsync);
+integrations.MapPut("/{providerId}/enabled", SetMetadataProviderEnabledAsync);
+integrations.MapPut("/{providerId}/credential", SetMetadataProviderCredentialAsync);
+integrations.MapDelete("/{providerId}/credential", ClearMetadataProviderCredentialAsync);
+integrations.MapPost("/{providerId}/test", TestMetadataProviderAsync);
 
 app.MapFallbackToFile("index.html");
 
@@ -136,9 +170,90 @@ static async Task<IResult> GetCurrentUserAsync(
         roles.ToArray()));
 }
 
+static async Task<IResult> ListMetadataProvidersAsync(
+    MetadataProviderAdminService admin,
+    CancellationToken cancellationToken)
+{
+    var statuses = await admin.GetStatusesAsync(cancellationToken);
+    return Results.Ok(new MetadataProviderListResponse(
+        statuses.Select(ToProviderResponse).ToArray()));
+}
+
+static async Task<IResult> SetMetadataProviderEnabledAsync(
+    string providerId,
+    SetMetadataProviderEnabledRequest request,
+    MetadataProviderAdminService admin,
+    CancellationToken cancellationToken) =>
+    ToResult(await admin.SetEnabledAsync(providerId, request.Enabled, cancellationToken));
+
+static async Task<IResult> SetMetadataProviderCredentialAsync(
+    string providerId,
+    SetMetadataProviderCredentialRequest request,
+    MetadataProviderAdminService admin,
+    CancellationToken cancellationToken) =>
+    ToResult(await admin.SetCredentialAsync(providerId, request.Credential, cancellationToken));
+
+static async Task<IResult> ClearMetadataProviderCredentialAsync(
+    string providerId,
+    MetadataProviderAdminService admin,
+    CancellationToken cancellationToken) =>
+    ToResult(await admin.ClearCredentialAsync(providerId, cancellationToken));
+
+static async Task<IResult> TestMetadataProviderAsync(
+    string providerId,
+    MetadataProviderAdminService admin,
+    MetadataProviderConnectionTester tester,
+    CancellationToken cancellationToken)
+{
+    if (await admin.GetStatusAsync(providerId, cancellationToken) is null)
+    {
+        return Results.NotFound();
+    }
+
+    var outcome = await tester.TestAsync(providerId, cancellationToken);
+    var recorded = await admin.RecordTestResultAsync(
+        providerId,
+        outcome.Succeeded,
+        outcome.Message,
+        cancellationToken);
+
+    return recorded.Status is null
+        ? Results.NotFound()
+        : Results.Ok(new MetadataProviderTestResponse(
+            outcome.Succeeded,
+            outcome.Message,
+            ToProviderResponse(recorded.Status)));
+}
+
+static IResult ToResult(MetadataProviderCommandResult result) => result.Outcome switch
+{
+    MetadataProviderCommandOutcome.NotFound => Results.NotFound(),
+    MetadataProviderCommandOutcome.Invalid => Results.ValidationProblem(
+        new Dictionary<string, string[]>
+        {
+            ["provider"] = [result.Error ?? "That change is not allowed."]
+        }),
+    _ => Results.Ok(ToProviderResponse(result.Status!))
+};
+
+static MetadataProviderStatusResponse ToProviderResponse(MetadataProviderStatus status) => new(
+    status.ProviderId,
+    status.DisplayName,
+    status.RequiresCredential,
+    status.IsEnabled,
+    status.HasStoredCredential,
+    status.IsExternallyManaged,
+    status.IsMisconfigured,
+    status.CanManageCredential,
+    status.CredentialHint,
+    status.CredentialSetAtUtc,
+    status.LastTestedAtUtc,
+    status.LastTestSucceeded,
+    status.LastTestMessage);
+
 static async Task<IResult> SearchCatalogAsync(
     string? q,
-    IEnumerable<IBookMetadataProvider> providers,
+    IActiveMetadataProviderResolver providerResolver,
     ILoggerFactory loggerFactory,
     CancellationToken cancellationToken)
 {
@@ -153,6 +268,7 @@ static async Task<IResult> SearchCatalogAsync(
 
     var query = new BookSearchQuery(searchText);
     var logger = loggerFactory.CreateLogger("FamilyLibrarian.MetadataSearch");
+    var providers = await providerResolver.GetActiveProvidersAsync(cancellationToken);
     var searches = providers.Select(provider =>
         SearchProviderAsync(provider, query, logger, cancellationToken));
     var providerResults = await Task.WhenAll(searches);
@@ -175,12 +291,13 @@ static async Task<IResult> SearchCatalogAsync(
 static async Task<IResult> GetCatalogCandidateAsync(
     string providerId,
     string externalId,
-    IEnumerable<IBookMetadataProvider> providers,
+    IActiveMetadataProviderResolver providerResolver,
     ILoggerFactory loggerFactory,
     CancellationToken cancellationToken)
 {
-    var provider = providers.SingleOrDefault(candidate =>
-        string.Equals(candidate.Id, providerId, StringComparison.OrdinalIgnoreCase));
+    // Resolving through the active set means a disabled provider cannot be
+    // reached by addressing its id directly.
+    var provider = await providerResolver.FindActiveProviderAsync(providerId, cancellationToken);
     if (provider is null)
     {
         return Results.NotFound();

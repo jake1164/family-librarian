@@ -47,7 +47,7 @@
           "-ExecutionPolicy",
           "Bypass",
           "-Command",
-          "$envFile = Join-Path '${workspaceFolder}' '.env'; Get-Content -LiteralPath $envFile | ForEach-Object { if ($_ -match '^\\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }; $env:ASPNETCORE_ENVIRONMENT = 'Development'; $env:ASPNETCORE_URLS = 'https://localhost:7080;http://localhost:5080'; dotnet watch run --project '${workspaceFolder}/src/FamilyLibrarian.Web'"
+          "$envFile = \"${workspaceFolder}\\.env\"; Get-Content -LiteralPath $envFile | ForEach-Object { if ($_ -match \"^\\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)`$\") { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], \"Process\") } }; $env:ASPNETCORE_ENVIRONMENT = \"Development\"; $env:ASPNETCORE_URLS = \"https://localhost:7080;http://localhost:5080\"; dotnet watch run --project \"${workspaceFolder}/src/FamilyLibrarian.Web\""
         ]
       },
       "dependsOn": ["dev: check .env"],
@@ -104,7 +104,7 @@
           "-ExecutionPolicy",
           "Bypass",
           "-Command",
-          "if (-not (Test-Path -LiteralPath (Join-Path '${workspaceFolder}' '.env'))) { Write-Error 'Missing .env — copy .env.example to .env, then edit the values'; exit 1 }"
+          "if (-not (Test-Path -LiteralPath \"${workspaceFolder}\\.env\")) { Write-Error \"Missing .env - copy .env.example to .env, then edit the values\"; exit 1 }"
         ]
       },
       "options": { "cwd": "${workspaceFolder}" },
@@ -128,14 +128,22 @@
         "case \"$(uname -m)\" in arm64|aarch64) rid=linux-arm64 ;; *) rid=linux-x64 ;; esac; export VSDBG_HOST_DIR=\"$HOME/.vsdbg/$rid/latest\"; if [ ! -x \"$VSDBG_HOST_DIR/vsdbg\" ]; then echo \"No $rid vsdbg found at $VSDBG_HOST_DIR — run: bash '$HOME/.vsdbg/getvsdbg.sh' -v latest -r $rid -l '$VSDBG_HOST_DIR'\" >&2; exit 1; fi; exec docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --wait"
       ],
       "windows": {
-        "command": "powershell",
+        "command": "docker",
         "args": [
-          "-NoProfile",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-Command",
-          "$env:VSDBG_HOST_DIR = Join-Path $env:USERPROFILE '.vsdbg\\linux-x64\\latest'; docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --wait"
-        ]
+          "compose",
+          "-f",
+          "compose.yaml",
+          "-f",
+          "compose.debug-attach.yaml",
+          "up",
+          "-d",
+          "--build",
+          "--wait"
+        ],
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": { "VSDBG_HOST_DIR": "${userHome}\\.vsdbg\\linux-x64\\latest" }
+        }
       },
       "options": { "cwd": "${workspaceFolder}" },
       "dependsOn": ["dev: check .env"],
@@ -157,7 +165,7 @@
           "-ExecutionPolicy",
           "Bypass",
           "-Command",
-          "Start-Process 'http://localhost:8080'"
+          "Start-Process http://localhost:8080"
         ]
       },
       "options": { "cwd": "${workspaceFolder}" },
@@ -220,14 +228,23 @@
         "case \"$(uname -m)\" in arm64|aarch64) rid=linux-arm64 ;; *) rid=linux-x64 ;; esac; export VSDBG_HOST_DIR=\"$HOME/.vsdbg/$rid/latest\"; if [ ! -x \"$VSDBG_HOST_DIR/vsdbg\" ]; then echo \"No $rid vsdbg found at $VSDBG_HOST_DIR — run: bash '$HOME/.vsdbg/getvsdbg.sh' -v latest -r $rid -l '$VSDBG_HOST_DIR'\" >&2; exit 1; fi; exec docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --force-recreate --wait"
       ],
       "windows": {
-        "command": "powershell",
+        "command": "docker",
         "args": [
-          "-NoProfile",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-Command",
-          "$env:VSDBG_HOST_DIR = Join-Path $env:USERPROFILE '.vsdbg\\linux-x64\\latest'; docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --force-recreate --wait"
-        ]
+          "compose",
+          "-f",
+          "compose.yaml",
+          "-f",
+          "compose.debug-attach.yaml",
+          "up",
+          "-d",
+          "--build",
+          "--force-recreate",
+          "--wait"
+        ],
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": { "VSDBG_HOST_DIR": "${userHome}\\.vsdbg\\linux-x64\\latest" }
+        }
       },
       "options": { "cwd": "${workspaceFolder}" },
       "dependsOn": ["dev: check .env"],

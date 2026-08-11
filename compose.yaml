@@ -44,6 +44,11 @@ services:
       MetadataProviders__OpenLibrary__RequestsPerSecond: ${OPENLIBRARY_REQUESTS_PER_SECOND:-1}
       MetadataProviders__GoogleBooks__Enabled: ${MetadataProviders__GoogleBooks__Enabled:-false}
       MetadataProviders__GoogleBooks__ApiKey: ${MetadataProviders__GoogleBooks__ApiKey:-}
+      # Creates the first administrator, and only when no admin exists yet.
+      # Without these the app still starts and seeds the User/Admin roles, but no
+      # account exists to sign in with, so the Admin pages stay unreachable.
+      BootstrapAdmin__Email: ${BootstrapAdmin__Email:-}
+      BootstrapAdmin__Password: ${BootstrapAdmin__Password:-}
     depends_on:
       postgres:
         condition: service_healthy

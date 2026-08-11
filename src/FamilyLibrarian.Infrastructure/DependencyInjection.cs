@@ -1,7 +1,9 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Identity;
+using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Time;
@@ -32,19 +34,7 @@ public static class DependencyInjection
                 connectionString,
                 npgsql => npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "identity")));
 
-        // Keep the Data Protection key ring in PostgreSQL rather than on disk.
-        // The default file provider writes to the container's own
-        // ~/.aspnet/DataProtection-Keys, so every `docker compose up
-        // --force-recreate` threw the keys away and signed everyone out.
-        //
-        // SetApplicationName pins the key discriminator, which otherwise derives
-        // from the content root path — `/app` in the container but an OS-specific
-        // absolute path under the debugger, so a cookie issued by one would fail
-        // to decrypt in the other. A fixed name keeps container, macOS, and
-        // Windows runs interchangeable against the same database.
-        services.AddDataProtection()
-            .PersistKeysToDbContext<AppDbContext>()
-            .SetApplicationName("FamilyLibrarian");
+        services.AddFamilyLibrarianDataProtection(configuration);
 
         services
             .AddIdentityCore<AppUser>(options =>
@@ -96,10 +86,24 @@ public static class DependencyInjection
         services.AddScoped<ICatalogRepository, CatalogRepository>();
         services.AddScoped<CatalogWorkResolver>();
 
-        if (configuration.GetValue("MetadataProviders:Demo:Enabled", true))
-        {
-            services.AddSingleton<IBookMetadataProvider, DemoBookMetadataProvider>();
-        }
+        services.AddHttpContextAccessor();
+        services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
+
+        // Admin Integrations wiring. The registry is the allowlist of installed
+        // providers; enablement and credentials are runtime state, so every
+        // provider below is registered unconditionally and filtered per request
+        // by ActiveMetadataProviderResolver.
+        services.AddSingleton<IMetadataProviderRegistry, MetadataProviderRegistry>();
+        services.AddSingleton<ICredentialProtector, DataProtectionCredentialProtector>();
+        services.AddScoped<IMetadataProviderSettingsStore, MetadataProviderSettingsStore>();
+        services.AddScoped<IAuditWriter, AuditWriter>();
+        services.AddScoped<MetadataCredentialSource>();
+        services.AddSingleton<IMetadataCredentialAccessor, ScopedMetadataCredentialAccessor>();
+        services.AddScoped<IActiveMetadataProviderResolver, ActiveMetadataProviderResolver>();
+        services.AddScoped<MetadataProviderAdminService>();
+        services.AddScoped<MetadataProviderConnectionTester>();
+
+        services.AddSingleton<IBookMetadataProvider, DemoBookMetadataProvider>();
 
         services.AddOptions<OpenLibraryMetadataOptions>()
             .Bind(configuration.GetSection(OpenLibraryMetadataOptions.SectionName))
@@ -117,33 +121,30 @@ public static class DependencyInjection
                 "Open Library requires ContactEmail when RequestsPerSecond is greater than 1.")
             .ValidateOnStart();
 
-        if (configuration.GetValue<bool>($"{OpenLibraryMetadataOptions.SectionName}:Enabled"))
-        {
-            services.AddSingleton<OpenLibraryRequestGate>();
-            services.AddTransient<OpenLibraryRateLimitHandler>();
-            services.AddHttpClient<OpenLibraryBookMetadataProvider>((serviceProvider, client) =>
+        services.AddSingleton<OpenLibraryRequestGate>();
+        services.AddTransient<OpenLibraryRateLimitHandler>();
+        services.AddHttpClient<OpenLibraryBookMetadataProvider>((serviceProvider, client) =>
+            {
+                var options = serviceProvider
+                    .GetRequiredService<IOptions<OpenLibraryMetadataOptions>>()
+                    .Value;
+
+                client.BaseAddress = new Uri("https://openlibrary.org/");
+                client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+                client.DefaultRequestHeaders.Accept.Add(
+                    new MediaTypeWithQualityHeaderValue("application/json"));
+                client.DefaultRequestHeaders.UserAgent.Add(
+                    new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+
+                if (!string.IsNullOrWhiteSpace(options.ContactEmail))
                 {
-                    var options = serviceProvider
-                        .GetRequiredService<IOptions<OpenLibraryMetadataOptions>>()
-                        .Value;
-
-                    client.BaseAddress = new Uri("https://openlibrary.org/");
-                    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
-                    client.DefaultRequestHeaders.Accept.Add(
-                        new MediaTypeWithQualityHeaderValue("application/json"));
                     client.DefaultRequestHeaders.UserAgent.Add(
-                        new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
-
-                    if (!string.IsNullOrWhiteSpace(options.ContactEmail))
-                    {
-                        client.DefaultRequestHeaders.UserAgent.Add(
-                            new ProductInfoHeaderValue($"({options.ContactEmail})"));
-                    }
-                })
-                .AddHttpMessageHandler<OpenLibraryRateLimitHandler>();
-            services.AddTransient<IBookMetadataProvider>(serviceProvider =>
-                serviceProvider.GetRequiredService<OpenLibraryBookMetadataProvider>());
-        }
+                        new ProductInfoHeaderValue($"({options.ContactEmail})"));
+                }
+            })
+            .AddHttpMessageHandler<OpenLibraryRateLimitHandler>();
+        services.AddTransient<IBookMetadataProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<OpenLibraryBookMetadataProvider>());
 
         services.AddOptions<GoogleBooksMetadataOptions>()
             .Bind(configuration.GetSection(GoogleBooksMetadataOptions.SectionName))
@@ -151,30 +152,38 @@ public static class DependencyInjection
                 "Google Books MaxResults must be between 1 and 40.")
             .Validate(options => options.TimeoutSeconds is >= 1 and <= 60,
                 "Google Books TimeoutSeconds must be between 1 and 60.")
-            .Validate(options => !options.Enabled || !string.IsNullOrWhiteSpace(options.ApiKey),
-                "Google Books ApiKey is required when the provider is enabled.")
+            // No longer "required when enabled": the key may instead be stored
+            // encrypted in the database through the Admin Integrations page, and
+            // enablement itself is now runtime state rather than configuration.
+            // ActiveMetadataProviderResolver refuses to query a credentialed
+            // provider that has no key from either source.
             .ValidateOnStart();
 
-        if (configuration.GetValue<bool>($"{GoogleBooksMetadataOptions.SectionName}:Enabled"))
-        {
-            services.AddTransient<GoogleBooksApiKeyHandler>();
-            services.AddHttpClient<GoogleBooksBookMetadataProvider>((serviceProvider, client) =>
-                {
-                    var options = serviceProvider
-                        .GetRequiredService<IOptions<GoogleBooksMetadataOptions>>()
-                        .Value;
+        services.AddTransient<GoogleBooksApiKeyHandler>();
+        // AddLogger<T> resolves T from DI, so it must be registered.
+        services.AddSingleton<QueryRedactingHttpClientLogger>();
+        services.AddHttpClient<GoogleBooksBookMetadataProvider>((serviceProvider, client) =>
+            {
+                var options = serviceProvider
+                    .GetRequiredService<IOptions<GoogleBooksMetadataOptions>>()
+                    .Value;
 
-                    client.BaseAddress = new Uri("https://www.googleapis.com/books/v1/");
-                    client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
-                    client.DefaultRequestHeaders.Accept.Add(
-                        new MediaTypeWithQualityHeaderValue("application/json"));
-                    client.DefaultRequestHeaders.UserAgent.Add(
-                        new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
-                })
-                .AddHttpMessageHandler<GoogleBooksApiKeyHandler>();
-            services.AddTransient<IBookMetadataProvider>(serviceProvider =>
-                serviceProvider.GetRequiredService<GoogleBooksBookMetadataProvider>());
-        }
+                client.BaseAddress = new Uri("https://www.googleapis.com/books/v1/");
+                client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+                client.DefaultRequestHeaders.Accept.Add(
+                    new MediaTypeWithQualityHeaderValue("application/json"));
+                client.DefaultRequestHeaders.UserAgent.Add(
+                    new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+            })
+            .AddHttpMessageHandler<GoogleBooksApiKeyHandler>()
+            // By this point the request URI carries ?key=<api key>. The stock
+            // loggers already redact query values, but this client is the one
+            // holding a secret, so the guarantee is made explicit rather than
+            // inherited; see QueryRedactingHttpClientLogger.
+            .RemoveAllLoggers()
+            .AddLogger<QueryRedactingHttpClientLogger>();
+        services.AddTransient<IBookMetadataProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<GoogleBooksBookMetadataProvider>());
 
         return services;
     }

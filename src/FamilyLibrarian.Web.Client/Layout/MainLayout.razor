@@ -10,6 +10,11 @@
         <MudText Typo="Typo.h6">Family Librarian</MudText>
         <MudSpacer />
         <MudButton Variant="Variant.Text" Href="search">Search</MudButton>
+        @* Hiding the link is UX only — the page carries [Authorize(Roles = "Admin")]
+           and every endpoint behind it independently authorizes the caller. *@
+        <AuthorizeView Roles="Admin">
+            <MudButton Variant="Variant.Text" Href="admin/integrations">Integrations</MudButton>
+        </AuthorizeView>
     </MudAppBar>
 
     <MudMainContent Class="pa-6">
