@@ -145,6 +145,12 @@ Can additionally:
 - Search by title, author, ISBN, and loose user-entered text.
 - Query one or more external metadata providers.
 - Normalize results into the application's internal model.
+- Present one unified search surface: users must not have to choose between a
+  search of the family's catalogue and a search for a new title.
+- Before rendering a result, match its canonical Work and editions against the
+  local catalogue and active request/acquisition records. Each result must
+  distinguish Ebook and Audiobook availability independently, including owned,
+  requested, waiting, acquiring/processing, and deliverable states.
 - Display:
   - cover;
   - title;
@@ -153,8 +159,15 @@ Can additionally:
   - publication date;
   - series;
   - series position;
-  - edition/format where available.
+  - clear Ebook and Audiobook indicators;
+  - the appropriate simple action for each format: for example, **Get Ebook**,
+    **Get Audiobook**, **Read**, **Listen**, or **Send to device**.
 - Allow admin correction when provider data is wrong or ambiguous.
+
+The family catalogue is a catalogue of Works, not separate search-result rows
+for each edition or media type. A Work may have an owned Ebook while its
+Audiobook is still being acquired. Ownership is distinct from delivery: an owned
+asset might not yet be imported into the user's configured library or device.
 
 #### Requests
 
@@ -167,6 +180,12 @@ Users can request:
 Users can view active requests and status.
 
 Completed items should not be deleted; they should move to History.
+
+A request records a user's intent to obtain one Work in one format. It does not
+by itself imply manual administrator approval: policy may fulfill an already
+owned or automatically acquirable format immediately. The user-facing UI should
+not expose provider selection, indexer search, or release selection unless an
+administrator is resolving an exception.
 
 #### Series Intelligence
 
@@ -205,6 +224,10 @@ No acquired file may enter a trusted delivery target before passing the security
 
 - Audiobookshelf should be the first supported media-library provider.
 - It must be implemented behind a generic delivery interface.
+- Audiobookshelf is a delivery/library destination, not the authority for
+  whether the family owns an audiobook. An owned audiobook that is absent from
+  Audiobookshelf should offer delivery/import; one already there should offer
+  listening.
 
 #### Ebook Delivery
 
@@ -261,6 +284,7 @@ Browser/PWA device delivery should be prototyped separately before becoming a ha
 ### Optional Supporting Services
 
 - ClamAV
+- VPN/private-egress gateway (Gluetun is the documented reference implementation)
 - Audiobookshelf
 - Authentik
 - ntfy
@@ -308,6 +332,7 @@ Optional services:
 audiobookshelf
 ntfy
 acquisition-provider-*
+vpn-gateway
 ```
 
 ---
@@ -434,6 +459,95 @@ their server-side configuration, while search and acquisition preserve provenanc
 and still pass through the normal authorization, audit, and file-safety workflow.
 This deliberately leaves room for future sources without making arbitrary plugins
 or automated acquisition part of V1.
+
+---
+
+### 12.1 Private acquisition egress
+
+Family Librarian **SHALL NOT** depend on a specific commercial VPN provider.
+Private acquisition networking is optional and configured at the deployment
+layer through a generic VPN/private-egress gateway. The application must not
+contain provider-specific logic for Proton VPN, Mullvad, PIA, NordVPN,
+Surfshark, IVPN, or any other commercial VPN service.
+
+The application has two distinct traffic paths:
+
+```text
+Family Librarian
+  +--> normal traffic --> LAN / normal Internet
+  |      metadata, OIDC/authentication, notifications, Audiobookshelf,
+  |      BookLore, and other LAN services
+  |
+  +--> private acquisition traffic --> VPN/private-egress gateway
+                                         --> selected VPN provider / Internet
+```
+
+The main Family Librarian container does not need to run entirely inside the
+VPN. A provider that is configured to require private egress must route its
+complete interaction through the configured gateway: authentication, search,
+result and detail retrieval, artifact and download-URL resolution, and the
+artifact download itself. It must never protect only the final file transfer.
+
+Supported integration mechanisms are gateway-neutral:
+
+- HTTP proxy;
+- SOCKS5 proxy;
+- deployment-provided container/network-namespace routing; or
+- router-level or custom WireGuard/OpenVPN gateway routing.
+
+Gluetun is the documented reference implementation because it can provide a
+VPN tunnel, DNS and leak handling, firewall/kill-switch behavior, HTTP and
+SOCKS5 proxies, and shared Docker network namespaces. It is not a dependency:
+another gateway with one of the mechanisms above is equally valid. Selecting or
+switching the VPN provider is a gateway/deployment concern and must not require
+a Family Librarian application release. A gateway that supports custom
+WireGuard or OpenVPN configuration also provides an escape hatch for VPN
+providers outside its built-in provider list.
+
+Private-required work must fail closed. If the selected gateway is unavailable
+or cannot be verified, acquisition must be blocked and represented as a waiting
+or failed operation (for example, `WAITING_FOR_PRIVATE_EGRESS` or
+`PRIVATE_EGRESS_UNAVAILABLE`); it must not silently retry through normal
+Internet egress.
+
+The component that makes the external request owns its privacy boundary. For
+example, when Family Librarian calls Prowlarr over an internal API, Prowlarr's
+outbound indexer requests need private egress. When it calls qBittorrent over
+its API, qBittorrent's peer/download traffic needs private egress. Routing only
+the main application through a VPN does not protect those separate containers.
+
+Preferred deployment examples are:
+
+```text
+No VPN
+  Family Librarian --> normal Internet
+  Suitable for metadata, public-domain sources, manual imports, and
+  legitimate store integrations.
+
+Private acquisition gateway
+  Family Librarian --> normal Internet / LAN
+  private in-process provider --> HTTP or SOCKS5 gateway --> VPN --> Internet
+
+Private acquisition stack
+  Family Librarian --> internal Prowlarr/qBittorrent/SABnzbd APIs
+  Prowlarr/qBittorrent/SABnzbd/(private worker) --> VPN gateway --> Internet
+```
+
+For Docker deployments, the last model commonly places the external acquisition
+container in the gateway's shared namespace (for example,
+`network_mode: "service:gluetun"`). The gateway then governs that container's
+egress using its own firewall/kill switch, while Family Librarian can still use
+an internal Docker/LAN API path. Keep tunnel privileges isolated to the gateway:
+
+```text
+family-librarian: normal container privileges
+vpn-gateway:      NET_ADMIN, /dev/net/tun, and VPN-specific privileges
+```
+
+Family Librarian itself must not require `NET_ADMIN`, `NET_RAW`, privileged
+mode, or direct WireGuard/OpenVPN tunnel management. Future higher-risk or
+untrusted providers may run out of process behind the same gateway boundary;
+that is an available isolation direction, not a V1 VPN prerequisite.
 
 ---
 

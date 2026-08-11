@@ -20,6 +20,8 @@ Define the core entities and workflow states that allow Family Librarian to rema
 5. Completed requests remain historical records.
 6. Series and authors are first-class entities.
 7. External provider identifiers are references, not primary domain identity.
+8. Family ownership, a user's request, acquisition work, and delivery to a
+   target are separate facts. They must not be inferred from one another.
 
 ---
 
@@ -224,6 +226,55 @@ Ebook
 Audiobook
 ```
 
+`BookRequest` is the user-intent aggregate. Its summary status is derived from
+its child `RequestFormat` records and is not an ownership record. A request can
+be satisfied from an existing family-owned asset without an acquisition job.
+
+Each `RequestFormat` has an independent lifecycle. Conceptually:
+
+```text
+Requested
+  -> CheckingLibrary
+      -> Available                  (an owned, already deliverable format)
+      -> Delivering -> Available    (an owned format needs delivery)
+      -> Searching -> Found -> [PendingApproval] -> Acquiring
+         -> Processing -> Importing -> Available
+      -> WaitingForAvailability
+```
+
+Names can vary in implementation, but the model must preserve the distinction
+between intent, ownership, acquisition, processing/import, delivery, and final
+availability. A combined Ebook + Audiobook request therefore has two independent
+format states rather than one opaque request state.
+
+---
+
+### WorkFormatAvailability
+
+Represents the family's current local availability for a Work and one media
+type. It is a catalogue read model, not a user request and not a delivery log.
+
+```text
+WorkId
+MediaType
+OwnershipState
+PreferredAssetId?
+PreferredEditionId?
+AcquisitionState?
+```
+
+`OwnershipState` distinguishes at least `NotOwned` and `Owned`. The model may
+also expose an in-progress state derived from active request formats. It must
+remain possible for an owned asset to have no delivery record, or to have been
+delivered to one target but not another.
+
+Search-result enrichment reads this model with the current user's requests and
+delivery targets to produce format-level indicators and actions. It must resolve
+by canonical Work/Edition and retained identifiers first (internal IDs, provider
+IDs, ISBNs, and relevant audiobook identifiers). Title/author fuzzy matching is
+only a fallback because titles, translations, boxed sets, punctuation, editions,
+and abridged audio can be ambiguous.
+
 ---
 
 ### AcquisitionJob
@@ -235,6 +286,7 @@ AcquisitionJobId
 RequestId
 MediaType
 ProviderId
+EgressPolicy
 Status
 CreatedAt
 StartedAt
@@ -243,6 +295,20 @@ FailureReason?
 ```
 
 A request may have multiple acquisition jobs.
+
+`EgressPolicy` is a policy selected by the provider or deployment, not a VPN
+provider identity. It should support at least:
+
+```text
+NORMAL
+PRIVATE_REQUIRED
+CUSTOM_PROXY
+```
+
+`PRIVATE_REQUIRED` means all provider-originated external traffic must use the
+configured private-egress gateway. It must fail closed when that gateway is
+unavailable; the job may wait for private egress or fail, but must never fall
+back silently to normal host Internet access.
 
 ---
 
@@ -597,32 +663,33 @@ Failure
 
 ## 4. Request Workflow
 
-Primary happy path:
+`BookRequest` captures intent. The executable workflow runs for each
+`RequestFormat`, starting with a library check so an already owned format never
+unnecessarily enters acquisition.
 
 ```text
 Requested
   ->
-Identified
+CheckingLibrary
   ->
-PendingAcquisition
+Owned? -- yes --> Available (already deliverable)
+  |              or Delivering (when a target needs import/copy) --> Available
+  |
+  no
+  v
+Searching
+  ->
+Found
+  ->
+[PendingApproval when policy requires it]
   ->
 Acquiring
   ->
-Acquired
+Processing
   ->
-SecurityReview
+Importing
   ->
-AwaitingApproval
-  ->
-Approved
-  ->
-PreparingDelivery
-  ->
-Ready
-  ->
-Delivered
-  ->
-Completed
+Available
 ```
 
 Exception/alternate states:
@@ -631,7 +698,7 @@ Exception/alternate states:
 NeedsIdentification
 NeedsReview
 AwaitingPublication
-NotAvailable
+WaitingForAvailability
 AcquisitionFailed
 SecurityFailed
 Rejected
@@ -639,7 +706,12 @@ DeliveryFailed
 Cancelled
 ```
 
-A request should not be represented by one uncontrolled free-text status field.
+An administrator approval may gate acquisition or a risky asset, but it is not
+an inherent requirement of creating a request. A request should not be
+represented by one uncontrolled free-text status field.
+
+The aggregate request moves to completed history when all of its requested
+formats are available, delivered where requested, or otherwise terminal.
 
 Transitions should be explicit application commands.
 
@@ -692,6 +764,10 @@ PendingAcquisition
       |
       v
 Acquisition engine selects providers
+      |
+      +--> Enforce provider egress policy
+      |      PRIVATE_REQUIRED + gateway unavailable
+      |        --> WaitingForPrivateEgress / AcquisitionFailed
       |
       +--> Search provider A
       +--> Search provider B
@@ -751,6 +827,16 @@ Admin review should be required for risky overrides.
 ---
 
 ## 8. Audiobook Delivery Workflow
+
+Audiobookshelf is a delivery target. It does not define the family's ownership
+state. When the user chooses **Get Audiobook**, the workflow first checks the
+canonical Work's owned-audiobook availability:
+
+```text
+Owned and already in Audiobookshelf -> offer Listen
+Owned but not in Audiobookshelf     -> import/deliver, then offer Listen
+Not owned                           -> acquire/process/import according to policy
+```
 
 Generic media-library flow:
 
@@ -924,6 +1010,8 @@ RequestCreated
 MetadataResolved
 MetadataCorrected
 AcquisitionStarted
+PrivateEgressUnavailable
+PrivateEgressPolicyBlocked
 CandidateSelected
 AssetUploaded
 SecurityScanStarted
@@ -974,3 +1062,5 @@ Recommended default:
 - Different regional publication dates.
 - Multiple audiobook editions/narrators.
 - Whether a Request should directly target a Work or optionally a specific Edition.
+- How a deployment proves a private-egress gateway is healthy before dispatching
+  a `PRIVATE_REQUIRED` acquisition job.

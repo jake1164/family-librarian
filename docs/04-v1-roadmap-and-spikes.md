@@ -58,6 +58,8 @@ Test set should include:
 - upcoming releases;
 - books with multiple editions;
 - audiobooks with different narrators.
+- owned editions that must match an external result through ISBN/provider IDs;
+- ambiguous title/author matches that must remain unresolved for review.
 
 Success criteria:
 
@@ -211,6 +213,7 @@ Implement:
 - Series
 - SeriesEntry
 - external identifier records
+- WorkFormatAvailability/search-enrichment read model
 
 Provider contract:
 
@@ -234,9 +237,15 @@ Book detail
 Series context
 ```
 
+Search results are one unified family catalogue: each canonical Work displays
+Ebook and Audiobook ownership/request/acquisition state independently and
+offers simple format actions. The UI must not require users to choose a separate
+"local library" search before searching metadata providers.
+
 Definition of done:
 
-A user can type a real-world request and select the intended canonical Work.
+A user can type a real-world request and select the intended canonical Work,
+immediately seeing whether the family owns each requested format.
 
 ---
 
@@ -250,6 +259,7 @@ Implement:
 - active requests
 - completed history
 - duplicate detection
+- per-format library checks before acquisition
 
 UI:
 
@@ -272,7 +282,10 @@ You do not have books 1-4 in your history.
 
 Definition of done:
 
-Family can replace email requests with the web app.
+Family can replace email requests with the web app. Creating a request records
+intent; policy can immediately fulfill an owned/available format, queue approval,
+or retain it while waiting for availability without changing the user-facing
+"Get Ebook" / "Get Audiobook" action.
 
 ---
 
@@ -386,7 +399,10 @@ Ready
 
 Definition of done:
 
-A user can request an audiobook and, after manual acquisition/admin approval, listen to it through Audiobookshelf.
+A user can listen to an owned audiobook through Audiobookshelf, or have an owned
+but not-yet-imported audiobook delivered there. Newly acquired audiobooks follow
+the same security and import path; Audiobookshelf remains a replaceable delivery
+provider, not the ownership system.
 
 ---
 
@@ -492,6 +508,8 @@ Implement:
 - search;
 - acquire;
 - retry/policy;
+- generic private-egress policy and health gate;
+- fail-closed behavior for private-required providers;
 - scoped service authentication.
 
 Family Librarian should not require changes to its security/delivery workflow.
@@ -664,7 +682,8 @@ Highest-value automated tests:
 - malware scanner failure behavior;
 - approval requirements;
 - delivery retry/idempotency;
-- provider contract tests.
+- provider contract tests; and
+- private-egress fail-closed behavior and no-fallback tests for private providers.
 
 ---
 
@@ -684,7 +703,9 @@ Highest-value automated tests:
 - action-token replay protection;
 - audit logging;
 - dependency/container scanning;
-- non-root containers where practical.
+- non-root containers where practical; and
+- private acquisition gateway health checks and auditable fail-closed policy
+  enforcement; keep VPN tunnel privileges out of the main application container.
 
 ---
 

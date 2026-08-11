@@ -95,6 +95,27 @@ Raw payload/version where useful
 
 but internal Work/Author/Series IDs remain authoritative.
 
+### Unified search enrichment
+
+The host composes the user-facing search response; a metadata provider does not
+decide local ownership or delivery state. For every normalized provider result,
+the application must:
+
+1. resolve or match the canonical Work and relevant Editions;
+2. match local assets using retained internal/provider identifiers and ISBNs
+   before considering title/author fuzzy matching;
+3. load active request/acquisition state and the current user's delivery state;
+4. return one Work result with independently enriched Ebook and Audiobook
+   availability.
+
+The response must be able to represent `Owned`, `Requested`,
+`WaitingForAvailability`, `Acquiring`, `Processing`, and delivery availability
+for each media type. It should offer product actions such as `GetEbook`,
+`GetAudiobook`, `Read`, `Listen`, and `Deliver`, rather than exposing
+acquisition-provider mechanics to ordinary users. Matching logic must retain an
+ambiguity outcome for alternate titles, translations, boxed sets, editions, and
+abridged versus unabridged recordings.
+
 ---
 
 ## 4. Acquisition Provider
@@ -121,8 +142,19 @@ Example:
     "search",
     "availability",
     "acquire"
-  ]
+  ],
+  "egressPolicy": "PRIVATE_REQUIRED"
 }
+```
+
+`egressPolicy` is optional for backward compatibility; if omitted, the default
+is `NORMAL`. It describes the required egress class, not a commercial VPN
+provider. Valid initial policy values are:
+
+```text
+NORMAL
+PRIVATE_REQUIRED
+CUSTOM_PROXY
 ```
 
 ### Health
@@ -196,6 +228,41 @@ requires-api-key
 manual
 ```
 
+### Private-egress policy
+
+Family Librarian **SHALL NOT** depend on a specific commercial VPN provider.
+An acquisition provider may declare `PRIVATE_REQUIRED` or inherit that policy
+from its server-side configuration. For an in-process provider, the policy
+applies to every outbound interaction with its source: authentication, search,
+result and detail lookup, artifact resolution, download-URL resolution, and
+direct download. A private provider must not leak any of those steps via normal
+host egress.
+
+The generic private-acquisition configuration is server-side and represents a
+gateway endpoint rather than a VPN service:
+
+```text
+Private Acquisition Network
+  Enabled
+  Gateway type: HTTP proxy | SOCKS5 proxy | external route (future)
+  Gateway endpoint
+  Require private egress
+  Fail closed
+  Health/status where available
+```
+
+For example, an HTTP proxy endpoint can be `http://gluetun:8888`, but the
+provider never needs to know which VPN service, if any, backs that gateway.
+Gluetun is the documented reference implementation, not a hard dependency;
+custom WireGuard/OpenVPN gateways, router-level routing, and compatible proxy
+gateways remain valid.
+
+When private egress is required, an unavailable or unhealthy gateway blocks the
+operation. The engine records a policy-blocked, waiting, or error state and can
+retry or notify an administrator later; it must not silently fall back to normal
+Internet access. `CUSTOM_PROXY` similarly requires an explicitly configured
+proxy and must not imply an automatic fallback policy.
+
 ### Future external sourcing providers
 
 External sourcing is a planned extension of the acquisition-provider boundary,
@@ -218,6 +285,11 @@ The future integration model should preserve these boundaries:
   library; and
 - external implementations communicate over the versioned HTTP protocol or run in
   isolated containers. The main application does not load arbitrary provider code.
+
+Provider-source implementations remain independent of VPN-provider
+implementations. For example, a private source provider may require
+`PRIVATE_REQUIRED` and use the generic gateway; it must not embed Proton- or
+Mullvad-specific tunnel logic.
 
 This creates a clear future administration/settings surface for source management
 without committing V1 to acquisition automation, a plugin marketplace, or support
@@ -246,6 +318,28 @@ Benefits:
 - easier third-party distribution.
 
 A trusted built-in Manual Provider may exist in the acquisition engine.
+
+For an external component that actually contacts private services, prefer
+putting the entire component behind the private-egress gateway rather than
+relying only on its application-level proxy setting. A Docker/Gluetun reference
+deployment can use `network_mode: "service:gluetun"` for a private provider,
+Prowlarr, qBittorrent, SABnzbd, or NZBGet. The gateway's firewall/kill switch
+then governs the component's outbound traffic.
+
+Family Librarian may call those components over internal APIs, but that does not
+protect the components' own outbound traffic: Prowlarr's indexer requests and
+qBittorrent's peer/download requests must each be routed by the gateway. The
+main application retains normal LAN/Internet networking and must not need
+`NET_ADMIN`, `NET_RAW`, privileged mode, or tunnel-management responsibility.
+
+The same boundary supports a future out-of-process model:
+
+```text
+Family Librarian --> provider API --> private provider container
+                                  --> VPN/private-egress gateway --> Internet
+```
+
+That is a future isolation option, not a V1 requirement solely for VPN support.
 
 ---
 
@@ -518,6 +612,12 @@ Family Librarian should not store Audiobookshelf-specific fields in core Work/Re
 
 Store external references against Delivery/DeliveryTarget.
 
+The provider reports whether a specific owned asset is available in its library;
+it does not determine ownership. The application may therefore import an owned
+audiobook that is not in Audiobookshelf, or directly offer a deep link for one
+that is already present, while retaining the option to support another
+media-library provider later.
+
 ---
 
 ## 12. E-Reader Device Providers
@@ -631,6 +731,7 @@ Security
 Notifications
 Delivery
 Authentication
+Private acquisition network
 ```
 
 For each integration:
@@ -647,6 +748,13 @@ Last Error
 ```
 
 Secrets must never be returned to the browser after storage.
+
+The Private Acquisition Network settings use the generic gateway fields above,
+not VPN-provider credentials or provider-selection controls. VPN tunnel
+configuration, DNS, kill-switch, IPv4/IPv6 leak prevention, reconnection, and
+WireGuard/OpenVPN details belong to the external gateway/deployment. Health
+status must distinguish an unavailable required gateway from a general provider
+failure, without exposing gateway credentials.
 
 ### Credential lifecycle
 
@@ -741,6 +849,7 @@ Examples:
 ```text
 MetadataProviderContractTests
 AcquisitionProviderProtocolTests
+PrivateEgressPolicyTests
 MalwareScannerContractTests
 NotificationProviderContractTests
 DeliveryProviderContractTests
@@ -753,3 +862,7 @@ A third-party provider author should be able to verify:
 ```
 
 without requiring Family Librarian's internal source code or database.
+
+Private-egress conformance tests must confirm that `PRIVATE_REQUIRED` blocks
+the whole provider interaction when its gateway is unavailable and that no
+normal-egress fallback is attempted.
