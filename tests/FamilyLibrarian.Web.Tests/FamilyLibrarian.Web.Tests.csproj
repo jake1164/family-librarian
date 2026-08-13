@@ -10,6 +10,7 @@
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
     <ProjectReference Include="../../src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Testcontainers.PostgreSql" />
   </ItemGroup>
 
