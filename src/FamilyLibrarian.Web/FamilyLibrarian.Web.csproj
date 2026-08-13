@@ -8,4 +8,12 @@
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
   </ItemGroup>
+  <ItemGroup>
+    <!--
+      Top-level statements compile to an internal Program class. WebApplicationFactory
+      needs to reach it to boot the real host. Granting the test assembly access keeps
+      Program internal rather than widening the public surface just for tests.
+    -->
+    <InternalsVisibleTo Include="FamilyLibrarian.Web.Tests" />
+  </ItemGroup>
 </Project>
