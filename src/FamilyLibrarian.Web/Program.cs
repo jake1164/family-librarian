@@ -139,6 +139,18 @@ var requests = app.MapGroup("/api/v1/requests")
 requests.MapPost("/", CreateBookRequestAsync);
 requests.MapPost("/{requestId:guid}/transitions", ChangeBookRequestStatusAsync);
 
+// Request review is an administrative surface, distinct from the requester's
+// own routes. The service enforces the state matrix; this group supplies the
+// role check and anti-forgery protection for cookie-authenticated mutations.
+var adminRequests = app.MapGroup("/api/v1/admin/requests")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+adminRequests.MapGet("/", ListAdminRequestsAsync);
+adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
+adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
+adminRequests.MapPut("/{requestId:guid}/note", SetAdminRequestNoteAsync);
+
 // Invitation redemption. Anonymous by necessity — the invitee has no account
 // yet — so it carries no anti-forgery requirement (there are no ambient
 // credentials to forge with) and is rate limited instead.
@@ -441,8 +453,8 @@ static async Task<IResult> ListMyRequestsAsync(
     var mine = await requests.ListMineAsync(cancellationToken);
 
     return Results.Ok(new BookRequestListResponse(
-        mine.Where(request => request.IsActive).Select(ToRequestResponse).ToArray(),
-        mine.Where(request => !request.IsActive).Select(ToRequestResponse).ToArray()));
+        mine.Where(request => request.IsActive).Select(request => ToRequestResponse(request)).ToArray(),
+        mine.Where(request => !request.IsActive).Select(request => ToRequestResponse(request)).ToArray()));
 }
 
 static async Task<IResult> CreateBookRequestAsync(
@@ -504,6 +516,7 @@ static async Task<IResult> ChangeBookRequestStatusAsync(
         requestId,
         status,
         request.Reason,
+        request.ExpectedVersion,
         cancellationToken);
 
     return result.Outcome switch
@@ -511,9 +524,116 @@ static async Task<IResult> ChangeBookRequestStatusAsync(
         BookRequestCommandOutcome.Success => Results.Ok(ToRequestResponse(result.Request!)),
         BookRequestCommandOutcome.NotFound => Results.NotFound(),
         BookRequestCommandOutcome.Unauthenticated => Results.Unauthorized(),
+        BookRequestCommandOutcome.Conflict => Results.Conflict(new { message = result.Error }),
         _ => Results.ValidationProblem(new Dictionary<string, string[]>
         {
             ["status"] = [result.Error ?? "That status change is not allowed."]
+        })
+    };
+}
+
+static async Task<IResult> ListAdminRequestsAsync(
+    string? status,
+    BookRequestService requests,
+    CancellationToken cancellationToken)
+{
+    RequestStatus? requestedStatus = null;
+    if (!string.IsNullOrWhiteSpace(status))
+    {
+        if (!Enum.TryParse<RequestStatus>(status, ignoreCase: true, out var parsed) ||
+            !Enum.IsDefined(parsed))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["status"] = ["That is not a request status."]
+            });
+        }
+
+        requestedStatus = parsed;
+    }
+
+    var queue = await requests.ListForAdminAsync(requestedStatus, cancellationToken);
+    return Results.Ok(new AdminBookRequestListResponse(
+        queue.Select(ToAdminRequestResponse).ToArray()));
+}
+
+static async Task<IResult> GetAdminRequestAsync(
+    Guid requestId,
+    BookRequestService requests,
+    CancellationToken cancellationToken)
+{
+    var request = await requests.GetForAdminAsync(requestId, cancellationToken);
+    return request is null ? Results.NotFound() : Results.Ok(ToAdminRequestResponse(request));
+}
+
+static async Task<IResult> ChangeAdminRequestStatusAsync(
+    Guid requestId,
+    ChangeBookRequestStatusRequest request,
+    BookRequestService requests,
+    CancellationToken cancellationToken)
+{
+    if (!Enum.TryParse<RequestStatus>(request.Status, ignoreCase: true, out var status) ||
+        !Enum.IsDefined(status))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["status"] = ["That is not a request status."]
+        });
+    }
+
+    if (request.ExpectedVersion is null)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["expectedVersion"] = ["Reload the request before changing its status."]
+        });
+    }
+
+    var result = await requests.AdminTransitionAsync(
+        requestId,
+        status,
+        request.Reason,
+        request.ExpectedVersion.Value,
+        cancellationToken);
+
+    return await ToAdminCommandResult(result, requestId, requests, cancellationToken);
+}
+
+static async Task<IResult> SetAdminRequestNoteAsync(
+    Guid requestId,
+    SetAdminBookRequestNoteRequest request,
+    BookRequestService requests,
+    CancellationToken cancellationToken)
+{
+    var result = await requests.SetAdminNoteAsync(
+        requestId,
+        request.Note,
+        request.ExpectedVersion,
+        cancellationToken);
+
+    return await ToAdminCommandResult(result, requestId, requests, cancellationToken);
+}
+
+static async Task<IResult> ToAdminCommandResult(
+    BookRequestCommandResult result,
+    Guid requestId,
+    BookRequestService requests,
+    CancellationToken cancellationToken)
+{
+    if (result.Outcome == BookRequestCommandOutcome.Success)
+    {
+        var updated = await requests.GetForAdminAsync(requestId, cancellationToken);
+        return Results.Ok(ToAdminRequestResponse(updated!));
+    }
+
+    return result.Outcome switch
+    {
+        BookRequestCommandOutcome.NotFound => Results.NotFound(),
+        BookRequestCommandOutcome.Unauthenticated => Results.Unauthorized(),
+        BookRequestCommandOutcome.Conflict => Results.Conflict(new { message = result.Error }),
+        _ => Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["request"] = [result.Error ?? "That request could not be updated."]
         })
     };
 }
@@ -544,7 +664,9 @@ static bool TryParseMediaTypes(
     return true;
 }
 
-static BookRequestResponse ToRequestResponse(BookRequestView request) => new(
+static BookRequestResponse ToRequestResponse(
+    BookRequestView request,
+    IReadOnlyList<RequestStatus>? availableTransitions = null) => new(
     request.Id,
     request.WorkId,
     request.WorkTitle,
@@ -562,8 +684,23 @@ static BookRequestResponse ToRequestResponse(BookRequestView request) => new(
     request.AdminNote,
     request.RequestedAtUtc,
     request.StatusChangedAtUtc,
-    BookRequestService.RequesterTransitionsFrom(request.Status)
+    (availableTransitions ?? BookRequestService.RequesterTransitionsFrom(request.Status))
         .Select(status => status.ToString())
+        .ToArray(),
+    request.Version);
+
+static AdminBookRequestResponse ToAdminRequestResponse(AdminBookRequestView request) => new(
+    ToRequestResponse(
+        request.Request,
+        BookRequestService.AdminTransitionsFrom(request.Request.Status)),
+    request.RequesterDisplayName,
+    request.RequesterEmail,
+    request.StatusHistory
+        .Select(history => new BookRequestStatusHistoryResponse(
+            history.FromStatus?.ToString(),
+            history.ToStatus.ToString(),
+            history.Reason,
+            history.OccurredAtUtc))
         .ToArray());
 
 // Plain language for a family, not the enum name. The status itself travels

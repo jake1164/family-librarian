@@ -25,5 +25,6 @@ builder.Services.AddScoped<AccountsApiClient>();
 builder.Services.AddScoped<CatalogApiClient>();
 builder.Services.AddScoped<MetadataIntegrationsApiClient>();
 builder.Services.AddScoped<RequestsApiClient>();
+builder.Services.AddScoped<AdminRequestsApiClient>();
 
 await builder.Build().RunAsync();

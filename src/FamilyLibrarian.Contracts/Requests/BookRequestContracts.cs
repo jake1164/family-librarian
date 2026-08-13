@@ -13,7 +13,10 @@ public sealed record CreateBookRequestRequest(
     string? Note,
     bool ConfirmDuplicate);
 
-public sealed record ChangeBookRequestStatusRequest(string Status, string? Reason);
+public sealed record ChangeBookRequestStatusRequest(
+    string Status,
+    string? Reason,
+    uint? ExpectedVersion = null);
 
 /// <param name="AvailableTransitions">
 /// The status changes this user may make now. Presentation only — the host
@@ -33,13 +36,31 @@ public sealed record BookRequestResponse(
     string? AdminNote,
     DateTimeOffset RequestedAtUtc,
     DateTimeOffset StatusChangedAtUtc,
-    IReadOnlyList<string> AvailableTransitions);
+    IReadOnlyList<string> AvailableTransitions,
+    uint Version);
 
 public sealed record BookRequestFormatResponse(string MediaType, string Status);
 
 public sealed record BookRequestListResponse(
     IReadOnlyList<BookRequestResponse> Active,
     IReadOnlyList<BookRequestResponse> History);
+
+public sealed record AdminBookRequestListResponse(
+    IReadOnlyList<AdminBookRequestResponse> Requests);
+
+public sealed record AdminBookRequestResponse(
+    BookRequestResponse Request,
+    string RequesterDisplayName,
+    string RequesterEmail,
+    IReadOnlyList<BookRequestStatusHistoryResponse> StatusHistory);
+
+public sealed record BookRequestStatusHistoryResponse(
+    string? FromStatus,
+    string ToStatus,
+    string? Reason,
+    DateTimeOffset OccurredAtUtc);
+
+public sealed record SetAdminBookRequestNoteRequest(string? Note, uint ExpectedVersion);
 
 /// <summary>
 /// The 409 answer to a create that would overlap an outstanding request.

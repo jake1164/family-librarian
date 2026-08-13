@@ -68,6 +68,8 @@ internal sealed class WebTestFixture : IAsyncDisposable
 
     internal IServiceProvider Services => _factory.Services;
 
+    internal string ConnectionString => _connectionString;
+
     /// <summary>
     /// A client with no session, following no redirects so a 401 stays visible.
     /// </summary>

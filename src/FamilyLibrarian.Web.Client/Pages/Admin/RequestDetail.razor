@@ -1,0 +1,228 @@
+@page "/admin/requests/{RequestId:guid}"
+@attribute [Authorize(Roles = "Admin")]
+@inject AdminRequestsApiClient Requests
+
+<PageTitle>Review request · Family Librarian</PageTitle>
+
+<MudStack Spacing="4">
+    <MudButton Variant="Variant.Text" Href="admin/requests" StartIcon="@Icons.Material.Filled.ArrowBack">
+        Back to queue
+    </MudButton>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+    }
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (request is null)
+    {
+        <MudAlert Severity="Severity.Info">That request no longer exists.</MudAlert>
+    }
+    else
+    {
+        <div>
+            <MudText Typo="Typo.h3">@request.Request.WorkTitle</MudText>
+            <MudText Typo="Typo.body1">@string.Join(", ", request.Request.Authors)</MudText>
+            <MudText Typo="Typo.body2">
+                Requested by @request.RequesterDisplayName (@request.RequesterEmail)
+            </MudText>
+        </div>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h6">Request</MudText>
+                <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
+                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                    @foreach (var format in request.Request.Formats)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                            @format.MediaType — @format.Status
+                        </MudChip>
+                    }
+                </MudStack>
+                <MudText Typo="Typo.caption">Asked @request.Request.RequestedAtUtc.ToLocalTime().ToString("f")</MudText>
+                @if (!string.IsNullOrWhiteSpace(request.Request.Note))
+                {
+                    <MudText Typo="Typo.body2"><em>Requester note:</em> @request.Request.Note</MudText>
+                }
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h6">Librarian note</MudText>
+                <MudTextField @bind-Value="adminNote"
+                              Label="Visible to the requester"
+                              Lines="4"
+                              Counter="2000"
+                              MaxLength="2000"
+                              Disabled="@isBusy" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           Disabled="@isBusy" OnClick="SaveNoteAsync">
+                    Save note
+                </MudButton>
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h6">Review action</MudText>
+                <MudTextField @bind-Value="transitionReason"
+                              Label="Reason (optional, shown in the timeline)"
+                              Disabled="@isBusy" />
+                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                    @foreach (var transition in request.Request.AvailableTransitions)
+                    {
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="@TransitionColor(transition)"
+                                   Disabled="@isBusy"
+                                   OnClick="() => ChangeStatusAsync(transition)">
+                            @TransitionLabel(transition)
+                        </MudButton>
+                    }
+                </MudStack>
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudText Typo="Typo.h6" Class="mb-2">Status timeline</MudText>
+            <MudList T="string" Dense="true">
+                @foreach (var entry in request.StatusHistory)
+                {
+                    <MudListItem T="string">
+                        <MudText Typo="Typo.body2">
+                            @(entry.FromStatus is null ? "Request created" : $"{entry.FromStatus} → {entry.ToStatus}")
+                        </MudText>
+                        <MudText Typo="Typo.caption">
+                            @entry.OccurredAtUtc.ToLocalTime().ToString("g")
+                            @if (!string.IsNullOrWhiteSpace(entry.Reason))
+                            {
+                                <span> — @entry.Reason</span>
+                            }
+                        </MudText>
+                    </MudListItem>
+                }
+            </MudList>
+        </MudPaper>
+    }
+</MudStack>
+
+@code {
+    [Parameter]
+    public Guid RequestId { get; set; }
+
+    private AdminBookRequestResponse? request;
+    private string? adminNote;
+    private string? transitionReason;
+    private bool isLoading = true;
+    private bool isBusy;
+    private string? errorMessage;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+        try
+        {
+            request = await Requests.GetAsync(RequestId);
+            adminNote = request?.Request.AdminNote;
+        }
+        catch (HttpRequestException)
+        {
+            request = null;
+            errorMessage = "The request could not be loaded. Please try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SaveNoteAsync()
+    {
+        if (request is null)
+        {
+            return;
+        }
+
+        isBusy = true;
+        errorMessage = null;
+        try
+        {
+            var outcome = await Requests.SetNoteAsync(
+                request.Request.Id, adminNote, request.Request.Version);
+            await ApplyOutcomeAsync(outcome);
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "The note could not be saved. Please try again.";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task ChangeStatusAsync(string status)
+    {
+        if (request is null)
+        {
+            return;
+        }
+
+        isBusy = true;
+        errorMessage = null;
+        try
+        {
+            var outcome = await Requests.ChangeStatusAsync(
+                request.Request.Id, status, transitionReason, request.Request.Version);
+            transitionReason = null;
+            await ApplyOutcomeAsync(outcome);
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "The status could not be changed. Please try again.";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task ApplyOutcomeAsync(AdminRequestActionOutcome outcome)
+    {
+        if (!outcome.Succeeded)
+        {
+            errorMessage = outcome.Error;
+            return;
+        }
+
+        request = outcome.Request;
+        adminNote = request?.Request.AdminNote;
+        // Reload after a successful command so the detail's timeline and version
+        // are both the authoritative server state.
+        await LoadAsync();
+    }
+
+    private static string TransitionLabel(string status) => status switch
+    {
+        "PendingAcquisition" => "Return to queue",
+        "NeedsReview" => "Needs review",
+        "NotAvailable" => "Mark unavailable",
+        "Cancelled" => "Cancel request",
+        _ => status
+    };
+
+    private static Color TransitionColor(string status) => status switch
+    {
+        "NotAvailable" or "Cancelled" => Color.Error,
+        "NeedsReview" => Color.Warning,
+        _ => Color.Primary
+    };
+}

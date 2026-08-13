@@ -35,6 +35,7 @@
             @* Hiding a link is UX only — every page carries [Authorize] and every
                endpoint behind it independently authorizes the caller. *@
             <AuthorizeView Roles="Admin">
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/requests">Queue</MudButton>
                 <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/accounts">Accounts</MudButton>
                 <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/integrations">Integrations</MudButton>
             </AuthorizeView>
@@ -72,6 +73,7 @@
                 <MudNavLink Href="requests" Icon="@Icons.Material.Filled.MenuBook">My requests</MudNavLink>
                 <AuthorizeView Roles="Admin" Context="adminContext">
                     <MudDivider Class="my-2" />
+                    <MudNavLink Href="admin/requests" Icon="@Icons.Material.Filled.Inbox">Queue</MudNavLink>
                     <MudNavLink Href="admin/accounts" Icon="@Icons.Material.Filled.People">Accounts</MudNavLink>
                     <MudNavLink Href="admin/integrations" Icon="@Icons.Material.Filled.Extension">Integrations</MudNavLink>
                 </AuthorizeView>

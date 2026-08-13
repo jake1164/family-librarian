@@ -34,6 +34,18 @@ public interface IRequestRepository
         Guid userId,
         CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<AdminBookRequestView>> ListForAdminAsync(
+        RequestStatus? status,
+        CancellationToken cancellationToken);
+
+    Task<BookRequest?> FindRequestForAdminAsync(
+        Guid requestId,
+        CancellationToken cancellationToken);
+
+    Task<AdminBookRequestView?> FindAdminViewAsync(
+        Guid requestId,
+        CancellationToken cancellationToken);
+
     void AddRequest(BookRequest request);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);

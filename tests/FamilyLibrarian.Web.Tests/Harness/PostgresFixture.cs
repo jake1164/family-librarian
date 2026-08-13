@@ -33,14 +33,17 @@ internal static class PostgresFixture
 
     internal static async Task StartAsync()
     {
-        var container = new PostgreSqlBuilder("postgres:17-alpine")
-            .WithDatabase("family_librarian_tests")
-            .WithUsername("family_librarian")
-            .WithPassword("family_librarian")
-            .Build();
-
+        PostgreSqlContainer? container = null;
         try
         {
+            // Build validates Docker availability too, not only StartAsync. Keep
+            // it inside this guard so a host without Docker reaches the suite's
+            // documented inconclusive path instead of failing assembly setup.
+            container = new PostgreSqlBuilder("postgres:17-alpine")
+                .WithDatabase("family_librarian_tests")
+                .WithUsername("family_librarian")
+                .WithPassword("family_librarian")
+                .Build();
             await container.StartAsync();
         }
         catch (Exception exception)
@@ -49,11 +52,14 @@ internal static class PostgresFixture
             // reason and let each test skip; do not fail the assembly.
             UnavailableReason =
                 $"A PostgreSQL test container could not be started, so host-integration tests were skipped: {exception.Message}";
-            await container.DisposeAsync();
+            if (container is not null)
+            {
+                await container.DisposeAsync();
+            }
             return;
         }
 
-        _container = container;
+        _container = container!;
         UnavailableReason = null;
     }
 
@@ -69,9 +75,13 @@ internal static class PostgresFixture
     }
 
     /// <summary>
-    /// Creates and migrates an empty database, returning its connection string.
+    /// Creates a database and migrates it to <paramref name="targetMigration"/>
+    /// or, when omitted, the current migration. Tests use an explicit historical
+    /// target to prove that a deployed installation can upgrade forward rather
+    /// than only proving a brand-new database works.
     /// </summary>
-    internal static async Task<string> CreateMigratedDatabaseAsync()
+    internal static async Task<string> CreateMigratedDatabaseAsync(
+        string? targetMigration = null)
     {
         if (_container is null)
         {
@@ -104,7 +114,7 @@ internal static class PostgresFixture
             .Options;
 
         await using var context = new AppDbContext(options);
-        await context.Database.MigrateAsync();
+        await context.Database.MigrateAsync(targetMigration);
 
         return connectionString;
     }

@@ -1,0 +1,118 @@
+using System.Net;
+using System.Net.Http.Json;
+using FamilyLibrarian.Contracts.Requests;
+using FamilyLibrarian.Web.Client.Authentication;
+
+namespace FamilyLibrarian.Web.Client.Requests;
+
+/// <summary>Typed client for the administrator's request-review queue.</summary>
+public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTokenProvider antiforgery)
+{
+    public async Task<IReadOnlyList<AdminBookRequestResponse>> GetQueueAsync(
+        string? status,
+        CancellationToken cancellationToken = default)
+    {
+        var path = string.IsNullOrWhiteSpace(status)
+            ? "api/v1/admin/requests/"
+            : $"api/v1/admin/requests/?status={Uri.EscapeDataString(status)}";
+        var response = await httpClient.GetFromJsonAsync<AdminBookRequestListResponse>(path, cancellationToken);
+        return response?.Requests ?? [];
+    }
+
+    public Task<AdminBookRequestResponse?> GetAsync(
+        Guid requestId,
+        CancellationToken cancellationToken = default) =>
+        httpClient.GetFromJsonAsync<AdminBookRequestResponse>(
+            $"api/v1/admin/requests/{requestId}", cancellationToken);
+
+    public Task<AdminRequestActionOutcome> ChangeStatusAsync(
+        Guid requestId,
+        string status,
+        string? reason,
+        uint expectedVersion,
+        CancellationToken cancellationToken = default) =>
+        SendForOutcomeAsync(
+            HttpMethod.Post,
+            $"api/v1/admin/requests/{requestId}/transitions",
+            new ChangeBookRequestStatusRequest(status, reason, expectedVersion),
+            cancellationToken);
+
+    public Task<AdminRequestActionOutcome> SetNoteAsync(
+        Guid requestId,
+        string? note,
+        uint expectedVersion,
+        CancellationToken cancellationToken = default) =>
+        SendForOutcomeAsync(
+            HttpMethod.Put,
+            $"api/v1/admin/requests/{requestId}/note",
+            new SetAdminBookRequestNoteRequest(note, expectedVersion),
+            cancellationToken);
+
+    private async Task<AdminRequestActionOutcome> SendForOutcomeAsync<TPayload>(
+        HttpMethod method,
+        string path,
+        TPayload payload,
+        CancellationToken cancellationToken)
+        where TPayload : class
+    {
+        using var request = new HttpRequestMessage(method, path)
+        {
+            Content = JsonContent.Create(payload)
+        };
+        await antiforgery.AttachAsync(request, cancellationToken);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            return new AdminRequestActionOutcome(
+                true,
+                await response.Content.ReadFromJsonAsync<AdminBookRequestResponse>(cancellationToken),
+                null);
+        }
+
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            return new AdminRequestActionOutcome(
+                false,
+                null,
+                "Someone else updated this request. Reload it before making another change.");
+        }
+
+        return new AdminRequestActionOutcome(false, null, await ReadErrorAsync(response, cancellationToken));
+    }
+
+    private static async Task<string> ReadErrorAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return "That request no longer exists.";
+        }
+
+        try
+        {
+            var problem = await response.Content.ReadFromJsonAsync<ValidationProblemPayload>(cancellationToken);
+            var message = problem?.Errors?.Values.SelectMany(messages => messages).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                return message;
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or NotSupportedException
+            or System.Text.Json.JsonException)
+        {
+            // The generic message below is safe when an intermediary returned a
+            // response outside the application's problem-details shape.
+        }
+
+        return "That request could not be updated. Please try again.";
+    }
+
+    private sealed record ValidationProblemPayload(Dictionary<string, string[]>? Errors);
+}
+
+public sealed record AdminRequestActionOutcome(
+    bool Succeeded,
+    AdminBookRequestResponse? Request,
+    string? Error);

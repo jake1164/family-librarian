@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Requests;
 
@@ -225,6 +226,7 @@ public sealed class BookRequestServiceTests
             request.Id,
             RequestStatus.Cancelled,
             "Changed my mind.",
+            expectedVersion: null,
             CancellationToken.None);
 
         Assert.AreEqual(BookRequestCommandOutcome.Success, result.Outcome);
@@ -244,6 +246,7 @@ public sealed class BookRequestServiceTests
             request.Id,
             RequestStatus.Cancelled,
             null,
+            expectedVersion: null,
             CancellationToken.None);
 
         // NotFound rather than Forbidden: answering "forbidden" would confirm that
@@ -266,6 +269,7 @@ public sealed class BookRequestServiceTests
             request.Id,
             status,
             null,
+            expectedVersion: null,
             CancellationToken.None);
 
         Assert.AreEqual(BookRequestCommandOutcome.Invalid, result.Outcome);
@@ -286,6 +290,7 @@ public sealed class BookRequestServiceTests
             request.Id,
             RequestStatus.Cancelled,
             null,
+            expectedVersion: null,
             CancellationToken.None);
 
         Assert.AreEqual(BookRequestCommandOutcome.Invalid, result.Outcome);
@@ -305,7 +310,7 @@ public sealed class BookRequestServiceTests
     }
 
     private static BookRequestService Create(IRequestRepository repository, Guid? userId) =>
-        new(repository, new StubCurrentUser(userId), new FixedClock());
+        new(repository, new StubCurrentUser(userId), new FixedClock(), new NullAuditWriter());
 
     private sealed class StubCurrentUser(Guid? userId) : ICurrentUser
     {
@@ -317,6 +322,16 @@ public sealed class BookRequestServiceTests
     private sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class NullAuditWriter : IAuditWriter
+    {
+        public Task WriteAsync(
+            string action,
+            string subjectType,
+            string? subjectId,
+            object? detail,
+            CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class InMemoryRequestRepository : IRequestRepository
@@ -366,6 +381,21 @@ public sealed class BookRequestServiceTests
                 .Select(ToView)
                 .SingleOrDefault());
 
+        public Task<IReadOnlyList<AdminBookRequestView>> ListForAdminAsync(
+            RequestStatus? status,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AdminBookRequestView>>([]);
+
+        public Task<BookRequest?> FindRequestForAdminAsync(
+            Guid requestId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(Requests.SingleOrDefault(request => request.Id == requestId));
+
+        public Task<AdminBookRequestView?> FindAdminViewAsync(
+            Guid requestId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<AdminBookRequestView?>(null);
+
         public void AddRequest(BookRequest request) => Requests.Add(request);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -394,6 +424,7 @@ public sealed class BookRequestServiceTests
             request.RequesterNote,
             request.AdminNote,
             request.RequestedAtUtc,
-            request.StatusChangedAtUtc);
+            request.StatusChangedAtUtc,
+            request.Version);
     }
 }

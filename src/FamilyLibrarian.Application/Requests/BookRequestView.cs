@@ -21,9 +21,27 @@ public sealed record BookRequestView(
     string? RequesterNote,
     string? AdminNote,
     DateTimeOffset RequestedAtUtc,
-    DateTimeOffset StatusChangedAtUtc)
+    DateTimeOffset StatusChangedAtUtc,
+    uint Version)
 {
     public bool IsActive => RequestStatusTransitions.IsActive(Status);
 }
 
 public sealed record RequestFormatView(RequestMediaType MediaType, RequestFormatStatus Status);
+
+/// <summary>
+/// The administrator-only request read model. Requester identity and the status
+/// timeline stay out of <see cref="BookRequestView"/> because My Requests is
+/// intentionally private to its owner.
+/// </summary>
+public sealed record AdminBookRequestView(
+    BookRequestView Request,
+    string RequesterDisplayName,
+    string RequesterEmail,
+    IReadOnlyList<RequestStatusHistoryView> StatusHistory);
+
+public sealed record RequestStatusHistoryView(
+    RequestStatus? FromStatus,
+    RequestStatus ToStatus,
+    string? Reason,
+    DateTimeOffset OccurredAtUtc);

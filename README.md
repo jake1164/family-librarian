@@ -11,6 +11,7 @@ This repository contains the current design documents for **Family Librarian**, 
 3. [Provider & API Contract Design](docs/03-provider-api-contracts.md)
 4. [V1 Roadmap, Technical Spikes & Backlog](docs/04-v1-roadmap-and-spikes.md)
 5. [Project Name Decision (archived shortlist)](docs/05-project-name-options.md)
+6. [Deployment, Backup, and Recovery](docs/06-deployment-and-recovery.md)
 
 These documents are intended to be living specifications and should be updated as technical spikes and implementation decisions resolve open questions.
 
@@ -230,6 +231,31 @@ Run the full suite with:
 
 ```bash
 dotnet test --solution FamilyLibrarian.slnx
+```
+
+### Opt-in browser E2E
+
+The request-to-queue browser test runs against a separately started, **clean**
+Compose deployment. After building the test project, install Chromium once using
+the Playwright script copied to its output directory:
+
+```bash
+pwsh tests/FamilyLibrarian.Web.Tests/bin/Debug/net10.0/playwright.ps1 install chromium
+```
+
+Start `docker compose up --build` with a bootstrap administrator, then provide
+the public base URL and those administrator credentials only as process
+environment variables. The test creates a temporary invited family member,
+requests a book through the UI, and verifies that the administrator can review
+it in the Queue. It is intentionally inconclusive unless all three variables
+are set, so everyday unit and host-integration runs do not require a browser or
+credentials.
+
+```bash
+FAMILY_LIBRARIAN_E2E_BASE_URL=http://localhost:8080 \
+FAMILY_LIBRARIAN_E2E_ADMIN_EMAIL=admin@example.test \
+FAMILY_LIBRARIAN_E2E_ADMIN_PASSWORD='replace-with-bootstrap-password' \
+dotnet test --project tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj
 ```
 
 `FamilyLibrarian.Domain.Tests` begins by enforcing the domain dependency boundary.

@@ -52,12 +52,13 @@ public sealed class RequestsApiClient(HttpClient httpClient, AntiforgeryTokenPro
         Guid requestId,
         string status,
         string? reason = null,
+        uint? expectedVersion = null,
         CancellationToken cancellationToken = default)
     {
         using var response = await SendAsync(
             HttpMethod.Post,
             $"api/v1/requests/{requestId}/transitions",
-            new ChangeBookRequestStatusRequest(status, reason),
+            new ChangeBookRequestStatusRequest(status, reason, expectedVersion),
             cancellationToken);
 
         return response.IsSuccessStatusCode

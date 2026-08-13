@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Hosting;
@@ -12,7 +13,9 @@ namespace FamilyLibrarian.Web.Tests.Harness;
 /// stubbed. These tests exist to prove the production wiring denies the right
 /// callers, so replacing any part of it would test the substitute instead.
 /// </remarks>
-internal sealed class FamilyLibrarianAppFactory(string connectionString)
+internal sealed class FamilyLibrarianAppFactory(
+    string connectionString,
+    Action<IServiceCollection>? configureTestServices = null)
     : WebApplicationFactory<global::Program>
 {
     internal const string AdminEmail = "admin@family-librarian.example";
@@ -82,6 +85,14 @@ internal sealed class FamilyLibrarianAppFactory(string connectionString)
             {
                 Environment.SetEnvironmentVariable(key, value);
             }
+        }
+    }
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        if (configureTestServices is not null)
+        {
+            builder.ConfigureServices(configureTestServices);
         }
     }
 }

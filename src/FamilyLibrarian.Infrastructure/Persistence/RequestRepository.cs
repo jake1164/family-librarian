@@ -47,6 +47,33 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                 .Where(request => request.Id == requestId && request.UserId == userId))
             .SingleOrDefaultAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<AdminBookRequestView>> ListForAdminAsync(
+        RequestStatus? status,
+        CancellationToken cancellationToken)
+    {
+        var requests = database.BookRequests.AsQueryable();
+        if (status is not null)
+        {
+            requests = requests.Where(request => request.Status == status);
+        }
+
+        return await ProjectAdminViews(requests).ToArrayAsync(cancellationToken);
+    }
+
+    public Task<BookRequest?> FindRequestForAdminAsync(
+        Guid requestId,
+        CancellationToken cancellationToken) =>
+        database.BookRequests
+            .Include(request => request.Formats)
+            .Include(request => request.StatusHistory)
+            .SingleOrDefaultAsync(request => request.Id == requestId, cancellationToken);
+
+    public Task<AdminBookRequestView?> FindAdminViewAsync(
+        Guid requestId,
+        CancellationToken cancellationToken) =>
+        ProjectAdminViews(database.BookRequests.Where(request => request.Id == requestId))
+            .SingleOrDefaultAsync(cancellationToken);
+
     public void AddRequest(BookRequest request) => database.BookRequests.Add(request);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken) =>
@@ -125,5 +152,47 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             request.RequesterNote,
             request.AdminNote,
             request.RequestedAtUtc,
-            request.StatusChangedAtUtc);
+            request.StatusChangedAtUtc,
+            request.Version);
+
+    /// <summary>
+    /// The queue projection explicitly joins the Identity user. This association
+    /// is deliberately limited to the administrator-only query: a requester's
+    /// identity never crosses into their family member's My Requests response.
+    /// </summary>
+    private IQueryable<AdminBookRequestView> ProjectAdminViews(IQueryable<BookRequest> requests) =>
+        from request in requests
+        join work in database.Works on request.WorkId equals work.Id
+        join user in database.Users on request.UserId equals user.Id
+        orderby request.StatusChangedAtUtc descending
+        select new AdminBookRequestView(
+            new BookRequestView(
+                request.Id,
+                request.WorkId,
+                work.CanonicalTitle,
+                work.Authors
+                    .OrderBy(author => author.Ordinal)
+                    .Select(author => author.Author.CanonicalName)
+                    .ToList(),
+                work.CoverUrl,
+                request.Status,
+                request.Formats
+                    .OrderBy(format => format.MediaType)
+                    .Select(format => new RequestFormatView(format.MediaType, format.Status))
+                    .ToList(),
+                request.RequesterNote,
+                request.AdminNote,
+                request.RequestedAtUtc,
+                request.StatusChangedAtUtc,
+                request.Version),
+            user.DisplayName,
+            user.Email!,
+            request.StatusHistory
+                .OrderBy(history => history.OccurredAtUtc)
+                .Select(history => new RequestStatusHistoryView(
+                    history.FromStatus,
+                    history.ToStatus,
+                    history.Reason,
+                    history.OccurredAtUtc))
+                .ToList());
 }

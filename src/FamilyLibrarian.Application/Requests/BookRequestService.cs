@@ -1,4 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Requests;
@@ -15,7 +17,8 @@ namespace FamilyLibrarian.Application.Requests;
 public sealed class BookRequestService(
     IRequestRepository repository,
     ICurrentUser currentUser,
-    IClock clock)
+    IClock clock,
+    IAuditWriter audit)
 {
     /// <summary>
     /// The status changes a requester may make. Moving a request to
@@ -105,6 +108,7 @@ public sealed class BookRequestService(
         Guid requestId,
         RequestStatus to,
         string? reason,
+        uint? expectedVersion,
         CancellationToken cancellationToken)
     {
         if (currentUser.UserId is not { } userId)
@@ -123,6 +127,11 @@ public sealed class BookRequestService(
             return BookRequestCommandResult.NotFound();
         }
 
+        if (expectedVersion is not null && request.Version != expectedVersion)
+        {
+            return BookRequestCommandResult.Conflict();
+        }
+
         if (!RequestStatusTransitions.IsAllowed(request.Status, to))
         {
             return BookRequestCommandResult.Invalid(
@@ -136,11 +145,120 @@ public sealed class BookRequestService(
         return BookRequestCommandResult.Success(view!);
     }
 
+    /// <summary>Lists requests for the administrative queue.</summary>
+    public Task<IReadOnlyList<AdminBookRequestView>> ListForAdminAsync(
+        RequestStatus? status,
+        CancellationToken cancellationToken) =>
+        repository.ListForAdminAsync(status, cancellationToken);
+
+    /// <summary>Loads a request and its status history for administrative review.</summary>
+    public Task<AdminBookRequestView?> GetForAdminAsync(
+        Guid requestId,
+        CancellationToken cancellationToken) =>
+        repository.FindAdminViewAsync(requestId, cancellationToken);
+
+    /// <summary>
+    /// Applies one transition from the domain matrix as an administrator and
+    /// leaves a separate, secret-free audit record of the decision.
+    /// </summary>
+    public async Task<BookRequestCommandResult> AdminTransitionAsync(
+        Guid requestId,
+        RequestStatus to,
+        string? reason,
+        uint expectedVersion,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return BookRequestCommandResult.Unauthenticated();
+        }
+
+        if (!Enum.IsDefined(to))
+        {
+            return BookRequestCommandResult.Invalid("That is not a request status.");
+        }
+
+        var request = await repository.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null)
+        {
+            return BookRequestCommandResult.NotFound();
+        }
+
+        if (request.Version != expectedVersion)
+        {
+            return BookRequestCommandResult.Conflict();
+        }
+
+        if (!RequestStatusTransitions.IsAllowed(request.Status, to))
+        {
+            return BookRequestCommandResult.Invalid(
+                $"A request that is {Describe(request.Status)} cannot be {Describe(to)}.");
+        }
+
+        request.TransitionTo(to, userId, reason, clock.UtcNow);
+        await repository.SaveChangesAsync(cancellationToken);
+        await audit.WriteAsync(
+            AuditActions.BookRequestStatusChanged,
+            AuditSubjectTypes.BookRequest,
+            requestId.ToString(),
+            new { RequestId = requestId, From = request.StatusHistory.Last().FromStatus?.ToString(), To = to.ToString() },
+            cancellationToken);
+
+        var view = await repository.FindAdminViewAsync(requestId, cancellationToken);
+        return BookRequestCommandResult.Success(view!.Request);
+    }
+
+    /// <summary>Changes the administrative note without creating a fake status event.</summary>
+    public async Task<BookRequestCommandResult> SetAdminNoteAsync(
+        Guid requestId,
+        string? note,
+        uint expectedVersion,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return BookRequestCommandResult.Unauthenticated();
+        }
+
+        if (note?.Trim().Length > BookRequest.MaxAdminNoteLength)
+        {
+            return BookRequestCommandResult.Invalid(
+                $"An admin note may not exceed {BookRequest.MaxAdminNoteLength} characters.");
+        }
+
+        var request = await repository.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null)
+        {
+            return BookRequestCommandResult.NotFound();
+        }
+
+        if (request.Version != expectedVersion)
+        {
+            return BookRequestCommandResult.Conflict();
+        }
+
+        request.SetAdminNote(note, clock.UtcNow);
+        await repository.SaveChangesAsync(cancellationToken);
+        await audit.WriteAsync(
+            AuditActions.BookRequestNoteChanged,
+            AuditSubjectTypes.BookRequest,
+            requestId.ToString(),
+            new { RequestId = requestId, ChangedBy = userId },
+            cancellationToken);
+
+        var view = await repository.FindAdminViewAsync(requestId, cancellationToken);
+        return BookRequestCommandResult.Success(view!.Request);
+    }
+
     /// <summary>The transitions the current user may make from a given status.</summary>
     public static IReadOnlyList<RequestStatus> RequesterTransitionsFrom(RequestStatus status) =>
         RequestStatusTransitions.AllowedFrom(status)
             .Where(target => Array.IndexOf(RequesterTransitions, target) >= 0)
             .ToArray();
+
+    /// <summary>The transitions an administrator may make from a given status.</summary>
+    public static IReadOnlyList<RequestStatus> AdminTransitionsFrom(RequestStatus status) =>
+        RequestStatusTransitions.AllowedFrom(status);
 
     private static string Describe(RequestStatus status) => status switch
     {
@@ -201,6 +319,10 @@ public sealed record BookRequestCommandResult(
 
     public static BookRequestCommandResult Unauthenticated() =>
         new(BookRequestCommandOutcome.Unauthenticated, null, null);
+
+    public static BookRequestCommandResult Conflict() =>
+        new(BookRequestCommandOutcome.Conflict, null,
+            "Someone else updated this request. Reload it before making another change.");
 }
 
 public enum BookRequestCommandOutcome
@@ -208,5 +330,6 @@ public enum BookRequestCommandOutcome
     Success,
     NotFound,
     Invalid,
-    Unauthenticated
+    Unauthenticated,
+    Conflict
 }

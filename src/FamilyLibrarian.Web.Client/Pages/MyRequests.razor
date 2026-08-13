@@ -156,7 +156,10 @@
 
         try
         {
-            var outcome = await Requests.ChangeStatusAsync(request.Id, status);
+            var outcome = await Requests.ChangeStatusAsync(
+                request.Id,
+                status,
+                expectedVersion: request.Version);
             if (outcome.Succeeded)
             {
                 // Reload rather than patch the row: a transition moves a request
