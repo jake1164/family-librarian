@@ -201,8 +201,11 @@ await app.RunAsync();
 static async Task<IResult> LoginAsync(
     LoginRequest request,
     UserManager<AppUser> userManager,
-    SignInManager<AppUser> signInManager)
+    SignInManager<AppUser> signInManager,
+    ILoggerFactory loggerFactory)
 {
+    var logger = loggerFactory.CreateLogger("FamilyLibrarian.Authentication");
+
     if (!new EmailAddressAttribute().IsValid(request.Email) || request.Password.Length < 8)
     {
         return Results.ValidationProblem(new Dictionary<string, string[]>
@@ -215,6 +218,7 @@ static async Task<IResult> LoginAsync(
     var user = await userManager.FindByEmailAsync(request.Email);
     if (user is null)
     {
+        AuthenticationLog.LoginUnknownAccount(logger, request.Email);
         return Results.Unauthorized();
     }
 
@@ -223,6 +227,7 @@ static async Task<IResult> LoginAsync(
     // to a wrong password either way.
     if (!UserStatuses.CanSignIn(user.Status))
     {
+        AuthenticationLog.LoginDisabledAccount(logger, user.Id);
         return Results.Unauthorized();
     }
 
@@ -236,7 +241,17 @@ static async Task<IResult> LoginAsync(
     {
         user.LastLoginAtUtc = DateTimeOffset.UtcNow;
         await userManager.UpdateAsync(user);
+        AuthenticationLog.LoginSucceeded(logger, user.Id);
         return Results.NoContent();
+    }
+
+    if (result.IsLockedOut)
+    {
+        AuthenticationLog.LoginLockedOut(logger, user.Id);
+    }
+    else
+    {
+        AuthenticationLog.LoginInvalidPassword(logger, user.Id);
     }
 
     return Results.Unauthorized();
@@ -1096,4 +1111,37 @@ internal static partial class MetadataProviderLog
         ILogger logger,
         string providerId,
         Exception exception);
+}
+
+internal static partial class AuthenticationLog
+{
+    [LoggerMessage(
+        EventId = 2001,
+        Level = LogLevel.Warning,
+        Message = "Login attempt for unknown email {Email}.")]
+    internal static partial void LoginUnknownAccount(ILogger logger, string email);
+
+    [LoggerMessage(
+        EventId = 2002,
+        Level = LogLevel.Warning,
+        Message = "Login attempt for disabled account {UserId}.")]
+    internal static partial void LoginDisabledAccount(ILogger logger, Guid userId);
+
+    [LoggerMessage(
+        EventId = 2003,
+        Level = LogLevel.Warning,
+        Message = "Account {UserId} is locked out after too many failed attempts.")]
+    internal static partial void LoginLockedOut(ILogger logger, Guid userId);
+
+    [LoggerMessage(
+        EventId = 2004,
+        Level = LogLevel.Warning,
+        Message = "Invalid password for account {UserId}.")]
+    internal static partial void LoginInvalidPassword(ILogger logger, Guid userId);
+
+    [LoggerMessage(
+        EventId = 2005,
+        Level = LogLevel.Information,
+        Message = "Account {UserId} signed in.")]
+    internal static partial void LoginSucceeded(ILogger logger, Guid userId);
 }
