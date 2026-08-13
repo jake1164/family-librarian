@@ -77,9 +77,11 @@ optional integration. Authentik is a documented/tested target, not a runtime
 dependency—the same design supports any standards-compliant OIDC provider.
 
 When OIDC is enabled, it supplements rather than replaces local sign-in so an
-IdP outage or configuration error cannot remove the administrator's recovery
-path. Family Librarian maps validated claims from the configured issuer to its
-own `User` and `Admin` roles; it does not put Authentik-specific roles into the
+IdP outage or configuration error cannot remove the administrator's **IdP-outage
+recovery path**. This does not provide self-service recovery for a lost sole
+administrator password; the local-account recovery limits above still apply.
+Family Librarian maps validated claims from the configured issuer to its own
+`User` and `Admin` roles; it does not put Authentik-specific roles into the
 domain model.
 
 Use a separate OIDC client registration, ID/secret, and redirect/sign-out URI for

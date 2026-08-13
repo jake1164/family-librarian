@@ -318,18 +318,18 @@ tests/
   FamilyLibrarian.IntegrationTests
 ```
 
-Initial runtime deployment may contain:
+The default runtime deployment contains only:
 
 ```text
 family-librarian
-family-librarian-worker
 postgres
-clamav
 ```
 
-Optional services:
+Add services only when their planned slice requires them:
 
 ```text
+family-librarian-worker
+clamav
 audiobookshelf
 ntfy
 acquisition-provider-*
@@ -341,8 +341,8 @@ vpn-gateway
 ## 9. High-Level Architecture
 
 ```text
-                     Identity Provider
-               Local Auth / OIDC / Authentik
+                  Optional Identity Provider
+             Generic OIDC / Authentik target
                             |
                             v
                   +------------------+
@@ -351,19 +351,13 @@ vpn-gateway
                   +---------+--------+
                             |
                   +---------+----------+
-                  |                    |
-                  v                    v
-             PostgreSQL          Background Worker
-                                      |
-             +------------------------+------------------------+
-             |                 |              |               |
-             v                 v              v               v
-        Metadata          Acquisition      Security        Delivery
-        Providers          Providers       Providers       Providers
-             |                 |              |               |
-       Google/OpenLib     Manual/HTTP     ClamAV/etc    ABS/Kindle/etc
-       Hardcover/etc       plugins
+                            |
+                            v
+                       PostgreSQL
 ```
+
+Future slices may add a worker and optional metadata, acquisition, security, and
+delivery providers behind the same application boundary.
 
 ---
 
