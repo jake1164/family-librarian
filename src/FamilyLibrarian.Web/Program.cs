@@ -1,12 +1,20 @@
 using System.Security.Claims;
 using System.Text.Json;
 using System.ComponentModel.DataAnnotations;
+using System.Threading.RateLimiting;
+using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Contracts.Accounts;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Integrations;
+using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain;
+using FamilyLibrarian.Domain.Accounts;
+using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
@@ -22,6 +30,32 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgresql");
+
+// Invitation redemption is necessarily anonymous, which makes it the one write
+// endpoint an unauthenticated caller can reach. The token is 256 bits, so this
+// is not what stops a guess succeeding — it stops a client burning host
+// resources trying, and it bounds the damage if a token ever leaks into a log.
+var redemptionAttemptsPerMinute = builder.Configuration
+    .GetSection(InvitationPolicy.SectionName)
+    .GetValue("RedemptionAttemptsPerMinute", InvitationPolicy.DefaultRedemptionAttemptsPerMinute);
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy(InvitationEndpoints.RateLimitPolicy, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            // Partitioned by caller so one busy address cannot lock everyone
+            // else out of redeeming their invitation. Note that a household
+            // behind one NAT address shares a bucket, which is why the ceiling
+            // is configurable rather than fixed.
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = redemptionAttemptsPerMinute,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+});
 
 // The WebAssembly client cannot read an HttpOnly cookie, so the request token
 // travels in a header it sets explicitly. The cookie half stays HttpOnly.
@@ -62,19 +96,23 @@ app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
+app.UseRateLimiter();
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }))
     .AllowAnonymous();
 app.MapHealthChecks("/health/ready");
 
-app.MapGet("/api/v1/catalog/search", SearchCatalogAsync)
-    .AllowAnonymous();
-app.MapGet("/api/v1/catalog/candidates/{providerId}/{externalId}", GetCatalogCandidateAsync)
-    .AllowAnonymous();
-app.MapPost("/api/v1/catalog/candidates/{providerId}/{externalId}/resolve", ResolveCatalogCandidateAsync)
-    .AllowAnonymous();
-app.MapGet("/api/v1/catalog/works/{workId:guid}", GetCatalogWorkAsync)
-    .AllowAnonymous();
+// The catalog stopped being an anonymous development surface when requests
+// arrived: a request needs a server-verified owner, and searching now sends
+// family search terms to third-party providers on an identified user's behalf.
+var catalog = app.MapGroup("/api/v1/catalog")
+    .RequireAuthorization()
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+catalog.MapGet("/search", SearchCatalogAsync);
+catalog.MapGet("/candidates/{providerId}/{externalId}", GetCatalogCandidateAsync);
+catalog.MapPost("/candidates/{providerId}/{externalId}/resolve", ResolveCatalogCandidateAsync);
+catalog.MapGet("/works/{workId:guid}", GetCatalogWorkAsync);
 
 app.MapPost("/api/auth/login", LoginAsync)
     .AllowAnonymous();
@@ -88,6 +126,47 @@ app.MapGet("/api/v1/me", GetCurrentUserAsync)
     .RequireAuthorization();
 app.MapGet("/api/v1/admin/ping", () => Results.Ok(new { status = "ok" }))
     .RequireAuthorization("Admin");
+
+// Requests. Ownership is enforced inside BookRequestService, not here: these
+// routes only establish that a caller is authenticated and carries a token.
+app.MapGet("/api/v1/me/requests", ListMyRequestsAsync)
+    .RequireAuthorization();
+
+var requests = app.MapGroup("/api/v1/requests")
+    .RequireAuthorization()
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+requests.MapPost("/", CreateBookRequestAsync);
+requests.MapPost("/{requestId:guid}/transitions", ChangeBookRequestStatusAsync);
+
+// Invitation redemption. Anonymous by necessity — the invitee has no account
+// yet — so it carries no anti-forgery requirement (there are no ambient
+// credentials to forge with) and is rate limited instead.
+app.MapGet("/api/v1/invitations/preview", PreviewInvitationAsync)
+    .AllowAnonymous()
+    .RequireRateLimiting(InvitationEndpoints.RateLimitPolicy);
+app.MapPost("/api/v1/invitations/redeem", RedeemInvitationAsync)
+    .AllowAnonymous()
+    .RequireRateLimiting(InvitationEndpoints.RateLimitPolicy);
+
+// Admin account management.
+var adminAccounts = app.MapGroup("/api/v1/admin/accounts")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+adminAccounts.MapGet("/", ListAccountsAsync);
+adminAccounts.MapPut("/{userId:guid}/status", SetAccountStatusAsync);
+adminAccounts.MapPut("/{userId:guid}/admin", SetAccountAdminAsync);
+adminAccounts.MapPut("/{userId:guid}/password", ResetAccountPasswordAsync);
+
+var adminInvitations = app.MapGroup("/api/v1/admin/invitations")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+adminInvitations.MapGet("/", ListInvitationsAsync);
+adminInvitations.MapPost("/", CreateInvitationAsync);
+adminInvitations.MapPost("/{invitationId:guid}/revoke", RevokeInvitationAsync);
+adminInvitations.MapPost("/{invitationId:guid}/regenerate", RegenerateInvitationAsync);
 
 // Admin Metadata Integrations. Every route is Admin-only and addresses a known
 // installed provider id; none accepts an arbitrary target or returns a secret.
@@ -123,6 +202,14 @@ static async Task<IResult> LoginAsync(
 
     var user = await userManager.FindByEmailAsync(request.Email);
     if (user is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    // Checked before the password so a disabled account cannot be used as an
+    // oracle for whether a password is still correct. The response is identical
+    // to a wrong password either way.
+    if (!UserStatuses.CanSignIn(user.Status))
     {
         return Results.Unauthorized();
     }
@@ -169,6 +256,326 @@ static async Task<IResult> GetCurrentUserAsync(
         user.Email,
         roles.ToArray()));
 }
+
+static async Task<IResult> ListAccountsAsync(
+    AccountAdminService accountAdmin,
+    CancellationToken cancellationToken)
+{
+    var accounts = await accountAdmin.ListAsync(cancellationToken);
+    return Results.Ok(new FamilyAccountListResponse(accounts.Select(ToAccountResponse).ToArray()));
+}
+
+static async Task<IResult> SetAccountStatusAsync(
+    Guid userId,
+    SetAccountStatusRequest request,
+    AccountAdminService accountAdmin,
+    CancellationToken cancellationToken)
+{
+    if (!Enum.TryParse<UserStatus>(request.Status, ignoreCase: true, out var status))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["status"] = ["That is not an account status."]
+        });
+    }
+
+    return ToAccountResult(await accountAdmin.SetStatusAsync(userId, status, cancellationToken));
+}
+
+static async Task<IResult> SetAccountAdminAsync(
+    Guid userId,
+    SetAccountAdminRequest request,
+    AccountAdminService accountAdmin,
+    CancellationToken cancellationToken) =>
+    ToAccountResult(await accountAdmin.SetAdminAsync(userId, request.IsAdmin, cancellationToken));
+
+static async Task<IResult> ResetAccountPasswordAsync(
+    Guid userId,
+    ResetAccountPasswordRequest request,
+    AccountAdminService accountAdmin,
+    CancellationToken cancellationToken) =>
+    ToAccountResult(await accountAdmin.SetPasswordAsync(userId, request.Password, cancellationToken));
+
+static IResult ToAccountResult(AccountOperationResult result) => result.Succeeded
+    ? Results.NoContent()
+    : Results.ValidationProblem(new Dictionary<string, string[]>
+    {
+        ["account"] = [result.Error ?? "That change could not be saved."]
+    });
+
+static FamilyAccountResponse ToAccountResponse(UserAccount account) => new(
+    account.Id,
+    account.Email,
+    account.DisplayName,
+    account.Status.ToString(),
+    account.IsAdmin,
+    account.CreatedAtUtc,
+    account.LastLoginAtUtc);
+
+static async Task<IResult> ListInvitationsAsync(
+    InvitationService invitationService,
+    IClock clock,
+    CancellationToken cancellationToken)
+{
+    var invitations = await invitationService.ListAsync(cancellationToken);
+    var now = clock.UtcNow;
+
+    return Results.Ok(new InvitationListResponse(
+        invitations.Select(invitation => ToInvitationResponse(invitation, now)).ToArray()));
+}
+
+static async Task<IResult> CreateInvitationAsync(
+    CreateInvitationRequest request,
+    InvitationService invitationService,
+    HttpContext httpContext,
+    CancellationToken cancellationToken) =>
+    ToInvitationResult(
+        await invitationService.CreateAsync(request.Email, request.AsAdmin, cancellationToken),
+        httpContext);
+
+static async Task<IResult> RegenerateInvitationAsync(
+    Guid invitationId,
+    InvitationService invitationService,
+    HttpContext httpContext,
+    CancellationToken cancellationToken) =>
+    ToInvitationResult(
+        await invitationService.RegenerateAsync(invitationId, cancellationToken),
+        httpContext);
+
+static IResult ToInvitationResult(CreateInvitationResult result, HttpContext httpContext)
+{
+    if (!result.Succeeded)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["email"] = [result.Error ?? "That invitation could not be created."]
+        });
+    }
+
+    var invitation = result.Invitation!;
+    return Results.Ok(new CreatedInvitationResponse(
+        invitation.Id,
+        invitation.Email,
+        invitation.Role,
+        invitation.ExpiresAtUtc,
+        result.Token!,
+        InvitationEndpoints.BuildRedeemUrl(httpContext, result.Token!)));
+}
+
+static async Task<IResult> RevokeInvitationAsync(
+    Guid invitationId,
+    InvitationService invitationService,
+    CancellationToken cancellationToken)
+{
+    var result = await invitationService.RevokeAsync(invitationId, cancellationToken);
+
+    return result.Outcome switch
+    {
+        InvitationCommandOutcome.Success => Results.NoContent(),
+        InvitationCommandOutcome.NotFound => Results.NotFound(),
+        _ => Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["invitation"] = [result.Error ?? "That invitation could not be withdrawn."]
+        })
+    };
+}
+
+static async Task<IResult> PreviewInvitationAsync(
+    string? token,
+    InvitationService invitationService,
+    CancellationToken cancellationToken)
+{
+    var preview = await invitationService.PreviewAsync(token ?? string.Empty, cancellationToken);
+
+    // A missing token and an unusable one answer the same way, so this endpoint
+    // cannot be used to test whether a guessed token exists.
+    return preview is null
+        ? Results.NotFound()
+        : Results.Ok(new InvitationPreviewResponse(
+            preview.Email,
+            preview.CanBeRedeemed,
+            preview.State));
+}
+
+static async Task<IResult> RedeemInvitationAsync(
+    RedeemInvitationRequest request,
+    InvitationService invitationService,
+    CancellationToken cancellationToken)
+{
+    var result = await invitationService.RedeemAsync(
+        request.Token,
+        request.DisplayName,
+        request.Password,
+        cancellationToken);
+
+    return result.Outcome switch
+    {
+        RedeemInvitationOutcome.Success => Results.NoContent(),
+        RedeemInvitationOutcome.InvalidInvitation => Results.ValidationProblem(
+            new Dictionary<string, string[]>
+            {
+                ["token"] = ["This invitation link is not valid. Ask for a new one."]
+            }),
+        _ => Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["password"] = [result.Error ?? "That account could not be created."]
+        })
+    };
+}
+
+static InvitationResponse ToInvitationResponse(Invitation invitation, DateTimeOffset now) => new(
+    invitation.Id,
+    invitation.Email,
+    invitation.Role,
+    invitation.DescribeState(now),
+    invitation.CanBeRedeemedAt(now),
+    invitation.CreatedAtUtc,
+    invitation.ExpiresAtUtc,
+    invitation.RedeemedAtUtc,
+    invitation.RevokedAtUtc);
+
+static async Task<IResult> ListMyRequestsAsync(
+    BookRequestService requests,
+    CancellationToken cancellationToken)
+{
+    var mine = await requests.ListMineAsync(cancellationToken);
+
+    return Results.Ok(new BookRequestListResponse(
+        mine.Where(request => request.IsActive).Select(ToRequestResponse).ToArray(),
+        mine.Where(request => !request.IsActive).Select(ToRequestResponse).ToArray()));
+}
+
+static async Task<IResult> CreateBookRequestAsync(
+    CreateBookRequestRequest request,
+    BookRequestService requests,
+    CancellationToken cancellationToken)
+{
+    if (!TryParseMediaTypes(request.Formats, out var mediaTypes))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["formats"] = ["Choose ebook, audiobook, or both."]
+        });
+    }
+
+    var result = await requests.CreateAsync(
+        request.WorkId,
+        mediaTypes,
+        request.Note,
+        request.ConfirmDuplicate,
+        cancellationToken);
+
+    return result.Outcome switch
+    {
+        CreateBookRequestOutcome.Created => Results.Created(
+            $"/api/v1/me/requests#{result.Request!.Id}",
+            ToRequestResponse(result.Request)),
+        // 409, not an error: the request is legitimate but the user should see
+        // the outstanding one first and confirm they still want another.
+        CreateBookRequestOutcome.DuplicateWarning => Results.Conflict(
+            new BookRequestDuplicateResponse(
+                "You already have an outstanding request for this book.",
+                result.OverlappingFormats.Select(mediaType => mediaType.ToString()).ToArray(),
+                result.Request is null ? null : ToRequestResponse(result.Request))),
+        CreateBookRequestOutcome.WorkNotFound => Results.NotFound(),
+        CreateBookRequestOutcome.Unauthenticated => Results.Unauthorized(),
+        _ => Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["request"] = [result.Error ?? "That request could not be created."]
+        })
+    };
+}
+
+static async Task<IResult> ChangeBookRequestStatusAsync(
+    Guid requestId,
+    ChangeBookRequestStatusRequest request,
+    BookRequestService requests,
+    CancellationToken cancellationToken)
+{
+    if (!Enum.TryParse<RequestStatus>(request.Status, ignoreCase: true, out var status))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["status"] = ["That is not a request status."]
+        });
+    }
+
+    var result = await requests.TransitionAsync(
+        requestId,
+        status,
+        request.Reason,
+        cancellationToken);
+
+    return result.Outcome switch
+    {
+        BookRequestCommandOutcome.Success => Results.Ok(ToRequestResponse(result.Request!)),
+        BookRequestCommandOutcome.NotFound => Results.NotFound(),
+        BookRequestCommandOutcome.Unauthenticated => Results.Unauthorized(),
+        _ => Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["status"] = [result.Error ?? "That status change is not allowed."]
+        })
+    };
+}
+
+static bool TryParseMediaTypes(
+    IReadOnlyList<string>? formats,
+    out RequestMediaType[] mediaTypes)
+{
+    mediaTypes = [];
+    if (formats is null || formats.Count is 0 or > 2)
+    {
+        return false;
+    }
+
+    var parsed = new List<RequestMediaType>(formats.Count);
+    foreach (var format in formats)
+    {
+        if (!Enum.TryParse<RequestMediaType>(format, ignoreCase: true, out var mediaType) ||
+            !Enum.IsDefined(mediaType))
+        {
+            return false;
+        }
+
+        parsed.Add(mediaType);
+    }
+
+    mediaTypes = parsed.Distinct().ToArray();
+    return true;
+}
+
+static BookRequestResponse ToRequestResponse(BookRequestView request) => new(
+    request.Id,
+    request.WorkId,
+    request.WorkTitle,
+    request.Authors,
+    request.CoverUrl,
+    request.Status.ToString(),
+    DescribeStatus(request.Status),
+    request.IsActive,
+    request.Formats
+        .Select(format => new BookRequestFormatResponse(
+            format.MediaType.ToString(),
+            format.Status.ToString()))
+        .ToArray(),
+    request.RequesterNote,
+    request.AdminNote,
+    request.RequestedAtUtc,
+    request.StatusChangedAtUtc,
+    BookRequestService.RequesterTransitionsFrom(request.Status)
+        .Select(status => status.ToString())
+        .ToArray());
+
+// Plain language for a family, not the enum name. The status itself travels
+// separately so the client never has to parse this sentence.
+static string DescribeStatus(RequestStatus status) => status switch
+{
+    RequestStatus.PendingAcquisition => "Waiting for the librarian to find this.",
+    RequestStatus.NeedsReview => "The librarian has a question about this request.",
+    RequestStatus.NotAvailable => "The librarian could not find this one for now.",
+    RequestStatus.Cancelled => "You cancelled this request.",
+    _ => status.ToString()
+};
 
 static async Task<IResult> ListMetadataProvidersAsync(
     MetadataProviderAdminService admin,

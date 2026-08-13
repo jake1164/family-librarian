@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Integrations;
+using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Web.Tests.Harness;
 
@@ -172,16 +173,48 @@ public sealed class EndpointAuthorizationTests
     }
 
     [TestMethod]
-    public async Task CatalogSearchIsStillAnonymousInThisDevelopmentSlice()
+    [DataRow("/api/v1/catalog/search?q=dragon")]
+    [DataRow("/api/v1/catalog/candidates/demo/the-hobbit")]
+    [DataRow("/api/v1/catalog/works/00000000-0000-0000-0000-000000000001")]
+    [DataRow("/api/v1/me/requests")]
+    public async Task TheCatalogAndRequestsAreNoLongerAnonymous(string route)
     {
         var fixture = WebTestFixture.Require(_fixture);
         using var client = fixture.CreateAnonymousClient();
 
-        var response = await client.GetAsync("/api/v1/catalog/search?q=dragon");
+        var response = await client.GetAsync(route);
 
-        // Documents the M2/M3 development-mode decision rather than endorsing it.
-        // The plan requires catalog routes to become authenticated when requests
-        // arrive in M5; when that lands, this test should flip to Unauthorized.
-        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        // The anonymous development window closed when requests arrived: a request
+        // needs a server-verified owner, and searching now sends family search
+        // terms to providers on an identified user's behalf.
+        Assert.AreEqual(HttpStatusCode.Unauthorized, response.StatusCode, route);
+    }
+
+    [TestMethod]
+    public async Task AnAnonymousCallerCannotCreateARequest()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = fixture.CreateAnonymousClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/v1/requests/",
+            new CreateBookRequestRequest(Guid.NewGuid(), ["Ebook"], null, false));
+
+        Assert.AreEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task ARequestMutationWithoutAnAntiforgeryTokenIsRejected()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await fixture.CreateUserClientAsync();
+
+        // Authenticated by cookie and otherwise well formed. Only the token is
+        // missing, which is exactly the shape of a cross-site forgery.
+        var response = await client.PostAsJsonAsync(
+            "/api/v1/requests/",
+            new CreateBookRequestRequest(Guid.NewGuid(), ["Ebook"], null, false));
+
+        Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

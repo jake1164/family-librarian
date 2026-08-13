@@ -10,8 +10,7 @@ This repository contains the current design documents for **Family Librarian**, 
 2. [Domain Model & Workflow Specification](docs/02-domain-workflows.md)
 3. [Provider & API Contract Design](docs/03-provider-api-contracts.md)
 4. [V1 Roadmap, Technical Spikes & Backlog](docs/04-v1-roadmap-and-spikes.md)
-5. [Initial Implementation Plan](docs/planning/initial-implementation-plan.md)
-6. [Project Name Decision (archived shortlist)](docs/05-project-name-options.md)
+5. [Project Name Decision (archived shortlist)](docs/05-project-name-options.md)
 
 These documents are intended to be living specifications and should be updated as technical spikes and implementation decisions resolve open questions.
 
@@ -29,6 +28,100 @@ The application is then available at `http://localhost:8080`. Compose applies th
 checked-in EF Core migration and creates the configured bootstrap administrator on
 the first successful start.
 
+## Signing in
+
+There is no sign-up page. The first account is the bootstrap administrator, and
+its credentials are the two values you put in `.env`; everyone else joins by
+invitation from an administrator:
+
+```bash
+BootstrapAdmin__Email=you@example.test
+BootstrapAdmin__Password=Your-Local-Dev-Pass1!
+```
+
+Sign in at `http://localhost:8080/login` with exactly those values. The password
+policy requires at least 12 characters with a digit, a lowercase letter, an
+uppercase letter, and a symbol; five failed attempts lock the account for 15
+minutes.
+
+The bootstrap runs on every start but creates the account **only while no
+administrator exists**. So:
+
+- Adding or changing `BootstrapAdmin__*` after an admin already exists has no
+  effect — the existing account keeps its original password.
+- Leaving them blank on the very first start seeds the `User` and `Admin` roles
+  but no account, leaving nothing to sign in with. Fill them in and restart; the
+  bootstrap will then create the account.
+
+To check which account exists, or to confirm the bootstrap actually ran:
+
+```bash
+docker exec family-librarian-postgres-1 \
+  psql -U family_librarian -d family_librarian -c 'SELECT "Email" FROM identity.users;'
+```
+
+If that returns no rows, no account was created — check that `.env` has both
+`BootstrapAdmin__` values and restart the stack. To start over completely, use the
+force-rebuild debug configuration below, which drops the database volume.
+
+If you lose the administrator password and no other administrator exists, there
+is no self-service recovery: the bootstrap will not re-run. Another administrator
+can reset it from the Accounts page, which is a good reason to invite a second
+one.
+
+## Adding family members
+
+Go to **Accounts** (administrators only), enter an email address, and create an
+invite link. **The link is shown once and cannot be retrieved afterwards** — only
+a hash of it is stored — so copy it before leaving the page. If you lose it,
+withdraw the invitation and issue another.
+
+Send the link however you normally reach that person. Following it lets them set
+their own name and password, which creates their account and signs them in from
+then on. Invitations work once, expire after seven days, and can be withdrawn
+before they are used.
+
+The page separates **Pending invitations** from a collapsed **Past invitations**
+list, so what is still outstanding stays readable. If a link is lost or has
+expired, use **New link** on that invitation: it issues a fresh token and
+withdraws the old one, so the mislaid link stops working immediately. Inviting an
+address that already has an outstanding invitation does the same thing.
+
+Two optional settings, both validated at startup:
+
+```bash
+Invitations__LifetimeDays=7                 # 1-90
+Invitations__RedemptionAttemptsPerMinute=10 # 1-10000
+```
+
+The second one rate-limits the redemption endpoint, which is anonymous by
+necessity. Everyone behind a shared public address counts as one caller, so raise
+it if a household trips the limit.
+
+There is deliberately no self-registration: for a household, an invitation *is*
+the approval, and open signup would add an unauthenticated account-creation
+endpoint plus a queue of strangers to sift through. Email delivery of invitations
+will arrive with the notification provider; until then the copy-paste link is the
+delivery mechanism, and it remains the fallback afterwards.
+
+From the same page you can disable or re-enable an account and grant or remove
+the administrator role. Disabling takes effect immediately, including on any
+session that account already has open. You cannot disable or demote your own
+account, and the last remaining administrator cannot be removed — the bootstrap
+only runs while no administrator exists, so that would leave no way back in.
+
+### What you can do once signed in
+
+Search the catalog, open a book, save it to the family catalog, then request it as
+an ebook, an audiobook, or both, and follow it under **My requests** — where you
+can also cancel a request or ask again. Requests are private to the account that
+made them. The librarian-side queue for acting on those requests is the next
+milestone, so a submitted request currently stays "waiting for the librarian"
+until then.
+
+Administrators also get **Integrations**, for enabling metadata providers and
+storing a Google Books key.
+
 In VS Code, the Run and Debug selector provides the same two Compose-backed
 container modes:
 
@@ -45,14 +138,44 @@ Use `compose: down (preserve data)` only when you also want to remove the
 stopped containers.
 
 Both preLaunch tasks apply `compose.debug-attach.yaml` on top of `compose.yaml`,
-which bind-mounts the `vsdbg` debugger VS Code already downloaded to
-`~/.vsdbg/linux-x64/latest` (`%USERPROFILE%\.vsdbg\linux-x64\latest` on
-Windows) into the application container at `/remote_debugger`, guaranteeing
-it's present before VS Code's own copy-into-container check runs — that check
-is unreliable on Windows hosts on its own. VS Code may still prompt to copy
-the debugger; accept it (it's a harmless no-op re-copy onto the same mount).
-The matching `compose:` tasks remain available under **Tasks: Run Task** when
-you want to start the stack without a debugger.
+which builds the application container from the Dockerfile's `debug` stage. That
+stage is the ordinary runtime image plus `vsdbg`, already installed at
+`/remote_debugger` — so attaching finds the debugger in place and copies nothing.
+
+This replaced an earlier approach that bind-mounted the host's own `~/.vsdbg`
+folder into the container. It worked, but VS Code still ran its copy check on
+attach and, when it decided to copy, wrote the entire debugger back out through
+that mount: thousands of small files crossing the Docker Desktop filesystem
+bridge, which took minutes on Windows. Baking it into a layer removes the copy,
+and with it the host-architecture detection the tasks used to need — the stage is
+built for the same platform as the container that runs it.
+
+Both attach configurations set `netCore.debuggerPath` to `/remote_debugger/vsdbg`,
+and that setting is **required, not cosmetic**. The Containers extension only
+takes the fast path when it is present: left unset, the extension downloads vsdbg
+to the host, probes the container for it, and prompts *"Attaching to container
+requires .NET debugger in the container. Do you want to copy the debugger to the
+container?"* — the copy that took minutes. With the path set, it skips acquiring,
+probing, and copying entirely and pipes straight to the debugger already in the
+image. Baking the debugger in without setting this path is not enough; you need
+both.
+
+The debug image is tagged `family-librarian:debug`, separate from
+`family-librarian:dev`, and the `debug` stage is declared *before* `final` in the
+Dockerfile so that a plain `docker build` — and therefore every release image —
+can never pick up the debugger. The matching `compose:` tasks remain available
+under **Tasks: Run Task** when you want to start the stack without a debugger.
+
+If a debug session ever hangs with no terminal output, stop it with **Shift+F5**
+and check what the container is actually running:
+
+```bash
+docker ps --filter name=family-librarian-web --format "{{.Image}}"
+```
+
+It must say `family-librarian:debug`. If it says `family-librarian:dev`, the
+preLaunch task did not complete, so the container has no debugger in it and the
+attach will stall or prompt.
 
 The `watch` task and the server debug launch both load server-side configuration
 from the ignored `.env` file, including provider credentials.

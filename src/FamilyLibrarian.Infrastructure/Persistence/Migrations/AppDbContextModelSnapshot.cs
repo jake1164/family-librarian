@@ -23,6 +23,82 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Accounts.Invitation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("email");
+
+                    b.Property<DateTimeOffset>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at_utc");
+
+                    b.Property<Guid>("InvitedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("invited_by_user_id");
+
+                    b.Property<string>("NormalizedEmail")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("normalized_email");
+
+                    b.Property<DateTimeOffset?>("RedeemedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("redeemed_at_utc");
+
+                    b.Property<Guid?>("RedeemedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("redeemed_by_user_id");
+
+                    b.Property<DateTimeOffset?>("RevokedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at_utc");
+
+                    b.Property<Guid?>("RevokedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("revoked_by_user_id");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("role");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("token_hash");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvitedByUserId");
+
+                    b.HasIndex("NormalizedEmail");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("invitations", "identity");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Audit.AuditEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -522,6 +598,154 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("metadata_provider_settings", "app");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.BookRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AdminNote")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("admin_note");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<DateTimeOffset>("RequestedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_at_utc");
+
+                    b.Property<string>("RequesterNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("requester_note");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("StatusChangedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("status_changed_at_utc");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<Guid>("WorkId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("work_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkId");
+
+                    b.HasIndex("Status", "UpdatedAtUtc");
+
+                    b.HasIndex("UserId", "WorkId", "Status");
+
+                    b.ToTable("book_requests", "requests");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestFormat", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("MediaType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("media_type");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId", "MediaType")
+                        .IsUnique();
+
+                    b.ToTable("request_formats", "requests");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestStatusHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_user_id");
+
+                    b.Property<string>("FromStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("from_status");
+
+                    b.Property<DateTimeOffset>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at_utc");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<string>("ToStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("to_status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId", "OccurredAtUtc");
+
+                    b.ToTable("request_status_history", "requests");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Infrastructure.Identity.AppUser", b =>
                 {
                     b.Property<Guid>("Id")
@@ -579,6 +803,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("text");
 
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
                     b.Property<bool>("TwoFactorEnabled")
                         .HasColumnType("boolean");
 
@@ -594,6 +824,8 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasIndex("NormalizedUserName")
                         .IsUnique()
                         .HasDatabaseName("UserNameIndex");
+
+                    b.HasIndex("Status");
 
                     b.ToTable("users", "identity");
                 });
@@ -747,6 +979,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("AspNetUserTokens", "identity");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Accounts.Invitation", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("InvitedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.Edition", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Catalog.Work", "Work")
@@ -802,6 +1043,43 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("Author");
 
                     b.Navigation("Work");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.BookRequest", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Domain.Catalog.Work", null)
+                        .WithMany()
+                        .HasForeignKey("WorkId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestFormat", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", "Request")
+                        .WithMany("Formats")
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Request");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestStatusHistory", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", "Request")
+                        .WithMany("StatusHistory")
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Request");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
@@ -872,6 +1150,13 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("Editions");
 
                     b.Navigation("SeriesEntries");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.BookRequest", b =>
+                {
+                    b.Navigation("Formats");
+
+                    b.Navigation("StatusHistory");
                 });
 #pragma warning restore 612, 618
         }

@@ -49,6 +49,28 @@ services:
       # account exists to sign in with, so the Admin pages stay unreachable.
       BootstrapAdmin__Email: ${BootstrapAdmin__Email:-}
       BootstrapAdmin__Password: ${BootstrapAdmin__Password:-}
+      # Invite-link lifetime and the anonymous redemption rate limit. Both are
+      # optional; the application defaults apply when they are unset.
+      Invitations__LifetimeDays: ${Invitations__LifetimeDays:-7}
+      Invitations__RedemptionAttemptsPerMinute: ${Invitations__RedemptionAttemptsPerMinute:-10}
+    # Without this, `docker compose up --wait` returns the moment the container
+    # is *running* — which is before Kestrel has bound the port. The VS Code
+    # task then opens a browser against an app that cannot answer yet, and the
+    # Blazor client sticks on "Loading Family Librarian..." until you refresh.
+    #
+    # The image deliberately carries no curl or wget, and `sh` here is dash,
+    # which has no /dev/tcp — hence the explicit bash. /health/ready is used
+    # rather than a bare port check because it also verifies the database.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && head -n 1 <&3 | grep -q " 200 "'
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
     depends_on:
       postgres:
         condition: service_healthy

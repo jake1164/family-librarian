@@ -1,6 +1,8 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
@@ -77,6 +79,21 @@ public static class DependencyInjection
             };
         });
 
+        // Revalidate the security stamp on every authenticated request, so
+        // disabling an account, revoking its Admin role, or resetting its
+        // password takes effect immediately rather than whenever the cookie
+        // happens to be re-checked.
+        //
+        // Identity's default is 30 minutes, which would leave a disabled family
+        // member signed in for up to half an hour after an administrator removed
+        // their access. The cost is one indexed lookup per request; at household
+        // scale that is not a trade worth making, and "disabled" meaning
+        // "disabled eventually" is not what an administrator clicking Disable
+        // expects. Revisit only if this ever serves enough users for the read
+        // volume to matter.
+        services.Configure<SecurityStampValidatorOptions>(options =>
+            options.ValidationInterval = TimeSpan.Zero);
+
         services.AddAuthorizationBuilder()
             .AddPolicy(
                 "Admin",
@@ -85,6 +102,31 @@ public static class DependencyInjection
         services.AddScoped<IClock, SystemClock>();
         services.AddScoped<ICatalogRepository, CatalogRepository>();
         services.AddScoped<CatalogWorkResolver>();
+
+        services.AddScoped<IRequestRepository, RequestRepository>();
+        services.AddScoped<BookRequestService>();
+
+        // Bound and validated at startup, so a bad LifetimeDays fails the deploy
+        // rather than silently issuing invitations that never expire or expire
+        // instantly. Registered as the plain policy type because the application
+        // layer takes no dependency on the options packages.
+        var invitationPolicy = new InvitationPolicy();
+        configuration.GetSection(InvitationPolicy.SectionName).Bind(invitationPolicy);
+        if (!invitationPolicy.IsValid)
+        {
+            throw new InvalidOperationException(
+                $"{InvitationPolicy.SectionName}:LifetimeDays must be between " +
+                $"{InvitationPolicy.MinimumLifetimeDays} and {InvitationPolicy.MaximumLifetimeDays}, " +
+                "and RedemptionAttemptsPerMinute must be between 1 and 10000.");
+        }
+
+        services.AddSingleton(invitationPolicy);
+
+        services.AddScoped<IInvitationRepository, InvitationRepository>();
+        services.AddScoped<IUserAccountStore, IdentityUserAccountStore>();
+        services.AddSingleton<IInvitationTokenGenerator, InvitationTokenGenerator>();
+        services.AddScoped<InvitationService>();
+        services.AddScoped<AccountAdminService>();
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();

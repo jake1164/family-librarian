@@ -1,10 +1,11 @@
 @page "/search/{ProviderId}/{ExternalId}"
+@attribute [Authorize]
 @inject CatalogApiClient Catalog
 @inject NavigationManager Navigation
 
 <PageTitle>@(book?.Title ?? "Book") · Family Librarian</PageTitle>
 
-<MudStack Spacing="3" Class="mx-auto" Style="max-width: 56rem;">
+<MudStack Spacing="3">
     <MudButton Variant="Variant.Text" Href="search">Back to search</MudButton>
 
     @if (isLoading)
@@ -60,9 +61,9 @@
             <MudAlert Severity="Severity.Error">@resolveError</MudAlert>
         }
 
-        <MudAlert Severity="Severity.Info">
-            Requesting will be added after the catalog is connected to persistent Works and local accounts.
-        </MudAlert>
+        <MudText Typo="Typo.body2">
+            Choosing this book saves it to the family catalog, where you can request it.
+        </MudText>
     }
 </MudStack>
 

@@ -1,9 +1,11 @@
 @page "/works/{WorkId:guid}"
+@attribute [Authorize]
 @inject CatalogApiClient Catalog
+@inject RequestsApiClient Requests
 
 <PageTitle>@(work?.Title ?? "Book") · Family Librarian</PageTitle>
 
-<MudStack Spacing="3" Class="mx-auto" Style="max-width: 56rem;">
+<MudStack Spacing="3">
     <MudButton Variant="Variant.Text" Href="search">Back to search</MudButton>
 
     @if (isLoading)
@@ -47,9 +49,78 @@
             }
         </MudPaper>
 
-        <MudAlert Severity="Severity.Info">
-            Requesting will be added after local accounts and the request workflow.
-        </MudAlert>
+        <MudPaper Class="pa-4" Outlined="true">
+            <MudStack Spacing="3">
+                <MudText Typo="Typo.h6">Ask for this book</MudText>
+
+                @if (createdRequest is not null)
+                {
+                    <MudAlert Severity="Severity.Success">
+                        Your request is in. @createdRequest.StatusDescription
+                    </MudAlert>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="requests">
+                        See my requests
+                    </MudButton>
+                }
+                else
+                {
+                    <fieldset class="pa-0" style="border: 0;">
+                        <legend class="mud-typography mud-typography-body2">Which format would you like?</legend>
+                        <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@isSubmitting" />
+                        <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@isSubmitting" />
+                    </fieldset>
+
+                    <MudTextField @bind-Value="note"
+                                  Label="Anything the librarian should know? (optional)"
+                                  Variant="Variant.Outlined"
+                                  Lines="2"
+                                  MaxLength="1000"
+                                  Disabled="@isSubmitting" />
+
+                    @if (duplicate is not null)
+                    {
+                        <MudAlert Severity="Severity.Warning">
+                            @duplicate.Message
+                            @if (duplicate.ExistingRequest is not null)
+                            {
+                                <text>
+                                    You asked for
+                                    @string.Join(" and ", duplicate.OverlappingFormats).ToLowerInvariant()
+                                    on @duplicate.ExistingRequest.RequestedAtUtc.ToLocalTime().ToString("d")
+                                    — @duplicate.ExistingRequest.StatusDescription
+                                </text>
+                            }
+                        </MudAlert>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(errorMessage))
+                    {
+                        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+                    }
+
+                    <MudStack Row="true" Spacing="2">
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   OnClick="() => SubmitAsync(false)"
+                                   Disabled="@(isSubmitting || !HasFormatSelected)">
+                            @(isSubmitting ? "Sending…" : "Request this book")
+                        </MudButton>
+
+                        @* Shown only after the host has reported an overlap, so the
+                           confirmation is a deliberate second choice. *@
+                        @if (duplicate is not null)
+                        {
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Warning"
+                                       OnClick="() => SubmitAsync(true)"
+                                       Disabled="@isSubmitting">
+                                Request it anyway
+                            </MudButton>
+                        }
+                    </MudStack>
+                }
+            </MudStack>
+        </MudPaper>
     }
 </MudStack>
 
@@ -60,9 +131,23 @@
     private CatalogWorkResponse? work;
     private bool isLoading = true;
 
+    private bool wantsEbook = true;
+    private bool wantsAudiobook;
+    private string? note;
+    private bool isSubmitting;
+    private string? errorMessage;
+    private BookRequestDuplicateResponse? duplicate;
+    private BookRequestResponse? createdRequest;
+
+    private bool HasFormatSelected => wantsEbook || wantsAudiobook;
+
     protected override async Task OnParametersSetAsync()
     {
         isLoading = true;
+        createdRequest = null;
+        duplicate = null;
+        errorMessage = null;
+
         try
         {
             work = await Catalog.GetWorkAsync(WorkId);
@@ -74,6 +159,55 @@
         finally
         {
             isLoading = false;
+        }
+    }
+
+    private async Task SubmitAsync(bool confirmDuplicate)
+    {
+        if (!HasFormatSelected)
+        {
+            errorMessage = "Choose ebook, audiobook, or both.";
+            return;
+        }
+
+        isSubmitting = true;
+        errorMessage = null;
+
+        try
+        {
+            var formats = new List<string>(2);
+            if (wantsEbook)
+            {
+                formats.Add("Ebook");
+            }
+
+            if (wantsAudiobook)
+            {
+                formats.Add("Audiobook");
+            }
+
+            var outcome = await Requests.CreateAsync(WorkId, formats, note, confirmDuplicate);
+            switch (outcome.Status)
+            {
+                case CreateRequestStatus.Created:
+                    createdRequest = outcome.Request;
+                    duplicate = null;
+                    break;
+                case CreateRequestStatus.DuplicateWarning:
+                    duplicate = outcome.Existing;
+                    break;
+                default:
+                    errorMessage = outcome.Error;
+                    break;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "Your request could not be sent. Please try again.";
+        }
+        finally
+        {
+            isSubmitting = false;
         }
     }
 }

@@ -1,0 +1,298 @@
+@page "/admin/accounts"
+@attribute [Authorize(Roles = "Admin")]
+@inject AccountsApiClient AccountsApi
+
+@* The role attribute is UX only. Every endpoint behind this page independently
+   requires the Admin policy and an anti-forgery token. *@
+
+<PageTitle>Family accounts · Family Librarian</PageTitle>
+
+<MudStack Spacing="4">
+    <div>
+        <MudText Typo="Typo.h3">Family accounts</MudText>
+        <MudText Typo="Typo.body1">
+            Invite family members, and manage the accounts that already exist.
+        </MudText>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+    }
+
+    <MudPaper Class="pa-4" Outlined="true">
+        <MudStack Spacing="3">
+            <MudText Typo="Typo.h6">Invite someone</MudText>
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                <MudTextField @bind-Value="inviteEmail"
+                              Label="Email address"
+                              Variant="Variant.Outlined"
+                              Class="flex-grow-1"
+                              Disabled="@isBusy" />
+                <MudCheckBox @bind-Value="inviteAsAdmin" Label="Administrator" Disabled="@isBusy" />
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           OnClick="CreateInvitationAsync"
+                           Disabled="@isBusy">
+                    Create invite link
+                </MudButton>
+            </MudStack>
+
+            @* The token is readable exactly once, here. If the admin loses it,
+               the invitation must be revoked and reissued. *@
+            @if (newInvitation is not null)
+            {
+                <MudAlert Severity="Severity.Success">
+                    <MudText Typo="Typo.body2">
+                        Send this link to <strong>@newInvitation.Email</strong>. It works once and
+                        expires @newInvitation.ExpiresAtUtc.ToLocalTime().ToString("f").
+                        <strong>This is the only time it can be shown.</strong>
+                    </MudText>
+                    <MudTextField Value="@newInvitation.RedeemUrl"
+                                  ReadOnly="true"
+                                  Variant="Variant.Outlined"
+                                  Class="mt-2"
+                                  Label="Invitation link" />
+                </MudAlert>
+            }
+        </MudStack>
+    </MudPaper>
+
+    <MudText Typo="Typo.h5">Accounts</MudText>
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        @foreach (var account in accounts)
+        {
+            <MudCard Outlined="true" Class="mb-3">
+                <MudCardContent>
+                    <MudStack Spacing="1">
+                        <MudText Typo="Typo.h6">@account.DisplayName</MudText>
+                        <MudText Typo="Typo.body2">@account.Email</MudText>
+                        <MudStack Row="true" Spacing="1">
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@(account.Status == ActiveStatus ? Color.Success : Color.Warning)">
+                                @account.Status
+                            </MudChip>
+                            @if (account.IsAdmin)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info">Administrator</MudChip>
+                            }
+                        </MudStack>
+                        <MudText Typo="Typo.caption">
+                            @(account.LastLoginAtUtc is { } seen
+                                ? $"Last signed in {seen.ToLocalTime():g}"
+                                : "Has never signed in")
+                        </MudText>
+                    </MudStack>
+                </MudCardContent>
+                <MudCardActions>
+                    @if (account.Status == ActiveStatus)
+                    {
+                        <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="@isBusy"
+                                   OnClick="() => SetEnabledAsync(account, false)">
+                            Disable
+                        </MudButton>
+                    }
+                    else
+                    {
+                        <MudButton Variant="Variant.Text" Color="Color.Success" Disabled="@isBusy"
+                                   OnClick="() => SetEnabledAsync(account, true)">
+                            Enable
+                        </MudButton>
+                    }
+
+                    <MudButton Variant="Variant.Text" Disabled="@isBusy"
+                               OnClick="() => SetAdminAsync(account, !account.IsAdmin)">
+                        @(account.IsAdmin ? "Remove administrator" : "Make administrator")
+                    </MudButton>
+                </MudCardActions>
+            </MudCard>
+        }
+
+        <MudText Typo="Typo.h5">Pending invitations</MudText>
+        @if (Pending.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">No invitations are waiting to be used.</MudAlert>
+        }
+        else
+        {
+            @foreach (var invitation in Pending)
+            {
+                @InvitationCard(invitation)
+            }
+        }
+
+        @* Used, withdrawn, and expired invitations are kept for the record but
+           folded away, so the pending list stays the thing you actually read. *@
+        @if (Past.Count > 0)
+        {
+            <MudExpansionPanels Elevation="0">
+                <MudExpansionPanel Text="@($"Past invitations ({Past.Count})")">
+                    @foreach (var invitation in Past)
+                    {
+                        @InvitationCard(invitation)
+                    }
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+    }
+</MudStack>
+
+@code {
+    // The wire form of Domain.Accounts.UserStatus. The client deliberately does
+    // not reference the domain assembly, so these are the string values the API
+    // exchanges.
+    private const string ActiveStatus = "Active";
+    private const string DisabledStatus = "Disabled";
+
+    private IReadOnlyList<FamilyAccountResponse> accounts = [];
+    private IReadOnlyList<InvitationResponse> invitations = [];
+    private CreatedInvitationResponse? newInvitation;
+    private string inviteEmail = string.Empty;
+    private bool inviteAsAdmin;
+    private bool isLoading = true;
+    private bool isBusy;
+    private string? errorMessage;
+
+    private IReadOnlyList<InvitationResponse> Pending =>
+        invitations.Where(invitation => invitation.IsOutstanding).ToArray();
+
+    private IReadOnlyList<InvitationResponse> Past =>
+        invitations.Where(invitation => !invitation.IsOutstanding).ToArray();
+
+    /// <summary>A redeemed invitation has produced an account; there is nothing left to reissue.</summary>
+    private static bool CanRegenerate(InvitationResponse invitation) =>
+        invitation.RedeemedAtUtc is null;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private RenderFragment InvitationCard(InvitationResponse invitation) =>
+        @<MudCard Outlined="true" Class="mb-3">
+            <MudCardContent>
+                <MudStack Spacing="1">
+                    <MudText Typo="Typo.body1">@invitation.Email</MudText>
+                    <MudText Typo="Typo.body2">
+                        Invited as @invitation.Role — @invitation.State
+                    </MudText>
+                    <MudText Typo="Typo.caption">
+                        @(invitation.IsOutstanding
+                            ? $"Expires {invitation.ExpiresAtUtc.ToLocalTime():g}"
+                            : $"Invited {invitation.CreatedAtUtc.ToLocalTime():g}")
+                    </MudText>
+                </MudStack>
+            </MudCardContent>
+            <MudCardActions>
+                @* Offered for expired and withdrawn invitations too: the link is
+                   unrecoverable by design, so "I lost it" is the usual reason to
+                   come back here. *@
+                @if (CanRegenerate(invitation))
+                {
+                    <MudButton Variant="Variant.Text" Color="Color.Primary" Disabled="@isBusy"
+                               OnClick="() => RegenerateAsync(invitation)">
+                        New link
+                    </MudButton>
+                }
+                @if (invitation.IsOutstanding)
+                {
+                    <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="@isBusy"
+                               OnClick="() => RevokeAsync(invitation)">
+                        Withdraw
+                    </MudButton>
+                }
+            </MudCardActions>
+        </MudCard>;
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            accounts = await AccountsApi.GetAccountsAsync();
+            invitations = await AccountsApi.GetInvitationsAsync();
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "Accounts could not be loaded. Please try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task CreateInvitationAsync()
+    {
+        if (string.IsNullOrWhiteSpace(inviteEmail))
+        {
+            errorMessage = "Enter the email address to invite.";
+            return;
+        }
+
+        await RunAsync(async () =>
+        {
+            var outcome = await AccountsApi.CreateInvitationAsync(inviteEmail.Trim(), inviteAsAdmin);
+            if (outcome.Succeeded)
+            {
+                newInvitation = outcome.Invitation;
+                inviteEmail = string.Empty;
+                inviteAsAdmin = false;
+                return null;
+            }
+
+            return outcome.Error;
+        });
+    }
+
+    private Task SetEnabledAsync(FamilyAccountResponse account, bool enabled) =>
+        RunAsync(async () =>
+            (await AccountsApi.SetStatusAsync(
+                account.Id,
+                enabled ? ActiveStatus : DisabledStatus)).Error);
+
+    private Task SetAdminAsync(FamilyAccountResponse account, bool isAdmin) =>
+        RunAsync(async () => (await AccountsApi.SetAdminAsync(account.Id, isAdmin)).Error);
+
+    private Task RevokeAsync(InvitationResponse invitation) =>
+        RunAsync(async () => (await AccountsApi.RevokeInvitationAsync(invitation.Id)).Error);
+
+    private Task RegenerateAsync(InvitationResponse invitation) =>
+        RunAsync(async () =>
+        {
+            var outcome = await AccountsApi.RegenerateInvitationAsync(invitation.Id);
+            if (!outcome.Succeeded)
+            {
+                return outcome.Error;
+            }
+
+            // Shown in the same one-time panel as a brand new invitation, because
+            // it is exactly that: a fresh token that replaces the old one.
+            newInvitation = outcome.Invitation;
+            return null;
+        });
+
+    /// <summary>Runs an action, then reloads so the list reflects what the host now holds.</summary>
+    private async Task RunAsync(Func<Task<string?>> action)
+    {
+        isBusy = true;
+        errorMessage = null;
+
+        try
+        {
+            errorMessage = await action();
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That change could not be saved. Please try again.";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+
+        await LoadAsync();
+    }
+}

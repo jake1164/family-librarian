@@ -1,29 +1,23 @@
-# Adds the vsdbg debugger to the `family-librarian` container for the VS Code
-# "docker: attach" launch configs.
+# Builds the application container from the Dockerfile's `debug` stage, which
+# already contains vsdbg at /remote_debugger, for the VS Code "Containers:
+# attach" launch configs.
 #
-# VS Code's own copy-on-attach prompt for this container is unreliable on
-# Windows hosts (silent skips when it should copy, and tar/pipe errors when it
-# does run against a fresh/starting container), so we bind-mount the
-# already-downloaded vsdbg folder straight into the container at the path the
-# debug adapter expects, guaranteeing it's there before VS Code even checks.
-# `VSDBG_HOST_DIR` is set by the `compose: reuse container` / `compose: force
-# rebuild` tasks (OS-specific — see tasks.json) and points at the vsdbg install
-# VS Code already maintains for you.
+# This used to bind-mount the host's own ~/.vsdbg folder into the container
+# instead. That guaranteed the debugger was present, but VS Code still ran its
+# own "copy the debugger?" check on attach and, when it decided to copy, wrote
+# the whole debugger back out through the mount. On Windows that means thousands
+# of small files crossing the Docker Desktop filesystem bridge, which took
+# minutes. Shipping the debugger in a layer removes the copy entirely, and with
+# it the host-architecture detection the tasks used to need: the stage is built
+# for the same platform as the container it runs in.
 #
-# It MUST match the container's architecture, not just the OS. Compose builds
-# this image for the host's native platform, so an Apple Silicon Mac gets an
-# arm64 container: mounting the linux-x64 vsdbg there makes the attach die with
-# `rosetta error: failed to open elf at /lib64/ld-linux-x86-64.so.2`. The tasks
-# pick linux-arm64 or linux-x64 from `uname -m` for this reason.
-#
-# Deliberately NOT read-only: VS Code still runs its own "copy the debugger?"
-# check on attach and, if it decides to, `docker cp`s into this path anyway.
-# A read-only mount makes that copy fail outright ("mounted volume is marked
-# read-only"); writable, it just harmlessly re-copies the same files back
-# into the host's own `.vsdbg` folder.
+# The debug image is tagged separately so `family-librarian:dev` never silently
+# becomes an image containing a debugger.
 #
 #   docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --wait
 services:
   family-librarian:
-    volumes:
-      - ${VSDBG_HOST_DIR:?Set VSDBG_HOST_DIR to your host's linux-x64 vsdbg/latest folder}:/remote_debugger
+    build:
+      context: .
+      target: debug
+    image: family-librarian:debug

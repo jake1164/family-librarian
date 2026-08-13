@@ -1,10 +1,11 @@
 @page "/search"
+@attribute [Authorize]
 @inject CatalogApiClient Catalog
 @inject NavigationManager Navigation
 
 <PageTitle>Search · Family Librarian</PageTitle>
 
-<MudStack Spacing="3" Class="mx-auto" Style="max-width: 64rem;">
+<MudStack Spacing="3">
     <div>
         <MudText Typo="Typo.h3">Find a book</MudText>
         <MudText Typo="Typo.body1">

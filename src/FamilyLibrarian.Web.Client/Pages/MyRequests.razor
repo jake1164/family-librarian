@@ -1,0 +1,180 @@
+@page "/requests"
+@attribute [Authorize]
+@inject RequestsApiClient Requests
+
+<PageTitle>My requests · Family Librarian</PageTitle>
+
+<MudStack Spacing="4">
+    <div>
+        <MudText Typo="Typo.h3">My requests</MudText>
+        <MudText Typo="Typo.body1">
+            Books you have asked the family librarian for. Only you can see this list.
+        </MudText>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+    }
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudText Typo="Typo.h5">Active</MudText>
+        @if (active.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">
+                Nothing outstanding right now.
+                <MudLink Href="search">Find a book</MudLink> to ask for one.
+            </MudAlert>
+        }
+        else
+        {
+            @foreach (var request in active)
+            {
+                @RequestCard(request)
+            }
+        }
+
+        @* History is a section rather than its own page: a family's list is short,
+           and closed requests are the context for "did I already ask for this?" *@
+        @if (history.Count > 0)
+        {
+            <MudText Typo="Typo.h5">History</MudText>
+            @foreach (var request in history)
+            {
+                @RequestCard(request)
+            }
+        }
+    }
+</MudStack>
+
+@code {
+    private IReadOnlyList<BookRequestResponse> active = [];
+    private IReadOnlyList<BookRequestResponse> history = [];
+    private bool isLoading = true;
+    private string? errorMessage;
+    private Guid busyRequestId;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private RenderFragment RequestCard(BookRequestResponse request) =>
+        @<MudCard Outlined="true" Class="mb-3">
+            <MudCardContent>
+                <MudStack Spacing="1">
+                    <MudText Typo="Typo.h6">
+                        <MudLink Href="@($"works/{request.WorkId}")">@request.WorkTitle</MudLink>
+                    </MudText>
+                    <MudText Typo="Typo.body2">@string.Join(", ", request.Authors)</MudText>
+                    <MudStack Row="true" Spacing="1">
+                        @foreach (var format in request.Formats)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                @format.MediaType
+                            </MudChip>
+                        }
+                    </MudStack>
+                    <MudText Typo="Typo.body2" Color="@StatusColor(request)">
+                        @request.StatusDescription
+                    </MudText>
+                    <MudText Typo="Typo.caption">
+                        Asked @request.RequestedAtUtc.ToLocalTime().ToString("d")
+                    </MudText>
+                    @if (!string.IsNullOrWhiteSpace(request.Note))
+                    {
+                        <MudText Typo="Typo.body2"><em>Your note:</em> @request.Note</MudText>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(request.AdminNote))
+                    {
+                        <MudText Typo="Typo.body2"><em>From the librarian:</em> @request.AdminNote</MudText>
+                    }
+                </MudStack>
+            </MudCardContent>
+            @* The buttons mirror what the host says is allowed from this status;
+               the host re-checks the transition regardless of what is rendered. *@
+            @if (request.AvailableTransitions.Count > 0)
+            {
+                <MudCardActions>
+                    @foreach (var transition in request.AvailableTransitions)
+                    {
+                        <MudButton Variant="Variant.Text"
+                                   Color="@(transition == "Cancelled" ? Color.Error : Color.Primary)"
+                                   Disabled="@(busyRequestId == request.Id)"
+                                   OnClick="() => ChangeStatusAsync(request, transition)">
+                            @TransitionLabel(transition)
+                        </MudButton>
+                    }
+                </MudCardActions>
+            }
+        </MudCard>;
+
+    private static string TransitionLabel(string transition) => transition switch
+    {
+        "Cancelled" => "Cancel this request",
+        "PendingAcquisition" => "Ask again",
+        _ => transition
+    };
+
+    private static Color StatusColor(BookRequestResponse request) => request.Status switch
+    {
+        "PendingAcquisition" => Color.Info,
+        "NeedsReview" => Color.Warning,
+        "NotAvailable" => Color.Error,
+        _ => Color.Default
+    };
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            var response = await Requests.GetMineAsync();
+            active = response.Active;
+            history = response.History;
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "Your requests could not be loaded. Please try again.";
+            active = [];
+            history = [];
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ChangeStatusAsync(BookRequestResponse request, string status)
+    {
+        busyRequestId = request.Id;
+        errorMessage = null;
+
+        try
+        {
+            var outcome = await Requests.ChangeStatusAsync(request.Id, status);
+            if (outcome.Succeeded)
+            {
+                // Reload rather than patch the row: a transition moves a request
+                // between the active and history sections.
+                await LoadAsync();
+            }
+            else
+            {
+                errorMessage = outcome.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That change could not be saved. Please try again.";
+        }
+        finally
+        {
+            busyRequestId = Guid.Empty;
+        }
+    }
+}

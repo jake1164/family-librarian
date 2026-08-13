@@ -39,6 +39,11 @@ internal sealed class FamilyLibrarianAppFactory(string connectionString)
         ["Authentication__EnableLocal"] = "true",
         ["BootstrapAdmin__Email"] = AdminEmail,
         ["BootstrapAdmin__Password"] = AdminPassword,
+        // Every test reaches the host from the same address, so they share one
+        // rate-limit bucket. Raised here so the suite exercises the invitation
+        // rules rather than the limiter; the limiter's own ceiling is a
+        // deployment setting, not behaviour these tests are asserting.
+        ["Invitations__RedemptionAttemptsPerMinute"] = "10000",
         // Keep every outbound provider off. A test must never depend on Open
         // Library or Google Books being reachable.
         ["MetadataProviders__Demo__Enabled"] = "true",

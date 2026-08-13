@@ -1,4 +1,6 @@
 @inherits LayoutComponentBase
+@inject ApiAuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
 
 <MudThemeProvider />
 <MudPopoverProvider />
@@ -7,17 +9,95 @@
 
 <MudLayout>
     <MudAppBar Elevation="1">
-        <MudText Typo="Typo.h6">Family Librarian</MudText>
+        @* Only signed-in users have anywhere to navigate to. *@
+        <AuthorizeView>
+            <MudIconButton Icon="@Icons.Material.Filled.Menu"
+                           Color="Color.Inherit"
+                           Edge="Edge.Start"
+                           Class="d-md-none"
+                           aria-label="Open navigation"
+                           OnClick="@(() => isDrawerOpen = !isDrawerOpen)" />
+        </AuthorizeView>
+
+        <MudLink Href="/" Color="Color.Inherit" Underline="Underline.None">
+            <MudText Typo="Typo.h6">Family Librarian</MudText>
+        </MudLink>
+
         <MudSpacer />
-        <MudButton Variant="Variant.Text" Href="search">Search</MudButton>
-        @* Hiding the link is UX only — the page carries [Authorize(Roles = "Admin")]
-           and every endpoint behind it independently authorizes the caller. *@
-        <AuthorizeView Roles="Admin">
-            <MudButton Variant="Variant.Text" Href="admin/integrations">Integrations</MudButton>
+
+        @* Inline links from md up; the same destinations live in the drawer
+           below that width, so a phone does not get a squashed row of buttons. *@
+        <div class="d-none d-md-flex">
+            <AuthorizeView>
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="search">Search</MudButton>
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="requests">My requests</MudButton>
+            </AuthorizeView>
+            @* Hiding a link is UX only — every page carries [Authorize] and every
+               endpoint behind it independently authorizes the caller. *@
+            <AuthorizeView Roles="Admin">
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/accounts">Accounts</MudButton>
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/integrations">Integrations</MudButton>
+            </AuthorizeView>
+        </div>
+
+        <AuthorizeView>
+            <Authorized>
+                <MudMenu Icon="@Icons.Material.Filled.AccountCircle"
+                         Color="Color.Inherit"
+                         AriaLabel="Account menu"
+                         AnchorOrigin="Origin.BottomRight"
+                         TransformOrigin="Origin.TopRight">
+                    <MudText Typo="Typo.body2" Class="px-4 py-2">
+                        Signed in as <strong>@context.User.Identity?.Name</strong>
+                    </MudText>
+                    <MudDivider />
+                    <MudMenuItem Icon="@Icons.Material.Filled.Logout" OnClick="SignOutAsync">
+                        Sign out
+                    </MudMenuItem>
+                </MudMenu>
+            </Authorized>
+            <NotAuthorized>
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="login">Sign in</MudButton>
+            </NotAuthorized>
         </AuthorizeView>
     </MudAppBar>
 
-    <MudMainContent Class="pa-6">
-        @Body
+    <AuthorizeView>
+        <MudDrawer @bind-Open="isDrawerOpen"
+                   Variant="DrawerVariant.Temporary"
+                   Breakpoint="Breakpoint.Md"
+                   Elevation="2">
+            <MudNavMenu>
+                <MudNavLink Href="search" Icon="@Icons.Material.Filled.Search">Search</MudNavLink>
+                <MudNavLink Href="requests" Icon="@Icons.Material.Filled.MenuBook">My requests</MudNavLink>
+                <AuthorizeView Roles="Admin" Context="adminContext">
+                    <MudDivider Class="my-2" />
+                    <MudNavLink Href="admin/accounts" Icon="@Icons.Material.Filled.People">Accounts</MudNavLink>
+                    <MudNavLink Href="admin/integrations" Icon="@Icons.Material.Filled.Extension">Integrations</MudNavLink>
+                </AuthorizeView>
+            </MudNavMenu>
+        </MudDrawer>
+    </AuthorizeView>
+
+    @* No `pa-` class here. MudBlazor's own .mud-main-content sets
+       padding-top: var(--mud-appbar-height) to clear the fixed app bar, and the
+       spacing utilities are declared !important — so pa-6 would win and slide
+       the page under the bar. Bottom padding only; the container handles the
+       sides and the top gap. *@
+    <MudMainContent Class="pb-8">
+        <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
+            @Body
+        </MudContainer>
     </MudMainContent>
 </MudLayout>
+
+@code {
+    private bool isDrawerOpen;
+
+    private async Task SignOutAsync()
+    {
+        await AuthenticationStateProvider.SignOutAsync();
+        // forceLoad so nothing cached in the WebAssembly app outlives the session.
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+}

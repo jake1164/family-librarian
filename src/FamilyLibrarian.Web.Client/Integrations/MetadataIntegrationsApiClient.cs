@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FamilyLibrarian.Contracts.Integrations;
+using FamilyLibrarian.Web.Client.Authentication;
 
 namespace FamilyLibrarian.Web.Client.Integrations;
 
@@ -12,12 +13,11 @@ namespace FamilyLibrarian.Web.Client.Integrations;
 /// to the host; nothing here can read one back, because the API does not return
 /// stored credential values.
 /// </remarks>
-public sealed class MetadataIntegrationsApiClient(HttpClient httpClient)
+public sealed class MetadataIntegrationsApiClient(
+    HttpClient httpClient,
+    AntiforgeryTokenProvider antiforgery)
 {
     private const string BasePath = "api/v1/admin/integrations/metadata";
-    private const string AntiforgeryHeaderName = "X-CSRF-TOKEN";
-
-    private string? _antiforgeryToken;
 
     public async Task<IReadOnlyList<MetadataProviderStatusResponse>> GetProvidersAsync(
         CancellationToken cancellationToken = default)
@@ -74,28 +74,6 @@ public sealed class MetadataIntegrationsApiClient(HttpClient httpClient)
             : null;
     }
 
-    /// <summary>
-    /// Fetches the anti-forgery request token, caching it for the page's lifetime.
-    /// </summary>
-    /// <remarks>
-    /// The paired cookie is HttpOnly, so the token must be requested from the
-    /// host rather than read out of <c>document.cookie</c>.
-    /// </remarks>
-    private async Task<string?> GetAntiforgeryTokenAsync(CancellationToken cancellationToken)
-    {
-        if (_antiforgeryToken is not null)
-        {
-            return _antiforgeryToken;
-        }
-
-        var response = await httpClient.GetFromJsonAsync<AntiforgeryTokenPayload>(
-            "api/v1/antiforgery/token",
-            cancellationToken);
-
-        _antiforgeryToken = response?.Token;
-        return _antiforgeryToken;
-    }
-
     private async Task<HttpRequestMessage> CreateRequestAsync<TPayload>(
         HttpMethod method,
         string path,
@@ -104,12 +82,7 @@ public sealed class MetadataIntegrationsApiClient(HttpClient httpClient)
         where TPayload : class
     {
         var request = new HttpRequestMessage(method, path);
-
-        var token = await GetAntiforgeryTokenAsync(cancellationToken);
-        if (!string.IsNullOrEmpty(token))
-        {
-            request.Headers.Add(AntiforgeryHeaderName, token);
-        }
+        await antiforgery.AttachAsync(request, cancellationToken);
 
         if (payload is not null)
         {
@@ -160,8 +133,6 @@ public sealed class MetadataIntegrationsApiClient(HttpClient httpClient)
     }
 
     private sealed record ValidationProblemPayload(Dictionary<string, string[]>? Errors);
-
-    private sealed record AntiforgeryTokenPayload(string Token);
 }
 
 public sealed record MetadataIntegrationsResult(

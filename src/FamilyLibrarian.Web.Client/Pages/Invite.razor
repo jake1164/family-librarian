@@ -1,0 +1,151 @@
+@page "/invite"
+@inject AccountsApiClient Accounts
+@inject NavigationManager Navigation
+
+@* Deliberately anonymous: the whole point is that the invitee has no account
+   yet. The token arrives in the URL fragment, which browsers never send to the
+   server, so it stays out of access and proxy logs. *@
+
+<PageTitle>Join the family library</PageTitle>
+
+<MudStack Spacing="3" Class="mx-auto" Style="max-width: 34rem;">
+    <MudText Typo="Typo.h4">Join the family library</MudText>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (created)
+    {
+        <MudAlert Severity="Severity.Success">
+            Your account is ready. Sign in with <strong>@preview!.Email</strong>.
+        </MudAlert>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="login">Sign in</MudButton>
+    }
+    else if (preview is null)
+    {
+        <MudAlert Severity="Severity.Error">
+            This invitation link is not valid. Ask whoever invited you for a new one.
+        </MudAlert>
+    }
+    else if (!preview.CanBeRedeemed)
+    {
+        <MudAlert Severity="Severity.Warning">
+            This invitation cannot be used because @preview.State. Ask for a new one.
+        </MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.body1">
+            You have been invited as <strong>@preview.Email</strong>. Choose a name and a
+            password to finish setting up your account.
+        </MudText>
+
+        <MudTextField @bind-Value="displayName"
+                      Label="Your name"
+                      Variant="Variant.Outlined"
+                      MaxLength="256"
+                      Disabled="@isSubmitting" />
+
+        <MudTextField @bind-Value="password"
+                      Label="Password"
+                      Variant="Variant.Outlined"
+                      InputType="InputType.Password"
+                      Disabled="@isSubmitting" />
+
+        <MudTextField @bind-Value="confirmPassword"
+                      Label="Confirm password"
+                      Variant="Variant.Outlined"
+                      InputType="InputType.Password"
+                      Disabled="@isSubmitting" />
+
+        <MudText Typo="Typo.caption">
+            At least 12 characters, with an uppercase letter, a lowercase letter, a
+            number, and a symbol.
+        </MudText>
+
+        @if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+        }
+
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="RedeemAsync"
+                   Disabled="@isSubmitting">
+            @(isSubmitting ? "Creating your account…" : "Create my account")
+        </MudButton>
+    }
+</MudStack>
+
+@code {
+    private string? token;
+    private InvitationPreviewResponse? preview;
+    private string displayName = string.Empty;
+    private string password = string.Empty;
+    private string confirmPassword = string.Empty;
+    private bool isLoading = true;
+    private bool isSubmitting;
+    private bool created;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        token = ReadTokenFromFragment();
+
+        if (!string.IsNullOrEmpty(token))
+        {
+            preview = await Accounts.PreviewInvitationAsync(token);
+        }
+
+        isLoading = false;
+    }
+
+    private string? ReadTokenFromFragment()
+    {
+        var fragment = new Uri(Navigation.Uri).Fragment;
+        return string.IsNullOrEmpty(fragment) ? null : fragment.TrimStart('#');
+    }
+
+    private async Task RedeemAsync()
+    {
+        if (!string.Equals(password, confirmPassword, StringComparison.Ordinal))
+        {
+            errorMessage = "Those passwords do not match.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            errorMessage = "Enter the name to show on your requests.";
+            return;
+        }
+
+        isSubmitting = true;
+        errorMessage = null;
+
+        try
+        {
+            var outcome = await Accounts.RedeemInvitationAsync(token!, displayName, password);
+            if (outcome.Succeeded)
+            {
+                created = true;
+            }
+            else
+            {
+                errorMessage = outcome.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "Your account could not be created. Please try again.";
+        }
+        finally
+        {
+            isSubmitting = false;
+            // Never leave a chosen password sitting in component state.
+            password = string.Empty;
+            confirmPassword = string.Empty;
+        }
+    }
+}

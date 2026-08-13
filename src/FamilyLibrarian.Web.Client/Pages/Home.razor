@@ -2,10 +2,23 @@
 
 <PageTitle>Family Librarian</PageTitle>
 
-<MudStack Spacing="3" Class="mx-auto" Style="max-width: 48rem;">
+<MudStack Spacing="3">
     <MudText Typo="Typo.h3">Your family library, thoughtfully organized.</MudText>
-    <MudText Typo="Typo.body1">
-        Start by finding a book. Requests and family accounts will follow once the catalog flow is proven.
-    </MudText>
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="search">Find a book</MudButton>
+    <AuthorizeView>
+        <Authorized>
+            <MudText Typo="Typo.body1">
+                Find a book and ask the family librarian for it, then follow it in My requests.
+            </MudText>
+            <MudStack Row="true" Spacing="2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="search">Find a book</MudButton>
+                <MudButton Variant="Variant.Outlined" Href="requests">My requests</MudButton>
+            </MudStack>
+        </Authorized>
+        <NotAuthorized>
+            <MudText Typo="Typo.body1">
+                Sign in to search the catalog and ask the family librarian for a book.
+            </MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="login">Sign in</MudButton>
+        </NotAuthorized>
+    </AuthorizeView>
 </MudStack>

@@ -71,7 +71,13 @@
       "platform": "netCore",
       "netCore": {
         "appProject": "${workspaceFolder}/src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj",
-        "justMyCode": true
+        "justMyCode": true,
+        // Required, not optional. The Containers extension only skips its
+        // acquire-and-copy path when this is set: with it unset it downloads
+        // vsdbg to the host, probes the container, and prompts to copy it in —
+        // which is the multi-minute step. Set, it uses this path directly.
+        // The Dockerfile's `debug` stage puts the debugger exactly here.
+        "debuggerPath": "/remote_debugger/vsdbg"
       }
     },
     {
@@ -88,7 +94,9 @@
       "platform": "netCore",
       "netCore": {
         "appProject": "${workspaceFolder}/src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj",
-        "justMyCode": true
+        "justMyCode": true,
+        // See the note on the reuse configuration above.
+        "debuggerPath": "/remote_debugger/vsdbg"
       }
     },
     {
