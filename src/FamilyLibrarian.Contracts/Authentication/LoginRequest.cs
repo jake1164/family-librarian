@@ -9,7 +9,7 @@ public sealed class LoginRequest
     public string Email { get; set; } = string.Empty;
 
     [Required]
-    [StringLength(128, MinimumLength = 12)]
+    [StringLength(128, MinimumLength = 8)]
     public string Password { get; set; } = string.Empty;
 
     public bool RememberMe { get; set; }

@@ -203,7 +203,7 @@ static async Task<IResult> LoginAsync(
     UserManager<AppUser> userManager,
     SignInManager<AppUser> signInManager)
 {
-    if (!new EmailAddressAttribute().IsValid(request.Email) || request.Password.Length < 12)
+    if (!new EmailAddressAttribute().IsValid(request.Email) || request.Password.Length < 8)
     {
         return Results.ValidationProblem(new Dictionary<string, string[]>
         {

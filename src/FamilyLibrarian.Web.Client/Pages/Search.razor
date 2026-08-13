@@ -1,6 +1,7 @@
 @page "/search"
 @attribute [Authorize]
 @inject CatalogApiClient Catalog
+@inject CatalogSearchState SearchState
 @inject NavigationManager Navigation
 
 <PageTitle>Search · Family Librarian</PageTitle>
@@ -89,6 +90,14 @@
     private string? errorMessage;
     private IReadOnlyList<string> unavailableProviders = [];
 
+    protected override void OnInitialized()
+    {
+        searchText = SearchState.SearchText;
+        results = SearchState.Results;
+        unavailableProviders = SearchState.UnavailableProviders;
+        hasSearched = SearchState.HasSearched;
+    }
+
     private async Task SearchAsync()
     {
         var query = searchText.Trim();
@@ -122,6 +131,11 @@
         {
             isSearching = false;
         }
+
+        SearchState.SearchText = searchText;
+        SearchState.Results = results;
+        SearchState.UnavailableProviders = unavailableProviders;
+        SearchState.HasSearched = hasSearched;
     }
 
     private void OpenDetails(CatalogBookCandidateResponse result) =>

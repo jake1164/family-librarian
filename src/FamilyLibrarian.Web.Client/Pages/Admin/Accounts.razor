@@ -1,6 +1,8 @@
 @page "/admin/accounts"
 @attribute [Authorize(Roles = "Admin")]
 @inject AccountsApiClient AccountsApi
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
 
 @* The role attribute is UX only. Every endpoint behind this page independently
    requires the Admin policy and an anti-forgery token. *@
@@ -52,7 +54,11 @@
                                   ReadOnly="true"
                                   Variant="Variant.Outlined"
                                   Class="mt-2"
-                                  Label="Invitation link" />
+                                  Label="Invitation link"
+                                  Adornment="Adornment.End"
+                                  AdornmentIcon="@Icons.Material.Filled.ContentCopy"
+                                  AdornmentAriaLabel="Copy invitation link"
+                                  OnAdornmentClick="() => CopyInviteLinkAsync(newInvitation.RedeemUrl)" />
                 </MudAlert>
             }
         </MudStack>
@@ -87,6 +93,28 @@
                                 ? $"Last signed in {seen.ToLocalTime():g}"
                                 : "Has never signed in")
                         </MudText>
+
+                        @if (resettingAccountId == account.Id)
+                        {
+                            <MudDivider Class="my-2" />
+                            <MudTextField @bind-Value="resetPassword"
+                                          Label="New password"
+                                          Variant="Variant.Outlined"
+                                          InputType="InputType.Password"
+                                          Disabled="@isBusy" />
+                            <MudTextField @bind-Value="resetConfirmPassword"
+                                          Label="Confirm new password"
+                                          Variant="Variant.Outlined"
+                                          InputType="InputType.Password"
+                                          Disabled="@isBusy" />
+                            <MudText Typo="Typo.caption">
+                                At least 8 characters.
+                            </MudText>
+                            @if (!string.IsNullOrWhiteSpace(resetErrorMessage))
+                            {
+                                <MudAlert Severity="Severity.Error" Dense="true">@resetErrorMessage</MudAlert>
+                            }
+                        }
                     </MudStack>
                 </MudCardContent>
                 <MudCardActions>
@@ -109,6 +137,25 @@
                                OnClick="() => SetAdminAsync(account, !account.IsAdmin)">
                         @(account.IsAdmin ? "Remove administrator" : "Make administrator")
                     </MudButton>
+
+                    @if (resettingAccountId == account.Id)
+                    {
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" Disabled="@isBusy"
+                                   OnClick="() => ConfirmResetPasswordAsync(account)">
+                            Save password
+                        </MudButton>
+                        <MudButton Variant="Variant.Text" Disabled="@isBusy"
+                                   OnClick="CancelResetPassword">
+                            Cancel
+                        </MudButton>
+                    }
+                    else
+                    {
+                        <MudButton Variant="Variant.Text" Disabled="@isBusy"
+                                   OnClick="() => StartResetPassword(account)">
+                            Reset password
+                        </MudButton>
+                    }
                 </MudCardActions>
             </MudCard>
         }
@@ -157,6 +204,10 @@
     private bool isLoading = true;
     private bool isBusy;
     private string? errorMessage;
+    private Guid? resettingAccountId;
+    private string resetPassword = string.Empty;
+    private string resetConfirmPassword = string.Empty;
+    private string? resetErrorMessage;
 
     private IReadOnlyList<InvitationResponse> Pending =>
         invitations.Where(invitation => invitation.IsOutstanding).ToArray();
@@ -235,11 +286,12 @@
         await RunAsync(async () =>
         {
             var outcome = await AccountsApi.CreateInvitationAsync(inviteEmail.Trim(), inviteAsAdmin);
-            if (outcome.Succeeded)
+            if (outcome is { Succeeded: true, Invitation: { } invitation })
             {
-                newInvitation = outcome.Invitation;
+                newInvitation = invitation;
                 inviteEmail = string.Empty;
                 inviteAsAdmin = false;
+                await CopyInviteLinkAsync(invitation.RedeemUrl);
                 return null;
             }
 
@@ -256,6 +308,59 @@
     private Task SetAdminAsync(FamilyAccountResponse account, bool isAdmin) =>
         RunAsync(async () => (await AccountsApi.SetAdminAsync(account.Id, isAdmin)).Error);
 
+    private void StartResetPassword(FamilyAccountResponse account)
+    {
+        resettingAccountId = account.Id;
+        resetPassword = string.Empty;
+        resetConfirmPassword = string.Empty;
+        resetErrorMessage = null;
+    }
+
+    private void CancelResetPassword()
+    {
+        resettingAccountId = null;
+        resetPassword = string.Empty;
+        resetConfirmPassword = string.Empty;
+        resetErrorMessage = null;
+    }
+
+    private async Task ConfirmResetPasswordAsync(FamilyAccountResponse account)
+    {
+        if (!string.Equals(resetPassword, resetConfirmPassword, StringComparison.Ordinal))
+        {
+            resetErrorMessage = "Those passwords do not match.";
+            return;
+        }
+
+        resetErrorMessage = null;
+        isBusy = true;
+
+        try
+        {
+            var outcome = await AccountsApi.ResetPasswordAsync(account.Id, resetPassword);
+            if (outcome.Succeeded)
+            {
+                resettingAccountId = null;
+                Snackbar.Add($"Password reset for {account.Email}.", Severity.Success);
+            }
+            else
+            {
+                resetErrorMessage = outcome.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            resetErrorMessage = "That change could not be saved. Please try again.";
+        }
+        finally
+        {
+            isBusy = false;
+            // Never leave a chosen password sitting in component state.
+            resetPassword = string.Empty;
+            resetConfirmPassword = string.Empty;
+        }
+    }
+
     private Task RevokeAsync(InvitationResponse invitation) =>
         RunAsync(async () => (await AccountsApi.RevokeInvitationAsync(invitation.Id)).Error);
 
@@ -263,16 +368,23 @@
         RunAsync(async () =>
         {
             var outcome = await AccountsApi.RegenerateInvitationAsync(invitation.Id);
-            if (!outcome.Succeeded)
+            if (outcome is not { Succeeded: true, Invitation: { } regenerated })
             {
                 return outcome.Error;
             }
 
             // Shown in the same one-time panel as a brand new invitation, because
             // it is exactly that: a fresh token that replaces the old one.
-            newInvitation = outcome.Invitation;
+            newInvitation = regenerated;
+            await CopyInviteLinkAsync(regenerated.RedeemUrl);
             return null;
         });
+
+    private async Task CopyInviteLinkAsync(string url)
+    {
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", url);
+        Snackbar.Add("Invitation link copied to clipboard.", Severity.Success);
+    }
 
     /// <summary>Runs an action, then reloads so the list reflects what the host now holds.</summary>
     private async Task RunAsync(Func<Task<string?>> action)

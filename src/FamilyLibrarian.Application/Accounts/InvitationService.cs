@@ -24,7 +24,7 @@ public sealed class InvitationService(
     IClock clock,
     InvitationPolicy policy)
 {
-    public const int MinimumPasswordLength = 12;
+    public const int MinimumPasswordLength = 8;
 
     /// <summary>How long a new invitation stays usable.</summary>
     public TimeSpan Lifetime => policy.Lifetime;

@@ -23,6 +23,7 @@ builder.Services.AddScoped(sp => new HttpClient
 builder.Services.AddScoped<AntiforgeryTokenProvider>();
 builder.Services.AddScoped<AccountsApiClient>();
 builder.Services.AddScoped<CatalogApiClient>();
+builder.Services.AddScoped<CatalogSearchState>();
 builder.Services.AddScoped<MetadataIntegrationsApiClient>();
 builder.Services.AddScoped<RequestsApiClient>();
 builder.Services.AddScoped<AdminRequestsApiClient>();
