@@ -9,6 +9,12 @@
 
 Build vertical slices that are useful before automated acquisition exists.
 
+The official product is legal-first. A bundled provider is optional, and the
+default installation must be useful without a third-party provider ecosystem.
+Keep metadata, ownership, availability, commercial store offers, direct legal
+acquisition, library storage, and delivery as separate capabilities. Provider
+enablement/configuration and provider preference are also separate concerns.
+
 Avoid starting with:
 
 - acquisition automation;
@@ -194,12 +200,22 @@ tests/
 - local Identity
 - initial admin bootstrap
 - User/Admin roles
-- generic OIDC configuration
-- Authentik documentation
+- provider-neutral OIDC operational design and configuration validation
+- Authentik documentation as a tested target, not a default service
+- test-host identity injection so ordinary automated tests do not contact an IdP
+
+OIDC activation follows the local request workflow rather than blocking the
+foundation. When it is implemented, each development, staging, and production
+environment gets a distinct client registration, secret, and callback URI. A
+shared Authentik server is allowed; a shared client registration is not. Local
+Identity stays available as the administrator recovery path, while the OIDC
+integration remains provider-neutral.
 
 Definition of done:
 
-A fresh Docker installation can create/log into an admin account without any external identity provider.
+A fresh Docker installation can create/log into an admin account without any
+external identity provider, and the normal test suite needs neither Authentik nor
+any network OIDC service.
 
 ---
 
@@ -283,9 +299,9 @@ You do not have books 1-4 in your history.
 Definition of done:
 
 Family can replace email requests with the web app. Creating a request records
-intent; policy can immediately fulfill an owned/available format, queue approval,
-or retain it while waiting for availability without changing the user-facing
-"Get Ebook" / "Get Audiobook" action.
+intent; it does not require a provider decision or create an acquisition job.
+Later policy may recommend an owned/available option without changing the
+user-facing "Get Ebook" / "Get Audiobook" action.
 
 ---
 
@@ -354,6 +370,34 @@ Rules:
 Definition of done:
 
 Every uploaded/acquired file travels through the same enforced security pipeline.
+
+---
+
+## 7.5 Phase 5.5 — Provider Options and Policy
+
+Implement after the manual pipeline is trustworthy:
+
+- generic provider identity, capabilities, enable/disable, scoped configuration,
+  redacted health, and audit;
+- `FulfillmentOption` search enrichment that distinguishes owned copies,
+  library/subscription availability, store offers, external actions, and direct
+  legal acquisition;
+- separately configured availability, store-offer, free-content, owned-library,
+  and delivery capabilities;
+- an explainable initial policy profile with per-user/media-type ordering of
+  permitted providers (`Prefer`, `Deprioritize`, `Skip`); and
+- legal bundled providers incrementally, only where the service interface and
+  terms support the advertised action.
+
+Do not build a generic rules language, automatic purchasing/borrowing, or an
+official marketplace in this phase. A store offer is not an acquisition and an
+availability result is not a file.
+
+Definition of done:
+
+One Work/format can show owned state and multiple permitted ways to obtain it;
+the selected recommendation is explainable, providers remain independently
+disableable, and no policy performs a financial or borrowing action silently.
 
 ---
 
@@ -511,6 +555,19 @@ Implement:
 - generic private-egress policy and health gate;
 - fail-closed behavior for private-required providers;
 - scoped service authentication.
+
+External providers run out of process and receive only scoped credentials,
+network access, and temporary staging access. They never receive the application
+database, unrelated provider secrets, trusted library filesystem, or Docker
+socket. The protocol is language-neutral and versioned from its first release;
+it supports capability-specific search/availability, asynchronous jobs,
+cancellation, and controlled staged-artifact return.
+
+Provider repositories are a later catalog specification, not a prerequisite for
+this milestone. A static signed catalog may advertise provider metadata,
+source/license, capabilities, and immutable OCI image digests, but the operator
+installs providers explicitly. Do not add an official marketplace, automatic
+container installation/updates, or a Docker-socket mount to the main app.
 
 Family Librarian should not require changes to its security/delivery workflow.
 

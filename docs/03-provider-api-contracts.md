@@ -15,6 +15,9 @@ The initial contract families are:
 
 ```text
 IBookMetadataProvider
+IAvailabilityProvider
+IStoreOfferProvider
+IOwnedLibraryProvider
 IAcquisitionProvider
 IMalwareScanner
 INotificationProvider
@@ -36,10 +39,58 @@ Not every contract must support third-party dynamic loading in V1. The important
 7. Contracts should be versioned.
 8. HTTP-based providers should be language-agnostic.
 9. External providers should be independently containerizable where practical.
+10. Bundled providers are individually enableable; bundling is not a requirement
+    to contact a provider.
+11. Provider enablement, authorization to use a provider, and policy preference
+    are separate decisions.
+12. A store offer, availability/borrow action, owned copy, and staged artifact
+    are distinct outcomes.
 
 ---
 
-## 3. Metadata Provider
+## 3. Capability model and normalized options
+
+A provider declares one or more capabilities instead of being forced into a
+single acquisition-provider type:
+
+```text
+Metadata
+Availability
+StoreOffer
+FreeContent / DirectAcquisition
+Acquisition
+OwnedLibrary
+LibraryBackend
+Delivery
+```
+
+Examples: a library integration may offer availability and an external borrow
+action without yielding a file; Audiobookshelf may report owned content and act
+as a library/delivery backend; a public-domain provider may expose metadata and
+direct acquisition. The UI offers only actions supported by the capability.
+
+The unified search read model uses a neutral `FulfillmentOption` for results
+from all of these capabilities. It carries provider/result identity, media type,
+edition/format/language when known, ownership or availability state, cost and
+currency, DRM/license facts when reported, acquisition method, external action
+URI, and opaque provider data. Its acquisition methods include
+`DirectDownload`, `Borrow`, `Purchase`, `ExternalAction`, `ProviderManaged`,
+`ManualImport`, and `OwnedImport`.
+
+`FulfillmentOption` must not be named `AcquisitionCandidate`: the latter remains
+the job-scoped record representing a concrete artifact candidate after an
+`AcquisitionJob` begins. This prevents a purchase link or a library hold from
+being mistaken for a file the application controls.
+
+Provider configuration defines whether and how a provider may run: enabled
+state, allowed manual/automatic use, available users/roles, scoped credentials,
+rate limits, and deployment-controlled network route. Policy later ranks only
+permitted options. It may recommend an option but cannot silently purchase,
+borrow, or download without a separately authorized supported action.
+
+---
+
+## 4. Metadata Provider
 
 Conceptual interface:
 
@@ -118,7 +169,7 @@ abridged versus unabridged recordings.
 
 ---
 
-## 4. Acquisition Provider
+## 5. Acquisition Provider
 
 Long-term recommendation: external HTTP provider protocol.
 
@@ -297,7 +348,7 @@ for unreviewed sources.
 
 ---
 
-## 5. Acquisition Provider Isolation
+## 6. Acquisition Provider Isolation
 
 Preferred long-term deployment:
 
@@ -322,14 +373,15 @@ A trusted built-in Manual Provider may exist in the acquisition engine.
 For an external component that actually contacts private services, prefer
 putting the entire component behind the private-egress gateway rather than
 relying only on its application-level proxy setting. A Docker/Gluetun reference
-deployment can use `network_mode: "service:gluetun"` for a private provider,
-Prowlarr, qBittorrent, SABnzbd, or NZBGet. The gateway's firewall/kill switch
-then governs the component's outbound traffic.
+deployment can use `network_mode: "service:gluetun"` for an isolated private
+provider. The gateway's firewall/kill switch then governs that component's
+outbound traffic.
 
 Family Librarian may call those components over internal APIs, but that does not
-protect the components' own outbound traffic: Prowlarr's indexer requests and
-qBittorrent's peer/download requests must each be routed by the gateway. The
-main application retains normal LAN/Internet networking and must not need
+protect the components' own outbound traffic: each provider's complete
+interaction, including authentication, discovery, artifact resolution, and
+transfer, must be routed by the gateway when required. The main application
+retains normal LAN/Internet networking and must not need
 `NET_ADMIN`, `NET_RAW`, privileged mode, or tunnel-management responsibility.
 
 The same boundary supports a future out-of-process model:
@@ -341,9 +393,26 @@ Family Librarian --> provider API --> private provider container
 
 That is a future isolation option, not a V1 requirement solely for VPN support.
 
+External providers receive only the minimum scoped configuration, credentials,
+network route, and temporary staging access they require. They never receive the
+Family Librarian database, user-account data, OIDC credentials, unrelated
+provider credentials, a final-library filesystem path, or Docker-socket access.
+The provider returns an artifact to controlled staging; it never selects the
+trusted storage path. Trusted bundled .NET providers may use in-process
+dependency isolation where appropriate, but that is not a security sandbox and
+must not be offered for arbitrary community code.
+
+Provider repositories are catalogs, not a requirement to run a marketplace or a
+binary registry. A repository may initially be a static signed JSON document
+listing provider identity, protocol version, capabilities, source/license,
+publisher/trust metadata, and an immutable OCI image digest. Multiple catalogs
+may be configured, but installation is an explicit administrator deployment
+step. Family Librarian must not mount or control the Docker socket merely to
+install or update external providers.
+
 ---
 
-## 6. Malware Scanner Provider
+## 7. Malware Scanner Provider
 
 Conceptual contract:
 
@@ -416,7 +485,7 @@ security:
 
 ---
 
-## 7. Format Validator Contract
+## 8. Format Validator Contract
 
 Separate malware detection from format validation.
 
@@ -456,7 +525,7 @@ Potential checks:
 
 ---
 
-## 8. Notification Provider
+## 9. Notification Provider
 
 Conceptual:
 
@@ -502,7 +571,7 @@ Telegram
 
 ---
 
-## 9. Actionable Notification Security
+## 10. Actionable Notification Security
 
 Never embed permanent service credentials in a notification.
 
@@ -554,7 +623,7 @@ Examples:
 
 ---
 
-## 10. Delivery Provider
+## 11. Delivery Provider
 
 Use one generic delivery contract.
 
@@ -596,7 +665,7 @@ DeepLink
 
 ---
 
-## 11. Audiobookshelf Provider
+## 12. Audiobookshelf Provider
 
 Implementation responsibilities:
 
@@ -620,7 +689,7 @@ media-library provider later.
 
 ---
 
-## 12. E-Reader Device Providers
+## 13. E-Reader Device Providers
 
 Possible providers:
 
@@ -648,19 +717,28 @@ The provider decides the mechanism.
 
 ---
 
-## 13. Authentication Provider Boundary
+## 14. Authentication Provider Boundary
 
 Authentication differs slightly from the other provider types because ASP.NET Core middleware will own much of it.
 
-Required application modes:
+Production application modes:
 
 ```text
 Local
-OIDC
 Local + OIDC
 ```
 
-OIDC configuration should be generic.
+`Local` remains available in `Local + OIDC` as the administrator recovery path.
+There is intentionally no ordinary deployment setting for OIDC-only or an
+authentication bypass. Test hosts may register a deterministic test scheme that
+issues only fixture User/Admin identities; that scheme is test-only and must not
+be selectable from normal application configuration.
+
+OIDC configuration is generic and uses a confidential authorization-code client
+with PKCE plus the host's cookie session. Authentik is a recommended/tested
+target, but it is not a dependency and no Authentik-specific group or role is
+stored in the domain. A configured issuer's validated claims/groups map through
+an explicit allowlist to Family Librarian's own `User` and `Admin` roles.
 
 Authentik gets:
 
@@ -670,9 +748,25 @@ Authentik gets:
 
 It should not receive bespoke business logic unless unavoidable.
 
+Every development, staging, and production environment uses a separate OIDC
+registration, client ID/secret, and redirect/sign-out URI. One IdP installation
+may host all of those registrations. The configured canonical issuer must be
+reachable both by the browser and by the Family Librarian process/container: the
+browser follows authorization redirects and returns to the public callback URI,
+while the host uses discovery, token, and signing-key/JWKS endpoints. Do not
+paper over this distinction with different issuer values; use safe DNS/reverse
+proxy routing instead.
+
+Client secrets belong only in the environment's secret provider (or a local
+developer secret mechanism). They are never checked in, returned to the browser,
+or logged. Normal automated tests use injected identities and never require an
+Authentik instance. An opt-in integration suite may run a disposable,
+standards-compliant OIDC provider to validate discovery, callback, external-login
+linking, and claims mapping; Authentik in Docker is an acceptable test target.
+
 ---
 
-## 14. Service-to-Service Authentication
+## 15. Service-to-Service Authentication
 
 For Family Librarian-owned services:
 
@@ -700,7 +794,7 @@ delivery.report-status
 
 ---
 
-## 15. Versioning
+## 16. Versioning
 
 HTTP plugin protocol:
 
@@ -720,7 +814,7 @@ Provider manifest should advertise protocol support.
 
 ---
 
-## 16. Provider Configuration UX
+## 17. Provider Configuration UX
 
 Admin Integrations screen should show:
 
@@ -798,7 +892,7 @@ especially for Docker deployments.
 
 ---
 
-## 17. V1 Provider Implementation Targets
+## 18. V1 Provider Implementation Targets
 
 ### Required
 
@@ -826,7 +920,7 @@ Delivery:
 ### Strong Candidate for Early Addition
 
 ```text
-OIDC
+Optional generic OIDC (after the local request loop)
 ntfy
 Hardcover metadata
 ```
@@ -840,7 +934,7 @@ WebUSB
 
 ---
 
-## 18. Testing Strategy for Providers
+## 19. Testing Strategy for Providers
 
 Every contract should ship with a provider conformance test suite.
 

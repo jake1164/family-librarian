@@ -69,6 +69,33 @@ is no self-service recovery: the bootstrap will not re-run. Another administrato
 can reset it from the Accounts page, which is a good reason to invite a second
 one.
 
+## OIDC and Authentik
+
+The default development and self-hosted stack uses local Identity only; it does
+not require Authentik or any other identity provider. Generic OIDC is a planned,
+optional integration. Authentik is a documented/tested target, not a runtime
+dependency—the same design supports any standards-compliant OIDC provider.
+
+When OIDC is enabled, it supplements rather than replaces local sign-in so an
+IdP outage or configuration error cannot remove the administrator's recovery
+path. Family Librarian maps validated claims from the configured issuer to its
+own `User` and `Admin` roles; it does not put Authentik-specific roles into the
+domain model.
+
+Use a separate OIDC client registration, ID/secret, and redirect/sign-out URI for
+development, staging, and production. These registrations may be on one shared
+Authentik server. The public callback URI must be browser-reachable, and the
+configured issuer's discovery, token, and signing-key endpoints must also be
+reachable by the Family Librarian host/container. Keep client secrets in the
+environment's secret store or local developer-secret mechanism, never in the
+repository or browser configuration.
+
+Developers do not need their own Authentik installation. Local Identity is the
+normal path; OIDC work may use a shared development client or a disposable IdP.
+The ordinary automated test suite uses controlled test identities and must never
+depend on Authentik or a reachable OIDC service. A separate opt-in OIDC
+integration suite may use a disposable provider.
+
 ## Adding family members
 
 Go to **Accounts** (administrators only), enter an email address, and create an

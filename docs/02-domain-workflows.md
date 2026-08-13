@@ -275,6 +275,62 @@ IDs, ISBNs, and relevant audiobook identifiers). Title/author fuzzy matching is
 only a fallback because titles, translations, boxed sets, punctuation, editions,
 and abridged audio can be ambiguous.
 
+`WorkFormatAvailability` represents local family ownership only. It must not be
+overloaded with a public-library hold, a commercial price, or an external action.
+Those are provider results and may coexist with `NotOwned` or `Owned`.
+
+---
+
+### FulfillmentOption
+
+Represents a provider-supplied way to obtain, access, or act on one Work/format.
+It is an enriched read model and an audit/provenance record when a user or admin
+chooses it; it is not a request, ownership record, or artifact.
+
+```text
+ProviderId
+ProviderResultId
+WorkId / EditionId?
+MediaType
+OptionKind              Owned | Availability | StoreOffer | DirectAcquisition | ExternalAction
+AcquisitionMethod       Borrow | Purchase | DirectDownload | ManualImport | OwnedImport | ProviderManaged
+Format / Language / Quality?
+Availability / Cost / Currency?
+LicenseOrUsageStatus / DrmStatus?
+ExternalActionUri?
+ProviderData
+```
+
+Opaque provider data remains outside the domain's decision rules. The core uses
+only standardized facts needed for authorization, display, and policy. A store
+offer does not create an `AcquisitionJob`; a borrow/hold or external action may
+record user intent without claiming Family Librarian acquired a file.
+
+---
+
+### ProviderPolicyProfile
+
+Represents an explainable selection policy, not provider configuration. Provider
+configuration controls whether a provider can be used; a policy ranks options
+that are already permitted.
+
+The first policy model should be intentionally small:
+
+```text
+PolicyProfileId
+Scope                    SystemDefault | User
+MediaType?
+Ordered rules            Prefer | Deprioritize | Skip
+ProviderId or capability
+Manual/automatic permission
+```
+
+Initial profiles may be `Library First`, `Free First`, `Lowest Cost`, and
+`Manual Choice`. Each recommendation retains the matched rule/profile so an
+administrator or user can understand why it was selected. Role, author, series,
+title, price/wait, and time-based fallback rules remain later extensions rather
+than a generic rules language introduced before real options are available.
+
 ---
 
 ### AcquisitionJob

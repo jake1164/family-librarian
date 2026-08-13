@@ -134,8 +134,9 @@ Can additionally:
 #### Authentication
 
 - Local authentication must work out of the box.
-- Generic OIDC support must be available.
-- Authentik should be a documented and tested OIDC configuration.
+- Generic OIDC support is optional and follows the proven local request loop;
+  it must not block local development, self-hosting, or ordinary tests.
+- Authentik should be a documented and opt-in tested OIDC configuration.
 - Roles:
   - User
   - Admin
@@ -370,15 +371,21 @@ vpn-gateway
 
 Authentication must not require Authentik.
 
-Supported modes should conceptually include:
+Production modes are deliberately limited to:
 
 ```text
 Local
-OIDC
 Local + OIDC
 ```
 
-OIDC should be generic enough for:
+Local Identity remains enabled in both modes as the first-start and recovery
+path. Do not offer a deployable OIDC-only mode until a separately designed,
+tested recovery mechanism proves that an IdP outage or bad registration cannot
+permanently lock out the household administrator. A test-authentication scheme
+may exist only in the test host/development composition; it must not be enabled
+through ordinary deployment configuration or exposed by a production image.
+
+OIDC is provider-agnostic and should be generic enough for:
 
 - Authentik
 - Keycloak
@@ -386,7 +393,15 @@ OIDC should be generic enough for:
 - Okta
 - other standards-compliant providers
 
-Application authorization remains internal.
+Authentik is a recommended and tested target, not a dependency or source of
+bespoke domain behavior. Use the standard ASP.NET Core confidential OIDC code
+flow with PKCE, backed by the host's cookie session. The WebAssembly client does
+not receive an OIDC client secret or perform authorization decisions.
+
+Application authorization and role names remain internal. Map validated claims
+from the configured issuer to Family Librarian roles using an explicit
+allowlist; do not create Authentik-specific roles or grant administrative access
+merely because a provider emitted an unreviewed claim.
 
 External claims/groups may map to:
 
@@ -396,6 +411,35 @@ Admin
 ```
 
 Local administrator bootstrap must be available for first startup.
+
+### OIDC environment and operational contract
+
+Each development, staging, and production deployment should use a distinct OIDC
+client registration, client ID/secret, and redirect/sign-out callback URI. They
+may share one Authentik (or other) server, but must not share a registration:
+separate registrations prevent a development callback or secret rotation from
+changing production behavior.
+
+The configured issuer/authority must be the canonical issuer reachable by both
+the browser and the Family Librarian host/container. The browser needs the
+public application callback URI; the host/container must also be able to fetch
+OIDC discovery, token, and signing-key/JWKS endpoints. Split-horizon DNS or a
+reverse proxy is acceptable only when both views resolve the same issuer safely.
+
+Client secrets are deployment secrets. Keep them in an environment-specific
+secret store or development user-secret/.env mechanism, never in source,
+checked-in appsettings, browser configuration, logs, audit events, or API
+responses. Configure redirect and sign-out callback paths in the OIDC client
+registration as well as the application.
+
+Developers do not need a personal Authentik deployment: local Identity is enough
+for ordinary development. An OIDC contributor may use a shared development
+client, a disposable IdP, or the isolated OIDC test environment. The normal unit,
+application, and web/API test suite must inject controlled user/admin identities
+and must not require Authentik, a network IdP, or OIDC credentials. A separate,
+opt-in integration test may use a disposable standards-compliant provider
+(Authentik in Docker is an acceptable target) to exercise discovery, redirect,
+callback, external-login linking, and claim mapping.
 
 ---
 
@@ -510,11 +554,11 @@ or failed operation (for example, `WAITING_FOR_PRIVATE_EGRESS` or
 `PRIVATE_EGRESS_UNAVAILABLE`); it must not silently retry through normal
 Internet egress.
 
-The component that makes the external request owns its privacy boundary. For
-example, when Family Librarian calls Prowlarr over an internal API, Prowlarr's
-outbound indexer requests need private egress. When it calls qBittorrent over
-its API, qBittorrent's peer/download traffic needs private egress. Routing only
-the main application through a VPN does not protect those separate containers.
+The component that makes an external request owns its privacy boundary. When
+Family Librarian calls an isolated provider over an internal API, that provider's
+own authentication, discovery, artifact resolution, and transfer requests still
+need the required private egress. Routing only the main application through a
+VPN does not protect those separate containers.
 
 Preferred deployment examples are:
 
@@ -529,8 +573,8 @@ Private acquisition gateway
   private in-process provider --> HTTP or SOCKS5 gateway --> VPN --> Internet
 
 Private acquisition stack
-  Family Librarian --> internal Prowlarr/qBittorrent/SABnzbd APIs
-  Prowlarr/qBittorrent/SABnzbd/(private worker) --> VPN gateway --> Internet
+  Family Librarian --> isolated provider internal API
+  isolated provider --> VPN gateway --> Internet
 ```
 
 For Docker deployments, the last model commonly places the external acquisition
@@ -548,6 +592,36 @@ Family Librarian itself must not require `NET_ADMIN`, `NET_RAW`, privileged
 mode, or direct WireGuard/OpenVPN tunnel management. Future higher-risk or
 untrusted providers may run out of process behind the same gateway boundary;
 that is an available isolation direction, not a V1 VPN prerequisite.
+
+### 12.2 Provider, availability, and policy model
+
+Family Librarian is a legal-first discovery, ownership, acquisition, and
+delivery platform. A useful default installation must not depend on external
+community providers: metadata, manual import, legitimate free content,
+owned-library detection, and store/library discovery are all independent
+capabilities. Official providers remain individually enableable or disableable.
+
+The core distinguishes metadata, availability, store offers, direct legal
+acquisition, owned libraries, library backends, and delivery. A unified Work
+result combines the permitted outcomes as format-specific options so users can
+ask “How can I get this?” without needing separate local-library, store, or
+library-service searches. An offer or library availability is not an asset, and
+an owned asset is not necessarily delivered to a target.
+
+Provider configuration answers whether an installed capability may run and for
+whom; policy answers which permitted option is preferred for a user and media
+type. Start with explainable profiles and simple ordering only after multiple
+real options exist. More complex rules (price/wait limits, author/series/title
+overrides, or automatic actions) require separate evidence and authorization
+design. A recommendation never silently completes a purchase, borrow, or
+download.
+
+External providers use a versioned, language-neutral protocol and are isolated
+from the core database, unrelated credentials, final library storage, and Docker
+socket. Every artifact returns to Family Librarian-controlled staging before the
+security pipeline chooses its final placement. Provider repositories are future
+catalogs of provenance and immutable OCI image identities, not an initial
+marketplace or automatic container-management system.
 
 ---
 
