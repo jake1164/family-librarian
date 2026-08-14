@@ -5,11 +5,13 @@ using System.Threading.RateLimiting;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Contracts.Accounts;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
+using FamilyLibrarian.Contracts.Feedback;
 using FamilyLibrarian.Contracts.Integrations;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain;
@@ -150,6 +152,17 @@ adminRequests.MapGet("/", ListAdminRequestsAsync);
 adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
 adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
 adminRequests.MapPut("/{requestId:guid}/note", SetAdminRequestNoteAsync);
+
+// My Reading: a completion date and 1-5 star rating per Work, private to the
+// owner. Ownership is enforced inside UserWorkFeedbackService, same as Requests.
+var feedback = app.MapGroup("/api/v1/me/feedback")
+    .RequireAuthorization()
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+feedback.MapGet("/", ListMyFeedbackAsync);
+feedback.MapGet("/{workId:guid}", GetMyFeedbackAsync);
+feedback.MapPut("/{workId:guid}", SetMyFeedbackAsync);
+feedback.MapDelete("/{workId:guid}", RemoveMyFeedbackAsync);
 
 // Invitation redemption. Anonymous by necessity — the invitee has no account
 // yet — so it carries no anti-forgery requirement (there are no ambient
@@ -546,6 +559,76 @@ static async Task<IResult> ChangeBookRequestStatusAsync(
         })
     };
 }
+
+static async Task<IResult> ListMyFeedbackAsync(
+    UserWorkFeedbackService feedback,
+    CancellationToken cancellationToken)
+{
+    var mine = await feedback.ListMineAsync(cancellationToken);
+    return Results.Ok(new WorkFeedbackListResponse(mine.Select(ToFeedbackResponse).ToArray()));
+}
+
+static async Task<IResult> GetMyFeedbackAsync(
+    Guid workId,
+    UserWorkFeedbackService feedback,
+    CancellationToken cancellationToken)
+{
+    var mine = await feedback.FindMineAsync(workId, cancellationToken);
+    return mine is null ? Results.NotFound() : Results.Ok(ToFeedbackResponse(mine));
+}
+
+static async Task<IResult> SetMyFeedbackAsync(
+    Guid workId,
+    SetWorkFeedbackRequest request,
+    UserWorkFeedbackService feedback,
+    CancellationToken cancellationToken)
+{
+    var result = await feedback.SetFeedbackAsync(
+        workId,
+        request.CompletedOn,
+        request.Rating,
+        request.ExpectedVersion,
+        cancellationToken);
+
+    return result.Outcome switch
+    {
+        SetFeedbackOutcome.Success => Results.Ok(ToFeedbackResponse(result.Feedback!)),
+        SetFeedbackOutcome.WorkNotFound => Results.NotFound(),
+        SetFeedbackOutcome.Unauthenticated => Results.Unauthorized(),
+        SetFeedbackOutcome.Conflict => Results.Conflict(new { message = result.Error }),
+        _ => Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["rating"] = [result.Error ?? "That rating could not be saved."]
+        })
+    };
+}
+
+static async Task<IResult> RemoveMyFeedbackAsync(
+    Guid workId,
+    RemoveWorkFeedbackRequest request,
+    UserWorkFeedbackService feedback,
+    CancellationToken cancellationToken)
+{
+    var result = await feedback.RemoveFeedbackAsync(workId, request.ExpectedVersion, cancellationToken);
+
+    return result.Outcome switch
+    {
+        RemoveFeedbackOutcome.Success => Results.NoContent(),
+        RemoveFeedbackOutcome.NotFound => Results.NotFound(),
+        RemoveFeedbackOutcome.Unauthenticated => Results.Unauthorized(),
+        RemoveFeedbackOutcome.Conflict => Results.Conflict(new { message = result.Error }),
+        _ => Results.Problem(statusCode: StatusCodes.Status500InternalServerError)
+    };
+}
+
+static WorkFeedbackResponse ToFeedbackResponse(UserWorkFeedbackView feedback) => new(
+    feedback.WorkId,
+    feedback.WorkTitle,
+    feedback.Authors,
+    feedback.CoverUrl,
+    feedback.CompletedOn,
+    feedback.Rating,
+    feedback.Version);
 
 static async Task<IResult> ListAdminRequestsAsync(
     string? status,

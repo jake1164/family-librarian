@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain;
@@ -105,6 +106,9 @@ public static class DependencyInjection
 
         services.AddScoped<IRequestRepository, RequestRepository>();
         services.AddScoped<BookRequestService>();
+
+        services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
+        services.AddScoped<UserWorkFeedbackService>();
 
         // Bound and validated at startup, so a bad LifetimeDays fails the deploy
         // rather than silently issuing invitations that never expire or expire

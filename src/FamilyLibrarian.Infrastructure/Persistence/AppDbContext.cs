@@ -2,6 +2,7 @@ using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Feedback;
 using FamilyLibrarian.Domain.Integrations;
 using FamilyLibrarian.Domain.Requests;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
@@ -43,6 +44,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<RequestStatusHistory> RequestStatusHistory => Set<RequestStatusHistory>();
 
+    public DbSet<UserWorkFeedback> UserWorkFeedback => Set<UserWorkFeedback>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         builder.HasDefaultSchema("identity");
@@ -72,8 +75,39 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
         ConfigureCatalog(builder);
         ConfigureRequests(builder);
+        ConfigureFeedback(builder);
         ConfigureIntegrations(builder);
         ConfigureAudit(builder);
+    }
+
+    private static void ConfigureFeedback(ModelBuilder builder)
+    {
+        builder.Entity<UserWorkFeedback>(entity =>
+        {
+            entity.ToTable("user_work_feedback", "feedback");
+            entity.HasKey(feedback => feedback.Id);
+            entity.Property(feedback => feedback.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(feedback => feedback.UserId).HasColumnName("user_id");
+            entity.Property(feedback => feedback.WorkId).HasColumnName("work_id");
+            entity.Property(feedback => feedback.CompletedOn).HasColumnName("completed_on");
+            entity.Property(feedback => feedback.Rating).HasColumnName("rating");
+            ConfigureTimestamps(entity);
+
+            // One feedback row per (user, Work); the read pattern (mine, or
+            // mine-for-this-Work) never needs anything looser.
+            entity.HasIndex(feedback => new { feedback.UserId, feedback.WorkId }).IsUnique();
+
+            // Restrict, matching book_requests: a person's reading history
+            // outlives catalog corrections and account deactivation.
+            entity.HasOne<AppUser>()
+                .WithMany()
+                .HasForeignKey(feedback => feedback.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Work>()
+                .WithMany()
+                .HasForeignKey(feedback => feedback.WorkId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
     }
 
     private static void ConfigureInvitations(ModelBuilder builder)
