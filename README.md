@@ -145,12 +145,11 @@ only runs while no administrator exists, so that would leave no way back in.
 Search the catalog, open a book, save it to the family catalog, then request it as
 an ebook, an audiobook, or both, and follow it under **My requests** — where you
 can also cancel a request or ask again. Requests are private to the account that
-made them. The librarian-side queue for acting on those requests is the next
-milestone, so a submitted request currently stays "waiting for the librarian"
-until then.
+made them.
 
-Administrators also get **Integrations**, for enabling metadata providers and
-storing a Google Books key.
+Administrators also get **Queue**, to review family requests and act on them
+(add a note, mark needs-review/unavailable, or cancel), and **Integrations**, for
+enabling metadata providers and storing a Google Books key.
 
 In VS Code, the Run and Debug selector provides the same two Compose-backed
 container modes:
