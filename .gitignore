@@ -11,6 +11,7 @@ TestResults/
 .ai_docs
 .claude/
 .codex/
+.playwright-mcp/
 
 # Syncthing local metadata
 .stfolder/
