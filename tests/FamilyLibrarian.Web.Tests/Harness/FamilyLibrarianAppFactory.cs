@@ -31,7 +31,9 @@ internal sealed class FamilyLibrarianAppFactory(
     /// startup fails with "Connection string 'FamilyLibrarian' is required".
     /// <c>WebApplication.CreateBuilder</c> reads environment variables during
     /// <c>CreateBuilder</c>, which is early enough. A double underscore is the
-    /// configuration section separator.
+    /// configuration section separator — except <c>Admin_Email</c>/<c>Admin_Password</c>,
+    /// which <c>IdentityInitializer</c> reads as flat keys, not through a nested
+    /// options class, so a single underscore is enough.
     /// </remarks>
     private Dictionary<string, string?> HostVariables() => new(StringComparer.Ordinal)
     {
@@ -40,8 +42,8 @@ internal sealed class FamilyLibrarianAppFactory(
         ["ASPNETCORE_ENVIRONMENT"] = "Testing",
         ["ConnectionStrings__FamilyLibrarian"] = connectionString,
         ["Authentication__EnableLocal"] = "true",
-        ["BootstrapAdmin__Email"] = AdminEmail,
-        ["BootstrapAdmin__Password"] = AdminPassword,
+        ["Admin_Email"] = AdminEmail,
+        ["Admin_Password"] = AdminPassword,
         // Every test reaches the host from the same address, so they share one
         // rate-limit bucket. Raised here so the suite exercises the invitation
         // rules rather than the limiter; the limiter's own ceiling is a

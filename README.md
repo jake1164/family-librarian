@@ -31,30 +31,28 @@ the first successful start.
 
 ## Signing in
 
-There is no sign-up page. The first account is the bootstrap administrator, and
-its credentials are the two values you put in `.env`; everyone else joins by
-invitation from an administrator:
+There is no sign-up page. The first account is created from the two values you
+put in `.env`; everyone else joins by invitation from an administrator:
 
 ```bash
-BootstrapAdmin__Email=you@example.test
-BootstrapAdmin__Password=Your-Local-Dev-Pass1!
+ADMIN_EMAIL=you@example.test
+ADMIN_PASSWORD=Your-Local-Dev-Pass1!
 ```
 
 Sign in at `http://localhost:8080/login` with exactly those values. The password
-policy requires at least 12 characters with a digit, a lowercase letter, an
-uppercase letter, and a symbol; five failed attempts lock the account for 15
-minutes.
+policy requires at least 8 characters; there is no digit/case/symbol requirement.
+Five failed attempts lock the account for 15 minutes.
 
-The bootstrap runs on every start but creates the account **only while no
-administrator exists**. So:
+This bootstrap check runs on every start but creates the account **only while
+no administrator exists**. So:
 
-- Adding or changing `BootstrapAdmin__*` after an admin already exists has no
+- Adding or changing `ADMIN_*` after an admin already exists has no
   effect — the existing account keeps its original password.
 - Leaving them blank on the very first start seeds the `User` and `Admin` roles
   but no account, leaving nothing to sign in with. Fill them in and restart; the
-  bootstrap will then create the account.
+  first-admin creation will then run.
 
-To check which account exists, or to confirm the bootstrap actually ran:
+To check which account exists, or to confirm it actually ran:
 
 ```bash
 docker exec family-librarian-postgres-1 \
@@ -62,7 +60,7 @@ docker exec family-librarian-postgres-1 \
 ```
 
 If that returns no rows, no account was created — check that `.env` has both
-`BootstrapAdmin__` values and restart the stack. To start over completely, use the
+`ADMIN_*` values and restart the stack. To start over completely, use the
 force-rebuild debug configuration below, which drops the database volume.
 
 If you lose the administrator password and no other administrator exists, there

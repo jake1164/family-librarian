@@ -47,8 +47,8 @@ services:
       # Creates the first administrator, and only when no admin exists yet.
       # Without these the app still starts and seeds the User/Admin roles, but no
       # account exists to sign in with, so the Admin pages stay unreachable.
-      BootstrapAdmin__Email: ${BootstrapAdmin__Email:-}
-      BootstrapAdmin__Password: ${BootstrapAdmin__Password:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # Invite-link lifetime and the anonymous redemption rate limit. Both are
       # optional; the application defaults apply when they are unset.
       Invitations__LifetimeDays: ${Invitations__LifetimeDays:-7}

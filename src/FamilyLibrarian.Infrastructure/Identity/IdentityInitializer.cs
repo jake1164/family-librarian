@@ -37,8 +37,8 @@ public static class IdentityInitializer
             }
         }
 
-        var bootstrapEmail = configuration["BootstrapAdmin:Email"];
-        var bootstrapPassword = configuration["BootstrapAdmin:Password"];
+        var bootstrapEmail = configuration["Admin_Email"];
+        var bootstrapPassword = configuration["Admin_Password"];
 
         if (string.IsNullOrWhiteSpace(bootstrapEmail) || string.IsNullOrWhiteSpace(bootstrapPassword))
         {
