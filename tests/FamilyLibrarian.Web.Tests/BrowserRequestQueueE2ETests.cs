@@ -78,14 +78,27 @@ public sealed class BrowserRequestQueueE2ETests
         await page.GetByLabel("Email", new() { Exact = true }).FillAsync(email);
         await page.GetByLabel("Password", new() { Exact = true }).FillAsync(password);
         await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+
+        // "Account menu" alone is not proof this sign-in took effect: the layout
+        // shows it for *any* authenticated identity, so a still-valid prior
+        // session (e.g. the admin's, earlier in this same test) already
+        // satisfies it even if this sign-in silently no-ops. A successful sign-in
+        // does a forceLoad navigation to "/", so waiting for that first is what
+        // actually proves the new identity replaced the old one.
+        await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/", new() { Timeout = 15_000 });
         await Assertions.Expect(page.GetByLabel("Account menu", new() { Exact = true })).ToBeVisibleAsync();
     }
 
     private static async Task SignOutAsync(IPage page)
     {
         await page.GetByLabel("Account menu", new() { Exact = true }).ClickAsync();
-        await page.GetByRole(AriaRole.Menuitem, new() { Name = "Sign out", Exact = true }).ClickAsync();
-        await Assertions.Expect(page.GetByRole(AriaRole.Link, new() { Name = "Sign in", Exact = true })).ToBeVisibleAsync();
+        // MudMenuItem renders as an unadorned <div>/<p> with no ARIA menuitem
+        // role, so the visible text is the only reliable locator.
+        await page.GetByText("Sign out", new() { Exact = true }).ClickAsync();
+        // The signed-out home page offers "Sign in" twice (the app bar and the
+        // anonymous hero CTA); the app bar link is the one that is always there.
+        await Assertions.Expect(page.GetByRole(AriaRole.Toolbar).GetByRole(AriaRole.Link, new() { Name = "Sign in", Exact = true }))
+            .ToBeVisibleAsync();
     }
 
     private static BrowserE2eSettings ReadSettings()

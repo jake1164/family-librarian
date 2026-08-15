@@ -382,8 +382,18 @@
 
     private async Task CopyInviteLinkAsync(string url)
     {
-        await JS.InvokeVoidAsync("navigator.clipboard.writeText", url);
-        Snackbar.Add("Invitation link copied to clipboard.", Severity.Success);
+        // The link itself is shown on screen regardless: clipboard access can be
+        // denied by browser permission policy, and that must never hide the one
+        // time this token is readable.
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", url);
+            Snackbar.Add("Invitation link copied to clipboard.", Severity.Success);
+        }
+        catch (JSException)
+        {
+            Snackbar.Add("Copy the invitation link below manually; clipboard access was denied.", Severity.Info);
+        }
     }
 
     /// <summary>Runs an action, then reloads so the list reflects what the host now holds.</summary>

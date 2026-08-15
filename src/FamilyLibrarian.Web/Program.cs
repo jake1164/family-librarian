@@ -605,7 +605,7 @@ static async Task<IResult> SetMyFeedbackAsync(
 
 static async Task<IResult> RemoveMyFeedbackAsync(
     Guid workId,
-    RemoveWorkFeedbackRequest request,
+    [FromBody] RemoveWorkFeedbackRequest request,
     UserWorkFeedbackService feedback,
     CancellationToken cancellationToken)
 {
