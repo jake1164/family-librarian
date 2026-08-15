@@ -20,7 +20,9 @@ public sealed record MetadataProviderStatus(
     DateTimeOffset? CredentialSetAtUtc,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
-    string? LastTestMessage)
+    string? LastTestMessage,
+    string? SetupInstructions,
+    IReadOnlyList<MetadataProviderSetupLink> SetupLinks)
 {
     /// <summary>
     /// True when the provider is switched on but still lacks the credential it

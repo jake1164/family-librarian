@@ -22,7 +22,11 @@ public sealed record MetadataProviderStatusResponse(
     DateTimeOffset? CredentialSetAtUtc,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
-    string? LastTestMessage);
+    string? LastTestMessage,
+    string? SetupInstructions,
+    IReadOnlyList<MetadataProviderSetupLinkResponse> SetupLinks);
+
+public sealed record MetadataProviderSetupLinkResponse(string Label, string Url);
 
 public sealed record MetadataProviderListResponse(
     IReadOnlyList<MetadataProviderStatusResponse> Providers);

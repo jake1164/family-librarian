@@ -67,6 +67,29 @@ else
                 {
                     <MudDivider Class="my-3" />
 
+                    @if (!string.IsNullOrWhiteSpace(provider.SetupInstructions) || provider.SetupLinks.Count > 0)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+                            <MudStack Spacing="1">
+                                @if (!string.IsNullOrWhiteSpace(provider.SetupInstructions))
+                                {
+                                    <MudText Typo="Typo.body2">@provider.SetupInstructions</MudText>
+                                }
+                                @if (provider.SetupLinks.Count > 0)
+                                {
+                                    <MudStack Row="true" Spacing="3" Wrap="Wrap.Wrap">
+                                        @foreach (var link in provider.SetupLinks)
+                                        {
+                                            <MudLink Href="@link.Url" Target="_blank" rel="noopener noreferrer">
+                                                @link.Label
+                                            </MudLink>
+                                        }
+                                    </MudStack>
+                                }
+                            </MudStack>
+                        </MudAlert>
+                    }
+
                     <MudText Typo="Typo.subtitle2">API key</MudText>
                     @if (provider.HasStoredCredential)
                     {

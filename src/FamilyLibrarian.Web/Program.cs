@@ -891,7 +891,11 @@ static MetadataProviderStatusResponse ToProviderResponse(MetadataProviderStatus 
     status.CredentialSetAtUtc,
     status.LastTestedAtUtc,
     status.LastTestSucceeded,
-    status.LastTestMessage);
+    status.LastTestMessage,
+    status.SetupInstructions,
+    status.SetupLinks
+        .Select(link => new MetadataProviderSetupLinkResponse(link.Label, link.Url))
+        .ToArray());
 
 static async Task<IResult> SearchCatalogAsync(
     string? q,

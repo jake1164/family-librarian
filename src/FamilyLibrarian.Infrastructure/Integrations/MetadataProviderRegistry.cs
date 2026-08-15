@@ -51,7 +51,23 @@ public sealed class MetadataProviderRegistry : IMetadataProviderRegistry
                 RequiresCredential: true,
                 HasExternallyManagedCredential: googleBooksKeyFromConfiguration,
                 DefaultEnabled: configuration.GetValue(
-                    $"{GoogleBooksMetadataOptions.SectionName}:Enabled", false))
+                    $"{GoogleBooksMetadataOptions.SectionName}:Enabled", false),
+                SetupInstructions:
+                    "Google Books API keys are free. In Google Cloud Console: " +
+                    "1) create or choose a project, 2) enable the Books API for it, " +
+                    "3) create an API key under Credentials and restrict it to the Books API. " +
+                    "Google enforces its own daily query quota on the key (adjustable in the " +
+                    "console); Family Librarian does not add its own rate limit on top of it, " +
+                    "unlike Open Library, which this app throttles itself.",
+                SetupLinks:
+                [
+                    new MetadataProviderSetupLink(
+                        "1. Enable the Books API",
+                        "https://console.cloud.google.com/apis/library/books.googleapis.com"),
+                    new MetadataProviderSetupLink(
+                        "2. Create an API key",
+                        "https://console.cloud.google.com/apis/credentials")
+                ])
         ];
     }
 

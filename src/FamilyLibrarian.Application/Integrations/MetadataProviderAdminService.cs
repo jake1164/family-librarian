@@ -230,7 +230,9 @@ public sealed class MetadataProviderAdminService(
             descriptor.HasExternallyManagedCredential ? null : setting?.CredentialSetAtUtc,
             setting?.LastTestedAtUtc,
             setting?.LastTestSucceeded,
-            setting?.LastTestMessage);
+            setting?.LastTestMessage,
+            descriptor.SetupInstructions,
+            descriptor.SetupLinks ?? []);
 
     private static string? BuildHint(string credential) =>
         credential.Length <= 4 ? null : credential[^4..];
