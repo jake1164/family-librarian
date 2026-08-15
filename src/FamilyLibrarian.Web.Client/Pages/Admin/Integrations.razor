@@ -48,7 +48,15 @@ else
 
                     <MudSpacer />
 
+                    @* Keyed on a generation counter, not just ProviderId: MudSwitch flips
+                       its own checked-state immediately on click, before the round trip
+                       resolves. When the server rejects the change (or, for Remove key,
+                       flips a value it wasn't watching), the value it's bound to can end
+                       up unchanged or unnoticed from its perspective, and it never syncs
+                       back. Forcing a fresh instance after every attempt — success or
+                       failure — is what actually guarantees it reflects the true state. *@
                     <MudSwitch T="bool"
+                               @key="@($"{provider.ProviderId}:{SwitchGeneration(provider.ProviderId)}")"
                                Value="provider.IsEnabled"
                                ValueChanged="@(enabled => SetEnabledAsync(provider, enabled))"
                                Color="Color.Primary"
@@ -162,8 +170,14 @@ else
 @code {
     private IReadOnlyList<MetadataProviderStatusResponse>? providers;
     private readonly Dictionary<string, string?> credentialDrafts = new(StringComparer.OrdinalIgnoreCase);
+    // Bumped after every enable/credential attempt (see RunAsync), win or lose, so
+    // the @key on each provider's MudSwitch forces a fresh instance rather than
+    // risking stale optimistic checked-state from a prior click.
+    private readonly Dictionary<string, int> switchGenerations = new(StringComparer.OrdinalIgnoreCase);
     private string? busyProviderId;
     private bool loadFailed;
+
+    private int SwitchGeneration(string providerId) => switchGenerations.GetValueOrDefault(providerId);
 
     protected override Task OnInitializedAsync() => LoadAsync();
 
@@ -262,6 +276,7 @@ else
         finally
         {
             busyProviderId = null;
+            switchGenerations[provider.ProviderId] = SwitchGeneration(provider.ProviderId) + 1;
         }
     }
 
