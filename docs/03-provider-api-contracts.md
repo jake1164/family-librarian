@@ -552,6 +552,19 @@ security:
   on_detected: quarantine
 ```
 
+`on_unavailable: hold` is fail-closed acquisition policy, not merely a later
+approval result. When any required scanner is unhealthy, the host rejects manual
+file uploads before reading file bytes and prevents acquisition providers and
+linked-library adapters from downloading or staging files. It records a
+`WaitingForSecurityScanner` request/job state instead. Metadata/catalog search
+and user request creation remain permitted so the held work can be resumed after
+scanner health recovers.
+
+If a scanner becomes unavailable after an ingress operation has started, the
+asset stays quarantined and no destination, download, or notification operation
+may use it. Scanner recovery triggers a controlled, auditable retry; it never
+causes an unscanned fallback or requires the user to re-request the book.
+
 ---
 
 ## 8. Format Validator Contract

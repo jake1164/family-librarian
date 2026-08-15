@@ -40,6 +40,21 @@ volumes together before relying on CWA as the household's ebook library. On
 network shares, use CWA's documented network-share mode and prove ingest and
 recovery behavior in the deployment-specific compatibility test.
 
+## Required malware scanner for file acquisition
+
+ClamAV is optional only for deployments that do not acquire or accept ebook or
+audiobook files. Once manual upload, a linked-library stage, or an acquisition
+provider is enabled, the deployment must configure a required scanner and include
+its health in the acquisition readiness check.
+
+An unavailable required scanner fails closed: the host continues catalog search
+and request creation, but rejects uploads before accepting file bytes and does
+not begin provider downloads or linked-library staging. Existing requests remain
+in `WaitingForSecurityScanner` for automatic, auditable backfill after scanner
+health recovers. If the scanner fails during ingress, retain the affected file in
+quarantine and do not publish it to CWA, Audiobookshelf, a download endpoint, or
+a notification.
+
 ## Deploy or upgrade
 
 1. Back up PostgreSQL before changing the image, Compose configuration, or

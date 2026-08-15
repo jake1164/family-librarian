@@ -238,16 +238,19 @@ Requested
   -> CheckingLibrary
       -> Available                  (an owned, already deliverable format)
       -> Delivering -> Available    (an owned format needs delivery)
-      -> LinkedLibraryAvailable -> Staging -> Processing -> Importing -> Available
-      -> Searching -> Found -> [PendingApproval] -> Acquiring
+      -> LinkedLibraryAvailable -> [WaitingForSecurityScanner] -> Staging -> Processing -> Importing -> Available
+      -> Searching -> Found -> [PendingApproval] -> [WaitingForSecurityScanner] -> Acquiring
          -> Processing -> Importing -> Available
       -> WaitingForAvailability
 ```
 
 Names can vary in implementation, but the model must preserve the distinction
 between intent, ownership, acquisition, processing/import, delivery, and final
-availability. A combined Ebook + Audiobook request therefore has two independent
-format states rather than one opaque request state.
+availability. `WaitingForSecurityScanner` is used only when the requested path
+would accept, download, or stage file bytes; catalog search and request creation
+remain available while the scanner is unhealthy. A combined Ebook + Audiobook
+request therefore has two independent format states rather than one opaque
+request state.
 
 ---
 
@@ -377,6 +380,7 @@ RequestId
 MediaType
 ProviderId
 EgressPolicy
+ScannerHealthAtStart?
 Status
 CreatedAt
 StartedAt
@@ -399,6 +403,14 @@ CUSTOM_PROXY
 configured private-egress gateway. It must fail closed when that gateway is
 unavailable; the job may wait for private egress or fail, but must never fall
 back silently to normal host Internet access.
+
+Required malware-scanner health is a separate, mandatory acquisition gate. The
+application checks it before creating a manual-upload, linked-library staging,
+or provider-download attempt. If it is unavailable, the request format remains
+`WaitingForSecurityScanner`; no file bytes are accepted or acquired. A health
+loss after acquisition has begun leaves the file in quarantine and creates a
+retryable held job. Recovery resumes queued work without requiring the user to
+submit another request.
 
 ---
 
@@ -830,6 +842,7 @@ NeedsIdentification
 NeedsReview
 AwaitingPublication
 WaitingForAvailability
+WaitingForSecurityScanner
 AcquisitionFailed
 SecurityFailed
 Rejected
@@ -845,6 +858,10 @@ The aggregate request moves to completed history when all of its requested
 formats are available, delivered where requested, or otherwise terminal.
 
 Transitions should be explicit application commands.
+
+The scanner gate is evaluated before any transition that accepts, downloads, or
+stages file bytes. It does not block metadata/catalog checks or user request
+creation, so queued requests can be backfilled after scanner recovery.
 
 ---
 
@@ -895,6 +912,9 @@ PendingAcquisition
       |
       v
 Acquisition engine selects providers
+      |
+      +--> Required scanner unavailable
+      |        --> WaitingForSecurityScanner (do not search/acquire/stage files)
       |
       +--> Enforce provider egress policy
       |      PRIVATE_REQUIRED + gateway unavailable
@@ -954,6 +974,10 @@ Evaluate policy
 Security failures must never be overridable through an unauthenticated notification action.
 
 Admin review should be required for risky overrides.
+
+Scanner unavailability is not a reviewable pass or an upload queue: it blocks
+file ingress. A scanner outage after ingress holds the asset in quarantine until
+the required scanner succeeds or the asset is rejected.
 
 ---
 

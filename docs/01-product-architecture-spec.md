@@ -242,6 +242,11 @@ Every acquired asset must pass:
 - approval policy.
 
 No acquired file may enter a trusted delivery target before passing the security gate.
+If a required malware scanner is unavailable or unhealthy, Family Librarian must
+fail closed: it must not accept uploads, start provider downloads, or stage a
+linked-library file. Existing user requests remain recorded and move to a
+scanner-waiting state for backfill once scanner health is restored; catalog
+search and request creation continue to work.
 
 #### Audiobook Delivery
 
@@ -739,6 +744,13 @@ The security policy should support:
 - all/any pass policy;
 - scanner unavailable behavior;
 - detected threat behavior.
+
+For any deployment that enables manual or automated file acquisition, required
+scanner unavailability blocks the whole acquisition boundary—not merely trusted
+asset approval. The host checks scanner readiness before accepting an upload or
+starting a download/stage operation. If scanner health changes during transfer,
+the incomplete or completed file remains quarantined and the request waits for
+scanner recovery; it must not be retried through an unscanned path.
 
 ---
 

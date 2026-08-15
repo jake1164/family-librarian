@@ -364,6 +364,12 @@ Rules:
 
 - no trusted delivery before scan completion;
 - no direct user access to quarantine;
+- required scanner health is checked before accepting an upload, provider
+  download, or linked-library staging operation;
+- scanner unavailability fails closed for all file acquisition: do not accept
+  file bytes into an upload queue or start/continue an acquisition job;
+- users may still create requests, which enter `WaitingForSecurityScanner` and
+  are backfilled through the normal workflow after recovery;
 - SHA-256 stored;
 - scanner/version stored;
 - errors become Hold/Review, not automatic pass.
@@ -371,6 +377,8 @@ Rules:
 Definition of done:
 
 Every uploaded/acquired file travels through the same enforced security pipeline.
+Required scanner unavailability prevents file acquisition rather than merely
+preventing delivery.
 
 ---
 
@@ -779,6 +787,8 @@ Highest-value automated tests:
 - duplicate request logic;
 - quarantine enforcement;
 - malware scanner failure behavior;
+- required-scanner outage blocks uploads, provider downloads, and linked-library
+  staging while preserving and later resuming user requests;
 - approval requirements;
 - delivery retry/idempotency;
 - provider contract tests; and
