@@ -45,6 +45,7 @@ public sealed class FeedbackWorkflowEndpointTests
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateFeedbackClientAsync(fixture);
         var workId = await ResolveWorkAsync(client, "the-hobbit");
+        await EnsureNoFeedbackAsync(client, workId);
 
         var response = await SetFeedbackAsync(client, workId, CompletedOn, 5, expectedVersion: null);
 
@@ -65,8 +66,10 @@ public sealed class FeedbackWorkflowEndpointTests
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateFeedbackClientAsync(fixture);
         var workId = await ResolveWorkAsync(client, "a-wrinkle-in-time");
+        await EnsureNoFeedbackAsync(client, workId);
 
         var first = await SetFeedbackAsync(client, workId, CompletedOn, 3, expectedVersion: null);
+        Assert.AreEqual(HttpStatusCode.OK, first.StatusCode);
         var created = await first.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
         Assert.IsNotNull(created);
 
@@ -116,8 +119,10 @@ public sealed class FeedbackWorkflowEndpointTests
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateFeedbackClientAsync(fixture);
         var workId = await ResolveWorkAsync(client, "the-hobbit");
+        await EnsureNoFeedbackAsync(client, workId);
 
         var first = await SetFeedbackAsync(client, workId, CompletedOn, 3, expectedVersion: null);
+        Assert.AreEqual(HttpStatusCode.OK, first.StatusCode);
         var created = await first.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
         Assert.IsNotNull(created);
 
@@ -135,8 +140,10 @@ public sealed class FeedbackWorkflowEndpointTests
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateFeedbackClientAsync(fixture);
         var workId = await ResolveWorkAsync(client, "a-wrinkle-in-time");
+        await EnsureNoFeedbackAsync(client, workId);
 
         var created = await SetFeedbackAsync(client, workId, CompletedOn, 3, expectedVersion: null);
+        Assert.AreEqual(HttpStatusCode.OK, created.StatusCode);
         var feedback = await created.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
         Assert.IsNotNull(feedback);
 
@@ -153,7 +160,9 @@ public sealed class FeedbackWorkflowEndpointTests
         var fixture = WebTestFixture.Require(_fixture);
         using var owner = await CreateFeedbackClientAsync(fixture);
         var workId = await ResolveWorkAsync(owner, "project-hail-mary");
+        await EnsureNoFeedbackAsync(owner, workId);
         var created = await SetFeedbackAsync(owner, workId, CompletedOn, 5, expectedVersion: null);
+        Assert.AreEqual(HttpStatusCode.OK, created.StatusCode);
         var feedback = await created.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
         Assert.IsNotNull(feedback);
 
@@ -185,7 +194,9 @@ public sealed class FeedbackWorkflowEndpointTests
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateFeedbackClientAsync(fixture);
         var workId = await ResolveWorkAsync(client, "project-hail-mary");
-        await SetFeedbackAsync(client, workId, CompletedOn, 5, expectedVersion: null);
+        await EnsureNoFeedbackAsync(client, workId);
+        var recorded = await SetFeedbackAsync(client, workId, CompletedOn, 5, expectedVersion: null);
+        Assert.AreEqual(HttpStatusCode.OK, recorded.StatusCode);
 
         await using var restarted = fixture.RestartHost();
         using var afterRestart = await restarted.CreateUserClientAsync();
@@ -204,6 +215,27 @@ public sealed class FeedbackWorkflowEndpointTests
         var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
         client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
         return client;
+    }
+
+    /// <summary>
+    /// Clears any feedback the fixture's one shared reader already left for this
+    /// Work. The demo catalog has only three books, so several tests in this
+    /// class necessarily reuse the same (user, Work) pair; without this, a test
+    /// that assumes it is creating fresh feedback can land on a row an earlier
+    /// test left behind and get an unexpected 409 for the wrong reason.
+    /// </summary>
+    private static async Task EnsureNoFeedbackAsync(HttpClient client, Guid workId)
+    {
+        var existing = await client.GetAsync($"/api/v1/me/feedback/{workId}");
+        if (existing.StatusCode != HttpStatusCode.OK)
+        {
+            return;
+        }
+
+        var feedback = await existing.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
+        Assert.IsNotNull(feedback);
+        var removed = await RemoveFeedbackAsync(client, workId, feedback.Version);
+        Assert.AreEqual(HttpStatusCode.NoContent, removed.StatusCode);
     }
 
     /// <summary>
