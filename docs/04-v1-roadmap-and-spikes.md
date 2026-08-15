@@ -275,7 +275,8 @@ Implement:
 - active requests
 - completed history
 - duplicate detection
-- per-format library checks before acquisition
+- per-format library checks before acquisition, including configured linked
+  Calibre-Web catalog sources
 
 UI:
 
@@ -373,7 +374,42 @@ Every uploaded/acquired file travels through the same enforced security pipeline
 
 ---
 
-## 7.5 Phase 5.5 — Provider Options and Policy
+## 7.5 Phase 5.5 — Linked Ebook Libraries
+
+Implement after the security pipeline is trustworthy:
+
+- `IOwnedLibraryProvider` lookup for a configured Calibre-Web catalog via its
+  server-side OPDS/catalog surface, with identifier/ISBN matching first and
+  ambiguity retained for title/author fallback;
+- request-authorized staging of a linked ebook into Family Librarian quarantine,
+  without bulk-importing the user's existing Calibre-Web library;
+- `ILibraryDestination` and `LibraryImport` state, distinct from user delivery;
+- an opt-in CWA destination that copies a completed approved asset from outbound
+  staging and atomically hands it to CWA's ingest directory;
+- post-ingest verification of the expected work and format through the library
+  catalog, idempotency/duplicate handling, retained external reference, and a
+  safe retry path; and
+- ready notifications containing a configured Calibre-Web/CWA deep link only
+  after verification and only for users independently authorized by that
+  library.
+
+The initial CWA integration must disable CWA conversion, metadata rewriting,
+EPUB fixing, and automatic e-reader send. Family Librarian retains its trusted
+asset even though CWA removes its processed ingest copy. Do not write
+`metadata.db` directly, automate Calibre-Web's browser upload form, or make CWA
+a default Compose dependency. Plain Calibre-Web is an initial source/reading
+frontend; CWA is the first automated destination.
+
+Definition of done:
+
+A family member can request an ebook already visible in their configured
+Calibre-Web library without a bulk import, or an administrator can manually
+upload and approve an ebook that is then verified in an opt-in CWA library before
+the requester is notified.
+
+---
+
+## 7.6 Phase 5.6 — Provider Options and Policy
 
 Implement after the manual pipeline is trustworthy:
 
@@ -680,23 +716,29 @@ It creates value before file handling is introduced.
 - approval;
 - history.
 
-### Milestone C — Audiobook End-to-End
+### Milestone C — Linked Ebook Library
+
+- Calibre-Web catalog/source;
+- CWA opt-in ingest destination;
+- verified ready deep-link notifications.
+
+### Milestone D — Audiobook End-to-End
 
 - Audiobookshelf delivery;
 - notifications.
 
-### Milestone D — Reading Intelligence
+### Milestone E — Reading Intelligence
 
 - series tracking;
 - authors;
 - next-book suggestions;
 - followed series.
 
-### Milestone E — Automated Acquisition
+### Milestone F — Automated Acquisition
 
 - HTTP provider ecosystem.
 
-### Milestone F — Device Delivery
+### Milestone G — Device Delivery
 
 - Kindle/Kobo/browser/agent according to spike results.
 

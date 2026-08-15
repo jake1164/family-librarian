@@ -13,6 +13,33 @@ same application image with the `--migrate` command, so the schema reviewed in
 source control is the schema deployed by Compose. Do not replace it with
 `EnsureCreated`, and do not run migrations from every application replica.
 
+## Optional linked ebook libraries
+
+Calibre-Web and Calibre-Web Automated (CWA) are optional integrations, not
+services in the default Compose deployment. A configured Calibre-Web source is
+reached over the server-side catalog/OPDS interface with a least-privilege
+account; its credentials belong in the deployment's secret mechanism and are
+never supplied to the browser.
+
+CWA is the initial automated ebook-library destination. Its three main volumes
+must remain distinct: CWA configuration, the Calibre library, and the watched
+ingest directory. Family Librarian retains trusted assets in its own storage and
+gets write access only to a dedicated outbound staging location plus the CWA
+ingest directory. It must not mount or write CWA's `metadata.db` directly.
+
+The application copies a complete approved file to outbound staging and then
+atomically hands it to the ingest directory. Do not download directly into that
+watched directory: CWA documents that partial files can create duplicate imports
+or database corruption. Disable CWA's automatic conversion, metadata rewriting,
+EPUB fixing, and auto-send for the initial integration; enable them only after a
+future adapter can verify the final processed result.
+
+Back up the complete Calibre library directory (`metadata.db` and all book
+folders) and CWA configuration separately from PostgreSQL. Test restoring those
+volumes together before relying on CWA as the household's ebook library. On
+network shares, use CWA's documented network-share mode and prove ingest and
+recovery behavior in the deployment-specific compatibility test.
+
 ## Deploy or upgrade
 
 1. Back up PostgreSQL before changing the image, Compose configuration, or

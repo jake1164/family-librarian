@@ -16,7 +16,8 @@ Define the core entities and workflow states that allow Family Librarian to rema
 1. A **Work** is not the same thing as an **Edition**.
 2. A **Request** is not the same thing as a **Book**.
 3. A downloaded file is an **Asset**, not the bibliographic Work.
-4. Delivery destinations must be replaceable.
+4. Library destinations and user delivery targets must be replaceable, and they
+   are separate facts.
 5. Completed requests remain historical records.
 6. Series and authors are first-class entities.
 7. External provider identifiers are references, not primary domain identity.
@@ -237,6 +238,7 @@ Requested
   -> CheckingLibrary
       -> Available                  (an owned, already deliverable format)
       -> Delivering -> Available    (an owned format needs delivery)
+      -> LinkedLibraryAvailable -> Staging -> Processing -> Importing -> Available
       -> Searching -> Found -> [PendingApproval] -> Acquiring
          -> Processing -> Importing -> Available
       -> WaitingForAvailability
@@ -278,6 +280,38 @@ and abridged audio can be ambiguous.
 `WorkFormatAvailability` represents local family ownership only. It must not be
 overloaded with a public-library hold, a commercial price, or an external action.
 Those are provider results and may coexist with `NotOwned` or `Owned`.
+
+An item found in a linked Calibre-Web library is similarly separate from local
+ownership: it is a provider-backed `LinkedLibraryAvailable` outcome, not a
+trusted `MediaAsset`. The application may stage its requested file into
+quarantine, then create a local asset only after the normal safety pipeline
+passes.
+
+---
+
+### LibraryItemReference
+
+Represents a verified reference to an item in an external library catalog. It
+allows Family Librarian to locate an existing Calibre-Web/CWA book without
+importing the whole library or treating the library's database entities as its
+own domain records.
+
+```text
+LibraryItemReferenceId
+ProviderId
+ExternalBookId
+WorkId?
+EditionId?
+MediaType
+Format
+MatchConfidence
+CatalogUrl?
+LastVerifiedAt
+```
+
+The reference is retained only after an identifier-first or explicitly reviewed
+match. A title/author-only match remains ambiguous until confirmed. A catalog
+URL is a user-facing deep-link hint, never a credential-bearing download URL.
 
 ---
 
@@ -538,6 +572,43 @@ System
 
 ---
 
+### LibraryImport
+
+Represents publication of an approved trusted Asset to an external library. It
+is not a user delivery attempt: one library import can make a book available to
+many users or later delivery targets.
+
+```text
+LibraryImportId
+AssetId
+ProviderId
+DestinationReference
+ExternalBookId?
+Status
+CreatedAt
+CompletedAt?
+FailureReason?
+```
+
+Statuses:
+
+```text
+Pending
+Staging
+Importing
+Verifying
+Available
+Failed
+Cancelled
+```
+
+For CWA, `Available` requires that the expected work/format be verified in the
+library catalog after CWA has consumed the ingest copy. The trusted source asset
+remains retained by Family Librarian; CWA's deletion of its processed ingest
+copy is not an archive policy.
+
+---
+
 ### DeliveryTarget
 
 Represents where content can be sent.
@@ -569,6 +640,10 @@ Audiobookshelf
 Kobo
 Generic folder
 ```
+
+A Calibre-Web or CWA library is not a `DeliveryTarget`. It may be a linked
+catalog/source and CWA may be a `LibraryImport` destination; Kindle, browser,
+or email delivery remains a separate user-specific operation.
 
 ---
 

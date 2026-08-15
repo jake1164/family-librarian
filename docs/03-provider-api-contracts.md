@@ -18,6 +18,7 @@ IBookMetadataProvider
 IAvailabilityProvider
 IStoreOfferProvider
 IOwnedLibraryProvider
+ILibraryDestination
 IAcquisitionProvider
 IMalwareScanner
 INotificationProvider
@@ -60,13 +61,14 @@ StoreOffer
 FreeContent / DirectAcquisition
 Acquisition
 OwnedLibrary
-LibraryBackend
+LibraryDestination
 Delivery
 ```
 
 Examples: a library integration may offer availability and an external borrow
-action without yielding a file; Audiobookshelf may report owned content and act
-as a library/delivery backend; a public-domain provider may expose metadata and
+action without yielding a file; Calibre-Web may report a linked ebook; CWA may
+act as a library destination; Audiobookshelf may report owned content and act as
+a library/delivery backend; and a public-domain provider may expose metadata and
 direct acquisition. The UI offers only actions supported by the capability.
 
 The unified search read model uses a neutral `FulfillmentOption` for results
@@ -166,6 +168,73 @@ for each media type. It should offer product actions such as `GetEbook`,
 acquisition-provider mechanics to ordinary users. Matching logic must retain an
 ambiguity outcome for alternate titles, translations, boxed sets, editions, and
 abridged versus unabridged recordings.
+
+---
+
+### Linked ebook-library providers
+
+`IOwnedLibraryProvider` supplies catalog/source capabilities; it does not make
+an external library's database authoritative in the domain. A conceptual
+Calibre-Web implementation searches the server-side configured OPDS/catalog
+surface, returns a `LibraryItemReference`, and stages a specifically selected
+format into Family Librarian quarantine only after request authorization.
+
+```csharp
+public interface IOwnedLibraryProvider
+{
+    string Id { get; }
+    OwnedLibraryCapabilities Capabilities { get; }
+
+    Task<IReadOnlyList<LibraryItemReference>> SearchAsync(
+        LibrarySearchQuery query,
+        CancellationToken cancellationToken);
+
+    Task<StagedArtifact> StageAsync(
+        LibraryItemReference item,
+        CancellationToken cancellationToken);
+}
+```
+
+`StageAsync` returns only to controlled quarantine. It must not return a
+browser-visible credential-bearing URL, create a trusted `MediaAsset`, or bypass
+the file-safety and approval pipeline. Matching uses identifiers and ISBN first;
+title/author matching remains explicitly ambiguous when it cannot prove the
+edition/format.
+
+`ILibraryDestination` publishes an already approved asset and verifies the
+result. It is deliberately distinct from `IDeliveryProvider`: publishing a book
+to a shared library does not mean that it has been delivered to a particular
+user or Kindle.
+
+```csharp
+public interface ILibraryDestination
+{
+    string Id { get; }
+    LibraryDestinationCapabilities Capabilities { get; }
+
+    Task<LibraryImportResult> ImportAsync(
+        ApprovedAsset asset,
+        LibraryImportRequest request,
+        CancellationToken cancellationToken);
+
+    Task<LibraryImportStatus> GetImportStatusAsync(
+        LibraryImportReference reference,
+        CancellationToken cancellationToken);
+}
+```
+
+The first destination implementation is CWA. Family Librarian writes a complete
+copy from its trusted storage to a private outbound staging location and performs
+an atomic handoff to CWA's configured ingest directory; it never streams a
+partially written acquisition into the watched directory. The adapter records
+the result only after finding the expected book/format in the CWA catalog.
+
+The initial CWA integration disables CWA post-ingest conversion, metadata
+rewriting, EPUB fixing, and auto-send. They may become supported only when their
+final output and completion status can be verified by the integration. A CWA
+destination is opt-in. Plain Calibre-Web is a source/catalog frontend in this
+scope, not an assumed write API; direct `metadata.db` writes and HTML-form
+automation are prohibited.
 
 ---
 
@@ -657,11 +726,15 @@ Streaming
 Download
 UsbFilesystem
 CloudSend
-LibraryImport
+MediaLibraryImport
 OfflineSync
 UserMapping
 DeepLink
 ```
+
+`MediaLibraryImport` is a delivery capability for a media service such as
+Audiobookshelf. It is not the `ILibraryDestination` contract used to publish an
+ebook to CWA before any user-specific delivery occurs.
 
 ---
 
@@ -824,6 +897,7 @@ Acquisition
 Security
 Notifications
 Delivery
+Linked ebook libraries
 Authentication
 Private acquisition network
 ```
@@ -903,6 +977,10 @@ Metadata:
 Acquisition:
   Manual
 
+Linked ebook libraries:
+  Calibre-Web (catalog/source via configured OPDS surface)
+  Calibre-Web Automated (CWA, opt-in ingest destination)
+
 Security:
   ClamAV
   File type validator
@@ -947,6 +1025,7 @@ PrivateEgressPolicyTests
 MalwareScannerContractTests
 NotificationProviderContractTests
 DeliveryProviderContractTests
+LinkedLibraryProviderContractTests
 ```
 
 A third-party provider author should be able to verify:

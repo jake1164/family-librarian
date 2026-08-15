@@ -209,6 +209,28 @@ When a user requests a book in a series:
 - Admin can attach/upload an acquired ebook or audiobook to a request.
 - The file enters quarantine, not the trusted library directly.
 
+#### Linked Ebook Libraries
+
+- A configured **Calibre-Web** instance is an optional linked ebook-library
+  source. Its existing library is queried as part of the normal Ebook request
+  flow; it is never bulk-imported into Family Librarian.
+- A linked-library match means the ebook is available to stage for the request;
+  it is not a trusted Family Librarian asset until the selected file completes
+  the same quarantine, validation, malware-scanning, and approval pipeline as a
+  manual upload.
+- **Calibre-Web Automated (CWA)** is the first opt-in automated ebook-library
+  destination. After approval, Family Librarian copies the retained trusted
+  asset into a completed outbound staging file and atomically hands it to CWA's
+  configured ingest directory. It then verifies the imported book through the
+  library's normal catalog surface before reporting it ready.
+- Plain Calibre-Web is initially a linked-library source and user-facing reading
+  surface, not an assumed automated write API. Directly writing its database or
+  automating its browser upload form is out of scope.
+- A library destination is not a user delivery target. CWA/Calibre-Web may make
+  a book browsable, readable, downloadable, or independently sendable to an
+  e-reader; Family Librarian still records its own delivery and notification
+  state.
+
 #### Security Gate
 
 Every acquired asset must pass:
@@ -287,6 +309,7 @@ Browser/PWA device delivery should be prototyped separately before becoming a ha
 - ClamAV
 - VPN/private-egress gateway (Gluetun is the documented reference implementation)
 - Audiobookshelf
+- Calibre-Web or Calibre-Web Automated (CWA)
 - Authentik
 - ntfy
 - SMTP provider
@@ -331,6 +354,7 @@ Add services only when their planned slice requires them:
 family-librarian-worker
 clamav
 audiobookshelf
+cwa
 ntfy
 acquisition-provider-*
 vpn-gateway
@@ -500,7 +524,50 @@ or automated acquisition part of V1.
 
 ---
 
-### 12.1 Private acquisition egress
+### 12.1 Linked ebook-library integration
+
+Family Librarian separates a linked library's three roles:
+
+```text
+Library catalog/source     find an existing ebook
+Library destination        publish an approved ebook to a library
+Reader delivery            make an ebook available on a user's Kindle/device
+```
+
+The first supported catalog/source is Calibre-Web. Its server-side configured
+OPDS/download surface is used with a least-privilege account; provider
+credentials and library download URLs are never returned to the browser. A
+canonical Work/Edition is matched using retained identifiers and ISBN first,
+with title/author matching retained as an ambiguity-aware fallback. A match is
+displayed as available in the linked library, not as an already-trusted local
+asset.
+
+The first automated ebook-library destination is CWA's ingest directory. The
+destination contract receives only an approved trusted asset. Family Librarian
+must retain that asset, copy it outside the watched directory, and atomically
+move/rename the completed copy into the configured CWA ingest directory. It
+must then verify the expected book and format are visible before the request
+becomes ready. The integration is idempotent and records the external library
+reference; a retry must not create an unreviewed duplicate.
+
+CWA's optional post-ingest conversion, metadata rewriting, EPUB fixing, and
+automatic e-reader send features are disabled for the initial integration.
+They can be supported only when their completed output and status can be
+verified under the Family Librarian security and notification workflow. CWA may
+delete its ingest copy after processing, so it must never be the only retained
+copy of an approved asset.
+
+Plain Calibre-Web remains supported as a source and reading frontend. It is not
+treated as an automated destination until it exposes a supported, versioned
+write mechanism. Family Librarian never writes `metadata.db` directly and never
+depends on browser-form automation.
+
+Calibre-Web/CWA user accounts and permissions remain their own authorization
+boundary. A Family Librarian ready notification may contain a deep link only
+after the user can independently authenticate to the linked library; it must not
+leak a service account's credentials or grant access through a shared URL.
+
+### 12.2 Private acquisition egress
 
 Family Librarian **SHALL NOT** depend on a specific commercial VPN provider.
 Private acquisition networking is optional and configured at the deployment
@@ -587,7 +654,7 @@ mode, or direct WireGuard/OpenVPN tunnel management. Future higher-risk or
 untrusted providers may run out of process behind the same gateway boundary;
 that is an available isolation direction, not a V1 VPN prerequisite.
 
-### 12.2 Provider, availability, and policy model
+### 12.3 Provider, availability, and policy model
 
 Family Librarian is a legal-first discovery, ownership, acquisition, and
 delivery platform. A useful default installation must not depend on external
@@ -740,6 +807,10 @@ Cloud:
 MediaLibrary:
   Audiobookshelf
   future alternatives
+
+Ebook library frontend:
+  Calibre-Web
+  Calibre-Web Automated (CWA)
 ```
 
 Audiobookshelf should be the first audiobook delivery provider.
@@ -809,7 +880,7 @@ A V1 release is useful when:
 6. The admin manually provides a media file.
 7. The file passes quarantine/security validation.
 8. The admin approves it.
-9. The audiobook can be delivered to Audiobookshelf or the ebook can be downloaded/delivered through the available provider.
+9. The audiobook can be delivered to Audiobookshelf, while an approved ebook can be published to a configured CWA library or downloaded/delivered through an available provider.
 10. The user receives a batched ready notification.
 11. The request appears in completed history.
 12. Family Librarian retains the information needed for future series/author recommendations.
@@ -838,6 +909,8 @@ A V1 release is useful when:
 - How robustly series metadata can be resolved across providers.
 - Browser/PWA viability for Kindle/Kobo transfer.
 - Exact Audiobookshelf deep-link/user mapping behavior.
+- Calibre-Web OPDS matching fidelity, CWA ingest idempotency, and CWA/Family
+  Librarian user-account/deep-link mapping.
 - Asset storage layout.
 - Whether acquisition engine lives in the main repository or a sibling repository.
 - Plugin discovery/installation UX.
