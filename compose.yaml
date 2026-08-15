@@ -34,6 +34,9 @@ services:
   # `:stable`/`:latest` — verify the current recommended release before
   # upgrading it.
   clamav:
+    # No arm64 build is published for this image; force amd64 so it still
+    # pulls (and runs under emulation) on Apple Silicon hosts.
+    platform: linux/amd64
     image: clamav/clamav:1.4
     healthcheck:
       # freshclam's virus-database download can take minutes on a cold image;
