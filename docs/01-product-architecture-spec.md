@@ -752,6 +752,25 @@ starting a download/stage operation. If scanner health changes during transfer,
 the incomplete or completed file remains quarantined and the request waits for
 scanner recovery; it must not be retried through an unscanned path.
 
+### 13.1 Baseline hardening requirements
+
+Beyond the acquisition pipeline above, the application must provide:
+
+- anti-forgery protection for all cookie-authenticated state changes, and
+  OIDC state/nonce validation for the federated sign-in path;
+- secure cookie flags (`HttpOnly`, `Secure`, `SameSite`) for the authentication
+  session;
+- least-privilege, narrowly scoped service tokens for service-to-service and
+  external-provider calls, and encrypted at-rest storage for provider secrets;
+- upload size limits, MIME sniffing/content-type verification, and zip-bomb and
+  path-traversal protection for archive-based formats (EPUB), with any archive
+  extraction sandboxed away from the trusted filesystem;
+- rate limiting and replay protection on unauthenticated or action-token
+  endpoints (for example, invitation redemption and notification actions);
+- audit logging for authorization-sensitive and status-transition events;
+- dependency and container image scanning in the build pipeline, and non-root
+  containers where the base image and tooling support it.
+
 ---
 
 ## 14. Notification Architecture
