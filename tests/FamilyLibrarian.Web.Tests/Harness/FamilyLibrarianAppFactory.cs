@@ -23,6 +23,14 @@ internal sealed class FamilyLibrarianAppFactory(
     internal const string AdminEmail = "admin@family-librarian.example";
     internal const string AdminPassword = "Bootstrap-Admin-Pass1!";
 
+    // StorageOptions.RootPath defaults to /data/family-librarian — a path that
+    // only exists because the Dockerfile creates it and Compose mounts a volume
+    // there. Nothing provisions it for a bare `dotnet test` run, on this
+    // machine or any other, so every fixture gets its own throwaway directory
+    // instead of inheriting the container-only default.
+    private readonly string _storageRootPath = Path.Combine(
+        Path.GetTempPath(), "family-librarian-tests", Guid.NewGuid().ToString("N"));
+
     /// <summary>
     /// Settings the host must see, as environment variables.
     /// </summary>
@@ -59,7 +67,8 @@ internal sealed class FamilyLibrarianAppFactory(
         // Leave the deployment-supplied Google Books key unset, so the provider is
         // credential-managed through the admin surface rather than externally
         // managed. Clearing it defends against a developer's own shell exporting one.
-        ["MetadataProviders__GoogleBooks__ApiKey"] = null
+        ["MetadataProviders__GoogleBooks__ApiKey"] = null,
+        ["Storage__RootPath"] = _storageRootPath
     };
 
     /// <summary>
@@ -108,6 +117,26 @@ internal sealed class FamilyLibrarianAppFactory(
         if (configureTestServices is not null)
         {
             builder.ConfigureServices(configureTestServices);
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+
+        if (disposing)
+        {
+            try
+            {
+                if (Directory.Exists(_storageRootPath))
+                {
+                    Directory.Delete(_storageRootPath, recursive: true);
+                }
+            }
+            catch (IOException)
+            {
+                // Best-effort: a leftover temp directory is harmless.
+            }
         }
     }
 }

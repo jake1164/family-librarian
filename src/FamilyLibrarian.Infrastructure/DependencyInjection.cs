@@ -160,6 +160,7 @@ public static class DependencyInjection
         services.AddScoped<ISecurityEvaluationRepository, SecurityEvaluationRepository>();
         services.AddScoped<SecurityEvaluationService>();
         services.AddScoped<ApprovalService>();
+        services.AddScoped<MediaAssetQueueService>();
 
         // Bound and validated at startup, so a bad LifetimeDays fails the deploy
         // rather than silently issuing invitations that never expire or expire

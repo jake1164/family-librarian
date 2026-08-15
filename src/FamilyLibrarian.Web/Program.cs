@@ -171,6 +171,7 @@ var adminMediaAssets = app.MapGroup("/api/v1/admin/media-assets")
     .RequireAuthorization("Admin")
     .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
+adminMediaAssets.MapGet("/", ListMediaAssetsAsync);
 adminMediaAssets.MapPost("/{assetId:guid}/evaluate", EvaluateMediaAssetAsync);
 adminMediaAssets.MapPost("/{assetId:guid}/approve", ApproveMediaAssetAsync);
 adminMediaAssets.MapPost("/{assetId:guid}/reject", RejectMediaAssetAsync);
@@ -818,6 +819,41 @@ static IResult ToManualImportResult(ManualImportResult result) => result.Outcome
         ["file"] = [result.Error ?? "That file could not be imported."]
     })
 };
+
+static async Task<IResult> ListMediaAssetsAsync(
+    MediaAssetQueueService queue,
+    CancellationToken cancellationToken)
+{
+    var entries = await queue.ListAsync(cancellationToken);
+    return Results.Ok(new MediaAssetAdminListResponse(entries.Select(ToMediaAssetAdminResponse).ToArray()));
+}
+
+static MediaAssetAdminResponse ToMediaAssetAdminResponse(MediaAssetQueueEntry entry) => new(
+    entry.Asset.AssetId,
+    entry.Asset.RequestId,
+    entry.Asset.WorkId,
+    entry.Asset.WorkTitle,
+    entry.Asset.MediaType.ToString(),
+    entry.Asset.Format,
+    entry.Asset.OriginalFilename,
+    entry.Asset.SizeBytes,
+    entry.Asset.StorageState.ToString(),
+    entry.Asset.CreatedAtUtc,
+    entry.Asset.UpdatedAtUtc,
+    entry.LatestEvaluation is null ? null : new SecurityEvaluationDetailResponse(
+        entry.LatestEvaluation.Id,
+        entry.LatestEvaluation.Status.ToString(),
+        entry.LatestEvaluation.CreatedAtUtc,
+        entry.LatestEvaluation.CompletedAtUtc,
+        entry.LatestEvaluation.ScanResults.Select(result => new SecurityScanResultResponse(
+            result.ScannerId, result.IsRequired, result.Status.ToString(), result.ThreatName, result.ScannedAtUtc))
+            .ToArray(),
+        entry.LatestEvaluation.ValidationResults.Select(result => new FormatValidationResultResponse(
+            result.ValidatorId, result.IsValid, result.Message, result.ValidatedAtUtc))
+            .ToArray(),
+        entry.LatestEvaluation.Approvals.Select(approval => new SecurityApprovalResponse(
+            approval.Decision.ToString(), approval.ActorType.ToString(), approval.Reason, approval.DecidedAtUtc))
+            .ToArray()));
 
 static async Task<IResult> EvaluateMediaAssetAsync(
     Guid assetId,

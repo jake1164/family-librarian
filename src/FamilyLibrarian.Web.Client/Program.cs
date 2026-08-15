@@ -1,5 +1,6 @@
 using FamilyLibrarian.Web.Client;
 using FamilyLibrarian.Web.Client.Accounts;
+using FamilyLibrarian.Web.Client.Acquisition;
 using FamilyLibrarian.Web.Client.Authentication;
 using FamilyLibrarian.Web.Client.Catalog;
 using FamilyLibrarian.Web.Client.Feedback;
@@ -29,5 +30,6 @@ builder.Services.AddScoped<MetadataIntegrationsApiClient>();
 builder.Services.AddScoped<RequestsApiClient>();
 builder.Services.AddScoped<AdminRequestsApiClient>();
 builder.Services.AddScoped<FeedbackApiClient>();
+builder.Services.AddScoped<MediaAssetsApiClient>();
 
 await builder.Build().RunAsync();

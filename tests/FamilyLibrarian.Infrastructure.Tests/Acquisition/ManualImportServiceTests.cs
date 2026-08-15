@@ -203,6 +203,9 @@ public sealed class ManualImportServiceTests
             Guid requestFormatId, string sha256, CancellationToken cancellationToken) =>
             Task.FromResult(ExistingChecksums.Contains((requestFormatId, sha256)));
 
+        public Task<IReadOnlyList<MediaAssetAdminView>> ListActiveAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void AddJob(AcquisitionJob job) => Jobs.Add(job);
 
         public void AddAsset(MediaAsset asset) => Assets.Add(asset);

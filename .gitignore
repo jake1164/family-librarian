@@ -7,6 +7,9 @@ artifacts/
 TestResults/
 .DS_Store
 
+# Local dev-only manual-import staging (see appsettings.Development.json Storage:RootPath)
+.local-data/
+
 # AI scratch / local agent state (carried between machines by Syncthing, not git)
 .ai_docs
 .claude/
