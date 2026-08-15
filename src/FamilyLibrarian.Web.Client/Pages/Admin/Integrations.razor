@@ -1,6 +1,6 @@
 @page "/admin/integrations"
 @attribute [Authorize(Roles = "Admin")]
-@using FamilyLibrarian.Contracts.Integrations
+@using FamilyLibrarian.Contracts.Providers
 @using FamilyLibrarian.Web.Client.Integrations
 @using Microsoft.AspNetCore.Authorization
 @* Named IntegrationsApi, not Integrations: a member may not share the enclosing
@@ -168,7 +168,7 @@ else
 }
 
 @code {
-    private IReadOnlyList<MetadataProviderStatusResponse>? providers;
+    private IReadOnlyList<ProviderStatusResponse>? providers;
     private readonly Dictionary<string, string?> credentialDrafts = new(StringComparer.OrdinalIgnoreCase);
     // Bumped after every enable/credential attempt (see RunAsync), win or lose, so
     // the @key on each provider's MudSwitch forces a fresh instance rather than
@@ -197,12 +197,12 @@ else
         }
     }
 
-    private async Task SetEnabledAsync(MetadataProviderStatusResponse provider, bool enabled)
+    private async Task SetEnabledAsync(ProviderStatusResponse provider, bool enabled)
     {
         await RunAsync(provider, () => IntegrationsApi.SetEnabledAsync(provider.ProviderId, enabled));
     }
 
-    private async Task SaveCredentialAsync(MetadataProviderStatusResponse provider)
+    private async Task SaveCredentialAsync(ProviderStatusResponse provider)
     {
         var credential = credentialDrafts[provider.ProviderId];
         if (string.IsNullOrWhiteSpace(credential))
@@ -223,7 +223,7 @@ else
         }
     }
 
-    private async Task ClearCredentialAsync(MetadataProviderStatusResponse provider)
+    private async Task ClearCredentialAsync(ProviderStatusResponse provider)
     {
         if (await RunAsync(provider, () => IntegrationsApi.ClearCredentialAsync(provider.ProviderId)))
         {
@@ -231,7 +231,7 @@ else
         }
     }
 
-    private async Task TestAsync(MetadataProviderStatusResponse provider)
+    private async Task TestAsync(ProviderStatusResponse provider)
     {
         busyProviderId = provider.ProviderId;
         try
@@ -253,7 +253,7 @@ else
     }
 
     private async Task<bool> RunAsync(
-        MetadataProviderStatusResponse provider,
+        ProviderStatusResponse provider,
         Func<Task<MetadataIntegrationsResult>> action)
     {
         busyProviderId = provider.ProviderId;
@@ -280,7 +280,7 @@ else
         }
     }
 
-    private void Replace(MetadataProviderStatusResponse updated)
+    private void Replace(ProviderStatusResponse updated)
     {
         if (providers is null)
         {

@@ -4,16 +4,21 @@ using System.ComponentModel.DataAnnotations;
 using System.Threading.RateLimiting;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Accounts;
+using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Feedback;
-using FamilyLibrarian.Contracts.Integrations;
+using FamilyLibrarian.Contracts.Providers;
 using FamilyLibrarian.Contracts.Requests;
+using FamilyLibrarian.Contracts.Security;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Requests;
@@ -21,17 +26,21 @@ using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Persistence;
+using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHealthChecks()
-    .AddCheck<DatabaseHealthCheck>("postgresql");
+    .AddCheck<DatabaseHealthCheck>("postgresql")
+    .AddCheck<SecurityScannerHealthCheck>("malware-scanner");
 
 // Invitation redemption is necessarily anonymous, which makes it the one write
 // endpoint an unauthenticated caller can reach. The token is 256 bits, so this
@@ -152,6 +161,19 @@ adminRequests.MapGet("/", ListAdminRequestsAsync);
 adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
 adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
 adminRequests.MapPut("/{requestId:guid}/note", SetAdminRequestNoteAsync);
+adminRequests.MapPost("/{requestId:guid}/formats/{formatId:guid}/manual-import", ManualImportAsync);
+
+// The security gate's admin surface: run the scanner/validator pass over a
+// quarantined asset, then approve or reject it. Approve is the only path that
+// can move an asset to Trusted; the service re-enforces that a Failed
+// evaluation can never be approved even by an administrator.
+var adminMediaAssets = app.MapGroup("/api/v1/admin/media-assets")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+adminMediaAssets.MapPost("/{assetId:guid}/evaluate", EvaluateMediaAssetAsync);
+adminMediaAssets.MapPost("/{assetId:guid}/approve", ApproveMediaAssetAsync);
+adminMediaAssets.MapPost("/{assetId:guid}/reject", RejectMediaAssetAsync);
 
 // My Reading: a completion date and 1-5 star rating per Work, private to the
 // owner. Ownership is enforced inside UserWorkFeedbackService, same as Requests.
@@ -201,11 +223,11 @@ var integrations = app.MapGroup("/api/v1/admin/integrations/metadata")
     // already authenticated; every mutation below must carry a matching token.
     .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
-integrations.MapGet("/", ListMetadataProvidersAsync);
-integrations.MapPut("/{providerId}/enabled", SetMetadataProviderEnabledAsync);
-integrations.MapPut("/{providerId}/credential", SetMetadataProviderCredentialAsync);
-integrations.MapDelete("/{providerId}/credential", ClearMetadataProviderCredentialAsync);
-integrations.MapPost("/{providerId}/test", TestMetadataProviderAsync);
+integrations.MapGet("/", ListProvidersAsync);
+integrations.MapPut("/{providerId}/enabled", SetProviderEnabledAsync);
+integrations.MapPut("/{providerId}/credential", SetProviderCredentialAsync);
+integrations.MapDelete("/{providerId}/credential", ClearProviderCredentialAsync);
+integrations.MapPost("/{providerId}/test", TestProviderAsync);
 
 app.MapFallbackToFile("index.html");
 
@@ -712,6 +734,138 @@ static async Task<IResult> SetAdminRequestNoteAsync(
     return await ToAdminCommandResult(result, requestId, requests, cancellationToken);
 }
 
+static async Task<IResult> ManualImportAsync(
+    Guid requestId,
+    Guid formatId,
+    HttpRequest request,
+    ManualImportService manualImport,
+    ManualImportPolicy policy,
+    CancellationToken cancellationToken)
+{
+    // Deliberately not bound as [FromForm]/IFormFile: minimal-API model binding
+    // for those runs before any endpoint filter or handler code executes, which
+    // would already have buffered the whole body to a temp file before this
+    // method could enforce a size limit. Reading the multipart body by hand lets
+    // the size cap below apply before a single byte is accepted.
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest();
+    }
+
+    var sizeFeature = request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+    if (sizeFeature is { IsReadOnly: false })
+    {
+        sizeFeature.MaxRequestBodySize = policy.MaxUploadSizeBytes;
+    }
+
+    var boundary = Microsoft.Net.Http.Headers.MediaTypeHeaderValue.Parse(request.ContentType).Boundary.Value;
+    if (string.IsNullOrEmpty(boundary))
+    {
+        return Results.BadRequest();
+    }
+
+    var reader = new MultipartReader(boundary, request.Body);
+    for (var section = await reader.ReadNextSectionAsync(cancellationToken);
+        section is not null;
+        section = await reader.ReadNextSectionAsync(cancellationToken))
+    {
+        var fileSection = section.AsFileSection();
+        if (fileSection is null)
+        {
+            continue;
+        }
+
+        var fileName = fileSection.FileName;
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return Results.BadRequest();
+        }
+
+        ManualImportResult result;
+        try
+        {
+            result = await manualImport.ImportAsync(
+                requestId,
+                formatId,
+                fileSection.FileStream ?? section.Body,
+                fileName,
+                cancellationToken);
+        }
+        catch (BadHttpRequestException)
+        {
+            // The body exceeded the size limit set above.
+            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+        }
+
+        return ToManualImportResult(result);
+    }
+
+    // No file section was present in the form.
+    return Results.BadRequest();
+}
+
+static IResult ToManualImportResult(ManualImportResult result) => result.Outcome switch
+{
+    ManualImportOutcome.Success => Results.Ok(
+        new ManualImportResultResponse(result.AcquisitionJobId!.Value, result.MediaAssetId!.Value)),
+    ManualImportOutcome.DuplicateDetected => Results.Conflict(new { message = result.Error }),
+    ManualImportOutcome.WaitingForSecurityScanner => Results.Problem(
+        detail: result.Error,
+        statusCode: StatusCodes.Status503ServiceUnavailable,
+        type: "WAITING_FOR_SECURITY_SCANNER"),
+    _ => Results.ValidationProblem(new Dictionary<string, string[]>
+    {
+        ["file"] = [result.Error ?? "That file could not be imported."]
+    })
+};
+
+static async Task<IResult> EvaluateMediaAssetAsync(
+    Guid assetId,
+    SecurityEvaluationService evaluationService,
+    CancellationToken cancellationToken)
+{
+    var result = await evaluationService.EvaluateAsync(assetId, cancellationToken);
+
+    return result.Outcome switch
+    {
+        SecurityEvaluationOutcome.Success => Results.Ok(new SecurityEvaluationResponse(
+            result.EvaluationId!.Value,
+            assetId,
+            result.Status!.Value.ToString(),
+            result.CreatedAtUtc!.Value,
+            result.CompletedAtUtc)),
+        SecurityEvaluationOutcome.NotFound => Results.NotFound(),
+        _ => Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["asset"] = [result.Error ?? "That asset could not be evaluated."]
+        })
+    };
+}
+
+static async Task<IResult> ApproveMediaAssetAsync(
+    Guid assetId,
+    ApprovalDecisionRequest request,
+    ApprovalService approvals,
+    CancellationToken cancellationToken) =>
+    ToApprovalResult(await approvals.ApproveAsync(assetId, request.Reason, cancellationToken));
+
+static async Task<IResult> RejectMediaAssetAsync(
+    Guid assetId,
+    ApprovalDecisionRequest request,
+    ApprovalService approvals,
+    CancellationToken cancellationToken) =>
+    ToApprovalResult(await approvals.RejectAsync(assetId, request.Reason, cancellationToken));
+
+static IResult ToApprovalResult(ApprovalResult result) => result.Outcome switch
+{
+    ApprovalOutcome.Success => Results.NoContent(),
+    ApprovalOutcome.NotFound => Results.NotFound(),
+    _ => Results.ValidationProblem(new Dictionary<string, string[]>
+    {
+        ["asset"] = [result.Error ?? "That decision could not be recorded."]
+    })
+};
+
 static async Task<IResult> ToAdminCommandResult(
     BookRequestCommandResult result,
     Guid requestId,
@@ -775,6 +929,7 @@ static BookRequestResponse ToRequestResponse(
     request.IsActive,
     request.Formats
         .Select(format => new BookRequestFormatResponse(
+            format.Id,
             format.MediaType.ToString(),
             format.Status.ToString()))
         .ToArray(),
@@ -812,38 +967,38 @@ static string DescribeStatus(RequestStatus status) => status switch
     _ => status.ToString()
 };
 
-static async Task<IResult> ListMetadataProvidersAsync(
-    MetadataProviderAdminService admin,
+static async Task<IResult> ListProvidersAsync(
+    ProviderAdminService admin,
     CancellationToken cancellationToken)
 {
     var statuses = await admin.GetStatusesAsync(cancellationToken);
-    return Results.Ok(new MetadataProviderListResponse(
+    return Results.Ok(new ProviderListResponse(
         statuses.Select(ToProviderResponse).ToArray()));
 }
 
-static async Task<IResult> SetMetadataProviderEnabledAsync(
+static async Task<IResult> SetProviderEnabledAsync(
     string providerId,
-    SetMetadataProviderEnabledRequest request,
-    MetadataProviderAdminService admin,
+    SetProviderEnabledRequest request,
+    ProviderAdminService admin,
     CancellationToken cancellationToken) =>
     ToResult(await admin.SetEnabledAsync(providerId, request.Enabled, cancellationToken));
 
-static async Task<IResult> SetMetadataProviderCredentialAsync(
+static async Task<IResult> SetProviderCredentialAsync(
     string providerId,
-    SetMetadataProviderCredentialRequest request,
-    MetadataProviderAdminService admin,
+    SetProviderCredentialRequest request,
+    ProviderAdminService admin,
     CancellationToken cancellationToken) =>
     ToResult(await admin.SetCredentialAsync(providerId, request.Credential, cancellationToken));
 
-static async Task<IResult> ClearMetadataProviderCredentialAsync(
+static async Task<IResult> ClearProviderCredentialAsync(
     string providerId,
-    MetadataProviderAdminService admin,
+    ProviderAdminService admin,
     CancellationToken cancellationToken) =>
     ToResult(await admin.ClearCredentialAsync(providerId, cancellationToken));
 
-static async Task<IResult> TestMetadataProviderAsync(
+static async Task<IResult> TestProviderAsync(
     string providerId,
-    MetadataProviderAdminService admin,
+    ProviderAdminService admin,
     MetadataProviderConnectionTester tester,
     CancellationToken cancellationToken)
 {
@@ -861,16 +1016,16 @@ static async Task<IResult> TestMetadataProviderAsync(
 
     return recorded.Status is null
         ? Results.NotFound()
-        : Results.Ok(new MetadataProviderTestResponse(
+        : Results.Ok(new ProviderTestResponse(
             outcome.Succeeded,
             outcome.Message,
             ToProviderResponse(recorded.Status)));
 }
 
-static IResult ToResult(MetadataProviderCommandResult result) => result.Outcome switch
+static IResult ToResult(ProviderCommandResult result) => result.Outcome switch
 {
-    MetadataProviderCommandOutcome.NotFound => Results.NotFound(),
-    MetadataProviderCommandOutcome.Invalid => Results.ValidationProblem(
+    ProviderCommandOutcome.NotFound => Results.NotFound(),
+    ProviderCommandOutcome.Invalid => Results.ValidationProblem(
         new Dictionary<string, string[]>
         {
             ["provider"] = [result.Error ?? "That change is not allowed."]
@@ -878,7 +1033,7 @@ static IResult ToResult(MetadataProviderCommandResult result) => result.Outcome 
     _ => Results.Ok(ToProviderResponse(result.Status!))
 };
 
-static MetadataProviderStatusResponse ToProviderResponse(MetadataProviderStatus status) => new(
+static ProviderStatusResponse ToProviderResponse(ProviderStatus status) => new(
     status.ProviderId,
     status.DisplayName,
     status.RequiresCredential,
@@ -894,7 +1049,7 @@ static MetadataProviderStatusResponse ToProviderResponse(MetadataProviderStatus 
     status.LastTestMessage,
     status.SetupInstructions,
     status.SetupLinks
-        .Select(link => new MetadataProviderSetupLinkResponse(link.Label, link.Url))
+        .Select(link => new ProviderSetupLinkResponse(link.Label, link.Url))
         .ToArray());
 
 static async Task<IResult> SearchCatalogAsync(

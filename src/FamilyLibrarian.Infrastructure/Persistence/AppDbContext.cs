@@ -1,10 +1,12 @@
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Domain.Accounts;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Feedback;
-using FamilyLibrarian.Domain.Integrations;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Domain.Security;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -32,7 +34,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<ExternalReference> ExternalReferences => Set<ExternalReference>();
 
-    public DbSet<MetadataProviderSetting> MetadataProviderSettings => Set<MetadataProviderSetting>();
+    public DbSet<ProviderSetting> ProviderSettings => Set<ProviderSetting>();
 
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
@@ -45,6 +47,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<RequestStatusHistory> RequestStatusHistory => Set<RequestStatusHistory>();
 
     public DbSet<UserWorkFeedback> UserWorkFeedback => Set<UserWorkFeedback>();
+
+    public DbSet<AcquisitionJob> AcquisitionJobs => Set<AcquisitionJob>();
+
+    public DbSet<AcquisitionCandidate> AcquisitionCandidates => Set<AcquisitionCandidate>();
+
+    public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
+
+    public DbSet<SecurityEvaluation> SecurityEvaluations => Set<SecurityEvaluation>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -76,7 +86,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         ConfigureCatalog(builder);
         ConfigureRequests(builder);
         ConfigureFeedback(builder);
-        ConfigureIntegrations(builder);
+        ConfigureProviders(builder);
+        ConfigureAcquisition(builder);
+        ConfigureSecurity(builder);
         ConfigureAudit(builder);
     }
 
@@ -234,11 +246,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         });
     }
 
-    private static void ConfigureIntegrations(ModelBuilder builder)
+    private static void ConfigureProviders(ModelBuilder builder)
     {
-        builder.Entity<MetadataProviderSetting>(entity =>
+        builder.Entity<ProviderSetting>(entity =>
         {
-            entity.ToTable("metadata_provider_settings", "app");
+            entity.ToTable("provider_settings", "providers");
             // The provider id is the natural key: routes address known installed
             // provider ids, so a surrogate key would add a lookup without adding
             // any meaning.
@@ -256,6 +268,181 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(setting => setting.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(setting => setting.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(setting => setting.Version).HasColumnName("xmin").IsRowVersion();
+        });
+    }
+
+    private static void ConfigureAcquisition(ModelBuilder builder)
+    {
+        builder.Entity<AcquisitionJob>(entity =>
+        {
+            entity.ToTable("acquisition_jobs", "acquisition");
+            entity.HasKey(job => job.Id);
+            entity.Property(job => job.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(job => job.RequestId).HasColumnName("request_id");
+            entity.Property(job => job.MediaType).HasColumnName("media_type").HasConversion<string>().HasMaxLength(32);
+            entity.Property(job => job.ProviderId).HasColumnName("provider_id").HasMaxLength(128);
+            entity.Property(job => job.EgressPolicy).HasColumnName("egress_policy").HasConversion<string>().HasMaxLength(32);
+            entity.Property(job => job.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+            entity.Property(job => job.StartedAtUtc).HasColumnName("started_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(job => job.CompletedAtUtc).HasColumnName("completed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(job => job.FailureReason).HasColumnName("failure_reason").HasMaxLength(2_000);
+            ConfigureTimestamps(entity);
+
+            // The admin queue for outstanding jobs filters/orders by these.
+            entity.HasIndex(job => new { job.RequestId, job.Status });
+
+            // Restrict: acquisition history outlives request-record changes, the
+            // same rationale as BookRequest's own foreign keys.
+            entity.HasOne<BookRequest>()
+                .WithMany()
+                .HasForeignKey(job => job.RequestId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(job => job.Candidates)
+                .WithOne(candidate => candidate.AcquisitionJob)
+                .HasForeignKey(candidate => candidate.AcquisitionJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.Navigation(job => job.Candidates).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        builder.Entity<AcquisitionCandidate>(entity =>
+        {
+            entity.ToTable("acquisition_candidates", "acquisition");
+            entity.HasKey(candidate => candidate.Id);
+            entity.Property(candidate => candidate.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(candidate => candidate.AcquisitionJobId).HasColumnName("acquisition_job_id");
+            entity.Property(candidate => candidate.ProviderId).HasColumnName("provider_id").HasMaxLength(128);
+            entity.Property(candidate => candidate.ProviderReference).HasColumnName("provider_reference").HasMaxLength(512);
+            entity.Property(candidate => candidate.Title).HasColumnName("title").HasMaxLength(1_024);
+            entity.Property(candidate => candidate.Author).HasColumnName("author").HasMaxLength(512);
+            entity.Property(candidate => candidate.Format).HasColumnName("format").HasMaxLength(32);
+            entity.Property(candidate => candidate.SizeBytes).HasColumnName("size_bytes");
+            entity.Property(candidate => candidate.Duration).HasColumnName("duration");
+            entity.Property(candidate => candidate.BitrateKbps).HasColumnName("bitrate_kbps");
+            entity.Property(candidate => candidate.MetadataJson).HasColumnName("metadata_json").HasColumnType("jsonb");
+            entity.Property(candidate => candidate.ConfidenceScore).HasColumnName("confidence_score");
+            entity.Property(candidate => candidate.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+            ConfigureTimestamps(entity);
+        });
+
+        builder.Entity<MediaAsset>(entity =>
+        {
+            entity.ToTable("media_assets", "acquisition");
+            entity.HasKey(asset => asset.Id);
+            entity.Property(asset => asset.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(asset => asset.WorkId).HasColumnName("work_id");
+            entity.Property(asset => asset.EditionId).HasColumnName("edition_id");
+            entity.Property(asset => asset.MediaType).HasColumnName("media_type").HasConversion<string>().HasMaxLength(32);
+            entity.Property(asset => asset.Format).HasColumnName("format").HasMaxLength(32);
+            entity.Property(asset => asset.OriginalFilename).HasColumnName("original_filename").HasMaxLength(1_024);
+            entity.Property(asset => asset.StoredFilename).HasColumnName("stored_filename").HasMaxLength(256);
+            entity.Property(asset => asset.SizeBytes).HasColumnName("size_bytes");
+            entity.Property(asset => asset.Sha256).HasColumnName("sha256").HasMaxLength(64);
+            entity.Property(asset => asset.DetectedMimeType).HasColumnName("detected_mime_type").HasMaxLength(128);
+            entity.Property(asset => asset.AssociatedRequestFormatId).HasColumnName("associated_request_format_id");
+            entity.Property(asset => asset.SourceAcquisitionCandidateId).HasColumnName("source_acquisition_candidate_id");
+            entity.Property(asset => asset.StorageState).HasColumnName("storage_state").HasConversion<string>().HasMaxLength(32);
+            ConfigureTimestamps(entity);
+
+            // Duplicate-upload detection looks up by (format, checksum); the asset
+            // review surfaces will look up an asset by its owning format.
+            entity.HasIndex(asset => asset.Sha256);
+            entity.HasIndex(asset => asset.AssociatedRequestFormatId);
+
+            entity.HasOne<Work>()
+                .WithMany()
+                .HasForeignKey(asset => asset.WorkId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<RequestFormat>()
+                .WithMany()
+                .HasForeignKey(asset => asset.AssociatedRequestFormatId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AcquisitionCandidate>()
+                .WithMany()
+                .HasForeignKey(asset => asset.SourceAcquisitionCandidateId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureSecurity(ModelBuilder builder)
+    {
+        builder.Entity<SecurityEvaluation>(entity =>
+        {
+            entity.ToTable("security_evaluations", "security");
+            entity.HasKey(evaluation => evaluation.Id);
+            entity.Property(evaluation => evaluation.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(evaluation => evaluation.AssetId).HasColumnName("asset_id");
+            entity.Property(evaluation => evaluation.PolicyVersion).HasColumnName("policy_version").HasMaxLength(32);
+            entity.Property(evaluation => evaluation.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+            entity.Property(evaluation => evaluation.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(evaluation => evaluation.CompletedAtUtc).HasColumnName("completed_at_utc").HasColumnType("timestamp with time zone");
+
+            // The admin asset-review surface looks up the most recent evaluation
+            // for one asset.
+            entity.HasIndex(evaluation => new { evaluation.AssetId, evaluation.CreatedAtUtc });
+
+            entity.HasOne<MediaAsset>()
+                .WithMany()
+                .HasForeignKey(evaluation => evaluation.AssetId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(evaluation => evaluation.ScanResults)
+                .WithOne()
+                .HasForeignKey(result => result.SecurityEvaluationId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(evaluation => evaluation.ValidationResults)
+                .WithOne()
+                .HasForeignKey(result => result.SecurityEvaluationId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(evaluation => evaluation.Approvals)
+                .WithOne()
+                .HasForeignKey(approval => approval.SecurityEvaluationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.Navigation(evaluation => evaluation.ScanResults).UsePropertyAccessMode(PropertyAccessMode.Field);
+            entity.Navigation(evaluation => evaluation.ValidationResults).UsePropertyAccessMode(PropertyAccessMode.Field);
+            entity.Navigation(evaluation => evaluation.Approvals).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        builder.Entity<SecurityScanResult>(entity =>
+        {
+            entity.ToTable("security_scan_results", "security");
+            entity.HasKey(result => result.Id);
+            entity.Property(result => result.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(result => result.SecurityEvaluationId).HasColumnName("security_evaluation_id");
+            entity.Property(result => result.ScannerId).HasColumnName("scanner_id").HasMaxLength(64);
+            entity.Property(result => result.IsRequired).HasColumnName("is_required");
+            entity.Property(result => result.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+            entity.Property(result => result.ThreatName).HasColumnName("threat_name").HasMaxLength(256);
+            entity.Property(result => result.ScannerVersion).HasColumnName("scanner_version").HasMaxLength(64);
+            entity.Property(result => result.ScannedAtUtc).HasColumnName("scanned_at_utc").HasColumnType("timestamp with time zone");
+        });
+
+        builder.Entity<FormatValidationResult>(entity =>
+        {
+            entity.ToTable("format_validation_results", "security");
+            entity.HasKey(result => result.Id);
+            entity.Property(result => result.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(result => result.SecurityEvaluationId).HasColumnName("security_evaluation_id");
+            entity.Property(result => result.ValidatorId).HasColumnName("validator_id").HasMaxLength(64);
+            entity.Property(result => result.IsValid).HasColumnName("is_valid");
+            entity.Property(result => result.Message).HasColumnName("message").HasMaxLength(1_024);
+            entity.Property(result => result.ValidatedAtUtc).HasColumnName("validated_at_utc").HasColumnType("timestamp with time zone");
+        });
+
+        builder.Entity<Approval>(entity =>
+        {
+            entity.ToTable("approvals", "security");
+            entity.HasKey(approval => approval.Id);
+            entity.Property(approval => approval.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(approval => approval.SecurityEvaluationId).HasColumnName("security_evaluation_id");
+            entity.Property(approval => approval.Decision).HasColumnName("decision").HasConversion<string>().HasMaxLength(32);
+            entity.Property(approval => approval.ActorType).HasColumnName("actor_type").HasConversion<string>().HasMaxLength(32);
+            entity.Property(approval => approval.ActorUserId).HasColumnName("actor_user_id");
+            entity.Property(approval => approval.PolicyName).HasColumnName("policy_name").HasMaxLength(128);
+            entity.Property(approval => approval.Reason).HasColumnName("reason").HasMaxLength(Approval.MaxReasonLength);
+            entity.Property(approval => approval.DecidedAtUtc).HasColumnName("decided_at_utc").HasColumnType("timestamp with time zone");
         });
     }
 

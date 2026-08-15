@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
-using FamilyLibrarian.Contracts.Integrations;
+using FamilyLibrarian.Contracts.Providers;
 using FamilyLibrarian.Web.Client.Authentication;
 
 namespace FamilyLibrarian.Web.Client.Integrations;
@@ -19,10 +19,10 @@ public sealed class MetadataIntegrationsApiClient(
 {
     private const string BasePath = "api/v1/admin/integrations/metadata";
 
-    public async Task<IReadOnlyList<MetadataProviderStatusResponse>> GetProvidersAsync(
+    public async Task<IReadOnlyList<ProviderStatusResponse>> GetProvidersAsync(
         CancellationToken cancellationToken = default)
     {
-        var response = await httpClient.GetFromJsonAsync<MetadataProviderListResponse>(
+        var response = await httpClient.GetFromJsonAsync<ProviderListResponse>(
             $"{BasePath}/",
             cancellationToken);
 
@@ -36,7 +36,7 @@ public sealed class MetadataIntegrationsApiClient(
         SendAsync(
             HttpMethod.Put,
             $"{BasePath}/{Uri.EscapeDataString(providerId)}/enabled",
-            new SetMetadataProviderEnabledRequest(enabled),
+            new SetProviderEnabledRequest(enabled),
             cancellationToken);
 
     public Task<MetadataIntegrationsResult> SetCredentialAsync(
@@ -46,7 +46,7 @@ public sealed class MetadataIntegrationsApiClient(
         SendAsync(
             HttpMethod.Put,
             $"{BasePath}/{Uri.EscapeDataString(providerId)}/credential",
-            new SetMetadataProviderCredentialRequest(credential),
+            new SetProviderCredentialRequest(credential),
             cancellationToken);
 
     public Task<MetadataIntegrationsResult> ClearCredentialAsync(
@@ -58,7 +58,7 @@ public sealed class MetadataIntegrationsApiClient(
             payload: null,
             cancellationToken);
 
-    public async Task<MetadataProviderTestResponse?> TestAsync(
+    public async Task<ProviderTestResponse?> TestAsync(
         string providerId,
         CancellationToken cancellationToken = default)
     {
@@ -70,7 +70,7 @@ public sealed class MetadataIntegrationsApiClient(
         using var response = await httpClient.SendAsync(request, cancellationToken);
 
         return response.IsSuccessStatusCode
-            ? await response.Content.ReadFromJsonAsync<MetadataProviderTestResponse>(cancellationToken)
+            ? await response.Content.ReadFromJsonAsync<ProviderTestResponse>(cancellationToken)
             : null;
     }
 
@@ -114,7 +114,7 @@ public sealed class MetadataIntegrationsApiClient(
             return new MetadataIntegrationsResult(
                 true,
                 null,
-                await response.Content.ReadFromJsonAsync<MetadataProviderStatusResponse>());
+                await response.Content.ReadFromJsonAsync<ProviderStatusResponse>());
         }
 
         // The host answers a rejected change with a validation problem carrying a
@@ -138,4 +138,4 @@ public sealed class MetadataIntegrationsApiClient(
 public sealed record MetadataIntegrationsResult(
     bool Succeeded,
     string? Error,
-    MetadataProviderStatusResponse? Provider);
+    ProviderStatusResponse? Provider);

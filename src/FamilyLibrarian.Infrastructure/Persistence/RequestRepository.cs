@@ -147,7 +147,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             request.Status,
             request.Formats
                 .OrderBy(format => format.MediaType)
-                .Select(format => new RequestFormatView(format.MediaType, format.Status))
+                .Select(format => new RequestFormatView(format.Id, format.MediaType, format.Status))
                 .ToList(),
             request.RequesterNote,
             request.AdminNote,
@@ -178,7 +178,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                 request.Status,
                 request.Formats
                     .OrderBy(format => format.MediaType)
-                    .Select(format => new RequestFormatView(format.MediaType, format.Status))
+                    .Select(format => new RequestFormatView(format.Id, format.MediaType, format.Status))
                     .ToList(),
                 request.RequesterNote,
                 request.AdminNote,

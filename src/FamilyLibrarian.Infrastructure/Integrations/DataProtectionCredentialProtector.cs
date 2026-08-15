@@ -16,6 +16,10 @@ namespace FamilyLibrarian.Infrastructure.Integrations;
 /// </remarks>
 public sealed class DataProtectionCredentialProtector : ICredentialProtector
 {
+    // DO NOT CHANGE. This literal (plus the per-provider sub-purpose below) derives
+    // the Data Protection key used to encrypt every stored provider credential.
+    // Changing it — even as part of the M8 provider-model rename — makes every
+    // previously stored credential permanently unprotectable.
     internal const string PurposeRoot = "FamilyLibrarian.MetadataProviderCredential.v1";
 
     private const int CurrentFormatVersion = 1;

@@ -1,14 +1,20 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain;
+using FamilyLibrarian.Infrastructure.Acquisition;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
 using FamilyLibrarian.Infrastructure.Persistence;
+using FamilyLibrarian.Infrastructure.Providers;
+using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Infrastructure.Time;
 using System.Net.Http.Headers;
 using System.Net.Mail;
@@ -103,12 +109,57 @@ public static class DependencyInjection
         services.AddScoped<IClock, SystemClock>();
         services.AddScoped<ICatalogRepository, CatalogRepository>();
         services.AddScoped<CatalogWorkResolver>();
+        services.AddScoped<IWorkFormatAvailabilityService, WorkFormatAvailabilityService>();
+        services.AddScoped<IWorkFulfillmentOptionsService, WorkFulfillmentOptionsService>();
 
         services.AddScoped<IRequestRepository, RequestRepository>();
         services.AddScoped<BookRequestService>();
 
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
         services.AddScoped<UserWorkFeedbackService>();
+
+        services.AddOptions<StorageOptions>()
+            .Bind(configuration.GetSection(StorageOptions.SectionName))
+            .Validate(
+                options => !string.IsNullOrWhiteSpace(options.RootPath),
+                $"{StorageOptions.SectionName}:RootPath is required.")
+            .ValidateOnStart();
+        services.AddScoped<IAssetStagingStore, FileSystemAssetStagingStore>();
+        services.AddScoped<IAcquisitionRepository, AcquisitionRepository>();
+
+        // Mirrors InvitationPolicy above: a plain settings object, since the
+        // Application layer that consumes it takes no dependency on the options
+        // packages.
+        var manualImportPolicy = new ManualImportPolicy();
+        configuration.GetSection(ManualImportPolicy.SectionName).Bind(manualImportPolicy);
+        if (!manualImportPolicy.IsValid)
+        {
+            throw new InvalidOperationException(
+                $"{ManualImportPolicy.SectionName} configuration is invalid: MaxUploadSizeBytes must be " +
+                "positive and at least one extension must be allowed for each media type.");
+        }
+
+        services.AddSingleton(manualImportPolicy);
+        services.AddScoped<ManualImportService>();
+
+        services.AddOptions<ClamAvScannerOptions>()
+            .Bind(configuration.GetSection(ClamAvScannerOptions.SectionName))
+            .Validate(
+                options => !string.IsNullOrWhiteSpace(options.Host),
+                $"{ClamAvScannerOptions.SectionName}:Host is required.")
+            .Validate(
+                options => options.Port is > 0 and <= 65_535,
+                $"{ClamAvScannerOptions.SectionName}:Port must be a valid port number.")
+            .Validate(
+                options => options.TimeoutSeconds is >= 1 and <= 300,
+                $"{ClamAvScannerOptions.SectionName}:TimeoutSeconds must be between 1 and 300.")
+            .ValidateOnStart();
+        services.AddSingleton<IMalwareScanner, ClamAvMalwareScanner>();
+
+        services.AddScoped<IAcquisitionBoundaryGuard, AcquisitionBoundaryGuard>();
+        services.AddScoped<ISecurityEvaluationRepository, SecurityEvaluationRepository>();
+        services.AddScoped<SecurityEvaluationService>();
+        services.AddScoped<ApprovalService>();
 
         // Bound and validated at startup, so a bad LifetimeDays fails the deploy
         // rather than silently issuing invitations that never expire or expire
@@ -139,14 +190,14 @@ public static class DependencyInjection
         // providers; enablement and credentials are runtime state, so every
         // provider below is registered unconditionally and filtered per request
         // by ActiveMetadataProviderResolver.
-        services.AddSingleton<IMetadataProviderRegistry, MetadataProviderRegistry>();
+        services.AddSingleton<IProviderRegistry, ProviderRegistry>();
         services.AddSingleton<ICredentialProtector, DataProtectionCredentialProtector>();
-        services.AddScoped<IMetadataProviderSettingsStore, MetadataProviderSettingsStore>();
+        services.AddScoped<IProviderSettingsStore, ProviderSettingsStore>();
         services.AddScoped<IAuditWriter, AuditWriter>();
         services.AddScoped<MetadataCredentialSource>();
         services.AddSingleton<IMetadataCredentialAccessor, ScopedMetadataCredentialAccessor>();
         services.AddScoped<IActiveMetadataProviderResolver, ActiveMetadataProviderResolver>();
-        services.AddScoped<MetadataProviderAdminService>();
+        services.AddScoped<ProviderAdminService>();
         services.AddScoped<MetadataProviderConnectionTester>();
 
         services.AddSingleton<IBookMetadataProvider, DemoBookMetadataProvider>();

@@ -1,5 +1,7 @@
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Infrastructure.Metadata;
+using FamilyLibrarian.Infrastructure.Providers;
 using Microsoft.Extensions.Configuration;
 
 namespace FamilyLibrarian.Infrastructure.Integrations;
@@ -20,7 +22,7 @@ namespace FamilyLibrarian.Infrastructure.Integrations;
 /// </remarks>
 public sealed class MetadataCredentialSource(
     IConfiguration configuration,
-    IMetadataProviderSettingsStore store,
+    IProviderSettingsStore store,
     ICredentialProtector protector)
 {
     public async Task<string?> GetCredentialAsync(
@@ -46,7 +48,7 @@ public sealed class MetadataCredentialSource(
     }
 
     private string? ReadFromConfiguration(string providerId) =>
-        string.Equals(providerId, MetadataProviderRegistry.GoogleBooksProviderId, StringComparison.OrdinalIgnoreCase)
+        string.Equals(providerId, ProviderRegistry.GoogleBooksProviderId, StringComparison.OrdinalIgnoreCase)
             ? configuration[$"{GoogleBooksMetadataOptions.SectionName}:ApiKey"]
             : null;
 }

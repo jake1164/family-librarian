@@ -1,4 +1,6 @@
+using FamilyLibrarian.Application.Security;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Hosting;
@@ -92,6 +94,17 @@ internal sealed class FamilyLibrarianAppFactory(
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Ordinary tests must never depend on a reachable ClamAV instance,
+        // mirroring how metadata providers default to the safe in-process demo
+        // provider above. A test that specifically exercises the security gate
+        // (see SecurityGateEndpointTests) overrides this via configureTestServices,
+        // which runs after this and so wins.
+        builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<IMalwareScanner>();
+            services.AddSingleton<IMalwareScanner, AlwaysCleanTestMalwareScanner>();
+        });
+
         if (configureTestServices is not null)
         {
             builder.ConfigureServices(configureTestServices);

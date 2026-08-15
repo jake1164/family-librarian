@@ -419,7 +419,7 @@ public sealed class BookRequestServiceTests
             null,
             request.Status,
             request.Formats
-                .Select(format => new RequestFormatView(format.MediaType, format.Status))
+                .Select(format => new RequestFormatView(format.Id, format.MediaType, format.Status))
                 .ToArray(),
             request.RequesterNote,
             request.AdminNote,

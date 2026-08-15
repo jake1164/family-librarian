@@ -99,6 +99,253 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("invitations", "identity");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.AcquisitionCandidate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AcquisitionJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("acquisition_job_id");
+
+                    b.Property<string>("Author")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("author");
+
+                    b.Property<int?>("BitrateKbps")
+                        .HasColumnType("integer")
+                        .HasColumnName("bitrate_kbps");
+
+                    b.Property<double?>("ConfidenceScore")
+                        .HasColumnType("double precision")
+                        .HasColumnName("confidence_score");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<TimeSpan?>("Duration")
+                        .HasColumnType("interval")
+                        .HasColumnName("duration");
+
+                    b.Property<string>("Format")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("format");
+
+                    b.Property<string>("MetadataJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("metadata_json");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<string>("ProviderReference")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("provider_reference");
+
+                    b.Property<long?>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("title");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AcquisitionJobId");
+
+                    b.ToTable("acquisition_candidates", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.AcquisitionJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at_utc");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("EgressPolicy")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("egress_policy");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<string>("MediaType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("media_type");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<DateTimeOffset?>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at_utc");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId", "Status");
+
+                    b.ToTable("acquisition_jobs", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.MediaAsset", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AssociatedRequestFormatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("associated_request_format_id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("DetectedMimeType")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("detected_mime_type");
+
+                    b.Property<Guid?>("EditionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("edition_id");
+
+                    b.Property<string>("Format")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("format");
+
+                    b.Property<string>("MediaType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("media_type");
+
+                    b.Property<string>("OriginalFilename")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("original_filename");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sha256");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<Guid?>("SourceAcquisitionCandidateId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("source_acquisition_candidate_id");
+
+                    b.Property<string>("StorageState")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("storage_state");
+
+                    b.Property<string>("StoredFilename")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("stored_filename");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<Guid>("WorkId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("work_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssociatedRequestFormatId");
+
+                    b.HasIndex("Sha256");
+
+                    b.HasIndex("SourceAcquisitionCandidateId");
+
+                    b.HasIndex("WorkId");
+
+                    b.ToTable("media_assets", "acquisition");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Audit.AuditEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -579,7 +826,7 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("user_work_feedback", "feedback");
                 });
 
-            modelBuilder.Entity("FamilyLibrarian.Domain.Integrations.MetadataProviderSetting", b =>
+            modelBuilder.Entity("FamilyLibrarian.Domain.Providers.ProviderSetting", b =>
                 {
                     b.Property<string>("ProviderId")
                         .HasMaxLength(128)
@@ -641,7 +888,7 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
                     b.HasKey("ProviderId");
 
-                    b.ToTable("metadata_provider_settings", "app");
+                    b.ToTable("provider_settings", "providers");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.BookRequest", b =>
@@ -790,6 +1037,173 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasIndex("RequestId", "OccurredAtUtc");
 
                     b.ToTable("request_status_history", "requests");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Security.Approval", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActorType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("actor_type");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_user_id");
+
+                    b.Property<DateTimeOffset>("DecidedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("decided_at_utc");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("decision");
+
+                    b.Property<string>("PolicyName")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("policy_name");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("SecurityEvaluationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("security_evaluation_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SecurityEvaluationId");
+
+                    b.ToTable("approvals", "security");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Security.FormatValidationResult", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("IsValid")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_valid");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("message");
+
+                    b.Property<Guid>("SecurityEvaluationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("security_evaluation_id");
+
+                    b.Property<DateTimeOffset>("ValidatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("validated_at_utc");
+
+                    b.Property<string>("ValidatorId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("validator_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SecurityEvaluationId");
+
+                    b.ToTable("format_validation_results", "security");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Security.SecurityEvaluation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("asset_id");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at_utc");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("PolicyVersion")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("policy_version");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssetId", "CreatedAtUtc");
+
+                    b.ToTable("security_evaluations", "security");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Security.SecurityScanResult", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("IsRequired")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_required");
+
+                    b.Property<DateTimeOffset>("ScannedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("scanned_at_utc");
+
+                    b.Property<string>("ScannerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("scanner_id");
+
+                    b.Property<string>("ScannerVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("scanner_version");
+
+                    b.Property<Guid>("SecurityEvaluationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("security_evaluation_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("ThreatName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("threat_name");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SecurityEvaluationId");
+
+                    b.ToTable("security_scan_results", "security");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Infrastructure.Identity.AppUser", b =>
@@ -1034,6 +1448,46 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.AcquisitionCandidate", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.AcquisitionJob", "AcquisitionJob")
+                        .WithMany("Candidates")
+                        .HasForeignKey("AcquisitionJobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AcquisitionJob");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.AcquisitionJob", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.MediaAsset", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
+                        .WithMany()
+                        .HasForeignKey("AssociatedRequestFormatId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.AcquisitionCandidate", null)
+                        .WithMany()
+                        .HasForeignKey("SourceAcquisitionCandidateId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FamilyLibrarian.Domain.Catalog.Work", null)
+                        .WithMany()
+                        .HasForeignKey("WorkId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.Edition", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Catalog.Work", "Work")
@@ -1143,6 +1597,42 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("Request");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Security.Approval", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Security.SecurityEvaluation", null)
+                        .WithMany("Approvals")
+                        .HasForeignKey("SecurityEvaluationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Security.FormatValidationResult", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Security.SecurityEvaluation", null)
+                        .WithMany("ValidationResults")
+                        .HasForeignKey("SecurityEvaluationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Security.SecurityEvaluation", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.MediaAsset", null)
+                        .WithMany()
+                        .HasForeignKey("AssetId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Security.SecurityScanResult", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Security.SecurityEvaluation", null)
+                        .WithMany("ScanResults")
+                        .HasForeignKey("SecurityEvaluationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole<System.Guid>", null)
@@ -1194,6 +1684,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.AcquisitionJob", b =>
+                {
+                    b.Navigation("Candidates");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.Author", b =>
                 {
                     b.Navigation("WorkAuthors");
@@ -1218,6 +1713,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("Formats");
 
                     b.Navigation("StatusHistory");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Security.SecurityEvaluation", b =>
+                {
+                    b.Navigation("Approvals");
+
+                    b.Navigation("ScanResults");
+
+                    b.Navigation("ValidationResults");
                 });
 #pragma warning restore 612, 618
         }

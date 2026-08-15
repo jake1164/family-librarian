@@ -28,6 +28,24 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # Required malware scanner for manual/automated file acquisition. Not
+  # published to the host: only the family-librarian service reaches it, over
+  # the internal Compose network. Pin this tag deliberately rather than
+  # `:stable`/`:latest` — verify the current recommended release before
+  # upgrading it.
+  clamav:
+    image: clamav/clamav:1.4
+    healthcheck:
+      # freshclam's virus-database download can take minutes on a cold image;
+      # the generous start_period keeps that from being reported as unhealthy.
+      test: ["CMD", "clamdscan", "--ping", "1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 180s
+    volumes:
+      - clamav-data:/var/lib/clamav
+
   family-librarian:
     # Stable local-only name used by the VS Code Docker attach configurations.
     # This service is intentionally not scaled in the development Compose stack.
@@ -53,6 +71,11 @@ services:
       # optional; the application defaults apply when they are unset.
       Invitations__LifetimeDays: ${Invitations__LifetimeDays:-7}
       Invitations__RedemptionAttemptsPerMinute: ${Invitations__RedemptionAttemptsPerMinute:-10}
+      # Quarantine/processing/rejected/trusted storage zones. ClamAv__Host
+      # points at the internal Compose service, never published to the host.
+      Storage__RootPath: /data/family-librarian
+      ClamAv__Host: clamav
+      ClamAv__Port: 3310
     # Without this, `docker compose up --wait` returns the moment the container
     # is *running* — which is before Kestrel has bound the port. The VS Code
     # task then opens a browser against an app that cannot answer yet, and the
@@ -71,11 +94,17 @@ services:
       timeout: 5s
       retries: 30
       start_period: 5s
+    volumes:
+      - family-librarian-data:/data/family-librarian
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
 
 volumes:
   postgres-data:
+  clamav-data:
+  family-librarian-data:

@@ -1,4 +1,5 @@
 using FamilyLibrarian.Infrastructure.Integrations;
+using FamilyLibrarian.Infrastructure.Providers;
 
 namespace FamilyLibrarian.Infrastructure.Metadata;
 
@@ -27,7 +28,7 @@ public sealed class GoogleBooksApiKeyHandler(IMetadataCredentialAccessor credent
         ArgumentNullException.ThrowIfNull(request.RequestUri);
 
         var apiKey = await credentials.GetCredentialAsync(
-            MetadataProviderRegistry.GoogleBooksProviderId,
+            ProviderRegistry.GoogleBooksProviderId,
             cancellationToken);
 
         if (string.IsNullOrWhiteSpace(apiKey))

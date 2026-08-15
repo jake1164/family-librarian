@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FamilyLibrarian.Contracts.Authentication;
-using FamilyLibrarian.Contracts.Integrations;
+using FamilyLibrarian.Contracts.Providers;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Web.Tests.Harness;
@@ -127,11 +127,11 @@ public sealed class EndpointAuthorizationTests
         // respect except authorization.
         var enable = await client.PutAsJsonAsync(
             "/api/v1/admin/integrations/metadata/openlibrary/enabled",
-            new SetMetadataProviderEnabledRequest(true));
+            new SetProviderEnabledRequest(true));
 
         var credential = await client.PutAsJsonAsync(
             "/api/v1/admin/integrations/metadata/googlebooks/credential",
-            new SetMetadataProviderCredentialRequest("attempted-by-non-admin"));
+            new SetProviderCredentialRequest("attempted-by-non-admin"));
 
         var clear = await client.DeleteAsync(
             "/api/v1/admin/integrations/metadata/googlebooks/credential");
@@ -152,7 +152,7 @@ public sealed class EndpointAuthorizationTests
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await fixture.CreateAdminClientAsync();
 
-        var providers = await client.GetFromJsonAsync<MetadataProviderListResponse>(
+        var providers = await client.GetFromJsonAsync<ProviderListResponse>(
             "/api/v1/admin/integrations/metadata/");
 
         Assert.IsNotNull(providers);

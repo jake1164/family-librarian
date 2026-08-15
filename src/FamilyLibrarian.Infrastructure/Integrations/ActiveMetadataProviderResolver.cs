@@ -1,13 +1,14 @@
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
-using FamilyLibrarian.Domain.Integrations;
+using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Domain.Providers;
 
 namespace FamilyLibrarian.Infrastructure.Integrations;
 
 public sealed class ActiveMetadataProviderResolver(
     IEnumerable<IBookMetadataProvider> providers,
-    IMetadataProviderRegistry registry,
-    IMetadataProviderSettingsStore store) : IActiveMetadataProviderResolver
+    IProviderRegistry registry,
+    IProviderSettingsStore store) : IActiveMetadataProviderResolver
 {
     public async Task<IReadOnlyList<IBookMetadataProvider>> GetActiveProvidersAsync(
         CancellationToken cancellationToken)
@@ -34,7 +35,7 @@ public sealed class ActiveMetadataProviderResolver(
         return IsUsable(provider.Id, settings) ? provider : null;
     }
 
-    private async Task<Dictionary<string, MetadataProviderSetting>> LoadSettingsAsync(
+    private async Task<Dictionary<string, ProviderSetting>> LoadSettingsAsync(
         CancellationToken cancellationToken)
     {
         var settings = await store.GetAllAsync(cancellationToken);
@@ -45,7 +46,7 @@ public sealed class ActiveMetadataProviderResolver(
 
     private bool IsUsable(
         string providerId,
-        Dictionary<string, MetadataProviderSetting> settings)
+        Dictionary<string, ProviderSetting> settings)
     {
         var descriptor = registry.Find(providerId);
         if (descriptor is null)
@@ -57,6 +58,6 @@ public sealed class ActiveMetadataProviderResolver(
         }
 
         settings.TryGetValue(descriptor.Id, out var setting);
-        return MetadataProviderState.IsUsable(descriptor, setting);
+        return ProviderState.IsUsable(descriptor, setting);
     }
 }

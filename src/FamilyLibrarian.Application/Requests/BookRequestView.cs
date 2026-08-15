@@ -27,7 +27,7 @@ public sealed record BookRequestView(
     public bool IsActive => RequestStatusTransitions.IsActive(Status);
 }
 
-public sealed record RequestFormatView(RequestMediaType MediaType, RequestFormatStatus Status);
+public sealed record RequestFormatView(Guid Id, RequestMediaType MediaType, RequestFormatStatus Status);
 
 /// <summary>
 /// The administrator-only request read model. Requester identity and the status

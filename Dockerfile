@@ -17,6 +17,11 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://+:8080
 ENV ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+# Baked in (while still root) so a fresh named volume mounted at this path on
+# first run inherits this ownership instead of root:root — the security
+# pipeline's storage zones live here, and the app runs as the non-root
+# $APP_UID user below.
+RUN mkdir -p /data/family-librarian && chown -R $APP_UID:$APP_UID /data/family-librarian
 COPY --from=build /app/publish .
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "FamilyLibrarian.Web.dll"]
