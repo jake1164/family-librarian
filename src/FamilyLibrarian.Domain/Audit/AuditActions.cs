@@ -26,6 +26,15 @@ public static class AuditActions
     public const string AssetEvaluated = "asset.evaluated";
     public const string AssetApproved = "asset.approved";
     public const string AssetRejected = "asset.rejected";
+    public const string AssetPublished = "asset.published";
+    public const string AssetPublishFailed = "asset.publish_failed";
+
+    public const string PublishingDestinationEnabled = "publishing_destination.enabled";
+    public const string PublishingDestinationDisabled = "publishing_destination.disabled";
+    public const string PublishingDestinationSettingsChanged = "publishing_destination.settings_changed";
+    public const string PublishingDestinationSecretSet = "publishing_destination.secret_set";
+    public const string PublishingDestinationSecretCleared = "publishing_destination.secret_cleared";
+    public const string PublishingDestinationTested = "publishing_destination.tested";
 }
 
 public static class AuditSubjectTypes
@@ -35,4 +44,5 @@ public static class AuditSubjectTypes
     public const string Account = "account";
     public const string BookRequest = "book_request";
     public const string MediaAsset = "media_asset";
+    public const string PublishingDestination = "publishing_destination";
 }

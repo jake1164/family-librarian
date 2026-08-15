@@ -1,0 +1,187 @@
+@page "/admin/library-publishing"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Publishing
+@using FamilyLibrarian.Web.Client.Publishing
+@using Microsoft.AspNetCore.Authorization
+@inject LibraryPublishingApiClient PublishingApi
+@inject ISnackbar Snackbar
+
+<PageTitle>Library publishing · Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Library publishing</MudText>
+<MudText Typo="Typo.body1" Class="mb-6">
+    What happened after an approved file was handed to CWA or Audiobookshelf.
+    Configure the destinations themselves on the
+    <MudLink Href="admin/integrations">Integrations</MudLink> page.
+</MudText>
+
+@if (loadFailed)
+{
+    <MudAlert Severity="Severity.Error">We could not load the publishing queue.</MudAlert>
+}
+else if (queue is null)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading the publishing queue" />
+}
+else
+{
+    <MudText Typo="Typo.h6" Class="mb-2">Ebooks → CWA</MudText>
+    @if (queue.LibraryImports.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Class="mb-6">No ebook publishing attempts yet.</MudAlert>
+    }
+    else
+    {
+        <MudStack Spacing="3" Class="mb-6">
+            @foreach (var import in queue.LibraryImports)
+            {
+                <MudPaper Class="pa-4" Elevation="1">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                        <MudLink Href="@($"admin/requests/{import.RequestId}")">
+                            <MudText Typo="Typo.h6">@import.WorkTitle</MudText>
+                        </MudLink>
+                        <MudSpacer />
+                        <MudChip T="string" Size="Size.Small" Color="StatusColor(import.Status)">@import.Status</MudChip>
+                    </MudStack>
+                    <MudText Typo="Typo.body2" Class="mt-1">
+                        @import.OriginalFilename — staged @import.CreatedAtUtc.ToLocalTime().ToString("g")
+                        @if (!string.IsNullOrWhiteSpace(import.ExternalBookId))
+                        {
+                            <span> — CWA book id @import.ExternalBookId</span>
+                        }
+                    </MudText>
+                    @if (!string.IsNullOrWhiteSpace(import.FailureReason))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">@import.FailureReason</MudText>
+                    }
+                    @if (import.Status is "AwaitingVerification" or "Failed")
+                    {
+                        <MudButton Variant="Variant.Outlined" Class="mt-2" Disabled="@(busyId == import.Id)"
+                                   OnClick="@(() => RecheckLibraryImportAsync(import.Id))">
+                            Recheck
+                        </MudButton>
+                    }
+                </MudPaper>
+            }
+        </MudStack>
+    }
+
+    <MudText Typo="Typo.h6" Class="mb-2">Audiobooks → Audiobookshelf</MudText>
+    @if (queue.Deliveries.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">No audiobook publishing attempts yet.</MudAlert>
+    }
+    else
+    {
+        <MudStack Spacing="3">
+            @foreach (var delivery in queue.Deliveries)
+            {
+                <MudPaper Class="pa-4" Elevation="1">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                        <MudLink Href="@($"admin/requests/{delivery.RequestId}")">
+                            <MudText Typo="Typo.h6">@delivery.WorkTitle</MudText>
+                        </MudLink>
+                        <MudSpacer />
+                        <MudChip T="string" Size="Size.Small" Color="StatusColor(delivery.Status)">@delivery.Status</MudChip>
+                    </MudStack>
+                    <MudText Typo="Typo.body2" Class="mt-1">
+                        @delivery.OriginalFilename — staged @delivery.CreatedAtUtc.ToLocalTime().ToString("g")
+                        @if (!string.IsNullOrWhiteSpace(delivery.ExternalItemId))
+                        {
+                            <span> — Audiobookshelf item @delivery.ExternalItemId</span>
+                        }
+                    </MudText>
+                    @if (!string.IsNullOrWhiteSpace(delivery.FailureReason))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">@delivery.FailureReason</MudText>
+                    }
+                    @if (delivery.Status is "Verifying" or "Failed")
+                    {
+                        <MudButton Variant="Variant.Outlined" Class="mt-2" Disabled="@(busyId == delivery.Id)"
+                                   OnClick="@(() => RecheckDeliveryAsync(delivery.Id))">
+                            Recheck
+                        </MudButton>
+                    }
+                </MudPaper>
+            }
+        </MudStack>
+    }
+}
+
+@code {
+    private PublishingQueueResponse? queue;
+    private bool loadFailed;
+    private Guid? busyId;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            queue = await PublishingApi.GetQueueAsync();
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+    }
+
+    private async Task RecheckLibraryImportAsync(Guid id)
+    {
+        busyId = id;
+        try
+        {
+            var succeeded = await PublishingApi.RecheckLibraryImportAsync(id);
+            if (!succeeded)
+            {
+                Snackbar.Add("That recheck could not be completed.", Severity.Error);
+                return;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add("That recheck could not be completed. Please try again.", Severity.Error);
+            return;
+        }
+        finally
+        {
+            busyId = null;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task RecheckDeliveryAsync(Guid id)
+    {
+        busyId = id;
+        try
+        {
+            var succeeded = await PublishingApi.RecheckDeliveryAsync(id);
+            if (!succeeded)
+            {
+                Snackbar.Add("That recheck could not be completed.", Severity.Error);
+                return;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add("That recheck could not be completed. Please try again.", Severity.Error);
+            return;
+        }
+        finally
+        {
+            busyId = null;
+        }
+
+        await LoadAsync();
+    }
+
+    private static Color StatusColor(string status) => status switch
+    {
+        "Available" or "Delivered" => Color.Success,
+        "Failed" => Color.Error,
+        "AwaitingVerification" or "Verifying" => Color.Warning,
+        _ => Color.Default
+    };
+}

@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Security;
@@ -22,6 +23,7 @@ namespace FamilyLibrarian.Application.Security;
 public sealed class ApprovalService(
     ISecurityEvaluationRepository repository,
     IAssetStagingStore stagingStore,
+    MediaAssetPublishingCoordinator publishing,
     IAuditWriter audit,
     ICurrentUser currentUser,
     IClock clock)
@@ -62,6 +64,12 @@ public sealed class ApprovalService(
             assetId.ToString(),
             new { AssetId = assetId, Reason = reason },
             cancellationToken);
+
+        // Best-effort: a publish failure must never undo or fail an approval
+        // decision that has already been made and committed above. See
+        // MediaAssetPublishingCoordinator for why this is safe to call
+        // unconditionally and never throws.
+        await publishing.PublishAsync(asset, cancellationToken);
 
         return ApprovalResult.Success();
     }

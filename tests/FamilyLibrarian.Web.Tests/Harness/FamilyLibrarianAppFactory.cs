@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -112,6 +113,20 @@ internal sealed class FamilyLibrarianAppFactory(
         {
             services.RemoveAll<IMalwareScanner>();
             services.AddSingleton<IMalwareScanner, AlwaysCleanTestMalwareScanner>();
+
+            // Same posture for the two publishing destinations: no ordinary test
+            // depends on a reachable CWA or Audiobookshelf instance. Nothing calls
+            // these unless a test explicitly configures and enables the
+            // destination first, but they're registered unconditionally for the
+            // same reason the scanner fake is — a test that does configure one
+            // and doesn't care about deep publish behavior gets a safe default
+            // rather than a real network/filesystem call.
+            services.RemoveAll<ICwaIngestTransportFactory>();
+            services.AddSingleton<ICwaIngestTransportFactory, AlwaysSucceedsCwaIngestTransportFactory>();
+            services.RemoveAll<ICwaCatalogClient>();
+            services.AddSingleton<ICwaCatalogClient, AlwaysEmptyCwaCatalogClient>();
+            services.RemoveAll<IAudiobookshelfApiClient>();
+            services.AddSingleton<IAudiobookshelfApiClient, AlwaysEmptyAudiobookshelfApiClient>();
         });
 
         if (configureTestServices is not null)

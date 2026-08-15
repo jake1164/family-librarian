@@ -5,6 +5,7 @@ using FamilyLibrarian.Web.Client.Authentication;
 using FamilyLibrarian.Web.Client.Catalog;
 using FamilyLibrarian.Web.Client.Feedback;
 using FamilyLibrarian.Web.Client.Integrations;
+using FamilyLibrarian.Web.Client.Publishing;
 using FamilyLibrarian.Web.Client.Requests;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
@@ -31,5 +32,8 @@ builder.Services.AddScoped<RequestsApiClient>();
 builder.Services.AddScoped<AdminRequestsApiClient>();
 builder.Services.AddScoped<FeedbackApiClient>();
 builder.Services.AddScoped<MediaAssetsApiClient>();
+builder.Services.AddScoped<CwaSettingsApiClient>();
+builder.Services.AddScoped<AudiobookshelfSettingsApiClient>();
+builder.Services.AddScoped<LibraryPublishingApiClient>();
 
 await builder.Build().RunAsync();

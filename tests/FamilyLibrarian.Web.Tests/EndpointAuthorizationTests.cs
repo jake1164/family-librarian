@@ -46,6 +46,9 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/integrations/metadata/")]
     [DataRow("/api/v1/admin/requests/")]
     [DataRow("/api/v1/admin/media-assets/")]
+    [DataRow("/api/v1/admin/publishing/cwa/")]
+    [DataRow("/api/v1/admin/publishing/audiobookshelf/")]
+    [DataRow("/api/v1/admin/publishing/queue")]
     public async Task AnAnonymousCallerIsChallengedOnAProtectedRoute(string route)
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -105,6 +108,9 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/integrations/metadata/")]
     [DataRow("/api/v1/admin/requests/")]
     [DataRow("/api/v1/admin/media-assets/")]
+    [DataRow("/api/v1/admin/publishing/cwa/")]
+    [DataRow("/api/v1/admin/publishing/audiobookshelf/")]
+    [DataRow("/api/v1/admin/publishing/queue")]
     public async Task ANonAdminIsDeniedAnAdminRoute(string route)
     {
         var fixture = WebTestFixture.Require(_fixture);

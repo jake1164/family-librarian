@@ -5,6 +5,7 @@ using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Feedback;
 using FamilyLibrarian.Domain.Providers;
+using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
@@ -56,6 +57,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<SecurityEvaluation> SecurityEvaluations => Set<SecurityEvaluation>();
 
+    public DbSet<CwaSettings> CwaSettings => Set<CwaSettings>();
+
+    public DbSet<AudiobookshelfSettings> AudiobookshelfSettings => Set<AudiobookshelfSettings>();
+
+    public DbSet<LibraryImport> LibraryImports => Set<LibraryImport>();
+
+    public DbSet<Delivery> Deliveries => Set<Delivery>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         builder.HasDefaultSchema("identity");
@@ -90,6 +99,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         ConfigureAcquisition(builder);
         ConfigureSecurity(builder);
         ConfigureAudit(builder);
+        ConfigurePublishing(builder);
     }
 
     private static void ConfigureFeedback(ModelBuilder builder)
@@ -462,6 +472,108 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(auditEvent => auditEvent.OccurredAtUtc).HasColumnName("occurred_at_utc").HasColumnType("timestamp with time zone");
             entity.HasIndex(auditEvent => auditEvent.OccurredAtUtc);
             entity.HasIndex(auditEvent => new { auditEvent.SubjectType, auditEvent.SubjectId });
+        });
+    }
+
+    private static void ConfigurePublishing(ModelBuilder builder)
+    {
+        builder.Entity<CwaSettings>(entity =>
+        {
+            entity.ToTable("cwa_settings", "publishing");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(settings => settings.TransportMode).HasColumnName("transport_mode").HasConversion<string>().HasMaxLength(32);
+            entity.Property(settings => settings.LocalIngestPath).HasColumnName("local_ingest_path").HasMaxLength(1_024);
+            entity.Property(settings => settings.SftpHost).HasColumnName("sftp_host").HasMaxLength(256);
+            entity.Property(settings => settings.SftpPort).HasColumnName("sftp_port");
+            entity.Property(settings => settings.SftpUsername).HasColumnName("sftp_username").HasMaxLength(256);
+            entity.Property(settings => settings.SftpIngestPath).HasColumnName("sftp_ingest_path").HasMaxLength(1_024);
+            entity.Property(settings => settings.ProtectedSftpPrivateKey).HasColumnName("protected_sftp_private_key").HasMaxLength(8_192);
+            entity.Property(settings => settings.SftpPrivateKeyFormatVersion).HasColumnName("sftp_private_key_format_version");
+            entity.Property(settings => settings.SftpPrivateKeyHint).HasColumnName("sftp_private_key_hint").HasMaxLength(8);
+            entity.Property(settings => settings.SftpPrivateKeySetAtUtc).HasColumnName("sftp_private_key_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.ProtectedSftpPassphrase).HasColumnName("protected_sftp_passphrase").HasMaxLength(2_048);
+            entity.Property(settings => settings.SftpPassphraseFormatVersion).HasColumnName("sftp_passphrase_format_version");
+            entity.Property(settings => settings.SftpPassphraseHint).HasColumnName("sftp_passphrase_hint").HasMaxLength(8);
+            entity.Property(settings => settings.SftpPassphraseSetAtUtc).HasColumnName("sftp_passphrase_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.OpdsBaseUrl).HasColumnName("opds_base_url").HasMaxLength(512);
+            entity.Property(settings => settings.OpdsUsername).HasColumnName("opds_username").HasMaxLength(256);
+            entity.Property(settings => settings.ProtectedOpdsPassword).HasColumnName("protected_opds_password").HasMaxLength(2_048);
+            entity.Property(settings => settings.OpdsPasswordFormatVersion).HasColumnName("opds_password_format_version");
+            entity.Property(settings => settings.OpdsPasswordHint).HasColumnName("opds_password_hint").HasMaxLength(8);
+            entity.Property(settings => settings.OpdsPasswordSetAtUtc).HasColumnName("opds_password_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
+            entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
+
+        builder.Entity<AudiobookshelfSettings>(entity =>
+        {
+            entity.ToTable("audiobookshelf_settings", "publishing");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(settings => settings.BaseUrl).HasColumnName("base_url").HasMaxLength(512);
+            entity.Property(settings => settings.LibraryId).HasColumnName("library_id").HasMaxLength(128);
+            entity.Property(settings => settings.FolderId).HasColumnName("folder_id").HasMaxLength(128);
+            entity.Property(settings => settings.ProtectedApiToken).HasColumnName("protected_api_token").HasMaxLength(2_048);
+            entity.Property(settings => settings.ApiTokenFormatVersion).HasColumnName("api_token_format_version");
+            entity.Property(settings => settings.ApiTokenHint).HasColumnName("api_token_hint").HasMaxLength(8);
+            entity.Property(settings => settings.ApiTokenSetAtUtc).HasColumnName("api_token_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
+            entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
+
+        builder.Entity<LibraryImport>(entity =>
+        {
+            entity.ToTable("library_imports", "publishing");
+            entity.HasKey(import => import.Id);
+            entity.Property(import => import.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(import => import.AssetId).HasColumnName("asset_id");
+            entity.Property(import => import.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+            entity.Property(import => import.ExternalBookId).HasColumnName("external_book_id").HasMaxLength(256);
+            entity.Property(import => import.FailureReason).HasColumnName("failure_reason").HasMaxLength(2_000);
+            entity.Property(import => import.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(import => import.CompletedAtUtc).HasColumnName("completed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(import => import.Version).HasColumnName("xmin").IsRowVersion();
+
+            entity.HasIndex(import => import.AssetId);
+
+            entity.HasOne<MediaAsset>()
+                .WithMany()
+                .HasForeignKey(import => import.AssetId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<Delivery>(entity =>
+        {
+            entity.ToTable("deliveries", "publishing");
+            entity.HasKey(delivery => delivery.Id);
+            entity.Property(delivery => delivery.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(delivery => delivery.AssetId).HasColumnName("asset_id");
+            entity.Property(delivery => delivery.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+            entity.Property(delivery => delivery.ExternalItemId).HasColumnName("external_item_id").HasMaxLength(256);
+            entity.Property(delivery => delivery.FailureReason).HasColumnName("failure_reason").HasMaxLength(2_000);
+            entity.Property(delivery => delivery.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(delivery => delivery.CompletedAtUtc).HasColumnName("completed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(delivery => delivery.Version).HasColumnName("xmin").IsRowVersion();
+
+            entity.HasIndex(delivery => delivery.AssetId);
+
+            entity.HasOne<MediaAsset>()
+                .WithMany()
+                .HasForeignKey(delivery => delivery.AssetId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 

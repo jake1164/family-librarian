@@ -9,6 +9,7 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Accounts;
@@ -17,10 +18,12 @@ using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Feedback;
 using FamilyLibrarian.Contracts.Providers;
+using FamilyLibrarian.Contracts.Publishing;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Contracts.Security;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Domain.Accounts;
+using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
@@ -229,6 +232,43 @@ integrations.MapPut("/{providerId}/enabled", SetProviderEnabledAsync);
 integrations.MapPut("/{providerId}/credential", SetProviderCredentialAsync);
 integrations.MapDelete("/{providerId}/credential", ClearProviderCredentialAsync);
 integrations.MapPost("/{providerId}/test", TestProviderAsync);
+
+// Publishing destinations (M12): CWA (ebook library) and Audiobookshelf
+// (audiobook delivery). Neither is a metadata provider, so each gets its own
+// settings routes rather than stretching the provider-registry shape.
+var cwaSettings = app.MapGroup("/api/v1/admin/publishing/cwa")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+cwaSettings.MapGet("/", GetCwaSettingsAsync);
+cwaSettings.MapPut("/", SetCwaSettingsAsync);
+cwaSettings.MapPut("/enabled", SetCwaEnabledAsync);
+cwaSettings.MapPut("/sftp-key", SetCwaSftpPrivateKeyAsync);
+cwaSettings.MapDelete("/sftp-key", ClearCwaSftpPrivateKeyAsync);
+cwaSettings.MapPut("/sftp-passphrase", SetCwaSftpPassphraseAsync);
+cwaSettings.MapDelete("/sftp-passphrase", ClearCwaSftpPassphraseAsync);
+cwaSettings.MapPut("/opds-password", SetCwaOpdsPasswordAsync);
+cwaSettings.MapDelete("/opds-password", ClearCwaOpdsPasswordAsync);
+cwaSettings.MapPost("/test", TestCwaConnectionAsync);
+
+var audiobookshelfSettings = app.MapGroup("/api/v1/admin/publishing/audiobookshelf")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+audiobookshelfSettings.MapGet("/", GetAudiobookshelfSettingsAsync);
+audiobookshelfSettings.MapPut("/", SetAudiobookshelfSettingsAsync);
+audiobookshelfSettings.MapPut("/enabled", SetAudiobookshelfEnabledAsync);
+audiobookshelfSettings.MapPut("/api-token", SetAudiobookshelfApiTokenAsync);
+audiobookshelfSettings.MapDelete("/api-token", ClearAudiobookshelfApiTokenAsync);
+audiobookshelfSettings.MapPost("/test", TestAudiobookshelfConnectionAsync);
+
+var publishingQueue = app.MapGroup("/api/v1/admin/publishing")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+publishingQueue.MapGet("/queue", GetPublishingQueueAsync);
+publishingQueue.MapPost("/library-imports/{id:guid}/recheck", RecheckLibraryImportAsync);
+publishingQueue.MapPost("/deliveries/{id:guid}/recheck", RecheckDeliveryAsync);
 
 app.MapFallbackToFile("index.html");
 
@@ -1087,6 +1127,190 @@ static ProviderStatusResponse ToProviderResponse(ProviderStatus status) => new(
     status.SetupLinks
         .Select(link => new ProviderSetupLinkResponse(link.Label, link.Url))
         .ToArray());
+
+static async Task<IResult> GetCwaSettingsAsync(CwaSettingsService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToCwaResponse(await service.GetStatusAsync(cancellationToken)));
+
+static async Task<IResult> SetCwaSettingsAsync(
+    SetCwaSettingsRequest request, CwaSettingsService service, CancellationToken cancellationToken)
+{
+    if (!Enum.TryParse<CwaTransportMode>(request.TransportMode, ignoreCase: true, out var mode) ||
+        !Enum.IsDefined(mode))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["transportMode"] = ["That is not a valid transport mode."]
+        });
+    }
+
+    return ToCwaResult(await service.SetSettingsAsync(
+        mode, request.LocalIngestPath, request.SftpHost, request.SftpPort, request.SftpUsername,
+        request.SftpIngestPath, request.OpdsBaseUrl, request.OpdsUsername, cancellationToken));
+}
+
+static async Task<IResult> SetCwaEnabledAsync(
+    SetPublishingEnabledRequest request, CwaSettingsService service, CancellationToken cancellationToken) =>
+    ToCwaResult(await service.SetEnabledAsync(request.Enabled, cancellationToken));
+
+static async Task<IResult> SetCwaSftpPrivateKeyAsync(
+    SetPublishingSecretRequest request, CwaSettingsService service, CancellationToken cancellationToken) =>
+    ToCwaResult(await service.SetSftpPrivateKeyAsync(request.Value, cancellationToken));
+
+static async Task<IResult> ClearCwaSftpPrivateKeyAsync(
+    CwaSettingsService service, CancellationToken cancellationToken) =>
+    ToCwaResult(await service.ClearSftpPrivateKeyAsync(cancellationToken));
+
+static async Task<IResult> SetCwaSftpPassphraseAsync(
+    SetPublishingSecretRequest request, CwaSettingsService service, CancellationToken cancellationToken) =>
+    ToCwaResult(await service.SetSftpPassphraseAsync(request.Value, cancellationToken));
+
+static async Task<IResult> ClearCwaSftpPassphraseAsync(
+    CwaSettingsService service, CancellationToken cancellationToken) =>
+    ToCwaResult(await service.ClearSftpPassphraseAsync(cancellationToken));
+
+static async Task<IResult> SetCwaOpdsPasswordAsync(
+    SetPublishingSecretRequest request, CwaSettingsService service, CancellationToken cancellationToken) =>
+    ToCwaResult(await service.SetOpdsPasswordAsync(request.Value, cancellationToken));
+
+static async Task<IResult> ClearCwaOpdsPasswordAsync(
+    CwaSettingsService service, CancellationToken cancellationToken) =>
+    ToCwaResult(await service.ClearOpdsPasswordAsync(cancellationToken));
+
+static async Task<IResult> TestCwaConnectionAsync(CwaSettingsService service, CancellationToken cancellationToken)
+{
+    var result = await service.TestConnectionAsync(cancellationToken);
+    return Results.Ok(new PublishingConnectionTestResponse(
+        result.Status!.LastTestSucceeded ?? false, result.Status.LastTestMessage ?? string.Empty));
+}
+
+static IResult ToCwaResult(CwaCommandResult result) => result.Outcome switch
+{
+    PublishingCommandOutcome.Invalid => Results.ValidationProblem(new Dictionary<string, string[]>
+    {
+        ["cwa"] = [result.Error ?? "That change is not allowed."]
+    }),
+    _ => Results.Ok(ToCwaResponse(result.Status!))
+};
+
+static CwaSettingsResponse ToCwaResponse(CwaStatus status) => new(
+    status.IsEnabled,
+    status.TransportMode.ToString(),
+    status.LocalIngestPath,
+    status.SftpHost,
+    status.SftpPort,
+    status.SftpUsername,
+    status.SftpIngestPath,
+    status.HasSftpPrivateKey,
+    status.SftpPrivateKeyHint,
+    status.SftpPrivateKeySetAtUtc,
+    status.HasSftpPassphrase,
+    status.SftpPassphraseHint,
+    status.SftpPassphraseSetAtUtc,
+    status.OpdsBaseUrl,
+    status.OpdsUsername,
+    status.HasOpdsPassword,
+    status.OpdsPasswordHint,
+    status.OpdsPasswordSetAtUtc,
+    status.LastTestedAtUtc,
+    status.LastTestSucceeded,
+    status.LastTestMessage);
+
+static async Task<IResult> GetAudiobookshelfSettingsAsync(
+    AudiobookshelfSettingsService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToAudiobookshelfResponse(await service.GetStatusAsync(cancellationToken)));
+
+static async Task<IResult> SetAudiobookshelfSettingsAsync(
+    SetAudiobookshelfSettingsRequest request,
+    AudiobookshelfSettingsService service,
+    CancellationToken cancellationToken) =>
+    ToAudiobookshelfResult(
+        await service.SetSettingsAsync(request.BaseUrl, request.LibraryId, request.FolderId, cancellationToken));
+
+static async Task<IResult> SetAudiobookshelfEnabledAsync(
+    SetPublishingEnabledRequest request,
+    AudiobookshelfSettingsService service,
+    CancellationToken cancellationToken) =>
+    ToAudiobookshelfResult(await service.SetEnabledAsync(request.Enabled, cancellationToken));
+
+static async Task<IResult> SetAudiobookshelfApiTokenAsync(
+    SetPublishingSecretRequest request,
+    AudiobookshelfSettingsService service,
+    CancellationToken cancellationToken) =>
+    ToAudiobookshelfResult(await service.SetApiTokenAsync(request.Value, cancellationToken));
+
+static async Task<IResult> ClearAudiobookshelfApiTokenAsync(
+    AudiobookshelfSettingsService service, CancellationToken cancellationToken) =>
+    ToAudiobookshelfResult(await service.ClearApiTokenAsync(cancellationToken));
+
+static async Task<IResult> TestAudiobookshelfConnectionAsync(
+    AudiobookshelfSettingsService service, CancellationToken cancellationToken)
+{
+    var result = await service.TestConnectionAsync(cancellationToken);
+    return Results.Ok(new PublishingConnectionTestResponse(
+        result.Status!.LastTestSucceeded ?? false, result.Status.LastTestMessage ?? string.Empty));
+}
+
+static IResult ToAudiobookshelfResult(AudiobookshelfCommandResult result) => result.Outcome switch
+{
+    PublishingCommandOutcome.Invalid => Results.ValidationProblem(new Dictionary<string, string[]>
+    {
+        ["audiobookshelf"] = [result.Error ?? "That change is not allowed."]
+    }),
+    _ => Results.Ok(ToAudiobookshelfResponse(result.Status!))
+};
+
+static AudiobookshelfSettingsResponse ToAudiobookshelfResponse(AudiobookshelfStatus status) => new(
+    status.IsEnabled,
+    status.BaseUrl,
+    status.LibraryId,
+    status.FolderId,
+    status.HasApiToken,
+    status.ApiTokenHint,
+    status.ApiTokenSetAtUtc,
+    status.LastTestedAtUtc,
+    status.LastTestSucceeded,
+    status.LastTestMessage);
+
+static async Task<IResult> GetPublishingQueueAsync(
+    PublishingQueueService service, CancellationToken cancellationToken)
+{
+    var snapshot = await service.ListAsync(cancellationToken);
+    return Results.Ok(new PublishingQueueResponse(
+        snapshot.LibraryImports.Select(ToLibraryImportResponse).ToArray(),
+        snapshot.Deliveries.Select(ToDeliveryResponse).ToArray()));
+}
+
+static async Task<IResult> RecheckLibraryImportAsync(
+    Guid id, CwaPublishingService service, CancellationToken cancellationToken) =>
+    await service.RecheckAsync(id, cancellationToken) ? Results.NoContent() : Results.NotFound();
+
+static async Task<IResult> RecheckDeliveryAsync(
+    Guid id, AudiobookshelfPublishingService service, CancellationToken cancellationToken) =>
+    await service.RecheckAsync(id, cancellationToken) ? Results.NoContent() : Results.NotFound();
+
+static LibraryImportResponse ToLibraryImportResponse(LibraryImportView view) => new(
+    view.Id,
+    view.RequestId,
+    view.WorkId,
+    view.WorkTitle,
+    view.OriginalFilename,
+    view.Status.ToString(),
+    view.ExternalBookId,
+    view.FailureReason,
+    view.CreatedAtUtc,
+    view.CompletedAtUtc);
+
+static DeliveryResponse ToDeliveryResponse(DeliveryView view) => new(
+    view.Id,
+    view.RequestId,
+    view.WorkId,
+    view.WorkTitle,
+    view.OriginalFilename,
+    view.Status.ToString(),
+    view.ExternalItemId,
+    view.FailureReason,
+    view.CreatedAtUtc,
+    view.CompletedAtUtc);
 
 static async Task<IResult> SearchCatalogAsync(
     string? q,

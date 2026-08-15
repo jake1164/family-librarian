@@ -5,6 +5,7 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain;
@@ -14,6 +15,7 @@ using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Providers;
+using FamilyLibrarian.Infrastructure.Publishing;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Infrastructure.Time;
 using System.Net.Http.Headers;
@@ -282,6 +284,29 @@ public static class DependencyInjection
             .AddLogger<QueryRedactingHttpClientLogger>();
         services.AddTransient<IBookMetadataProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<GoogleBooksBookMetadataProvider>());
+
+        // Publishing destinations (M12): CWA (ebook library, ingest folder) and
+        // Audiobookshelf (audiobook delivery, upload API). Neither is a metadata
+        // provider, so neither goes through ProviderRegistry/ProviderSetting —
+        // each has its own purpose-built, multi-field settings entity.
+        services.AddScoped<ICwaSettingsStore, CwaSettingsStore>();
+        services.AddScoped<IAudiobookshelfSettingsStore, AudiobookshelfSettingsStore>();
+        services.AddScoped<ILibraryImportRepository, LibraryImportRepository>();
+        services.AddScoped<IDeliveryRepository, DeliveryRepository>();
+        services.AddScoped<IWorkLookup, WorkLookup>();
+
+        services.AddScoped<ICwaIngestTransportFactory, CwaIngestTransportFactory>();
+        services.AddScoped<ICwaCatalogClient, CwaCatalogClient>();
+        services.AddScoped<ICwaConnectionTester, CwaConnectionTester>();
+        services.AddScoped<IAudiobookshelfApiClient, AudiobookshelfApiClient>();
+        services.AddScoped<IAudiobookshelfConnectionTester, AudiobookshelfConnectionTester>();
+
+        services.AddScoped<CwaSettingsService>();
+        services.AddScoped<AudiobookshelfSettingsService>();
+        services.AddScoped<CwaPublishingService>();
+        services.AddScoped<AudiobookshelfPublishingService>();
+        services.AddScoped<MediaAssetPublishingCoordinator>();
+        services.AddScoped<PublishingQueueService>();
 
         return services;
     }
