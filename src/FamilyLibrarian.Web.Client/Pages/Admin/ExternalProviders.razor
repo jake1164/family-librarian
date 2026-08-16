@@ -1,0 +1,652 @@
+@page "/admin/external-providers"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Providers
+@using FamilyLibrarian.Web.Client.Providers
+@using Microsoft.AspNetCore.Authorization
+@inject ExternalProviderApiClient Api
+@inject ISnackbar Snackbar
+
+<PageTitle>External providers | Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">External providers</MudText>
+<MudText Typo="Typo.body1" Class="mb-6">
+    Out-of-process acquisition sources reached over the versioned external-provider
+    protocol. A registered provider never receives the application database, other
+    providers' credentials, or the destination library — only its own scoped API key
+    and a network route.
+</MudText>
+
+<MudPaper Class="pa-4 mb-6" Elevation="1">
+    <MudText Typo="Typo.h6">Private acquisition network</MudText>
+    <MudText Typo="Typo.body2" Class="mb-3">
+        An optional HTTP proxy (e.g. Gluetun) that a provider declaring
+        <code>PRIVATE_REQUIRED</code> or <code>CUSTOM_PROXY</code> must be routed
+        through. No gateway means those providers simply fail closed rather than
+        falling back to normal egress.
+    </MudText>
+
+    @if (gateway is null)
+    {
+        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+    }
+    else
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+            <MudSwitch T="bool"
+                       @key="@("gateway:" + gatewayGeneration)"
+                       Value="gateway.IsEnabled"
+                       ValueChanged="@(enabled => SetGatewayEnabledAsync(enabled))"
+                       Color="Color.Primary"
+                       Disabled="@gatewayBusy"
+                       Label="@(gateway.IsEnabled ? "Enabled" : "Disabled")" />
+        </MudStack>
+
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudTextField T="string" Label="Gateway endpoint (e.g. http://gluetun:8888)"
+                          @bind-Value="gatewayEndpoint" Disabled="@gatewayBusy" Class="flex-grow-1" />
+            <MudButton Variant="Variant.Filled" Disabled="@gatewayBusy" OnClick="SaveGatewayEndpointAsync">
+                Save
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" Disabled="@gatewayBusy" OnClick="TestGatewayAsync">
+                Test connection
+            </MudButton>
+        </MudStack>
+
+        @if (gateway.LastTestedAtUtc is not null)
+        {
+            <MudText Typo="Typo.body2" Class="mt-2">
+                <MudIcon Icon="@(gateway.LastTestSucceeded == true ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Error)"
+                         Color="@(gateway.LastTestSucceeded == true ? Color.Success : Color.Error)"
+                         Size="Size.Small" />
+                @gateway.LastTestMessage
+            </MudText>
+        }
+    }
+</MudPaper>
+
+<MudPaper Class="pa-4 mb-6" Elevation="1">
+    <MudText Typo="Typo.h6" Class="mb-2">Provider catalogs</MudText>
+    <MudText Typo="Typo.body2" Class="mb-3">
+        A discovery listing, not an installer — signed catalog verification is not
+        implemented yet, so only add a catalog URL you trust. Registering a provider
+        you find here is still a separate, manual step below.
+    </MudText>
+
+    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-3">
+        <MudTextField T="string" Label="Catalog URL" @bind-Value="newCatalogUrl" Disabled="@catalogsBusy" Class="flex-grow-1" />
+        <MudButton Variant="Variant.Filled" Disabled="@(catalogsBusy || string.IsNullOrWhiteSpace(newCatalogUrl))" OnClick="AddCatalogAsync">
+            Add
+        </MudButton>
+    </MudStack>
+
+    @if (catalogs is null)
+    {
+        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+    }
+    else if (catalogs.Count == 0)
+    {
+        <MudText Typo="Typo.body2">No catalogs configured.</MudText>
+    }
+    else
+    {
+        @foreach (var catalog in catalogs)
+        {
+            <MudPaper Outlined="true" Class="pa-3 mb-2">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                    <MudText Typo="Typo.body1" Class="flex-grow-1">@catalog.DisplayName</MudText>
+                    <MudSwitch T="bool" Value="catalog.IsEnabled" Disabled="@catalogsBusy"
+                               ValueChanged="@(enabled => SetCatalogEnabledAsync(catalog.Id, enabled))" Label="Enabled" />
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@catalogsBusy"
+                               OnClick="@(() => RefreshCatalogAsync(catalog.Id))">
+                        Refresh
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" Disabled="@catalogsBusy"
+                               OnClick="@(() => RemoveCatalogAsync(catalog.Id))">
+                        Remove
+                    </MudButton>
+                </MudStack>
+                <MudText Typo="Typo.caption">
+                    @(catalog.LastFetchedAtUtc is { } fetched
+                        ? $"Last fetched {fetched.ToLocalTime():g} — {(catalog.LastFetchSucceeded == true ? "succeeded" : "failed")}"
+                        : "Never fetched")
+                    @catalog.LastFetchMessage
+                </MudText>
+                @if (catalog.Entries.Count > 0)
+                {
+                    <MudGrid Class="mt-2">
+                        @foreach (var entry in catalog.Entries)
+                        {
+                            <MudItem xs="12" sm="6" md="4">
+                                <MudPaper Outlined="true" Class="pa-2 d-flex flex-column" Style="height:100%">
+                                    <MudText Typo="Typo.subtitle2">@entry.Name</MudText>
+                                    <MudText Typo="Typo.caption" Class="mb-1">
+                                        @entry.Id@(entry.ProtocolVersion is null ? "" : $" · protocol v{entry.ProtocolVersion}")
+                                    </MudText>
+                                    @if (entry.Capabilities.Count > 0)
+                                    {
+                                        <MudStack Row="true" Spacing="1" Class="mb-1" Wrap="Wrap.Wrap">
+                                            @foreach (var capability in entry.Capabilities)
+                                            {
+                                                <MudChip T="string" Size="Size.Small" Color="Color.Info">@capability</MudChip>
+                                            }
+                                        </MudStack>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(entry.Description))
+                                    {
+                                        <MudText Typo="Typo.body2" Class="mb-1">@entry.Description</MudText>
+                                    }
+                                    <MudText Typo="Typo.caption" Class="mb-2">
+                                        @(entry.Publisher is null ? "" : $"Publisher: {entry.Publisher}")
+                                        @(entry.License is null ? "" : $" · License: {entry.License}")
+                                        @(entry.TrustLabel is null ? "" : $" · {entry.TrustLabel}")
+                                    </MudText>
+                                    <MudSpacer />
+                                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Class="align-self-start"
+                                               OnClick="@(() => InstallCatalogEntry(entry))">
+                                        Install
+                                    </MudButton>
+                                </MudPaper>
+                            </MudItem>
+                        }
+                    </MudGrid>
+                }
+            </MudPaper>
+        }
+    }
+</MudPaper>
+
+<MudPaper Class="pa-4 mb-6" Elevation="1">
+    <MudText Typo="Typo.h6" Class="mb-2">External providers</MudText>
+
+    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudTextField T="string" Label="Provider id" @bind-Value="newProviderId" Disabled="@providersBusy" />
+        <MudTextField T="string" Label="Display name" @bind-Value="newProviderDisplayName" Disabled="@providersBusy" />
+        <MudTextField T="string" Label="Base URL" @bind-Value="newProviderBaseUrl" Disabled="@providersBusy" Class="flex-grow-1" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(providersBusy || !CanRegister)" OnClick="RegisterProviderAsync">
+            Register
+        </MudButton>
+    </MudStack>
+
+    @if (providers is null)
+    {
+        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+    }
+    else if (providers.Count == 0)
+    {
+        <MudText Typo="Typo.body2">No external providers registered.</MudText>
+    }
+    else
+    {
+        @foreach (var provider in providers)
+        {
+            <MudPaper Outlined="true" Class="pa-3 mb-3">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                    <MudText Typo="Typo.h6" Class="flex-grow-1">@provider.DisplayName</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@provider.ProviderId</MudChip>
+                    <MudSwitch T="bool" Value="provider.IsEnabled" Disabled="@providersBusy"
+                               ValueChanged="@(enabled => SetProviderEnabledAsync(provider.Id, enabled))" Label="Enabled" />
+                </MudStack>
+
+                <MudStack Row="true" Spacing="2" Class="mt-2">
+                    <MudTextField T="string" Label="Base URL" Value="@provider.BaseUrl" Disabled="@providersBusy" Class="flex-grow-1"
+                                  ValueChanged="@(value => baseUrlDrafts[provider.Id] = value)" />
+                    <MudButton Variant="Variant.Outlined" Disabled="@providersBusy"
+                               OnClick="@(() => SaveDetailsAsync(provider))">
+                        Save URL
+                    </MudButton>
+                </MudStack>
+
+                <MudDivider Class="my-2" />
+                <MudText Typo="Typo.subtitle2">Egress policy</MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    Declared by the provider's manifest as <b>@provider.CachedEgressPolicy</b>. Override the
+                    routing decision here if needed.
+                </MudText>
+                <MudSelect T="string" Label="Override" Value="@(provider.EgressPolicyOverride ?? string.Empty)"
+                           ValueChanged="@(value => SetEgressPolicyOverrideAsync(provider.Id, value))"
+                           Disabled="@providersBusy" Class="mb-2">
+                    <MudSelectItem T="string" Value="@string.Empty">Use provider default (currently: @provider.CachedEgressPolicy)</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Normal")">Normal</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("PrivateRequired")">PrivateRequired</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("CustomProxy")">CustomProxy</MudSelectItem>
+                </MudSelect>
+                @if (IsOverrideWeaker(provider))
+                {
+                    <MudAlert Severity="Severity.Warning" Class="mb-2" Dense="true">
+                        This override weakens the provider's declared @provider.CachedEgressPolicy requirement
+                        down to @provider.EffectiveEgressPolicy — acquisitions from this provider may no longer
+                        be routed through the private egress gateway.
+                    </MudAlert>
+                }
+
+                <MudDivider Class="my-2" />
+                <MudText Typo="Typo.subtitle2">API key</MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    @(provider.HasApiKey
+                        ? $"A key ending in {provider.ApiKeyHint} was saved {provider.ApiKeySetAtUtc?.ToLocalTime().ToString("f")}."
+                        : "No key is stored yet.")
+                </MudText>
+                <MudStack Row="true" Spacing="2">
+                    <MudTextField T="string" Value="@GetApiKeyDraft(provider.Id)"
+                                  ValueChanged="@(value => apiKeyDrafts[provider.Id] = value)" Label="Replace API key"
+                                  InputType="InputType.Password" Disabled="@providersBusy" Class="flex-grow-1" />
+                    <MudButton Variant="Variant.Filled" Disabled="@(providersBusy || string.IsNullOrWhiteSpace(GetApiKeyDraft(provider.Id)))"
+                               OnClick="@(() => SaveApiKeyAsync(provider.Id))">
+                        Save key
+                    </MudButton>
+                    @if (provider.HasApiKey)
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@providersBusy"
+                                   OnClick="@(() => ClearApiKeyAsync(provider.Id))">
+                            Remove
+                        </MudButton>
+                    }
+                </MudStack>
+
+                <MudDivider Class="my-2" />
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+                    <MudButton Variant="Variant.Outlined" Disabled="@providersBusy" OnClick="@(() => TestProviderAsync(provider.Id))">
+                        Test connection
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@providersBusy"
+                               OnClick="@(() => RemoveProviderAsync(provider.Id))">
+                        Remove provider
+                    </MudButton>
+                </MudStack>
+
+                @if (provider.LastTestedAtUtc is not null)
+                {
+                    <MudText Typo="Typo.body2" Class="mt-2">
+                        <MudIcon Icon="@(provider.LastTestSucceeded == true ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Error)"
+                                 Color="@(provider.LastTestSucceeded == true ? Color.Success : Color.Error)"
+                                 Size="Size.Small" />
+                        @provider.LastTestMessage
+                    </MudText>
+                    @if (provider.LastTestSucceeded == true)
+                    {
+                        <MudStack Row="true" Spacing="1" Class="mt-1" Wrap="Wrap.Wrap">
+                            <MudChip T="string" Size="Size.Small">Protocol v@(provider.CachedProtocolVersion)</MudChip>
+                            <MudChip T="string" Size="Size.Small">Egress: @provider.CachedEgressPolicy</MudChip>
+                            @foreach (var capability in (provider.CachedCapabilities ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries))
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info">@capability</MudChip>
+                            }
+                        </MudStack>
+                    }
+                }
+            </MudPaper>
+        }
+    }
+</MudPaper>
+
+@code {
+    private PrivateEgressGatewayResponse? gateway;
+    private bool gatewayBusy;
+    private int gatewayGeneration;
+    private string? gatewayEndpoint;
+
+    private IReadOnlyList<ProviderCatalogResponse>? catalogs;
+    private bool catalogsBusy;
+    private string? newCatalogUrl;
+
+    private IReadOnlyList<ExternalProviderResponse>? providers;
+    private bool providersBusy;
+    private string? newProviderId;
+    private string? newProviderDisplayName;
+    private string? newProviderBaseUrl;
+    private readonly Dictionary<Guid, string?> apiKeyDrafts = new();
+    private readonly Dictionary<Guid, string> baseUrlDrafts = new();
+
+    private bool CanRegister =>
+        !string.IsNullOrWhiteSpace(newProviderId) && !string.IsNullOrWhiteSpace(newProviderDisplayName) &&
+        !string.IsNullOrWhiteSpace(newProviderBaseUrl);
+
+    protected override Task OnInitializedAsync() =>
+        Task.WhenAll(LoadGatewayAsync(), LoadCatalogsAsync(), LoadProvidersAsync());
+
+    private string? GetApiKeyDraft(Guid id) => apiKeyDrafts.GetValueOrDefault(id);
+
+    // --- Gateway -------------------------------------------------------------
+
+    private async Task LoadGatewayAsync()
+    {
+        gateway = await Api.GetGatewayAsync();
+        gatewayEndpoint = gateway?.GatewayEndpoint;
+    }
+
+    private async Task SetGatewayEnabledAsync(bool enabled)
+    {
+        gatewayBusy = true;
+        try
+        {
+            var result = await Api.SetGatewayEnabledAsync(enabled);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+            }
+
+            gateway = result.Settings;
+        }
+        finally
+        {
+            gatewayBusy = false;
+            gatewayGeneration++;
+        }
+    }
+
+    private async Task SaveGatewayEndpointAsync()
+    {
+        gatewayBusy = true;
+        try
+        {
+            var result = await Api.SetGatewayEndpointAsync(gatewayEndpoint);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            gateway = result.Settings;
+            Snackbar.Add("Saved the gateway endpoint.", Severity.Success);
+        }
+        finally
+        {
+            gatewayBusy = false;
+        }
+    }
+
+    private async Task TestGatewayAsync()
+    {
+        gatewayBusy = true;
+        try
+        {
+            var result = await Api.TestGatewayAsync();
+            gateway = result.Settings ?? gateway;
+            Snackbar.Add(
+                gateway?.LastTestMessage ?? "The connection test could not be run.",
+                gateway?.LastTestSucceeded == true ? Severity.Success : Severity.Warning);
+        }
+        finally
+        {
+            gatewayBusy = false;
+        }
+    }
+
+    // --- Catalogs --------------------------------------------------------------
+
+    private async Task LoadCatalogsAsync() => catalogs = await Api.GetCatalogsAsync();
+
+    private async Task AddCatalogAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newCatalogUrl))
+        {
+            return;
+        }
+
+        catalogsBusy = true;
+        try
+        {
+            if (await Api.AddCatalogAsync(newCatalogUrl, displayName: null))
+            {
+                newCatalogUrl = null;
+                await LoadCatalogsAsync();
+            }
+            else
+            {
+                Snackbar.Add("That catalog could not be added.", Severity.Error);
+            }
+        }
+        finally
+        {
+            catalogsBusy = false;
+        }
+    }
+
+    private async Task SetCatalogEnabledAsync(Guid id, bool enabled)
+    {
+        catalogsBusy = true;
+        try
+        {
+            await Api.SetCatalogEnabledAsync(id, enabled);
+            await LoadCatalogsAsync();
+        }
+        finally
+        {
+            catalogsBusy = false;
+        }
+    }
+
+    private async Task RefreshCatalogAsync(Guid id)
+    {
+        catalogsBusy = true;
+        try
+        {
+            await Api.RefreshCatalogAsync(id);
+            await LoadCatalogsAsync();
+        }
+        finally
+        {
+            catalogsBusy = false;
+        }
+    }
+
+    private async Task RemoveCatalogAsync(Guid id)
+    {
+        catalogsBusy = true;
+        try
+        {
+            await Api.RemoveCatalogAsync(id);
+            await LoadCatalogsAsync();
+        }
+        finally
+        {
+            catalogsBusy = false;
+        }
+    }
+
+    private void InstallCatalogEntry(ProviderCatalogEntryResponse entry)
+    {
+        newProviderId = entry.Id;
+        newProviderDisplayName = entry.Name;
+        Snackbar.Add("Provider details filled in below — add the base URL and register.", Severity.Info);
+    }
+
+    // --- Providers -------------------------------------------------------------
+
+    private async Task LoadProvidersAsync() => providers = await Api.GetProvidersAsync();
+
+    private async Task RegisterProviderAsync()
+    {
+        if (!CanRegister)
+        {
+            return;
+        }
+
+        providersBusy = true;
+        try
+        {
+            var result = await Api.CreateProviderAsync(newProviderId!, newProviderDisplayName!, newProviderBaseUrl!);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That provider could not be registered.", Severity.Error);
+                return;
+            }
+
+            newProviderId = null;
+            newProviderDisplayName = null;
+            newProviderBaseUrl = null;
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task SetProviderEnabledAsync(Guid id, bool enabled)
+    {
+        providersBusy = true;
+        try
+        {
+            var result = await Api.SetProviderEnabledAsync(id, enabled);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+            }
+
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task SaveDetailsAsync(ExternalProviderResponse provider)
+    {
+        var baseUrl = baseUrlDrafts.GetValueOrDefault(provider.Id, provider.BaseUrl);
+        providersBusy = true;
+        try
+        {
+            var result = await Api.SetProviderDetailsAsync(provider.Id, provider.DisplayName, baseUrl);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Saved.", Severity.Success);
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task SaveApiKeyAsync(Guid id)
+    {
+        var key = GetApiKeyDraft(id);
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return;
+        }
+
+        providersBusy = true;
+        try
+        {
+            var result = await Api.SetProviderApiKeyAsync(id, key);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            apiKeyDrafts[id] = null;
+            Snackbar.Add("Saved the API key.", Severity.Success);
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task ClearApiKeyAsync(Guid id)
+    {
+        providersBusy = true;
+        try
+        {
+            await Api.ClearProviderApiKeyAsync(id);
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task TestProviderAsync(Guid id)
+    {
+        providersBusy = true;
+        try
+        {
+            var result = await Api.TestProviderAsync(id);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "The connection test could not be run.", Severity.Error);
+                return;
+            }
+
+            await LoadProvidersAsync();
+            var updated = providers?.FirstOrDefault(p => p.Id == id);
+            Snackbar.Add(
+                updated?.LastTestMessage ?? "Tested.",
+                updated?.LastTestSucceeded == true ? Severity.Success : Severity.Warning);
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task RemoveProviderAsync(Guid id)
+    {
+        providersBusy = true;
+        try
+        {
+            if (await Api.RemoveProviderAsync(id))
+            {
+                await LoadProvidersAsync();
+            }
+            else
+            {
+                Snackbar.Add("That provider could not be removed.", Severity.Error);
+            }
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task SetEgressPolicyOverrideAsync(Guid id, string? value)
+    {
+        providersBusy = true;
+        try
+        {
+            var policy = string.IsNullOrEmpty(value) ? null : value;
+            var result = await Api.SetProviderEgressPolicyOverrideAsync(id, policy);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private static readonly Dictionary<string, int> EgressPolicyStrictness = new()
+    {
+        ["Normal"] = 1,
+        ["PrivateRequired"] = 2,
+        ["CustomProxy"] = 3
+    };
+
+    private static bool IsOverrideWeaker(ExternalProviderResponse provider)
+    {
+        if (provider.EgressPolicyOverride is null)
+        {
+            return false;
+        }
+
+        var declared = EgressPolicyStrictness.GetValueOrDefault(provider.CachedEgressPolicy, 0);
+        var overridden = EgressPolicyStrictness.GetValueOrDefault(provider.EgressPolicyOverride, 0);
+        return overridden < declared;
+    }
+}

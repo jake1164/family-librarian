@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Security;
 using Microsoft.Extensions.DependencyInjection;
@@ -144,6 +145,19 @@ internal sealed class FamilyLibrarianAppFactory(
             // still override this via configureTestServices.
             services.RemoveAll<IOidcDiscoveryTester>();
             services.AddSingleton<IOidcDiscoveryTester, AlwaysSucceedsOidcDiscoveryTester>();
+
+            // External providers (M13): same posture — no ordinary test depends
+            // on a reachable external-provider process, even the in-repo sample
+            // one. A test that specifically exercises the external-provider
+            // acquisition path swaps this via configureTestServices.
+            services.RemoveAll<IExternalProviderClient>();
+            services.AddSingleton<IExternalProviderClient, AlwaysEmptyExternalProviderClient>();
+
+            // Same posture for repository catalogs: no ordinary test depends on
+            // a reachable catalog URL. A test that specifically exercises a
+            // catalog fetch swaps this via configureTestServices.
+            services.RemoveAll<IProviderCatalogFetcher>();
+            services.AddSingleton<IProviderCatalogFetcher, AlwaysFailsProviderCatalogFetcher>();
         });
 
         if (configureTestServices is not null)

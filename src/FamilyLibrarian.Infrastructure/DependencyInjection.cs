@@ -354,6 +354,26 @@ public static class DependencyInjection
         services.AddScoped<IAcquisitionPolicySettingsStore, AcquisitionPolicySettingsStore>();
         services.AddScoped<AcquisitionPolicyService>();
 
+        // External-provider protocol (M13): a registered provider is a
+        // multi-row, admin-added registration (unlike ProviderRegistry's
+        // hardcoded allowlist), so it has its own store/service rather than
+        // widening ProviderSetting. The gateway cache is a singleton for the
+        // same "never block route resolution on a DB read" reason as the OIDC
+        // runtime cache.
+        services.AddScoped<IExternalProviderStore, ExternalProviderStore>();
+        services.AddScoped<IExternalProviderClient, ExternalProviderClient>();
+        services.AddScoped<ExternalProviderAdminService>();
+
+        services.AddSingleton<IPrivateEgressGatewayRuntimeCache, PrivateEgressGatewayRuntimeCache>();
+        services.AddScoped<IPrivateEgressGatewayStore, PrivateEgressGatewayStore>();
+        services.AddScoped<IPrivateEgressGatewayTester, PrivateEgressGatewayTester>();
+        services.AddScoped<PrivateEgressGatewayService>();
+        services.AddScoped<PrivateEgressRouteResolver>();
+
+        services.AddScoped<IProviderCatalogStore, ProviderCatalogStore>();
+        services.AddScoped<IProviderCatalogFetcher, ProviderCatalogFetcher>();
+        services.AddScoped<ProviderCatalogService>();
+
         return services;
     }
 }

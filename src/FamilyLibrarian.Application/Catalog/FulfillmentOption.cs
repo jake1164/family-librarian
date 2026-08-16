@@ -1,3 +1,5 @@
+using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Catalog;
@@ -124,7 +126,12 @@ public sealed class WorkFulfillmentOptionsService(
     IEnumerable<IAvailabilityProvider> availabilityProviders,
     IEnumerable<IStoreOfferProvider> storeOfferProviders,
     IEnumerable<IDirectAcquisitionProvider> directAcquisitionProviders,
-    IEnumerable<IOwnedLibraryProvider> ownedLibraryProviders) : IWorkFulfillmentOptionsService
+    IEnumerable<IOwnedLibraryProvider> ownedLibraryProviders,
+    Providers.IExternalProviderStore externalProviders,
+    Providers.IExternalProviderClient externalProviderClient,
+    Providers.PrivateEgressRouteResolver routeResolver,
+    ICredentialProtector protector,
+    IWorkLookup workLookup) : IWorkFulfillmentOptionsService
 {
     public async Task<IReadOnlyList<FulfillmentOption>> GetOptionsAsync(
         Guid workId,
@@ -153,6 +160,85 @@ public sealed class WorkFulfillmentOptionsService(
             options.AddRange(await provider.FindOwnedMatchesAsync(workId, mediaType, cancellationToken));
         }
 
+        options.AddRange(await FindExternalProviderOptionsAsync(workId, mediaType, cancellationToken));
+
         return options;
+    }
+
+    /// <summary>
+    /// Same unified <see cref="FulfillmentOption"/> shape as every other
+    /// direct-acquisition source (Gutendex included) — an external provider's
+    /// results need no special handling anywhere downstream (UI, recommendation
+    /// policy, acquire endpoint). A provider whose declared egress policy the
+    /// gateway cannot currently satisfy is silently skipped, same "degrade to no
+    /// results" posture every other search failure in this method already has.
+    /// </summary>
+    private async Task<IReadOnlyList<FulfillmentOption>> FindExternalProviderOptionsAsync(
+        Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)
+    {
+        var enabled = await externalProviders.ListEnabledAsync(cancellationToken);
+        if (enabled.Count == 0)
+        {
+            return [];
+        }
+
+        var work = await workLookup.FindAsync(workId, cancellationToken);
+        if (work is null)
+        {
+            return [];
+        }
+
+        var found = new List<FulfillmentOption>();
+        foreach (var provider in enabled)
+        {
+            var resolution = routeResolver.Resolve(provider.EffectiveEgressPolicy);
+            if (!resolution.IsAllowed)
+            {
+                continue;
+            }
+
+            var apiKey = provider.HasApiKey
+                ? protector.Unprotect(
+                    Providers.ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
+                : null;
+
+            IReadOnlyList<Providers.ExternalProviderCandidate> candidates;
+            try
+            {
+                candidates = await externalProviderClient.SearchAsync(
+                    provider.BaseUrl,
+                    apiKey,
+                    new Providers.ExternalProviderSearchRequest(
+                        Guid.NewGuid(), mediaType, work.Title,
+                        work.PrimaryAuthor is null ? [] : [work.PrimaryAuthor], Isbn13: null),
+                    resolution.Route!,
+                    cancellationToken);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+            {
+                continue;
+            }
+
+            found.AddRange(candidates.Select(candidate => new FulfillmentOption(
+                ProviderId: provider.ProviderId,
+                ProviderResultId: candidate.ProviderReference,
+                WorkId: workId,
+                EditionId: null,
+                MediaType: mediaType,
+                OptionKind: OptionKind.DirectAcquisition,
+                AcquisitionMethod: AcquisitionMethod.DirectDownload,
+                Format: candidate.Format,
+                Language: null,
+                Quality: null,
+                Availability: null,
+                Cost: 0m,
+                Currency: null,
+                LicenseOrUsageStatus: null,
+                DrmStatus: null,
+                ExternalActionUri: null,
+                ProviderData: candidate.ProviderReference)));
+        }
+
+        return found;
     }
 }

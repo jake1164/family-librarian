@@ -3,10 +3,12 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Acquisition;
@@ -103,7 +105,19 @@ public sealed class DirectAcquisitionServiceTests
                 Audit,
                 new FixedClock());
 
-            Service = new DirectAcquisitionService(RequestRepository, [Provider], WorkLookup, staging);
+            // No external providers are registered in these tests — only the
+            // DI-registered (Gutendex-style) provider path is under test here;
+            // see ExternalProviderClientTests/ExternalProviderEndpointTests for
+            // the external-provider path.
+            Service = new DirectAcquisitionService(
+                RequestRepository,
+                [Provider],
+                new NoExternalProviders(),
+                new UnusedExternalProviderClient(),
+                new PrivateEgressRouteResolver(new AlwaysDisabledGatewayCache()),
+                new NoOpCredentialProtector(),
+                WorkLookup,
+                staging);
         }
 
         public FakeAcquisitionRepository Repository { get; }
@@ -298,5 +312,63 @@ public sealed class DirectAcquisitionServiceTests
     {
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
             Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien"));
+    }
+
+    private sealed class NoExternalProviders : IExternalProviderStore
+    {
+        public Task<IReadOnlyList<ExternalProvider>> ListAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ExternalProvider>>([]);
+
+        public Task<IReadOnlyList<ExternalProvider>> ListEnabledAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ExternalProvider>>([]);
+
+        public Task<ExternalProvider?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult<ExternalProvider?>(null);
+
+        public Task<ExternalProvider?> FindByProviderIdAsync(string providerId, CancellationToken cancellationToken) =>
+            Task.FromResult<ExternalProvider?>(null);
+
+        public void Add(ExternalProvider provider) => throw new NotSupportedException();
+
+        public void Remove(ExternalProvider provider) => throw new NotSupportedException();
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class UnusedExternalProviderClient : IExternalProviderClient
+    {
+        public Task<ExternalProviderManifest> GetManifestAsync(
+            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> GetHealthAsync(
+            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExternalProviderArtifact> AcquireAsync(
+            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class AlwaysDisabledGatewayCache : IPrivateEgressGatewayRuntimeCache
+    {
+        public PrivateEgressGatewayRuntimeState Current => PrivateEgressGatewayRuntimeState.Disabled;
+
+        public void Refresh(PrivateEgressGatewayRuntimeState state) => throw new NotSupportedException();
+    }
+
+    private sealed class NoOpCredentialProtector : ICredentialProtector
+    {
+        public int FormatVersion => 1;
+
+        public string Protect(string providerId, string plaintext) => plaintext;
+
+        public string? Unprotect(string providerId, string protectedValue, int formatVersion) => protectedValue;
     }
 }

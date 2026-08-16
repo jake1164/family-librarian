@@ -70,6 +70,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<OidcSettings> OidcSettings => Set<OidcSettings>();
 
+    public DbSet<ExternalProvider> ExternalProviders => Set<ExternalProvider>();
+
+    public DbSet<PrivateEgressGatewaySettings> PrivateEgressGatewaySettings => Set<PrivateEgressGatewaySettings>();
+
+    public DbSet<ProviderCatalog> ProviderCatalogs => Set<ProviderCatalog>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         builder.HasDefaultSchema("identity");
@@ -316,6 +322,68 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(setting => setting.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(setting => setting.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(setting => setting.Version).HasColumnName("xmin").IsRowVersion();
+        });
+
+        builder.Entity<ExternalProvider>(entity =>
+        {
+            entity.ToTable("external_providers", "providers");
+            entity.HasKey(provider => provider.Id);
+            entity.Property(provider => provider.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(provider => provider.ProviderId).HasColumnName("provider_id").HasMaxLength(64).IsRequired();
+            entity.Property(provider => provider.DisplayName).HasColumnName("display_name").HasMaxLength(128).IsRequired();
+            entity.Property(provider => provider.BaseUrl).HasColumnName("base_url").HasMaxLength(1_024).IsRequired();
+            entity.Property(provider => provider.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(provider => provider.ProtectedApiKey).HasColumnName("protected_api_key").HasMaxLength(4_096);
+            entity.Property(provider => provider.ApiKeyFormatVersion).HasColumnName("api_key_format_version");
+            entity.Property(provider => provider.ApiKeyHint).HasColumnName("api_key_hint").HasMaxLength(8);
+            entity.Property(provider => provider.ApiKeySetAtUtc).HasColumnName("api_key_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(provider => provider.CachedProtocolVersion).HasColumnName("cached_protocol_version").HasMaxLength(32);
+            entity.Property(provider => provider.CachedCapabilities).HasColumnName("cached_capabilities").HasMaxLength(512);
+            entity.Property(provider => provider.CachedEgressPolicy).HasColumnName("cached_egress_policy").HasConversion<string>().HasMaxLength(32);
+            entity.Property(provider => provider.EgressPolicyOverride).HasColumnName("overridden_egress_policy").HasConversion<string>().HasMaxLength(32);
+            entity.Property(provider => provider.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(provider => provider.LastTestSucceeded).HasColumnName("last_test_succeeded");
+            entity.Property(provider => provider.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
+            entity.Property(provider => provider.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(provider => provider.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(provider => provider.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(provider => provider.Version).HasColumnName("xmin").IsRowVersion();
+
+            entity.HasIndex(provider => provider.ProviderId).IsUnique();
+        });
+
+        builder.Entity<PrivateEgressGatewaySettings>(entity =>
+        {
+            entity.ToTable("private_egress_gateway_settings", "providers");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(settings => settings.GatewayEndpoint).HasColumnName("gateway_endpoint").HasMaxLength(512);
+            entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
+            entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
+
+        builder.Entity<ProviderCatalog>(entity =>
+        {
+            entity.ToTable("provider_catalogs", "providers");
+            entity.HasKey(catalog => catalog.Id);
+            entity.Property(catalog => catalog.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(catalog => catalog.Url).HasColumnName("url").HasMaxLength(1_024).IsRequired();
+            entity.Property(catalog => catalog.DisplayName).HasColumnName("display_name").HasMaxLength(256).IsRequired();
+            entity.Property(catalog => catalog.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(catalog => catalog.CachedEntriesJson).HasColumnName("cached_entries_json").HasColumnType("jsonb");
+            entity.Property(catalog => catalog.LastFetchedAtUtc).HasColumnName("last_fetched_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(catalog => catalog.LastFetchSucceeded).HasColumnName("last_fetch_succeeded");
+            entity.Property(catalog => catalog.LastFetchMessage).HasColumnName("last_fetch_message").HasMaxLength(512);
+            entity.Property(catalog => catalog.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(catalog => catalog.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(catalog => catalog.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(catalog => catalog.Version).HasColumnName("xmin").IsRowVersion();
         });
     }
 

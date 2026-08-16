@@ -49,6 +49,24 @@ public static class AuditActions
 
     public const string ExternalLoginLinked = "account.external_login_linked";
     public const string ExternalAccountCreated = "account.external_account_created";
+
+    public const string ExternalProviderCreated = "external_provider.created";
+    public const string ExternalProviderUpdated = "external_provider.updated";
+    public const string ExternalProviderEnabled = "external_provider.enabled";
+    public const string ExternalProviderDisabled = "external_provider.disabled";
+    public const string ExternalProviderApiKeySet = "external_provider.api_key_set";
+    public const string ExternalProviderApiKeyCleared = "external_provider.api_key_cleared";
+    public const string ExternalProviderTested = "external_provider.tested";
+    public const string ExternalProviderRemoved = "external_provider.removed";
+    public const string ExternalProviderEgressPolicyOverrideChanged = "external_provider.egress_policy_override_changed";
+    public const string ExternalProviderAcquisitionStaged = "external_provider_acquisition.staged";
+
+    public const string PrivateEgressGatewayChanged = "private_egress_gateway.changed";
+    public const string PrivateEgressGatewayTested = "private_egress_gateway.tested";
+
+    public const string ProviderCatalogAdded = "provider_catalog.added";
+    public const string ProviderCatalogRemoved = "provider_catalog.removed";
+    public const string ProviderCatalogRefreshed = "provider_catalog.refreshed";
 }
 
 public static class AuditSubjectTypes
@@ -61,4 +79,7 @@ public static class AuditSubjectTypes
     public const string PublishingDestination = "publishing_destination";
     public const string AcquisitionPolicy = "acquisition_policy";
     public const string Oidc = "oidc";
+    public const string ExternalProvider = "external_provider";
+    public const string PrivateEgressGateway = "private_egress_gateway";
+    public const string ProviderCatalog = "provider_catalog";
 }

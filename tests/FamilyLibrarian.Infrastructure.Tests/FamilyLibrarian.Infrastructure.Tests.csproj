@@ -10,6 +10,9 @@
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
     <ProjectReference Include="../../src/FamilyLibrarian.Application/FamilyLibrarian.Application.csproj" />
     <ProjectReference Include="../../src/FamilyLibrarian.Infrastructure/FamilyLibrarian.Infrastructure.csproj" />
+    <!-- The conformance test boots a real instance of this to prove the
+         external-provider protocol client works against a real implementation. -->
+    <ProjectReference Include="../../samples/FamilyLibrarian.SampleProvider/FamilyLibrarian.SampleProvider.csproj" />
   </ItemGroup>
 
   <Import Project="Sdk.targets" Sdk="MSTest.Sdk" />

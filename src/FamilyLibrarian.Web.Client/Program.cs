@@ -6,6 +6,7 @@ using FamilyLibrarian.Web.Client.Catalog;
 using FamilyLibrarian.Web.Client.Feedback;
 using FamilyLibrarian.Web.Client.Integrations;
 using FamilyLibrarian.Web.Client.Policy;
+using FamilyLibrarian.Web.Client.Providers;
 using FamilyLibrarian.Web.Client.Publishing;
 using FamilyLibrarian.Web.Client.Requests;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -38,5 +39,6 @@ builder.Services.AddScoped<AudiobookshelfSettingsApiClient>();
 builder.Services.AddScoped<LibraryPublishingApiClient>();
 builder.Services.AddScoped<PolicyApiClient>();
 builder.Services.AddScoped<OidcSettingsApiClient>();
+builder.Services.AddScoped<ExternalProviderApiClient>();
 
 await builder.Build().RunAsync();

@@ -42,7 +42,8 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        EgressPolicy egressPolicy = EgressPolicy.Normal)
     {
         var extension = Path.GetExtension(originalFilename);
         if (string.IsNullOrEmpty(extension) || !policy.IsExtensionAllowed(format.MediaType, extension))

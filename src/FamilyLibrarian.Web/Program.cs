@@ -25,12 +25,15 @@ using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Contracts.Security;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Domain.Accounts;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Publishing;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Persistence;
+using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web;
 using Microsoft.AspNetCore.Authentication;
@@ -105,6 +108,10 @@ if (app.Configuration.GetValue<bool>("Authentication:EnableLocal"))
 // see OidcOptionsConfigurator's remarks for why this can't be read from
 // configuration at Build() time the way the connection string is.
 await app.Services.InitializeOidcRuntimeCacheAsync();
+
+// Same reasoning as the OIDC cache above, for the private-egress gateway
+// PrivateEgressRouteResolver reads from.
+await app.Services.InitializeGatewayRuntimeCacheAsync();
 
 app.UseExceptionHandler("/error");
 
@@ -310,6 +317,42 @@ adminOidc.MapPut("/client-secret", SetOidcClientSecretAsync);
 adminOidc.MapDelete("/client-secret", ClearOidcClientSecretAsync);
 adminOidc.MapPost("/test", TestOidcConnectionAsync);
 adminOidc.MapPut("/local-login-disabled", SetOidcLocalLoginDisabledAsync);
+
+// External-provider protocol (M13): a registered provider is an admin-added
+// row, not part of the hardcoded ProviderRegistry allowlist, so it gets its
+// own CRUD surface rather than stretching the metadata-provider routes.
+var adminExternalProviders = app.MapGroup("/api/v1/admin/external-providers")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+adminExternalProviders.MapGet("/", ListExternalProvidersAsync);
+adminExternalProviders.MapPost("/", CreateExternalProviderAsync);
+adminExternalProviders.MapPut("/{id:guid}/details", SetExternalProviderDetailsAsync);
+adminExternalProviders.MapPut("/{id:guid}/enabled", SetExternalProviderEnabledAsync);
+adminExternalProviders.MapPut("/{id:guid}/api-key", SetExternalProviderApiKeyAsync);
+adminExternalProviders.MapDelete("/{id:guid}/api-key", ClearExternalProviderApiKeyAsync);
+adminExternalProviders.MapPost("/{id:guid}/test", TestExternalProviderAsync);
+adminExternalProviders.MapPut("/{id:guid}/egress-policy-override", SetExternalProviderEgressPolicyOverrideAsync);
+adminExternalProviders.MapDelete("/{id:guid}", RemoveExternalProviderAsync);
+
+var adminGateway = app.MapGroup("/api/v1/admin/private-egress-gateway")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+adminGateway.MapGet("/", GetGatewaySettingsAsync);
+adminGateway.MapPut("/enabled", SetGatewayEnabledAsync);
+adminGateway.MapPut("/endpoint", SetGatewayEndpointAsync);
+adminGateway.MapPost("/test", TestGatewayAsync);
+
+var adminProviderCatalogs = app.MapGroup("/api/v1/admin/provider-catalogs")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+adminProviderCatalogs.MapGet("/", ListProviderCatalogsAsync);
+adminProviderCatalogs.MapPost("/", AddProviderCatalogAsync);
+adminProviderCatalogs.MapPut("/{id:guid}/enabled", SetProviderCatalogEnabledAsync);
+adminProviderCatalogs.MapPost("/{id:guid}/refresh", RefreshProviderCatalogAsync);
+adminProviderCatalogs.MapDelete("/{id:guid}", RemoveProviderCatalogAsync);
 
 var publishingQueue = app.MapGroup("/api/v1/admin/publishing")
     .RequireAuthorization("Admin")
@@ -585,6 +628,179 @@ static OidcSettingsResponse ToOidcResponse(OidcStatus status) => new(
     status.LastTestedAtUtc,
     status.LastTestSucceeded,
     status.LastTestMessage);
+
+static async Task<IResult> ListExternalProvidersAsync(
+    ExternalProviderAdminService service, CancellationToken cancellationToken) =>
+    Results.Ok((await service.ListAsync(cancellationToken)).Select(ToExternalProviderResponse).ToArray());
+
+static async Task<IResult> CreateExternalProviderAsync(
+    CreateExternalProviderRequest request, ExternalProviderAdminService service, CancellationToken cancellationToken) =>
+    ToExternalProviderResult(
+        await service.CreateAsync(request.ProviderId, request.DisplayName, request.BaseUrl, cancellationToken));
+
+static async Task<IResult> SetExternalProviderDetailsAsync(
+    Guid id, SetExternalProviderDetailsRequest request, ExternalProviderAdminService service,
+    CancellationToken cancellationToken) =>
+    ToExternalProviderResult(await service.SetDetailsAsync(id, request.DisplayName, request.BaseUrl, cancellationToken));
+
+static async Task<IResult> SetExternalProviderEnabledAsync(
+    Guid id, SetExternalProviderEnabledRequest request, ExternalProviderAdminService service,
+    CancellationToken cancellationToken) =>
+    ToExternalProviderResult(await service.SetEnabledAsync(id, request.Enabled, cancellationToken));
+
+static async Task<IResult> SetExternalProviderApiKeyAsync(
+    Guid id, SetExternalProviderApiKeyRequest request, ExternalProviderAdminService service,
+    CancellationToken cancellationToken) =>
+    ToExternalProviderResult(await service.SetApiKeyAsync(id, request.ApiKey, cancellationToken));
+
+static async Task<IResult> ClearExternalProviderApiKeyAsync(
+    Guid id, ExternalProviderAdminService service, CancellationToken cancellationToken) =>
+    ToExternalProviderResult(await service.ClearApiKeyAsync(id, cancellationToken));
+
+static async Task<IResult> TestExternalProviderAsync(
+    Guid id, ExternalProviderAdminService service, CancellationToken cancellationToken) =>
+    ToExternalProviderResult(await service.TestConnectionAsync(id, cancellationToken));
+
+static async Task<IResult> SetExternalProviderEgressPolicyOverrideAsync(
+    Guid id, SetExternalProviderEgressPolicyOverrideRequest request, ExternalProviderAdminService service,
+    CancellationToken cancellationToken)
+{
+    EgressPolicy? policy = null;
+    if (!string.IsNullOrWhiteSpace(request.EgressPolicy))
+    {
+        if (!Enum.TryParse<EgressPolicy>(request.EgressPolicy, ignoreCase: true, out var parsed))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["externalProvider"] = ["That is not a known egress policy."]
+            });
+        }
+
+        policy = parsed;
+    }
+
+    return ToExternalProviderResult(await service.SetEgressPolicyOverrideAsync(id, policy, cancellationToken));
+}
+
+static async Task<IResult> RemoveExternalProviderAsync(
+    Guid id, ExternalProviderAdminService service, CancellationToken cancellationToken)
+{
+    var result = await service.RemoveAsync(id, cancellationToken);
+    return result.Outcome == ExternalProviderCommandOutcome.Success
+        ? Results.NoContent()
+        : Results.ValidationProblem(new Dictionary<string, string[]> { ["externalProvider"] = [result.Error!] });
+}
+
+static IResult ToExternalProviderResult(ExternalProviderCommandResult result) => result.Outcome switch
+{
+    ExternalProviderCommandOutcome.Invalid => Results.ValidationProblem(new Dictionary<string, string[]>
+    {
+        ["externalProvider"] = [result.Error ?? "That change is not allowed."]
+    }),
+    _ => Results.Ok(ToExternalProviderResponse(result.Status!))
+};
+
+static ExternalProviderResponse ToExternalProviderResponse(ExternalProviderStatus status) => new(
+    status.Id,
+    status.ProviderId,
+    status.DisplayName,
+    status.BaseUrl,
+    status.IsEnabled,
+    status.HasApiKey,
+    status.ApiKeyHint,
+    status.ApiKeySetAtUtc,
+    status.CachedProtocolVersion,
+    status.CachedCapabilities,
+    status.CachedEgressPolicy,
+    status.EgressPolicyOverride,
+    status.EffectiveEgressPolicy,
+    status.LastTestedAtUtc,
+    status.LastTestSucceeded,
+    status.LastTestMessage);
+
+static async Task<IResult> GetGatewaySettingsAsync(
+    PrivateEgressGatewayService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToGatewayResponse(await service.GetStatusAsync(cancellationToken)));
+
+static async Task<IResult> SetGatewayEnabledAsync(
+    SetPrivateEgressGatewayEnabledRequest request, PrivateEgressGatewayService service,
+    CancellationToken cancellationToken) =>
+    ToGatewayResult(await service.SetEnabledAsync(request.Enabled, cancellationToken));
+
+static async Task<IResult> SetGatewayEndpointAsync(
+    SetPrivateEgressGatewayEndpointRequest request, PrivateEgressGatewayService service,
+    CancellationToken cancellationToken) =>
+    ToGatewayResult(await service.SetGatewayEndpointAsync(request.GatewayEndpoint, cancellationToken));
+
+static async Task<IResult> TestGatewayAsync(
+    PrivateEgressGatewayService service, CancellationToken cancellationToken) =>
+    ToGatewayResult(await service.TestConnectionAsync(cancellationToken));
+
+static IResult ToGatewayResult(PrivateEgressGatewayCommandResult result) => result.Outcome switch
+{
+    PrivateEgressGatewayCommandOutcome.Invalid => Results.ValidationProblem(new Dictionary<string, string[]>
+    {
+        ["gateway"] = [result.Error ?? "That change is not allowed."]
+    }),
+    _ => Results.Ok(ToGatewayResponse(result.Status!))
+};
+
+static PrivateEgressGatewayResponse ToGatewayResponse(PrivateEgressGatewayStatus status) => new(
+    status.IsEnabled, status.GatewayEndpoint, status.LastTestedAtUtc, status.LastTestSucceeded, status.LastTestMessage);
+
+static async Task<IResult> ListProviderCatalogsAsync(
+    ProviderCatalogService service, CancellationToken cancellationToken) =>
+    Results.Ok((await service.ListAsync(cancellationToken)).Select(ToProviderCatalogResponse).ToArray());
+
+static async Task<IResult> AddProviderCatalogAsync(
+    AddProviderCatalogRequest request, ProviderCatalogService service, CancellationToken cancellationToken)
+{
+    var result = await service.AddAsync(request.Url, request.DisplayName, cancellationToken);
+    return result.Succeeded
+        ? Results.Ok()
+        : Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = [result.Error!] });
+}
+
+static async Task<IResult> SetProviderCatalogEnabledAsync(
+    Guid id, SetProviderCatalogEnabledRequest request, ProviderCatalogService service, CancellationToken cancellationToken)
+{
+    var result = await service.SetEnabledAsync(id, request.Enabled, cancellationToken);
+    return result.Succeeded
+        ? Results.Ok()
+        : Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = [result.Error!] });
+}
+
+static async Task<IResult> RefreshProviderCatalogAsync(
+    Guid id, ProviderCatalogService service, CancellationToken cancellationToken)
+{
+    var result = await service.RefreshAsync(id, cancellationToken);
+    return result.Succeeded
+        ? Results.Ok()
+        : Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = [result.Error!] });
+}
+
+static async Task<IResult> RemoveProviderCatalogAsync(
+    Guid id, ProviderCatalogService service, CancellationToken cancellationToken)
+{
+    var result = await service.RemoveAsync(id, cancellationToken);
+    return result.Succeeded
+        ? Results.NoContent()
+        : Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = [result.Error!] });
+}
+
+static ProviderCatalogResponse ToProviderCatalogResponse(ProviderCatalog catalog) => new(
+    catalog.Id,
+    catalog.Url,
+    catalog.DisplayName,
+    catalog.IsEnabled,
+    ProviderCatalogEntryParser.Parse(catalog.CachedEntriesJson)
+        .Select(entry => new ProviderCatalogEntryResponse(
+            entry.Id, entry.Name, entry.ProtocolVersion, entry.Capabilities, entry.License, entry.Publisher,
+            entry.TrustLabel, entry.OciImageDigest, entry.HomepageUrl, entry.Description))
+        .ToArray(),
+    catalog.LastFetchedAtUtc,
+    catalog.LastFetchSucceeded,
+    catalog.LastFetchMessage);
 
 static async Task<IResult> GetCurrentUserAsync(
     ClaimsPrincipal principal,

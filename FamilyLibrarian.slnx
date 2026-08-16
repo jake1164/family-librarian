@@ -7,6 +7,9 @@
     <Project Path="src/FamilyLibrarian.Web.Client/FamilyLibrarian.Web.Client.csproj" />
     <Project Path="src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/FamilyLibrarian.SampleProvider/FamilyLibrarian.SampleProvider.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/FamilyLibrarian.Domain.Tests/FamilyLibrarian.Domain.Tests.csproj" />
     <Project Path="tests/FamilyLibrarian.Infrastructure.Tests/FamilyLibrarian.Infrastructure.Tests.csproj" />
