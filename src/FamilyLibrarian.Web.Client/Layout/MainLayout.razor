@@ -25,27 +25,25 @@
 
         <MudSpacer />
 
-        @* Inline links from md up; the same destinations live in the drawer
-           below that width, so a phone does not get a squashed row of buttons. *@
-        <div class="d-none d-md-flex">
-            <AuthorizeView>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="search">Search</MudButton>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="requests">My requests</MudButton>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="reading">My reading</MudButton>
-            </AuthorizeView>
-            @* Hiding a link is UX only — every page carries [Authorize] and every
-               endpoint behind it independently authorizes the caller. *@
-            <AuthorizeView Roles="Admin">
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/requests">Queue</MudButton>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/accounts">Accounts</MudButton>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/integrations">Integrations</MudButton>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/security">Security queue</MudButton>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/library-publishing">Library publishing</MudButton>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/policy">Acquisition policy</MudButton>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/authentication">Authentication</MudButton>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="admin/external-providers">External providers</MudButton>
-            </AuthorizeView>
-        </div>
+        @* Config/setup pages an admin visits rarely — everyday destinations
+           (Search/My Requests/My Reading/Queue/Security Queue) live in the
+           sidebar drawer instead. Hiding this is UX only — every page carries
+           [Authorize] and every endpoint behind it independently authorizes
+           the caller. *@
+        <AuthorizeView Roles="Admin">
+            <MudMenu Icon="@Icons.Material.Filled.Settings"
+                     Color="Color.Inherit"
+                     AriaLabel="Settings menu"
+                     AnchorOrigin="Origin.BottomRight"
+                     TransformOrigin="Origin.TopRight">
+                <MudMenuItem Href="admin/accounts" Icon="@Icons.Material.Filled.People">Accounts</MudMenuItem>
+                <MudMenuItem Href="admin/integrations" Icon="@Icons.Material.Filled.Extension">Integrations</MudMenuItem>
+                <MudMenuItem Href="admin/library-publishing" Icon="@Icons.Material.Filled.CloudUpload">Library publishing</MudMenuItem>
+                <MudMenuItem Href="admin/policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudMenuItem>
+                <MudMenuItem Href="admin/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudMenuItem>
+                <MudMenuItem Href="admin/external-providers" Icon="@Icons.Material.Filled.Hub">External providers</MudMenuItem>
+            </MudMenu>
+        </AuthorizeView>
 
         <AuthorizeView>
             <Authorized>
@@ -69,9 +67,12 @@
         </AuthorizeView>
     </MudAppBar>
 
+    @* Responsive: an overlay drawer below md (toggled by the hamburger above),
+       a permanently visible sidebar from md up — the ABS-style persistent nav
+       this whole layout is modeled on. *@
     <AuthorizeView>
         <MudDrawer @bind-Open="isDrawerOpen"
-                   Variant="DrawerVariant.Temporary"
+                   Variant="DrawerVariant.Responsive"
                    Breakpoint="Breakpoint.Md"
                    Elevation="2">
             <MudNavMenu>
@@ -81,13 +82,7 @@
                 <AuthorizeView Roles="Admin" Context="adminContext">
                     <MudDivider Class="my-2" />
                     <MudNavLink Href="admin/requests" Icon="@Icons.Material.Filled.Inbox">Queue</MudNavLink>
-                    <MudNavLink Href="admin/accounts" Icon="@Icons.Material.Filled.People">Accounts</MudNavLink>
-                    <MudNavLink Href="admin/integrations" Icon="@Icons.Material.Filled.Extension">Integrations</MudNavLink>
                     <MudNavLink Href="admin/security" Icon="@Icons.Material.Filled.Shield">Security queue</MudNavLink>
-                    <MudNavLink Href="admin/library-publishing" Icon="@Icons.Material.Filled.CloudUpload">Library publishing</MudNavLink>
-                    <MudNavLink Href="admin/policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudNavLink>
-                    <MudNavLink Href="admin/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudNavLink>
-                    <MudNavLink Href="admin/external-providers" Icon="@Icons.Material.Filled.Hub">External providers</MudNavLink>
                 </AuthorizeView>
             </MudNavMenu>
         </MudDrawer>
@@ -106,7 +101,11 @@
 </MudLayout>
 
 @code {
-    private bool isDrawerOpen;
+    // True by default: DrawerVariant.Responsive renders as a permanently
+    // visible sidebar from md up (matching the standard MudBlazor template),
+    // and as a dismissible overlay below it, toggled by the app bar's
+    // hamburger button.
+    private bool isDrawerOpen = true;
 
     private async Task SignOutAsync()
     {
