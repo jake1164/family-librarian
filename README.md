@@ -144,9 +144,18 @@ an ebook, an audiobook, or both, and follow it under **My requests** — where y
 can also cancel a request or ask again. Requests are private to the account that
 made them.
 
-Administrators also get **Queue**, to review family requests and act on them
-(add a note, mark needs-review/unavailable, or cancel), and **Integrations**, for
-enabling metadata providers and storing a Google Books key.
+Administrators also get:
+
+- **Queue**, to review family requests and act on them (add a note, mark
+  needs-review/unavailable, or cancel);
+- **Integrations**, for enabling metadata providers and storing a Google Books
+  key, plus the CWA and Audiobookshelf publishing-destination settings
+  (transport/credentials for each, with a connection test);
+- **Security queue**, to run the malware/format scan on a manually imported
+  file and approve or reject it before it can go anywhere;
+- **Library publishing**, showing what happened after an approved file was
+  handed to CWA or Audiobookshelf, with a **Recheck** action for anything not
+  yet confirmed.
 
 In VS Code, the Run and Debug selector provides the same two Compose-backed
 container modes:
