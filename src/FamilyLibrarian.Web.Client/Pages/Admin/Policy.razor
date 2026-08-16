@@ -1,0 +1,104 @@
+@page "/admin/policy"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Policy
+@using FamilyLibrarian.Web.Client.Policy
+@using Microsoft.AspNetCore.Authorization
+@inject PolicyApiClient PolicyApi
+@inject ISnackbar Snackbar
+
+<PageTitle>Acquisition policy | Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Acquisition policy</MudText>
+<MudText Typo="Typo.body1" Class="mb-6">
+    When more than one way to get a book is available, this profile decides which
+    one gets highlighted as "Recommended" on a request's Files section. It never
+    acts on its own — every acquisition still requires an explicit click.
+</MudText>
+
+@if (loadFailed)
+{
+    <MudAlert Severity="Severity.Error">We could not load the acquisition policy settings.</MudAlert>
+}
+else if (profiles is null || defaultProfileId is null)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading acquisition policy settings" />
+}
+else
+{
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudStack Spacing="3">
+            <MudSelect T="string" Label="System default profile" @bind-Value="selectedProfileId" Disabled="@busy">
+                @foreach (var profile in profiles)
+                {
+                    <MudSelectItem Value="@profile.Id">@profile.DisplayName</MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (SelectedDescription is not null)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true">@SelectedDescription</MudAlert>
+            }
+
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       Disabled="@(busy || selectedProfileId == defaultProfileId)"
+                       OnClick="SaveAsync">
+                Save
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+}
+
+@code {
+    private IReadOnlyList<PolicyProfileResponse>? profiles;
+    private string? defaultProfileId;
+    private string? selectedProfileId;
+    private bool busy;
+    private bool loadFailed;
+
+    private string? SelectedDescription =>
+        profiles?.FirstOrDefault(profile => profile.Id == selectedProfileId)?.Description;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            profiles = await PolicyApi.GetProfilesAsync();
+            var settings = await PolicyApi.GetSettingsAsync();
+            defaultProfileId = settings?.DefaultProfileId ?? profiles.FirstOrDefault()?.Id;
+            selectedProfileId = defaultProfileId;
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (selectedProfileId is null)
+        {
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            var result = await PolicyApi.SetDefaultProfileAsync(selectedProfileId);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            defaultProfileId = result.Settings?.DefaultProfileId ?? selectedProfileId;
+            Snackbar.Add("Saved the acquisition policy default.", Severity.Success);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

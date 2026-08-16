@@ -1,3 +1,5 @@
+using FamilyLibrarian.Contracts.Policy;
+
 namespace FamilyLibrarian.Contracts.Catalog;
 
 public sealed record CatalogWorkResponse(
@@ -25,4 +27,6 @@ public sealed record FulfillmentOptionResponse(
 
 public sealed record WorkFulfillmentOptionsResponse(
     IReadOnlyList<FulfillmentOptionResponse> Ebook,
-    IReadOnlyList<FulfillmentOptionResponse> Audiobook);
+    IReadOnlyList<FulfillmentOptionResponse> Audiobook,
+    RecommendationResponse? EbookRecommendation = null,
+    RecommendationResponse? AudiobookRecommendation = null);

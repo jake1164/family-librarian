@@ -1,0 +1,256 @@
+@page "/admin/authentication"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Authentication
+@using FamilyLibrarian.Web.Client.Authentication
+@using Microsoft.AspNetCore.Authorization
+@inject OidcSettingsApiClient OidcApi
+@inject ISnackbar Snackbar
+
+<PageTitle>Authentication | Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Authentication</MudText>
+<MudText Typo="Typo.body1" Class="mb-6">
+    Optional single sign-on through any standards-compliant OIDC identity provider —
+    configured entirely here, no environment variables. Local sign-in keeps working
+    alongside it until you choose to disable it below.
+</MudText>
+
+@if (loadFailed)
+{
+    <MudAlert Severity="Severity.Error">We could not load the authentication settings.</MudAlert>
+}
+else if (settings is null)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading authentication settings" />
+}
+else
+{
+    <MudPaper Class="pa-4 mb-6" Elevation="1">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudText Typo="Typo.h6">OpenID Connect</MudText>
+            <MudSpacer />
+            <MudSwitch T="bool"
+                       @key="@("oidc:" + switchGeneration)"
+                       Value="settings.IsEnabled"
+                       ValueChanged="@(enabled => SetEnabledAsync(enabled))"
+                       Color="Color.Primary"
+                       Disabled="@busy"
+                       Label="@(settings.IsEnabled ? "Enabled" : "Disabled")" />
+        </MudStack>
+
+        <MudDivider Class="my-3" />
+
+        <MudStack Spacing="3">
+            <MudTextField T="string" Label="Button label" @bind-Value="displayName" Disabled="@busy"
+                          HelperText="Shown on the sign-in page (e.g. Sign in with Authentik)." />
+            <MudTextField T="string" Label="Issuer (Authority) URL" @bind-Value="authority" Disabled="@busy"
+                          HelperText="Everything else — authorize, token, userinfo, JWKS — is resolved from here automatically." />
+            <MudTextField T="string" Label="Client ID" @bind-Value="clientId" Disabled="@busy" />
+            <MudTextField T="string" Label="Scopes" @bind-Value="scopes" Disabled="@busy" />
+
+            <MudStack Row="true" Spacing="3">
+                <MudTextField T="string" Label="Match claim" @bind-Value="matchClaimName" Disabled="@busy"
+                              HelperText="Links a sign-in to an existing account by this claim." Class="flex-grow-1" />
+                <MudTextField T="string" Label="Admin claim name" @bind-Value="adminClaimName" Disabled="@busy" Class="flex-grow-1" />
+                <MudTextField T="string" Label="Admin claim values" @bind-Value="adminClaimValues" Disabled="@busy"
+                              HelperText="Comma-separated. Any match grants the Admin role." Class="flex-grow-1" />
+            </MudStack>
+
+            <MudCheckBox T="bool" @bind-Value="autoCreateAccounts" Disabled="@busy"
+                         Label="Auto-create accounts on first sign-in (otherwise new accounts wait for admin approval)" />
+        </MudStack>
+
+        <MudDivider Class="my-3" />
+        <MudText Typo="Typo.subtitle2">Client secret</MudText>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            @(settings.HasClientSecret
+                ? $"A secret ending in {settings.ClientSecretHint} was saved {settings.ClientSecretSetAtUtc?.ToLocalTime().ToString("f")}."
+                : "No secret is stored yet.")
+        </MudText>
+        <MudStack Row="true" Spacing="2">
+            <MudTextField T="string" @bind-Value="clientSecretDraft" Label="Replace client secret"
+                          InputType="InputType.Password" Disabled="@busy" Class="flex-grow-1" />
+            <MudButton Variant="Variant.Filled"
+                       Disabled="@(busy || string.IsNullOrWhiteSpace(clientSecretDraft))"
+                       OnClick="SaveClientSecretAsync">
+                Save secret
+            </MudButton>
+            @if (settings.HasClientSecret)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@busy" OnClick="ClearClientSecretAsync">
+                    Remove
+                </MudButton>
+            }
+        </MudStack>
+
+        <MudDivider Class="my-3" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveSettingsAsync">
+            Save settings
+        </MudButton>
+
+        <MudDivider Class="my-3" />
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+            <MudButton Variant="Variant.Outlined" Disabled="@busy" OnClick="TestAsync">Test connection</MudButton>
+            @if (settings.LastTestedAtUtc is not null)
+            {
+                <MudText Typo="Typo.body2">
+                    <MudIcon Icon="@(settings.LastTestSucceeded == true ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Error)"
+                             Color="@(settings.LastTestSucceeded == true ? Color.Success : Color.Error)"
+                             Size="Size.Small" />
+                    @settings.LastTestMessage
+                </MudText>
+            }
+        </MudStack>
+
+        @if (lastTestEndpoints is not null)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mt-3">
+                <MudStack Spacing="1">
+                    <MudText Typo="Typo.caption">Authorize: @lastTestEndpoints.AuthorizationEndpoint</MudText>
+                    <MudText Typo="Typo.caption">Token: @lastTestEndpoints.TokenEndpoint</MudText>
+                    <MudText Typo="Typo.caption">Userinfo: @lastTestEndpoints.UserinfoEndpoint</MudText>
+                    <MudText Typo="Typo.caption">JWKS: @lastTestEndpoints.JwksUri</MudText>
+                    <MudText Typo="Typo.caption">Logout: @lastTestEndpoints.EndSessionEndpoint</MudText>
+                </MudStack>
+            </MudAlert>
+        }
+
+        <MudDivider Class="my-3" />
+        <MudText Typo="Typo.subtitle2">Local sign-in</MudText>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            Disabling local sign-in leaves it working for one break-glass account only —
+            the administrator created when this deployment was first started.
+        </MudText>
+        <MudSwitch T="bool"
+                   @key="@("local-login:" + switchGeneration)"
+                   Value="settings.LocalLoginDisabled"
+                   ValueChanged="@(disabled => SetLocalLoginDisabledAsync(disabled))"
+                   Color="Color.Warning"
+                   Disabled="@(busy || settings.LastTestSucceeded != true)"
+                   Label="@(settings.LocalLoginDisabled ? "Local sign-in disabled" : "Local sign-in enabled")" />
+        @if (settings.LastTestSucceeded != true)
+        {
+            <MudText Typo="Typo.caption">A successful connection test is required first.</MudText>
+        }
+    </MudPaper>
+}
+
+@code {
+    private OidcSettingsResponse? settings;
+    private bool loadFailed;
+    private bool busy;
+    private int switchGeneration;
+    private OidcConnectionTestResponse? lastTestEndpoints;
+
+    private string? displayName;
+    private string? authority;
+    private string? clientId;
+    private string scopes = "openid profile email";
+    private string matchClaimName = "email";
+    private string? adminClaimName = "groups";
+    private string? adminClaimValues;
+    private bool autoCreateAccounts;
+    private string? clientSecretDraft;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            settings = await OidcApi.GetAsync();
+            ApplyFields(settings);
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+    }
+
+    private void ApplyFields(OidcSettingsResponse? source)
+    {
+        if (source is null)
+        {
+            return;
+        }
+
+        displayName = source.DisplayName;
+        authority = source.Authority;
+        clientId = source.ClientId;
+        scopes = source.Scopes;
+        matchClaimName = source.MatchClaimName;
+        adminClaimName = source.AdminClaimName;
+        adminClaimValues = source.AdminClaimValues;
+        autoCreateAccounts = source.AutoCreateAccounts;
+    }
+
+    private Task SetEnabledAsync(bool enabled) => RunAsync(() => OidcApi.SetEnabledAsync(enabled));
+
+    private Task SaveSettingsAsync() => RunAsync(() => OidcApi.SetSettingsAsync(new SetOidcSettingsRequest(
+        displayName ?? "Sign in with SSO", authority, clientId, scopes, matchClaimName,
+        adminClaimName, adminClaimValues, autoCreateAccounts)));
+
+    private async Task SaveClientSecretAsync()
+    {
+        if (string.IsNullOrWhiteSpace(clientSecretDraft))
+        {
+            return;
+        }
+
+        if (await RunAsync(() => OidcApi.SetClientSecretAsync(clientSecretDraft)))
+        {
+            clientSecretDraft = null;
+            Snackbar.Add("Saved the OIDC client secret.", Severity.Success);
+        }
+    }
+
+    private Task ClearClientSecretAsync() => RunAsync(() => OidcApi.ClearClientSecretAsync());
+
+    private Task SetLocalLoginDisabledAsync(bool disabled) =>
+        RunAsync(() => OidcApi.SetLocalLoginDisabledAsync(disabled));
+
+    private async Task TestAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await OidcApi.TestAsync();
+            if (result is null)
+            {
+                Snackbar.Add("The connection test could not be run.", Severity.Error);
+                return;
+            }
+
+            lastTestEndpoints = result.Succeeded ? result : null;
+            await LoadAsync();
+            Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task<bool> RunAsync(Func<Task<OidcResult>> action)
+    {
+        busy = true;
+        try
+        {
+            var result = await action();
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return false;
+            }
+
+            settings = result.Settings;
+            ApplyFields(settings);
+            return true;
+        }
+        finally
+        {
+            busy = false;
+            switchGeneration++;
+        }
+    }
+}

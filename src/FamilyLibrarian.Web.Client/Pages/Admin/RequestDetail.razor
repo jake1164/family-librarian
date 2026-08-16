@@ -113,6 +113,13 @@
                                        OnClick="@(() => AcquireDirectAsync(format.FormatId, option))">
                                 Get free copy from @option.ProviderId
                             </MudButton>
+                            @if (Recommendation(format.MediaType) is { } recommendation &&
+                                 recommendation.ProviderId == option.ProviderId &&
+                                 recommendation.ProviderResultId == option.ProviderResultId)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Primary">Recommended</MudChip>
+                                <MudText Typo="Typo.caption">@recommendation.Reason</MudText>
+                            }
                         }
                     </MudStack>
                 }
@@ -188,6 +195,13 @@
 
         return options?.FirstOrDefault(option => option.OptionKind == "DirectAcquisition");
     }
+
+    private RecommendationResponse? Recommendation(string mediaType) => mediaType switch
+    {
+        "Ebook" => fulfillment?.EbookRecommendation,
+        "Audiobook" => fulfillment?.AudiobookRecommendation,
+        _ => null
+    };
 
     private async Task AcquireDirectAsync(Guid formatId, FulfillmentOptionResponse option)
     {

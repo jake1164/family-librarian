@@ -1,5 +1,8 @@
 @page "/login"
+@using FamilyLibrarian.Contracts.Authentication
+@using FamilyLibrarian.Web.Client.Authentication
 @inject ApiAuthenticationStateProvider AuthenticationStateProvider
+@inject OidcSettingsApiClient OidcApi
 @inject NavigationManager Navigation
 
 <PageTitle>Sign in | Family Librarian</PageTitle>
@@ -11,22 +14,79 @@
     {
         <MudAlert Severity="Severity.Error" Class="mb-4">@errorMessage</MudAlert>
     }
+    @if (!string.IsNullOrWhiteSpace(infoMessage))
+    {
+        <MudAlert Severity="Severity.Info" Class="mb-4">@infoMessage</MudAlert>
+    }
 
-    <EditForm Model="request" OnValidSubmit="SignInAsync">
-        <DataAnnotationsValidator />
-        <MudTextField @bind-Value="request.Email" Label="Email" InputType="InputType.Email" Required="true" />
-        <MudTextField @bind-Value="request.Password" Label="Password" InputType="InputType.Password" Required="true" Class="mt-3" />
-        <MudCheckBox @bind-Value="request.RememberMe" Label="Keep me signed in" Class="mt-3" />
-        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Disabled="isSubmitting" Class="mt-4">
-            Sign in
+    @if (oidcStatus is { Enabled: true })
+    {
+        <MudButton Href="api/auth/oidc/challenge"
+                   Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   FullWidth="true"
+                   Class="mb-4">
+            @oidcStatus.DisplayName
         </MudButton>
-    </EditForm>
+
+        @if (oidcStatus.LocalLoginDisabled && !showLocalForm)
+        {
+            <MudLink Typo="Typo.body2" OnClick="@(() => showLocalForm = true)">
+                Sign in with a local account instead
+            </MudLink>
+        }
+    }
+
+    @if (oidcStatus is not { Enabled: true, LocalLoginDisabled: true } || showLocalForm)
+    {
+        <EditForm Model="request" OnValidSubmit="SignInAsync">
+            <DataAnnotationsValidator />
+            <MudTextField @bind-Value="request.Email" Label="Email" InputType="InputType.Email" Required="true" />
+            <MudTextField @bind-Value="request.Password" Label="Password" InputType="InputType.Password" Required="true" Class="mt-3" />
+            <MudCheckBox @bind-Value="request.RememberMe" Label="Keep me signed in" Class="mt-3" />
+            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Disabled="isSubmitting" Class="mt-4">
+                Sign in
+            </MudButton>
+        </EditForm>
+    }
 </MudPaper>
 
 @code {
     private readonly LoginRequest request = new();
     private bool isSubmitting;
     private string? errorMessage;
+    private string? infoMessage;
+    private OidcSignInStatusResponse? oidcStatus;
+    private bool showLocalForm;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var query = ParseQuery(Navigation.ToAbsoluteUri(Navigation.Uri).Query);
+        errorMessage = query.TryGetValue("oidcError", out var error) ? "Sign-in failed: " + error : null;
+        infoMessage = query.TryGetValue("oidcInfo", out var info) ? info : null;
+
+        try
+        {
+            oidcStatus = await OidcApi.GetSignInStatusAsync();
+        }
+        catch (HttpRequestException)
+        {
+            // Informational only — a failed probe just means no OIDC button shows.
+            oidcStatus = null;
+        }
+    }
+
+    private static Dictionary<string, string> ParseQuery(string query)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            result[Uri.UnescapeDataString(parts[0])] = parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : string.Empty;
+        }
+
+        return result;
+    }
 
     private async Task SignInAsync()
     {

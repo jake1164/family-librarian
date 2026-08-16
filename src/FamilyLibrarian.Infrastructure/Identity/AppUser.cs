@@ -20,4 +20,15 @@ public sealed class AppUser : IdentityUser<Guid>
     public DateTimeOffset CreatedAtUtc { get; set; }
 
     public DateTimeOffset? LastLoginAtUtc { get; set; }
+
+    /// <summary>
+    /// Whether this is the one bootstrap administrator <c>IdentityInitializer</c>
+    /// creates from <c>Admin_Email</c>/<c>Admin_Password</c> at first boot.
+    /// </summary>
+    /// <remarks>
+    /// The single account exempt from <c>OidcSettings.LocalLoginDisabled</c> —
+    /// a break-glass path so disabling local sign-in in favor of OIDC can never
+    /// lock every administrator out at once. Nothing else ever sets this true.
+    /// </remarks>
+    public bool IsBreakGlass { get; set; }
 }

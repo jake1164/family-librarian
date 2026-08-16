@@ -129,7 +129,7 @@
                     {
                         <MudButton Variant="Variant.Text" Color="Color.Success" Disabled="@isBusy"
                                    OnClick="() => SetEnabledAsync(account, true)">
-                            Enable
+                            @(account.Status == PendingApprovalStatus ? "Approve" : "Enable")
                         </MudButton>
                     }
 
@@ -195,6 +195,7 @@
     // exchanges.
     private const string ActiveStatus = "Active";
     private const string DisabledStatus = "Disabled";
+    private const string PendingApprovalStatus = "PendingApproval";
 
     private IReadOnlyList<FamilyAccountResponse> accounts = [];
     private IReadOnlyList<InvitationResponse> invitations = [];

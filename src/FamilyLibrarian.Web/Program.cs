@@ -8,6 +8,7 @@ using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Policy;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
@@ -17,6 +18,7 @@ using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Feedback;
+using FamilyLibrarian.Contracts.Policy;
 using FamilyLibrarian.Contracts.Providers;
 using FamilyLibrarian.Contracts.Publishing;
 using FamilyLibrarian.Contracts.Requests;
@@ -31,6 +33,7 @@ using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
@@ -97,6 +100,12 @@ if (app.Configuration.GetValue<bool>("Authentication:EnableLocal"))
     await app.Services.InitializeIdentityAsync(app.Configuration);
 }
 
+// Loads whatever OIDC settings are already saved (or the disabled default on
+// a fresh install) into the in-memory cache the "oidc" scheme reads from —
+// see OidcOptionsConfigurator's remarks for why this can't be read from
+// configuration at Build() time the way the connection string is.
+await app.Services.InitializeOidcRuntimeCacheAsync();
+
 app.UseExceptionHandler("/error");
 
 if (app.Environment.IsDevelopment())
@@ -133,6 +142,17 @@ app.MapPost("/api/auth/login", LoginAsync)
     .AllowAnonymous();
 app.MapPost("/api/auth/logout", LogoutAsync)
     .RequireAuthorization();
+
+// OIDC. Anonymous by necessity — nobody is signed in yet — and reached by a
+// full browser navigation throughout (the login page renders these as plain
+// <a href> links, never a fetch), since the identity provider needs the
+// top-level browsing context to render its own sign-in UI.
+app.MapGet("/api/auth/oidc/status", GetOidcSignInStatusAsync)
+    .AllowAnonymous();
+app.MapGet("/api/auth/oidc/challenge", ChallengeOidcAsync)
+    .AllowAnonymous();
+app.MapGet("/api/auth/oidc/complete", CompleteOidcSignInAsync)
+    .AllowAnonymous();
 
 app.MapGet("/api/v1/antiforgery/token", AntiforgeryTokenEndpoint.GetToken)
     .RequireAuthorization();
@@ -266,6 +286,31 @@ audiobookshelfSettings.MapPut("/api-token", SetAudiobookshelfApiTokenAsync);
 audiobookshelfSettings.MapDelete("/api-token", ClearAudiobookshelfApiTokenAsync);
 audiobookshelfSettings.MapPost("/test", TestAudiobookshelfConnectionAsync);
 
+// Acquisition policy engine (M11): ranks FulfillmentOptions a Work/format
+// already produces. Only the system default is admin-editable this pass —
+// see the M11-part-3 plan for why a per-user override has no UI yet.
+var adminPolicy = app.MapGroup("/api/v1/admin/policy")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+adminPolicy.MapGet("/profiles", ListPolicyProfilesAsync);
+adminPolicy.MapGet("/settings", GetPolicySettingsAsync);
+adminPolicy.MapPut("/settings", SetPolicySettingsAsync);
+
+// OIDC (M6.5): configured entirely here, no environment variables. Same shape
+// as the CWA/Audiobookshelf settings groups above.
+var adminOidc = app.MapGroup("/api/v1/admin/authentication/oidc")
+    .RequireAuthorization("Admin")
+    .AddEndpointFilter<AntiforgeryEndpointFilter>();
+
+adminOidc.MapGet("/", GetOidcSettingsAsync);
+adminOidc.MapPut("/", SetOidcSettingsAsync);
+adminOidc.MapPut("/enabled", SetOidcEnabledAsync);
+adminOidc.MapPut("/client-secret", SetOidcClientSecretAsync);
+adminOidc.MapDelete("/client-secret", ClearOidcClientSecretAsync);
+adminOidc.MapPost("/test", TestOidcConnectionAsync);
+adminOidc.MapPut("/local-login-disabled", SetOidcLocalLoginDisabledAsync);
+
 var publishingQueue = app.MapGroup("/api/v1/admin/publishing")
     .RequireAuthorization("Admin")
     .AddEndpointFilter<AntiforgeryEndpointFilter>();
@@ -282,6 +327,7 @@ static async Task<IResult> LoginAsync(
     LoginRequest request,
     UserManager<AppUser> userManager,
     SignInManager<AppUser> signInManager,
+    IOidcRuntimeSettingsCache oidcCache,
     ILoggerFactory loggerFactory)
 {
     var logger = loggerFactory.CreateLogger("FamilyLibrarian.Authentication");
@@ -306,6 +352,15 @@ static async Task<IResult> LoginAsync(
     // oracle for whether a password is still correct. The response is identical
     // to a wrong password either way.
     if (!UserStatuses.CanSignIn(user.Status))
+    {
+        AuthenticationLog.LoginDisabledAccount(logger, user.Id);
+        return Results.Unauthorized();
+    }
+
+    // Local sign-in can be administratively disabled once OIDC is verified
+    // working, but never for the one break-glass account — see OidcSettings'
+    // own remarks on why a full OIDC-only mode isn't offered.
+    if (oidcCache.Current.LocalLoginDisabled && !user.IsBreakGlass)
     {
         AuthenticationLog.LoginDisabledAccount(logger, user.Id);
         return Results.Unauthorized();
@@ -345,6 +400,191 @@ static async Task<IResult> LogoutAsync(
     await signInManager.SignOutAsync();
     return Results.NoContent();
 }
+
+static IResult GetOidcSignInStatusAsync(IOidcRuntimeSettingsCache cache)
+{
+    var settings = cache.Current;
+    return Results.Ok(new OidcSignInStatusResponse(settings.IsUsable, settings.DisplayName, settings.LocalLoginDisabled));
+}
+
+static IResult ChallengeOidcAsync(IOidcRuntimeSettingsCache cache)
+{
+    if (!cache.Current.IsUsable)
+    {
+        return Results.NotFound();
+    }
+
+    return Results.Challenge(
+        new AuthenticationProperties { RedirectUri = "/api/auth/oidc/complete" },
+        [OidcOptionsConfigurator.SchemeName]);
+}
+
+static async Task<IResult> CompleteOidcSignInAsync(
+    SignInManager<AppUser> signInManager,
+    UserManager<AppUser> userManager,
+    ExternalSignInService externalSignIn,
+    IOidcRuntimeSettingsCache oidcCache,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken)
+{
+    var logger = loggerFactory.CreateLogger("FamilyLibrarian.Authentication");
+    var settings = oidcCache.Current;
+
+    var info = await signInManager.GetExternalLoginInfoAsync();
+    if (info is null)
+    {
+        AuthenticationLog.OidcCallbackWithoutTicket(logger);
+        return Results.Redirect("/login?oidcError=failed");
+    }
+
+    var identity = new ExternalIdentity(
+        Issuer: settings.Authority ?? OidcOptionsConfigurator.SchemeName,
+        Subject: info.ProviderKey,
+        Email: FindConfiguredClaimValue(info.Principal, settings.MatchClaimName),
+        DisplayName: FindConfiguredClaimValue(info.Principal, "name") ?? FindConfiguredClaimValue(info.Principal, "email"),
+        IsAdminClaimMatched: IsAdminClaimMatched(info.Principal, settings));
+
+    var result = await externalSignIn.SignInAsync(identity, settings.AutoCreateAccounts, cancellationToken);
+
+    // The External-scheme ticket has done its job (linking/provisioning read
+    // it); it must not linger as a second, half-authenticated cookie.
+    await signInManager.SignOutAsync();
+
+    switch (result.Outcome)
+    {
+        case ExternalSignInOutcome.SignedIn:
+            var user = await userManager.FindByIdAsync(result.UserId!.Value.ToString());
+            if (user is null)
+            {
+                return Results.Redirect("/login?oidcError=failed");
+            }
+
+            user.LastLoginAtUtc = DateTimeOffset.UtcNow;
+            await userManager.UpdateAsync(user);
+            await signInManager.SignInAsync(user, isPersistent: false);
+            AuthenticationLog.OidcSignInSucceeded(logger, user.Id);
+            return Results.Redirect("/");
+
+        case ExternalSignInOutcome.NotActive:
+            return Results.Redirect($"/login?oidcInfo={Uri.EscapeDataString(result.Message ?? string.Empty)}");
+
+        default:
+            AuthenticationLog.OidcSignInRejected(logger, result.Message ?? "unknown reason");
+            return Results.Redirect($"/login?oidcError={Uri.EscapeDataString(result.Message ?? "rejected")}");
+    }
+}
+
+static bool IsAdminClaimMatched(ClaimsPrincipal principal, OidcRuntimeSettings settings)
+{
+    if (string.IsNullOrWhiteSpace(settings.AdminClaimName) || string.IsNullOrWhiteSpace(settings.AdminClaimValues))
+    {
+        return false;
+    }
+
+    var allowedValues = settings.AdminClaimValues.Split(
+        ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    return FindConfiguredClaimValues(principal, settings.AdminClaimName)
+        .Any(value => allowedValues.Contains(value, StringComparer.OrdinalIgnoreCase));
+}
+
+/// <summary>
+/// A claim name an admin typed into settings ("email", "groups", "sub") may or
+/// may not have been remapped by ASP.NET Core's legacy inbound-claim-type
+/// mapping (see <c>OidcOptionsConfigurator</c>'s remarks) — this checks the
+/// raw short name first, then the well-known mapped equivalent, so either form
+/// of the token's claims resolves correctly.
+/// </summary>
+static string? FindConfiguredClaimValue(ClaimsPrincipal principal, string claimName) =>
+    principal.FindFirstValue(claimName) ??
+    (OidcClaimAlias(claimName) is { } mapped ? principal.FindFirstValue(mapped) : null);
+
+static IEnumerable<string> FindConfiguredClaimValues(ClaimsPrincipal principal, string claimName)
+{
+    var values = principal.FindAll(claimName).Select(claim => claim.Value);
+    if (OidcClaimAlias(claimName) is { } mapped)
+    {
+        values = values.Concat(principal.FindAll(mapped).Select(claim => claim.Value));
+    }
+
+    return values.Distinct();
+}
+
+static string? OidcClaimAlias(string claimName) => claimName.ToLowerInvariant() switch
+{
+    "sub" => ClaimTypes.NameIdentifier,
+    "email" => ClaimTypes.Email,
+    "name" => ClaimTypes.Name,
+    "given_name" => ClaimTypes.GivenName,
+    "family_name" => ClaimTypes.Surname,
+    "role" => ClaimTypes.Role,
+    _ => null
+};
+
+static async Task<IResult> GetOidcSettingsAsync(OidcSettingsService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToOidcResponse(await service.GetStatusAsync(cancellationToken)));
+
+static async Task<IResult> SetOidcSettingsAsync(
+    SetOidcSettingsRequest request, OidcSettingsService service, CancellationToken cancellationToken) =>
+    ToOidcResult(await service.SetSettingsAsync(
+        request.DisplayName, request.Authority, request.ClientId, request.Scopes, request.MatchClaimName,
+        request.AdminClaimName, request.AdminClaimValues, request.AutoCreateAccounts, cancellationToken));
+
+static async Task<IResult> SetOidcEnabledAsync(
+    SetOidcEnabledRequest request, OidcSettingsService service, CancellationToken cancellationToken) =>
+    ToOidcResult(await service.SetEnabledAsync(request.Enabled, cancellationToken));
+
+static async Task<IResult> SetOidcClientSecretAsync(
+    SetOidcClientSecretRequest request, OidcSettingsService service, CancellationToken cancellationToken) =>
+    ToOidcResult(await service.SetClientSecretAsync(request.ClientSecret, cancellationToken));
+
+static async Task<IResult> ClearOidcClientSecretAsync(
+    OidcSettingsService service, CancellationToken cancellationToken) =>
+    ToOidcResult(await service.ClearClientSecretAsync(cancellationToken));
+
+static async Task<IResult> SetOidcLocalLoginDisabledAsync(
+    SetOidcLocalLoginDisabledRequest request, OidcSettingsService service, CancellationToken cancellationToken) =>
+    ToOidcResult(await service.SetLocalLoginDisabledAsync(request.Disabled, cancellationToken));
+
+static async Task<IResult> TestOidcConnectionAsync(OidcSettingsService service, CancellationToken cancellationToken)
+{
+    var result = await service.TestConnectionAsync(cancellationToken);
+    return Results.Ok(new OidcConnectionTestResponse(
+        result.Status?.LastTestSucceeded ?? false,
+        result.Status?.LastTestMessage ?? "The connection test could not be run.",
+        result.DiscoveryEndpoints?.AuthorizationEndpoint,
+        result.DiscoveryEndpoints?.TokenEndpoint,
+        result.DiscoveryEndpoints?.UserinfoEndpoint,
+        result.DiscoveryEndpoints?.JwksUri,
+        result.DiscoveryEndpoints?.EndSessionEndpoint));
+}
+
+static IResult ToOidcResult(OidcCommandResult result) => result.Outcome switch
+{
+    OidcCommandOutcome.Invalid => Results.ValidationProblem(new Dictionary<string, string[]>
+    {
+        ["oidc"] = [result.Error ?? "That change is not allowed."]
+    }),
+    _ => Results.Ok(ToOidcResponse(result.Status!))
+};
+
+static OidcSettingsResponse ToOidcResponse(OidcStatus status) => new(
+    status.IsEnabled,
+    status.DisplayName,
+    status.Authority,
+    status.ClientId,
+    status.HasClientSecret,
+    status.ClientSecretHint,
+    status.ClientSecretSetAtUtc,
+    status.Scopes,
+    status.MatchClaimName,
+    status.AdminClaimName,
+    status.AdminClaimValues,
+    status.AutoCreateAccounts,
+    status.LocalLoginDisabled,
+    status.LastTestedAtUtc,
+    status.LastTestSucceeded,
+    status.LastTestMessage);
 
 static async Task<IResult> GetCurrentUserAsync(
     ClaimsPrincipal principal,
@@ -1491,14 +1731,19 @@ static async Task<IResult> GetCatalogWorkAsync(
 static async Task<IResult> GetWorkFulfillmentOptionsAsync(
     Guid workId,
     IWorkFulfillmentOptionsService fulfillment,
+    AcquisitionPolicyService policyService,
+    IPolicyRanker ranker,
     CancellationToken cancellationToken)
 {
     var ebook = await fulfillment.GetOptionsAsync(workId, RequestMediaType.Ebook, cancellationToken);
     var audiobook = await fulfillment.GetOptionsAsync(workId, RequestMediaType.Audiobook, cancellationToken);
+    var profileId = await policyService.GetEffectiveProfileIdAsync(cancellationToken);
 
     return Results.Ok(new WorkFulfillmentOptionsResponse(
         ebook.Select(ToFulfillmentOptionResponse).ToArray(),
-        audiobook.Select(ToFulfillmentOptionResponse).ToArray()));
+        audiobook.Select(ToFulfillmentOptionResponse).ToArray(),
+        ToRecommendationResponse(ranker.Recommend(ebook, profileId)),
+        ToRecommendationResponse(ranker.Recommend(audiobook, profileId))));
 }
 
 static FulfillmentOptionResponse ToFulfillmentOptionResponse(FulfillmentOption option) => new(
@@ -1507,6 +1752,41 @@ static FulfillmentOptionResponse ToFulfillmentOptionResponse(FulfillmentOption o
     option.OptionKind.ToString(),
     option.AcquisitionMethod.ToString(),
     option.ExternalActionUri?.ToString());
+
+static RecommendationResponse? ToRecommendationResponse(FulfillmentRecommendation? recommendation) =>
+    recommendation is null
+        ? null
+        : new RecommendationResponse(
+            recommendation.Option.ProviderId,
+            recommendation.Option.ProviderResultId,
+            recommendation.ProfileId,
+            recommendation.Reason);
+
+static IResult ListPolicyProfilesAsync(IPolicyProfileRegistry registry) =>
+    Results.Ok(registry.GetProfiles()
+        .Select(profile => new PolicyProfileResponse(profile.Id, profile.DisplayName, profile.Description))
+        .ToArray());
+
+static async Task<IResult> GetPolicySettingsAsync(
+    AcquisitionPolicyService service, CancellationToken cancellationToken)
+{
+    var status = await service.GetStatusAsync(cancellationToken);
+    return Results.Ok(new AcquisitionPolicySettingsResponse(status.DefaultProfileId, status.UpdatedAtUtc));
+}
+
+static async Task<IResult> SetPolicySettingsAsync(
+    SetDefaultPolicyProfileRequest request, AcquisitionPolicyService service, CancellationToken cancellationToken)
+{
+    var result = await service.SetDefaultProfileAsync(request.ProfileId, cancellationToken);
+    return result.Outcome switch
+    {
+        AcquisitionPolicyCommandOutcome.Invalid => Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["profileId"] = [result.Error ?? "That change is not allowed."]
+        }),
+        _ => Results.Ok(new AcquisitionPolicySettingsResponse(result.Status!.DefaultProfileId, result.Status.UpdatedAtUtc))
+    };
+}
 
 static async Task<ProviderSearchResult> SearchProviderAsync(
     IBookMetadataProvider provider,
@@ -1683,4 +1963,22 @@ internal static partial class AuthenticationLog
         Level = LogLevel.Information,
         Message = "Account {UserId} signed in.")]
     internal static partial void LoginSucceeded(ILogger logger, Guid userId);
+
+    [LoggerMessage(
+        EventId = 2006,
+        Level = LogLevel.Warning,
+        Message = "The OIDC callback carried no external login ticket.")]
+    internal static partial void OidcCallbackWithoutTicket(ILogger logger);
+
+    [LoggerMessage(
+        EventId = 2007,
+        Level = LogLevel.Information,
+        Message = "Account {UserId} signed in via OIDC.")]
+    internal static partial void OidcSignInSucceeded(ILogger logger, Guid userId);
+
+    [LoggerMessage(
+        EventId = 2008,
+        Level = LogLevel.Warning,
+        Message = "OIDC sign-in was rejected: {Reason}.")]
+    internal static partial void OidcSignInRejected(ILogger logger, string reason);
 }

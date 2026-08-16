@@ -49,6 +49,9 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/publishing/cwa/")]
     [DataRow("/api/v1/admin/publishing/audiobookshelf/")]
     [DataRow("/api/v1/admin/publishing/queue")]
+    [DataRow("/api/v1/admin/policy/profiles")]
+    [DataRow("/api/v1/admin/policy/settings")]
+    [DataRow("/api/v1/admin/authentication/oidc/")]
     public async Task AnAnonymousCallerIsChallengedOnAProtectedRoute(string route)
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -111,6 +114,9 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/publishing/cwa/")]
     [DataRow("/api/v1/admin/publishing/audiobookshelf/")]
     [DataRow("/api/v1/admin/publishing/queue")]
+    [DataRow("/api/v1/admin/policy/profiles")]
+    [DataRow("/api/v1/admin/policy/settings")]
+    [DataRow("/api/v1/admin/authentication/oidc/")]
     public async Task ANonAdminIsDeniedAnAdminRoute(string route)
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -180,6 +186,23 @@ public sealed class EndpointAuthorizationTests
 
         Assert.AreEqual(HttpStatusCode.OK, live.StatusCode);
         Assert.AreEqual(HttpStatusCode.OK, ready.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task OidcSignInRoutesStayAnonymousSoTheLoginPageNeedsNoAccount()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = fixture.CreateAnonymousClient();
+
+        // Nobody is signed in yet by definition — both must be reachable
+        // without a session. The challenge route 404s (no provider configured
+        // by default) rather than redirecting, which itself proves it was
+        // reached rather than denied.
+        var status = await client.GetAsync("/api/auth/oidc/status");
+        var challenge = await client.GetAsync("/api/auth/oidc/challenge");
+
+        Assert.AreEqual(HttpStatusCode.OK, status.StatusCode);
+        Assert.AreEqual(HttpStatusCode.NotFound, challenge.StatusCode);
     }
 
     [TestMethod]

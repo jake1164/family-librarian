@@ -4,6 +4,7 @@ using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Policy;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
@@ -14,12 +15,14 @@ using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
 using FamilyLibrarian.Infrastructure.Persistence;
+using FamilyLibrarian.Infrastructure.Policy;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Publishing;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Infrastructure.Time;
 using System.Net.Http.Headers;
 using System.Net.Mail;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -65,9 +68,23 @@ public static class DependencyInjection
             .AddEntityFrameworkStores<AppDbContext>()
             .AddDefaultTokenProviders();
 
-        services
-            .AddAuthentication(IdentityConstants.ApplicationScheme)
-            .AddIdentityCookies();
+        var authenticationBuilder = services.AddAuthentication(IdentityConstants.ApplicationScheme);
+        authenticationBuilder.AddIdentityCookies();
+        // Registered unconditionally, same posture as every other bundled
+        // integration: an unconfigured deployment must never error just because
+        // this scheme exists. OidcOptionsConfigurator supplies real values (or a
+        // harmless placeholder) at resolution time instead of here — see its own
+        // remarks for why that has to happen lazily.
+        authenticationBuilder.AddOpenIdConnect(OidcOptionsConfigurator.SchemeName, _ => { });
+
+        services.ConfigureOptions<OidcOptionsConfigurator>();
+        services.AddSingleton<IOidcRuntimeSettingsCache, OidcRuntimeSettingsCache>();
+        services.AddSingleton<IOidcOptionsInvalidator, OidcOptionsInvalidator>();
+        services.AddScoped<IOidcSettingsStore, OidcSettingsStore>();
+        services.AddScoped<IOidcDiscoveryTester, OidcDiscoveryTester>();
+        services.AddScoped<OidcSettingsService>();
+        services.AddScoped<IExternalLoginStore, IdentityExternalLoginStore>();
+        services.AddScoped<ExternalSignInService>();
 
         // The browser app is a Blazor WebAssembly SPA: there is no server-rendered
         // login page to redirect to, and MapFallbackToFile would answer any such
@@ -328,6 +345,14 @@ public static class DependencyInjection
         // for "does the household already have this" instead.
         services.AddScoped<IOwnedLibraryProvider, CwaOwnedLibraryProvider>();
         services.AddScoped<IOwnedLibraryProvider, AudiobookshelfOwnedLibraryProvider>();
+
+        // Acquisition policy engine (M11): ranks whatever FulfillmentOptions the
+        // providers above already returned. Both the profile list and the
+        // ranking logic are stateless/hardcoded, so they're singletons.
+        services.AddSingleton<IPolicyProfileRegistry, PolicyProfileRegistry>();
+        services.AddSingleton<IPolicyRanker, PolicyRanker>();
+        services.AddScoped<IAcquisitionPolicySettingsStore, AcquisitionPolicySettingsStore>();
+        services.AddScoped<AcquisitionPolicyService>();
 
         return services;
     }

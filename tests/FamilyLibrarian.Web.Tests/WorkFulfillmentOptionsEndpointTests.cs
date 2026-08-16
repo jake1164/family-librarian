@@ -2,6 +2,8 @@ using System.Net.Http.Json;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
+using FamilyLibrarian.Contracts.Policy;
+using FamilyLibrarian.Domain.Policy;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -85,6 +87,43 @@ public sealed class WorkFulfillmentOptionsEndpointTests
         Assert.AreEqual("Owned", response.Ebook[0].OptionKind);
         Assert.AreEqual("cwa", response.Ebook[0].ProviderId);
         Assert.AreEqual(0, response.Audiobook.Count);
+    }
+
+    [TestMethod]
+    public async Task ARecommendationAppearsOnceTheSystemDefaultProfileIsSet()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<ICwaCatalogClient>();
+                services.AddSingleton<ICwaCatalogClient>(new DeterministicCatalogClient("42"));
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsync(client, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
+        var userToken = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, userToken);
+
+        using var adminClient = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsync(adminClient, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(adminClient);
+        adminClient.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        await ConfigureCwaAsync(adminClient);
+
+        var setDefault = await adminClient.PutAsJsonAsync(
+            "/api/v1/admin/policy/settings", new SetDefaultPolicyProfileRequest(PolicyProfileIds.LibraryFirst));
+        setDefault.EnsureSuccessStatusCode();
+
+        var workId = await ResolveHobbitWorkIdAsync(client);
+
+        var response = await client.GetFromJsonAsync<WorkFulfillmentOptionsResponse>(
+            $"/api/v1/catalog/works/{workId}/fulfillment-options");
+
+        Assert.IsNotNull(response);
+        Assert.IsNotNull(response.EbookRecommendation);
+        Assert.AreEqual("cwa", response.EbookRecommendation.ProviderId);
+        Assert.AreEqual("Already in your library", response.EbookRecommendation.Reason);
     }
 
     private static async Task ConfigureCwaAsync(HttpClient client)

@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
@@ -9,6 +10,21 @@ namespace FamilyLibrarian.Infrastructure.Identity;
 
 public static class IdentityInitializer
 {
+    /// <summary>
+    /// Loads whatever OIDC settings are already saved into the in-memory cache
+    /// the "oidc" scheme's options read from, so the very first request after a
+    /// restart sees the last-configured state rather than the disabled default.
+    /// </summary>
+    public static async Task InitializeOidcRuntimeCacheAsync(
+        this IServiceProvider services, CancellationToken cancellationToken = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var settingsService = scope.ServiceProvider.GetRequiredService<OidcSettingsService>();
+        var cache = scope.ServiceProvider.GetRequiredService<IOidcRuntimeSettingsCache>();
+
+        cache.Refresh(await settingsService.LoadRuntimeSettingsAsync(cancellationToken));
+    }
+
     public static async Task MigrateDatabaseAsync(
         this IServiceProvider services,
         CancellationToken cancellationToken = default)
@@ -60,7 +76,8 @@ public static class IdentityInitializer
                 Email = bootstrapEmail,
                 EmailConfirmed = true,
                 DisplayName = bootstrapEmail.Split('@', 2)[0],
-                CreatedAtUtc = DateTimeOffset.UtcNow
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                IsBreakGlass = true
             };
 
             var createResult = await userManager.CreateAsync(user, bootstrapPassword);

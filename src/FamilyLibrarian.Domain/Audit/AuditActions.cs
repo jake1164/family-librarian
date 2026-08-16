@@ -36,6 +36,19 @@ public static class AuditActions
     public const string PublishingDestinationSecretSet = "publishing_destination.secret_set";
     public const string PublishingDestinationSecretCleared = "publishing_destination.secret_cleared";
     public const string PublishingDestinationTested = "publishing_destination.tested";
+
+    public const string AcquisitionPolicyDefaultChanged = "acquisition_policy.default_changed";
+
+    public const string OidcEnabled = "oidc.enabled";
+    public const string OidcDisabled = "oidc.disabled";
+    public const string OidcSettingsChanged = "oidc.settings_changed";
+    public const string OidcSecretSet = "oidc.secret_set";
+    public const string OidcSecretCleared = "oidc.secret_cleared";
+    public const string OidcTested = "oidc.tested";
+    public const string OidcLocalLoginChanged = "oidc.local_login_changed";
+
+    public const string ExternalLoginLinked = "account.external_login_linked";
+    public const string ExternalAccountCreated = "account.external_account_created";
 }
 
 public static class AuditSubjectTypes
@@ -46,4 +59,6 @@ public static class AuditSubjectTypes
     public const string BookRequest = "book_request";
     public const string MediaAsset = "media_asset";
     public const string PublishingDestination = "publishing_destination";
+    public const string AcquisitionPolicy = "acquisition_policy";
+    public const string Oidc = "oidc";
 }

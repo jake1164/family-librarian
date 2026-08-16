@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Security;
@@ -137,6 +138,12 @@ internal sealed class FamilyLibrarianAppFactory(
             // instead of depending on gutendex.com.
             services.RemoveAll<IDirectAcquisitionProvider>();
             services.AddSingleton<IDirectAcquisitionProvider, AlwaysEmptyDirectAcquisitionProvider>();
+
+            // OIDC (M6.5): no ordinary test depends on a reachable identity
+            // provider. A test that specifically exercises Test Connection can
+            // still override this via configureTestServices.
+            services.RemoveAll<IOidcDiscoveryTester>();
+            services.AddSingleton<IOidcDiscoveryTester, AlwaysSucceedsOidcDiscoveryTester>();
         });
 
         if (configureTestServices is not null)

@@ -4,6 +4,7 @@ using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Feedback;
+using FamilyLibrarian.Domain.Policy;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
@@ -65,6 +66,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<Delivery> Deliveries => Set<Delivery>();
 
+    public DbSet<AcquisitionPolicySettings> AcquisitionPolicySettings => Set<AcquisitionPolicySettings>();
+
+    public DbSet<OidcSettings> OidcSettings => Set<OidcSettings>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         builder.HasDefaultSchema("identity");
@@ -100,6 +105,39 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         ConfigureSecurity(builder);
         ConfigureAudit(builder);
         ConfigurePublishing(builder);
+        ConfigurePolicy(builder);
+        ConfigureAuthentication(builder);
+    }
+
+    private static void ConfigureAuthentication(ModelBuilder builder)
+    {
+        builder.Entity<OidcSettings>(entity =>
+        {
+            entity.ToTable("oidc_settings", "identity");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(settings => settings.DisplayName).HasColumnName("display_name").HasMaxLength(128).IsRequired();
+            entity.Property(settings => settings.Authority).HasColumnName("authority").HasMaxLength(512);
+            entity.Property(settings => settings.ClientId).HasColumnName("client_id").HasMaxLength(256);
+            entity.Property(settings => settings.ProtectedClientSecret).HasColumnName("protected_client_secret").HasMaxLength(2_048);
+            entity.Property(settings => settings.ClientSecretFormatVersion).HasColumnName("client_secret_format_version");
+            entity.Property(settings => settings.ClientSecretHint).HasColumnName("client_secret_hint").HasMaxLength(8);
+            entity.Property(settings => settings.ClientSecretSetAtUtc).HasColumnName("client_secret_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Scopes).HasColumnName("scopes").HasMaxLength(512).IsRequired();
+            entity.Property(settings => settings.MatchClaimName).HasColumnName("match_claim_name").HasMaxLength(128).IsRequired();
+            entity.Property(settings => settings.AdminClaimName).HasColumnName("admin_claim_name").HasMaxLength(128);
+            entity.Property(settings => settings.AdminClaimValues).HasColumnName("admin_claim_values").HasMaxLength(1_024);
+            entity.Property(settings => settings.AutoCreateAccounts).HasColumnName("auto_create_accounts");
+            entity.Property(settings => settings.LocalLoginDisabled).HasColumnName("local_login_disabled");
+            entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
+            entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
     }
 
     private static void ConfigureFeedback(ModelBuilder builder)
@@ -574,6 +612,21 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(delivery => delivery.AssetId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigurePolicy(ModelBuilder builder)
+    {
+        builder.Entity<AcquisitionPolicySettings>(entity =>
+        {
+            entity.ToTable("acquisition_policy_settings", "policy");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.DefaultProfileId).HasColumnName("default_profile_id").HasMaxLength(64).IsRequired();
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
         });
     }
 

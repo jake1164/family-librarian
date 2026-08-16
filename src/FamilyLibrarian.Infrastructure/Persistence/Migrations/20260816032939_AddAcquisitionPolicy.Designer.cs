@@ -3,6 +3,7 @@ using System;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260816032939_AddAcquisitionPolicy")]
+    partial class AddAcquisitionPolicy
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -97,116 +100,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("invitations", "identity");
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Accounts.OidcSettings", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("AdminClaimName")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("admin_claim_name");
-
-                    b.Property<string>("AdminClaimValues")
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)")
-                        .HasColumnName("admin_claim_values");
-
-                    b.Property<string>("Authority")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("authority");
-
-                    b.Property<bool>("AutoCreateAccounts")
-                        .HasColumnType("boolean")
-                        .HasColumnName("auto_create_accounts");
-
-                    b.Property<string>("ClientId")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
-                        .HasColumnName("client_id");
-
-                    b.Property<int>("ClientSecretFormatVersion")
-                        .HasColumnType("integer")
-                        .HasColumnName("client_secret_format_version");
-
-                    b.Property<string>("ClientSecretHint")
-                        .HasMaxLength(8)
-                        .HasColumnType("character varying(8)")
-                        .HasColumnName("client_secret_hint");
-
-                    b.Property<DateTimeOffset?>("ClientSecretSetAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("client_secret_set_at_utc");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<string>("DisplayName")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("display_name");
-
-                    b.Property<bool>("IsEnabled")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_enabled");
-
-                    b.Property<string>("LastTestMessage")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("last_test_message");
-
-                    b.Property<bool?>("LastTestSucceeded")
-                        .HasColumnType("boolean")
-                        .HasColumnName("last_test_succeeded");
-
-                    b.Property<DateTimeOffset?>("LastTestedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_tested_at_utc");
-
-                    b.Property<bool>("LocalLoginDisabled")
-                        .HasColumnType("boolean")
-                        .HasColumnName("local_login_disabled");
-
-                    b.Property<string>("MatchClaimName")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("match_claim_name");
-
-                    b.Property<string>("ProtectedClientSecret")
-                        .HasMaxLength(2048)
-                        .HasColumnType("character varying(2048)")
-                        .HasColumnName("protected_client_secret");
-
-                    b.Property<string>("Scopes")
-                        .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("scopes");
-
-                    b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at_utc");
-
-                    b.Property<Guid?>("UpdatedByUserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("updated_by_user_id");
-
-                    b.Property<uint>("Version")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("oidc_settings", "identity");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.AcquisitionCandidate", b =>
@@ -1690,9 +1583,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(256)");
 
                     b.Property<bool>("EmailConfirmed")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsBreakGlass")
                         .HasColumnType("boolean");
 
                     b.Property<DateTimeOffset?>("LastLoginAtUtc")
