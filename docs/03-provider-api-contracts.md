@@ -174,7 +174,8 @@ abridged versus unabridged recordings.
 ### Linked ebook-library providers
 
 `IOwnedLibraryProvider` supplies catalog/source capabilities; it does not make
-an external library's database authoritative in the domain. A conceptual
+an external library's database authoritative for Family Librarian's workflow
+records. A conceptual
 Calibre-Web implementation searches the server-side configured OPDS/catalog
 surface, returns a `LibraryItemReference`, and stages a specifically selected
 format into Family Librarian quarantine only after request authorization.
@@ -201,10 +202,11 @@ the file-safety and approval pipeline. Matching uses identifiers and ISBN first;
 title/author matching remains explicitly ambiguous when it cannot prove the
 edition/format.
 
-`ILibraryDestination` publishes an already approved asset and verifies the
-result. It is deliberately distinct from `IDeliveryProvider`: publishing a book
-to a shared library does not mean that it has been delivered to a particular
-user or Kindle.
+`ILibraryDestination` publishes an already approved staged artifact and verifies
+the result. The destination becomes the permanent store for the media; Family
+Librarian retains only provenance and transient staging bytes. It is deliberately
+distinct from `IDeliveryProvider`: publishing a book to a shared library does
+not mean that it has been delivered to a particular user or Kindle.
 
 ```csharp
 public interface ILibraryDestination
@@ -224,17 +226,20 @@ public interface ILibraryDestination
 ```
 
 The first destination implementation is CWA. Family Librarian writes a complete
-copy from its trusted storage to a private outbound staging location and performs
+copy from controlled staging to a private outbound staging location and performs
 an atomic handoff to CWA's configured ingest directory; it never streams a
 partially written acquisition into the watched directory. The adapter records
-the result only after finding the expected book/format in the CWA catalog.
+the result only after finding the expected book/format in the CWA catalog, then
+the host removes the local media copies according to retention policy.
 
 The initial CWA integration disables CWA post-ingest conversion, metadata
 rewriting, EPUB fixing, and auto-send. They may become supported only when their
 final output and completion status can be verified by the integration. A CWA
 destination is opt-in. Plain Calibre-Web is a source/catalog frontend in this
 scope, not an assumed write API; direct `metadata.db` writes and HTML-form
-automation are prohibited.
+automation are prohibited. Future ebook or audiobook destinations (including a
+combined media library) implement the same capability contract and own their
+own import, verification, format, and deep-link behavior.
 
 ---
 
@@ -333,7 +338,8 @@ POST /acquire
 
 The provider should return or stage an asset through a controlled mechanism defined by the acquisition engine.
 
-The provider must not place files directly into the trusted library.
+The provider must not place files directly into a destination library; it returns
+them only to Family Librarian-controlled staging.
 
 ### Capability Examples
 
@@ -467,7 +473,7 @@ network route, and temporary staging access they require. They never receive the
 Family Librarian database, user-account data, OIDC credentials, unrelated
 provider credentials, a final-library filesystem path, or Docker-socket access.
 The provider returns an artifact to controlled staging; it never selects the
-trusted storage path. Trusted bundled .NET providers may use in-process
+destination-library path. Trusted bundled .NET providers may use in-process
 dependency isolation where appropriate, but that is not a security sandbox and
 must not be offered for arbitrary community code.
 
@@ -747,7 +753,8 @@ DeepLink
 
 `MediaLibraryImport` is a delivery capability for a media service such as
 Audiobookshelf. It is not the `ILibraryDestination` contract used to publish an
-ebook to CWA before any user-specific delivery occurs.
+ebook to CWA before any user-specific delivery occurs. A provider may implement
+either capability, or both, for ebook, audiobook, or both media types.
 
 ---
 
@@ -762,8 +769,13 @@ Implementation responsibilities:
 5. Locate imported item.
 6. Record external item ID.
 7. Return a deep link if practical.
+8. After verified import, allow Family Librarian to delete its transient staging
+   copies while retaining checksum, validation/approval evidence, and the
+   provider reference.
 
-Family Librarian should not store Audiobookshelf-specific fields in core Work/Request entities.
+Family Librarian should not store Audiobookshelf-specific fields in core
+Work/Request entities. This rule applies equally to CWA and every future
+destination.
 
 Store external references against Delivery/DeliveryTarget.
 
@@ -785,6 +797,7 @@ KindleSendTo
 KoboBrowserFilesystem
 GenericMassStorage
 DesktopAgent
+FutureEbookOrAudioLibrary
 ```
 
 Do not expose a core method named:
@@ -1004,8 +1017,9 @@ Notifications:
   Email
 
 Delivery:
-  Authenticated download
-  Audiobookshelf
+  CWA (initial ebook library destination)
+  Audiobookshelf (initial audiobook library destination)
+  Authenticated download (optional, later)
 ```
 
 ### Strong Candidate for Early Addition

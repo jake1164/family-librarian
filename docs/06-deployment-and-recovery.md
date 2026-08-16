@@ -23,8 +23,9 @@ never supplied to the browser.
 
 CWA is the initial automated ebook-library destination. Its three main volumes
 must remain distinct: CWA configuration, the Calibre library, and the watched
-ingest directory. Family Librarian retains trusted assets in its own storage and
-gets write access only to a dedicated outbound staging location plus the CWA
+ingest directory. The managed Calibre library is the permanent ebook store.
+Family Librarian uses only short-lived quarantine/processing/outbound storage
+and gets write access only to a dedicated outbound staging location plus the CWA
 ingest directory. It must not mount or write CWA's `metadata.db` directly.
 
 The application copies a complete approved file to outbound staging and then
@@ -39,6 +40,13 @@ folders) and CWA configuration separately from PostgreSQL. Test restoring those
 volumes together before relying on CWA as the household's ebook library. On
 network shares, use CWA's documented network-share mode and prove ingest and
 recovery behavior in the deployment-specific compatibility test.
+
+Audiobookshelf is the initial permanent audiobook store. Back up its persistent
+configuration and library volumes separately from PostgreSQL, and test their
+restore with the same care. These are initial adapters, not an exclusive list:
+each future ebook, audiobook, or combined-library destination must document its
+own isolated credentials, import verification, format support, and backup/
+recovery procedure.
 
 ## Required malware scanner for file acquisition
 

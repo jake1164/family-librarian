@@ -17,7 +17,8 @@ Define the core entities and workflow states that allow Family Librarian to rema
 2. A **Request** is not the same thing as a **Book**.
 3. A downloaded file is an **Asset**, not the bibliographic Work.
 4. Library destinations and user delivery targets must be replaceable, and they
-   are separate facts.
+   are separate facts. A destination is the permanent media store; Family
+   Librarian storage is transient staging only.
 5. Completed requests remain historical records.
 6. Series and authors are first-class entities.
 7. External provider identifiers are references, not primary domain identity.
@@ -286,9 +287,9 @@ Those are provider results and may coexist with `NotOwned` or `Owned`.
 
 An item found in a linked Calibre-Web library is similarly separate from local
 ownership: it is a provider-backed `LinkedLibraryAvailable` outcome, not a
-trusted `MediaAsset`. The application may stage its requested file into
-quarantine, then create a local asset only after the normal safety pipeline
-passes.
+Family Librarian media copy. The application may stage its requested file into
+quarantine, then create a provenance record after the normal safety pipeline
+passes and the selected destination verifies import.
 
 ---
 
@@ -586,8 +587,9 @@ System
 
 ### LibraryImport
 
-Represents publication of an approved trusted Asset to an external library. It
-is not a user delivery attempt: one library import can make a book available to
+Represents publication of an approved staged Asset to an external library. The
+external library becomes the permanent media store. It is not necessarily a
+user-specific delivery attempt: one library import can make a book available to
 many users or later delivery targets.
 
 ```text
@@ -614,10 +616,12 @@ Failed
 Cancelled
 ```
 
-For CWA, `Available` requires that the expected work/format be verified in the
-library catalog after CWA has consumed the ingest copy. The trusted source asset
-remains retained by Family Librarian; CWA's deletion of its processed ingest
-copy is not an archive policy.
+For every destination, `Available` requires that the expected work/format be
+verified through that destination's supported catalog/API surface. Once that
+succeeds, Family Librarian keeps the artifact's checksum, validation/approval
+evidence, and opaque destination reference, then removes its local media copy
+under the staging-retention policy. For CWA, the managed Calibre library—not its
+processed ingest copy—is the permanent ebook archive.
 
 ---
 
@@ -653,9 +657,10 @@ Kobo
 Generic folder
 ```
 
-A Calibre-Web or CWA library is not a `DeliveryTarget`. It may be a linked
-catalog/source and CWA may be a `LibraryImport` destination; Kindle, browser,
-or email delivery remains a separate user-specific operation.
+A Calibre-Web or CWA library is not a Family Librarian-managed `DeliveryTarget`.
+It may be a linked catalog/source and CWA may be a `LibraryImport` destination;
+it can also provide its own reading, download, or send features. Kindle,
+browser, or email delivery remain optional, separate user-specific operations.
 
 ---
 
@@ -889,10 +894,13 @@ Hash + identify + scan + validate
 Admin approval
       |
       v
-Trusted asset
+Approved staged artifact
       |
       v
-Delivery provider
+Enabled library destination
+      |
+      v
+Verify import and remove local media copy
       |
       v
 Ready / Delivered
@@ -988,15 +996,15 @@ state. When the user chooses **Get Audiobook**, the workflow first checks the
 canonical Work's owned-audiobook availability:
 
 ```text
-Owned and already in Audiobookshelf -> offer Listen
-Owned but not in Audiobookshelf     -> import/deliver, then offer Listen
-Not owned                           -> acquire/process/import according to policy
+Published and already in Audiobookshelf -> offer Listen
+Approved but not in Audiobookshelf      -> publish, verify, then offer Listen
+Not yet acquired                        -> acquire/process/publish according to policy
 ```
 
 Generic media-library flow:
 
 ```text
-Trusted audiobook Asset
+Approved staged audiobook
       |
       v
 Select user's MediaLibrary target
@@ -1036,7 +1044,7 @@ Family Librarian remains authoritative for request/history/series data.
 Generic flow:
 
 ```text
-Trusted ebook Asset
+Approved staged ebook
       |
       v
 Target device / target method
@@ -1200,9 +1208,10 @@ Recommended default:
 
 - keep request history indefinitely;
 - keep audit events indefinitely or configurable;
-- keep rejected/quarantine assets for a configurable period;
+- keep rejected/quarantine assets for a configurable, time-limited period;
 - never expose quarantined assets to user download;
-- optionally deduplicate trusted assets using SHA-256.
+- retain checksum and provenance to detect duplicate staged imports without
+  retaining a permanent Family Librarian media copy.
 
 ---
 

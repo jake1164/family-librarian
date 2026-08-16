@@ -83,7 +83,18 @@ The application should own:
 - delivery state;
 - recommendations/following.
 
-External tools should remain replaceable.
+Family Librarian is not a permanent ebook or audiobook store. It may hold media
+only in short-lived quarantine, processing, and outbound-staging areas while it
+checks and publishes an artifact. The enabled external library destination is
+the permanent media store after verified import. Family Librarian retains the
+request/history, bibliographic metadata, checksum, security/approval evidence,
+and opaque destination reference needed to prove what happened, not a second
+media copy.
+
+External tools should remain replaceable. CWA and Audiobookshelf are the initial
+destinations, not core assumptions: a future destination may support either or
+both media types without adding vendor-specific fields to Work, Request, or
+asset-provenance records.
 
 ### 3.4 Manual workflow remains valid
 
@@ -207,7 +218,13 @@ When a user requests a book in a series:
 #### Manual Acquisition
 
 - Admin can attach/upload an acquired ebook or audiobook to a request.
-- The file enters quarantine, not the trusted library directly.
+- The upload is bound to the request's `Ebook` or `Audiobook` format; arbitrary
+  files and cross-media uploads are rejected.
+- An extension and declared MIME allowlist are only early filters. Content-type
+  inspection and a media-specific validator must confirm that an ebook is an
+  approved ebook format and an audiobook is an approved audiobook format before
+  it can be published.
+- The file enters quarantine, never a permanent Family Librarian library.
 
 #### Linked Ebook Libraries
 
@@ -219,17 +236,19 @@ When a user requests a book in a series:
   the same quarantine, validation, malware-scanning, and approval pipeline as a
   manual upload.
 - **Calibre-Web Automated (CWA)** is the first opt-in automated ebook-library
-  destination. After approval, Family Librarian copies the retained trusted
-  asset into a completed outbound staging file and atomically hands it to CWA's
-  configured ingest directory. It then verifies the imported book through the
-  library's normal catalog surface before reporting it ready.
+  destination and permanent ebook store. After approval, Family Librarian copies
+  the staged artifact into a completed outbound staging file and atomically hands
+  it to CWA's configured ingest directory. It verifies the imported book through
+  the library's normal catalog surface before reporting it ready, then removes
+  its staging/outbound copies according to retention policy.
 - Plain Calibre-Web is initially a linked-library source and user-facing reading
   surface, not an assumed automated write API. Directly writing its database or
   automating its browser upload form is out of scope.
-- A library destination is not a user delivery target. CWA/Calibre-Web may make
-  a book browsable, readable, downloadable, or independently sendable to an
-  e-reader; Family Librarian still records its own delivery and notification
-  state.
+- A library destination is separate from an optional Family Librarian-managed,
+  user-specific delivery target. CWA/Calibre-Web may make a book browsable,
+  readable, downloadable, or independently sendable to an e-reader through its
+  own features; Family Librarian does not duplicate that capability by retaining
+  a permanent file.
 
 #### Security Gate
 
@@ -250,12 +269,13 @@ search and request creation continue to work.
 
 #### Audiobook Delivery
 
-- Audiobookshelf should be the first supported media-library provider.
-- It must be implemented behind a generic delivery interface.
-- Audiobookshelf is a delivery/library destination, not the authority for
-  whether the family owns an audiobook. An owned audiobook that is absent from
-  Audiobookshelf should offer delivery/import; one already there should offer
-  listening.
+- Audiobookshelf is the first supported audiobook-library destination and
+  permanent audiobook store.
+- It must be implemented behind a generic library/delivery interface. Future
+  destinations may support ebook, audiobook, or both.
+- Audiobookshelf is not the authority for Family Librarian's request or
+  bibliographic history. A verified destination reference establishes that the
+  particular artifact was published there; the library supplies listening.
 
 #### Ebook Delivery
 
@@ -286,7 +306,7 @@ Browser/PWA device delivery should be prototyped separately before becoming a ha
 - PWA/browser-based USB/filesystem e-reader transfer.
 - Desktop device agent fallback.
 - Kobo, PocketBook, generic EPUB device support.
-- Alternative audiobook/media-library servers.
+- Alternative ebook, audiobook, or combined media-library servers.
 - Pushover, ntfy, web push, Home Assistant, Discord, or other notification providers.
 - Multiple malware engines and policy-based aggregate verdicts.
 - Device-aware format conversion.
@@ -548,19 +568,19 @@ displayed as available in the linked library, not as an already-trusted local
 asset.
 
 The first automated ebook-library destination is CWA's ingest directory. The
-destination contract receives only an approved trusted asset. Family Librarian
-must retain that asset, copy it outside the watched directory, and atomically
-move/rename the completed copy into the configured CWA ingest directory. It
-must then verify the expected book and format are visible before the request
-becomes ready. The integration is idempotent and records the external library
-reference; a retry must not create an unreviewed duplicate.
+destination contract receives an approved staged artifact. Family Librarian
+copies it outside the watched directory and atomically moves/renames the completed
+copy into the configured CWA ingest directory. It then verifies the expected
+book and format are visible before the request becomes ready, records the
+external library reference, and removes local media copies after the configured
+short retention period. A retry must not create an unreviewed duplicate.
 
 CWA's optional post-ingest conversion, metadata rewriting, EPUB fixing, and
 automatic e-reader send features are disabled for the initial integration.
 They can be supported only when their completed output and status can be
-verified under the Family Librarian security and notification workflow. CWA may
-delete its ingest copy after processing, so it must never be the only retained
-copy of an approved asset.
+verified under the Family Librarian security and notification workflow. CWA's
+managed Calibre library, rather than its transient ingest folder, is the
+permanent ebook store and must be backed up accordingly.
 
 Plain Calibre-Web remains supported as a source and reading frontend. It is not
 treated as an automated destination until it exposes a supported, versioned
@@ -683,11 +703,11 @@ design. A recommendation never silently completes a purchase, borrow, or
 download.
 
 External providers use a versioned, language-neutral protocol and are isolated
-from the core database, unrelated credentials, final library storage, and Docker
-socket. Every artifact returns to Family Librarian-controlled staging before the
-security pipeline chooses its final placement. Provider repositories are future
-catalogs of provenance and immutable OCI image identities, not an initial
-marketplace or automatic container-management system.
+from the core database, unrelated credentials, destination-library storage, and
+Docker socket. Every artifact returns to Family Librarian-controlled staging
+before the security pipeline publishes it to an enabled destination. Provider
+repositories are future catalogs of provenance and immutable OCI image
+identities, not an initial marketplace or automatic container-management system.
 
 ---
 
@@ -701,9 +721,12 @@ Suggested storage zones:
 /data/family-librarian/
   quarantine/
   processing/
-  rejected/
-  trusted/
+  outbound/
 ```
+
+These are transient working areas, not a library. Rejected content may be kept
+in quarantine only for an explicit, time-limited investigation/cleanup policy;
+approved content is deleted locally after the destination verifies import.
 
 Minimum pipeline:
 
@@ -722,9 +745,13 @@ Metadata/content verification
   ->
 Approval
   ->
-Trusted asset
+Approved staged artifact
   ->
-Delivery
+Publish to enabled library destination
+  ->
+Verify destination reference
+  ->
+Remove local media copy
 ```
 
 Malware scanning must be provider-based.
@@ -942,7 +969,7 @@ A V1 release is useful when:
 - Exact Audiobookshelf deep-link/user mapping behavior.
 - Calibre-Web OPDS matching fidelity, CWA ingest idempotency, and CWA/Family
   Librarian user-account/deep-link mapping.
-- Asset storage layout.
+- Transient-media retention/cleanup policy and destination-backup verification.
 - Whether acquisition engine lives in the main repository or a sibling repository.
 - Plugin discovery/installation UX.
 - Whether third-party providers are HTTP-only or whether trusted in-process .NET providers are also supported.
