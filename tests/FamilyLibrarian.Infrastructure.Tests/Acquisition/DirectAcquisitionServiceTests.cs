@@ -1,7 +1,9 @@
 using System.Text;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
@@ -10,7 +12,7 @@ using FamilyLibrarian.Domain.Requests;
 namespace FamilyLibrarian.Infrastructure.Tests.Acquisition;
 
 [TestClass]
-public sealed class ManualImportServiceTests
+public sealed class DirectAcquisitionServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 15, 12, 0, 0, TimeSpan.Zero);
 
@@ -19,93 +21,68 @@ public sealed class ManualImportServiceTests
     {
         var context = new TestContext();
 
-        var result = await context.Service.ImportAsync(
-            Guid.NewGuid(), Guid.NewGuid(), Content("epub bytes"), "book.epub", CancellationToken.None);
+        var result = await context.Service.AcquireAsync(
+            Guid.NewGuid(), Guid.NewGuid(), "gutendex", "1234", CancellationToken.None);
 
         Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
     }
 
     [TestMethod]
-    public async Task ADisallowedExtensionIsRejectedBeforeStaging()
+    public async Task AnUnknownProviderIsRejected()
     {
         var context = new TestContext();
         var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
 
-        var result = await context.Service.ImportAsync(
-            request.Id, format.Id, Content("not really an exe"), "book.exe", CancellationToken.None);
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "not-a-real-provider", "1234", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+    }
+
+    [TestMethod]
+    public async Task AStaleProviderResultIdIsRejected()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        context.Provider.Matches = false;
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "gutendex", "1234", CancellationToken.None);
 
         Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
         Assert.AreEqual(0, context.StagingStore.WriteCount);
     }
 
     [TestMethod]
-    public async Task AContentMismatchIsRejectedAfterStaging()
-    {
-        var context = new TestContext();
-        context.StagingStore.NextDetectedMimeType = "text/plain";
-        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
-
-        var result = await context.Service.ImportAsync(
-            request.Id, format.Id, Content("not actually an epub"), "book.epub", CancellationToken.None);
-
-        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
-        // The mismatch is only detectable once the real bytes are sniffed.
-        Assert.AreEqual(1, context.StagingStore.WriteCount);
-        Assert.AreEqual(0, context.Repository.Assets.Count);
-    }
-
-    [TestMethod]
-    public async Task ACleanImportStagesAJobAndAsset()
+    public async Task ASuccessfulFetchStagesAJobWithTheProviderIdAndCandidateMetadata()
     {
         var context = new TestContext();
         var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
 
-        var result = await context.Service.ImportAsync(
-            request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "gutendex", "1234", CancellationToken.None);
 
         Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
-        Assert.HasCount(1, context.Repository.Jobs);
-        Assert.HasCount(1, context.Repository.Assets);
-
-        var asset = context.Repository.Assets[0];
-        Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
-        Assert.AreEqual(request.WorkId, asset.WorkId);
-        Assert.AreEqual(format.Id, asset.AssociatedRequestFormatId);
-
-        var job = context.Repository.Jobs[0];
-        Assert.AreEqual(AcquisitionJobStatus.CandidateAcquired, job.Status);
-        Assert.HasCount(1, job.Candidates);
-        Assert.AreEqual(AcquisitionCandidateStatus.Acquired, job.Candidates.Single().Status);
+        var job = context.Repository.Jobs.Single();
+        Assert.AreEqual("gutendex", job.ProviderId);
+        var candidate = job.Candidates.Single();
+        Assert.AreEqual("The Hobbit", candidate.Title);
+        Assert.AreEqual("J. R. R. Tolkien", candidate.Author);
     }
 
     [TestMethod]
-    public async Task ADuplicateChecksumForTheSameFormatIsDetected()
+    public async Task ADuplicateChecksumIsDetectedThroughTheSharedStagingPath()
     {
         var context = new TestContext();
         var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
         context.Repository.ExistingChecksums.Add((format.Id, context.StagingStore.NextSha256));
 
-        var result = await context.Service.ImportAsync(
-            request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "gutendex", "1234", CancellationToken.None);
 
         Assert.AreEqual(ManualImportOutcome.DuplicateDetected, result.Outcome);
-        Assert.HasCount(0, context.Repository.Assets);
+        Assert.AreEqual(0, context.Repository.Assets.Count);
     }
-
-    [TestMethod]
-    public async Task EveryStagedImportWritesAnAuditEvent()
-    {
-        var context = new TestContext();
-        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
-
-        await context.Service.ImportAsync(
-            request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
-
-        Assert.HasCount(1, context.Audit.Entries);
-        Assert.AreEqual("manual_import.staged", context.Audit.Entries[0].Action);
-    }
-
-    private static MemoryStream Content(string text) => new(Encoding.UTF8.GetBytes(text));
 
     private sealed class TestContext
     {
@@ -115,8 +92,10 @@ public sealed class ManualImportServiceTests
             RequestRepository = new FakeRequestRepository();
             StagingStore = new FakeStagingStore();
             Audit = new RecordingAuditWriter();
+            Provider = new FakeDirectAcquisitionProvider();
+            WorkLookup = new FakeWorkLookup();
 
-            Staging = new AcquisitionStagingService(
+            var staging = new AcquisitionStagingService(
                 Repository,
                 StagingStore,
                 new AlwaysHealthyBoundaryGuard(),
@@ -124,7 +103,7 @@ public sealed class ManualImportServiceTests
                 Audit,
                 new FixedClock());
 
-            Service = new ManualImportService(RequestRepository, Staging);
+            Service = new DirectAcquisitionService(RequestRepository, [Provider], WorkLookup, staging);
         }
 
         public FakeAcquisitionRepository Repository { get; }
@@ -135,9 +114,11 @@ public sealed class ManualImportServiceTests
 
         public RecordingAuditWriter Audit { get; }
 
-        public AcquisitionStagingService Staging { get; }
+        public FakeDirectAcquisitionProvider Provider { get; }
 
-        public ManualImportService Service { get; }
+        public FakeWorkLookup WorkLookup { get; }
+
+        public DirectAcquisitionService Service { get; }
 
         public (BookRequest Request, RequestFormat Format) SeedRequest(RequestMediaType mediaType)
         {
@@ -267,5 +248,55 @@ public sealed class ManualImportServiceTests
     private sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class FakeDirectAcquisitionProvider : IDirectAcquisitionProvider
+    {
+        public bool Matches { get; set; } = true;
+
+        public string Id => "gutendex";
+
+        public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
+            Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)
+        {
+            if (!Matches)
+            {
+                return Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
+            }
+
+            IReadOnlyList<FulfillmentOption> options =
+            [
+                new FulfillmentOption(
+                    ProviderId: Id,
+                    ProviderResultId: "1234",
+                    WorkId: workId,
+                    EditionId: null,
+                    MediaType: mediaType,
+                    OptionKind: OptionKind.DirectAcquisition,
+                    AcquisitionMethod: AcquisitionMethod.DirectDownload,
+                    Format: "epub",
+                    Language: null,
+                    Quality: null,
+                    Availability: null,
+                    Cost: 0m,
+                    Currency: null,
+                    LicenseOrUsageStatus: "Public domain",
+                    DrmStatus: null,
+                    ExternalActionUri: null,
+                    ProviderData: "https://example.test/book.epub")
+            ];
+            return Task.FromResult(options);
+        }
+
+        public Task<DirectAcquisitionFile> FetchAsync(
+            FulfillmentOption fulfillmentOption, CancellationToken cancellationToken) =>
+            Task.FromResult(new DirectAcquisitionFile(
+                new MemoryStream(Encoding.UTF8.GetBytes("epub bytes")), "book.epub"));
+    }
+
+    private sealed class FakeWorkLookup : IWorkLookup
+    {
+        public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien"));
     }
 }

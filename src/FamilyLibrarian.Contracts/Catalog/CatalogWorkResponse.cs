@@ -15,3 +15,14 @@ public sealed record CatalogWorkSourceResponse(
     string ProviderId,
     string ExternalId,
     DateTimeOffset ObservedAtUtc);
+
+public sealed record FulfillmentOptionResponse(
+    string ProviderId,
+    string ProviderResultId,
+    string OptionKind,
+    string AcquisitionMethod,
+    string? ExternalActionUri);
+
+public sealed record WorkFulfillmentOptionsResponse(
+    IReadOnlyList<FulfillmentOptionResponse> Ebook,
+    IReadOnlyList<FulfillmentOptionResponse> Audiobook);

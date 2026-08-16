@@ -54,4 +54,15 @@ public sealed class CatalogApiClient(HttpClient httpClient, AntiforgeryTokenProv
         httpClient.GetFromJsonAsync<CatalogWorkResponse>(
             $"api/v1/catalog/works/{workId}",
             cancellationToken);
+
+    public async Task<WorkFulfillmentOptionsResponse> GetFulfillmentOptionsAsync(
+        Guid workId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await httpClient.GetFromJsonAsync<WorkFulfillmentOptionsResponse>(
+            $"api/v1/catalog/works/{workId}/fulfillment-options",
+            cancellationToken);
+
+        return response ?? new WorkFulfillmentOptionsResponse([], []);
+    }
 }

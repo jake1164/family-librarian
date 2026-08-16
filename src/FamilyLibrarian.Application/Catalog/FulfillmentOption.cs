@@ -73,7 +73,7 @@ public interface IAvailabilityProvider
         CancellationToken cancellationToken);
 }
 
-/// <summary>Advertises free/direct legal acquisition. No concrete implementation ships in M8.</summary>
+/// <summary>Advertises free/direct legal acquisition, and can fetch the file for an option it returned.</summary>
 public interface IDirectAcquisitionProvider
 {
     string Id { get; }
@@ -82,7 +82,19 @@ public interface IDirectAcquisitionProvider
         Guid workId,
         RequestMediaType mediaType,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches the file for a previously returned option.
+    /// <paramref name="fulfillmentOption"/> should be freshly re-derived by
+    /// the caller (e.g. via <see cref="FindDirectAcquisitionsAsync"/>), never
+    /// reconstructed from client-supplied data — <see cref="FulfillmentOption.ProviderData"/>
+    /// carries whatever this provider needs (e.g. a resolved download URL),
+    /// opaque to every caller but this one.
+    /// </summary>
+    Task<DirectAcquisitionFile> FetchAsync(FulfillmentOption fulfillmentOption, CancellationToken cancellationToken);
 }
+
+public sealed record DirectAcquisitionFile(Stream Content, string Filename);
 
 /// <summary>Advertises matches in a linked owned library (e.g. Calibre-Web). No concrete implementation ships in M8.</summary>
 public interface IOwnedLibraryProvider

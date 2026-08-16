@@ -142,7 +142,9 @@ public static class DependencyInjection
         }
 
         services.AddSingleton(manualImportPolicy);
+        services.AddScoped<AcquisitionStagingService>();
         services.AddScoped<ManualImportService>();
+        services.AddScoped<DirectAcquisitionService>();
 
         services.AddOptions<ClamAvScannerOptions>()
             .Bind(configuration.GetSection(ClamAvScannerOptions.SectionName))
@@ -285,6 +287,19 @@ public static class DependencyInjection
         services.AddTransient<IBookMetadataProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<GoogleBooksBookMetadataProvider>());
 
+        // Gutendex (M11): a free, keyless, fixed-address JSON API — no
+        // per-request settings lookup needed, unlike CWA/Audiobookshelf, so a
+        // plain typed client with a fixed BaseAddress is enough, same as Open
+        // Library/Google Books above.
+        services.AddHttpClient<GutendexProvider>(client =>
+        {
+            client.BaseAddress = new Uri("https://gutendex.com/");
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+        });
+        services.AddTransient<IDirectAcquisitionProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<GutendexProvider>());
+
         // Publishing destinations (M12): CWA (ebook library, ingest folder) and
         // Audiobookshelf (audiobook delivery, upload API). Neither is a metadata
         // provider, so neither goes through ProviderRegistry/ProviderSetting —
@@ -307,6 +322,12 @@ public static class DependencyInjection
         services.AddScoped<AudiobookshelfPublishingService>();
         services.AddScoped<MediaAssetPublishingCoordinator>();
         services.AddScoped<PublishingQueueService>();
+
+        // Owned-library detection (M11): reuses the same CWA/Audiobookshelf
+        // read primitives the publishing services use to verify a handoff, now
+        // for "does the household already have this" instead.
+        services.AddScoped<IOwnedLibraryProvider, CwaOwnedLibraryProvider>();
+        services.AddScoped<IOwnedLibraryProvider, AudiobookshelfOwnedLibraryProvider>();
 
         return services;
     }

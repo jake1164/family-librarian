@@ -22,6 +22,7 @@ public static class AuditActions
 
     public const string ManualImportStaged = "manual_import.staged";
     public const string ManualImportRejectedNoScanner = "manual_import.rejected_no_scanner";
+    public const string DirectAcquisitionStaged = "direct_acquisition.staged";
 
     public const string AssetEvaluated = "asset.evaluated";
     public const string AssetApproved = "asset.approved";

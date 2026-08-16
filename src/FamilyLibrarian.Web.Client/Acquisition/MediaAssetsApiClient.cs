@@ -50,6 +50,29 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
         return new ManualImportOutcome(false, null, await ReadImportErrorAsync(response, cancellationToken));
     }
 
+    public async Task<ManualImportOutcome> AcquireDirectAsync(
+        Guid requestId,
+        Guid formatId,
+        string providerId,
+        string providerResultId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"api/v1/admin/requests/{requestId}/formats/{formatId}/direct-acquisitions/" +
+            $"{Uri.EscapeDataString(providerId)}/{Uri.EscapeDataString(providerResultId)}");
+        await antiforgery.AttachAsync(request, cancellationToken);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            var result = await response.Content.ReadFromJsonAsync<ManualImportResultResponse>(cancellationToken);
+            return new ManualImportOutcome(true, result, null);
+        }
+
+        return new ManualImportOutcome(false, null, await ReadImportErrorAsync(response, cancellationToken));
+    }
+
     public Task<MediaAssetActionOutcome> EvaluateAsync(Guid assetId, CancellationToken cancellationToken = default) =>
         SendActionAsync($"api/v1/admin/media-assets/{assetId}/evaluate", reason: null, cancellationToken);
 

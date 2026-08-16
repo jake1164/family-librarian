@@ -127,6 +127,7 @@ catalog.MapGet("/search", SearchCatalogAsync);
 catalog.MapGet("/candidates/{providerId}/{externalId}", GetCatalogCandidateAsync);
 catalog.MapPost("/candidates/{providerId}/{externalId}/resolve", ResolveCatalogCandidateAsync);
 catalog.MapGet("/works/{workId:guid}", GetCatalogWorkAsync);
+catalog.MapGet("/works/{workId:guid}/fulfillment-options", GetWorkFulfillmentOptionsAsync);
 
 app.MapPost("/api/auth/login", LoginAsync)
     .AllowAnonymous();
@@ -165,6 +166,9 @@ adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
 adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
 adminRequests.MapPut("/{requestId:guid}/note", SetAdminRequestNoteAsync);
 adminRequests.MapPost("/{requestId:guid}/formats/{formatId:guid}/manual-import", ManualImportAsync);
+adminRequests.MapPost(
+    "/{requestId:guid}/formats/{formatId:guid}/direct-acquisitions/{providerId}/{providerResultId}",
+    AcquireDirectAsync);
 
 // The security gate's admin surface: run the scanner/validator pass over a
 // quarantined asset, then approve or reject it. Approve is the only path that
@@ -860,6 +864,19 @@ static IResult ToManualImportResult(ManualImportResult result) => result.Outcome
     })
 };
 
+static async Task<IResult> AcquireDirectAsync(
+    Guid requestId,
+    Guid formatId,
+    string providerId,
+    string providerResultId,
+    DirectAcquisitionService acquisitions,
+    CancellationToken cancellationToken)
+{
+    var result = await acquisitions.AcquireAsync(
+        requestId, formatId, providerId, providerResultId, cancellationToken);
+    return ToManualImportResult(result);
+}
+
 static async Task<IResult> ListMediaAssetsAsync(
     MediaAssetQueueService queue,
     CancellationToken cancellationToken)
@@ -1470,6 +1487,26 @@ static async Task<IResult> GetCatalogWorkAsync(
         ? Results.NotFound()
         : Results.Ok(await ToWorkResponseAsync(work, resolver, cancellationToken));
 }
+
+static async Task<IResult> GetWorkFulfillmentOptionsAsync(
+    Guid workId,
+    IWorkFulfillmentOptionsService fulfillment,
+    CancellationToken cancellationToken)
+{
+    var ebook = await fulfillment.GetOptionsAsync(workId, RequestMediaType.Ebook, cancellationToken);
+    var audiobook = await fulfillment.GetOptionsAsync(workId, RequestMediaType.Audiobook, cancellationToken);
+
+    return Results.Ok(new WorkFulfillmentOptionsResponse(
+        ebook.Select(ToFulfillmentOptionResponse).ToArray(),
+        audiobook.Select(ToFulfillmentOptionResponse).ToArray()));
+}
+
+static FulfillmentOptionResponse ToFulfillmentOptionResponse(FulfillmentOption option) => new(
+    option.ProviderId,
+    option.ProviderResultId,
+    option.OptionKind.ToString(),
+    option.AcquisitionMethod.ToString(),
+    option.ExternalActionUri?.ToString());
 
 static async Task<ProviderSearchResult> SearchProviderAsync(
     IBookMetadataProvider provider,

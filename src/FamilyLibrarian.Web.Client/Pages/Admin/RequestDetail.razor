@@ -1,8 +1,10 @@
 @page "/admin/requests/{RequestId:guid}"
 @attribute [Authorize(Roles = "Admin")]
 @using FamilyLibrarian.Web.Client.Acquisition
+@using FamilyLibrarian.Web.Client.Catalog
 @inject AdminRequestsApiClient Requests
 @inject MediaAssetsApiClient MediaAssets
+@inject CatalogApiClient Catalog
 @inject ISnackbar Snackbar
 
 <PageTitle>Review request · Family Librarian</PageTitle>
@@ -102,9 +104,16 @@
                 </MudText>
                 @foreach (var format in request.Request.Formats)
                 {
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
                         <MudText Typo="Typo.body2" Style="min-width: 100px;">@format.MediaType</MudText>
                         <InputFile OnChange="@(args => ImportFileAsync(format.FormatId, args))" disabled="@isBusy" />
+                        @if (DirectAcquisitionOption(format.MediaType) is { } option)
+                        {
+                            <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@isBusy"
+                                       OnClick="@(() => AcquireDirectAsync(format.FormatId, option))">
+                                Get free copy from @option.ProviderId
+                            </MudButton>
+                        }
                     </MudStack>
                 }
             </MudStack>
@@ -138,6 +147,7 @@
     public Guid RequestId { get; set; }
 
     private AdminBookRequestResponse? request;
+    private WorkFulfillmentOptionsResponse? fulfillment;
     private string? adminNote;
     private string? transitionReason;
     private bool isLoading = true;
@@ -154,6 +164,7 @@
         {
             request = await Requests.GetAsync(RequestId);
             adminNote = request?.Request.AdminNote;
+            fulfillment = request is null ? null : await Catalog.GetFulfillmentOptionsAsync(request.Request.WorkId);
         }
         catch (HttpRequestException)
         {
@@ -163,6 +174,47 @@
         finally
         {
             isLoading = false;
+        }
+    }
+
+    private FulfillmentOptionResponse? DirectAcquisitionOption(string mediaType)
+    {
+        var options = mediaType switch
+        {
+            "Ebook" => fulfillment?.Ebook,
+            "Audiobook" => fulfillment?.Audiobook,
+            _ => null
+        };
+
+        return options?.FirstOrDefault(option => option.OptionKind == "DirectAcquisition");
+    }
+
+    private async Task AcquireDirectAsync(Guid formatId, FulfillmentOptionResponse option)
+    {
+        isBusy = true;
+        errorMessage = null;
+        try
+        {
+            var outcome = await MediaAssets.AcquireDirectAsync(
+                RequestId, formatId, option.ProviderId, option.ProviderResultId);
+            if (outcome.Succeeded)
+            {
+                Snackbar.Add(
+                    $"Fetched from {option.ProviderId}. Visit the Security Queue to scan and approve it.",
+                    Severity.Success);
+            }
+            else
+            {
+                errorMessage = outcome.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "The file could not be fetched. Please try again.";
+        }
+        finally
+        {
+            isBusy = false;
         }
     }
 

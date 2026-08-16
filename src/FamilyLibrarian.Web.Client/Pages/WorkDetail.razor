@@ -50,6 +50,39 @@
             }
         </MudPaper>
 
+        @if (HasOwnedOption(fulfillment?.Ebook) || HasOwnedOption(fulfillment?.Audiobook))
+        {
+            <MudPaper Class="pa-4" Outlined="true">
+                <MudText Typo="Typo.h6" Class="mb-2">Already in your library</MudText>
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    @if (HasOwnedOption(fulfillment?.Ebook))
+                    {
+                        <MudChip T="string" Color="Color.Success" Icon="@Icons.Material.Filled.CheckCircle">
+                            Ebook — already in CWA
+                        </MudChip>
+                        @if (OwnedLink(fulfillment?.Ebook) is { } ebookLink)
+                        {
+                            <MudLink Href="@ebookLink" Target="_blank" rel="noopener noreferrer">Open in CWA</MudLink>
+                        }
+                    }
+                    @if (HasOwnedOption(fulfillment?.Audiobook))
+                    {
+                        <MudChip T="string" Color="Color.Success" Icon="@Icons.Material.Filled.CheckCircle">
+                            Audiobook — already in Audiobookshelf
+                        </MudChip>
+                        @if (OwnedLink(fulfillment?.Audiobook) is { } audiobookLink)
+                        {
+                            <MudLink Href="@audiobookLink" Target="_blank" rel="noopener noreferrer">Open in Audiobookshelf</MudLink>
+                        }
+                    }
+                </MudStack>
+                <MudText Typo="Typo.caption" Class="mt-2">
+                    Already having a copy doesn't guarantee everyone in the household can get to it —
+                    you can still ask for it below.
+                </MudText>
+            </MudPaper>
+        }
+
         <MudPaper Class="pa-4" Outlined="true">
             <MudStack Spacing="3">
                 <MudText Typo="Typo.h6">Ask for this book</MudText>
@@ -174,6 +207,7 @@
 
     private CatalogWorkResponse? work;
     private bool isLoading = true;
+    private WorkFulfillmentOptionsResponse? fulfillment;
 
     private bool wantsEbook = true;
     private bool wantsAudiobook;
@@ -213,7 +247,28 @@
         }
 
         await LoadFeedbackAsync();
+        await LoadFulfillmentOptionsAsync();
     }
+
+    private async Task LoadFulfillmentOptionsAsync()
+    {
+        try
+        {
+            fulfillment = await Catalog.GetFulfillmentOptionsAsync(WorkId);
+        }
+        catch (HttpRequestException)
+        {
+            // Informational only — a failed lookup just means no "already have
+            // this" chip shows, not a page-level error.
+            fulfillment = null;
+        }
+    }
+
+    private static bool HasOwnedOption(IReadOnlyList<FulfillmentOptionResponse>? options) =>
+        options?.Any(option => option.OptionKind == "Owned") ?? false;
+
+    private static string? OwnedLink(IReadOnlyList<FulfillmentOptionResponse>? options) =>
+        options?.FirstOrDefault(option => option.OptionKind == "Owned")?.ExternalActionUri;
 
     private async Task LoadFeedbackAsync()
     {

@@ -19,9 +19,13 @@ public sealed class ProviderRegistry : IProviderRegistry
     public const string DemoProviderId = "demo";
     public const string OpenLibraryProviderId = "openlibrary";
     public const string GoogleBooksProviderId = "googlebooks";
+    public const string GutendexProviderId = "gutendex";
 
     private static readonly IReadOnlySet<ProviderCapability> MetadataOnly =
         new HashSet<ProviderCapability> { ProviderCapability.Metadata };
+
+    private static readonly IReadOnlySet<ProviderCapability> DirectAcquisitionOnly =
+        new HashSet<ProviderCapability> { ProviderCapability.DirectAcquisition };
 
     private readonly ProviderDescriptor[] _providers;
 
@@ -74,7 +78,17 @@ public sealed class ProviderRegistry : IProviderRegistry
                     new ProviderSetupLink(
                         "2. Create an API key",
                         "https://console.cloud.google.com/apis/credentials")
-                ])
+                ]),
+            new ProviderDescriptor(
+                GutendexProviderId,
+                "Gutendex (Project Gutenberg)",
+                DirectAcquisitionOnly,
+                RequiresCredential: false,
+                HasExternallyManagedCredential: false,
+                // Bundled does not mean enabled: an admin must opt in before
+                // family search terms are used to query a third-party service,
+                // even a free, keyless one.
+                DefaultEnabled: false)
         ];
     }
 

@@ -1,0 +1,150 @@
+using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Security;
+using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Requests;
+
+namespace FamilyLibrarian.Application.Acquisition;
+
+/// <summary>
+/// The one trusted path by which any artifact — manually uploaded or fetched
+/// by a bundled provider — enters Family Librarian-controlled staging.
+/// </summary>
+/// <remarks>
+/// Extracted from what was originally <c>ManualImportService.ImportAsync</c>'s
+/// full body; that type's own doc comment anticipated this before M11 shipped
+/// a second caller: "every artifact ... enters staging through code shaped
+/// like this." Nothing here ever hands the caller a browser-servable path,
+/// and the resulting <see cref="MediaAsset"/> starts in
+/// <see cref="MediaAssetStorageState.Quarantine"/> with no path to
+/// <see cref="MediaAssetStorageState.Trusted"/> until an M10
+/// <c>ApprovalService</c> decision moves it there. <see cref="IAcquisitionBoundaryGuard"/>
+/// is checked before a single byte is staged: required-scanner unavailability
+/// blocks the whole acquisition boundary, not merely later delivery/approval —
+/// this applies identically to a legally-free automated fetch as to a manual
+/// upload; there is no "it's free" exception to the security gate.
+/// </remarks>
+public sealed class AcquisitionStagingService(
+    IAcquisitionRepository acquisitions,
+    IAssetStagingStore stagingStore,
+    IAcquisitionBoundaryGuard boundaryGuard,
+    ManualImportPolicy policy,
+    IAuditWriter audit,
+    IClock clock)
+{
+    public async Task<ManualImportResult> StageAsync(
+        BookRequest request,
+        RequestFormat format,
+        Stream content,
+        string originalFilename,
+        string providerId,
+        string auditAction,
+        string? candidateTitle,
+        string? candidateAuthor,
+        CancellationToken cancellationToken)
+    {
+        var extension = Path.GetExtension(originalFilename);
+        if (string.IsNullOrEmpty(extension) || !policy.IsExtensionAllowed(format.MediaType, extension))
+        {
+            return ManualImportResult.Invalid(
+                $"'{extension}' is not an allowed file type for {format.MediaType}.");
+        }
+
+        if (!await boundaryGuard.CanAcceptNewArtifactAsync(cancellationToken))
+        {
+            await audit.WriteAsync(
+                AuditActions.ManualImportRejectedNoScanner,
+                AuditSubjectTypes.BookRequest,
+                request.Id.ToString(),
+                new { RequestId = request.Id, RequestFormatId = format.Id },
+                cancellationToken);
+            return ManualImportResult.WaitingForSecurityScanner();
+        }
+
+        StagedFile staged;
+        try
+        {
+            staged = await stagingStore.WriteToQuarantineAsync(
+                content,
+                originalFilename,
+                policy.MaxUploadSizeBytes,
+                cancellationToken);
+        }
+        catch (AssetTooLargeException)
+        {
+            return ManualImportResult.Invalid(
+                $"The file exceeds the {policy.MaxUploadSizeBytes}-byte upload limit.");
+        }
+
+        // The file is already in quarantine at this point, which is safe: it is
+        // untrusted storage with no browser access and no path to Trusted. A
+        // rejected artifact is simply left there rather than deleted — quarantine
+        // retention/cleanup is a separate, later concern.
+        if (!KnownFormatContentTypes.ByExtension.TryGetValue(extension, out var expectedContentType) ||
+            !string.Equals(staged.DetectedMimeType, expectedContentType, StringComparison.OrdinalIgnoreCase))
+        {
+            return ManualImportResult.Invalid(
+                "The file's contents do not match its file extension.");
+        }
+
+        if (await acquisitions.ExistsAssetWithChecksumForFormatAsync(
+                format.Id, staged.Sha256, cancellationToken))
+        {
+            return ManualImportResult.DuplicateDetected();
+        }
+
+        var now = clock.UtcNow;
+        var job = new AcquisitionJob(request.Id, format.MediaType, providerId, EgressPolicy.Normal, now);
+        var candidate = job.AddCandidate(
+            providerId,
+            providerReference: staged.StoredFilename,
+            title: candidateTitle,
+            author: candidateAuthor,
+            format: extension,
+            sizeBytes: staged.SizeBytes,
+            duration: null,
+            bitrateKbps: null,
+            metadataJson: null,
+            confidenceScore: null,
+            now);
+        job.MarkCandidateStatus(candidate.Id, AcquisitionCandidateStatus.Acquired, now);
+        job.TransitionTo(AcquisitionJobStatus.CandidateAcquired, now);
+
+        var asset = new MediaAsset(
+            request.WorkId,
+            editionId: null,
+            format.MediaType,
+            extension,
+            originalFilename,
+            staged.StoredFilename,
+            staged.SizeBytes,
+            staged.Sha256,
+            staged.DetectedMimeType,
+            format.Id,
+            candidate.Id,
+            now);
+
+        acquisitions.AddJob(job);
+        acquisitions.AddAsset(asset);
+        await acquisitions.SaveChangesAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            auditAction,
+            AuditSubjectTypes.MediaAsset,
+            asset.Id.ToString(),
+            new
+            {
+                RequestId = request.Id,
+                RequestFormatId = format.Id,
+                WorkId = request.WorkId,
+                format.MediaType,
+                asset.SizeBytes,
+                asset.Sha256,
+                ProviderId = providerId
+            },
+            cancellationToken);
+
+        return ManualImportResult.Success(job.Id, asset.Id);
+    }
+}
