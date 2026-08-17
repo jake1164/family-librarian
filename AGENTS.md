@@ -22,6 +22,8 @@ file before proposing, changing, or reviewing code.
 ## Architecture and security
 
 - Keep the system a modular monolith: domain and application logic must not depend on Blazor, EF Core, or vendor SDKs.
+- `Program.cs` is host wiring only: configuration, the middleware pipeline, and one `Map<Area>Endpoints()` call per feature area. Route handlers, request/response mapping, and per-area route groups belong in `src/FamilyLibrarian.Web/Endpoints/<Area>Endpoints.cs` as `internal static` extension methods on `IEndpointRouteBuilder` — never as local functions in `Program.cs`. This file reached 2,200 lines and 128 handlers once; adding "just one" handler back is how that happens again. Keep each area's route prefix, role requirement, and anti-forgery filter together in its own class so the area's authorization posture reads in one place.
+- Remove a project reference when the last real use of it goes away. An unused `using` is now a build error (see `.editorconfig`), which catches the usual symptom, but the dead `ProjectReference` in the `.csproj` it appeared to justify is not detected by anything — check the project file too.
 - Do not send connection strings, provider credentials, OIDC client secrets, access tokens, or database entities to the WebAssembly client.
 - Use cookie-based browser authentication where suitable. Local Identity must work without Authentik; generic OIDC is optional and Authentik is a documented/tested target, not a requirement.
 - Apply authorization in server-side application/API handlers, validate all input, use anti-forgery protection for cookie-authenticated state changes, and keep audit/status transitions explicit.
@@ -33,6 +35,7 @@ file before proposing, changing, or reviewing code.
 - The application runs through Docker Compose for development and self-hosted deployment. Keep the default runtime limited to the application host/API and PostgreSQL unless a planned slice requires more.
 - Build locally through Compose. Release images publish to `ghcr.io/jake1164/family-librarian`; keep image tags immutable and publish through the repository's GitHub Actions credentials.
 - At the end of every relevant source change, run the appropriate build and tests. The project must build with zero warnings and zero errors, and all relevant tests must complete successfully before reporting the work complete. Run migration and Compose health checks whenever the change affects them.
+- The Microsoft Learn documentation step above is required *before* writing framework code, not after. A refactor is not an exemption: choosing a base type, interface, receiver type, or API overload is a framework decision even when no behavior changes. State plainly in the work summary whether the check ran — if it did not, say so rather than implying it did.
 
 ## AI working files
 

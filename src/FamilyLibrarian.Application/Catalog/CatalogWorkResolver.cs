@@ -1,6 +1,5 @@
 using System.Globalization;
 using FamilyLibrarian.Application.Abstractions;
-using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Domain.Catalog;
 
 namespace FamilyLibrarian.Application.Catalog;

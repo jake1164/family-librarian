@@ -1,4 +1,3 @@
-using FamilyLibrarian.Domain;
 using FamilyLibrarian.Domain.Accounts;
 
 namespace FamilyLibrarian.Domain.Tests.Accounts;

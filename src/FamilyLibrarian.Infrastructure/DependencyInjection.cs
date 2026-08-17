@@ -22,8 +22,6 @@ using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Infrastructure.Time;
 using System.Net.Http.Headers;
 using System.Net.Mail;
-using Microsoft.AspNetCore.Authentication.OpenIdConnect;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;

@@ -19,8 +19,8 @@ namespace FamilyLibrarian.Application.Acquisition;
 /// tampered or stale client request from making the host fetch an arbitrary
 /// address. A <c>providerId</c> that doesn't match any compile-time
 /// (DI-registered) provider falls back to a lookup among admin-registered
-/// <see cref="ExternalProvider"/> rows — the two are otherwise handled
-/// identically once a file is in hand.
+/// <see cref="Domain.Providers.ExternalProvider"/> rows — the two are otherwise
+/// handled identically once a file is in hand.
 /// </remarks>
 public sealed class DirectAcquisitionService(
     IRequestRepository requests,

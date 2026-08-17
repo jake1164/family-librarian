@@ -1,5 +1,3 @@
-using FamilyLibrarian.Domain;
-
 namespace FamilyLibrarian.Domain.Tests.Architecture;
 
 [TestClass]

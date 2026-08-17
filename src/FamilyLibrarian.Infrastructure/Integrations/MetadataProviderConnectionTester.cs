@@ -1,6 +1,5 @@
 using System.Text.Json;
 using FamilyLibrarian.Application.Catalog;
-using FamilyLibrarian.Application.Integrations;
 
 namespace FamilyLibrarian.Infrastructure.Integrations;
 
