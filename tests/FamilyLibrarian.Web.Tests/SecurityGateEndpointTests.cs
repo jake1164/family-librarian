@@ -195,6 +195,43 @@ public sealed class SecurityGateEndpointTests
         return (request.Id, format.FormatId);
     }
 
+    [TestMethod]
+    public async Task AScannerFailureDuringEvaluationReturnsProblemDetailsNotTheSpaShell()
+    {
+        // F8: app.UseExceptionHandler("/error") used to re-execute the pipeline
+        // at a path nothing mapped, which fell through to
+        // MapFallbackToFile("index.html") — an unhandled exception came back
+        // as the SPA's HTML shell, which every JSON-expecting client then
+        // failed to parse. This proves the real host now answers with a
+        // ProblemDetails body instead, through the same scanner failure F3's
+        // recovery path is built around.
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new ThrowingMalwareScanner());
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        var (requestId, formatId) = await CreateEbookRequestAsync(client);
+
+        var upload = await client.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(BuildMinimalEpubBytes(), "book.epub"));
+        Assert.AreEqual(HttpStatusCode.OK, upload.StatusCode);
+        var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        Assert.IsNotNull(imported);
+
+        var evaluate = await client.PostAsync(
+            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/evaluate", content: null);
+
+        Assert.AreEqual(HttpStatusCode.InternalServerError, evaluate.StatusCode);
+        Assert.AreEqual("application/problem+json", evaluate.Content.Headers.ContentType?.MediaType);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var asset = await database.MediaAssets.SingleAsync(asset => asset.Id == imported.MediaAssetId);
+        Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
+    }
+
     private static byte[] BuildMinimalEpubBytes() => EpubTestFixture.BuildMinimalEpubBytes();
 
     /// <summary>
@@ -228,5 +265,19 @@ public sealed class SecurityGateEndpointTests
 
         public Task<ScanOutcome> ScanAsync(Stream content, CancellationToken cancellationToken) =>
             Task.FromResult(new ScanOutcome(status, threatName));
+    }
+
+    /// <summary>Reports healthy, then fails mid-scan — the shape a dropped clamd connection actually takes.</summary>
+    private sealed class ThrowingMalwareScanner : IMalwareScanner
+    {
+        public string Id => "clamav";
+
+        public bool IsRequired => true;
+
+        public Task<ScannerHealth> CheckHealthAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ScannerHealth(true, "fake-1.0", null));
+
+        public Task<ScanOutcome> ScanAsync(Stream content, CancellationToken cancellationToken) =>
+            throw new IOException("Simulated connection reset mid-stream.");
     }
 }

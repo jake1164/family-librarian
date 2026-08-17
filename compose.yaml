@@ -39,6 +39,28 @@ services:
     # pulls (and runs under emulation) on Apple Silicon hosts.
     platform: linux/amd64
     image: clamav/clamav:1.4
+    environment:
+      # CLAMD_CONF_<Key> writes <Key> into /etc/clamav/clamd.conf — see
+      # https://github.com/Cisco-Talos/clamav-docker. The image's own default
+      # StreamMaxLength/MaxFileSize (100M as of ClamAV 1.4, not the 25M the
+      # sample config's comment might suggest) sits under
+      # ManualImportPolicy.DefaultMaxUploadSizeBytes (500 MiB), so most
+      # audiobooks were rejected before a single byte was scanned — see F2 in
+      # the architecture review. 600M covers that cap with headroom.
+      CLAMD_CONF_StreamMaxLength: 600M
+      CLAMD_CONF_MaxFileSize: 600M
+      CLAMD_CONF_PCREMaxFileSize: 600M
+      # Deliberately higher than the input caps above: this bounds total work
+      # across everything one scan expands into (e.g. an archive's contents),
+      # not the input file itself. ClamAV's own documentation warns against
+      # setting this equal to — or disabling — the input-size limits.
+      CLAMD_CONF_MaxScanSize: 1000M
+      # A limit-exceeded scan now reports through the same FOUND/threat-name
+      # path as a real detection (Heuristics.Limits.Exceeded.*) instead of a
+      # bare protocol error — ParseScanResponse already treats FOUND as
+      # Detected, so this makes an oversized file a distinguishable result
+      # with no application code change required.
+      CLAMD_CONF_AlertExceedsMax: "yes"
     healthcheck:
       # freshclam's virus-database download can take minutes on a cold image;
       # the generous start_period keeps that from being reported as unhealthy.

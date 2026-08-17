@@ -101,6 +101,16 @@ public static class DependencyInjection
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 return Task.CompletedTask;
             };
+
+            // Identity's own defaults (SameSite=Lax, SecurePolicy=SameAsRequest)
+            // are not wrong, but AntiforgeryTokenEndpoint sets these explicitly
+            // for the same reason: a stated requirement (docs/01 §13.1) should
+            // not depend on a library default nobody here chose. SameAsRequest
+            // matches the antiforgery cookie's own reasoning — Secure once behind
+            // HTTPS, absent on plain-HTTP local development.
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SameSite = SameSiteMode.Strict;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
         });
 
         // Revalidate the security stamp on every authenticated request, so

@@ -3,10 +3,11 @@ using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace FamilyLibrarian.Infrastructure.Integrations;
 
-internal static class DataProtectionSetup
+public static class DataProtectionSetup
 {
     /// <summary>
     /// Configures the key ring that protects auth cookies and stored provider
@@ -79,4 +80,39 @@ internal static class DataProtectionSetup
             ? X509CertificateLoader.LoadPkcs12FromFile(path, password: null)
             : X509CertificateLoader.LoadPkcs12FromFile(path, password);
     }
+
+    /// <summary>
+    /// Logs a warning, once at startup, if the key ring protecting every
+    /// stored provider credential is itself unencrypted — see F4 in the
+    /// architecture review.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately a warning, not the throw <see cref="LoadKeyEncryptionCertificate"/>
+    /// uses for a <em>misconfigured</em> path: a fresh install legitimately has
+    /// no certificate yet, and failing closed here would block the documented
+    /// zero-config Compose flow.
+    /// </remarks>
+    public static void WarnIfKeyRingIsUnprotected(this IServiceProvider services)
+    {
+        var configuration = services.GetRequiredService<IConfiguration>();
+        var path = configuration["DataProtection:KeyEncryptionCertificate:Path"];
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger("FamilyLibrarian.DataProtection");
+            DataProtectionLog.KeyRingUnprotected(logger);
+        }
+    }
+}
+
+internal static partial class DataProtectionLog
+{
+    [LoggerMessage(
+        EventId = 3001,
+        Level = LogLevel.Warning,
+        Message = "DataProtection:KeyEncryptionCertificate:Path is not set. The Data Protection key ring is " +
+            "stored unencrypted in PostgreSQL, so a database backup contains everything needed to decrypt every " +
+            "provider credential, SFTP key, and OIDC client secret it also contains. See " +
+            "docs/06-deployment-and-recovery.md.")]
+    internal static partial void KeyRingUnprotected(ILogger logger);
 }

@@ -2,10 +2,13 @@ using System.Threading.RateLimiting;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
+using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +16,35 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgresql")
     .AddCheck<SecurityScannerHealthCheck>("malware-scanner");
+
+// The forwarded-headers middleware only trusts a caller-supplied X-Forwarded-For
+// from an address in KnownProxies/KnownNetworks; both default to loopback only.
+// A self-hosted deployment's reverse proxy is rarely loopback, so it must be
+// named explicitly — there is deliberately no insecure "trust everything"
+// fallback here (that used to be ASPNETCORE_FORWARDEDHEADERS_ENABLED=true in
+// the image, which clears both lists and lets any caller spoof its own address
+// into RemoteIpAddress). Unconfigured, only the built-in loopback default
+// applies — a reverse proxy on another host or container needs this set.
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+
+foreach (var cidr in builder.Configuration.GetSection("ReverseProxy:TrustedNetworks").Get<string[]>() ?? [])
+{
+    try
+    {
+        // Fully qualified: Microsoft.AspNetCore.HttpOverrides also declares an
+        // IPNetwork (the now-obsolete type KnownNetworks used), so the bare
+        // name is ambiguous with that using directive in scope.
+        forwardedHeadersOptions.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(cidr));
+    }
+    catch (Exception exception) when (exception is FormatException or ArgumentOutOfRangeException)
+    {
+        throw new InvalidOperationException(
+            $"ReverseProxy:TrustedNetworks entry '{cidr}' is not a valid CIDR network.", exception);
+    }
+}
 
 // Invitation redemption is necessarily anonymous, which makes it the one write
 // endpoint an unauthenticated caller can reach. The token is 256 bits, so this
@@ -38,6 +70,18 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0
             }));
+
+    // A second, unpartitioned ceiling well above any single caller's own
+    // limit. The per-caller policy above is only as strong as its partition
+    // key; this one holds regardless of what RemoteIpAddress turns out to be,
+    // so it does not depend on the ReverseProxy configuration above being
+    // correct for every deployment topology.
+    options.AddFixedWindowLimiter(InvitationEndpoints.GlobalRateLimitPolicy, limiterOptions =>
+    {
+        limiterOptions.PermitLimit = Math.Max(redemptionAttemptsPerMinute * 20, 100);
+        limiterOptions.Window = TimeSpan.FromMinutes(1);
+        limiterOptions.QueueLimit = 0;
+    });
 });
 
 // The WebAssembly client cannot read an HttpOnly cookie, so the request token
@@ -53,6 +97,13 @@ builder.Services.AddAntiforgery(options =>
     options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
 });
 
+// Backs app.UseExceptionHandler() below — writes an RFC 7807 ProblemDetails
+// body for any response that reaches the client with an error status and no
+// body content yet, unhandled exceptions included.
+builder.Services.AddProblemDetails();
+
+builder.Services.AddHsts(options => options.MaxAge = TimeSpan.FromHours(1));
+
 var app = builder.Build();
 
 if (args.Contains("--migrate", StringComparer.Ordinal))
@@ -66,6 +117,10 @@ if (args.Contains("--migrate", StringComparer.Ordinal))
 // Not required for --migrate above: a schema-only run never touches the
 // security pipeline.
 app.Services.EnsureAssetValidatorsAreConfigured();
+
+// F4: a soft warning, not a startup guard — see WarnIfKeyRingIsUnprotected's
+// own remarks for why an unconfigured certificate does not fail closed here.
+app.Services.WarnIfKeyRingIsUnprotected();
 
 if (app.Configuration.GetValue<bool>("Authentication:EnableLocal"))
 {
@@ -82,7 +137,18 @@ await app.Services.InitializeOidcRuntimeCacheAsync();
 // PrivateEgressRouteResolver reads from.
 await app.Services.InitializeGatewayRuntimeCacheAsync();
 
-app.UseExceptionHandler("/error");
+// First: everything below — HTTPS redirection, the auth cookie's Secure flag,
+// the rate limiter's per-caller partition key — depends on seeing the
+// original client address and scheme, not the reverse proxy's.
+app.UseForwardedHeaders(forwardedHeadersOptions);
+
+// The parameterless overload writes a ProblemDetails response through
+// AddProblemDetails() directly; it does not re-execute the pipeline at a
+// route. The previous app.UseExceptionHandler("/error") did exactly that
+// against a path nothing ever mapped, so every unhandled exception fell
+// through to MapFallbackToFile("index.html") and the client tried to parse
+// the SPA's HTML shell as JSON — see F8 in the architecture review.
+app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
 {
@@ -90,6 +156,18 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+if (!app.Environment.IsDevelopment())
+{
+    // A short MaxAge deliberately: HSTS is a one-way commitment per
+    // Microsoft's own guidance — once a browser receives it, that browser
+    // refuses plain HTTP to this host until the MaxAge expires, even for a
+    // LAN deployment that later needs to drop TLS. Raise it only once this
+    // deployment is confirmed to always be HTTPS-reachable.
+    app.UseHsts();
+}
+
+app.UseSecurityHeaders();
 app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();
 app.UseAuthentication();

@@ -10,12 +10,21 @@ namespace FamilyLibrarian.Infrastructure.Providers;
 /// </summary>
 public sealed class ProviderCatalogFetcher(IHttpClientFactory httpClientFactory) : IProviderCatalogFetcher
 {
+    // A catalog listing is a short JSON array of provider entries — this is
+    // generous headroom over any legitimate one, not a working ceiling. The
+    // default is 2 GB, buffered entirely in memory before this method ever
+    // sees it; an admin-supplied catalog URL is exactly the kind of external
+    // input F9 in the architecture review flagged as unbounded. Exceeding it
+    // surfaces as HttpRequestException, already caught below.
+    private const long MaxCatalogResponseBytes = 10 * 1024 * 1024;
+
     public async Task<ProviderCatalogFetchOutcome> FetchAsync(string url, CancellationToken cancellationToken)
     {
         try
         {
             var client = httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(10);
+            client.MaxResponseContentBufferSize = MaxCatalogResponseBytes;
 
             using var response = await client.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)

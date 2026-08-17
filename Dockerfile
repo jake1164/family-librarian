@@ -16,7 +16,12 @@ RUN dotnet publish "src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj" --config
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime-base
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://+:8080
-ENV ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+# Deliberately not ASPNETCORE_FORWARDEDHEADERS_ENABLED=true: that setting
+# clears ForwardedHeadersOptions' KnownProxies/KnownNetworks, so it trusts
+# X-Forwarded-For from any caller, not just the deployment's actual reverse
+# proxy. Program.cs configures forwarded headers explicitly instead, reading
+# trusted proxy networks from the ReverseProxy:TrustedNetworks configuration
+# key — see docs/06-deployment-and-recovery.md.
 # Baked in (while still root) so a fresh named volume mounted at this path on
 # first run inherits this ownership instead of root:root — the security
 # pipeline's storage zones live here, and the app runs as the non-root

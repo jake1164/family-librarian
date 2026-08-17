@@ -256,4 +256,53 @@ public sealed class EndpointAuthorizationTests
 
         Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [TestMethod]
+    public async Task EveryResponseCarriesTheBaselineSecurityHeaders()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = fixture.CreateAnonymousClient();
+
+        var response = await client.GetAsync("/health/live");
+
+        // F7: none of these existed at all before. CSP ships report-only (see
+        // SecurityHeadersMiddleware's remarks on why), so only its presence is
+        // asserted here, not enforcement.
+        Assert.AreEqual("nosniff", Single(response, "X-Content-Type-Options"));
+        Assert.AreEqual("DENY", Single(response, "X-Frame-Options"));
+        Assert.AreEqual("strict-origin-when-cross-origin", Single(response, "Referrer-Policy"));
+        StringAssert.Contains(Single(response, "Content-Security-Policy-Report-Only"), "frame-ancestors 'none'");
+
+        static string Single(HttpResponseMessage response, string headerName)
+        {
+            Assert.IsTrue(response.Headers.TryGetValues(headerName, out var values), $"Missing header {headerName}.");
+            return values.Single();
+        }
+    }
+
+    [TestMethod]
+    public async Task TheIdentityCookieIsHttpOnlyAndSameSiteStrict()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = fixture.CreateAnonymousClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/auth/login",
+            new LoginRequest { Email = WebTestFixture.UserEmail, Password = WebTestFixture.UserPassword });
+        Assert.AreEqual(HttpStatusCode.NoContent, response.StatusCode);
+
+        Assert.IsTrue(response.Headers.TryGetValues("Set-Cookie", out var setCookies));
+        var identityCookie = setCookies.FirstOrDefault(cookie =>
+            cookie.StartsWith(".AspNetCore.Identity.Application=", StringComparison.Ordinal));
+        Assert.IsNotNull(identityCookie, "Sign-in did not set the Identity application cookie.");
+
+        // F10: these used to be Identity's own defaults (SameSite=Lax,
+        // SecurePolicy=SameAsRequest — itself only Secure once behind HTTPS),
+        // not something this codebase had asserted. Secure is not checked here:
+        // the test host is plain HTTP, so SameAsRequest correctly omits it —
+        // that omission is the behavior, not a gap in it.
+        var lowerCaseCookie = identityCookie.ToLowerInvariant();
+        StringAssert.Contains(lowerCaseCookie, "httponly");
+        StringAssert.Contains(lowerCaseCookie, "samesite=strict");
+    }
 }

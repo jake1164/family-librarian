@@ -162,8 +162,26 @@ proxy forwards the canonical scheme and host and does not cache API responses.
 Use the public HTTPS URL consistently in browser bookmarks and, when M6.5 OIDC
 is added, in the registered callback and sign-out URIs.
 
+Set `ReverseProxy__TrustedNetworks` to the proxy's own address or network in
+CIDR notation. The forwarded-headers middleware only honors `X-Forwarded-For`/
+`X-Forwarded-Proto` from an address in that list — unconfigured, only loopback
+is trusted, so a proxy running elsewhere (a separate host, a separate
+container) is silently ignored rather than trusted by default. Do not point
+this at a network wider than the actual proxy: any address inside it can then
+spoof its own client IP into request logs and the invitation rate limiter's
+per-caller partitioning.
+
 Keep PostgreSQL credentials, bootstrap credentials, OIDC secrets, and provider
 credentials outside the repository. Provider credentials entered through the
 administrator UI are encrypted using the persisted Data Protection key ring in
 PostgreSQL; that is why a database backup is required for both credential and
 session continuity after recovery.
+
+Set `DataProtection__KeyEncryptionCertificate__Path` (and `__Password` if the
+PFX is protected) to encrypt that key ring at rest. Without it, the key ring
+itself is stored in PostgreSQL unencrypted — meaning the credentials it
+protects and the key that unlocks them live in the same backup, which makes
+the encryption decorative against anyone who obtains one. The application logs
+a warning at startup when this is unset rather than refusing to start, since a
+first deployment has no certificate to provide yet; treat that warning as a
+todo, not routine output, once real provider credentials are in use.

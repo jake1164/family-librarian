@@ -9,6 +9,13 @@ internal static class InvitationEndpoints
 {
     public const string RateLimitPolicy = "invitation-redemption";
 
+    /// <summary>
+    /// A second, unpartitioned ceiling registered alongside <see cref="RateLimitPolicy"/>
+    /// — see its registration in <c>Program.cs</c> for why a partitioned limit
+    /// alone is not enough.
+    /// </summary>
+    public const string GlobalRateLimitPolicy = "invitation-redemption-global";
+
     /// <summary>The client route that redeems an invitation.</summary>
     public const string RedeemPath = "/invite";
 
@@ -19,10 +26,12 @@ internal static class InvitationEndpoints
         // credentials to forge with) and is rate limited instead.
         app.MapGet("/api/v1/invitations/preview", PreviewInvitationAsync)
             .AllowAnonymous()
-            .RequireRateLimiting(RateLimitPolicy);
+            .RequireRateLimiting(RateLimitPolicy)
+            .RequireRateLimiting(GlobalRateLimitPolicy);
         app.MapPost("/api/v1/invitations/redeem", RedeemInvitationAsync)
             .AllowAnonymous()
-            .RequireRateLimiting(RateLimitPolicy);
+            .RequireRateLimiting(RateLimitPolicy)
+            .RequireRateLimiting(GlobalRateLimitPolicy);
 
         var adminInvitations = app.MapGroup("/api/v1/admin/invitations")
             .RequireAuthorization("Admin")

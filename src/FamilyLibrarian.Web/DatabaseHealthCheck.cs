@@ -1,5 +1,4 @@
 using FamilyLibrarian.Infrastructure.Persistence;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace FamilyLibrarian.Web;

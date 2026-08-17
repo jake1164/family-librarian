@@ -13,6 +13,15 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     private static readonly TimeSpan AcquirePollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan AcquireTimeout = TimeSpan.FromSeconds(90);
 
+    // Governs the manifest/search/job-status calls below, all of which are
+    // small JSON and read fully into memory via ReadAsStringAsync — the
+    // default is 2 GB. Has no effect on the artifact download in
+    // AcquireAsync, which reads with HttpCompletionOption.ResponseHeadersRead
+    // and never buffers into this limit regardless. See F9 in the
+    // architecture review: an admin-registered external provider is still
+    // third-party code, and only the download path already had a size bound.
+    private const long MaxJsonResponseBytes = 10 * 1024 * 1024;
+
     public async Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken)
     {
@@ -202,6 +211,7 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
 
         client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
         client.Timeout = TimeSpan.FromSeconds(20);
+        client.MaxResponseContentBufferSize = MaxJsonResponseBytes;
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
