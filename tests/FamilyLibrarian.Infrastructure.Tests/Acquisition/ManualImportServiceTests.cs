@@ -51,6 +51,7 @@ public sealed class ManualImportServiceTests
         Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
         // The mismatch is only detectable once the real bytes are sniffed.
         Assert.AreEqual(1, context.StagingStore.WriteCount);
+        Assert.AreEqual(1, context.StagingStore.DeleteCount);
         Assert.AreEqual(0, context.Repository.Assets.Count);
     }
 
@@ -90,6 +91,7 @@ public sealed class ManualImportServiceTests
 
         Assert.AreEqual(ManualImportOutcome.DuplicateDetected, result.Outcome);
         Assert.HasCount(0, context.Repository.Assets);
+        Assert.AreEqual(1, context.StagingStore.DeleteCount);
     }
 
     [TestMethod]
@@ -220,6 +222,8 @@ public sealed class ManualImportServiceTests
     {
         public int WriteCount { get; private set; }
 
+        public int DeleteCount { get; private set; }
+
         public string NextSha256 { get; } = new string('a', 64);
 
         public string NextDetectedMimeType { get; set; } = "application/epub+zip";
@@ -245,6 +249,16 @@ public sealed class ManualImportServiceTests
             string storedFilename,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task DeleteAsync(
+            MediaAssetStorageState zone,
+            string storedFilename,
+            CancellationToken cancellationToken)
+        {
+            Assert.AreEqual(MediaAssetStorageState.Quarantine, zone);
+            DeleteCount++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class AlwaysHealthyBoundaryGuard : IAcquisitionBoundaryGuard

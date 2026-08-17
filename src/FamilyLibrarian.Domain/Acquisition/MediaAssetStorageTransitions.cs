@@ -35,13 +35,16 @@ public static class MediaAssetStorageTransitions
         [MediaAssetStorageState.Trusted] = [MediaAssetStorageState.Archived],
         [MediaAssetStorageState.Unmatched] =
         [
+            // An administrator may retry deterministic identity verification
+            // after correcting catalog metadata or verifier behavior. The
+            // asset must return through Processing, where normal approval
+            // rules verify it again before publishing.
+            MediaAssetStorageState.Processing,
             MediaAssetStorageState.Rejected,
             MediaAssetStorageState.Destroyed
         ],
         [MediaAssetStorageState.Rejected] = [MediaAssetStorageState.Destroyed]
-        // Archived and Destroyed are terminal. An unmatched asset can be
-        // retained for later routing or explicitly discarded, but cannot be
-        // approved or published.
+        // Archived and Destroyed are terminal.
     };
 
     public static bool IsAllowed(MediaAssetStorageState from, MediaAssetStorageState to) =>

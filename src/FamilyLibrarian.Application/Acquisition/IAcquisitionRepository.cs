@@ -11,8 +11,9 @@ public interface IAcquisitionRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Every non-delivered <see cref="MediaAsset"/>, including rejected and
-    /// removed records retained for administrator review and audit.
+    /// Every non-delivered <see cref="MediaAsset"/> that still has staged
+    /// bytes or needs attention. Destroyed records remain available only as
+    /// audit evidence, not live security-queue work.
     /// </summary>
     Task<IReadOnlyList<MediaAssetAdminView>> ListActiveAsync(CancellationToken cancellationToken);
 

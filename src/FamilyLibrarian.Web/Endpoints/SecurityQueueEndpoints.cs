@@ -18,6 +18,7 @@ internal static class SecurityQueueEndpoints
 
         adminMediaAssets.MapGet("/", ListMediaAssetsAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/evaluate", EvaluateMediaAssetAsync);
+        adminMediaAssets.MapPost("/{assetId:guid}/retry-identity", RetryIdentityAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/approve", ApproveMediaAssetAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/reject", RejectMediaAssetAsync);
         adminMediaAssets.MapDelete("/{assetId:guid}", DiscardMediaAssetAsync);
@@ -87,6 +88,12 @@ internal static class SecurityQueueEndpoints
         ApprovalService approvals,
         CancellationToken cancellationToken) =>
         ToApprovalResult(await approvals.ApproveAsync(assetId, request.Reason, cancellationToken));
+
+    private static async Task<IResult> RetryIdentityAsync(
+        Guid assetId,
+        AutomatedSecurityPipeline securityPipeline,
+        CancellationToken cancellationToken) =>
+        ToApprovalResult(await securityPipeline.RetryIdentityAsync(assetId, cancellationToken));
 
     private static async Task<IResult> RejectMediaAssetAsync(
         Guid assetId,

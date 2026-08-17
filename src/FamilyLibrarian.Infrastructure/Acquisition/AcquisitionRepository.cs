@@ -12,7 +12,9 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
         string sha256,
         CancellationToken cancellationToken) =>
         database.MediaAssets.AnyAsync(
-            asset => asset.AssociatedRequestFormatId == requestFormatId && asset.Sha256 == sha256,
+            asset => asset.AssociatedRequestFormatId == requestFormatId &&
+                asset.Sha256 == sha256 &&
+                asset.StorageState != MediaAssetStorageState.Destroyed,
             cancellationToken);
 
     public async Task<IReadOnlyList<MediaAssetAdminView>> ListActiveAsync(CancellationToken cancellationToken)
@@ -22,8 +24,7 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
             MediaAssetStorageState.Quarantine,
             MediaAssetStorageState.Processing,
             MediaAssetStorageState.Unmatched,
-            MediaAssetStorageState.Rejected,
-            MediaAssetStorageState.Destroyed
+            MediaAssetStorageState.Rejected
         };
 
         var query =

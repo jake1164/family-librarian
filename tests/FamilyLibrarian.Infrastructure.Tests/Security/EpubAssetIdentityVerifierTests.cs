@@ -25,6 +25,19 @@ public sealed class EpubAssetIdentityVerifierTests
     }
 
     [TestMethod]
+    public async Task CatalogOrderedCreatorMetadataIsAccepted()
+    {
+        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Restore Me", "Tahereh Mafi"));
+
+        var result = await verifier.VerifyAsync(
+            CreateAsset(),
+            BuildEpub("Restore Me", "Mafi, Tahereh"),
+            CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch);
+    }
+
+    [TestMethod]
     public async Task DifferentPackageMetadataIsHeldUnmatched()
     {
         var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Restore Me", "Tahereh Mafi"));

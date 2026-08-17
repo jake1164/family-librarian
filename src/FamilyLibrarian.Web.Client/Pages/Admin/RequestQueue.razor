@@ -91,6 +91,13 @@
                                 </MudChip>
                             }
                         </MudStack>
+                        @foreach (var format in item.Request.Formats.Where(format =>
+                            !string.IsNullOrWhiteSpace(format.ProgressDescription)))
+                        {
+                            <MudText Typo="Typo.body2" Color="@ProgressColor(format.ProgressCode)">
+                                @format.MediaType: @format.ProgressDescription
+                            </MudText>
+                        }
                         <MudText Typo="Typo.caption">
                             Asked @item.Request.RequestedAtUtc.ToLocalTime().ToString("g")
                             (@Age(item.Request.RequestedAtUtc))
@@ -178,7 +185,7 @@
                     file.Name,
                     outcome.Succeeded,
                     outcome.Succeeded
-                        ? $"Matched to {match.Title}; scanned automatically and awaiting approval."
+                        ? $"Matched to {match.Title}; security and delivery processing started automatically."
                         : outcome.Error ?? "The file could not be imported."));
             }
 
@@ -271,6 +278,14 @@
         "NeedsReview" => Color.Warning,
         "NotAvailable" => Color.Error,
         _ => Color.Default
+    };
+
+    private static Color ProgressColor(string? progressCode) => progressCode switch
+    {
+        "SecurityCheckFailed" or "PublishingNeedsAttention" => Color.Error,
+        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" => Color.Warning,
+        "Available" => Color.Success,
+        _ => Color.Info
     };
 
     private static string StatusLabel(string status) => status switch

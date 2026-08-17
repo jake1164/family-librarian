@@ -79,12 +79,14 @@ public sealed class AcquisitionStagingService(
         }
 
         // The file is already in quarantine at this point, which is safe: it is
-        // untrusted storage with no browser access and no path to Trusted. A
-        // rejected artifact is simply left there rather than deleted — quarantine
-        // retention/cleanup is a separate, later concern.
+        // untrusted storage with no browser access and no path to Trusted. If
+        // it cannot become an asset (wrong type or duplicate), remove this
+        // temporary file immediately rather than leaving an orphan behind.
         if (!KnownFormatContentTypes.ByExtension.TryGetValue(extension, out var expectedContentType) ||
             !string.Equals(staged.DetectedMimeType, expectedContentType, StringComparison.OrdinalIgnoreCase))
         {
+            await stagingStore.DeleteAsync(
+                MediaAssetStorageState.Quarantine, staged.StoredFilename, cancellationToken);
             return ManualImportResult.Invalid(
                 "The file's contents do not match its file extension.");
         }
@@ -92,6 +94,8 @@ public sealed class AcquisitionStagingService(
         if (await acquisitions.ExistsAssetWithChecksumForFormatAsync(
                 format.Id, staged.Sha256, cancellationToken))
         {
+            await stagingStore.DeleteAsync(
+                MediaAssetStorageState.Quarantine, staged.StoredFilename, cancellationToken);
             return ManualImportResult.DuplicateDetected();
         }
 

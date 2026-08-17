@@ -41,7 +41,8 @@ public enum MediaAssetStorageState
     /// <summary>
     /// The file passed security checks but its content could not be matched to
     /// the Work/request it was staged to fulfill. It is retained for later
-    /// librarian handling and has no path to publishing.
+    /// librarian handling. It can only return to processing for a fresh,
+    /// deterministic identity verification before the usual approval checks.
     /// </summary>
     Unmatched = 6,
     /// <summary>

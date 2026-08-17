@@ -13,6 +13,8 @@ namespace FamilyLibrarian.Application.Security;
 public interface IAssetIdentityVerificationService
 {
     Task<AssetIdentityVerificationResult> VerifyAsync(Guid assetId, CancellationToken cancellationToken);
+
+    Task<AssetIdentityVerificationResult> RetryUnmatchedAsync(Guid assetId, CancellationToken cancellationToken);
 }
 
 public sealed class AssetIdentityVerificationService(
@@ -39,7 +41,7 @@ public sealed class AssetIdentityVerificationService(
         // gain a format-specific identity verifier.
         var result = verifier is null
             ? AssetIdentityVerificationResult.Match("not-applicable")
-            : await VerifySafelyAsync(verifier, asset, cancellationToken);
+            : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Processing, cancellationToken);
 
         if (!result.IsMatch)
         {
@@ -62,13 +64,51 @@ public sealed class AssetIdentityVerificationService(
         return result;
     }
 
+    public async Task<AssetIdentityVerificationResult> RetryUnmatchedAsync(
+        Guid assetId,
+        CancellationToken cancellationToken)
+    {
+        var asset = await repository.FindAssetAsync(assetId, cancellationToken)
+            ?? throw new InvalidOperationException("The staged asset no longer exists.");
+        if (asset.StorageState != MediaAssetStorageState.Unmatched)
+        {
+            throw new InvalidOperationException("Only an unmatched asset can have its identity verification retried.");
+        }
+
+        var verifier = verifiers.FirstOrDefault(verifier => verifier.Supports(asset));
+        var result = verifier is null
+            ? AssetIdentityVerificationResult.Match("not-applicable")
+            : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Unmatched, cancellationToken);
+
+        if (result.IsMatch)
+        {
+            await stagingStore.MoveAsync(
+                MediaAssetStorageState.Unmatched,
+                MediaAssetStorageState.Processing,
+                asset.StoredFilename,
+                cancellationToken);
+            asset.TransitionStorageState(MediaAssetStorageState.Processing, clock.UtcNow);
+            await repository.SaveChangesAsync(cancellationToken);
+        }
+
+        await audit.WriteAsync(
+            result.IsMatch ? AuditActions.AssetIdentityVerified : AuditActions.AssetIdentityUnmatched,
+            AuditSubjectTypes.MediaAsset,
+            assetId.ToString(),
+            new { AssetId = assetId, result.VerifierId, result.IsMatch, Retried = true },
+            cancellationToken);
+
+        return result;
+    }
+
     private async Task<AssetIdentityVerificationResult> VerifyWithAsync(
         IAssetIdentityVerifier verifier,
         MediaAsset asset,
+        MediaAssetStorageState storageState,
         CancellationToken cancellationToken)
     {
         await using var content = await stagingStore.OpenAsync(
-            MediaAssetStorageState.Processing,
+            storageState,
             asset.StoredFilename,
             cancellationToken);
         return await verifier.VerifyAsync(asset, content, cancellationToken);
@@ -77,11 +117,12 @@ public sealed class AssetIdentityVerificationService(
     private async Task<AssetIdentityVerificationResult> VerifySafelyAsync(
         IAssetIdentityVerifier verifier,
         MediaAsset asset,
+        MediaAssetStorageState storageState,
         CancellationToken cancellationToken)
     {
         try
         {
-            return await VerifyWithAsync(verifier, asset, cancellationToken);
+            return await VerifyWithAsync(verifier, asset, storageState, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

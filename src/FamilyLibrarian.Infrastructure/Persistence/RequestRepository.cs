@@ -71,7 +71,8 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             requests = requests.Where(request => request.Status == status);
         }
 
-        return await ProjectAdminViews(requests).ToArrayAsync(cancellationToken);
+        var views = await ProjectAdminViews(requests).ToArrayAsync(cancellationToken);
+        return await AddAdminProgressAsync(views, cancellationToken);
     }
 
     public Task<BookRequest?> FindRequestForAdminAsync(
@@ -92,11 +93,19 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                 request => request.Formats.Any(format => format.Id == requestFormatId),
                 cancellationToken);
 
-    public Task<AdminBookRequestView?> FindAdminViewAsync(
+    public async Task<AdminBookRequestView?> FindAdminViewAsync(
         Guid requestId,
-        CancellationToken cancellationToken) =>
-        ProjectAdminViews(database.BookRequests.Where(request => request.Id == requestId))
+        CancellationToken cancellationToken)
+    {
+        var request = await ProjectAdminViews(database.BookRequests.Where(request => request.Id == requestId))
             .SingleOrDefaultAsync(cancellationToken);
+        if (request is null)
+        {
+            return null;
+        }
+
+        return (await AddAdminProgressAsync([request], cancellationToken)).Single();
+    }
 
     public void AddRequest(BookRequest request) => database.BookRequests.Add(request);
 
@@ -249,6 +258,20 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                     })
                     .ToArray()
             })
+            .ToArray();
+    }
+
+    private async Task<IReadOnlyList<AdminBookRequestView>> AddAdminProgressAsync(
+        IReadOnlyList<AdminBookRequestView> requests,
+        CancellationToken cancellationToken)
+    {
+        var progress = await AddRequesterProgressAsync(
+            requests.Select(request => request.Request).ToArray(),
+            cancellationToken);
+        var progressByRequestId = progress.ToDictionary(request => request.Id);
+
+        return requests
+            .Select(request => request with { Request = progressByRequestId[request.Request.Id] })
             .ToArray();
     }
 

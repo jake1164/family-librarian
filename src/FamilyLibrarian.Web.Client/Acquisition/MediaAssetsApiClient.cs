@@ -76,6 +76,9 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
     public Task<MediaAssetActionOutcome> EvaluateAsync(Guid assetId, CancellationToken cancellationToken = default) =>
         SendActionAsync($"api/v1/admin/media-assets/{assetId}/evaluate", reason: null, cancellationToken);
 
+    public Task<MediaAssetActionOutcome> RetryIdentityAsync(Guid assetId, CancellationToken cancellationToken = default) =>
+        SendActionAsync($"api/v1/admin/media-assets/{assetId}/retry-identity", reason: null, cancellationToken);
+
     public Task<MediaAssetActionOutcome> ApproveAsync(Guid assetId, CancellationToken cancellationToken = default) =>
         SendActionAsync($"api/v1/admin/media-assets/{assetId}/approve", reason: null, cancellationToken);
 

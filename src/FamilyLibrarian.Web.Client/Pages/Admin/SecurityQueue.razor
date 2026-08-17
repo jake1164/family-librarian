@@ -14,8 +14,9 @@
 <MudText Typo="Typo.body1" Class="mb-6">
     Every manually imported file is scanned and format-checked automatically. A clean, valid result is
     automatically approved and sent to its library destination. Quarantined files can be retried or deleted;
-    rejected non-malicious files are retained until deleted. Confirmed malware is deleted automatically, while
-    its security record remains here for review. Unmatched files cannot be approved or published.
+    rejected non-malicious files are retained until deleted. Confirmed malware is deleted automatically and its
+    audit record remains available without leaving a dead item in this queue. Unmatched files cannot be approved
+    or published until a retry verifies their identity.
 </MudText>
 
 @if (loadFailed)
@@ -109,6 +110,15 @@ else
                             Reject
                         </MudButton>
                     }
+                    @if (CanRetryIdentity(asset))
+                    {
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Disabled="@(busyAssetId is not null)"
+                                   OnClick="@(() => RetryIdentityAsync(asset))">
+                            Retry identity check
+                        </MudButton>
+                    }
                     @if (CanDiscard(asset))
                     {
                         <MudButton Variant="Variant.Outlined"
@@ -155,6 +165,9 @@ else
 
     private async Task ApproveAsync(MediaAssetAdminResponse asset) =>
         await RunAsync(asset, () => MediaAssets.ApproveAsync(asset.AssetId));
+
+    private async Task RetryIdentityAsync(MediaAssetAdminResponse asset) =>
+        await RunAsync(asset, () => MediaAssets.RetryIdentityAsync(asset.AssetId));
 
     private async Task RejectAsync(MediaAssetAdminResponse asset) =>
         await RunAsync(asset, () => MediaAssets.RejectAsync(asset.AssetId));
@@ -206,6 +219,9 @@ else
 
     private static bool CanDiscard(MediaAssetAdminResponse asset) =>
         asset.StorageState is "Quarantine" or "Rejected" or "Unmatched";
+
+    private static bool CanRetryIdentity(MediaAssetAdminResponse asset) =>
+        asset.StorageState == "Unmatched" && asset.LatestEvaluation?.Status == "Passed";
 
     private static Color EvaluationColor(string status) => status switch
     {

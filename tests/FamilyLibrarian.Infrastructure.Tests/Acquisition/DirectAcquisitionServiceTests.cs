@@ -84,6 +84,7 @@ public sealed class DirectAcquisitionServiceTests
 
         Assert.AreEqual(ManualImportOutcome.DuplicateDetected, result.Outcome);
         Assert.AreEqual(0, context.Repository.Assets.Count);
+        Assert.AreEqual(1, context.StagingStore.DeleteCount);
     }
 
     private sealed class TestContext
@@ -215,6 +216,8 @@ public sealed class DirectAcquisitionServiceTests
     {
         public int WriteCount { get; private set; }
 
+        public int DeleteCount { get; private set; }
+
         public string NextSha256 { get; } = new string('a', 64);
 
         public string NextDetectedMimeType { get; set; } = "application/epub+zip";
@@ -240,6 +243,16 @@ public sealed class DirectAcquisitionServiceTests
             string storedFilename,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task DeleteAsync(
+            MediaAssetStorageState zone,
+            string storedFilename,
+            CancellationToken cancellationToken)
+        {
+            Assert.AreEqual(MediaAssetStorageState.Quarantine, zone);
+            DeleteCount++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class AlwaysHealthyBoundaryGuard : IAcquisitionBoundaryGuard

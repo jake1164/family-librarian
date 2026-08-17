@@ -69,7 +69,7 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works) : IAssetIdentit
 
             var (titles, creators) = await ReadPackageMetadataAsync(package, cancellationToken);
             var titleMatches = titles.Any(title => Matches(expected.Title, title));
-            var authorMatches = creators.Any(creator => Matches(expected.PrimaryAuthor, creator));
+            var authorMatches = creators.Any(creator => AuthorMatches(expected.PrimaryAuthor, creator));
 
             return titleMatches && authorMatches
                 ? AssetIdentityVerificationResult.Match(Id)
@@ -133,6 +133,39 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works) : IAssetIdentit
 
     private static bool Matches(string expected, string actual) =>
         string.Equals(Normalize(expected), Normalize(actual), StringComparison.Ordinal);
+
+    // EPUB creators commonly use catalog order ("Mafi, Tahereh") while the
+    // family catalog uses display order ("Tahereh Mafi").  Compare the same
+    // normalized name parts without giving up the strict title comparison.
+    private static bool AuthorMatches(string expected, string actual) =>
+        AuthorTokens(expected).SequenceEqual(AuthorTokens(actual), StringComparer.Ordinal);
+
+    private static string[] AuthorTokens(string value)
+    {
+        var tokens = new List<string>();
+        var token = new StringBuilder();
+
+        foreach (var character in value.Normalize(NormalizationForm.FormKC))
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                token.Append(char.ToLowerInvariant(character));
+            }
+            else if (token.Length > 0)
+            {
+                tokens.Add(token.ToString());
+                token.Clear();
+            }
+        }
+
+        if (token.Length > 0)
+        {
+            tokens.Add(token.ToString());
+        }
+
+        tokens.Sort(StringComparer.Ordinal);
+        return tokens.ToArray();
+    }
 
     private static string Normalize(string value) => new(value
         .Normalize(NormalizationForm.FormKC)

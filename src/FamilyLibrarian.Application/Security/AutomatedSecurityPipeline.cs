@@ -11,7 +11,8 @@ namespace FamilyLibrarian.Application.Security;
 /// </remarks>
 public sealed class AutomatedSecurityPipeline(
     ISecurityEvaluationRunner evaluations,
-    IPolicyAssetApprovalService approvals)
+    IPolicyAssetApprovalService approvals,
+    IAssetIdentityVerificationService identity)
 {
     private const string CleanScanPolicyName = "clean-security-evaluation-v1";
 
@@ -35,5 +36,19 @@ public sealed class AutomatedSecurityPipeline(
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Retries an unmatched asset's deterministic identity check, then sends a
+    /// match through the same clean-scan approval policy as a new upload.
+    /// </summary>
+    public async Task<ApprovalResult> RetryIdentityAsync(
+        Guid assetId,
+        CancellationToken cancellationToken)
+    {
+        var result = await identity.RetryUnmatchedAsync(assetId, cancellationToken);
+        return result.IsMatch
+            ? await approvals.ApproveByPolicyAsync(assetId, CleanScanPolicyName, cancellationToken)
+            : ApprovalResult.IdentityUnmatched();
     }
 }

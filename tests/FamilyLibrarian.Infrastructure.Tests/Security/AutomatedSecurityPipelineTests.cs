@@ -13,7 +13,8 @@ public sealed class AutomatedSecurityPipelineTests
         var approvals = new RecordingPolicyApprovalService();
         var pipeline = new AutomatedSecurityPipeline(
             new DeterministicEvaluationRunner(SecurityEvaluationStatus.Passed),
-            approvals);
+            approvals,
+            new DeterministicIdentityVerificationService());
 
         var result = await pipeline.EvaluateAsync(assetId, CancellationToken.None);
 
@@ -28,7 +29,8 @@ public sealed class AutomatedSecurityPipelineTests
         var approvals = new RecordingPolicyApprovalService();
         var pipeline = new AutomatedSecurityPipeline(
             new DeterministicEvaluationRunner(SecurityEvaluationStatus.ReviewRequired),
-            approvals);
+            approvals,
+            new DeterministicIdentityVerificationService());
 
         var result = await pipeline.EvaluateAsync(Guid.NewGuid(), CancellationToken.None);
 
@@ -42,12 +44,30 @@ public sealed class AutomatedSecurityPipelineTests
         var approvals = new RecordingPolicyApprovalService(ApprovalResult.IdentityUnmatched());
         var pipeline = new AutomatedSecurityPipeline(
             new DeterministicEvaluationRunner(SecurityEvaluationStatus.Passed),
-            approvals);
+            approvals,
+            new DeterministicIdentityVerificationService());
 
         var result = await pipeline.EvaluateAsync(Guid.NewGuid(), CancellationToken.None);
 
         Assert.AreEqual(SecurityEvaluationStatus.Passed, result.Status);
         Assert.IsNotNull(approvals.AssetId);
+    }
+
+    [TestMethod]
+    public async Task ARetriedMatchingIdentityIsApprovedByTheCleanScanPolicy()
+    {
+        var assetId = Guid.NewGuid();
+        var approvals = new RecordingPolicyApprovalService();
+        var identity = new DeterministicIdentityVerificationService(AssetIdentityVerificationResult.Match("test"));
+        var pipeline = new AutomatedSecurityPipeline(
+            new DeterministicEvaluationRunner(SecurityEvaluationStatus.Passed), approvals, identity);
+
+        var result = await pipeline.RetryIdentityAsync(assetId, CancellationToken.None);
+
+        Assert.AreEqual(ApprovalOutcome.Success, result.Outcome);
+        Assert.AreEqual(assetId, identity.RetriedAssetId);
+        Assert.AreEqual(assetId, approvals.AssetId);
+        Assert.AreEqual("clean-security-evaluation-v1", approvals.PolicyName);
     }
 
     private sealed class DeterministicEvaluationRunner(SecurityEvaluationStatus status) : ISecurityEvaluationRunner
@@ -70,6 +90,23 @@ public sealed class AutomatedSecurityPipelineTests
             AssetId = assetId;
             PolicyName = policyName;
             return Task.FromResult(result ?? ApprovalResult.Success());
+        }
+    }
+
+    private sealed class DeterministicIdentityVerificationService(
+        AssetIdentityVerificationResult? retryResult = null) : IAssetIdentityVerificationService
+    {
+        public Guid? RetriedAssetId { get; private set; }
+
+        public Task<AssetIdentityVerificationResult> VerifyAsync(Guid assetId, CancellationToken cancellationToken) =>
+            Task.FromResult(AssetIdentityVerificationResult.Match("test"));
+
+        public Task<AssetIdentityVerificationResult> RetryUnmatchedAsync(
+            Guid assetId,
+            CancellationToken cancellationToken)
+        {
+            RetriedAssetId = assetId;
+            return Task.FromResult(retryResult ?? AssetIdentityVerificationResult.Match("test"));
         }
     }
 }
