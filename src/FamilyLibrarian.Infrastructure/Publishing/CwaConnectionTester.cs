@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
+using System.Xml.Linq;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Publishing;
@@ -250,7 +251,9 @@ public sealed class CwaConnectionTester(ICredentialProtector protector, IHttpCli
             var client = httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(10);
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"{settings.OpdsBaseUrl.TrimEnd('/')}/opds/");
+            var probeQuery = $"family-librarian-opds-probe-{Guid.NewGuid():N}";
+            var requestUri = $"{settings.OpdsBaseUrl.TrimEnd('/')}/opds/search/{Uri.EscapeDataString(probeQuery)}";
+            using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
             if (!string.IsNullOrWhiteSpace(settings.OpdsUsername))
             {
                 if (!settings.HasOpdsPassword)
@@ -279,9 +282,34 @@ public sealed class CwaConnectionTester(ICredentialProtector protector, IHttpCli
             }
 
             using var response = await client.SendAsync(request, cancellationToken);
-            return response.IsSuccessStatusCode
-                ? new ConnectionTestOutcome(true, "The OPDS catalog is reachable.")
-                : new ConnectionTestOutcome(false, $"The OPDS catalog responded with status {(int)response.StatusCode}.");
+            if (!response.IsSuccessStatusCode)
+            {
+                return new ConnectionTestOutcome(
+                    false,
+                    $"The OPDS catalog search endpoint responded with status {(int)response.StatusCode}.");
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            XDocument document;
+            try
+            {
+                document = XDocument.Parse(body);
+            }
+            catch (System.Xml.XmlException)
+            {
+                return new ConnectionTestOutcome(
+                    false,
+                    "The OPDS catalog search endpoint responded, but not with a valid XML feed.");
+            }
+
+            XNamespace atom = "http://www.w3.org/2005/Atom";
+            return document.Root?.Name == atom + "feed"
+                ? new ConnectionTestOutcome(
+                    true,
+                    "The OPDS catalog search endpoint authenticated successfully and returned a valid Atom feed.")
+                : new ConnectionTestOutcome(
+                    false,
+                    "The OPDS catalog search endpoint responded, but not with an Atom OPDS feed.");
         }
         catch (HttpRequestException exception)
         {

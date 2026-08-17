@@ -141,9 +141,16 @@ internal static class CwaSettingsEndpoints
             result.SftpHostKeyFingerprint));
     }
 
-    private static Task<IResult> TestCwaOpdsConnectionAsync(
-        CwaSettingsService service, CancellationToken cancellationToken) =>
-        TestCwaConnectionAsync(CwaConnectionTestTarget.Opds, service, cancellationToken);
+    private static async Task<IResult> TestCwaOpdsConnectionAsync(
+        TestCwaOpdsRequest request,
+        CwaSettingsService service,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.TestOpdsConnectionAsync(
+            new CwaOpdsTestConfiguration(request.OpdsBaseUrl, request.OpdsUsername, request.OpdsPassword),
+            cancellationToken);
+        return Results.Ok(new PublishingConnectionTestResponse(result.Succeeded, result.Message));
+    }
 
     private static async Task<IResult> TestCwaConnectionAsync(
         CwaConnectionTestTarget target,

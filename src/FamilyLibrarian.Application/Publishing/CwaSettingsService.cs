@@ -256,6 +256,57 @@ public sealed class CwaSettingsService(
         return await connectionTester.TestAsync(candidate, CwaConnectionTestTarget.Ingest, cancellationToken);
     }
 
+    /// <summary>
+    /// Tests the OPDS search values currently in the administrator's form
+    /// without changing persisted configuration, credentials, audit state, or
+    /// last-test status.
+    /// </summary>
+    public async Task<ConnectionTestOutcome> TestOpdsConnectionAsync(
+        CwaOpdsTestConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(configuration.OpdsBaseUrl))
+        {
+            return new ConnectionTestOutcome(false, "An OPDS base URL is required for an OPDS test.");
+        }
+
+        var persisted = await store.FindAsync(cancellationToken);
+        var candidate = new CwaSettings(clock.UtcNow);
+        candidate.SetSettings(
+            CwaTransportMode.Local,
+            null,
+            null,
+            null,
+            null,
+            null,
+            CwaSftpAuthenticationMode.PrivateKey,
+            configuration.OpdsBaseUrl,
+            configuration.OpdsUsername,
+            currentUser.UserId,
+            clock.UtcNow);
+
+        if (!string.IsNullOrWhiteSpace(configuration.OpdsPassword))
+        {
+            candidate.SetOpdsPassword(
+                protector.Protect(OpdsPasswordPurpose, configuration.OpdsPassword),
+                protector.FormatVersion,
+                null,
+                currentUser.UserId,
+                clock.UtcNow);
+        }
+        else if (persisted?.HasOpdsPassword == true)
+        {
+            candidate.SetOpdsPassword(
+                persisted.ProtectedOpdsPassword!,
+                persisted.OpdsPasswordFormatVersion,
+                null,
+                currentUser.UserId,
+                clock.UtcNow);
+        }
+
+        return await connectionTester.TestAsync(candidate, CwaConnectionTestTarget.Opds, cancellationToken);
+    }
+
     private async Task<CwaCommandResult> SetSecretAsync(
         string plaintext,
         string purpose,

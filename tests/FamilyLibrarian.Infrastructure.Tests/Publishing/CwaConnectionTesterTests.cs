@@ -60,6 +60,33 @@ public sealed class CwaConnectionTesterTests
         Assert.AreEqual("No OPDS URL is configured; import verification will be skipped.", result.Message);
     }
 
+    [TestMethod]
+    public async Task OpdsTestUsesTheSameSearchRouteAndRequiresAnAtomFeed()
+    {
+        var settings = CreatePasswordSettings();
+        settings.SetSettings(
+            CwaTransportMode.Sftp,
+            null,
+            "sftp.example.test",
+            22,
+            "cwa",
+            "/ingest",
+            CwaSftpAuthenticationMode.Password,
+            "https://cwa.example.test",
+            null,
+            null,
+            Now);
+        var handler = new OpdsSearchHandler();
+        var tester = CreateTester(new TestCredentialProtector(), new TestHttpClientFactory(handler));
+
+        var result = await tester.TestAsync(settings, CwaConnectionTestTarget.Opds, CancellationToken.None);
+
+        Assert.IsTrue(result.Succeeded);
+        StringAssert.Contains(result.Message, "search endpoint");
+        Assert.IsNotNull(handler.RequestUri);
+        StringAssert.StartsWith(handler.RequestUri.AbsolutePath, "/opds/search/");
+    }
+
     private static CwaSettings CreatePasswordSettings()
     {
         var settings = new CwaSettings(Now);
@@ -78,8 +105,10 @@ public sealed class CwaConnectionTesterTests
         return settings;
     }
 
-    private static CwaConnectionTester CreateTester(ICredentialProtector protector) =>
-        new(protector, new TestHttpClientFactory());
+    private static CwaConnectionTester CreateTester(
+        ICredentialProtector protector,
+        IHttpClientFactory? httpClientFactory = null) =>
+        new(protector, httpClientFactory ?? new TestHttpClientFactory());
 
     private sealed class TestCredentialProtector : ICredentialProtector
     {
@@ -93,8 +122,25 @@ public sealed class CwaConnectionTesterTests
             CanUnprotect ? protectedValue : null;
     }
 
-    private sealed class TestHttpClientFactory : IHttpClientFactory
+    private sealed class TestHttpClientFactory(HttpMessageHandler? handler = null) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new();
+        public HttpClient CreateClient(string name) => handler is null ? new() : new(handler, disposeHandler: false);
+    }
+
+    private sealed class OpdsSearchHandler : HttpMessageHandler
+    {
+        public Uri? RequestUri { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            RequestUri = request.RequestUri;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "<feed xmlns=\"http://www.w3.org/2005/Atom\"><title>Search results</title></feed>")
+            });
+        }
     }
 }

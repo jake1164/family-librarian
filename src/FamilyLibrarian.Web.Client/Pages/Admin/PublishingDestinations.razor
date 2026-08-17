@@ -132,7 +132,7 @@ else
             <MudText Typo="Typo.body2" Class="mb-3">
                 OPDS is CWA's HTTP catalog. It is not part of SFTP delivery. Leave this blank if
                 Family Librarian cannot reach CWA over HTTP or you don't need import confirmation.
-                The OPDS test saves the current OPDS values before checking the catalog.
+                The OPDS test checks the current form values without saving them.
             </MudText>
             <MudStack Spacing="3">
                 <MudTextField T="string" Label="CWA OPDS base URL" @bind-Value="cwaOpdsBaseUrl" Disabled="@cwaBusy" />
@@ -146,7 +146,7 @@ else
                            OnClick="SaveCwaOpdsAsync">Save OPDS settings</MudButton>
                 <MudButton Variant="Variant.Outlined"
                            Disabled="@(cwaBusy || string.IsNullOrWhiteSpace(cwaOpdsBaseUrl))"
-                           OnClick="SaveAndTestCwaOpdsAsync">Test OPDS</MudButton>
+                           OnClick="TestCwaOpdsAsync">Test OPDS</MudButton>
             </MudStack>
             @if (cwaOpdsTestResult is not null)
             {
@@ -300,24 +300,21 @@ else
         }
     }
 
-    private async Task SaveAndTestCwaOpdsAsync()
+    private async Task TestCwaOpdsAsync()
     {
         cwaBusy = true;
         try
         {
-            if (!await SaveCurrentCwaSettingsAsync(saveIngestCredential: false, saveOpdsCredential: true))
-            {
-                return;
-            }
-
-            cwaOpdsTestResult = await CwaApi.TestOpdsAsync();
+            cwaOpdsTestResult = await CwaApi.TestOpdsAsync(new TestCwaOpdsRequest(
+                cwaOpdsBaseUrl,
+                cwaOpdsUsername,
+                cwaOpdsPasswordDraft));
             if (cwaOpdsTestResult is null)
             {
                 Snackbar.Add("The OPDS test could not be run.", Severity.Error);
                 return;
             }
 
-            await LoadCwaAsync();
         }
         finally
         {

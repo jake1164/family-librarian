@@ -70,6 +70,15 @@ public sealed record TestCwaIngestRequest(
     string? SftpPassword,
     string? TrustedSftpHostKeyFingerprint);
 
+/// <summary>
+/// A non-persistent OPDS search probe. The password is used only for the
+/// request and is never written unless the administrator subsequently saves.
+/// </summary>
+public sealed record TestCwaOpdsRequest(
+    string? OpdsBaseUrl,
+    string? OpdsUsername,
+    string? OpdsPassword);
+
 public sealed record AudiobookshelfSettingsResponse(
     bool IsEnabled,
     string? BaseUrl,

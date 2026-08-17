@@ -92,8 +92,9 @@ public sealed class PublishingSettingsEndpointTests
         var ingestTestResponse = await client.PostAsync(
             "/api/v1/admin/publishing/cwa/test-ingest", content: null);
         var ingestTestBody = await ingestTestResponse.Content.ReadAsStringAsync();
-        var opdsTestResponse = await client.PostAsync(
-            "/api/v1/admin/publishing/cwa/test-opds", content: null);
+        var opdsTestResponse = await client.PostAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/test-opds",
+            new TestCwaOpdsRequest("http://127.0.0.1:9", null, null));
         var opdsTestBody = await opdsTestResponse.Content.ReadAsStringAsync();
 
         foreach (var (name, body) in new[]

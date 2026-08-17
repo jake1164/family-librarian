@@ -50,8 +50,10 @@ public sealed class CwaSettingsApiClient(HttpClient httpClient, AntiforgeryToken
         CancellationToken cancellationToken = default) =>
         TestAsync("test-ingest", request, cancellationToken);
 
-    public Task<PublishingConnectionTestResponse?> TestOpdsAsync(CancellationToken cancellationToken = default) =>
-        TestAsync("test-opds", null, cancellationToken);
+    public Task<PublishingConnectionTestResponse?> TestOpdsAsync(
+        TestCwaOpdsRequest request,
+        CancellationToken cancellationToken = default) =>
+        TestAsync("test-opds", request, cancellationToken);
 
     private async Task<PublishingConnectionTestResponse?> TestAsync(
         string operation,
