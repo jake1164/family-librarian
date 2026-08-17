@@ -1,0 +1,29 @@
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+    # No `allow: dependency-type: direct` filter here, unlike the m3undle
+    # template this was adapted from: this repo pins transitive packages too
+    # (CentralPackageTransitivePinningEnabled, see the SSH.NET/
+    # GHSA-q939-rpr3-3284 entry in Directory.Packages.props), and Dependabot's
+    # NuGet updater has a known gap generating alerts for anything but direct
+    # PackageReference versions under central package management
+    # (dependabot/dependabot-core#12476). Restricting to "direct" would blind
+    # this exact repo to the exact class of CVE it has already had to hand-pin
+    # once. The CI vulnerable-packages job (`dotnet list package --vulnerable`)
+    # doesn't share that blind spot and remains the primary check either way.
+
+    groups:
+      dotnet-dependencies:
+        patterns:
+          - "*"

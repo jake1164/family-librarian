@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Supersede an in-flight run when new commits land on the same branch/PR
+# instead of letting both finish.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # global.json pins the exact SDK (10.0.100, rollForward: latestFeature);
+  # setup-dotnet reads it via global-json-file below rather than duplicating
+  # the version here.
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  # AGENTS.md: "the project must build with zero warnings and zero errors,
+  # and all relevant tests must complete successfully" — Directory.Build.props
+  # already sets TreatWarningsAsErrors, so a plain build enforces that here.
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore FamilyLibrarian.slnx
+
+      - name: Build (zero warnings, zero errors)
+        run: dotnet build FamilyLibrarian.slnx --no-restore
+
+      # Testcontainers.PostgreSql needs a Docker daemon, which is
+      # preinstalled and running on GitHub-hosted ubuntu-latest runners.
+      - name: Test
+        run: dotnet test --solution FamilyLibrarian.slnx --no-restore
+
+  # docs/01 §13.1 requires "dependency and container image scanning in the
+  # build pipeline". This job covers NuGet packages; container-scan below
+  # covers the published image.
+  vulnerable-packages:
+    name: Vulnerable NuGet packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore FamilyLibrarian.slnx
+
+      # `dotnet list package --vulnerable` always exits 0, even when it finds
+      # something, so the check has to read its own output.
+      - name: Check for known-vulnerable packages
+        run: |
+          set -o pipefail
+          OUTPUT="$(dotnet list FamilyLibrarian.slnx package --vulnerable --include-transitive --no-restore)"
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -q "has the following vulnerable packages"; then
+            echo "::error::One or more NuGet packages have a known vulnerability. Pin a patched version (see Directory.Packages.props for the pattern already used for SSH.NET/GHSA-q939-rpr3-3284)."
+            exit 1
+          fi
+
+  # Builds the same image Compose and the release pipeline publish (a bare
+  # `docker build` selects the Dockerfile's last stage, `final` — the debug
+  # stage with vsdbg is declared earlier specifically so it can never be
+  # picked up here) and scans it for known-fixable CRITICAL/HIGH CVEs.
+  container-scan:
+    name: Container image scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build -t family-librarian:ci-${{ github.sha }} .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: family-librarian:ci-${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          # A CVE with no available fix isn't something changing this
+          # repository's code or pinned versions can resolve.
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Upload results to the Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
