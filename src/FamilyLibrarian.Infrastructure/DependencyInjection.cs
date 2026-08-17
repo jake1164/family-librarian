@@ -175,6 +175,12 @@ public static class DependencyInjection
             .ValidateOnStart();
         services.AddSingleton<IMalwareScanner, ClamAvMalwareScanner>();
 
+        // F1: the second half of the security gate, alongside malware
+        // scanning above. SecurityPipelineStartupCheck (invoked from
+        // Program.cs) refuses to serve if this collection is ever empty.
+        services.AddSingleton<IAssetValidator, FileTypeValidator>();
+        services.AddSingleton<IAssetValidator, EpubValidator>();
+
         services.AddScoped<IAcquisitionBoundaryGuard, AcquisitionBoundaryGuard>();
         services.AddScoped<ISecurityEvaluationRepository, SecurityEvaluationRepository>();
         services.AddScoped<SecurityEvaluationService>();

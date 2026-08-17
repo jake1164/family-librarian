@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Infrastructure.Acquisition;
 using Microsoft.Extensions.Options;
 
@@ -90,6 +91,57 @@ public sealed class FileSystemAssetStagingStoreTests
             CancellationToken.None);
 
         Assert.AreEqual("application/octet-stream", staged.DetectedMimeType);
+    }
+
+    [TestMethod]
+    public async Task MoveAsyncRelocatesTheFileBetweenZones()
+    {
+        var store = CreateStore();
+        var staged = await store.WriteToQuarantineAsync(
+            new MemoryStream("epub bytes"u8.ToArray()), "book.epub", maxSizeBytes: 1_000_000, CancellationToken.None);
+
+        await store.MoveAsync(
+            MediaAssetStorageState.Quarantine, MediaAssetStorageState.Processing, staged.StoredFilename, CancellationToken.None);
+
+        Assert.IsFalse(File.Exists(Path.Combine(_root, "quarantine", staged.StoredFilename)));
+        Assert.IsTrue(File.Exists(Path.Combine(_root, "processing", staged.StoredFilename)));
+    }
+
+    [TestMethod]
+    public async Task MoveAsyncIsANoOpWhenTheFileIsAlreadyAtItsDestination()
+    {
+        // Simulates a retry after a crash between a completed file move and the
+        // matching database commit — see SecurityEvaluationService's remarks
+        // (F3). Before this fix, a second MoveAsync call in this situation
+        // threw FileNotFoundException on every retry, forever: the source had
+        // nothing left to move.
+        var store = CreateStore();
+        var staged = await store.WriteToQuarantineAsync(
+            new MemoryStream("epub bytes"u8.ToArray()), "book.epub", maxSizeBytes: 1_000_000, CancellationToken.None);
+        await store.MoveAsync(
+            MediaAssetStorageState.Quarantine, MediaAssetStorageState.Processing, staged.StoredFilename, CancellationToken.None);
+
+        // No exception: the file is already exactly where this call would put it.
+        await store.MoveAsync(
+            MediaAssetStorageState.Quarantine, MediaAssetStorageState.Processing, staged.StoredFilename, CancellationToken.None);
+
+        Assert.IsTrue(File.Exists(Path.Combine(_root, "processing", staged.StoredFilename)));
+    }
+
+    [TestMethod]
+    public async Task MoveAsyncStillThrowsWhenNeitherZoneHasTheFile()
+    {
+        var store = CreateStore();
+
+        // A genuinely missing file — not the "already moved" case above, since
+        // the destination doesn't have it either — must still surface as an
+        // error rather than being silently treated as a no-op success.
+        await Assert.ThrowsExactlyAsync<FileNotFoundException>(() =>
+            store.MoveAsync(
+                MediaAssetStorageState.Quarantine,
+                MediaAssetStorageState.Processing,
+                $"{Guid.NewGuid():N}.epub",
+                CancellationToken.None));
     }
 
     private FileSystemAssetStagingStore CreateStore() =>

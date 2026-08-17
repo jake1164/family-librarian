@@ -105,6 +105,18 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
 
         var sourcePath = Path.Combine(ZoneDirectory(fromZone), storedFilename);
         var destinationPath = Path.Combine(destinationDirectory, storedFilename);
+
+        // A retry after a crash between this move completing and the matching
+        // database commit finds the file already gone from its source and
+        // present at its destination — that is the move having already
+        // succeeded, not a new failure. Without this, File.Move would throw
+        // FileNotFoundException on every subsequent retry, forever: the source
+        // no longer has anything to move.
+        if (!File.Exists(sourcePath) && File.Exists(destinationPath))
+        {
+            return Task.CompletedTask;
+        }
+
         File.Move(sourcePath, destinationPath, overwrite: false);
 
         return Task.CompletedTask;

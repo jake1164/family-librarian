@@ -244,32 +244,7 @@ public sealed class PublishingQueueEndpointTests
         return (request.Id, format.FormatId);
     }
 
-    private static byte[] BuildMinimalEpubBytes()
-    {
-        const string entryName = "mimetype";
-        const string content = "application/epub+zip";
-        var nameBytes = System.Text.Encoding.ASCII.GetBytes(entryName);
-        var contentBytes = System.Text.Encoding.ASCII.GetBytes(content);
-
-        using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream);
-
-        writer.Write(0x04034B50u);
-        writer.Write((ushort)20);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write(0u);
-        writer.Write((uint)contentBytes.Length);
-        writer.Write((uint)contentBytes.Length);
-        writer.Write((ushort)nameBytes.Length);
-        writer.Write((ushort)0);
-        writer.Write(nameBytes);
-        writer.Write(contentBytes);
-
-        return stream.ToArray();
-    }
+    private static byte[] BuildMinimalEpubBytes() => EpubTestFixture.BuildMinimalEpubBytes();
 
     private static byte[] BuildMinimalMp3Bytes()
     {

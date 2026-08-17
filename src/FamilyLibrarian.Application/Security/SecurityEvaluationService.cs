@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
@@ -48,31 +49,67 @@ public sealed class SecurityEvaluationService(
             MediaAssetStorageState.Quarantine, MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
         asset.TransitionStorageState(MediaAssetStorageState.Processing, now);
 
+        // Persisted immediately, not batched with everything below: from here
+        // on, a scanner or validator can throw (see ClamAvMalwareScannerTests
+        // for a documented case — a dropped connection propagates raw rather
+        // than being swallowed). Before this fix, that left the database still
+        // saying Quarantine while the file already sat in processing/, and
+        // every retry's MoveAsync then threw FileNotFoundException forever —
+        // the file had nowhere to move from. Saving here first means a later
+        // failure has a database state to recover *from* instead of a stale
+        // one to collide with.
+        await repository.SaveChangesAsync(cancellationToken);
+
         var evaluation = new SecurityEvaluation(assetId, PolicyVersion, now);
 
-        foreach (var scanner in scanners)
+        try
         {
-            var health = await scanner.CheckHealthAsync(cancellationToken);
-            if (!health.IsHealthy)
+            foreach (var scanner in scanners)
             {
+                var health = await scanner.CheckHealthAsync(cancellationToken);
+                if (!health.IsHealthy)
+                {
+                    evaluation.RecordScanResult(
+                        scanner.Id, scanner.IsRequired, ScanResultStatus.Unavailable, null, health.Version, now);
+                    continue;
+                }
+
+                await using var content = await stagingStore.OpenAsync(
+                    MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
+                var outcome = await scanner.ScanAsync(content, cancellationToken);
                 evaluation.RecordScanResult(
-                    scanner.Id, scanner.IsRequired, ScanResultStatus.Unavailable, null, health.Version, now);
-                continue;
+                    scanner.Id, scanner.IsRequired, outcome.Status, outcome.ThreatName, health.Version, now);
             }
 
-            await using var content = await stagingStore.OpenAsync(
-                MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
-            var outcome = await scanner.ScanAsync(content, cancellationToken);
-            evaluation.RecordScanResult(
-                scanner.Id, scanner.IsRequired, outcome.Status, outcome.ThreatName, health.Version, now);
+            foreach (var validator in validators)
+            {
+                await using var content = await stagingStore.OpenAsync(
+                    MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
+                var outcome = await validator.ValidateAsync(asset, content, cancellationToken);
+                evaluation.RecordValidationResult(validator.Id, outcome.IsValid, outcome.Message, now);
+            }
         }
-
-        foreach (var validator in validators)
+        catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException)
         {
-            await using var content = await stagingStore.OpenAsync(
-                MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
-            var outcome = await validator.ValidateAsync(asset, content, cancellationToken);
-            evaluation.RecordValidationResult(validator.Id, outcome.IsValid, outcome.Message, now);
+            // Re-queues rather than stranding the asset: MediaAssetStorageTransitions
+            // already allows Processing -> Quarantine for exactly this
+            // "transient scan/validator error" case (see its remarks). This
+            // makes the failure retryable through the same path a first
+            // attempt uses, rather than a dead end only Rejected/Trusted could
+            // previously reach.
+            await stagingStore.MoveAsync(
+                MediaAssetStorageState.Processing, MediaAssetStorageState.Quarantine, asset.StoredFilename, cancellationToken);
+            asset.TransitionStorageState(MediaAssetStorageState.Quarantine, clock.UtcNow);
+            await repository.SaveChangesAsync(cancellationToken);
+
+            await audit.WriteAsync(
+                AuditActions.AssetEvaluationFailed,
+                AuditSubjectTypes.MediaAsset,
+                assetId.ToString(),
+                new { AssetId = assetId, Reason = exception.GetType().Name },
+                cancellationToken);
+
+            throw;
         }
 
         evaluation.Evaluate(now);

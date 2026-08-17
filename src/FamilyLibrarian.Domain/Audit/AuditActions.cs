@@ -25,6 +25,7 @@ public static class AuditActions
     public const string DirectAcquisitionStaged = "direct_acquisition.staged";
 
     public const string AssetEvaluated = "asset.evaluated";
+    public const string AssetEvaluationFailed = "asset.evaluation_failed";
     public const string AssetApproved = "asset.approved";
     public const string AssetRejected = "asset.rejected";
     public const string AssetPublished = "asset.published";

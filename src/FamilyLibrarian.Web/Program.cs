@@ -61,6 +61,12 @@ if (args.Contains("--migrate", StringComparer.Ordinal))
     return;
 }
 
+// Refuses to serve at all rather than silently accept every uploaded or
+// acquired file as validly formatted — see F1 in the architecture review.
+// Not required for --migrate above: a schema-only run never touches the
+// security pipeline.
+app.Services.EnsureAssetValidatorsAreConfigured();
+
 if (app.Configuration.GetValue<bool>("Authentication:EnableLocal"))
 {
     await app.Services.InitializeIdentityAsync(app.Configuration);
