@@ -1,11 +1,11 @@
-# Local F5-debugging database only.
+# Local F5-debugging support services.
 #
 # `compose.yaml` deliberately keeps PostgreSQL unpublished, so the host process
-# started by the VS Code debugger cannot reach it. This file runs a separate,
-# throwaway PostgreSQL on localhost:5432 using the same credentials that
-# src/FamilyLibrarian.Web/appsettings.Development.json already expects. It is a
-# development-only database with development-only credentials and is never part
-# of `docker compose up`.
+# started by the VS Code debugger cannot reach it. This file runs separate,
+# development-only services on loopback using the settings in
+# src/FamilyLibrarian.Web/appsettings.Development.json. The host process needs
+# both PostgreSQL and the required ClamAV scanner for manual imports to work.
+# This stack is never part of `docker compose up`.
 #
 #   docker compose -f compose.debug.yaml up -d --wait
 #   docker compose -f compose.debug.yaml down -v
@@ -29,5 +29,28 @@ services:
     volumes:
       - postgres-debug-data:/var/lib/postgresql/data
 
+  clamav:
+    # Keep the host scanner private to this machine: the app reaches it through
+    # loopback, while ClamAV remains unavailable to the local network.
+    platform: linux/amd64
+    image: clamav/clamav:1.4
+    ports:
+      - "127.0.0.1:3310:3310"
+    environment:
+      CLAMD_CONF_StreamMaxLength: 600M
+      CLAMD_CONF_MaxFileSize: 600M
+      CLAMD_CONF_PCREMaxFileSize: 600M
+      CLAMD_CONF_MaxScanSize: 1000M
+      CLAMD_CONF_AlertExceedsMax: "yes"
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 180s
+    volumes:
+      - clamav-debug-data:/var/lib/clamav
+
 volumes:
   postgres-debug-data:
+  clamav-debug-data:

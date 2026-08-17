@@ -18,9 +18,11 @@ public sealed class RequestStatusTransitionTests
         (RequestStatus.PendingAcquisition, RequestStatus.NeedsReview),
         (RequestStatus.PendingAcquisition, RequestStatus.NotAvailable),
         (RequestStatus.PendingAcquisition, RequestStatus.Cancelled),
+        (RequestStatus.PendingAcquisition, RequestStatus.Available),
         (RequestStatus.NeedsReview, RequestStatus.PendingAcquisition),
         (RequestStatus.NeedsReview, RequestStatus.NotAvailable),
         (RequestStatus.NeedsReview, RequestStatus.Cancelled),
+        (RequestStatus.NeedsReview, RequestStatus.Available),
         (RequestStatus.NotAvailable, RequestStatus.PendingAcquisition),
         (RequestStatus.Cancelled, RequestStatus.PendingAcquisition)
     ];
@@ -73,6 +75,7 @@ public sealed class RequestStatusTransitionTests
     [DataRow(RequestStatus.NeedsReview, true)]
     [DataRow(RequestStatus.NotAvailable, false)]
     [DataRow(RequestStatus.Cancelled, false)]
+    [DataRow(RequestStatus.Available, false)]
     public void OutstandingStatusesAreTheOnesDuplicateDetectionCountsAgainst(
         RequestStatus status,
         bool expected) =>

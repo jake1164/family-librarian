@@ -97,10 +97,10 @@
             <MudStack Spacing="2">
                 <MudText Typo="Typo.h6">Files</MudText>
                 <MudText Typo="Typo.body2">
-                    Manually supply a file for a requested format. It is staged for
-                    security review — visit the
+                    Manually supply a file for a requested format. It is scanned and
+                    format-checked automatically, then stays in security review — visit the
                     <MudLink Href="admin/security">Security Queue</MudLink>
-                    to scan and approve it before it can be delivered.
+                    to approve it before it can be delivered.
                 </MudText>
                 @foreach (var format in request.Request.Formats)
                 {
@@ -293,7 +293,7 @@
             if (outcome.Succeeded)
             {
                 Snackbar.Add(
-                    "File staged. Visit the Security Queue to scan and approve it.", Severity.Success);
+                    "File scanned automatically. Visit the Security Queue to review and approve it.", Severity.Success);
             }
             else
             {

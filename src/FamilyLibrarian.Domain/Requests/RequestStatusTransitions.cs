@@ -19,13 +19,15 @@ public static class RequestStatusTransitions
         [
             RequestStatus.NeedsReview,
             RequestStatus.NotAvailable,
-            RequestStatus.Cancelled
+            RequestStatus.Cancelled,
+            RequestStatus.Available
         ],
         [RequestStatus.NeedsReview] =
         [
             RequestStatus.PendingAcquisition,
             RequestStatus.NotAvailable,
-            RequestStatus.Cancelled
+            RequestStatus.Cancelled,
+            RequestStatus.Available
         ],
         // Reopening returns a request to the queue rather than resurrecting the
         // status it held before it was closed.

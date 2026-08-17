@@ -125,6 +125,18 @@ internal sealed class FakeClamdServer : IAsyncDisposable
         {
             using (client)
             {
+                if (_abortAfterBytes is not null)
+                {
+                    // Caps the TCP receive window so the OS can't just buffer
+                    // the whole payload before the threshold check below ever
+                    // runs. Without this, a large enough loopback send window
+                    // (Linux's auto-tuned default is far bigger than Windows')
+                    // lets the client finish writing everything before the
+                    // abort happens, and the reset is never observed —
+                    // exactly the flake this existed to prevent.
+                    client.ReceiveBufferSize = 8 * 1024;
+                }
+
                 var stream = client.GetStream();
                 var command = await ReadCommandLineAsync(stream, cancellationToken);
                 if (command is null)

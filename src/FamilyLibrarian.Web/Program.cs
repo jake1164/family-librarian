@@ -7,12 +7,14 @@ using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
+using FamilyLibrarian.Web.Publishing;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddHostedService<CwaVerificationHostedService>();
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgresql")
     .AddCheck<SecurityScannerHealthCheck>("malware-scanner");

@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
@@ -29,6 +30,7 @@ public sealed class CwaPublishingService(
     IAssetStagingStore stagingStore,
     ICwaIngestTransportFactory transportFactory,
     ICwaCatalogClient catalogClient,
+    IBookRequestFulfillmentStore requestFulfillment,
     IWorkLookup workLookup,
     IAuditWriter audit,
     IClock clock)
@@ -85,10 +87,25 @@ public sealed class CwaPublishingService(
         else if (import.Status == LibraryImportStatus.AwaitingVerification)
         {
             var work = await workLookup.FindAsync(asset.WorkId, cancellationToken);
-            await TryVerifyAsync(import, work?.Title ?? "Unknown title", work?.PrimaryAuthor, cancellationToken);
+            await TryVerifyAsync(import, asset, work?.Title ?? "Unknown title", work?.PrimaryAuthor, cancellationToken);
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Rechecks every CWA handoff still awaiting catalog confirmation. This
+    /// only performs OPDS reads; it never transports the source file again.
+    /// </summary>
+    public async Task<int> RecheckAwaitingVerificationAsync(CancellationToken cancellationToken)
+    {
+        var importIds = await repository.ListAwaitingVerificationIdsAsync(cancellationToken);
+        foreach (var importId in importIds)
+        {
+            await RecheckAsync(importId, cancellationToken);
+        }
+
+        return importIds.Count;
     }
 
     private async Task ExecutePublishAsync(
@@ -122,7 +139,7 @@ public sealed class CwaPublishingService(
 
             // One best-effort immediate check; CWA's ingest is asynchronous, so
             // "not found yet" is expected and left for a later manual recheck.
-            await TryVerifyAsync(import, title, author, cancellationToken);
+            await TryVerifyAsync(import, asset, title, author, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -139,7 +156,11 @@ public sealed class CwaPublishingService(
     }
 
     private async Task TryVerifyAsync(
-        LibraryImport import, string title, string? author, CancellationToken cancellationToken)
+        LibraryImport import,
+        MediaAsset asset,
+        string title,
+        string? author,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -147,6 +168,7 @@ public sealed class CwaPublishingService(
             if (bookId is not null)
             {
                 import.MarkAvailable(bookId, clock.UtcNow);
+                await MarkRequestFormatAvailableAsync(asset, cancellationToken);
                 await repository.SaveChangesAsync(cancellationToken);
             }
         }
@@ -156,5 +178,13 @@ public sealed class CwaPublishingService(
             // import AwaitingVerification for a later manual recheck rather
             // than failing an otherwise-successful handoff.
         }
+    }
+
+    private async Task MarkRequestFormatAvailableAsync(MediaAsset asset, CancellationToken cancellationToken)
+    {
+        var request = await requestFulfillment.FindByFormatIdAsync(
+            asset.AssociatedRequestFormatId,
+            cancellationToken);
+        request?.MarkFormatAvailable(asset.AssociatedRequestFormatId, clock.UtcNow);
     }
 }

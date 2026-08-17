@@ -12,9 +12,9 @@
    requires the Admin policy and an anti-forgery token. *@
 <MudText Typo="Typo.h4" GutterBottom="true">Security queue</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
-    Every manually imported file passes through here before it can be delivered:
-    run a security scan, then approve or reject the result. A file drops off this
-    list once it is approved or rejected.
+    Every manually imported file is scanned and format-checked automatically
+    before it appears here. Review a clean result, then approve or reject it.
+    A file drops off this list once it is approved or rejected.
 </MudText>
 
 @if (loadFailed)
@@ -90,7 +90,7 @@ else
                                    Color="Color.Primary"
                                    Disabled="@(busyAssetId is not null)"
                                    OnClick="@(() => EvaluateAsync(asset))">
-                            Run security scan
+                            Retry security scan
                         </MudButton>
                     }
                     @if (CanDecide(asset))

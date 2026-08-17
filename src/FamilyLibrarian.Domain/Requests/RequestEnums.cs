@@ -13,7 +13,8 @@ public enum RequestStatus
     PendingAcquisition = 1,
     NeedsReview = 2,
     NotAvailable = 3,
-    Cancelled = 4
+    Cancelled = 4,
+    Available = 5
 }
 
 public enum RequestMediaType
@@ -30,5 +31,6 @@ public enum RequestFormatStatus
 {
     Requested = 1,
     NotAvailable = 2,
-    Cancelled = 3
+    Cancelled = 3,
+    Available = 4
 }

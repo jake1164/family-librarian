@@ -101,6 +101,20 @@ public sealed class BookRequestTests
     }
 
     [TestMethod]
+    public void MakingTheOnlyRequestedFormatAvailableCompletesTheRequestAndRecordsHistory()
+    {
+        var request = Create(RequestMediaType.Ebook);
+        var completedAt = CreatedAt.AddHours(1);
+
+        var completed = request.MarkFormatAvailable(request.Formats.Single().Id, completedAt);
+
+        Assert.IsTrue(completed);
+        Assert.AreEqual(RequestStatus.Available, request.Status);
+        Assert.AreEqual(RequestFormatStatus.Available, request.Formats.Single().Status);
+        Assert.AreEqual(RequestStatus.Available, request.StatusHistory.Last().ToStatus);
+    }
+
+    [TestMethod]
     public void ADisallowedTransitionIsRefusedAndChangesNothing()
     {
         var request = Create(RequestMediaType.Ebook);

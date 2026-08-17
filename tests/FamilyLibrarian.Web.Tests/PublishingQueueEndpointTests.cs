@@ -180,10 +180,6 @@ public sealed class PublishingQueueEndpointTests
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
 
-        var evaluate = await client.PostAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/evaluate", content: null);
-        Assert.AreEqual(HttpStatusCode.OK, evaluate.StatusCode);
-
         var approve = await client.PostAsJsonAsync(
             $"/api/v1/admin/media-assets/{imported.MediaAssetId}/approve", new ApprovalDecisionRequest(null));
         Assert.AreEqual(HttpStatusCode.NoContent, approve.StatusCode);
@@ -199,10 +195,6 @@ public sealed class PublishingQueueEndpointTests
         Assert.AreEqual(HttpStatusCode.OK, upload.StatusCode);
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
-
-        var evaluate = await client.PostAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/evaluate", content: null);
-        Assert.AreEqual(HttpStatusCode.OK, evaluate.StatusCode);
 
         var approve = await client.PostAsJsonAsync(
             $"/api/v1/admin/media-assets/{imported.MediaAssetId}/approve", new ApprovalDecisionRequest(null));

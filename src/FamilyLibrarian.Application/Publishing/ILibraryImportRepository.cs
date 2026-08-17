@@ -11,6 +11,13 @@ public interface ILibraryImportRepository
     /// <summary>Every import not created long ago and/or not yet <c>Available</c> — the admin queue.</summary>
     Task<IReadOnlyList<LibraryImportView>> ListRecentAsync(CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Imports whose bytes were handed to CWA but whose catalog entry has not
+    /// yet been observed. These are safe to verify again without re-sending
+    /// the source file.
+    /// </summary>
+    Task<IReadOnlyList<Guid>> ListAwaitingVerificationIdsAsync(CancellationToken cancellationToken);
+
     void Add(LibraryImport import);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);

@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain.Requests;
@@ -116,6 +117,7 @@ internal static class AdminRequestEndpoints
         Guid formatId,
         HttpRequest request,
         ManualImportService manualImport,
+        SecurityEvaluationService securityEvaluation,
         ManualImportPolicy policy,
         CancellationToken cancellationToken)
     {
@@ -167,6 +169,14 @@ internal static class AdminRequestEndpoints
                     fileSection.FileStream ?? section.Body,
                     fileName,
                     cancellationToken);
+
+                // A successful upload is evaluated immediately. The resulting
+                // asset still needs an explicit approval before it is trusted,
+                // but administrators should not need to start a routine scan.
+                if (result.Outcome == ManualImportOutcome.Success)
+                {
+                    await securityEvaluation.EvaluateAsync(result.MediaAssetId!.Value, cancellationToken);
+                }
             }
             catch (BadHttpRequestException)
             {

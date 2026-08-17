@@ -139,7 +139,9 @@ public static class DependencyInjection
         services.AddScoped<IWorkFormatAvailabilityService, WorkFormatAvailabilityService>();
         services.AddScoped<IWorkFulfillmentOptionsService, WorkFulfillmentOptionsService>();
 
-        services.AddScoped<IRequestRepository, RequestRepository>();
+        services.AddScoped<RequestRepository>();
+        services.AddScoped<IRequestRepository>(provider => provider.GetRequiredService<RequestRepository>());
+        services.AddScoped<IBookRequestFulfillmentStore>(provider => provider.GetRequiredService<RequestRepository>());
         services.AddScoped<BookRequestService>();
 
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();

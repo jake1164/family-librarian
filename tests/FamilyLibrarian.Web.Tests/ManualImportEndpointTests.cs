@@ -57,7 +57,7 @@ public sealed class ManualImportEndpointTests
         await using var scope = fixture.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var asset = await database.MediaAssets.SingleAsync(a => a.Id == result.MediaAssetId);
-        Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
+        Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
         Assert.AreEqual(formatId, asset.AssociatedRequestFormatId);
     }
 

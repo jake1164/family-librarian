@@ -57,7 +57,7 @@
 
     {
       "label": "dev-db: up",
-      "detail": "Start the local debug PostgreSQL container and wait for health",
+      "detail": "Start the local debug PostgreSQL and ClamAV containers and wait for health",
       "command": "docker",
       "type": "process",
       "args": ["compose", "-f", "compose.debug.yaml", "up", "-d", "--wait"],
@@ -66,7 +66,7 @@
     },
     {
       "label": "dev-db: down",
-      "detail": "Stop the local debug PostgreSQL container (keeps its volume)",
+      "detail": "Stop the local debug support containers (keeps their volumes)",
       "command": "docker",
       "type": "process",
       "args": ["compose", "-f", "compose.debug.yaml", "down"],
@@ -75,7 +75,7 @@
     },
     {
       "label": "dev-db: reset",
-      "detail": "Destroy the local debug PostgreSQL container AND its data volume",
+      "detail": "Destroy the local debug support containers AND their data volumes",
       "command": "docker",
       "type": "process",
       "args": ["compose", "-f", "compose.debug.yaml", "down", "-v"],
@@ -112,7 +112,7 @@
     },
     {
       "label": "dev: prepare",
-      "detail": "Check .env, start the debug database, apply migrations, then build",
+      "detail": "Check .env, start the debug support services, apply migrations, then build",
       "dependsOrder": "sequence",
       "dependsOn": ["dev: check .env", "dev-db: up", "db: apply migrations", "build"],
       "problemMatcher": []

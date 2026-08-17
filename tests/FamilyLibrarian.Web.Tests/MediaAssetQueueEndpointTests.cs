@@ -16,9 +16,9 @@ namespace FamilyLibrarian.Web.Tests;
 
 /// <summary>
 /// Covers the admin acquisition/security queue: the read surface an
-/// administrator needs to discover what's sitting in quarantine or awaiting
-/// approval, since the manual-import and evaluate/approve/reject endpoints
-/// only ever address an asset the caller already knows the id of.
+/// administrator needs to discover what's awaiting approval or a retry, since
+/// the manual-import and approve/reject endpoints only ever address an asset
+/// the caller already knows the id of.
 /// </summary>
 [TestClass]
 public sealed class MediaAssetQueueEndpointTests
@@ -42,7 +42,7 @@ public sealed class MediaAssetQueueEndpointTests
     }
 
     [TestMethod]
-    public async Task AQuarantinedUploadAppearsInTheQueueWithNoEvaluationYet()
+    public async Task AnUploadIsAutomaticallyEvaluatedBeforeAppearingInTheQueue()
     {
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
@@ -65,8 +65,9 @@ public sealed class MediaAssetQueueEndpointTests
         var entry = queue.Assets.SingleOrDefault(asset => asset.AssetId == imported.MediaAssetId);
         Assert.IsNotNull(entry, "The freshly staged asset should be in the queue.");
         Assert.AreEqual(requestId, entry.RequestId);
-        Assert.AreEqual("Quarantine", entry.StorageState);
-        Assert.IsNull(entry.LatestEvaluation);
+        Assert.AreEqual("Processing", entry.StorageState);
+        Assert.IsNotNull(entry.LatestEvaluation);
+        Assert.AreEqual(nameof(SecurityEvaluationStatus.Passed), entry.LatestEvaluation.Status);
     }
 
     [TestMethod]
@@ -85,10 +86,6 @@ public sealed class MediaAssetQueueEndpointTests
             BuildUpload(BuildMinimalEpubBytes(), "book.epub"));
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
-
-        var evaluate = await client.PostAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/evaluate", content: null);
-        Assert.AreEqual(HttpStatusCode.OK, evaluate.StatusCode);
 
         var queueBeforeApproval = await client.GetFromJsonAsync<MediaAssetAdminListResponse>(
             "/api/v1/admin/media-assets/");
@@ -127,10 +124,6 @@ public sealed class MediaAssetQueueEndpointTests
             BuildUpload(BuildMinimalEpubBytes(), "book.epub"));
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
-
-        var evaluate = await client.PostAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/evaluate", content: null);
-        Assert.AreEqual(HttpStatusCode.OK, evaluate.StatusCode);
 
         // The fail-closed policy already moved a Failed evaluation's asset to
         // Rejected on its own — it should have left the queue without any

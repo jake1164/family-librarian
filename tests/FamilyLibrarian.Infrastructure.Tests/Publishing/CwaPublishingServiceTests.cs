@@ -2,6 +2,7 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Publishing;
@@ -129,6 +130,48 @@ public sealed class CwaPublishingServiceTests
     }
 
     [TestMethod]
+    public async Task ConfirmedCwaImportCompletesTheMatchingSingleFormatRequest()
+    {
+        var context = context_Configured();
+        context.CatalogClient.NextBookId = "42";
+        var workId = Guid.NewGuid();
+        var request = new BookRequest(
+            Guid.NewGuid(),
+            workId,
+            [RequestMediaType.Ebook],
+            requesterNote: null,
+            Now);
+        var formatId = request.Formats.Single().Id;
+        context.RequestFulfillment.Requests[formatId] = request;
+        var asset = context.CreateAsset(formatId, workId);
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        Assert.AreEqual(RequestStatus.Available, request.Status);
+        Assert.AreEqual(RequestFormatStatus.Available, request.Formats.Single().Status);
+        Assert.AreEqual(RequestStatus.Available, request.StatusHistory.Last().ToStatus);
+    }
+
+    [TestMethod]
+    public async Task AutomaticRecheckVerifiesEveryAwaitingImportWithoutSendingItAgain()
+    {
+        var context = context_Configured();
+        var asset = context.CreateAsset();
+        context.CatalogClient.NextBookId = null;
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+        var import = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(LibraryImportStatus.AwaitingVerification, import!.Status);
+
+        context.CatalogClient.NextBookId = "8";
+        var checkedCount = await context.Service.RecheckAwaitingVerificationAsync(CancellationToken.None);
+
+        var reloaded = await context.Repository.FindAsync(import.Id, CancellationToken.None);
+        Assert.AreEqual(1, checkedCount);
+        Assert.AreEqual(LibraryImportStatus.Available, reloaded!.Status);
+        Assert.AreEqual(1, context.Transport.WriteCount);
+    }
+
+    [TestMethod]
     public async Task RecheckOnAnUnknownImportReturnsFalse()
     {
         var context = context_Configured();
@@ -158,11 +201,12 @@ public sealed class CwaPublishingServiceTests
             StagingStore = new FakeStagingStore();
             TransportFactory = new FakeTransportFactory(Transport);
             CatalogClient = new FakeCatalogClient();
+            RequestFulfillment = new FakeRequestFulfillmentStore();
             WorkLookup = new FakeWorkLookup();
             Audit = new RecordingAuditWriter();
 
             Service = new CwaPublishingService(
-                SettingsStore, Repository, Assets, StagingStore, TransportFactory, CatalogClient, WorkLookup,
+                SettingsStore, Repository, Assets, StagingStore, TransportFactory, CatalogClient, RequestFulfillment, WorkLookup,
                 Audit, new FixedClock());
         }
 
@@ -182,16 +226,18 @@ public sealed class CwaPublishingServiceTests
 
         public FakeCatalogClient CatalogClient { get; }
 
+        public FakeRequestFulfillmentStore RequestFulfillment { get; }
+
         public FakeWorkLookup WorkLookup { get; }
 
         public RecordingAuditWriter Audit { get; }
 
         public CwaPublishingService Service { get; }
 
-        public MediaAsset CreateAsset()
+        public MediaAsset CreateAsset(Guid? associatedRequestFormatId = null, Guid? workId = null)
         {
             var asset = new MediaAsset(
-                Guid.NewGuid(),
+                workId ?? Guid.NewGuid(),
                 editionId: null,
                 RequestMediaType.Ebook,
                 ".epub",
@@ -200,7 +246,7 @@ public sealed class CwaPublishingServiceTests
                 sizeBytes: 1024,
                 sha256: new string('a', 64),
                 detectedMimeType: "application/epub+zip",
-                associatedRequestFormatId: Guid.NewGuid(),
+                associatedRequestFormatId: associatedRequestFormatId ?? Guid.NewGuid(),
                 sourceAcquisitionCandidateId: null,
                 Now);
             Assets.Assets[asset.Id] = asset;
@@ -233,6 +279,13 @@ public sealed class CwaPublishingServiceTests
 
         public Task<IReadOnlyList<LibraryImportView>> ListRecentAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<IReadOnlyList<Guid>> ListAwaitingVerificationIdsAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Guid>>(
+                _byId.Values
+                    .Where(import => import.Status == LibraryImportStatus.AwaitingVerification)
+                    .Select(import => import.Id)
+                    .ToArray());
 
         public void Add(LibraryImport import) => _byId[import.Id] = import;
 
@@ -300,6 +353,14 @@ public sealed class CwaPublishingServiceTests
 
         public Task<string?> FindBookIdAsync(string title, string? author, CancellationToken cancellationToken) =>
             Task.FromResult(NextBookId);
+    }
+
+    private sealed class FakeRequestFulfillmentStore : IBookRequestFulfillmentStore
+    {
+        public Dictionary<Guid, BookRequest> Requests { get; } = [];
+
+        public Task<BookRequest?> FindByFormatIdAsync(Guid requestFormatId, CancellationToken cancellationToken) =>
+            Task.FromResult(Requests.GetValueOrDefault(requestFormatId));
     }
 
     private sealed class FakeWorkLookup : IWorkLookup

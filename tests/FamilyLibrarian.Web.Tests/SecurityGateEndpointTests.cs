@@ -90,13 +90,6 @@ public sealed class SecurityGateEndpointTests
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
 
-        var evaluate = await client.PostAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/evaluate", content: null);
-        Assert.AreEqual(HttpStatusCode.OK, evaluate.StatusCode);
-        var evaluation = await evaluate.Content.ReadFromJsonAsync<SecurityEvaluationResponse>();
-        Assert.IsNotNull(evaluation);
-        Assert.AreEqual(nameof(SecurityEvaluationStatus.Passed), evaluation.Status);
-
         var approve = await client.PostAsJsonAsync(
             $"/api/v1/admin/media-assets/{imported.MediaAssetId}/approve",
             new ApprovalDecisionRequest("Looks good."));
@@ -126,13 +119,6 @@ public sealed class SecurityGateEndpointTests
         Assert.AreEqual(HttpStatusCode.OK, upload.StatusCode);
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
-
-        var evaluate = await client.PostAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/evaluate", content: null);
-        Assert.AreEqual(HttpStatusCode.OK, evaluate.StatusCode);
-        var evaluation = await evaluate.Content.ReadFromJsonAsync<SecurityEvaluationResponse>();
-        Assert.IsNotNull(evaluation);
-        Assert.AreEqual(nameof(SecurityEvaluationStatus.Failed), evaluation.Status);
 
         // Nobody — not even an administrator — can approve a failed evaluation.
         var approve = await client.PostAsJsonAsync(
@@ -216,19 +202,12 @@ public sealed class SecurityGateEndpointTests
         var upload = await client.PostAsync(
             $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
             BuildUpload(BuildMinimalEpubBytes(), "book.epub"));
-        Assert.AreEqual(HttpStatusCode.OK, upload.StatusCode);
-        var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
-        Assert.IsNotNull(imported);
-
-        var evaluate = await client.PostAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/evaluate", content: null);
-
-        Assert.AreEqual(HttpStatusCode.InternalServerError, evaluate.StatusCode);
-        Assert.AreEqual("application/problem+json", evaluate.Content.Headers.ContentType?.MediaType);
+        Assert.AreEqual(HttpStatusCode.InternalServerError, upload.StatusCode);
+        Assert.AreEqual("application/problem+json", upload.Content.Headers.ContentType?.MediaType);
 
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var asset = await database.MediaAssets.SingleAsync(asset => asset.Id == imported.MediaAssetId);
+        var asset = await database.MediaAssets.SingleAsync(asset => asset.AssociatedRequestFormatId == formatId);
         Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
     }
 

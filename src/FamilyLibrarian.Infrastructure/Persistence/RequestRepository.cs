@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FamilyLibrarian.Infrastructure.Persistence;
 
-public sealed class RequestRepository(AppDbContext database) : IRequestRepository
+public sealed class RequestRepository(AppDbContext database) : IRequestRepository, IBookRequestFulfillmentStore
 {
     public Task<bool> WorkExistsAsync(Guid workId, CancellationToken cancellationToken) =>
         database.Works.AnyAsync(work => work.Id == workId && !work.IsRetired, cancellationToken);
@@ -67,6 +67,16 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
             .SingleOrDefaultAsync(request => request.Id == requestId, cancellationToken);
+
+    public Task<BookRequest?> FindByFormatIdAsync(
+        Guid requestFormatId,
+        CancellationToken cancellationToken) =>
+        database.BookRequests
+            .Include(request => request.Formats)
+            .Include(request => request.StatusHistory)
+            .SingleOrDefaultAsync(
+                request => request.Formats.Any(format => format.Id == requestFormatId),
+                cancellationToken);
 
     public Task<AdminBookRequestView?> FindAdminViewAsync(
         Guid requestId,

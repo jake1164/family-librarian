@@ -134,6 +134,7 @@ public sealed class BookRequest
         {
             RequestStatus.NotAvailable => RequestFormatStatus.NotAvailable,
             RequestStatus.Cancelled => RequestFormatStatus.Cancelled,
+            RequestStatus.Available => RequestFormatStatus.Available,
             _ => RequestFormatStatus.Requested
         };
 
@@ -149,6 +150,36 @@ public sealed class BookRequest
             actorUserId,
             CleanNote(reason, MaxReasonLength, nameof(reason)),
             atUtc));
+    }
+
+    /// <summary>
+    /// Records a single requested format as available. The request itself only
+    /// completes once every requested format is available.
+    /// </summary>
+    /// <returns><see langword="true"/> when the whole request completed.</returns>
+    public bool MarkFormatAvailable(Guid requestFormatId, DateTimeOffset atUtc)
+    {
+        if (!IsActive)
+        {
+            return false;
+        }
+
+        var format = _formats.SingleOrDefault(candidate => candidate.Id == requestFormatId);
+        if (format is null)
+        {
+            throw new ArgumentException("The requested format does not belong to this request.", nameof(requestFormatId));
+        }
+
+        format.SetStatus(RequestFormatStatus.Available, atUtc);
+        UpdatedAtUtc = atUtc;
+
+        if (!_formats.All(candidate => candidate.Status == RequestFormatStatus.Available))
+        {
+            return false;
+        }
+
+        TransitionTo(RequestStatus.Available, actorUserId: null, "Available in the family library.", atUtc);
+        return true;
     }
 
     public void SetAdminNote(string? adminNote, DateTimeOffset atUtc)

@@ -37,6 +37,12 @@ public sealed class LibraryImportRepository(AppDbContext database) : ILibraryImp
         return await query.ToArrayAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Guid>> ListAwaitingVerificationIdsAsync(CancellationToken cancellationToken) =>
+        await database.LibraryImports
+            .Where(import => import.Status == LibraryImportStatus.AwaitingVerification)
+            .Select(import => import.Id)
+            .ToArrayAsync(cancellationToken);
+
     public void Add(LibraryImport import) => database.LibraryImports.Add(import);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);

@@ -171,6 +171,7 @@ internal static class RequestEndpoints
         RequestStatus.NeedsReview => "The librarian has a question about this request.",
         RequestStatus.NotAvailable => "The librarian could not find this one for now.",
         RequestStatus.Cancelled => "You cancelled this request.",
+        RequestStatus.Available => "Available in the family library.",
         _ => status.ToString()
     };
 }

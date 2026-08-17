@@ -952,22 +952,23 @@ stages file bytes. It does not block metadata/catalog checks or user request
 creation, so queued requests can be backfilled after scanner recovery.
 
 **Implementation status:** the request lifecycle actually shipped today is
-deliberately much smaller than the workflow above. `RequestStatus` currently
-has four values (`PendingAcquisition`, `NeedsReview`, `NotAvailable`,
-`Cancelled`) and `RequestFormatStatus` has three (`Requested`, `NotAvailable`,
-`Cancelled`) — there is no `CheckingLibrary`, `Searching`, `Acquiring`,
-`Processing`, `Importing`, or `Available` state machine wired up yet, and
-`BookRequestService.CreateAsync` never checks whether the work is already
-owned before creating a plain `Requested` row. Manual acquisition, security
-scanning, and CWA/Audiobookshelf publishing exist as working, separately
-testable slices (see `MediaAssetPublishingCoordinator`), but they are not yet
-threaded back into `RequestFormatStatus` transitions — an approved, published
-asset does not currently move its request forward automatically. This is not
+still deliberately smaller than the workflow above. `RequestStatus` has five
+values (`PendingAcquisition`, `NeedsReview`, `NotAvailable`, `Cancelled`, and
+`Available`) and `RequestFormatStatus` has four (`Requested`, `NotAvailable`,
+`Cancelled`, and `Available`). A verified CWA ebook import automatically marks
+its matching requested format available; when every requested format is
+available, the request moves to completed history with an explicit status
+event. A background verifier performs the OPDS rechecks, so administrators do
+not have to drive that normal asynchronous CWA step by hand.
+
+There is still no general `CheckingLibrary`, `Searching`, `Acquiring`, or
+`Processing` request state machine; audiobook confirmation and
+existing-ownership checks at request creation remain future work. This is not
 a documentation error to "fix" by shrinking the target model; it reflects
-where implementation has reached versus where this document says it is
-headed. Expanding `RequestStatus`/`RequestFormatStatus` toward the states
-above, and wiring the existing-ownership check into request creation, are
-required before the "existing-artifact fulfillment" flows in
+where implementation has reached versus where this document says it is headed.
+Expanding `RequestStatus`/`RequestFormatStatus` toward the states above, and
+wiring the existing-ownership check into request creation, are required before
+the "existing-artifact fulfillment" flows in
 `docs/01-product-architecture-spec.md` can work end to end.
 
 ---
