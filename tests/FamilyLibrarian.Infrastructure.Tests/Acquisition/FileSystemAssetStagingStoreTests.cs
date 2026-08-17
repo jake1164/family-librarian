@@ -144,6 +144,19 @@ public sealed class FileSystemAssetStagingStoreTests
                 CancellationToken.None));
     }
 
+    [TestMethod]
+    public async Task DeleteAsyncPermanentlyRemovesAStagedFileAndCanBeRetried()
+    {
+        var store = CreateStore();
+        var staged = await store.WriteToQuarantineAsync(
+            new MemoryStream("epub bytes"u8.ToArray()), "book.epub", maxSizeBytes: 1_000_000, CancellationToken.None);
+
+        await store.DeleteAsync(MediaAssetStorageState.Quarantine, staged.StoredFilename, CancellationToken.None);
+        await store.DeleteAsync(MediaAssetStorageState.Quarantine, staged.StoredFilename, CancellationToken.None);
+
+        Assert.IsFalse(File.Exists(Path.Combine(_root, "quarantine", staged.StoredFilename)));
+    }
+
     private FileSystemAssetStagingStore CreateStore() =>
         new(Options.Create(new StorageOptions { RootPath = _root }));
 

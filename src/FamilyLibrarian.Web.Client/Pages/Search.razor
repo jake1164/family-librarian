@@ -15,20 +15,22 @@
     </div>
 
     <MudPaper Class="pa-4" Elevation="1">
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-            <MudTextField @bind-Value="searchText"
-                          Label="Title, author, or ISBN"
-                          Variant="Variant.Outlined"
-                          Immediate="true"
-                          Class="flex-grow-1"
-                          Disabled="@isSearching" />
-            <MudButton Variant="Variant.Filled"
-                       Color="Color.Primary"
-                       OnClick="SearchAsync"
-                       Disabled="@isSearching">
-                Search
-            </MudButton>
-        </MudStack>
+        <form role="search" @onsubmit="SearchAsync" @onsubmit:preventDefault>
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudTextField @bind-Value="searchText"
+                              Label="Title, author, or ISBN"
+                              Variant="Variant.Outlined"
+                              Immediate="true"
+                              Class="flex-grow-1"
+                              Disabled="@isSearching" />
+                <MudButton ButtonType="ButtonType.Submit"
+                           Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Disabled="@isSearching">
+                    Search
+                </MudButton>
+            </MudStack>
+        </form>
     </MudPaper>
 
     @if (!string.IsNullOrWhiteSpace(errorMessage))

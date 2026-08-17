@@ -1,5 +1,8 @@
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Domain.Security;
 using Microsoft.EntityFrameworkCore;
 
 namespace FamilyLibrarian.Infrastructure.Persistence;
@@ -35,17 +38,28 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
 
     public async Task<IReadOnlyList<BookRequestView>> ListForUserAsync(
         Guid userId,
-        CancellationToken cancellationToken) =>
-        await ProjectViews(database.BookRequests.Where(request => request.UserId == userId))
+        CancellationToken cancellationToken)
+    {
+        var requests = await ProjectViews(database.BookRequests.Where(request => request.UserId == userId))
             .ToArrayAsync(cancellationToken);
+        return await AddRequesterProgressAsync(requests, cancellationToken);
+    }
 
-    public Task<BookRequestView?> FindViewAsync(
+    public async Task<BookRequestView?> FindViewAsync(
         Guid requestId,
         Guid userId,
-        CancellationToken cancellationToken) =>
-        ProjectViews(database.BookRequests
+        CancellationToken cancellationToken)
+    {
+        var request = await ProjectViews(database.BookRequests
                 .Where(request => request.Id == requestId && request.UserId == userId))
             .SingleOrDefaultAsync(cancellationToken);
+        if (request is null)
+        {
+            return null;
+        }
+
+        return (await AddRequesterProgressAsync([request], cancellationToken)).Single();
+    }
 
     public async Task<IReadOnlyList<AdminBookRequestView>> ListForAdminAsync(
         RequestStatus? status,
@@ -128,6 +142,117 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             cancellationToken);
 
     /// <summary>
+    /// Adds the state a requester can safely see for each format without loading
+    /// asset metadata, scanner results, or destination failure details.
+    /// </summary>
+    private async Task<IReadOnlyList<BookRequestView>> AddRequesterProgressAsync(
+        IReadOnlyList<BookRequestView> requests,
+        CancellationToken cancellationToken)
+    {
+        var formatIds = requests
+            .SelectMany(request => request.Formats)
+            .Select(format => format.Id)
+            .ToArray();
+        if (formatIds.Length == 0)
+        {
+            return requests;
+        }
+
+        // These are separate, bounded projections rather than a large join of
+        // collections. That avoids duplicating request rows and keeps each query
+        // to the facts used in the requester-facing progress message.
+        var assets = await database.MediaAssets
+            .AsNoTracking()
+            .Where(asset => formatIds.Contains(asset.AssociatedRequestFormatId))
+            .Select(asset => new MediaAssetProgressRow(
+                asset.Id,
+                asset.AssociatedRequestFormatId,
+                asset.StorageState,
+                asset.CreatedAtUtc))
+            .ToArrayAsync(cancellationToken);
+
+        var latestAssets = assets
+            .GroupBy(asset => asset.RequestFormatId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(asset => asset.CreatedAtUtc).First());
+        var assetIds = latestAssets.Values.Select(asset => asset.AssetId).ToArray();
+        if (assetIds.Length == 0)
+        {
+            return requests;
+        }
+
+        var evaluations = await database.SecurityEvaluations
+            .AsNoTracking()
+            .Where(evaluation => assetIds.Contains(evaluation.AssetId))
+            .OrderByDescending(evaluation => evaluation.CreatedAtUtc)
+            .Select(evaluation => new SecurityEvaluationProgressRow(
+                evaluation.AssetId,
+                evaluation.Status))
+            .ToArrayAsync(cancellationToken);
+        var latestEvaluations = evaluations
+            .GroupBy(evaluation => evaluation.AssetId)
+            .ToDictionary(group => group.Key, group => group.First().Status);
+
+        var imports = await database.LibraryImports
+            .AsNoTracking()
+            .Where(import => assetIds.Contains(import.AssetId))
+            .OrderByDescending(import => import.CreatedAtUtc)
+            .Select(import => new LibraryImportProgressRow(import.AssetId, import.Status))
+            .ToArrayAsync(cancellationToken);
+        var latestImports = imports
+            .GroupBy(import => import.AssetId)
+            .ToDictionary(group => group.Key, group => group.First().Status);
+
+        var deliveries = await database.Deliveries
+            .AsNoTracking()
+            .Where(delivery => assetIds.Contains(delivery.AssetId))
+            .OrderByDescending(delivery => delivery.CreatedAtUtc)
+            .Select(delivery => new DeliveryProgressRow(delivery.AssetId, delivery.Status))
+            .ToArrayAsync(cancellationToken);
+        var latestDeliveries = deliveries
+            .GroupBy(delivery => delivery.AssetId)
+            .ToDictionary(group => group.Key, group => group.First().Status);
+
+        return requests
+            .Select(request => request with
+            {
+                Formats = request.Formats
+                    .Select(format =>
+                    {
+                        if (!latestAssets.TryGetValue(format.Id, out var asset))
+                        {
+                            return format;
+                        }
+
+                        SecurityEvaluationStatus? securityStatus =
+                            latestEvaluations.TryGetValue(asset.AssetId, out var evaluation)
+                                ? evaluation
+                                : null;
+                        LibraryImportStatus? libraryImportStatus =
+                            latestImports.TryGetValue(asset.AssetId, out var libraryImport)
+                                ? libraryImport
+                                : null;
+                        DeliveryStatus? deliveryStatus =
+                            latestDeliveries.TryGetValue(asset.AssetId, out var delivery)
+                                ? delivery
+                                : null;
+
+                        return format with
+                        {
+                            Progress = RequestFormatProgress.Describe(
+                                asset.StorageState,
+                                securityStatus,
+                                libraryImportStatus,
+                                deliveryStatus)
+                        };
+                    })
+                    .ToArray()
+            })
+            .ToArray();
+    }
+
+    /// <summary>
     /// Projects requests with the Work facts My Requests displays.
     /// </summary>
     /// <remarks>
@@ -205,4 +330,18 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                     history.Reason,
                     history.OccurredAtUtc))
                 .ToList());
+
+    private sealed record MediaAssetProgressRow(
+        Guid AssetId,
+        Guid RequestFormatId,
+        MediaAssetStorageState StorageState,
+        DateTimeOffset CreatedAtUtc);
+
+    private sealed record SecurityEvaluationProgressRow(
+        Guid AssetId,
+        SecurityEvaluationStatus Status);
+
+    private sealed record LibraryImportProgressRow(Guid AssetId, LibraryImportStatus Status);
+
+    private sealed record DeliveryProgressRow(Guid AssetId, DeliveryStatus Status);
 }

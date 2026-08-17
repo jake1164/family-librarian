@@ -73,7 +73,7 @@ public sealed class SecurityGateEndpointTests
     }
 
     [TestMethod]
-    public async Task ACleanFileIsApprovedAndBecomesTrusted()
+    public async Task ACleanFileIsApprovedByPolicyAndBecomesTrusted()
     {
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
@@ -90,15 +90,44 @@ public sealed class SecurityGateEndpointTests
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
 
-        var approve = await client.PostAsJsonAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/approve",
-            new ApprovalDecisionRequest("Looks good."));
-        Assert.AreEqual(HttpStatusCode.NoContent, approve.StatusCode);
-
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var asset = await database.MediaAssets.SingleAsync(asset => asset.Id == imported.MediaAssetId);
         Assert.AreEqual(MediaAssetStorageState.Trusted, asset.StorageState);
+        var approval = await database.SecurityEvaluations
+            .Where(evaluation => evaluation.AssetId == imported.MediaAssetId)
+            .SelectMany(evaluation => evaluation.Approvals)
+            .SingleAsync();
+        Assert.AreEqual(ApprovalActorType.Policy, approval.ActorType);
+        Assert.AreEqual("clean-security-evaluation-v1", approval.PolicyName);
+    }
+
+    [TestMethod]
+    public async Task ACleanButWrongEpubIsHeldUnmatchedAndNeverApproved()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        var (requestId, formatId) = await CreateEbookRequestAsync(client);
+
+        var upload = await client.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(EpubTestFixture.BuildMinimalEpubBytes("A Different Book", "Someone Else"), "book.epub"));
+        Assert.AreEqual(HttpStatusCode.OK, upload.StatusCode);
+        var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        Assert.IsNotNull(imported);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var asset = await database.MediaAssets.SingleAsync(asset => asset.Id == imported.MediaAssetId);
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState);
+        Assert.IsFalse(await database.SecurityEvaluations
+            .Where(evaluation => evaluation.AssetId == imported.MediaAssetId)
+            .SelectMany(evaluation => evaluation.Approvals)
+            .AnyAsync());
     }
 
     [TestMethod]

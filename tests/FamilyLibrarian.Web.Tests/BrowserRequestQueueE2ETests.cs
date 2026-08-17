@@ -52,7 +52,7 @@ public sealed class BrowserRequestQueueE2ETests
         await SignInAsync(page, settings.BaseUri, requesterEmail, RequesterPassword);
         await page.GotoAsync(new Uri(settings.BaseUri, "/search").ToString());
         await page.GetByLabel("Title, author, or ISBN", new() { Exact = true }).FillAsync("the hobbit");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Search", Exact = true }).ClickAsync();
+        await page.GetByLabel("Title, author, or ISBN", new() { Exact = true }).PressAsync("Enter");
         await Assertions.Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Results", Exact = true }))
             .ToBeVisibleAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "View details", Exact = true }).First.ClickAsync();

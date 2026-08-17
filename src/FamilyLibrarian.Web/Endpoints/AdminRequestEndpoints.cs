@@ -117,7 +117,7 @@ internal static class AdminRequestEndpoints
         Guid formatId,
         HttpRequest request,
         ManualImportService manualImport,
-        SecurityEvaluationService securityEvaluation,
+        AutomatedSecurityPipeline securityPipeline,
         ManualImportPolicy policy,
         CancellationToken cancellationToken)
     {
@@ -170,12 +170,12 @@ internal static class AdminRequestEndpoints
                     fileName,
                     cancellationToken);
 
-                // A successful upload is evaluated immediately. The resulting
-                // asset still needs an explicit approval before it is trusted,
-                // but administrators should not need to start a routine scan.
+                // Every successful upload is evaluated immediately. A clean,
+                // valid result is trusted and dispatched by the policy; only
+                // failed or inconclusive evaluations need follow-up.
                 if (result.Outcome == ManualImportOutcome.Success)
                 {
-                    await securityEvaluation.EvaluateAsync(result.MediaAssetId!.Value, cancellationToken);
+                    await securityPipeline.EvaluateAsync(result.MediaAssetId!.Value, cancellationToken);
                 }
             }
             catch (BadHttpRequestException)

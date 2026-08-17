@@ -13,27 +13,65 @@ namespace FamilyLibrarian.Application.Security;
 /// <see cref="MediaAssetStorageState.Trusted"/>.
 /// </summary>
 /// <remarks>
-/// Every approval is an explicit administrator action in V1 — there is no
-/// automatic policy-driven approval yet, even for a clean
-/// <see cref="SecurityEvaluationStatus.Passed"/> result. The evaluation domain
-/// entity still enforces the harder rule underneath this: a
-/// <see cref="SecurityEvaluationStatus.Failed"/> evaluation cannot be approved
-/// no matter who calls this.
+/// A passed evaluation can be approved by the clean-scan policy, while an
+/// administrator handles review-required results. The evaluation domain entity
+/// enforces the harder rule underneath: a <see cref="SecurityEvaluationStatus.Failed"/>
+/// evaluation cannot be approved no matter who calls this.
 /// </remarks>
 public sealed class ApprovalService(
     ISecurityEvaluationRepository repository,
     IAssetStagingStore stagingStore,
     MediaAssetPublishingCoordinator publishing,
+    IAssetIdentityVerificationService identity,
     IAuditWriter audit,
     ICurrentUser currentUser,
-    IClock clock)
+    IClock clock) : IPolicyAssetApprovalService
 {
     public async Task<ApprovalResult> ApproveAsync(Guid assetId, string? reason, CancellationToken cancellationToken)
+        => await ApproveCoreAsync(
+            assetId,
+            ApprovalActorType.Admin,
+            currentUser.UserId,
+            policyName: null,
+            reason,
+            cancellationToken);
+
+    /// <summary>
+    /// Records the trusted clean-scan policy's decision. This path is intentionally unavailable for
+    /// review-required evaluations: an administrator must make that exception decision.
+    /// </summary>
+    public Task<ApprovalResult> ApproveByPolicyAsync(
+        Guid assetId,
+        string policyName,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(policyName);
+
+        return ApproveCoreAsync(
+            assetId,
+            ApprovalActorType.Policy,
+            actorUserId: null,
+            policyName,
+            reason: null,
+            cancellationToken);
+    }
+
+    private async Task<ApprovalResult> ApproveCoreAsync(
+        Guid assetId,
+        ApprovalActorType actorType,
+        Guid? actorUserId,
+        string? policyName,
+        string? reason,
+        CancellationToken cancellationToken)
     {
         var asset = await repository.FindAssetAsync(assetId, cancellationToken);
         if (asset is null)
         {
             return ApprovalResult.NotFound();
+        }
+        if (asset.StorageState != MediaAssetStorageState.Processing)
+        {
+            return ApprovalResult.Invalid("Only a security-review asset can be approved.");
         }
 
         var evaluation = await repository.FindLatestEvaluationAsync(assetId, cancellationToken);
@@ -42,10 +80,20 @@ public sealed class ApprovalService(
             return ApprovalResult.Invalid("This asset has not been evaluated yet.");
         }
 
+        // Identity verification is deliberately part of every approval path,
+        // including a librarian's approval of a review-required scan. A clean
+        // security evaluation proves the file is safe, not that it is the
+        // requested book.
+        var identityResult = await identity.VerifyAsync(assetId, cancellationToken);
+        if (!identityResult.IsMatch)
+        {
+            return ApprovalResult.IdentityUnmatched();
+        }
+
         var now = clock.UtcNow;
         try
         {
-            evaluation.Approve(ApprovalActorType.Admin, currentUser.UserId, policyName: null, reason, now);
+            evaluation.Approve(actorType, actorUserId, policyName, reason, now);
         }
         catch (InvalidOperationException exception)
         {
@@ -62,7 +110,7 @@ public sealed class ApprovalService(
             AuditActions.AssetApproved,
             AuditSubjectTypes.MediaAsset,
             assetId.ToString(),
-            new { AssetId = assetId, Reason = reason },
+            new { AssetId = assetId, ActorType = actorType, PolicyName = policyName, Reason = reason },
             cancellationToken);
 
         // Best-effort: a publish failure must never undo or fail an approval
@@ -121,11 +169,16 @@ public sealed record ApprovalResult(ApprovalOutcome Outcome, string? Error)
     public static ApprovalResult NotFound() => new(ApprovalOutcome.NotFound, null);
 
     public static ApprovalResult Invalid(string error) => new(ApprovalOutcome.Invalid, error);
+
+    public static ApprovalResult IdentityUnmatched() => new(
+        ApprovalOutcome.IdentityUnmatched,
+        "The file metadata does not match the requested book. It has been held for librarian identification.");
 }
 
 public enum ApprovalOutcome
 {
     Success,
     NotFound,
-    Invalid
+    Invalid,
+    IdentityUnmatched
 }

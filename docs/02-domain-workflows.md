@@ -961,6 +961,13 @@ available, the request moves to completed history with an explicit status
 event. A background verifier performs the OPDS rechecks, so administrators do
 not have to drive that normal asynchronous CWA step by hand.
 
+**Requester progress:** My Requests supplements the stable request status with
+one safe, per-format workflow message whenever a file has entered the pipeline:
+awaiting scan, scanning, awaiting approval, security review required, needs
+librarian identification, approved and publishing, awaiting destination
+verification, or publishing needs attention. It intentionally excludes uploaded filenames, scan evidence,
+destination failure details, and librarian-only notes.
+
 There is still no general `CheckingLibrary`, `Searching`, `Acquiring`, or
 `Processing` request state machine; audiobook confirmation and
 existing-ownership checks at request creation remain future work. This is not
@@ -993,8 +1000,18 @@ Quarantine
       v
 Hash + identify + scan + validate
       |
-      v
-Admin approval
+      +--> Clean + valid + matching EPUB metadata
+      |                         -> policy approval -> Approved staged artifact
+      |
+      +--> EPUB identity mismatch/missing metadata
+      |                         -> retained unmatched for librarian identification
+      |
+      +--> Review required     -> identity check + admin approval
+      |                         -> Approved staged artifact
+      |
+      +--> Malware detected    -> bytes destroyed; audit record retained
+      |
+      +--> Invalid format      -> rejected and retained until admin deletion
       |
       v
 Approved staged artifact

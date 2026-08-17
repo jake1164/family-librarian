@@ -99,6 +99,24 @@ public sealed class SecurityEvaluationServiceTests
         Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
     }
 
+    [TestMethod]
+    public async Task ADetectedThreatIsDestroyedAfterItsFailedEvaluationIsRecorded()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAsset();
+
+        var result = await context.CreateService(new DetectedThreatScanner())
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(SecurityEvaluationStatus.Failed, result.Status);
+        Assert.AreEqual(MediaAssetStorageState.Destroyed, asset.StorageState);
+        Assert.IsFalse(context.StagingStore.Contains(asset.StoredFilename));
+        Assert.AreEqual(3, context.Repository.SaveCount);
+        CollectionAssert.AreEquivalent(
+            new[] { AuditActions.AssetEvaluated, AuditActions.AssetMalwareDestroyed },
+            context.Audit.Entries.Select(entry => entry.Action).ToArray());
+    }
+
     private sealed class TestContext
     {
         public TestContext()
@@ -176,6 +194,8 @@ public sealed class SecurityEvaluationServiceTests
 
         public MediaAssetStorageState ZoneOf(string storedFilename) => _zones[storedFilename];
 
+        public bool Contains(string storedFilename) => _zones.ContainsKey(storedFilename);
+
         public Task<StagedFile> WriteToQuarantineAsync(
             Stream content, string originalFilename, long maxSizeBytes, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -205,6 +225,21 @@ public sealed class SecurityEvaluationServiceTests
             }
 
             _zones[storedFilename] = toZone;
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteAsync(
+            MediaAssetStorageState zone,
+            string storedFilename,
+            CancellationToken cancellationToken)
+        {
+            if (_zones.GetValueOrDefault(storedFilename) != zone)
+            {
+                throw new FileNotFoundException(
+                    $"'{storedFilename}' is not in {zone}; it is in {_zones.GetValueOrDefault(storedFilename)}.");
+            }
+
+            _zones.Remove(storedFilename);
             return Task.CompletedTask;
         }
     }
@@ -251,5 +286,18 @@ public sealed class SecurityEvaluationServiceTests
 
         public Task<ScanOutcome> ScanAsync(Stream content, CancellationToken cancellationToken) =>
             throw new IOException("Simulated connection reset mid-stream.");
+    }
+
+    private sealed class DetectedThreatScanner : IMalwareScanner
+    {
+        public string Id => "detected";
+
+        public bool IsRequired => true;
+
+        public Task<ScannerHealth> CheckHealthAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ScannerHealth(true, "1.0", null));
+
+        public Task<ScanOutcome> ScanAsync(Stream content, CancellationToken cancellationToken) =>
+            Task.FromResult(new ScanOutcome(ScanResultStatus.Detected, "Test threat"));
     }
 }

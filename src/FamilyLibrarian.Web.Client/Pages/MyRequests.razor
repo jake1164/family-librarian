@@ -77,9 +77,20 @@
                             </MudChip>
                         }
                     </MudStack>
-                    <MudText Typo="Typo.body2" Color="@StatusColor(request)">
-                        @request.StatusDescription
-                    </MudText>
+                    @foreach (var format in request.Formats.Where(format =>
+                        !string.IsNullOrWhiteSpace(format.ProgressDescription)))
+                    {
+                        <MudText Typo="Typo.body2" Color="@ProgressColor(format.ProgressCode)">
+                            @format.MediaType: @format.ProgressDescription
+                        </MudText>
+                    }
+                    @if (request.Status != "PendingAcquisition" ||
+                        !request.Formats.Any(format => !string.IsNullOrWhiteSpace(format.ProgressDescription)))
+                    {
+                        <MudText Typo="Typo.body2" Color="@StatusColor(request)">
+                            @request.StatusDescription
+                        </MudText>
+                    }
                     <MudText Typo="Typo.caption">
                         Asked @request.RequestedAtUtc.ToLocalTime().ToString("d")
                     </MudText>
@@ -125,6 +136,14 @@
         "NotAvailable" => Color.Error,
         "Available" => Color.Success,
         _ => Color.Default
+    };
+
+    private static Color ProgressColor(string? progressCode) => progressCode switch
+    {
+        "SecurityCheckFailed" or "PublishingNeedsAttention" => Color.Error,
+        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" => Color.Warning,
+        "Available" => Color.Success,
+        _ => Color.Info
     };
 
     private async Task LoadAsync()

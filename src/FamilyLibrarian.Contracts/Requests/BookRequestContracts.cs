@@ -39,7 +39,12 @@ public sealed record BookRequestResponse(
     IReadOnlyList<string> AvailableTransitions,
     uint Version);
 
-public sealed record BookRequestFormatResponse(Guid FormatId, string MediaType, string Status);
+public sealed record BookRequestFormatResponse(
+    Guid FormatId,
+    string MediaType,
+    string Status,
+    string? ProgressCode = null,
+    string? ProgressDescription = null);
 
 public sealed record BookRequestListResponse(
     IReadOnlyList<BookRequestResponse> Active,

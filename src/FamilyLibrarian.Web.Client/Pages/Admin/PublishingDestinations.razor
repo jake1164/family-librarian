@@ -130,12 +130,17 @@ else
         <MudPaper Outlined="true" Class="pa-4">
             <MudText Typo="Typo.h6" GutterBottom="true">Optional import verification (OPDS)</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
-                OPDS is CWA's HTTP catalog. It is not part of SFTP delivery. Leave this blank if
-                Family Librarian cannot reach CWA over HTTP or you don't need import confirmation.
-                The OPDS test checks the current form values without saving them.
+                OPDS is CWA's HTTP catalog and is separate from SFTP delivery. Enter CWA's site root,
+                not its <code>/opds</code> page: for example, <code>https://books.sydneyelvis.net</code>,
+                not <code>https://books.sydneyelvis.net/opds</code>. Family Librarian adds the
+                <code>/opds/search/...</code> path itself. The OPDS test checks the current form values
+                without saving them.
             </MudText>
             <MudStack Spacing="3">
-                <MudTextField T="string" Label="CWA OPDS base URL" @bind-Value="cwaOpdsBaseUrl" Disabled="@cwaBusy" />
+                <MudTextField T="string" Label="CWA site root URL" @bind-Value="cwaOpdsBaseUrl"
+                              Placeholder="https://books.sydneyelvis.net"
+                              HelperText="Enter the CWA site root; do not add /opds."
+                              Disabled="@cwaBusy" />
                 <MudTextField T="string" Label="OPDS username" @bind-Value="cwaOpdsUsername" Disabled="@cwaBusy" />
                 <MudText Typo="Typo.body2">@(cwa.HasOpdsPassword ? "An OPDS password is stored. This field is intentionally blank: leave it blank to keep it, or enter a value to replace it." : "No OPDS password is stored.")</MudText>
                 <MudTextField T="string" @bind-Value="cwaOpdsPasswordDraft" Label="OPDS password"

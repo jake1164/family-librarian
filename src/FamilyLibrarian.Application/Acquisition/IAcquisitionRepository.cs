@@ -11,8 +11,8 @@ public interface IAcquisitionRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Every <see cref="MediaAsset"/> still in <c>Quarantine</c> or
-    /// <c>Processing</c> — the set that needs an administrator's attention.
+    /// Every non-delivered <see cref="MediaAsset"/>, including rejected and
+    /// removed records retained for administrator review and audit.
     /// </summary>
     Task<IReadOnlyList<MediaAssetAdminView>> ListActiveAsync(CancellationToken cancellationToken);
 

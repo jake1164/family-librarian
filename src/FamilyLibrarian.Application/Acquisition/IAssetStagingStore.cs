@@ -47,6 +47,17 @@ public interface IAssetStagingStore
         MediaAssetStorageState toZone,
         string storedFilename,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Permanently removes a staged artifact from its current storage zone.
+    /// The audit record and the owning <c>MediaAsset</c> remain, so removal is
+    /// traceable without retaining unsafe bytes.
+    /// </summary>
+    Task DeleteAsync(
+        MediaAssetStorageState zone,
+        string storedFilename,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This staging store does not support deletion.");
 }
 
 public sealed record StagedFile(

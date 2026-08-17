@@ -122,6 +122,24 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
         return Task.CompletedTask;
     }
 
+    public Task DeleteAsync(
+        MediaAssetStorageState zone,
+        string storedFilename,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(storedFilename);
+        if (!string.Equals(storedFilename, Path.GetFileName(storedFilename), StringComparison.Ordinal))
+        {
+            throw new ArgumentException("The stored filename must not contain a path.", nameof(storedFilename));
+        }
+
+        // File.Delete is intentionally idempotent. A process crash after the
+        // bytes are removed but before the record is saved must be recoverable
+        // by repeating the same deletion operation.
+        File.Delete(Path.Combine(ZoneDirectory(zone), storedFilename));
+        return Task.CompletedTask;
+    }
+
     private string ZoneDirectory(MediaAssetStorageState zone) =>
         Path.Combine(_options.RootPath, ZoneFolderName(zone));
 
@@ -132,6 +150,7 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
         MediaAssetStorageState.Rejected => "rejected",
         MediaAssetStorageState.Trusted => "trusted",
         MediaAssetStorageState.Archived => "archived",
+        MediaAssetStorageState.Unmatched => "unmatched",
         _ => throw new ArgumentOutOfRangeException(nameof(zone), zone, "Unknown storage zone.")
     };
 }

@@ -17,11 +17,18 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
 
     public async Task<IReadOnlyList<MediaAssetAdminView>> ListActiveAsync(CancellationToken cancellationToken)
     {
-        var activeStates = new[] { MediaAssetStorageState.Quarantine, MediaAssetStorageState.Processing };
+        var securityStates = new[]
+        {
+            MediaAssetStorageState.Quarantine,
+            MediaAssetStorageState.Processing,
+            MediaAssetStorageState.Unmatched,
+            MediaAssetStorageState.Rejected,
+            MediaAssetStorageState.Destroyed
+        };
 
         var query =
             from asset in database.MediaAssets
-            where activeStates.Contains(asset.StorageState)
+            where securityStates.Contains(asset.StorageState)
             join format in database.RequestFormats on asset.AssociatedRequestFormatId equals format.Id
             join work in database.Works on asset.WorkId equals work.Id
             orderby asset.CreatedAtUtc

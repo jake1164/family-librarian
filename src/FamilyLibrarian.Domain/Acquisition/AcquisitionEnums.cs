@@ -37,5 +37,16 @@ public enum MediaAssetStorageState
     Processing = 2,
     Rejected = 3,
     Trusted = 4,
-    Archived = 5
+    Archived = 5,
+    /// <summary>
+    /// The file passed security checks but its content could not be matched to
+    /// the Work/request it was staged to fulfill. It is retained for later
+    /// librarian handling and has no path to publishing.
+    /// </summary>
+    Unmatched = 6,
+    /// <summary>
+    /// The staged bytes were permanently removed. The asset row remains only
+    /// as auditable evidence of a blocked or administrator-discarded file.
+    /// </summary>
+    Destroyed = 7
 }

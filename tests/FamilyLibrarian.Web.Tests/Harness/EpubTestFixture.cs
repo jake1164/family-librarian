@@ -20,7 +20,9 @@ namespace FamilyLibrarian.Web.Tests.Harness;
 /// </remarks>
 public static class EpubTestFixture
 {
-    public static byte[] BuildMinimalEpubBytes()
+    public static byte[] BuildMinimalEpubBytes(
+        string title = "The Hobbit",
+        string author = "J. R. R. Tolkien")
     {
         using var stream = new MemoryStream();
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
@@ -44,9 +46,14 @@ public static class EpubTestFixture
                 </container>
                 """);
 
-            WriteTextEntry(archive, "OEBPS/content.opf", """
+            WriteTextEntry(archive, "OEBPS/content.opf", $"""
                 <?xml version="1.0" encoding="UTF-8"?>
-                <package xmlns="http://www.idpf.org/2007/opf" version="3.0"></package>
+                <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title>{title}</dc:title>
+                    <dc:creator>{author}</dc:creator>
+                  </metadata>
+                </package>
                 """);
         }
 

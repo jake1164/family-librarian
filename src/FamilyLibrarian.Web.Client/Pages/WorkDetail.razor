@@ -24,7 +24,7 @@
 
         @if (!string.IsNullOrWhiteSpace(work.Description))
         {
-            <MudText Typo="Typo.body1">@work.Description</MudText>
+            <div class="mud-typography mud-typography-body1">@CatalogDescriptionMarkup.ToMarkup(work.Description)</div>
         }
 
         @if (work.Series.Count > 0)

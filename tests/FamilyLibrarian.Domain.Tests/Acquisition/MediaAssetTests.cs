@@ -50,13 +50,15 @@ public sealed class MediaAssetTests
     }
 
     [TestMethod]
-    public void RejectedIsTerminal()
+    public void ARejectedAssetCanBeDestroyedButCannotReenterThePipeline()
     {
         var asset = CreateAsset();
         asset.TransitionStorageState(MediaAssetStorageState.Rejected, Now.AddMinutes(1));
 
+        asset.TransitionStorageState(MediaAssetStorageState.Destroyed, Now.AddMinutes(2));
+
         Assert.ThrowsExactly<InvalidMediaAssetStorageTransitionException>(() =>
-            asset.TransitionStorageState(MediaAssetStorageState.Processing, Now.AddMinutes(2)));
+            asset.TransitionStorageState(MediaAssetStorageState.Processing, Now.AddMinutes(3)));
     }
 
     [TestMethod]

@@ -152,8 +152,9 @@ Administrators also get:
   Google Books key;
 - **Sources**, for enabling Gutendex and configuring external acquisition
   sources and their private network;
-- **Security queue**, to run the malware/format scan on a manually imported
-  file and approve or reject it before it can go anywhere;
+- **Security queue**, for quarantined, rejected, unmatched, and removed-file
+  security records. Confirmed malware bytes are deleted automatically; clean,
+  matching EPUB imports proceed automatically;
 - **Publishing settings**, for configuring CWA and Audiobookshelf; and
 - **Publishing activity**, for reviewing each handoff after an approved file was
   sent to either destination, with a **Recheck** action for anything not yet

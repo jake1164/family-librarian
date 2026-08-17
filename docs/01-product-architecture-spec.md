@@ -261,6 +261,10 @@ Every acquired asset must pass:
 - approval policy.
 
 No acquired file may enter a trusted delivery target before passing the security gate.
+When malware is confirmed, the staged bytes are destroyed immediately and only
+the security/audit evidence remains. A failed format check is retained in the
+administrator security queue until it is explicitly deleted, so a bad artifact
+can be reviewed without treating it as trusted content.
 If a required malware scanner is unavailable or unhealthy, Family Librarian must
 fail closed: it must not accept uploads, start provider downloads, or stage a
 linked-library file. Existing user requests remain recorded and move to a
@@ -803,7 +807,7 @@ Format validation
   ->
 Metadata/content verification
   ->
-Approval
+Automatic approval when every required check passes; administrator review only for exceptions
   ->
 Approved staged artifact
   ->
@@ -1070,7 +1074,7 @@ A V1 release is useful when:
 5. An administrator sees the request.
 6. The admin manually provides a media file.
 7. The file passes quarantine/security validation.
-8. The admin approves it.
+8. A clean, valid file is approved by policy; the admin only handles exceptional results.
 9. The audiobook can be delivered to Audiobookshelf, while an approved ebook can be published to a configured CWA library or downloaded/delivered through an available provider.
 10. The user receives a batched ready notification.
 11. The request appears in completed history.

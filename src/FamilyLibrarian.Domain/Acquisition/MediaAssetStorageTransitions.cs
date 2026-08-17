@@ -19,18 +19,29 @@ public static class MediaAssetStorageTransitions
         [MediaAssetStorageState.Quarantine] =
         [
             MediaAssetStorageState.Processing,
-            MediaAssetStorageState.Rejected
+            MediaAssetStorageState.Rejected,
+            MediaAssetStorageState.Destroyed
         ],
         [MediaAssetStorageState.Processing] =
         [
             MediaAssetStorageState.Trusted,
             MediaAssetStorageState.Rejected,
+            MediaAssetStorageState.Unmatched,
+            MediaAssetStorageState.Destroyed,
             // A transient scan/validator error re-queues rather than condemning
             // the asset outright.
             MediaAssetStorageState.Quarantine
         ],
-        [MediaAssetStorageState.Trusted] = [MediaAssetStorageState.Archived]
-        // Rejected and Archived are terminal.
+        [MediaAssetStorageState.Trusted] = [MediaAssetStorageState.Archived],
+        [MediaAssetStorageState.Unmatched] =
+        [
+            MediaAssetStorageState.Rejected,
+            MediaAssetStorageState.Destroyed
+        ],
+        [MediaAssetStorageState.Rejected] = [MediaAssetStorageState.Destroyed]
+        // Archived and Destroyed are terminal. An unmatched asset can be
+        // retained for later routing or explicitly discarded, but cannot be
+        // approved or published.
     };
 
     public static bool IsAllowed(MediaAssetStorageState from, MediaAssetStorageState to) =>

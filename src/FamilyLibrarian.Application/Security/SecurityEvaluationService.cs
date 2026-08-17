@@ -27,7 +27,7 @@ public sealed class SecurityEvaluationService(
     IEnumerable<IMalwareScanner> scanners,
     IEnumerable<IAssetValidator> validators,
     IAuditWriter audit,
-    IClock clock)
+    IClock clock) : ISecurityEvaluationRunner
 {
     private const string PolicyVersion = "v1";
 
@@ -134,8 +134,44 @@ public sealed class SecurityEvaluationService(
             new { AssetId = assetId, evaluation.Status },
             cancellationToken);
 
+        if (evaluation.Status == SecurityEvaluationStatus.Failed &&
+            evaluation.ScanResults.Any(result => result.Status == ScanResultStatus.Detected))
+        {
+            await DestroyDetectedFileAsync(asset, cancellationToken);
+        }
+
         return SecurityEvaluationResult.Success(
             evaluation.Id, evaluation.Status, evaluation.CreatedAtUtc, evaluation.CompletedAtUtc);
+    }
+
+    private async Task DestroyDetectedFileAsync(MediaAsset asset, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // The rejected state and evaluation have already been committed.
+            // If deletion fails, the retained rejected file remains visible to
+            // an administrator rather than becoming an untracked orphan.
+            await stagingStore.DeleteAsync(
+                MediaAssetStorageState.Rejected, asset.StoredFilename, cancellationToken);
+            asset.TransitionStorageState(MediaAssetStorageState.Destroyed, clock.UtcNow);
+            await repository.SaveChangesAsync(cancellationToken);
+
+            await audit.WriteAsync(
+                AuditActions.AssetMalwareDestroyed,
+                AuditSubjectTypes.MediaAsset,
+                asset.Id.ToString(),
+                new { AssetId = asset.Id },
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            await audit.WriteAsync(
+                AuditActions.AssetMalwareDestructionFailed,
+                AuditSubjectTypes.MediaAsset,
+                asset.Id.ToString(),
+                new { AssetId = asset.Id, Reason = exception.GetType().Name },
+                cancellationToken);
+        }
     }
 }
 

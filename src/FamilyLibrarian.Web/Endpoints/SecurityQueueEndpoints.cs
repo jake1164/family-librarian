@@ -9,10 +9,9 @@ internal static class SecurityQueueEndpoints
 {
     public static void MapSecurityQueueEndpoints(this IEndpointRouteBuilder app)
     {
-        // The security gate's admin surface: run the scanner/validator pass over a
-        // quarantined asset, then approve or reject it. Approve is the only path that
-        // can move an asset to Trusted; the service re-enforces that a Failed
-        // evaluation can never be approved even by an administrator.
+        // The security gate's admin surface: a passed scan is trusted by policy;
+        // administrators only decide review-required outcomes. Failed evaluations
+        // are never approvable, no matter who attempts it.
         var adminMediaAssets = app.MapGroup("/api/v1/admin/media-assets")
             .RequireAuthorization("Admin")
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
@@ -21,6 +20,7 @@ internal static class SecurityQueueEndpoints
         adminMediaAssets.MapPost("/{assetId:guid}/evaluate", EvaluateMediaAssetAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/approve", ApproveMediaAssetAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/reject", RejectMediaAssetAsync);
+        adminMediaAssets.MapDelete("/{assetId:guid}", DiscardMediaAssetAsync);
     }
 
     private static async Task<IResult> ListMediaAssetsAsync(
@@ -60,10 +60,10 @@ internal static class SecurityQueueEndpoints
 
     private static async Task<IResult> EvaluateMediaAssetAsync(
         Guid assetId,
-        SecurityEvaluationService evaluationService,
+        AutomatedSecurityPipeline securityPipeline,
         CancellationToken cancellationToken)
     {
-        var result = await evaluationService.EvaluateAsync(assetId, cancellationToken);
+        var result = await securityPipeline.EvaluateAsync(assetId, cancellationToken);
 
         return result.Outcome switch
         {
@@ -94,6 +94,23 @@ internal static class SecurityQueueEndpoints
         ApprovalService approvals,
         CancellationToken cancellationToken) =>
         ToApprovalResult(await approvals.RejectAsync(assetId, request.Reason, cancellationToken));
+
+    private static async Task<IResult> DiscardMediaAssetAsync(
+        Guid assetId,
+        AssetDiscardService discards,
+        CancellationToken cancellationToken)
+    {
+        var result = await discards.DiscardAsync(assetId, cancellationToken);
+        return result.Outcome switch
+        {
+            AssetDiscardOutcome.Success => Results.NoContent(),
+            AssetDiscardOutcome.NotFound => Results.NotFound(),
+            _ => Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["asset"] = [result.Error ?? "That file could not be deleted."]
+            })
+        };
+    }
 
     private static IResult ToApprovalResult(ApprovalResult result) => result.Outcome switch
     {

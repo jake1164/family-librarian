@@ -82,15 +82,26 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
     public Task<MediaAssetActionOutcome> RejectAsync(Guid assetId, CancellationToken cancellationToken = default) =>
         SendActionAsync($"api/v1/admin/media-assets/{assetId}/reject", reason: null, cancellationToken);
 
+    public Task<MediaAssetActionOutcome> DiscardAsync(Guid assetId, CancellationToken cancellationToken = default) =>
+        SendActionAsync($"api/v1/admin/media-assets/{assetId}", HttpMethod.Delete, reason: null, cancellationToken);
+
     private async Task<MediaAssetActionOutcome> SendActionAsync(
         string path,
         string? reason,
         CancellationToken cancellationToken)
+        => await SendActionAsync(path, HttpMethod.Post, reason, cancellationToken);
+
+    private async Task<MediaAssetActionOutcome> SendActionAsync(
+        string path,
+        HttpMethod method,
+        string? reason,
+        CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, path)
+        using var request = new HttpRequestMessage(method, path);
+        if (method != HttpMethod.Delete)
         {
-            Content = JsonContent.Create(new ApprovalDecisionRequest(reason))
-        };
+            request.Content = JsonContent.Create(new ApprovalDecisionRequest(reason));
+        }
         await antiforgery.AttachAsync(request, cancellationToken);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);

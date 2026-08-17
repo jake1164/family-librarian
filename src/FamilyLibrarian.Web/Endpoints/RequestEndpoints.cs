@@ -152,7 +152,9 @@ internal static class RequestEndpoints
             .Select(format => new BookRequestFormatResponse(
                 format.Id,
                 format.MediaType.ToString(),
-                format.Status.ToString()))
+                format.Status.ToString(),
+                format.Progress?.Code,
+                format.Progress?.Description))
             .ToArray(),
         request.RequesterNote,
         request.AdminNote,

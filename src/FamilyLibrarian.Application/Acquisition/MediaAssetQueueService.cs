@@ -4,10 +4,10 @@ using FamilyLibrarian.Domain.Security;
 namespace FamilyLibrarian.Application.Acquisition;
 
 /// <summary>
-/// Read-only composition of the active acquisition/security queue: every
-/// <see cref="MediaAssetAdminView"/> that still needs an administrator's
-/// attention, paired with its latest <see cref="SecurityEvaluation"/> if one
-/// has run yet.
+/// Read-only composition of the acquisition/security records: every
+/// <see cref="MediaAssetAdminView"/> that needs attention or remains relevant
+/// to security audit, paired with its latest <see cref="SecurityEvaluation"/>
+/// if one has run yet.
 /// </summary>
 /// <remarks>
 /// One evaluation lookup per asset rather than a single joined query — the

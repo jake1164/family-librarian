@@ -26,8 +26,13 @@ public static class AuditActions
 
     public const string AssetEvaluated = "asset.evaluated";
     public const string AssetEvaluationFailed = "asset.evaluation_failed";
+    public const string AssetIdentityVerified = "asset.identity_verified";
+    public const string AssetIdentityUnmatched = "asset.identity_unmatched";
     public const string AssetApproved = "asset.approved";
     public const string AssetRejected = "asset.rejected";
+    public const string AssetDestroyed = "asset.destroyed";
+    public const string AssetMalwareDestroyed = "asset.malware_destroyed";
+    public const string AssetMalwareDestructionFailed = "asset.malware_destruction_failed";
     public const string AssetPublished = "asset.published";
     public const string AssetPublishFailed = "asset.publish_failed";
 

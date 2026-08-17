@@ -55,6 +55,18 @@ public sealed class SecurityEvaluationTests
     }
 
     [TestMethod]
+    public void ADetectedThreatFromAnOptionalScannerStillFailsClosed()
+    {
+        var evaluation = new SecurityEvaluation(Guid.NewGuid(), "v1", Now);
+        evaluation.RecordScanResult("clamav", isRequired: true, ScanResultStatus.Clean, null, null, Now);
+        evaluation.RecordScanResult("optional-scanner", isRequired: false, ScanResultStatus.Detected, "Test threat", null, Now);
+
+        evaluation.Evaluate(Now);
+
+        Assert.AreEqual(SecurityEvaluationStatus.Failed, evaluation.Status);
+    }
+
+    [TestMethod]
     public void AnInvalidFormatFails()
     {
         var evaluation = new SecurityEvaluation(Guid.NewGuid(), "v1", Now);

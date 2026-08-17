@@ -192,11 +192,19 @@ public static class DependencyInjection
         // Program.cs) refuses to serve if this collection is ever empty.
         services.AddSingleton<IAssetValidator, FileTypeValidator>();
         services.AddSingleton<IAssetValidator, EpubValidator>();
+        services.AddScoped<IAssetIdentityVerifier, EpubAssetIdentityVerifier>();
 
         services.AddScoped<IAcquisitionBoundaryGuard, AcquisitionBoundaryGuard>();
         services.AddScoped<ISecurityEvaluationRepository, SecurityEvaluationRepository>();
         services.AddScoped<SecurityEvaluationService>();
+        services.AddScoped<ISecurityEvaluationRunner>(provider => provider.GetRequiredService<SecurityEvaluationService>());
         services.AddScoped<ApprovalService>();
+        services.AddScoped<IPolicyAssetApprovalService>(provider => provider.GetRequiredService<ApprovalService>());
+        services.AddScoped<AssetDiscardService>();
+        services.AddScoped<AssetIdentityVerificationService>();
+        services.AddScoped<IAssetIdentityVerificationService>(provider =>
+            provider.GetRequiredService<AssetIdentityVerificationService>());
+        services.AddScoped<AutomatedSecurityPipeline>();
         services.AddScoped<MediaAssetQueueService>();
 
         // Bound and validated at startup, so a bad LifetimeDays fails the deploy

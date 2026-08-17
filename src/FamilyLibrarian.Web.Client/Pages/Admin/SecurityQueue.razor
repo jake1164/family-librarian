@@ -12,9 +12,10 @@
    requires the Admin policy and an anti-forgery token. *@
 <MudText Typo="Typo.h4" GutterBottom="true">Security queue</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
-    Every manually imported file is scanned and format-checked automatically
-    before it appears here. Review a clean result, then approve or reject it.
-    A file drops off this list once it is approved or rejected.
+    Every manually imported file is scanned and format-checked automatically. A clean, valid result is
+    automatically approved and sent to its library destination. Quarantined files can be retried or deleted;
+    rejected non-malicious files are retained until deleted. Confirmed malware is deleted automatically, while
+    its security record remains here for review. Unmatched files cannot be approved or published.
 </MudText>
 
 @if (loadFailed)
@@ -108,6 +109,15 @@ else
                             Reject
                         </MudButton>
                     }
+                    @if (CanDiscard(asset))
+                    {
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Error"
+                                   Disabled="@(busyAssetId is not null)"
+                                   OnClick="@(() => DiscardAsync(asset))">
+                            Delete file
+                        </MudButton>
+                    }
                 </MudStack>
             </MudPaper>
         }
@@ -149,8 +159,12 @@ else
     private async Task RejectAsync(MediaAssetAdminResponse asset) =>
         await RunAsync(asset, () => MediaAssets.RejectAsync(asset.AssetId));
 
+    private async Task DiscardAsync(MediaAssetAdminResponse asset) =>
+        await RunAsync(asset, () => MediaAssets.DiscardAsync(asset.AssetId));
+
     private async Task RunAsync(MediaAssetAdminResponse asset, Func<Task<MediaAssetActionOutcome>> action)
     {
+        var shouldReload = false;
         busyAssetId = asset.AssetId;
         try
         {
@@ -158,17 +172,21 @@ else
             if (!outcome.Succeeded)
             {
                 Snackbar.Add(outcome.Error ?? "That action could not be completed.", Severity.Error);
-                return;
             }
+            shouldReload = true;
         }
         catch (HttpRequestException)
         {
             Snackbar.Add("That action could not be completed. Please try again.", Severity.Error);
-            return;
         }
         finally
         {
             busyAssetId = null;
+        }
+
+        if (!shouldReload)
+        {
+            return;
         }
 
         // The queue's membership and every asset's state can change from this one
@@ -180,9 +198,14 @@ else
     private static Color StorageStateColor(string state) => state switch
     {
         "Rejected" => Color.Error,
+        "Destroyed" => Color.Error,
         "Trusted" => Color.Success,
+        "Unmatched" => Color.Warning,
         _ => Color.Default
     };
+
+    private static bool CanDiscard(MediaAssetAdminResponse asset) =>
+        asset.StorageState is "Quarantine" or "Rejected" or "Unmatched";
 
     private static Color EvaluationColor(string status) => status switch
     {

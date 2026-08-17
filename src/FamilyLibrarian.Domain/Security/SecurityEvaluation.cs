@@ -108,7 +108,10 @@ public sealed class SecurityEvaluation
         }
 
         var requiredScans = _scanResults.Where(result => result.IsRequired).ToArray();
-        var anyThreatDetected = requiredScans.Any(result => result.Status == ScanResultStatus.Detected);
+        // A scanner may be optional because it is unavailable or inconclusive
+        // without blocking an import. A confirmed detection is different: it
+        // is actionable evidence of malware and must always fail closed.
+        var anyThreatDetected = _scanResults.Any(result => result.Status == ScanResultStatus.Detected);
         var anyInconclusive = requiredScans.Any(result =>
             result.Status is ScanResultStatus.Error or ScanResultStatus.Unavailable);
         var anyInvalidFormat = _validationResults.Any(result => !result.IsValid);
