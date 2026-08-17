@@ -202,6 +202,68 @@ the file-safety and approval pipeline. Matching uses identifiers and ISBN first;
 title/author matching remains explicitly ambiguous when it cannot prove the
 edition/format.
 
+**Missing capability: retrieving an already-owned artifact.** Everything above
+covers finding and staging a book from a *linked, not-yet-trusted* library.
+There is a second, currently unmet need: fetching the bytes of a book that is
+already the family's own trusted CWA artifact (an `OwnedImport`
+`FulfillmentOption`, or a `LibraryImport` with `Status = Available`), so it can
+be delivered without re-acquisition. Neither `IOwnedLibraryProvider` nor
+`ICwaCatalogClient` can do this today — `ICwaCatalogClient.FindBookIdAsync`
+only resolves an ID. This blocks Send-to-Kindle-from-an-existing-copy,
+direct-device transfer, and browser download for any book already in CWA,
+and it blocks them identically for local and remote CWA, since neither
+should depend on filesystem or SFTP access to read a book back out.
+
+The shape should mirror the pattern `IDirectAcquisitionProvider.FetchAsync`
+already establishes for a different capability — fetch a stream for a
+previously returned, provider-opaque reference:
+
+```csharp
+public interface IOwnedLibraryProvider
+{
+    string Id { get; }
+
+    Task<IReadOnlyList<FulfillmentOption>> FindOwnedMatchesAsync(
+        Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches the canonical artifact bytes for a previously returned
+    /// <see cref="OptionKind.Owned"/> option (or an equivalent
+    /// <c>LibraryImport</c> reference). Implementations should prefer an
+    /// HTTP/OPDS download mechanism so remote deployments work without
+    /// filesystem or SFTP access; local deployments may use direct filesystem
+    /// access as an optimization behind the same contract.
+    /// </summary>
+    Task<OwnedArtifact> FetchOwnedArtifactAsync(
+        FulfillmentOption ownedOption, CancellationToken cancellationToken);
+}
+
+public sealed record OwnedArtifact(Stream Content, string Filename, string Format);
+```
+
+For CWA specifically, this means adding an OPDS/HTTP download call to
+`CwaCatalogClient` (Calibre-Web's OPDS feed exposes acquisition/download
+links per entry — the same links `CwaCatalogClient` already parses to extract
+a book ID) rather than reading the Calibre library's files or `metadata.db`
+directly, and rather than any SFTP-based retrieval. This is required before
+any direct-device or browser-delivery work can proceed for an already-owned
+book; see `docs/01-product-architecture-spec.md` §15.1.
+
+**OPDS integration stability.** `CwaCatalogClient`'s current implementation is
+a thin, best-effort Atom-feed scraper: it calls CWA's `/opds/search/{title}`
+endpoint, string-matches the entry title (substring, case-insensitive) and, if
+known, the author, then extracts a book ID from an acquisition/download link
+via a regular expression (`/opds/(?:book|download)/(\d+)`). It does not use
+ISBN, series, or any other retained identifier, and "not found" is
+indistinguishable from "found the wrong book because of a title collision."
+This is an accepted starting point — CWA does not expose a richer
+machine-readable ownership API — but it means correlation and ownership
+lookup are both weaker than this document's identifier-first principle calls
+for, and should be strengthened (ISBN in the OPDS query/response where CWA
+supports it, tighter entry disambiguation) before being relied on for
+irreversible decisions such as skipping acquisition of a book that turns out
+to be a different edition.
+
 `ILibraryDestination` publishes an already approved staged artifact and verifies
 the result. The destination becomes the permanent store for the media; Family
 Librarian retains only provenance and transient staging bytes. It is deliberately
@@ -813,6 +875,38 @@ Deliver(asset, target)
 ```
 
 The provider decides the mechanism.
+
+None of `KindleBrowserFilesystem`, `KindleSendTo`, `KoboBrowserFilesystem`,
+`GenericMassStorage`, or `DesktopAgent` exist in the codebase yet — this
+section, and `docs/01-product-architecture-spec.md` §15.1 / `docs/02-domain-workflows.md`
+("DeliveryAttempt"), describe the intended shape for when that work starts
+(`post-v1-roadmap.md` Milestone G / Spike C), not current behavior.
+
+A destination such as a Kindle should support more than one `IDeliveryProvider`
+implementation (`KindleSendTo`, then later `KindleBrowserFilesystem`), with a
+per-user preferred/fallback ordering resolved the same way
+`ProviderPolicyProfile` already resolves acquisition preference (§3 above) —
+this is a second, independent policy scope (`delivery`), not a reuse of the
+acquisition ranking rules, since "prefer the free acquisition source" and
+"prefer Send-to-Kindle over a manual download" are unrelated decisions.
+
+`DeliverAsync` must report a status that separates *submitted* from
+*confirmed*: Amazon's Send-to-Kindle path only ever gives a submission
+acknowledgement, never proof the file reached the device. A provider that
+cannot confirm delivery should return a status such as `SubmittedToAmazon`
+rather than `Delivered`, so the request/history UI can offer "Didn't receive
+it" -> retry or fall back to another method without losing the original
+request. Each attempt (provider, method, timing, status, failure reason)
+should be retained rather than overwritten, mirroring how `AcquisitionJob`
+already lets one request accumulate multiple acquisition attempts.
+
+A browser/WebUSB device detector is a future capability of a
+`DirectDevice`-style provider specifically, not a new core contract: it
+changes which delivery method is *offered* (and can move a delivery attempt to
+an `AwaitingDevice` status while the artifact finishes acquisition/processing
+with no device connected), but it must not change how acquisition or CWA
+publishing work. `PrepareAsync`/`DeliverAsync` already give a provider room to
+implement that without a new interface.
 
 ---
 

@@ -291,6 +291,23 @@ Family Librarian media copy. The application may stage its requested file into
 quarantine, then create a provenance record after the normal safety pipeline
 passes and the selected destination verifies import.
 
+**Implementation note (current state):** `WorkFormatAvailability` as specified
+here is not yet what actually answers "is this owned." The shipped
+`WorkFormatAvailabilityService` is a placeholder that always returns
+`OwnershipState.NotOwned` (no `MediaAsset` existed yet when it was written) and
+is not called by any endpoint. The real, working ownership signal today is the
+separate `FulfillmentOption`/`IOwnedLibraryProvider` model
+(`docs/03-provider-api-contracts.md` §3), specifically `CwaOwnedLibraryProvider`
+and `AudiobookshelfOwnedLibraryProvider`, surfaced through
+`GET /works/{workId}/fulfillment-options` and rendered on the work detail page.
+These two models need to be reconciled — either `WorkFormatAvailability`
+becomes a real read model backed by the owned-library providers, or it is
+retired in favor of `FulfillmentOption` — before either is extended further.
+Whichever remains should also be the thing request creation consults (see the
+implementation note under "Request Workflow" below): today
+`BookRequestService.CreateAsync` checks only for a duplicate active request,
+never for an existing owned artifact.
+
 ---
 
 ### LibraryItemReference
@@ -623,6 +640,39 @@ evidence, and opaque destination reference, then removes its local media copy
 under the staging-retention policy. For CWA, the managed Calibre library—not its
 processed ingest copy—is the permanent ebook archive.
 
+**Local vs. remote CWA does not change this model.** Whether the ingest
+transport is a shared filesystem or SFTP, `LibraryImport` verification always
+resolves the resulting book through the CWA catalog/query connection (OPDS),
+never through ingest-directory contents. A file disappearing from the ingest
+folder, or an SFTP upload completing, is evidence the transfer happened — it
+is not evidence CWA imported the expected book. `CwaPublishingService`
+already implements this correctly: it hands the file to whichever
+`ICwaIngestTransport` is configured, then separately calls `ICwaCatalogClient`
+to resolve the resulting book ID before marking the import `Available`. See
+`docs/01-product-architecture-spec.md` §12.1.1 for the full topology model.
+
+**Correlation today is best-effort, not identifier-based.** The current OPDS
+lookup matches on title (substring) and, when known, author — there is no
+ISBN or provider-ID correlation. This is an accepted fallback per this
+document's identifier-first/title-author-fallback principle, but it means a
+common title, an omnibus edition, or a retitled translation can produce an
+ambiguous or wrong match. Strengthening this (retained ISBN first, title/author
+only as fallback) is listed as required work, not a nice-to-have, once CWA
+ownership/correlation moves beyond the first opt-in integration.
+
+**Existing-artifact suitability is not yet modeled.** A `LibraryImport`
+reaching `Available`, or a `FulfillmentOption` with `OptionKind.Owned`, is
+currently treated as unconditionally usable. Nothing checks that the resolved
+artifact still exists, has a sensible size, is in a format the requested
+delivery method can use, or passes a basic integrity check before it is reused
+for delivery or shown as "owned." The architecture needs to support at least
+three outcomes for an existing match — usable as-is, usable after
+conversion/repair, or unusable (missing/corrupt) — with the unusable case
+routing to a distinct `ReplaceDefectiveCopy`/`UpgradeOrReplaceExistingCopy`
+acquisition reason rather than silently behaving as if the title were never
+owned. `AcquisitionJob` does not currently carry a reason/cause field at all,
+so this will need one.
+
 ---
 
 ### DeliveryTarget
@@ -662,17 +712,33 @@ It may be a linked catalog/source and CWA may be a `LibraryImport` destination;
 it can also provide its own reading, download, or send features. Kindle,
 browser, or email delivery remain optional, separate user-specific operations.
 
+**Implementation status:** neither `DeliveryTarget` nor the record below exists
+yet. No Kindle/device delivery code has been written; see
+`docs/01-product-architecture-spec.md` §15.1 for the intended design,
+including delivery-attempt history, retry/fallback, and the
+submitted-vs-confirmed distinction for Send-to-Kindle.
+
 ---
 
-### Delivery
+### DeliveryAttempt (design name — not yet implemented)
 
-Represents one attempt to deliver an Asset.
+Represents one attempt to deliver an Asset to a user's `DeliveryTarget`. This
+is the record referred to as `Delivery` in earlier drafts of this document;
+it is named `DeliveryAttempt` here specifically to avoid colliding with the
+type that already exists in code today: `FamilyLibrarian.Domain.Publishing.Delivery`,
+which represents an unrelated concept — one attempt to publish an approved
+audiobook `MediaAsset` into Audiobookshelf (a `MediaLibraryImport`, not a
+user-specific delivery). Resolving that name collision (rename the existing
+type, or pick a different name for this one) is a required decision before
+this record is implemented; do not introduce a second, differently-shaped
+`Delivery` type without making that choice explicitly.
 
 ```text
-DeliveryId
+DeliveryAttemptId
 RequestId
 AssetId
 DeliveryTargetId
+Method                SendToKindle | DirectDevice | BrowserDownload | ...
 Status
 CreatedAt
 StartedAt
@@ -687,11 +753,28 @@ Status:
 Pending
 Preparing
 Ready
+AwaitingDevice
 Delivering
+SubmittedToAmazon
 Delivered
+UserReportedMissing
 Failed
 Cancelled
 ```
+
+A request's asset may accumulate more than one `DeliveryAttempt` (for example,
+a `SendToKindle` attempt the user reports as `UserReportedMissing`, followed by
+a successful `DirectDevice` attempt). Retaining every attempt, rather than
+overwriting one mutable status, is required to support retry/fallback and the
+"didn't receive it" flow without losing history. `SubmittedToAmazon` is
+deliberately distinct from `Delivered`: Family Librarian never has positive
+confirmation that a Send-to-Kindle submission actually reached the device, so
+it must not be represented the same way as a verified `DirectDevice` transfer.
+
+Library artifact state and delivery state must be able to vary independently:
+a `LibraryImport`/artifact can be `Available` while its most recent
+`DeliveryAttempt` is `Failed` or `AwaitingDevice`, without that failure ever
+moving the artifact itself back into an acquisition state.
 
 ---
 
@@ -867,6 +950,25 @@ Transitions should be explicit application commands.
 The scanner gate is evaluated before any transition that accepts, downloads, or
 stages file bytes. It does not block metadata/catalog checks or user request
 creation, so queued requests can be backfilled after scanner recovery.
+
+**Implementation status:** the request lifecycle actually shipped today is
+deliberately much smaller than the workflow above. `RequestStatus` currently
+has four values (`PendingAcquisition`, `NeedsReview`, `NotAvailable`,
+`Cancelled`) and `RequestFormatStatus` has three (`Requested`, `NotAvailable`,
+`Cancelled`) — there is no `CheckingLibrary`, `Searching`, `Acquiring`,
+`Processing`, `Importing`, or `Available` state machine wired up yet, and
+`BookRequestService.CreateAsync` never checks whether the work is already
+owned before creating a plain `Requested` row. Manual acquisition, security
+scanning, and CWA/Audiobookshelf publishing exist as working, separately
+testable slices (see `MediaAssetPublishingCoordinator`), but they are not yet
+threaded back into `RequestFormatStatus` transitions — an approved, published
+asset does not currently move its request forward automatically. This is not
+a documentation error to "fix" by shrinking the target model; it reflects
+where implementation has reached versus where this document says it is
+headed. Expanding `RequestStatus`/`RequestFormatStatus` toward the states
+above, and wiring the existing-ownership check into request creation, are
+required before the "existing-artifact fulfillment" flows in
+`docs/01-product-architecture-spec.md` can work end to end.
 
 ---
 

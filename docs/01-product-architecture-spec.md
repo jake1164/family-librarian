@@ -592,6 +592,66 @@ boundary. A Family Librarian ready notification may contain a deep link only
 after the user can independently authenticate to the linked library; it must not
 leak a service account's credentials or grant access through a shared URL.
 
+#### 12.1.1 CWA connectivity is independent of ingest transport
+
+CWA integration has two independent concerns that must never collapse into one:
+
+```text
+CWA catalog/query connection    one HTTP(S)/OPDS endpoint + account, used for
+                                 ownership lookup, post-ingest correlation, and
+                                 (once implemented) canonical artifact retrieval
+
+CWA ingest transport            how a newly acquired, approved file is handed to
+                                 CWA's watched ingest folder: local/shared
+                                 filesystem, or SFTP to a remote host
+```
+
+Whether CWA runs on the same host as Family Librarian (a shared filesystem is
+available) or on separate hardware (a NAS, a remote server) only changes which
+ingest transport is configured. It never changes how Family Librarian talks to
+CWA's catalog: every ownership check, every post-ingest verification, and every
+future artifact retrieval goes over the same OPDS/HTTP connection in both
+topologies. A shared filesystem is at most an optimization for the ingest
+handoff itself, never a substitute for the catalog connection, and SFTP
+directory contents are never read as evidence of what CWA owns.
+
+```text
+Local CWA                                Remote CWA
+  FL --shared filesystem--> ingest          FL --SFTP--> ingest
+  FL --HTTP(S)/OPDS-------> catalog         FL --HTTP(S)/OPDS-------> catalog
+```
+
+This is already how the implementation is built: `CwaSettings` holds one
+`OpdsBaseUrl`/OPDS credential pair alongside an independently selectable
+`TransportMode` (`Local` or `Sftp`), `ICwaCatalogClient` performs only OPDS
+reads, and `ICwaIngestTransport`/`ICwaIngestTransportFactory` perform only the
+file handoff. Neither depends on the other. This document is being updated to
+make that separation an explicit, documented requirement rather than an
+implicit consequence of how the settings happened to be modeled.
+
+**Known gap:** the OPDS connection is currently optional even when CWA is
+enabled — `CwaSettingsService` only requires ingest-transport fields before
+allowing `IsEnabled = true`. An administrator can enable CWA with a working
+ingest transport and no OPDS URL configured at all, in which case ownership
+lookup (`CwaOwnedLibraryProvider`) and post-ingest correlation
+(`CwaPublishingService`) both silently return "not found" forever, and new
+requests will keep re-acquiring and re-ingesting books CWA already has. Since
+this document requires HTTP(S)/OPDS catalog access in every CWA deployment,
+enabling CWA without a working OPDS connection should be treated as a
+misconfiguration, not a supported ingest-only mode.
+
+**Known gap:** there is currently no way to retrieve an existing artifact's
+bytes back out of CWA. `ICwaCatalogClient.FindBookIdAsync` resolves only a
+book ID (used for ownership display and post-ingest verification); nothing in
+the CWA integration can fetch the underlying EPUB. This blocks every flow that
+needs to act on an already-owned book — direct-device transfer, browser
+download, or Send-to-Kindle from an existing copy — for both local and remote
+CWA. Local CWA read access to the Calibre library's files could serve as an
+optimization once this exists, but the primary mechanism should be an
+OPDS/HTTP download so remote CWA works identically without SFTP. See
+§15 (Delivery Architecture) and `docs/03-provider-api-contracts.md` §4
+("Linked ebook-library providers") for the proposed contract shape.
+
 ### 12.2 Private acquisition egress
 
 Family Librarian **SHALL NOT** depend on a specific commercial VPN provider.
@@ -874,6 +934,79 @@ Ebook library frontend:
 Audiobookshelf should be the first audiobook delivery provider.
 
 Kindle should be the first e-reader target but must not be hardcoded into the domain model.
+
+### 15.1 Kindle/e-reader delivery model (forward design, not yet implemented)
+
+No delivery/device code exists in the repository today: there is no
+`DeliveryTarget`, no `IDeliveryProvider` implementation, no Send-to-Kindle or
+direct-device transfer, and no artifact-retrieval path. `LibraryImport` and
+`Delivery` currently only track publishing an approved `MediaAsset` into CWA
+or Audiobookshelf; neither represents delivering a book to a specific user's
+device. This section records the intended design so that when device delivery
+work starts (`post-v1-roadmap.md`'s Milestone G), it has a documented target
+rather than being designed from scratch against a vague spec.
+
+**Destination vs. method.** A user's e-reader (for example, "Jason's Kindle
+Paperwhite") is a `DeliveryTarget`. Getting a book to it can use more than one
+method:
+
+```text
+SendToKindle       Amazon's Send-to-Kindle email/API path
+DirectDevice        browser-mediated transfer (WebUSB/File System Access, once
+                     Spike C determines viability) or a desktop-agent fallback
+BrowserDownload      authenticated manual download
+```
+
+These methods are not separate destinations, and CWA/SFTP/local-folder ingest
+are not delivery methods at all — they remain purely how a file reaches the
+library backend, described in §12.1.1.
+
+**Preference and fallback.** A user should be able to configure a preferred
+method and a fallback per destination (for example, prefer `SendToKindle`,
+fall back to `DirectDevice`). A request may override the default for one
+delivery. `Automatic` means "apply the user's configured policy."
+
+**Submitted vs. confirmed.** Amazon's Send-to-Kindle path gives Family
+Librarian a submission acknowledgement, never proof the book appeared on the
+device. The domain must keep these distinct — `SubmittedToAmazon` is not
+`Delivered`/`ConfirmedOnDevice` — so a silent Amazon failure can be recognized
+and offered a fallback (`Didn't receive it` -> resend or direct transfer)
+without the request needing to be recreated.
+
+**Delivery attempts, not one mutable status.** A request/asset may accumulate
+more than one delivery attempt (an `Amazon` submission the user never
+received, then a successful `DirectDevice` transfer). The design must retain
+each attempt's method, timing, status, and failure reason rather than
+overwriting a single delivery field, mirroring how `AcquisitionJob` already
+allows a request to accumulate more than one acquisition attempt.
+
+**Existing-artifact fast path.** When a search shows a book as already owned
+(today, via `FulfillmentOption`/`CwaOwnedLibraryProvider`), choosing a
+delivery method must be able to skip acquisition, scanning, and CWA ingest
+entirely and go straight to retrieving the canonical artifact and delivering
+it. This requires the artifact-retrieval capability noted as a gap in §12.1.1.
+
+**Device presence changes offered choices, not acquisition.** If a browser
+detects a connected Kindle while a book is still being acquired, the request
+should be able to reach an `AwaitingDevice` state once the artifact is ready,
+and complete a direct transfer later without the user repeating the request.
+Device connectivity must never be coupled to acquisition duration or a live
+browser session.
+
+**Naming conflict to resolve before implementation.** `Domain.Publishing.Delivery`
+already exists and means "one attempt to publish an approved audiobook
+`MediaAsset` to Audiobookshelf" (`DeliveryStatus`: `Uploading`/`Verifying`/
+`Delivered`/`Failed`, one row per asset). That is a `MediaLibraryImport`-style
+concept (moving a file into a shared library), not the user/device-specific
+delivery-attempt concept described above. Reusing the name `Delivery` for the
+new, unrelated user-facing concept would collide with the existing type and
+its `DeliveryResponse`/`DeliveryView`/`IDeliveryRepository` contracts. This
+needs an explicit naming decision when device delivery is designed — for
+example, renaming the existing Audiobookshelf concept (e.g. to
+`MediaLibraryDelivery`) to free up `Delivery`/`DeliveryAttempt` for the
+user-facing concept, or choosing a different name for the new one. This
+document intentionally does not decide that rename now; it is called out so
+it is not made accidentally.
 
 ---
 

@@ -41,6 +41,17 @@ volumes together before relying on CWA as the household's ebook library. On
 network shares, use CWA's documented network-share mode and prove ingest and
 recovery behavior in the deployment-specific compatibility test.
 
+CWA ingest transport (local/shared filesystem, or SFTP for a CWA host that
+does not share a filesystem with Family Librarian) is configured independently
+of the HTTP(S)/OPDS catalog connection that Family Librarian also needs
+against the same CWA instance for ownership lookup and post-ingest
+verification. Both are required in every deployment topology, local or
+remote: configure the OPDS base URL and account alongside whichever ingest
+transport applies, and confirm the OPDS connection test succeeds, not only the
+ingest connection test. A deployment with a working ingest transport but no
+reachable OPDS endpoint will keep re-acquiring books CWA already has and will
+never confirm that an ingested file actually imported successfully.
+
 Audiobookshelf is the initial permanent audiobook store. Back up its persistent
 configuration and library volumes separately from PostgreSQL, and test their
 restore with the same care. These are initial adapters, not an exclusive list:
