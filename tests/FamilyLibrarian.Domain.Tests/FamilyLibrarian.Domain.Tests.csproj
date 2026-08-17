@@ -9,6 +9,11 @@
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
     <ProjectReference Include="../../src/FamilyLibrarian.Domain/FamilyLibrarian.Domain.csproj" />
+    <!-- Referenced only by Architecture/ApplicationBoundaryTests, which asserts
+         what the Application assembly is allowed to depend on. Keeping both
+         layer-boundary tests in one Architecture folder means the enforced
+         layering rules are read in one place. -->
+    <ProjectReference Include="../../src/FamilyLibrarian.Application/FamilyLibrarian.Application.csproj" />
   </ItemGroup>
 
   <Import Project="Sdk.targets" Sdk="MSTest.Sdk" />
