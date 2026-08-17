@@ -10,6 +10,7 @@ public static class PublishingSecretPurposes
 {
     public const string CwaSftpPrivateKey = "cwa-sftp-private-key";
     public const string CwaSftpPassphrase = "cwa-sftp-passphrase";
+    public const string CwaSftpPassword = "cwa-sftp-password";
     public const string CwaOpdsPassword = "cwa-opds-password";
     public const string AudiobookshelfApiToken = "audiobookshelf-api-token";
 }

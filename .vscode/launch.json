@@ -52,8 +52,9 @@
       "console": "internalConsole"
     },
     {
-      // Starts the existing Compose containers without rebuilding them. The
-      // copied vsdbg debugger remains in this reused application container.
+      // Reuses today's cached debugger/prerequisite base, rebuilds changed
+      // application layers, and recreates only the web container so it cannot
+      // attach to an older application image.
       //
       // The browser is opened by the last step of the preLaunchTask, not by
       // `dockerServerReadyAction`: the Containers extension only builds the
@@ -62,7 +63,7 @@
       // `dockerServerReadyAction` here is silently ignored. Opening from the
       // task is sound because `docker compose up --wait` has already blocked
       // on the container's healthcheck.
-      "name": "Containers: Debug Web GUI (Docker, reuse container)",
+      "name": "Containers: Debug Web GUI (Docker, refresh application)",
       "type": "docker",
       "request": "attach",
       "preLaunchTask": "containers: reuse container, then open browser",
@@ -77,6 +78,23 @@
         // vsdbg to the host, probes the container, and prompts to copy it in —
         // which is the multi-minute step. Set, it uses this path directly.
         // The Dockerfile's `debug` stage puts the debugger exactly here.
+        "debuggerPath": "/remote_debugger/vsdbg"
+      }
+    },
+    {
+      // Rebuilds both the cached debugger/prerequisite base and the application
+      // image, but deliberately preserves the database and application-data
+      // volumes. Use this when the daily base refresh is not fresh enough.
+      "name": "Containers: Debug Web GUI (Docker, force image rebuild)",
+      "type": "docker",
+      "request": "attach",
+      "preLaunchTask": "containers: force image rebuild, then open browser",
+      "postDebugTask": "compose: stop (preserve containers and data)",
+      "containerName": "family-librarian-web",
+      "platform": "netCore",
+      "netCore": {
+        "appProject": "${workspaceFolder}/src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj",
+        "justMyCode": true,
         "debuggerPath": "/remote_debugger/vsdbg"
       }
     },

@@ -36,12 +36,19 @@
                      AriaLabel="Settings menu"
                      AnchorOrigin="Origin.BottomRight"
                      TransformOrigin="Origin.TopRight">
+                <MudMenuItem Href="settings/metadata-providers" Icon="@Icons.Material.Filled.AutoStories">Metadata providers</MudMenuItem>
+                <MudMenuItem Href="settings/sources" Icon="@Icons.Material.Filled.Source">Sources</MudMenuItem>
+                <MudMenuItem Href="settings/publishing" Icon="@Icons.Material.Filled.CloudUpload">Publishing</MudMenuItem>
+                <MudMenuItem Href="settings/acquisition-policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudMenuItem>
+                <MudMenuItem Href="settings/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudMenuItem>
+            </MudMenu>
+            <MudMenu Icon="@Icons.Material.Filled.People"
+                     Color="Color.Inherit"
+                     AriaLabel="Administration menu"
+                     AnchorOrigin="Origin.BottomRight"
+                     TransformOrigin="Origin.BottomRight">
                 <MudMenuItem Href="admin/accounts" Icon="@Icons.Material.Filled.People">Accounts</MudMenuItem>
-                <MudMenuItem Href="admin/integrations" Icon="@Icons.Material.Filled.Extension">Integrations</MudMenuItem>
-                <MudMenuItem Href="admin/library-publishing" Icon="@Icons.Material.Filled.CloudUpload">Library publishing</MudMenuItem>
-                <MudMenuItem Href="admin/policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudMenuItem>
-                <MudMenuItem Href="admin/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudMenuItem>
-                <MudMenuItem Href="admin/external-providers" Icon="@Icons.Material.Filled.Hub">External providers</MudMenuItem>
+                <MudMenuItem Href="admin/publishing" Icon="@Icons.Material.Filled.Assessment">Publishing activity</MudMenuItem>
             </MudMenu>
         </AuthorizeView>
 

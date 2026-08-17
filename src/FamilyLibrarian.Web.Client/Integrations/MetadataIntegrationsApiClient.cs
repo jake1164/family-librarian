@@ -6,7 +6,7 @@ using FamilyLibrarian.Web.Client.Authentication;
 namespace FamilyLibrarian.Web.Client.Integrations;
 
 /// <summary>
-/// Typed client for the Admin Metadata Integrations endpoints.
+/// Typed client for built-in provider settings endpoints.
 /// </summary>
 /// <remarks>
 /// Credentials travel one way only. <see cref="SetCredentialAsync"/> sends a key

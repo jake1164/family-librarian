@@ -24,6 +24,7 @@ public sealed class CwaSettings
         Id = Guid.NewGuid();
         IsEnabled = false;
         TransportMode = CwaTransportMode.Local;
+        SftpAuthenticationMode = CwaSftpAuthenticationMode.PrivateKey;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
     }
@@ -44,6 +45,8 @@ public sealed class CwaSettings
 
     public string? SftpIngestPath { get; private set; }
 
+    public CwaSftpAuthenticationMode SftpAuthenticationMode { get; private set; }
+
     public string? ProtectedSftpPrivateKey { get; private set; }
 
     public int SftpPrivateKeyFormatVersion { get; private set; }
@@ -59,6 +62,18 @@ public sealed class CwaSettings
     public string? SftpPassphraseHint { get; private set; }
 
     public DateTimeOffset? SftpPassphraseSetAtUtc { get; private set; }
+
+    public string? ProtectedSftpPassword { get; private set; }
+
+    public int SftpPasswordFormatVersion { get; private set; }
+
+    public string? SftpPasswordHint { get; private set; }
+
+    public DateTimeOffset? SftpPasswordSetAtUtc { get; private set; }
+
+    public string? SftpHostKeyFingerprint { get; private set; }
+
+    public DateTimeOffset? SftpHostKeyTrustedAtUtc { get; private set; }
 
     public string? OpdsBaseUrl { get; private set; }
 
@@ -90,6 +105,8 @@ public sealed class CwaSettings
 
     public bool HasSftpPassphrase => !string.IsNullOrEmpty(ProtectedSftpPassphrase);
 
+    public bool HasSftpPassword => !string.IsNullOrEmpty(ProtectedSftpPassword);
+
     public bool HasOpdsPassword => !string.IsNullOrEmpty(ProtectedOpdsPassword);
 
     public void SetEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
@@ -105,19 +122,31 @@ public sealed class CwaSettings
         int? sftpPort,
         string? sftpUsername,
         string? sftpIngestPath,
+        CwaSftpAuthenticationMode sftpAuthenticationMode,
         string? opdsBaseUrl,
         string? opdsUsername,
         Guid? actorUserId,
         DateTimeOffset updatedAtUtc)
     {
+        var normalizedSftpHost = Trim(sftpHost);
+        var sftpEndpointChanged = !string.Equals(SftpHost, normalizedSftpHost, StringComparison.OrdinalIgnoreCase)
+            || SftpPort != sftpPort;
+
         TransportMode = transportMode;
         LocalIngestPath = Trim(localIngestPath);
-        SftpHost = Trim(sftpHost);
+        SftpHost = normalizedSftpHost;
         SftpPort = sftpPort;
         SftpUsername = Trim(sftpUsername);
         SftpIngestPath = Trim(sftpIngestPath);
+        SftpAuthenticationMode = sftpAuthenticationMode;
         OpdsBaseUrl = Trim(opdsBaseUrl);
         OpdsUsername = Trim(opdsUsername);
+        if (sftpEndpointChanged)
+        {
+            ClearSftpHostKeyTrust();
+        }
+
+        ResetTestResult();
         Touch(actorUserId, updatedAtUtc);
     }
 
@@ -165,6 +194,41 @@ public sealed class CwaSettings
         Touch(actorUserId, updatedAtUtc);
     }
 
+    public void SetSftpPassword(
+        string protectedValue, int formatVersion, string? hint, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        RequireProtectedValue(protectedValue);
+        ProtectedSftpPassword = protectedValue;
+        SftpPasswordFormatVersion = formatVersion;
+        SftpPasswordHint = hint;
+        SftpPasswordSetAtUtc = updatedAtUtc;
+        ResetTestResult();
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void ClearSftpPassword(Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        ProtectedSftpPassword = null;
+        SftpPasswordFormatVersion = 0;
+        SftpPasswordHint = null;
+        SftpPasswordSetAtUtc = null;
+        ResetTestResult();
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void TrustSftpHostKey(string fingerprint, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        if (string.IsNullOrWhiteSpace(fingerprint))
+        {
+            throw new ArgumentException("An SSH host-key fingerprint is required.", nameof(fingerprint));
+        }
+
+        SftpHostKeyFingerprint = fingerprint.Trim();
+        SftpHostKeyTrustedAtUtc = updatedAtUtc;
+        ResetTestResult();
+        Touch(actorUserId, updatedAtUtc);
+    }
+
     public void SetOpdsPassword(
         string protectedValue, int formatVersion, string? hint, Guid? actorUserId, DateTimeOffset updatedAtUtc)
     {
@@ -200,6 +264,12 @@ public sealed class CwaSettings
         LastTestedAtUtc = null;
         LastTestSucceeded = null;
         LastTestMessage = null;
+    }
+
+    private void ClearSftpHostKeyTrust()
+    {
+        SftpHostKeyFingerprint = null;
+        SftpHostKeyTrustedAtUtc = null;
     }
 
     private void Touch(Guid? actorUserId, DateTimeOffset updatedAtUtc)

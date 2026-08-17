@@ -15,6 +15,7 @@ namespace FamilyLibrarian.Web.Tests;
 public sealed class PublishingSettingsEndpointTests
 {
     private const string CwaSecretValue = "-----BEGIN OPENSSH PRIVATE KEY-----do-not-leak-8675309-----END-----";
+    private const string CwaSftpPassword = "cwa-sftp-password-do-not-leak-8675309";
     private const string AudiobookshelfSecretValue = "abs-live-token-do-not-leak-8675309";
 
     private static WebTestFixture? _fixture;
@@ -51,7 +52,7 @@ public sealed class PublishingSettingsEndpointTests
 
         var write = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/",
-            new SetCwaSettingsRequest("Local", "/data/cwa-ingest", null, null, null, null, null, null));
+            new SetCwaSettingsRequest("Local", "/data/cwa-ingest", null, null, null, null, "PrivateKey", null, null));
         Assert.AreEqual(HttpStatusCode.OK, write.StatusCode);
         var written = await write.Content.ReadFromJsonAsync<CwaSettingsResponse>();
         Assert.IsNotNull(written);
@@ -71,7 +72,7 @@ public sealed class PublishingSettingsEndpointTests
 
         var write = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/",
-            new SetCwaSettingsRequest("Sftp", null, null, null, null, null, null, null));
+            new SetCwaSettingsRequest("Sftp", null, null, null, null, null, "PrivateKey", null, null));
 
         Assert.AreEqual(HttpStatusCode.BadRequest, write.StatusCode);
     }
@@ -88,10 +89,20 @@ public sealed class PublishingSettingsEndpointTests
 
         var writeBody = await write.Content.ReadAsStringAsync();
         var getBody = await client.GetStringAsync("/api/v1/admin/publishing/cwa/");
-        var testResponse = await client.PostAsync("/api/v1/admin/publishing/cwa/test", content: null);
-        var testBody = await testResponse.Content.ReadAsStringAsync();
+        var ingestTestResponse = await client.PostAsync(
+            "/api/v1/admin/publishing/cwa/test-ingest", content: null);
+        var ingestTestBody = await ingestTestResponse.Content.ReadAsStringAsync();
+        var opdsTestResponse = await client.PostAsync(
+            "/api/v1/admin/publishing/cwa/test-opds", content: null);
+        var opdsTestBody = await opdsTestResponse.Content.ReadAsStringAsync();
 
-        foreach (var (name, body) in new[] { ("write", writeBody), ("get", getBody), ("test", testBody) })
+        foreach (var (name, body) in new[]
+        {
+            ("write", writeBody),
+            ("get", getBody),
+            ("ingest test", ingestTestBody),
+            ("OPDS test", opdsTestBody)
+        })
         {
             StringAssert.DoesNotMatch(
                 body,
@@ -120,6 +131,66 @@ public sealed class PublishingSettingsEndpointTests
         var settings = await client.GetFromJsonAsync<CwaSettingsResponse>("/api/v1/admin/publishing/cwa/");
         Assert.IsNotNull(settings);
         Assert.IsFalse(settings.HasSftpPrivateKey);
+    }
+
+    [TestMethod]
+    public async Task SftpPasswordIsWriteOnlyAndSupportsPasswordAuthentication()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        var settingsWrite = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/",
+            new SetCwaSettingsRequest(
+                "Sftp", null, "sftp.example.test", 22, "cwa", "/ingest", "Password", null, null));
+        Assert.AreEqual(HttpStatusCode.OK, settingsWrite.StatusCode);
+
+        var passwordWrite = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/sftp-password", new SetPublishingSecretRequest(CwaSftpPassword));
+        Assert.AreEqual(HttpStatusCode.OK, passwordWrite.StatusCode);
+
+        var responseBody = await passwordWrite.Content.ReadAsStringAsync();
+        var settingsBody = await client.GetStringAsync("/api/v1/admin/publishing/cwa/");
+        Assert.IsFalse(responseBody.Contains(CwaSftpPassword, StringComparison.Ordinal));
+        Assert.IsFalse(settingsBody.Contains(CwaSftpPassword, StringComparison.Ordinal));
+
+        var settings = await client.GetFromJsonAsync<CwaSettingsResponse>("/api/v1/admin/publishing/cwa/");
+        Assert.IsNotNull(settings);
+        Assert.AreEqual("Password", settings.SftpAuthenticationMode);
+        Assert.IsTrue(settings.HasSftpPassword);
+        Assert.IsNull(settings.SftpPasswordHint);
+    }
+
+    [TestMethod]
+    public async Task SftpCannotBeEnabledUntilTheServerHostKeyIsTrusted()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/",
+            new SetCwaSettingsRequest(
+                "Sftp", null, "sftp.example.test", 22, "cwa", "/ingest", "Password", null, null));
+        await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/sftp-password", new SetPublishingSecretRequest(CwaSftpPassword));
+
+        var enableBeforeTrust = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/enabled", new SetPublishingEnabledRequest(true));
+        Assert.AreEqual(HttpStatusCode.BadRequest, enableBeforeTrust.StatusCode);
+
+        const string fingerprint = "SHA256:example-host-key-fingerprint";
+        var trust = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/sftp-host-key", new TrustSftpHostKeyRequest(fingerprint));
+        Assert.AreEqual(HttpStatusCode.OK, trust.StatusCode);
+
+        var enableAfterTrust = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/enabled", new SetPublishingEnabledRequest(true));
+        Assert.AreEqual(HttpStatusCode.OK, enableAfterTrust.StatusCode);
+
+        var settings = await client.GetFromJsonAsync<CwaSettingsResponse>("/api/v1/admin/publishing/cwa/");
+        Assert.IsNotNull(settings);
+        Assert.AreEqual(fingerprint, settings.SftpHostKeyFingerprint);
+        Assert.IsNotNull(settings.SftpHostKeyTrustedAtUtc);
     }
 
     [TestMethod]
@@ -178,7 +249,7 @@ public sealed class PublishingSettingsEndpointTests
 
         var response = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/",
-            new SetCwaSettingsRequest("Local", "/data/cwa-ingest", null, null, null, null, null, null));
+            new SetCwaSettingsRequest("Local", "/data/cwa-ingest", null, null, null, null, "PrivateKey", null, null));
 
         Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
     }

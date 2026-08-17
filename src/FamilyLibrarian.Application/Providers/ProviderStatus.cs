@@ -1,3 +1,5 @@
+using FamilyLibrarian.Domain.Providers;
+
 namespace FamilyLibrarian.Application.Providers;
 
 /// <summary>
@@ -12,6 +14,7 @@ namespace FamilyLibrarian.Application.Providers;
 public sealed record ProviderStatus(
     string ProviderId,
     string DisplayName,
+    IReadOnlySet<ProviderCapability> Capabilities,
     bool RequiresCredential,
     bool IsEnabled,
     bool HasStoredCredential,

@@ -7,6 +7,16 @@ public enum CwaTransportMode
 }
 
 /// <summary>
+/// The credential used for the CWA SFTP account. Both choices are SSH
+/// authentication methods; the transport is encrypted in either case.
+/// </summary>
+public enum CwaSftpAuthenticationMode
+{
+    PrivateKey = 1,
+    Password = 2
+}
+
+/// <summary>
 /// A lean status set for a synchronous-handoff, manual-recheck workflow — not
 /// the fuller Pending/Staging/Importing/Verifying/Available/Failed/Cancelled
 /// machine sketched in the architecture docs. There is exactly one CWA

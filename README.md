@@ -148,34 +148,45 @@ Administrators also get:
 
 - **Queue**, to review family requests and act on them (add a note, mark
   needs-review/unavailable, or cancel);
-- **Integrations**, for enabling metadata providers and storing a Google Books
-  key, plus the CWA and Audiobookshelf publishing-destination settings
-  (transport/credentials for each, with a connection test);
+- **Metadata providers**, for enabling book-information providers and storing a
+  Google Books key;
+- **Sources**, for enabling Gutendex and configuring external acquisition
+  sources and their private network;
 - **Security queue**, to run the malware/format scan on a manually imported
   file and approve or reject it before it can go anywhere;
-- **Library publishing**, showing what happened after an approved file was
-  handed to CWA or Audiobookshelf, with a **Recheck** action for anything not
-  yet confirmed.
+- **Publishing settings**, for configuring CWA and Audiobookshelf; and
+- **Publishing activity**, for reviewing each handoff after an approved file was
+  sent to either destination, with a **Recheck** action for anything not yet
+  confirmed.
 
-In VS Code, the Run and Debug selector provides the same two Compose-backed
-container modes:
+In VS Code, the Run and Debug selector provides three Compose-backed container
+modes:
 
-- `Containers: Debug Web GUI (Docker, reuse container)` starts the existing
-  containers without force-recreating them. It builds if no usable image exists.
+- `Containers: Debug Web GUI (Docker, refresh application)` preserves the
+  database and support containers, but always recreates the web container from
+  the newly built application image. It refreshes the local
+  `family-librarian:debug-base` image only when that image is missing or was
+  built on a previous UTC date.
+- `Containers: Debug Web GUI (Docker, force image rebuild)` rebuilds the cached
+  prerequisite base and the full debug application image while preserving the
+  PostgreSQL and application-data volumes.
 - `Containers: Debug Web GUI (Docker, force rebuild / fresh start)` explicitly
-  removes the database volume before rebuilding. It deletes all local users,
-  catalog records, and requests, so use it only when a clean database is
-  intended.
+  does the same forced image refresh and also removes the database volume. It
+  deletes all local users, catalog records, and requests, so use it only when a
+  clean database is intended.
 
-Ending either Docker debug session stops the Compose stack but preserves its
+Ending any Docker debug session stops the Compose stack but preserves its
 containers and database. The next reuse launch starts those same containers.
 Use `compose: down (preserve data)` only when you also want to remove the
 stopped containers.
 
-Both preLaunch tasks apply `compose.debug-attach.yaml` on top of `compose.yaml`,
+All three preLaunch tasks apply `compose.debug-attach.yaml` on top of `compose.yaml`,
 which builds the application container from the Dockerfile's `debug` stage. That
-stage is the ordinary runtime image plus `vsdbg`, already installed at
-`/remote_debugger` — so attaching finds the debugger in place and copies nothing.
+stage copies the latest application onto a reusable `debug-base` stage containing
+`vsdbg` at `/remote_debugger`. The base is tagged locally and refreshed at most
+once per UTC day during ordinary reuse launches. Application source changes sit
+above it, so they no longer rerun `apt-get` or download the debugger. A force
+image rebuild bypasses the prerequisite cache and refreshes both layers.
 
 This replaced an earlier approach that bind-mounted the host's own `~/.vsdbg`
 folder into the container. It worked, but VS Code still ran its copy check on
@@ -185,7 +196,7 @@ bridge, which took minutes on Windows. Baking it into a layer removes the copy,
 and with it the host-architecture detection the tasks used to need — the stage is
 built for the same platform as the container that runs it.
 
-Both attach configurations set `netCore.debuggerPath` to `/remote_debugger/vsdbg`,
+All three attach configurations set `netCore.debuggerPath` to `/remote_debugger/vsdbg`,
 and that setting is **required, not cosmetic**. The Containers extension only
 takes the fast path when it is present: left unset, the extension downloads vsdbg
 to the host, probes the container for it, and prompts *"Attaching to container

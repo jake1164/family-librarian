@@ -20,7 +20,7 @@ namespace FamilyLibrarian.Infrastructure.Acquisition;
 /// <see cref="IProviderSettingsStore"/> model exactly like keyless Open
 /// Library, rather than needing its own settings entity the way CWA/
 /// Audiobookshelf did. Gated on <see cref="ProviderState.IsUsable"/> so an
-/// administrator's enable/disable toggle on the Integrations page actually
+    /// administrator's enable/disable toggle on the Sources page actually
 /// controls whether this ever makes an outbound request.
 /// </remarks>
 public sealed class GutendexProvider(

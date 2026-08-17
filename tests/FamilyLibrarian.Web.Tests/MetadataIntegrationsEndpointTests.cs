@@ -17,6 +17,7 @@ public sealed class MetadataIntegrationsEndpointTests
     private const string CredentialedProvider = "googlebooks";
     private const string KeylessProvider = "openlibrary";
     private const string SecretValue = "gb-live-key-do-not-leak-8675309";
+    private static readonly string[] DirectAcquisitionCapability = ["DirectAcquisition"];
 
     private static WebTestFixture? _fixture;
 
@@ -103,6 +104,23 @@ public sealed class MetadataIntegrationsEndpointTests
         Assert.IsTrue(google.HasStoredCredential);
         Assert.AreEqual(SecretValue[^4..], google.CredentialHint);
         Assert.IsNotNull(google.CredentialSetAtUtc);
+    }
+
+    [TestMethod]
+    public async Task ProviderCapabilitiesLetTheClientSeparateMetadataAndAcquisitionSources()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        var providers = await client.GetFromJsonAsync<ProviderListResponse>(
+            "/api/v1/admin/integrations/metadata/");
+
+        Assert.IsNotNull(providers);
+        var gutendex = providers.Providers.Single(provider => provider.ProviderId == "gutendex");
+        var googleBooks = providers.Providers.Single(provider => provider.ProviderId == CredentialedProvider);
+
+        CollectionAssert.AreEquivalent(DirectAcquisitionCapability, gutendex.Capabilities.ToArray());
+        CollectionAssert.Contains(googleBooks.Capabilities.ToArray(), "Metadata");
     }
 
     [TestMethod]

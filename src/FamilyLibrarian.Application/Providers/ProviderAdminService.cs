@@ -6,7 +6,7 @@ using FamilyLibrarian.Domain.Providers;
 namespace FamilyLibrarian.Application.Providers;
 
 /// <summary>
-/// The administrative commands behind the Admin Metadata Integrations surface.
+/// The administrative commands behind the built-in provider settings surfaces.
 /// </summary>
 /// <remarks>
 /// Every method here is authorized as Admin at the endpoint boundary. This type
@@ -219,6 +219,7 @@ public sealed class ProviderAdminService(
         ProviderSetting? setting) => new(
             descriptor.Id,
             descriptor.DisplayName,
+            descriptor.Capabilities,
             descriptor.RequiresCredential,
             // Shared with the search path so this page cannot claim a provider is
             // on while search skips it.

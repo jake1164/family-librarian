@@ -24,9 +24,14 @@ internal static class CwaSettingsEndpoints
         cwaSettings.MapDelete("/sftp-key", ClearCwaSftpPrivateKeyAsync);
         cwaSettings.MapPut("/sftp-passphrase", SetCwaSftpPassphraseAsync);
         cwaSettings.MapDelete("/sftp-passphrase", ClearCwaSftpPassphraseAsync);
+        cwaSettings.MapPut("/sftp-password", SetCwaSftpPasswordAsync);
+        cwaSettings.MapDelete("/sftp-password", ClearCwaSftpPasswordAsync);
+        cwaSettings.MapPut("/sftp-host-key", TrustCwaSftpHostKeyAsync);
         cwaSettings.MapPut("/opds-password", SetCwaOpdsPasswordAsync);
         cwaSettings.MapDelete("/opds-password", ClearCwaOpdsPasswordAsync);
-        cwaSettings.MapPost("/test", TestCwaConnectionAsync);
+        cwaSettings.MapPost("/test", TestAllCwaConnectionsAsync);
+        cwaSettings.MapPost("/test-ingest", TestCwaIngestConnectionAsync);
+        cwaSettings.MapPost("/test-opds", TestCwaOpdsConnectionAsync);
     }
 
     private static async Task<IResult> GetCwaSettingsAsync(
@@ -37,17 +42,20 @@ internal static class CwaSettingsEndpoints
         SetCwaSettingsRequest request, CwaSettingsService service, CancellationToken cancellationToken)
     {
         if (!Enum.TryParse<CwaTransportMode>(request.TransportMode, ignoreCase: true, out var mode) ||
-            !Enum.IsDefined(mode))
+            !Enum.IsDefined(mode) ||
+            !Enum.TryParse<CwaSftpAuthenticationMode>(
+                request.SftpAuthenticationMode, ignoreCase: true, out var authenticationMode) ||
+            !Enum.IsDefined(authenticationMode))
         {
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["transportMode"] = ["That is not a valid transport mode."]
+                ["cwa"] = ["The transport or SFTP authentication mode is not valid."]
             });
         }
 
         return ToCwaResult(await service.SetSettingsAsync(
             mode, request.LocalIngestPath, request.SftpHost, request.SftpPort, request.SftpUsername,
-            request.SftpIngestPath, request.OpdsBaseUrl, request.OpdsUsername, cancellationToken));
+            request.SftpIngestPath, authenticationMode, request.OpdsBaseUrl, request.OpdsUsername, cancellationToken));
     }
 
     private static async Task<IResult> SetCwaEnabledAsync(
@@ -70,6 +78,18 @@ internal static class CwaSettingsEndpoints
         CwaSettingsService service, CancellationToken cancellationToken) =>
         ToCwaResult(await service.ClearSftpPassphraseAsync(cancellationToken));
 
+    private static async Task<IResult> SetCwaSftpPasswordAsync(
+        SetPublishingSecretRequest request, CwaSettingsService service, CancellationToken cancellationToken) =>
+        ToCwaResult(await service.SetSftpPasswordAsync(request.Value, cancellationToken));
+
+    private static async Task<IResult> ClearCwaSftpPasswordAsync(
+        CwaSettingsService service, CancellationToken cancellationToken) =>
+        ToCwaResult(await service.ClearSftpPasswordAsync(cancellationToken));
+
+    private static async Task<IResult> TrustCwaSftpHostKeyAsync(
+        TrustSftpHostKeyRequest request, CwaSettingsService service, CancellationToken cancellationToken) =>
+        ToCwaResult(await service.TrustSftpHostKeyAsync(request.Fingerprint, cancellationToken));
+
     private static async Task<IResult> SetCwaOpdsPasswordAsync(
         SetPublishingSecretRequest request, CwaSettingsService service, CancellationToken cancellationToken) =>
         ToCwaResult(await service.SetOpdsPasswordAsync(request.Value, cancellationToken));
@@ -78,12 +98,64 @@ internal static class CwaSettingsEndpoints
         CwaSettingsService service, CancellationToken cancellationToken) =>
         ToCwaResult(await service.ClearOpdsPasswordAsync(cancellationToken));
 
-    private static async Task<IResult> TestCwaConnectionAsync(
-        CwaSettingsService service, CancellationToken cancellationToken)
+    private static Task<IResult> TestAllCwaConnectionsAsync(
+        CwaSettingsService service, CancellationToken cancellationToken) =>
+        TestCwaConnectionAsync(CwaConnectionTestTarget.All, service, cancellationToken);
+
+    private static async Task<IResult> TestCwaIngestConnectionAsync(
+        TestCwaIngestRequest request,
+        CwaSettingsService service,
+        CancellationToken cancellationToken)
     {
-        var result = await service.TestConnectionAsync(cancellationToken);
+        if (!Enum.TryParse<CwaTransportMode>(request.TransportMode, ignoreCase: true, out var mode) ||
+            !Enum.IsDefined(mode) ||
+            !Enum.TryParse<CwaSftpAuthenticationMode>(
+                request.SftpAuthenticationMode, ignoreCase: true, out var authenticationMode) ||
+            !Enum.IsDefined(authenticationMode))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["cwa"] = ["The transport or SFTP authentication mode is not valid."]
+            });
+        }
+
+        var result = await service.TestIngestConnectionAsync(
+            new CwaIngestTestConfiguration(
+                mode,
+                request.LocalIngestPath,
+                request.SftpHost,
+                request.SftpPort,
+                request.SftpUsername,
+                request.SftpIngestPath,
+                authenticationMode,
+                request.SftpPrivateKey,
+                request.SftpPassphrase,
+                request.SftpPassword,
+                request.TrustedSftpHostKeyFingerprint),
+            cancellationToken);
+
         return Results.Ok(new PublishingConnectionTestResponse(
-            result.Status!.LastTestSucceeded ?? false, result.Status.LastTestMessage ?? string.Empty));
+            result.Succeeded,
+            result.Message,
+            result.RequiresSftpHostKeyTrust,
+            result.SftpHostKeyFingerprint));
+    }
+
+    private static Task<IResult> TestCwaOpdsConnectionAsync(
+        CwaSettingsService service, CancellationToken cancellationToken) =>
+        TestCwaConnectionAsync(CwaConnectionTestTarget.Opds, service, cancellationToken);
+
+    private static async Task<IResult> TestCwaConnectionAsync(
+        CwaConnectionTestTarget target,
+        CwaSettingsService service,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.TestConnectionAsync(target, cancellationToken);
+        return Results.Ok(new PublishingConnectionTestResponse(
+            result.Outcome.Succeeded,
+            result.Outcome.Message,
+            result.Outcome.RequiresSftpHostKeyTrust,
+            result.Outcome.SftpHostKeyFingerprint));
     }
 
     private static IResult ToCwaResult(CwaCommandResult result) => result.Outcome switch
@@ -103,12 +175,18 @@ internal static class CwaSettingsEndpoints
         status.SftpPort,
         status.SftpUsername,
         status.SftpIngestPath,
+        status.SftpAuthenticationMode.ToString(),
         status.HasSftpPrivateKey,
         status.SftpPrivateKeyHint,
         status.SftpPrivateKeySetAtUtc,
         status.HasSftpPassphrase,
         status.SftpPassphraseHint,
         status.SftpPassphraseSetAtUtc,
+        status.HasSftpPassword,
+        status.SftpPasswordHint,
+        status.SftpPasswordSetAtUtc,
+        status.SftpHostKeyFingerprint,
+        status.SftpHostKeyTrustedAtUtc,
         status.OpdsBaseUrl,
         status.OpdsUsername,
         status.HasOpdsPassword,

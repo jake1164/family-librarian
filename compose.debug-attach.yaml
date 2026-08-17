@@ -20,4 +20,9 @@ services:
     build:
       context: .
       target: debug
+      args:
+        # The VS Code tasks set this to today's UTC date. It matches the
+        # separately tagged local debug-base image and makes the refresh policy
+        # explicit instead of depending on an opaque builder-cache lifetime.
+        DEBUG_BASE_REFRESH: ${DEBUG_BASE_REFRESH:-manual}
     image: family-librarian:debug

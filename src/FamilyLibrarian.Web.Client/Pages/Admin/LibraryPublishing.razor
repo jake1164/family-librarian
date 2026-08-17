@@ -1,4 +1,4 @@
-@page "/admin/library-publishing"
+@page "/admin/publishing"
 @attribute [Authorize(Roles = "Admin")]
 @using FamilyLibrarian.Contracts.Publishing
 @using FamilyLibrarian.Web.Client.Publishing
@@ -6,13 +6,11 @@
 @inject LibraryPublishingApiClient PublishingApi
 @inject ISnackbar Snackbar
 
-<PageTitle>Library publishing · Family Librarian</PageTitle>
+<PageTitle>Publishing activity · Family Librarian</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Library publishing</MudText>
+<MudText Typo="Typo.h4" GutterBottom="true">Publishing activity</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
-    What happened after an approved file was handed to CWA or Audiobookshelf.
-    Configure the destinations themselves on the
-    <MudLink Href="admin/integrations">Integrations</MudLink> page.
+    Review what happened after an approved file was handed to CWA or Audiobookshelf.
 </MudText>
 
 @if (loadFailed)

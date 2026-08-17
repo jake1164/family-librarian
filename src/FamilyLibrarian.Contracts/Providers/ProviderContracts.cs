@@ -12,6 +12,7 @@ namespace FamilyLibrarian.Contracts.Providers;
 public sealed record ProviderStatusResponse(
     string ProviderId,
     string DisplayName,
+    IReadOnlyList<string> Capabilities,
     bool RequiresCredential,
     bool IsEnabled,
     bool HasStoredCredential,

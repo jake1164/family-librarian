@@ -1,5 +1,5 @@
-using System.Text;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Domain.Publishing;
 using Renci.SshNet;
 
 namespace FamilyLibrarian.Infrastructure.Publishing;
@@ -23,8 +23,10 @@ public sealed class SftpCwaIngestTransport(
     int port,
     string username,
     string ingestDirectoryPath,
-    string privateKeyPem,
-    string? passphrase) : ICwaIngestTransport
+    CwaSftpAuthenticationMode authenticationMode,
+    string credential,
+    string? privateKeyPassphrase,
+    string trustedHostKeyFingerprint) : ICwaIngestTransport
 {
     public Task WriteAsync(Stream content, string targetFilename, CancellationToken cancellationToken)
     {
@@ -34,14 +36,12 @@ public sealed class SftpCwaIngestTransport(
         return Task.Run(
             () =>
             {
-                using var keyStream = new MemoryStream(Encoding.UTF8.GetBytes(privateKeyPem));
-                var keyFile = string.IsNullOrEmpty(passphrase)
-                    ? new PrivateKeyFile(keyStream)
-                    : new PrivateKeyFile(keyStream, passphrase);
-                var authMethod = new PrivateKeyAuthenticationMethod(username, keyFile);
+                var authMethod = SftpAuthentication.Create(
+                    authenticationMode, username, credential, privateKeyPassphrase);
                 var connectionInfo = new ConnectionInfo(host, port, username, authMethod);
 
                 using var client = new SftpClient(connectionInfo);
+                SftpHostKeyTrust.RequireTrustedFingerprint(client, trustedHostKeyFingerprint, _ => { });
                 client.Connect();
                 try
                 {

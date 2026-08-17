@@ -206,7 +206,7 @@ public static class DependencyInjection
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
-        // Admin Integrations wiring. The registry is the allowlist of installed
+        // Built-in provider settings wiring. The registry is the allowlist of installed
         // providers; enablement and credentials are runtime state, so every
         // provider below is registered unconditionally and filtered per request
         // by ActiveMetadataProviderResolver.
@@ -270,7 +270,7 @@ public static class DependencyInjection
             .Validate(options => options.TimeoutSeconds is >= 1 and <= 60,
                 "Google Books TimeoutSeconds must be between 1 and 60.")
             // No longer "required when enabled": the key may instead be stored
-            // encrypted in the database through the Admin Integrations page, and
+            // encrypted in the database through the Metadata Providers page, and
             // enablement itself is now runtime state rather than configuration.
             // ActiveMetadataProviderResolver refuses to query a credentialed
             // provider that has no key from either source.

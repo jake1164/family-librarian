@@ -9,5 +9,15 @@ namespace FamilyLibrarian.Application.Publishing;
 /// </summary>
 public interface ICwaConnectionTester
 {
-    Task<ConnectionTestOutcome> TestAsync(CwaSettings settings, CancellationToken cancellationToken);
+    Task<ConnectionTestOutcome> TestAsync(
+        CwaSettings settings,
+        CwaConnectionTestTarget target,
+        CancellationToken cancellationToken);
+}
+
+public enum CwaConnectionTestTarget
+{
+    Ingest,
+    Opds,
+    All
 }

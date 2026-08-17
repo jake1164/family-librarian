@@ -119,23 +119,71 @@
     },
 
     {
-      "label": "compose: reuse container",
-      "detail": "Build if needed, then start/reuse the full Compose stack without force-recreating containers, using the debug image that already contains vsdbg (needs .env)",
-      "type": "shell",
-      "command": "docker",
+      "label": "compose: refresh debug base if stale",
+      "detail": "Reuse today's local debug prerequisite image, or refresh it from the current .NET runtime image when it is missing or older than one UTC day",
+      "type": "process",
+      "command": "bash",
       "args": [
-        "compose",
-        "-f",
-        "compose.yaml",
-        "-f",
-        "compose.debug-attach.yaml",
-        "up",
-        "-d",
-        "--build",
-        "--wait"
+        "-lc",
+        "set -euo pipefail; refresh_date=$(date -u +%F); cached_date=$(docker image inspect family-librarian:debug-base --format '{{ index .Config.Labels \"org.family-librarian.debug-base.refresh-date\" }}' 2>/dev/null || true); if [ \"$cached_date\" = \"$refresh_date\" ]; then echo \"Reusing family-librarian:debug-base refreshed $refresh_date\"; exit 0; fi; docker build --pull --build-arg \"DEBUG_BASE_REFRESH=$refresh_date\" --target debug-base --tag family-librarian:debug-base ."
       ],
+      "windows": {
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "$refreshDate = [DateTime]::UtcNow.ToString('yyyy-MM-dd'); $cachedDate = docker image inspect family-librarian:debug-base --format '{{ index .Config.Labels \"org.family-librarian.debug-base.refresh-date\" }}' 2>$null; $inspectExitCode = $LASTEXITCODE; if ($inspectExitCode -eq 0 -and $cachedDate -eq $refreshDate) { Write-Host \"Reusing family-librarian:debug-base refreshed $refreshDate\"; exit 0 }; docker build --pull --build-arg \"DEBUG_BASE_REFRESH=$refreshDate\" --target debug-base --tag family-librarian:debug-base .; exit $LASTEXITCODE"
+        ]
+      },
       "options": { "cwd": "${workspaceFolder}" },
-      "dependsOn": ["dev: check .env"],
+      "problemMatcher": []
+    },
+    {
+      "label": "compose: force refresh debug base",
+      "detail": "Rebuild the local debug prerequisite image from a freshly pulled .NET runtime image, bypassing cached prerequisite layers",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -euo pipefail; refresh_date=$(date -u +%F); exec docker build --pull --no-cache --build-arg \"DEBUG_BASE_REFRESH=$refresh_date\" --target debug-base --tag family-librarian:debug-base ."
+      ],
+      "windows": {
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "$refreshDate = [DateTime]::UtcNow.ToString('yyyy-MM-dd'); docker build --pull --no-cache --build-arg \"DEBUG_BASE_REFRESH=$refreshDate\" --target debug-base --tag family-librarian:debug-base .; exit $LASTEXITCODE"
+        ]
+      },
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "compose: reuse container",
+      "detail": "Refresh the cached debug base, build changed application layers, then recreate only the web container so it runs the new image (preserves support containers and data)",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "set -euo pipefail; export DEBUG_BASE_REFRESH=$(date -u +%F); docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --wait; exec docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --no-deps --force-recreate --wait family-librarian"
+      ],
+      "windows": {
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "$env:DEBUG_BASE_REFRESH = [DateTime]::UtcNow.ToString('yyyy-MM-dd'); docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --wait; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --no-deps --force-recreate --wait family-librarian; exit $LASTEXITCODE"
+        ]
+      },
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOrder": "sequence",
+      "dependsOn": ["dev: check .env", "compose: refresh debug base if stale"],
       "problemMatcher": []
     },
     {
@@ -166,6 +214,13 @@
       "detail": "preLaunchTask for the Docker attach configs: start/reuse the stack, then open the app",
       "dependsOrder": "sequence",
       "dependsOn": ["compose: reuse container", "dev: open app in browser"],
+      "problemMatcher": []
+    },
+    {
+      "label": "containers: force image rebuild, then open browser",
+      "detail": "Refresh both the debug prerequisite base and full application image, preserving containers and data, then open the app",
+      "dependsOrder": "sequence",
+      "dependsOn": ["compose: force rebuild", "dev: open app in browser"],
       "problemMatcher": []
     },
     {
@@ -209,23 +264,26 @@
     },
     {
       "label": "compose: force rebuild",
-      "detail": "Build and recreate the full Compose stack while preserving the PostgreSQL volume, using the debug image that already contains vsdbg (needs .env)",
-      "type": "shell",
-      "command": "docker",
+      "detail": "Force-refresh the debug prerequisite base, rebuild and recreate the full Compose stack while preserving the PostgreSQL volume (needs .env)",
+      "type": "process",
+      "command": "bash",
       "args": [
-        "compose",
-        "-f",
-        "compose.yaml",
-        "-f",
-        "compose.debug-attach.yaml",
-        "up",
-        "-d",
-        "--build",
-        "--force-recreate",
-        "--wait"
+        "-lc",
+        "export DEBUG_BASE_REFRESH=$(date -u +%F); exec docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --force-recreate --wait"
       ],
+      "windows": {
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "$env:DEBUG_BASE_REFRESH = [DateTime]::UtcNow.ToString('yyyy-MM-dd'); docker compose -f compose.yaml -f compose.debug-attach.yaml up -d --build --force-recreate --wait; exit $LASTEXITCODE"
+        ]
+      },
       "options": { "cwd": "${workspaceFolder}" },
-      "dependsOn": ["dev: check .env"],
+      "dependsOrder": "sequence",
+      "dependsOn": ["dev: check .env", "compose: force refresh debug base"],
       "problemMatcher": []
     }
   ]

@@ -915,18 +915,23 @@ Provider manifest should advertise protocol support.
 
 ## 17. Provider Configuration UX
 
-Admin Integrations screen should show:
+Configuration and operational administration should be separate. Settings must
+be organized into dedicated areas, rather than a single Integrations screen that
+links between unrelated concerns:
 
 ```text
-Metadata
-Acquisition
+Metadata providers
+Sources and private acquisition network
 Security
 Notifications
-Delivery
+Publishing destinations
 Linked ebook libraries
 Authentication
-Private acquisition network
 ```
+
+Operational pages belong in the administrator workspace: queue, security, and
+publishing activity/delivery history. A settings page configures a destination;
+it does not also contain its activity log.
 
 For each integration:
 
@@ -952,8 +957,8 @@ failure, without exposing gateway credentials.
 
 ### Credential lifecycle
 
-The normal self-hosted setup path for a provider API key or token is an
-Admin-only Integrations UI backed by same-origin host API commands. A newly entered
+The normal self-hosted setup path for a provider API key or token is its
+Admin-only, concern-specific settings UI backed by same-origin host API commands. A newly entered
 secret necessarily exists transiently in the administrator's browser while being
 submitted over HTTPS; the host must never send a stored secret back to the client.
 

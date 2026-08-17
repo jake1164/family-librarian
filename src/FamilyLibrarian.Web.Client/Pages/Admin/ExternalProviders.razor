@@ -1,20 +1,62 @@
-@page "/admin/external-providers"
+@page "/settings/sources"
 @attribute [Authorize(Roles = "Admin")]
 @using FamilyLibrarian.Contracts.Providers
+@using FamilyLibrarian.Web.Client.Integrations
 @using FamilyLibrarian.Web.Client.Providers
 @using Microsoft.AspNetCore.Authorization
 @inject ExternalProviderApiClient Api
+@inject MetadataIntegrationsApiClient BuiltInSourcesApi
 @inject ISnackbar Snackbar
 
-<PageTitle>External providers | Family Librarian</PageTitle>
+<PageTitle>Sources | Family Librarian</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">External providers</MudText>
+<MudText Typo="Typo.h4" GutterBottom="true">Sources</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
-    Out-of-process acquisition sources reached over the versioned external-provider
-    protocol. A registered provider never receives the application database, other
-    providers' credentials, or the destination library — only its own scoped API key
-    and a network route.
+    Configure book-acquisition sources. Built-in sources and registered external
+    sources stay here because they supply books; they do not enrich metadata or
+    receive published files.
 </MudText>
+
+<MudPaper Class="pa-4 mb-6" Elevation="1">
+    <MudText Typo="Typo.h6" Class="mb-2">Built-in sources</MudText>
+    @if (sourceLoadFailed)
+    {
+        <MudAlert Severity="Severity.Error">We could not load the built-in source settings.</MudAlert>
+    }
+    else if (builtInSources is null)
+    {
+        <MudProgressCircular Indeterminate="true" Size="Size.Small" aria-label="Loading built-in sources" />
+    }
+    else
+    {
+        @foreach (var source in builtInSources)
+        {
+            <MudPaper Outlined="true" Class="pa-3 mb-2">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                    <MudText Typo="Typo.subtitle1" Class="flex-grow-1">@source.DisplayName</MudText>
+                    <MudSwitch T="bool" @key="@($"builtin-source:{source.ProviderId}:{BuiltInSourceGeneration(source.ProviderId)}")"
+                               Value="source.IsEnabled" ValueChanged="@(enabled => SetBuiltInSourceEnabledAsync(source, enabled))"
+                               Color="Color.Primary" Disabled="@(builtInSourcesBusy || source.IsExternallyManaged)"
+                               Label="@(source.IsEnabled ? "Enabled" : "Disabled")" />
+                </MudStack>
+                <MudText Typo="Typo.body2" Class="mt-2">
+                    @if (source.ProviderId == "gutendex")
+                    {
+                        <span>Searches Project Gutenberg's public-domain catalogue for downloadable ebooks when a family request is fulfilled.</span>
+                    }
+                    else
+                    {
+                        <span>Provides direct acquisition options during fulfillment.</span>
+                    }
+                </MudText>
+                @if (source.LastTestedAtUtc is not null)
+                {
+                    <MudText Typo="Typo.caption" Class="mt-1">@source.LastTestMessage</MudText>
+                }
+            </MudPaper>
+        }
+    }
+</MudPaper>
 
 <MudPaper Class="pa-4 mb-6" Elevation="1">
     <MudText Typo="Typo.h6">Private acquisition network</MudText>
@@ -156,7 +198,7 @@
 </MudPaper>
 
 <MudPaper Class="pa-4 mb-6" Elevation="1">
-    <MudText Typo="Typo.h6" Class="mb-2">External providers</MudText>
+    <MudText Typo="Typo.h6" Class="mb-2">External sources</MudText>
 
     <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-4">
         <MudTextField T="string" Label="Provider id" @bind-Value="newProviderId" Disabled="@providersBusy" />
@@ -296,15 +338,57 @@
     private string? newProviderBaseUrl;
     private readonly Dictionary<Guid, string?> apiKeyDrafts = new();
     private readonly Dictionary<Guid, string> baseUrlDrafts = new();
+    private IReadOnlyList<ProviderStatusResponse>? builtInSources;
+    private bool sourceLoadFailed;
+    private bool builtInSourcesBusy;
+    private readonly Dictionary<string, int> builtInSourceGenerations = new(StringComparer.OrdinalIgnoreCase);
 
     private bool CanRegister =>
         !string.IsNullOrWhiteSpace(newProviderId) && !string.IsNullOrWhiteSpace(newProviderDisplayName) &&
         !string.IsNullOrWhiteSpace(newProviderBaseUrl);
 
     protected override Task OnInitializedAsync() =>
-        Task.WhenAll(LoadGatewayAsync(), LoadCatalogsAsync(), LoadProvidersAsync());
+        Task.WhenAll(LoadGatewayAsync(), LoadCatalogsAsync(), LoadProvidersAsync(), LoadBuiltInSourcesAsync());
 
     private string? GetApiKeyDraft(Guid id) => apiKeyDrafts.GetValueOrDefault(id);
+
+    private int BuiltInSourceGeneration(string providerId) =>
+        builtInSourceGenerations.GetValueOrDefault(providerId);
+
+    private async Task LoadBuiltInSourcesAsync()
+    {
+        try
+        {
+            builtInSources = (await BuiltInSourcesApi.GetProvidersAsync())
+                .Where(provider => provider.Capabilities.Contains("DirectAcquisition", StringComparer.Ordinal))
+                .ToArray();
+        }
+        catch (HttpRequestException)
+        {
+            sourceLoadFailed = true;
+        }
+    }
+
+    private async Task SetBuiltInSourceEnabledAsync(ProviderStatusResponse source, bool enabled)
+    {
+        builtInSourcesBusy = true;
+        try
+        {
+            var result = await BuiltInSourcesApi.SetEnabledAsync(source.ProviderId, enabled);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            await LoadBuiltInSourcesAsync();
+        }
+        finally
+        {
+            builtInSourcesBusy = false;
+            builtInSourceGenerations[source.ProviderId] = BuiltInSourceGeneration(source.ProviderId) + 1;
+        }
+    }
 
     // --- Gateway -------------------------------------------------------------
 

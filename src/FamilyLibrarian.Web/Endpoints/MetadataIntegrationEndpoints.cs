@@ -8,7 +8,7 @@ internal static class MetadataIntegrationEndpoints
 {
     public static void MapMetadataIntegrationEndpoints(this IEndpointRouteBuilder app)
     {
-        // Admin Metadata Integrations. Every route is Admin-only and addresses a known
+        // Built-in provider settings. Every route is Admin-only and addresses a known
         // installed provider id; none accepts an arbitrary target or returns a secret.
         var integrations = app.MapGroup("/api/v1/admin/integrations/metadata")
             .RequireAuthorization("Admin")
@@ -92,6 +92,10 @@ internal static class MetadataIntegrationEndpoints
     private static ProviderStatusResponse ToProviderResponse(ProviderStatus status) => new(
         status.ProviderId,
         status.DisplayName,
+        status.Capabilities
+            .Select(capability => capability.ToString())
+            .OrderBy(capability => capability, StringComparer.Ordinal)
+            .ToArray(),
         status.RequiresCredential,
         status.IsEnabled,
         status.HasStoredCredential,

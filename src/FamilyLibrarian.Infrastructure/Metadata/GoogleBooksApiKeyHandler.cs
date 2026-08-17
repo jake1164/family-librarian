@@ -8,7 +8,7 @@ namespace FamilyLibrarian.Infrastructure.Metadata;
 /// </summary>
 /// <remarks>
 /// The key is resolved per request rather than captured in the constructor. An
-/// administrator can replace it through the Admin Integrations page at any time,
+/// administrator can replace it through the Metadata Providers page at any time,
 /// and <c>HttpMessageHandler</c> instances are pooled and reused for minutes at a
 /// time — a constructor-captured key would keep sending the superseded value
 /// until the pool recycled it.

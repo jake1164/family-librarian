@@ -30,15 +30,40 @@ public sealed class CwaSettingsApiClient(HttpClient httpClient, AntiforgeryToken
     public Task<CwaResult> ClearSftpPassphraseAsync(CancellationToken cancellationToken = default) =>
         SendAsync<object>(HttpMethod.Delete, $"{BasePath}/sftp-passphrase", null, cancellationToken);
 
+    public Task<CwaResult> SetSftpPasswordAsync(string value, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Put, $"{BasePath}/sftp-password", new SetPublishingSecretRequest(value), cancellationToken);
+
+    public Task<CwaResult> ClearSftpPasswordAsync(CancellationToken cancellationToken = default) =>
+        SendAsync<object>(HttpMethod.Delete, $"{BasePath}/sftp-password", null, cancellationToken);
+
+    public Task<CwaResult> TrustSftpHostKeyAsync(string fingerprint, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Put, $"{BasePath}/sftp-host-key", new TrustSftpHostKeyRequest(fingerprint), cancellationToken);
+
     public Task<CwaResult> SetOpdsPasswordAsync(string value, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Put, $"{BasePath}/opds-password", new SetPublishingSecretRequest(value), cancellationToken);
 
     public Task<CwaResult> ClearOpdsPasswordAsync(CancellationToken cancellationToken = default) =>
         SendAsync<object>(HttpMethod.Delete, $"{BasePath}/opds-password", null, cancellationToken);
 
-    public async Task<PublishingConnectionTestResponse?> TestAsync(CancellationToken cancellationToken = default)
+    public Task<PublishingConnectionTestResponse?> TestIngestAsync(
+        TestCwaIngestRequest request,
+        CancellationToken cancellationToken = default) =>
+        TestAsync("test-ingest", request, cancellationToken);
+
+    public Task<PublishingConnectionTestResponse?> TestOpdsAsync(CancellationToken cancellationToken = default) =>
+        TestAsync("test-opds", null, cancellationToken);
+
+    private async Task<PublishingConnectionTestResponse?> TestAsync(
+        string operation,
+        object? payload,
+        CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/test");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/{operation}");
+        if (payload is not null)
+        {
+            request.Content = JsonContent.Create(payload);
+        }
+
         await antiforgery.AttachAsync(request, cancellationToken);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode

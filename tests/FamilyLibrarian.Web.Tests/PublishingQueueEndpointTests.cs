@@ -139,7 +139,7 @@ public sealed class PublishingQueueEndpointTests
     {
         var response = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/",
-            new SetCwaSettingsRequest("Local", "/data/cwa-ingest-test", null, null, null, null, null, null));
+            new SetCwaSettingsRequest("Local", "/data/cwa-ingest-test", null, null, null, null, "PrivateKey", null, null));
         response.EnsureSuccessStatusCode();
 
         var enabled = await client.PutAsJsonAsync(

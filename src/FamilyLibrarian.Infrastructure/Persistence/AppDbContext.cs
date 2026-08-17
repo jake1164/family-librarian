@@ -595,6 +595,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.SftpPort).HasColumnName("sftp_port");
             entity.Property(settings => settings.SftpUsername).HasColumnName("sftp_username").HasMaxLength(256);
             entity.Property(settings => settings.SftpIngestPath).HasColumnName("sftp_ingest_path").HasMaxLength(1_024);
+            entity.Property(settings => settings.SftpAuthenticationMode).HasColumnName("sftp_authentication_mode").HasConversion<string>().HasMaxLength(32).HasDefaultValue(CwaSftpAuthenticationMode.PrivateKey);
             entity.Property(settings => settings.ProtectedSftpPrivateKey).HasColumnName("protected_sftp_private_key").HasMaxLength(8_192);
             entity.Property(settings => settings.SftpPrivateKeyFormatVersion).HasColumnName("sftp_private_key_format_version");
             entity.Property(settings => settings.SftpPrivateKeyHint).HasColumnName("sftp_private_key_hint").HasMaxLength(8);
@@ -603,6 +604,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.SftpPassphraseFormatVersion).HasColumnName("sftp_passphrase_format_version");
             entity.Property(settings => settings.SftpPassphraseHint).HasColumnName("sftp_passphrase_hint").HasMaxLength(8);
             entity.Property(settings => settings.SftpPassphraseSetAtUtc).HasColumnName("sftp_passphrase_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.ProtectedSftpPassword).HasColumnName("protected_sftp_password").HasMaxLength(2_048);
+            entity.Property(settings => settings.SftpPasswordFormatVersion).HasColumnName("sftp_password_format_version");
+            entity.Property(settings => settings.SftpPasswordHint).HasColumnName("sftp_password_hint").HasMaxLength(8);
+            entity.Property(settings => settings.SftpPasswordSetAtUtc).HasColumnName("sftp_password_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.SftpHostKeyFingerprint).HasColumnName("sftp_host_key_fingerprint").HasMaxLength(128);
+            entity.Property(settings => settings.SftpHostKeyTrustedAtUtc).HasColumnName("sftp_host_key_trusted_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.OpdsBaseUrl).HasColumnName("opds_base_url").HasMaxLength(512);
             entity.Property(settings => settings.OpdsUsername).HasColumnName("opds_username").HasMaxLength(256);
             entity.Property(settings => settings.ProtectedOpdsPassword).HasColumnName("protected_opds_password").HasMaxLength(2_048);

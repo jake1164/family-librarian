@@ -31,7 +31,7 @@ public sealed class CwaPublishingServiceTests
     {
         var context = new TestContext();
         context.Settings.SetSettings(
-            CwaTransportMode.Local, "/ingest", null, null, null, null, null, null, null, Now);
+            CwaTransportMode.Local, "/ingest", null, null, null, null, CwaSftpAuthenticationMode.PrivateKey, null, null, null, Now);
         context.Settings.SetEnabled(false, null, Now);
         context.SettingsStore.Exists = true;
         var asset = context.CreateAsset();
@@ -142,7 +142,7 @@ public sealed class CwaPublishingServiceTests
     {
         var context = new TestContext();
         context.Settings.SetSettings(
-            CwaTransportMode.Local, "/ingest", null, null, null, null, null, null, null, Now);
+            CwaTransportMode.Local, "/ingest", null, null, null, null, CwaSftpAuthenticationMode.PrivateKey, null, null, null, Now);
         context.Settings.SetEnabled(true, null, Now);
         context.SettingsStore.Exists = true;
         return context;
