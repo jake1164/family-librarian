@@ -6,7 +6,6 @@ using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Publishing;
 using FamilyLibrarian.Contracts.Requests;
-using FamilyLibrarian.Contracts.Security;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -171,6 +170,11 @@ public sealed class PublishingQueueEndpointTests
         Assert.AreEqual(HttpStatusCode.NoContent, response.StatusCode);
     }
 
+    // The uploaded file's title/author match the-hobbit's catalog metadata
+    // (ebook) or has no identity verifier at all (audiobook — see
+    // EpubAssetIdentityVerifier.Supports), so a clean scan is approved by
+    // policy and published during the upload itself; no separate admin
+    // approval call is needed.
     private static async Task<Guid> ManualImportAndApproveAsync(HttpClient client, Guid requestId, Guid formatId)
     {
         var upload = await client.PostAsync(
@@ -179,10 +183,6 @@ public sealed class PublishingQueueEndpointTests
         Assert.AreEqual(HttpStatusCode.OK, upload.StatusCode);
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
-
-        var approve = await client.PostAsJsonAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/approve", new ApprovalDecisionRequest(null));
-        Assert.AreEqual(HttpStatusCode.NoContent, approve.StatusCode);
 
         return imported.MediaAssetId;
     }
@@ -195,10 +195,6 @@ public sealed class PublishingQueueEndpointTests
         Assert.AreEqual(HttpStatusCode.OK, upload.StatusCode);
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
-
-        var approve = await client.PostAsJsonAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/approve", new ApprovalDecisionRequest(null));
-        Assert.AreEqual(HttpStatusCode.NoContent, approve.StatusCode);
 
         return imported.MediaAssetId;
     }

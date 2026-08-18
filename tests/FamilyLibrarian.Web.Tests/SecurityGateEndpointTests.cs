@@ -158,7 +158,10 @@ public sealed class SecurityGateEndpointTests
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var asset = await database.MediaAssets.SingleAsync(asset => asset.Id == imported.MediaAssetId);
-        Assert.AreEqual(MediaAssetStorageState.Rejected, asset.StorageState);
+
+        // A confirmed detection destroys the staged bytes automatically rather
+        // than merely rejecting them — see SecurityEvaluationService.DestroyDetectedFileAsync.
+        Assert.AreEqual(MediaAssetStorageState.Destroyed, asset.StorageState);
     }
 
     private static FamilyLibrarianAppFactory CreateFactory(WebTestFixture fixture, IMalwareScanner scanner) =>

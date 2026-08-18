@@ -5,7 +5,6 @@ using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Requests;
-using FamilyLibrarian.Contracts.Security;
 using FamilyLibrarian.Domain.Security;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -44,6 +43,12 @@ public sealed class MediaAssetQueueEndpointTests
     [TestMethod]
     public async Task AnUploadIsAutomaticallyEvaluatedBeforeAppearingInTheQueue()
     {
+        // Title/author deliberately don't match the-hobbit's catalog metadata
+        // (see EpubAssetIdentityVerifier): a clean scan alone is not enough to
+        // leave the queue automatically — it also has to be held for identity
+        // review, which is what keeps this asset visible here to assert on.
+        // A clean scan that also matches is covered by
+        // SecurityGateEndpointTests.ACleanFileIsApprovedByPolicyAndBecomesTrusted.
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -54,7 +59,7 @@ public sealed class MediaAssetQueueEndpointTests
 
         var upload = await client.PostAsync(
             $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
-            BuildUpload(BuildMinimalEpubBytes(), "book.epub"));
+            BuildUpload(EpubTestFixture.BuildMinimalEpubBytes("A Different Book", "Someone Else"), "book.epub"));
         Assert.AreEqual(HttpStatusCode.OK, upload.StatusCode);
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
@@ -65,7 +70,7 @@ public sealed class MediaAssetQueueEndpointTests
         var entry = queue.Assets.SingleOrDefault(asset => asset.AssetId == imported.MediaAssetId);
         Assert.IsNotNull(entry, "The freshly staged asset should be in the queue.");
         Assert.AreEqual(requestId, entry.RequestId);
-        Assert.AreEqual("Processing", entry.StorageState);
+        Assert.AreEqual("Unmatched", entry.StorageState);
         Assert.IsNotNull(entry.LatestEvaluation);
         Assert.AreEqual(nameof(SecurityEvaluationStatus.Passed), entry.LatestEvaluation.Status);
     }
@@ -73,6 +78,10 @@ public sealed class MediaAssetQueueEndpointTests
     [TestMethod]
     public async Task AnApprovedAssetLeavesTheQueue()
     {
+        // The default fixture's title/author match the-hobbit's catalog
+        // metadata, so a clean scan is approved by policy and published
+        // immediately during the upload itself — there is no separate admin
+        // approval step to exercise here anymore.
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -87,24 +96,9 @@ public sealed class MediaAssetQueueEndpointTests
         var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
         Assert.IsNotNull(imported);
 
-        var queueBeforeApproval = await client.GetFromJsonAsync<MediaAssetAdminListResponse>(
-            "/api/v1/admin/media-assets/");
-        Assert.IsNotNull(queueBeforeApproval);
-        var pending = queueBeforeApproval.Assets.Single(asset => asset.AssetId == imported.MediaAssetId);
-        Assert.AreEqual("Processing", pending.StorageState);
-        Assert.IsNotNull(pending.LatestEvaluation);
-        Assert.AreEqual(nameof(SecurityEvaluationStatus.Passed), pending.LatestEvaluation.Status);
-        Assert.AreEqual(1, pending.LatestEvaluation.ScanResults.Count);
-
-        var approve = await client.PostAsJsonAsync(
-            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/approve",
-            new ApprovalDecisionRequest(null));
-        Assert.AreEqual(HttpStatusCode.NoContent, approve.StatusCode);
-
-        var queueAfterApproval = await client.GetFromJsonAsync<MediaAssetAdminListResponse>(
-            "/api/v1/admin/media-assets/");
-        Assert.IsNotNull(queueAfterApproval);
-        Assert.IsFalse(queueAfterApproval.Assets.Any(asset => asset.AssetId == imported.MediaAssetId));
+        var queue = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
+        Assert.IsNotNull(queue);
+        Assert.IsFalse(queue.Assets.Any(asset => asset.AssetId == imported.MediaAssetId));
     }
 
     [TestMethod]

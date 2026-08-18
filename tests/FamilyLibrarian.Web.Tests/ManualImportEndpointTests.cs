@@ -57,7 +57,11 @@ public sealed class ManualImportEndpointTests
         await using var scope = fixture.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var asset = await database.MediaAssets.SingleAsync(a => a.Id == result.MediaAssetId);
-        Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
+
+        // The fixture's title/author match the-hobbit's catalog metadata, so a
+        // clean scan is approved by policy and published during the upload
+        // itself — see SecurityGateEndpointTests.ACleanFileIsApprovedByPolicyAndBecomesTrusted.
+        Assert.AreEqual(MediaAssetStorageState.Trusted, asset.StorageState);
         Assert.AreEqual(formatId, asset.AssociatedRequestFormatId);
     }
 
@@ -147,34 +151,5 @@ public sealed class ManualImportEndpointTests
         return (request.Id, format.FormatId);
     }
 
-    /// <summary>
-    /// A ZIP local-file-header for an entry named "mimetype" whose stored
-    /// (uncompressed) content is the EPUB content-type string.
-    /// </summary>
-    private static byte[] BuildMinimalEpubBytes()
-    {
-        const string entryName = "mimetype";
-        const string content = "application/epub+zip";
-        var nameBytes = Encoding.ASCII.GetBytes(entryName);
-        var contentBytes = Encoding.ASCII.GetBytes(content);
-
-        using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream);
-
-        writer.Write(0x04034B50u);
-        writer.Write((ushort)20);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write(0u);
-        writer.Write((uint)contentBytes.Length);
-        writer.Write((uint)contentBytes.Length);
-        writer.Write((ushort)nameBytes.Length);
-        writer.Write((ushort)0);
-        writer.Write(nameBytes);
-        writer.Write(contentBytes);
-
-        return stream.ToArray();
-    }
+    private static byte[] BuildMinimalEpubBytes() => EpubTestFixture.BuildMinimalEpubBytes();
 }

@@ -32,6 +32,20 @@ public sealed class BookRequestService(
         RequestStatus.PendingAcquisition
     ];
 
+    /// <summary>
+    /// The status changes an administrator may make manually. <see cref="RequestStatus.Available"/>
+    /// is deliberately excluded: it is only ever reached automatically, via
+    /// <see cref="BookRequest.MarkFormatAvailable"/> once every requested format is delivered — not
+    /// something an admin picks from the transitions list.
+    /// </summary>
+    private static readonly RequestStatus[] AdminTransitions =
+    [
+        RequestStatus.PendingAcquisition,
+        RequestStatus.NeedsReview,
+        RequestStatus.NotAvailable,
+        RequestStatus.Cancelled
+    ];
+
     public async Task<CreateBookRequestResult> CreateAsync(
         Guid workId,
         IReadOnlyList<RequestMediaType> mediaTypes,
@@ -258,7 +272,9 @@ public sealed class BookRequestService(
 
     /// <summary>The transitions an administrator may make from a given status.</summary>
     public static IReadOnlyList<RequestStatus> AdminTransitionsFrom(RequestStatus status) =>
-        RequestStatusTransitions.AllowedFrom(status);
+        RequestStatusTransitions.AllowedFrom(status)
+            .Where(target => Array.IndexOf(AdminTransitions, target) >= 0)
+            .ToArray();
 
     private static string Describe(RequestStatus status) => status switch
     {
