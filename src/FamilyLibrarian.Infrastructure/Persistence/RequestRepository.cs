@@ -134,6 +134,28 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         return (await AddAdminProgressAsync([request], cancellationToken)).Single();
     }
 
+    public async Task<IReadOnlyList<BookRequest>> ListForManualRecheckAsync(
+        RequestStatus status,
+        string? providerId,
+        CancellationToken cancellationToken)
+    {
+        var query = database.BookRequests
+            .Include(request => request.Formats)
+            .Include(request => request.StatusHistory)
+            .Where(request => request.Status == status);
+
+        if (providerId is not null)
+        {
+            query = query.Where(request =>
+                database.ProviderAttempts.Any(attempt =>
+                    attempt.RequestId == request.Id && attempt.ProviderId == providerId));
+        }
+
+        return await query
+            .OrderBy(request => request.RequestedAtUtc)
+            .ToArrayAsync(cancellationToken);
+    }
+
     public void AddRequest(BookRequest request) => database.BookRequests.Add(request);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken) =>

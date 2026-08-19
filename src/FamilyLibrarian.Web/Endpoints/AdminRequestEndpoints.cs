@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
@@ -24,6 +25,7 @@ internal static class AdminRequestEndpoints
 
         adminRequests.MapGet("/", ListAdminRequestsAsync);
         adminRequests.MapGet("/attention", GetAttentionAsync);
+        adminRequests.MapPost("/recheck", RecheckNeedsReviewAsync);
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-attempts", ListProviderAttemptsAsync);
         adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
@@ -66,6 +68,30 @@ internal static class AdminRequestEndpoints
     {
         var request = await requests.GetForAdminAsync(requestId, cancellationToken);
         return request is null ? Results.NotFound() : Results.Ok(ToAdminRequestResponse(request));
+    }
+
+    private static async Task<IResult> RecheckNeedsReviewAsync(
+        RecheckNeedsReviewRequest request,
+        BookRequestService requests,
+        IEnumerable<IAutomaticDirectAcquisitionProvider> automaticProviders,
+        CancellationToken cancellationToken)
+    {
+        string? providerId = string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId.Trim();
+        if (providerId is not null &&
+            !automaticProviders.Any(provider => string.Equals(provider.Id, providerId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["providerId"] = ["That provider is not registered for automatic acquisition."]
+            });
+        }
+
+        var result = await requests.AdminBulkRecheckAsync(providerId, cancellationToken);
+        return result.Outcome switch
+        {
+            BulkRecheckOutcome.Success => Results.Ok(new RecheckNeedsReviewResponse(result.RequeuedCount)),
+            _ => Results.Unauthorized()
+        };
     }
 
     private static async Task<IResult> GetAttentionAsync(

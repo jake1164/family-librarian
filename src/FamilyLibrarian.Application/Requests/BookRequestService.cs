@@ -235,6 +235,63 @@ public sealed class BookRequestService(
         return BookRequestCommandResult.Success(view!.Request);
     }
 
+    /// <summary>
+    /// Requeues every <see cref="RequestStatus.NeedsReview"/> request — optionally
+    /// only ones with a prior lookup against <paramref name="providerId"/> — back
+    /// to <see cref="RequestStatus.PendingAcquisition"/>.
+    /// </summary>
+    /// <remarks>
+    /// This reuses the exact same domain transition as the single-request
+    /// "return to queue" action rather than re-running provider matching itself:
+    /// <see cref="BookRequest.TransitionTo"/> resets <c>StatusChangedAtUtc</c>,
+    /// which is what makes the automatic poller (<c>IsCurrentPendingCycleAttempt</c>
+    /// in <c>AutomaticRequestFulfillmentService</c>) treat every prior
+    /// <see cref="Domain.Acquisition.ProviderAttempt"/> as stale and try every
+    /// registered automatic provider again on its next pass — indistinguishable
+    /// from a freshly submitted request, with no acquisition logic duplicated here.
+    /// </remarks>
+    public async Task<BulkRecheckResult> AdminBulkRecheckAsync(
+        string? providerId,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return BulkRecheckResult.Unauthenticated();
+        }
+
+        var normalizedProviderId = string.IsNullOrWhiteSpace(providerId)
+            ? null
+            : providerId.Trim().ToLowerInvariant();
+
+        var candidates = await repository.ListForManualRecheckAsync(
+            RequestStatus.NeedsReview, normalizedProviderId, cancellationToken);
+
+        var reason = normalizedProviderId is null
+            ? "Manual recheck against all automatic providers."
+            : $"Manual recheck against {normalizedProviderId}.";
+
+        foreach (var request in candidates)
+        {
+            request.TransitionTo(RequestStatus.PendingAcquisition, userId, reason, clock.UtcNow);
+            await audit.WriteAsync(
+                AuditActions.BookRequestStatusChanged,
+                AuditSubjectTypes.BookRequest,
+                request.Id.ToString(),
+                new
+                {
+                    RequestId = request.Id,
+                    From = RequestStatus.NeedsReview.ToString(),
+                    To = RequestStatus.PendingAcquisition.ToString(),
+                    Trigger = "ManualRecheck",
+                    ProviderId = normalizedProviderId
+                },
+                cancellationToken);
+        }
+
+        await repository.SaveChangesAsync(cancellationToken);
+        return BulkRecheckResult.Success(candidates.Count);
+    }
+
     /// <summary>Changes the administrative note without creating a fake status event.</summary>
     public async Task<BookRequestCommandResult> SetAdminNoteAsync(
         Guid requestId,
@@ -361,4 +418,19 @@ public enum BookRequestCommandOutcome
     Invalid,
     Unauthenticated,
     Conflict
+}
+
+public sealed record BulkRecheckResult(BulkRecheckOutcome Outcome, int RequeuedCount)
+{
+    public static BulkRecheckResult Success(int requeuedCount) =>
+        new(BulkRecheckOutcome.Success, requeuedCount);
+
+    public static BulkRecheckResult Unauthenticated() =>
+        new(BulkRecheckOutcome.Unauthenticated, 0);
+}
+
+public enum BulkRecheckOutcome
+{
+    Success,
+    Unauthenticated
 }

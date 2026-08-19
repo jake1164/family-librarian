@@ -157,12 +157,48 @@ public sealed class GutendexProvider(
         return new DirectAcquisitionFile(stream, $"gutenberg-{fulfillmentOption.ProviderResultId}.epub");
     }
 
+    private static readonly string[] LeadingArticles = ["The ", "A ", "An "];
+    private static readonly string[] TrailingArticles = [", The", ", A", ", An"];
+
     private static bool TitleMatches(string expected, string actual)
     {
-        var normalizedExpected = Normalize(expected);
-        var normalizedActual = Normalize(actual);
+        var normalizedExpected = Normalize(NormalizeTitleVariants(expected));
+        var normalizedActual = Normalize(NormalizeTitleVariants(actual));
         return !string.IsNullOrEmpty(normalizedExpected) &&
             normalizedActual.StartsWith(normalizedExpected, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Catalog sources disagree on where a leading article goes — Gutendex
+    /// keeps "The Green Mummy" as written, while OpenLibrary-derived titles
+    /// often arrive as sort-form "Green Mummy, The" or with the article
+    /// dropped entirely. They also disagree on "&amp;" versus "and" (Gutendex
+    /// always spells it out, e.g. "Romeo and Juliet"). Normalizing both sides
+    /// to the same bare form keeps <see cref="TitleMatches"/> from rejecting
+    /// an otherwise exact match.
+    /// </summary>
+    private static string NormalizeTitleVariants(string value)
+    {
+        var trimmed = value.Replace("&", " and ", StringComparison.Ordinal).Trim();
+
+        foreach (var article in TrailingArticles)
+        {
+            if (trimmed.EndsWith(article, StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = trimmed[..^article.Length].TrimEnd();
+                break;
+            }
+        }
+
+        foreach (var article in LeadingArticles)
+        {
+            if (trimmed.StartsWith(article, StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed[article.Length..];
+            }
+        }
+
+        return trimmed;
     }
 
     private static bool AuthorMatches(string expected, string? actual) =>

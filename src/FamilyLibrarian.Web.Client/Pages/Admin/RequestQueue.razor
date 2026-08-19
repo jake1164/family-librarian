@@ -1,8 +1,11 @@
 @page "/admin/requests"
 @attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Providers
 @using FamilyLibrarian.Web.Client.Acquisition
+@using FamilyLibrarian.Web.Client.Integrations
 @inject AdminRequestsApiClient Requests
 @inject MediaAssetsApiClient MediaAssets
+@inject MetadataIntegrationsApiClient MetadataIntegrations
 @inject ISnackbar Snackbar
 
 <PageTitle>Request queue · Family Librarian</PageTitle>
@@ -31,7 +34,23 @@
                            OnClick='@(() => SelectStatusAsync("NeedsReview"))'>
                     Show needs review
                 </MudButton>
+                <MudMenu Label="Recheck" Variant="Variant.Text" Color="Color.Warning"
+                         StartIcon="@Icons.Material.Filled.Refresh" Disabled="@isRechecking">
+                    <MudMenuItem OnClick="@(() => RecheckAsync(null))">
+                        All providers
+                    </MudMenuItem>
+                    @foreach (var provider in directAcquisitionProviders)
+                    {
+                        <MudMenuItem OnClick="@(() => RecheckAsync(provider.ProviderId))">
+                            @provider.DisplayName only
+                        </MudMenuItem>
+                    }
+                </MudMenu>
             </MudStack>
+            <MudText Typo="Typo.caption">
+                Moves needs-review requests back to the queue so the next automatic pass treats them
+                as freshly submitted — no need to remove and re-add them.
+            </MudText>
         </MudAlert>
     }
 
@@ -152,8 +171,55 @@
     private string? errorMessage;
     private IReadOnlyList<BatchUploadResult> batchResults = [];
     private AdminRequestAttentionResponse? attention;
+    private IReadOnlyList<ProviderStatusResponse> directAcquisitionProviders = [];
+    private bool isRechecking;
 
-    protected override Task OnInitializedAsync() => LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        await LoadDirectAcquisitionProvidersAsync();
+    }
+
+    private async Task LoadDirectAcquisitionProvidersAsync()
+    {
+        try
+        {
+            directAcquisitionProviders = (await MetadataIntegrations.GetProvidersAsync())
+                .Where(provider => provider.Capabilities.Contains("DirectAcquisition", StringComparer.Ordinal))
+                .ToArray();
+        }
+        catch (HttpRequestException)
+        {
+            // The recheck menu just offers fewer per-provider choices; "All providers" still works.
+        }
+    }
+
+    private async Task RecheckAsync(string? providerId)
+    {
+        isRechecking = true;
+        errorMessage = null;
+        try
+        {
+            var outcome = await Requests.RecheckNeedsReviewAsync(providerId);
+            if (outcome.Succeeded)
+            {
+                Snackbar.Add(
+                    outcome.RequeuedCount == 0
+                        ? "No matching requests needed a recheck."
+                        : $"Requeued {outcome.RequeuedCount} request{(outcome.RequeuedCount == 1 ? string.Empty : "s")} for another automatic pass.",
+                    Severity.Success);
+                await LoadAsync();
+            }
+            else
+            {
+                errorMessage = outcome.Error;
+            }
+        }
+        finally
+        {
+            isRechecking = false;
+        }
+    }
 
     private async Task SelectStatusAsync(string? status)
     {

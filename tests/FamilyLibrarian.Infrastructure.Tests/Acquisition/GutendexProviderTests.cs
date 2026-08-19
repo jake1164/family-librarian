@@ -108,6 +108,58 @@ public sealed class GutendexProviderTests
     }
 
     [TestMethod]
+    public async Task ATitleDifferingOnlyByALeadingArticleStillMatches()
+    {
+        const string leadingArticleResponse = """
+            {
+              "count": 1,
+              "results": [
+                {
+                  "id": 2868,
+                  "title": "The Green Mummy",
+                  "authors": [{"name": "Hume, Fergus"}],
+                  "formats": {"application/epub+zip": "https://www.gutenberg.org/ebooks/2868.epub3.images"}
+                }
+              ]
+            }
+            """;
+        var context = new TestContext(
+            new RecordingHandler(leadingArticleResponse), enabled: true, workTitle: "Green Mummy", workAuthor: "Fergus Hume");
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            Guid.NewGuid(), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual("2868", options[0].ProviderResultId);
+    }
+
+    [TestMethod]
+    public async Task ATitleDifferingOnlyByAnAmpersandVersusAndStillMatches()
+    {
+        const string spelledOutResponse = """
+            {
+              "count": 1,
+              "results": [
+                {
+                  "id": 1513,
+                  "title": "Romeo and Juliet",
+                  "authors": [{"name": "Shakespeare, William"}],
+                  "formats": {"application/epub+zip": "https://www.gutenberg.org/ebooks/1513.epub3.images"}
+                }
+              ]
+            }
+            """;
+        var context = new TestContext(
+            new RecordingHandler(spelledOutResponse), enabled: true, workTitle: "Romeo & Juliet", workAuthor: "William Shakespeare");
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            Guid.NewGuid(), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual("1513", options[0].ProviderResultId);
+    }
+
+    [TestMethod]
     public async Task ATitleMatchWithADifferentAuthorIsNotEligibleForDirectAcquisition()
     {
         const string differentAuthorResponse = """
@@ -166,7 +218,7 @@ public sealed class GutendexProviderTests
 
     private sealed class TestContext
     {
-        public TestContext(HttpMessageHandler handler, bool enabled)
+        public TestContext(HttpMessageHandler handler, bool enabled, string workTitle = "The Hobbit", string workAuthor = "J. R. R. Tolkien")
         {
             var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://gutendex.com/") };
             var descriptor = new ProviderDescriptor(
@@ -183,7 +235,7 @@ public sealed class GutendexProviderTests
                 httpClient,
                 new FakeProviderRegistry(descriptor),
                 new FakeProviderSettingsStore(setting),
-                new FakeWorkLookup());
+                new FakeWorkLookup(workTitle, workAuthor));
         }
 
         public GutendexProvider Provider { get; }
@@ -210,10 +262,10 @@ public sealed class GutendexProviderTests
         public Task SaveChangesAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class FakeWorkLookup : IWorkLookup
+    private sealed class FakeWorkLookup(string title, string author) : IWorkLookup
     {
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien"));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, title, author));
     }
 
     private sealed class RecordingHandler(string responseBody) : HttpMessageHandler

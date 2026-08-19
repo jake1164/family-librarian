@@ -162,6 +162,86 @@ public sealed class AdminRequestQueueEndpointTests
         Assert.AreEqual(HttpStatusCode.Forbidden, forbidden.StatusCode);
     }
 
+    [TestMethod]
+    public async Task RecheckByProviderOnlyRequeuesRequestsWithAPriorAttemptForThatProvider()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var owner = await CreateTokenClientAsync(fixture, isAdmin: false);
+        using var admin = await CreateTokenClientAsync(fixture, isAdmin: true);
+
+        // Failed against Gutendex — the recheck-by-provider case should pick this one up.
+        var withAttempt = await CreateRequestAsync(owner, await ResolveWorkAsync(owner, "project-hail-mary"));
+        var withAttemptReview = await admin.PostAsJsonAsync(
+            $"/api/v1/admin/requests/{withAttempt.Id}/transitions",
+            new ChangeBookRequestStatusRequest("NeedsReview", "No automatic match.", withAttempt.Version));
+        Assert.AreEqual(HttpStatusCode.OK, withAttemptReview.StatusCode);
+        var withAttemptReviewed = await withAttemptReview.Content.ReadFromJsonAsync<AdminBookRequestResponse>();
+        Assert.IsNotNull(withAttemptReviewed);
+
+        // No provider was ever consulted for this one — recheck-by-provider must leave it alone.
+        // Ebook, not Audiobook: another test in this class already holds an active
+        // Audiobook request against "the-hobbit" for this same fixed test user.
+        var hobbitWorkId = await ResolveWorkAsync(owner, "the-hobbit");
+        var withoutAttemptCreate = await owner.PostAsJsonAsync(
+            "/api/v1/requests/",
+            new CreateBookRequestRequest(hobbitWorkId, ["Ebook"], "For the recheck test.", false));
+        Assert.AreEqual(HttpStatusCode.Created, withoutAttemptCreate.StatusCode);
+        var withoutAttempt = await withoutAttemptCreate.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(withoutAttempt);
+        var withoutAttemptReview = await admin.PostAsJsonAsync(
+            $"/api/v1/admin/requests/{withoutAttempt.Id}/transitions",
+            new ChangeBookRequestStatusRequest("NeedsReview", "Held for a manual reason.", withoutAttempt.Version));
+        Assert.AreEqual(HttpStatusCode.OK, withoutAttemptReview.StatusCode);
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            database.ProviderAttempts.Add(new ProviderAttempt(
+                withAttempt.Id,
+                withAttempt.Formats.Single().FormatId,
+                "gutendex",
+                ProviderAttemptOutcome.NoMatch,
+                "No high-confidence automatic copy was found.",
+                DateTimeOffset.UtcNow,
+                nextEligibleCheckAtUtc: null));
+            await database.SaveChangesAsync();
+        }
+
+        var recheck = await admin.PostAsJsonAsync(
+            "/api/v1/admin/requests/recheck",
+            new RecheckNeedsReviewRequest("gutendex"));
+        Assert.AreEqual(HttpStatusCode.OK, recheck.StatusCode);
+        var recheckResult = await recheck.Content.ReadFromJsonAsync<RecheckNeedsReviewResponse>();
+        Assert.IsNotNull(recheckResult);
+        // Other tests in this shared class fixture may also leave a NeedsReview
+        // request with a "gutendex" attempt behind, so this only asserts that
+        // recheck swept up at least this test's own request — the two status
+        // checks below confirm which request actually moved.
+        Assert.IsTrue(recheckResult.RequeuedCount >= 1);
+
+        var requeued = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{withAttempt.Id}");
+        Assert.IsNotNull(requeued);
+        Assert.AreEqual("PendingAcquisition", requeued.Request.Status);
+        Assert.IsTrue(requeued.Request.Version > withAttemptReviewed!.Request.Version);
+
+        var stillNeedsReview = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{withoutAttempt.Id}");
+        Assert.IsNotNull(stillNeedsReview);
+        Assert.AreEqual("NeedsReview", stillNeedsReview.Request.Status);
+    }
+
+    [TestMethod]
+    public async Task RecheckWithAnUnregisteredProviderIsRejected()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var admin = await CreateTokenClientAsync(fixture, isAdmin: true);
+
+        var response = await admin.PostAsJsonAsync(
+            "/api/v1/admin/requests/recheck",
+            new RecheckNeedsReviewRequest("not-a-real-provider"));
+
+        Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private static async Task<HttpClient> CreateTokenClientAsync(
         WebTestFixture fixture,
         bool isAdmin)

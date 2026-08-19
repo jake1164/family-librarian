@@ -2,16 +2,16 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
-using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Domain.Acquisition;
-using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Acquisition;
 
 /// <summary>
-/// Moves a request through unattended acquisition only when an explicitly
-/// opt-in provider returns one high-confidence direct-download match.
+/// Moves a request through unattended acquisition whenever an explicitly
+/// opt-in provider returns one high-confidence direct-download match — and
+/// keeps retrying on its own, once the cooldown elapses, for as long as none
+/// has found anything yet.
 /// </summary>
 /// <remarks>
 /// This service intentionally cannot use store offers, external actions, or
@@ -19,17 +19,32 @@ namespace FamilyLibrarian.Application.Acquisition;
 /// librarian, but do not carry the provider-specific confidence guarantee this
 /// workflow requires. Every acquired file still enters quarantine, is scanned,
 /// structurally validated, identity-checked, and only then sent to its library.
+/// <para>
+/// A request only ever reaches <see cref="RequestStatus.NeedsReview"/> from
+/// here for the two cases that genuinely need a librarian's judgment:
+/// different providers confidently disagreeing on which file is the right
+/// one, or a downloaded file failing its post-download security/identity
+/// check. Coming up empty is not one of those — that just means "not yet",
+/// so the request stays in the automatic queue and tries again later.
+/// </para>
 /// </remarks>
 public sealed class AutomaticRequestFulfillmentService(
     IRequestRepository requests,
     IProviderAttemptRepository attempts,
-    IExternalProviderStore externalProviders,
     IEnumerable<IAutomaticDirectAcquisitionProvider> providers,
     DirectAcquisitionSecurityService acquisition,
     IClock clock,
     NotificationService notifications)
 {
     private const int BatchSize = 20;
+
+    /// <summary>
+    /// How long to wait before asking the same provider about the same format
+    /// again after it found nothing. A free catalog's contents change slowly,
+    /// so this trades a little latency for not hammering an unauthenticated
+    /// API every poll cycle for a book it has already said it doesn't have.
+    /// </summary>
+    private static readonly TimeSpan RetryCooldown = TimeSpan.FromDays(1);
 
     public async Task<int> ProcessPendingAsync(CancellationToken cancellationToken)
     {
@@ -56,7 +71,7 @@ public sealed class AutomaticRequestFulfillmentService(
                 {
                     var latestAttempt = await attempts.FindLatestForFormatAsync(
                         format.Id, provider.Id, cancellationToken);
-                    if (IsCurrentPendingCycleAttempt(latestAttempt, request))
+                    if (HasRecentAttempt(latestAttempt, request))
                     {
                         continue;
                     }
@@ -92,21 +107,25 @@ public sealed class AutomaticRequestFulfillmentService(
                     .Select(group => group.Single())
                     .ToArray();
 
-                if (distinctOptions.Length != 1)
+                if (distinctOptions.Length > 1)
                 {
-                    // A scheduled external provider can still discover an option,
-                    // but never downloads it unattended. Without one, this is a
-                    // terminal automatic attempt and belongs in the review queue.
-                    if (distinctOptions.Length > 1 || !await HasScheduledExternalProviderAsync(cancellationToken))
-                    {
-                        await MarkForReviewAsync(request, distinctOptions.Length == 0
-                            ? "No high-confidence automatic copy was found."
-                            : "More than one high-confidence automatic copy was found.", cancellationToken);
-                    }
-
+                    // Different providers confidently disagree on the file. Picking
+                    // one automatically risks shipping the wrong edition, so this is
+                    // the one "found something" case that still needs a librarian.
+                    await MarkForReviewAsync(
+                        request, "More than one high-confidence automatic copy was found.", cancellationToken);
                     await attempts.SaveChangesAsync(cancellationToken);
                     await requests.SaveChangesAsync(cancellationToken);
                     break;
+                }
+
+                if (distinctOptions.Length == 0)
+                {
+                    // Nothing found yet, not a failure — leave the request in the
+                    // automatic queue. The cooldown above means this format is tried
+                    // again once it elapses, with no librarian action needed.
+                    await attempts.SaveChangesAsync(cancellationToken);
+                    continue;
                 }
 
                 var option = distinctOptions[0];
@@ -141,17 +160,18 @@ public sealed class AutomaticRequestFulfillmentService(
         return processed;
     }
 
-    private async Task<bool> HasScheduledExternalProviderAsync(CancellationToken cancellationToken) =>
-        (await externalProviders.ListEnabledAsync(cancellationToken))
-            .Any(provider => provider.RecheckSchedule is ProviderRecheckSchedule.Daily or ProviderRecheckSchedule.Weekly);
-
     /// <summary>
-    /// A user can cancel and then reopen a request. The old lookup remains
-    /// valuable audit history, but it must not suppress a new fulfillment pass
-    /// for the reopened request.
+    /// Whether this provider was already asked about this format recently
+    /// enough to skip asking it again — nothing has changed since (no status
+    /// change) and the cooldown has not elapsed yet. Cancelling and reopening
+    /// a request, or a librarian's manual recheck, updates
+    /// <see cref="BookRequest.StatusChangedAtUtc"/>, which is what lets this
+    /// bypass the cooldown immediately instead of waiting out the full period.
     /// </summary>
-    private static bool IsCurrentPendingCycleAttempt(ProviderAttempt? attempt, BookRequest request) =>
-        attempt is not null && attempt.AttemptedAtUtc >= request.StatusChangedAtUtc;
+    private bool HasRecentAttempt(ProviderAttempt? attempt, BookRequest request) =>
+        attempt is not null &&
+        attempt.AttemptedAtUtc >= request.StatusChangedAtUtc &&
+        attempt.AttemptedAtUtc >= clock.UtcNow - RetryCooldown;
 
     private async Task MarkForReviewAsync(BookRequest request, string reason, CancellationToken cancellationToken)
     {
@@ -169,10 +189,10 @@ public sealed class AutomaticRequestFulfillmentService(
     private static string DescribeProviderFailure(Exception exception) => exception switch
     {
         HttpRequestException { StatusCode: { } statusCode } =>
-            $"The automatic provider returned HTTP {(int)statusCode}; automatic retry is disabled for this source.",
+            $"The automatic provider returned HTTP {(int)statusCode}; it will be tried again automatically.",
         TaskCanceledException =>
-            "The automatic provider timed out; automatic retry is disabled for this source.",
-        _ => "The automatic provider could not be reached; automatic retry is disabled for this source."
+            "The automatic provider timed out; it will be tried again automatically.",
+        _ => "The automatic provider could not be reached; it will be tried again automatically."
     };
 
     private sealed class StringTupleComparer : IEqualityComparer<(string ProviderId, string ProviderResultId)>

@@ -11,7 +11,7 @@ public sealed partial class AutomaticRequestFulfillmentHostedService(
     IServiceScopeFactory scopeFactory,
     ILogger<AutomaticRequestFulfillmentHostedService> logger) : BackgroundService
 {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(2);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

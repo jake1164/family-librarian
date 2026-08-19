@@ -50,6 +50,26 @@ public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTok
             new ChangeBookRequestStatusRequest(status, reason, expectedVersion),
             cancellationToken);
 
+    public async Task<RecheckOutcome> RecheckNeedsReviewAsync(
+        string? providerId,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/admin/requests/recheck")
+        {
+            Content = JsonContent.Create(new RecheckNeedsReviewRequest(providerId))
+        };
+        await antiforgery.AttachAsync(request, cancellationToken);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadFromJsonAsync<RecheckNeedsReviewResponse>(cancellationToken);
+            return new RecheckOutcome(true, body?.RequeuedCount ?? 0, null);
+        }
+
+        return new RecheckOutcome(false, 0, await ReadErrorAsync(response, cancellationToken));
+    }
+
     public Task<AdminRequestActionOutcome> SetNoteAsync(
         Guid requestId,
         string? note,
@@ -128,4 +148,9 @@ public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTok
 public sealed record AdminRequestActionOutcome(
     bool Succeeded,
     AdminBookRequestResponse? Request,
+    string? Error);
+
+public sealed record RecheckOutcome(
+    bool Succeeded,
+    int RequeuedCount,
     string? Error);

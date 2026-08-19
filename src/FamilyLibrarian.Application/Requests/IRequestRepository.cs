@@ -68,6 +68,18 @@ public interface IRequestRepository
         Guid requestId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Full entities in <paramref name="status"/>, optionally restricted to ones
+    /// with a prior <see cref="Domain.Acquisition.ProviderAttempt"/> against
+    /// <paramref name="providerId"/>. Backs the admin manual-recheck action —
+    /// never exposed to requesters.
+    /// </summary>
+    Task<IReadOnlyList<BookRequest>> ListForManualRecheckAsync(
+        RequestStatus status,
+        string? providerId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<BookRequest>>([]);
+
     void AddRequest(BookRequest request);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);

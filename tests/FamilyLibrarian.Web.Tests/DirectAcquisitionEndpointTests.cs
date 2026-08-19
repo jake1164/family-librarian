@@ -141,7 +141,7 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     [TestMethod]
-    public async Task AnUncertainAutomaticSearchMovesTheRequestToReviewInsteadOfGuessing()
+    public async Task ANoMatchLeavesTheRequestInTheAutomaticQueueInsteadOfNeedingALibrarian()
     {
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = CreateFactory(fixture, new FakeProvider(matches: false));
@@ -157,13 +157,44 @@ public sealed class DirectAcquisitionEndpointTests
         await using var verificationScope = factory.Services.CreateAsyncScope();
         var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
         var request = await database.BookRequests.SingleAsync(request => request.Id == requestId);
+        // Coming up empty is not a failure worth a librarian's attention — the
+        // request stays queued so the next automatic pass, after the retry
+        // cooldown elapses, tries again with no one having to click anything.
+        Assert.AreEqual(RequestStatus.PendingAcquisition, request.Status);
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == formatId));
+        Assert.AreEqual(1, await database.ProviderAttempts.CountAsync(
+            attempt => attempt.RequestFormatId == formatId && attempt.Outcome == ProviderAttemptOutcome.NoMatch));
+    }
+
+    [TestMethod]
+    public async Task DifferentProvidersConfidentlyDisagreeingStillGoesToReview()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(fixture.ConnectionString, services =>
+        {
+            services.RemoveAll<IDirectAcquisitionProvider>();
+            services.RemoveAll<IAutomaticDirectAcquisitionProvider>();
+            services.AddSingleton<IDirectAcquisitionProvider>(new FakeProvider(matches: true));
+            services.AddSingleton<IAutomaticDirectAcquisitionProvider>(new FakeProvider(matches: true));
+            services.AddSingleton<IDirectAcquisitionProvider>(new FakeProvider(matches: true, providerId: "other-gutendex", providerResultId: "5678"));
+            services.AddSingleton<IAutomaticDirectAcquisitionProvider>(new FakeProvider(matches: true, providerId: "other-gutendex", providerResultId: "5678"));
+        });
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await database.BookRequests.SingleAsync(request => request.Id == requestId);
         Assert.AreEqual(RequestStatus.NeedsReview, request.Status);
         Assert.AreEqual(0, await database.MediaAssets.CountAsync(
             asset => asset.AssociatedRequestFormatId == formatId));
     }
 
     [TestMethod]
-    public async Task CancellingAndAskingAgainStartsANewAutomaticLookupCycle()
+    public async Task RepeatedAutomaticPassesDoNotRepeatALookupUntilTheRequestIsReopened()
     {
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = CreateFactory(fixture, new FakeProvider(matches: false));
@@ -171,15 +202,25 @@ public sealed class DirectAcquisitionEndpointTests
         var (requestId, formatId) = await CreateEbookRequestAsync(requester);
 
         await ProcessAutomaticFulfillmentAsync(factory);
+        // A second pass moments later must not repeat the lookup: the retry
+        // cooldown has not elapsed and nothing about the request has changed.
+        await ProcessAutomaticFulfillmentAsync(factory);
 
-        var firstCycle = await requester.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
-        Assert.IsNotNull(firstCycle);
-        var needsReview = firstCycle.Active.Single(request => request.Id == requestId);
-        Assert.AreEqual("NeedsReview", needsReview.Status);
+        await using (var firstPassScope = factory.Services.CreateAsyncScope())
+        {
+            var firstPassDatabase = firstPassScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.AreEqual(1, await firstPassDatabase.ProviderAttempts.CountAsync(attempt =>
+                attempt.RequestId == requestId && attempt.RequestFormatId == formatId && attempt.ProviderId == "gutendex"));
+        }
+
+        var current = await requester.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(current);
+        var pending = current.Active.Single(request => request.Id == requestId);
+        Assert.AreEqual("PendingAcquisition", pending.Status);
 
         var cancelled = await requester.PostAsJsonAsync(
             $"/api/v1/requests/{requestId}/transitions",
-            new ChangeBookRequestStatusRequest("Cancelled", null, needsReview.Version));
+            new ChangeBookRequestStatusRequest("Cancelled", null, pending.Version));
         var cancelledRequest = await cancelled.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.AreEqual(HttpStatusCode.OK, cancelled.StatusCode);
         Assert.IsNotNull(cancelledRequest);
@@ -250,10 +291,11 @@ public sealed class DirectAcquisitionEndpointTests
         return (request.Id, format.FormatId);
     }
 
-    /// <summary>Always reports one "1234" DirectAcquisition match (or none), and fetches a fake EPUB.</summary>
-    private sealed class FakeProvider(bool matches) : IAutomaticDirectAcquisitionProvider
+    /// <summary>Always reports one DirectAcquisition match (or none), and fetches a fake EPUB.</summary>
+    private sealed class FakeProvider(bool matches, string providerId = "gutendex", string providerResultId = "1234")
+        : IAutomaticDirectAcquisitionProvider
     {
-        public string Id => "gutendex";
+        public string Id => providerId;
 
         public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
             Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)
@@ -267,7 +309,7 @@ public sealed class DirectAcquisitionEndpointTests
             [
                 new FulfillmentOption(
                     ProviderId: Id,
-                    ProviderResultId: "1234",
+                    ProviderResultId: providerResultId,
                     WorkId: workId,
                     EditionId: null,
                     MediaType: RequestMediaType.Ebook,

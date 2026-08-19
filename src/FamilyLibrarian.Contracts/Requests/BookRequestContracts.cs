@@ -82,6 +82,14 @@ public sealed record BookRequestStatusHistoryResponse(
 
 public sealed record SetAdminBookRequestNoteRequest(string? Note, uint ExpectedVersion);
 
+/// <param name="ProviderId">
+/// A registered automatic direct-acquisition provider id, or <see langword="null"/>
+/// to recheck against every registered automatic provider.
+/// </param>
+public sealed record RecheckNeedsReviewRequest(string? ProviderId);
+
+public sealed record RecheckNeedsReviewResponse(int RequeuedCount);
+
 /// <summary>
 /// The 409 answer to a create that would overlap an outstanding request.
 /// </summary>
