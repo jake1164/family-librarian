@@ -161,7 +161,10 @@ Administrators also get:
   external acquisition sources, their private network, and a per-source manual,
   daily, or weekly recheck schedule. The page also shows the latest safe
   automatic-source failure directly, so an operator does not have to trace a
-  request timeline to discover it;
+  request timeline to discover it. Gutendex is a separate catalog API over
+  Project Gutenberg data: the Gutenberg website may be reachable while that API
+  is slow or unavailable. Source failures remain visible to administrators but
+  do not prevent Work or request pages from loading;
 - **Security queue**, for quarantined, rejected, unmatched, and removed-file
   security records. Confirmed malware bytes are deleted automatically; clean,
   matching EPUB imports proceed automatically;

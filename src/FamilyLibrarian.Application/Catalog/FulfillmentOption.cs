@@ -155,22 +155,69 @@ public sealed class WorkFulfillmentOptionsService(
 
         foreach (var provider in availabilityProviders)
         {
-            options.AddRange(await provider.FindAvailabilityAsync(workId, mediaType, cancellationToken));
+            try
+            {
+                options.AddRange(await provider.FindAvailabilityAsync(workId, mediaType, cancellationToken));
+            }
+            catch (HttpRequestException)
+            {
+                // Availability is optional page enrichment. One unavailable
+                // provider must not make the Work or request page unavailable.
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Treat a provider's own timeout as no options. Caller-requested
+                // cancellation still propagates through the filter above.
+            }
         }
 
         foreach (var provider in storeOfferProviders)
         {
-            options.AddRange(await provider.FindOffersAsync(workId, mediaType, cancellationToken));
+            try
+            {
+                options.AddRange(await provider.FindOffersAsync(workId, mediaType, cancellationToken));
+            }
+            catch (HttpRequestException)
+            {
+                // Store offers are optional page enrichment.
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // A provider timeout degrades to no offers from that provider.
+            }
         }
 
         foreach (var provider in directAcquisitionProviders)
         {
-            options.AddRange(await provider.FindDirectAcquisitionsAsync(workId, mediaType, cancellationToken));
+            try
+            {
+                options.AddRange(await provider.FindDirectAcquisitionsAsync(workId, mediaType, cancellationToken));
+            }
+            catch (HttpRequestException)
+            {
+                // The automatic worker records provider failures separately.
+                // This read model only needs to omit unavailable options.
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // A provider timeout must not fail the containing page.
+            }
         }
 
         foreach (var provider in ownedLibraryProviders)
         {
-            options.AddRange(await provider.FindOwnedMatchesAsync(workId, mediaType, cancellationToken));
+            try
+            {
+                options.AddRange(await provider.FindOwnedMatchesAsync(workId, mediaType, cancellationToken));
+            }
+            catch (HttpRequestException)
+            {
+                // Owned-library status is optional page enrichment.
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // A provider timeout degrades to an unknown owned status.
+            }
         }
 
         options.AddRange(await FindExternalProviderOptionsAsync(workId, mediaType, cancellationToken));
@@ -227,7 +274,11 @@ public sealed class WorkFulfillmentOptionsService(
                     resolution.Route!,
                     cancellationToken);
             }
-            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+            catch (HttpRequestException)
+            {
+                continue;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 continue;
             }

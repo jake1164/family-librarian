@@ -66,7 +66,7 @@ public sealed class GutendexProvider(
         try
         {
             using var response = await httpClient.GetAsync(
-                $"books?search={Uri.EscapeDataString(query)}", cancellationToken);
+                $"books/?search={Uri.EscapeDataString(query)}", cancellationToken);
             response.EnsureSuccessStatusCode();
 
             var body = await response.Content.ReadAsStringAsync(cancellationToken);

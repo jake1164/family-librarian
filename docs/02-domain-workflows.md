@@ -993,6 +993,13 @@ providers default to `Manual`, but an administrator may select `Daily` or
 egress policy and records the outcome; a result moves the request to
 `NeedsReview` and never downloads the external artifact automatically.
 
+Gutendex is a separate JSON catalog API that indexes Project Gutenberg; it is
+not the Project Gutenberg website itself. The website can therefore remain
+reachable while catalog requests time out. A source timeout is recorded by the
+automatic request worker as an administrator-visible provider failure. The same
+source's optional fulfillment-options lookup degrades to no options, so it must
+not fail or delay the core Work and request detail views.
+
 **Cancel and ask again:** reopening a cancelled request begins a fresh
 acquisition cycle. Previous provider attempts remain visible in the audit
 timeline, but they cannot suppress new automatic or scheduled checks for the

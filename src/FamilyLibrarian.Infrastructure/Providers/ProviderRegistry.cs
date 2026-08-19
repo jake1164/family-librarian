@@ -104,7 +104,9 @@ public sealed class ProviderRegistry : IProviderRegistry
                 DefaultEnabled: true,
                 SetupInstructions:
                     "Gutendex is a JSON API that indexes Project Gutenberg's " +
-                    "public-domain ebook catalogue.",
+                    "public-domain ebook catalogue. Family Librarian calls this " +
+                    "separate API, so Project Gutenberg's website can still open " +
+                    "while catalog lookups are slow or unavailable.",
                 SetupLinks:
                 [
                     new ProviderSetupLink("Gutendex API", "https://gutendex.com/"),

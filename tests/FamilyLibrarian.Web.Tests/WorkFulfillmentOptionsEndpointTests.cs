@@ -1,9 +1,11 @@
 using System.Net.Http.Json;
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Policy;
 using FamilyLibrarian.Domain.Policy;
+using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -40,6 +42,32 @@ public sealed class WorkFulfillmentOptionsEndpointTests
         // AlwaysEmptyAudiobookshelfApiClient) always report "not found."
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await fixture.CreateUserClientAsync();
+        var userToken = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, userToken);
+
+        var workId = await ResolveHobbitWorkIdAsync(client);
+
+        var response = await client.GetFromJsonAsync<WorkFulfillmentOptionsResponse>(
+            $"/api/v1/catalog/works/{workId}/fulfillment-options");
+
+        Assert.IsNotNull(response);
+        Assert.AreEqual(0, response.Ebook.Count);
+        Assert.AreEqual(0, response.Audiobook.Count);
+    }
+
+    [TestMethod]
+    public async Task ADirectProviderTimeoutDoesNotFailTheWorkOptionsEndpoint()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IDirectAcquisitionProvider>();
+                services.AddSingleton<IDirectAcquisitionProvider, TimingOutDirectAcquisitionProvider>();
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsync(client, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
         var userToken = await WebTestFixture.GetAntiforgeryTokenAsync(client);
         client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, userToken);
 
@@ -159,5 +187,22 @@ public sealed class WorkFulfillmentOptionsEndpointTests
     {
         public Task<string?> FindBookIdAsync(string title, string? author, CancellationToken cancellationToken) =>
             Task.FromResult(bookId);
+    }
+
+    private sealed class TimingOutDirectAcquisitionProvider : IDirectAcquisitionProvider
+    {
+        public string Id => "timing-out";
+
+        public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
+            Guid workId,
+            RequestMediaType mediaType,
+            CancellationToken cancellationToken) =>
+            Task.FromException<IReadOnlyList<FulfillmentOption>>(
+                new TaskCanceledException("The provider lookup timed out."));
+
+        public Task<DirectAcquisitionFile> FetchAsync(
+            FulfillmentOption fulfillmentOption,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 }

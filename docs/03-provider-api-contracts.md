@@ -449,6 +449,13 @@ safe operational indicator, not a replacement for the append-only ledger: it
 contains only provider display name/ID, the bounded safe summary, and the time.
 It must never expose credentials, provider payloads, requesters, or artifact URLs.
 
+Provider availability is not page availability. Calls that populate optional
+availability, store-offer, direct-acquisition, owned-library, or external-source
+options isolate transport failures and provider-owned timeouts per provider.
+They return the remaining options (or none) while preserving caller-requested
+cancellation. Background acquisition calls still surface the same failures to
+the provider-attempt ledger and administrator attention projection.
+
 ### Private-egress policy
 
 Family Librarian **SHALL NOT** depend on a specific commercial VPN provider.

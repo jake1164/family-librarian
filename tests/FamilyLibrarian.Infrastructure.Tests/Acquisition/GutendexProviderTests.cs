@@ -104,6 +104,7 @@ public sealed class GutendexProviderTests
         Assert.AreEqual(OptionKind.DirectAcquisition, option.OptionKind);
         Assert.AreEqual(AcquisitionMethod.DirectDownload, option.AcquisitionMethod);
         Assert.AreEqual("https://www.gutenberg.org/ebooks/1234.epub.noimages", option.ProviderData);
+        Assert.AreEqual("/books/", handler.LastRequestUri?.AbsolutePath);
     }
 
     [TestMethod]

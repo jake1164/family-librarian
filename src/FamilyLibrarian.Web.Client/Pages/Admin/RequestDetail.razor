@@ -1,5 +1,6 @@
 @page "/admin/requests/{RequestId:guid}"
 @attribute [Authorize(Roles = "Admin")]
+@implements IDisposable
 @using FamilyLibrarian.Web.Client.Acquisition
 @using FamilyLibrarian.Web.Client.Catalog
 @using FamilyLibrarian.Contracts.Acquisition
@@ -26,7 +27,10 @@
     }
     else if (request is null)
     {
-        <MudAlert Severity="Severity.Info">That request no longer exists.</MudAlert>
+        @if (string.IsNullOrWhiteSpace(errorMessage))
+        {
+            <MudAlert Severity="Severity.Info">That request no longer exists.</MudAlert>
+        }
     }
     else
     {
@@ -64,7 +68,11 @@
                 Every automatic lookup is recorded here. Scheduled external sources only report candidates for review;
                 they never download a file without a librarian action.
             </MudText>
-            @if (providerAttempts.Count == 0)
+            @if (!string.IsNullOrWhiteSpace(providerActivityError))
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true">@providerActivityError</MudAlert>
+            }
+            else if (providerAttempts.Count == 0)
             {
                 <MudText Typo="Typo.body2">No provider lookups have been recorded yet.</MudText>
             }
@@ -196,28 +204,79 @@
     private bool isLoading = true;
     private bool isBusy;
     private string? errorMessage;
+    private string? providerActivityError;
+    private CancellationTokenSource? fulfillmentLoadCancellation;
 
     protected override Task OnParametersSetAsync() => LoadAsync();
 
     private async Task LoadAsync()
     {
+        StopFulfillmentOptionsLoad();
         isLoading = true;
         errorMessage = null;
+        providerActivityError = null;
+        fulfillment = null;
+        providerAttempts = [];
+        request = null;
         try
         {
             request = await Requests.GetAsync(RequestId);
             adminNote = request?.Request.AdminNote;
-            fulfillment = request is null ? null : await Catalog.GetFulfillmentOptionsAsync(request.Request.WorkId);
-            providerAttempts = request is null ? [] : await Requests.GetProviderAttemptsAsync(RequestId);
         }
         catch (HttpRequestException)
         {
-            request = null;
             errorMessage = "The request could not be loaded. Please try again.";
         }
         finally
         {
             isLoading = false;
+        }
+
+        if (request is null)
+        {
+            return;
+        }
+
+        try
+        {
+            providerAttempts = await Requests.GetProviderAttemptsAsync(RequestId);
+        }
+        catch (HttpRequestException)
+        {
+            providerActivityError = "Provider activity could not be loaded. The request is still available.";
+        }
+
+        StartFulfillmentOptionsLoad(request.Request.WorkId);
+    }
+
+    private void StartFulfillmentOptionsLoad(Guid workId)
+    {
+        fulfillmentLoadCancellation = new CancellationTokenSource();
+        _ = LoadFulfillmentOptionsAsync(workId, fulfillmentLoadCancellation.Token);
+    }
+
+    private async Task LoadFulfillmentOptionsAsync(Guid workId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var loaded = await Catalog.GetFulfillmentOptionsAsync(workId, cancellationToken);
+            await InvokeAsync(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    fulfillment = loaded;
+                    StateHasChanged();
+                }
+            });
+        }
+        catch (HttpRequestException)
+        {
+            // Fulfillment suggestions are optional. Provider activity below is
+            // still the authoritative audit trail for this request.
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigation, reload, or a provider timeout ends this optional load.
         }
     }
 
@@ -386,4 +445,13 @@
         "Blocked" => Color.Warning,
         _ => Color.Error
     };
+
+    private void StopFulfillmentOptionsLoad()
+    {
+        fulfillmentLoadCancellation?.Cancel();
+        fulfillmentLoadCancellation?.Dispose();
+        fulfillmentLoadCancellation = null;
+    }
+
+    public void Dispose() => StopFulfillmentOptionsLoad();
 }

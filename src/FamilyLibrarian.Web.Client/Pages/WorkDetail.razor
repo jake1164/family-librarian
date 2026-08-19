@@ -232,6 +232,7 @@
     private BookRequestDuplicateResponse? duplicate;
     private BookRequestResponse? createdRequest;
     private CancellationTokenSource? requestStatusRefreshCancellation;
+    private CancellationTokenSource? fulfillmentLoadCancellation;
 
     private WorkFeedbackResponse? feedback;
     private bool isLoadingFeedback = true;
@@ -245,7 +246,9 @@
     protected override async Task OnParametersSetAsync()
     {
         StopRequestStatusRefresh();
+        StopFulfillmentOptionsLoad();
         isLoading = true;
+        fulfillment = null;
         createdRequest = null;
         duplicate = null;
         errorMessage = null;
@@ -264,20 +267,41 @@
         }
 
         await LoadFeedbackAsync();
-        await LoadFulfillmentOptionsAsync();
+        if (work is not null)
+        {
+            StartFulfillmentOptionsLoad();
+        }
     }
 
-    private async Task LoadFulfillmentOptionsAsync()
+    private void StartFulfillmentOptionsLoad()
+    {
+        fulfillmentLoadCancellation = new CancellationTokenSource();
+        _ = LoadFulfillmentOptionsAsync(fulfillmentLoadCancellation.Token);
+    }
+
+    private async Task LoadFulfillmentOptionsAsync(CancellationToken cancellationToken)
     {
         try
         {
-            fulfillment = await Catalog.GetFulfillmentOptionsAsync(WorkId);
+            var loaded = await Catalog.GetFulfillmentOptionsAsync(WorkId, cancellationToken);
+            await InvokeAsync(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    fulfillment = loaded;
+                    StateHasChanged();
+                }
+            });
         }
         catch (HttpRequestException)
         {
             // Informational only — a failed lookup just means no "already have
             // this" chip shows, not a page-level error.
-            fulfillment = null;
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigation, a newer Work, or the provider's own timeout ends this
+            // optional lookup without delaying or failing the page.
         }
     }
 
@@ -495,5 +519,16 @@
         requestStatusRefreshCancellation = null;
     }
 
-    public void Dispose() => StopRequestStatusRefresh();
+    private void StopFulfillmentOptionsLoad()
+    {
+        fulfillmentLoadCancellation?.Cancel();
+        fulfillmentLoadCancellation?.Dispose();
+        fulfillmentLoadCancellation = null;
+    }
+
+    public void Dispose()
+    {
+        StopRequestStatusRefresh();
+        StopFulfillmentOptionsLoad();
+    }
 }
