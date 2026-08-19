@@ -26,7 +26,13 @@ public sealed class DirectAcquisitionSecurityService(
 
         if (result.Outcome == ManualImportOutcome.Success)
         {
-            await securityPipeline.EvaluateAsync(result.MediaAssetId!.Value, cancellationToken);
+            // A bundle (e.g. a chaptered Gutenberg audiobook) stages several
+            // sibling assets at once; each gets its own independent scan and
+            // approval attempt, exactly like a single-file acquisition.
+            foreach (var assetId in result.MediaAssetIds)
+            {
+                await securityPipeline.EvaluateAsync(assetId, cancellationToken);
+            }
         }
 
         return result;

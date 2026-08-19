@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
@@ -23,19 +24,29 @@ namespace FamilyLibrarian.Infrastructure.Acquisition;
 /// Audiobookshelf did. Gated on <see cref="ProviderState.IsUsable"/> so an
     /// administrator's enable/disable toggle on the Sources page actually
 /// controls whether this ever makes an outbound request.
+/// <para>
+/// Audiobook discovery still goes through Gutendex (title/author search,
+/// <c>media_type == "Sound"</c>), but Gutendex's <c>formats</c> dictionary
+/// collapses same-mimetype files — a chaptered audiobook's several
+/// <c>audio/mpeg</c> chapters would collapse to one URL there — so the
+/// actual track list comes from <see cref="IGutenbergAudiobookCatalog"/>,
+/// which reads Gutenberg's own per-book RDF record instead.
+/// </para>
 /// </remarks>
 public sealed class GutendexProvider(
     HttpClient httpClient,
     IProviderRegistry registry,
     IProviderSettingsStore settingsStore,
-    IWorkLookup workLookup) : IAutomaticDirectAcquisitionProvider
+    IWorkLookup workLookup,
+    IGutenbergAudiobookCatalog gutenbergCatalog,
+    ManualImportPolicy importPolicy) : IAutomaticDirectAcquisitionProvider
 {
     public string Id => ProviderRegistry.GutendexProviderId;
 
     public async Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
         Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)
     {
-        if (mediaType != RequestMediaType.Ebook)
+        if (mediaType != RequestMediaType.Ebook && mediaType != RequestMediaType.Audiobook)
         {
             return [];
         }
@@ -58,15 +69,17 @@ public sealed class GutendexProvider(
             return [];
         }
 
-        var query = string.IsNullOrWhiteSpace(work.PrimaryAuthor)
+        var baseQuery = string.IsNullOrWhiteSpace(work.PrimaryAuthor)
             ? work.Title
             : $"{work.Title} {work.PrimaryAuthor}";
+        var searchUrl = mediaType == RequestMediaType.Audiobook
+            ? $"books/?search={Uri.EscapeDataString(baseQuery)}&mime_type=audio%2F"
+            : $"books/?search={Uri.EscapeDataString(baseQuery)}";
 
         JsonNode? root;
         try
         {
-            using var response = await httpClient.GetAsync(
-                $"books/?search={Uri.EscapeDataString(query)}", cancellationToken);
+            using var response = await httpClient.GetAsync(searchUrl, cancellationToken);
             response.EnsureSuccessStatusCode();
 
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -97,7 +110,7 @@ public sealed class GutendexProvider(
             // Gutendex's search results can include adaptations, reading guides,
             // and similarly titled works. For unattended acquisition we require
             // the title to begin with our canonical title *and* an exact match of
-            // normalized creator-name tokens. The downloaded EPUB is then still
+            // normalized creator-name tokens. The downloaded file is then still
             // independently verified against the Work before it can be trusted.
             var sourceAuthors = result?["authors"]?.AsArray() ?? [];
             if (!string.IsNullOrWhiteSpace(work.PrimaryAuthor) &&
@@ -107,45 +120,107 @@ public sealed class GutendexProvider(
                 continue;
             }
 
-            var epubUrl = result?["formats"]?["application/epub+zip"]?.GetValue<string>();
             var idNode = result?["id"];
-            if (string.IsNullOrWhiteSpace(epubUrl) || idNode is null)
+            if (idNode is null)
             {
                 continue;
             }
 
-            var bookId = idNode.GetValue<int>().ToString(CultureInfo.InvariantCulture);
+            var bookId = idNode.GetValue<int>();
 
-            return
-            [
-                new FulfillmentOption(
-                    ProviderId: Id,
-                    ProviderResultId: bookId,
-                    WorkId: workId,
-                    EditionId: null,
-                    MediaType: RequestMediaType.Ebook,
-                    OptionKind: OptionKind.DirectAcquisition,
-                    AcquisitionMethod: AcquisitionMethod.DirectDownload,
-                    Format: "epub",
-                    Language: null,
-                    Quality: null,
-                    Availability: null,
-                    Cost: 0m,
-                    Currency: null,
-                    LicenseOrUsageStatus: "Public domain",
-                    DrmStatus: null,
-                    ExternalActionUri: null,
-                    ProviderData: epubUrl)
-            ];
+            var option = mediaType == RequestMediaType.Audiobook
+                ? await TryBuildAudiobookOptionAsync(result, workId, bookId, cancellationToken)
+                : TryBuildEbookOption(result, workId, bookId);
+            if (option is not null)
+            {
+                return [option];
+            }
         }
 
         return [];
     }
 
-    public async Task<DirectAcquisitionFile> FetchAsync(
+    private static FulfillmentOption? TryBuildEbookOption(JsonNode? result, Guid workId, int bookId)
+    {
+        var epubUrl = result?["formats"]?["application/epub+zip"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(epubUrl))
+        {
+            return null;
+        }
+
+        return new FulfillmentOption(
+            ProviderId: ProviderRegistry.GutendexProviderId,
+            ProviderResultId: bookId.ToString(CultureInfo.InvariantCulture),
+            WorkId: workId,
+            EditionId: null,
+            MediaType: RequestMediaType.Ebook,
+            OptionKind: OptionKind.DirectAcquisition,
+            AcquisitionMethod: AcquisitionMethod.DirectDownload,
+            Format: "epub",
+            Language: null,
+            Quality: null,
+            Availability: null,
+            Cost: 0m,
+            Currency: null,
+            LicenseOrUsageStatus: "Public domain",
+            DrmStatus: null,
+            ExternalActionUri: null,
+            ProviderData: epubUrl);
+    }
+
+    /// <summary>
+    /// Gutendex can confirm a "Sound" record exists but not enumerate its
+    /// chapter files (see the class remarks), so a confirmed match still
+    /// requires a follow-up read of Gutenberg's own RDF record for the full
+    /// track list before this becomes an automatic candidate.
+    /// </summary>
+    private async Task<FulfillmentOption?> TryBuildAudiobookOptionAsync(
+        JsonNode? result, Guid workId, int bookId, CancellationToken cancellationToken)
+    {
+        var mediaTypeValue = result?["media_type"]?.GetValue<string>();
+        if (!string.Equals(mediaTypeValue, "Sound", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var tracks = await gutenbergCatalog.FindTracksAsync(bookId, cancellationToken);
+        if (tracks.Count == 0 || tracks.Count > importPolicy.MaxAudiobookBundleTracks)
+        {
+            return null;
+        }
+
+        var providerData = JsonSerializer.Serialize(
+            tracks.Select(track => new AudioBundleTrackData(track.Url.ToString(), track.Extension)).ToArray());
+
+        return new FulfillmentOption(
+            ProviderId: ProviderRegistry.GutendexProviderId,
+            ProviderResultId: bookId.ToString(CultureInfo.InvariantCulture),
+            WorkId: workId,
+            EditionId: null,
+            MediaType: RequestMediaType.Audiobook,
+            OptionKind: OptionKind.DirectAcquisition,
+            AcquisitionMethod: AcquisitionMethod.DirectDownload,
+            Format: AudioBundleFormat,
+            Language: null,
+            Quality: null,
+            Availability: null,
+            Cost: 0m,
+            Currency: null,
+            LicenseOrUsageStatus: "Public domain",
+            DrmStatus: null,
+            ExternalActionUri: null,
+            ProviderData: providerData);
+    }
+
+    public async Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
         FulfillmentOption fulfillmentOption, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(fulfillmentOption);
+
+        if (fulfillmentOption.Format == AudioBundleFormat)
+        {
+            return await FetchAudioBundleAsync(fulfillmentOption, cancellationToken);
+        }
 
         var url = fulfillmentOption.ProviderData
             ?? throw new InvalidOperationException("This Gutendex option has no download URL.");
@@ -154,8 +229,35 @@ public sealed class GutendexProvider(
         response.EnsureSuccessStatusCode();
         var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 
-        return new DirectAcquisitionFile(stream, $"gutenberg-{fulfillmentOption.ProviderResultId}.epub");
+        return [new DirectAcquisitionFile(stream, $"gutenberg-{fulfillmentOption.ProviderResultId}.epub")];
     }
+
+    private async Task<IReadOnlyList<DirectAcquisitionFile>> FetchAudioBundleAsync(
+        FulfillmentOption fulfillmentOption, CancellationToken cancellationToken)
+    {
+        var json = fulfillmentOption.ProviderData
+            ?? throw new InvalidOperationException("This Gutendex option has no track list.");
+        var tracks = JsonSerializer.Deserialize<AudioBundleTrackData[]>(json)
+            ?? throw new InvalidOperationException("This Gutendex option's track list could not be read.");
+
+        var files = new List<DirectAcquisitionFile>(tracks.Length);
+        for (var index = 0; index < tracks.Length; index++)
+        {
+            var response = await httpClient.GetAsync(
+                tracks[index].Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            files.Add(new DirectAcquisitionFile(
+                stream,
+                $"gutenberg-{fulfillmentOption.ProviderResultId}-{index + 1:00}{tracks[index].Extension}"));
+        }
+
+        return files;
+    }
+
+    private const string AudioBundleFormat = "audio-bundle";
+
+    private sealed record AudioBundleTrackData(string Url, string Extension);
 
     private static readonly string[] LeadingArticles = ["The ", "A ", "An "];
     private static readonly string[] TrailingArticles = [", The", ", A", ", An"];

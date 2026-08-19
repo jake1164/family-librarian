@@ -310,6 +310,9 @@ public sealed class CwaPublishingServiceTests
         public Task<MediaAsset?> FindAssetAsync(Guid assetId, CancellationToken cancellationToken) =>
             Task.FromResult(Assets.GetValueOrDefault(assetId));
 
+        public Task<IReadOnlyList<MediaAsset>> FindAssetsByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

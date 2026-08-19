@@ -17,16 +17,26 @@ public sealed class ManualImportPolicy
 
     public const long DefaultMaxUploadSizeBytes = 500L * 1024 * 1024;
 
+    public const int DefaultMaxAudiobookBundleTracks = 100;
+
     public long MaxUploadSizeBytes { get; set; } = DefaultMaxUploadSizeBytes;
 
     public IList<string> AllowedEbookExtensions { get; set; } = [".epub", ".pdf"];
 
     public IList<string> AllowedAudiobookExtensions { get; set; } = [".m4b", ".mp3"];
 
+    /// <summary>
+    /// Upper bound on how many track files a multi-file audiobook
+    /// acquisition (e.g. a chaptered Gutenberg audiobook) may contain before
+    /// it is treated as ineligible for unattended acquisition.
+    /// </summary>
+    public int MaxAudiobookBundleTracks { get; set; } = DefaultMaxAudiobookBundleTracks;
+
     public bool IsValid =>
         MaxUploadSizeBytes > 0 &&
         AllowedEbookExtensions.Count > 0 &&
-        AllowedAudiobookExtensions.Count > 0;
+        AllowedAudiobookExtensions.Count > 0 &&
+        MaxAudiobookBundleTracks > 0;
 
     public bool IsExtensionAllowed(RequestMediaType mediaType, string extension) =>
         AllowedExtensionsFor(mediaType).Contains(extension, StringComparer.OrdinalIgnoreCase);

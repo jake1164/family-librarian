@@ -56,8 +56,22 @@ public sealed record ManualImportResult(
     Guid? MediaAssetId,
     string? Error)
 {
+    /// <summary>
+    /// Every staged asset id for this result — the single id as a one-element
+    /// list for an ordinary import, or every track of a bundle. Empty for a
+    /// non-success outcome.
+    /// </summary>
+    public IReadOnlyList<Guid> MediaAssetIds { get; init; } = [];
+
     public static ManualImportResult Success(Guid jobId, Guid assetId) =>
-        new(ManualImportOutcome.Success, jobId, assetId, null);
+        new(ManualImportOutcome.Success, jobId, assetId, null) { MediaAssetIds = [assetId] };
+
+    /// <summary>A multi-file acquisition (e.g. a chaptered audiobook) staged as one bundle.</summary>
+    public static ManualImportResult SuccessBundle(Guid jobId, IReadOnlyList<Guid> assetIds) =>
+        new(ManualImportOutcome.Success, jobId, assetIds.Count > 0 ? assetIds[0] : null, null)
+        {
+            MediaAssetIds = assetIds
+        };
 
     public static ManualImportResult Invalid(string error) =>
         new(ManualImportOutcome.Invalid, null, null, error);

@@ -86,14 +86,16 @@ public interface IDirectAcquisitionProvider
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Fetches the file for a previously returned option.
+    /// Fetches the file(s) for a previously returned option — more than one
+    /// for a multi-track acquisition (e.g. a chaptered audiobook), which the
+    /// caller stages as one bundle rather than independent artifacts.
     /// <paramref name="fulfillmentOption"/> should be freshly re-derived by
     /// the caller (e.g. via <see cref="FindDirectAcquisitionsAsync"/>), never
     /// reconstructed from client-supplied data — <see cref="FulfillmentOption.ProviderData"/>
     /// carries whatever this provider needs (e.g. a resolved download URL),
     /// opaque to every caller but this one.
     /// </summary>
-    Task<DirectAcquisitionFile> FetchAsync(FulfillmentOption fulfillmentOption, CancellationToken cancellationToken);
+    Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(FulfillmentOption fulfillmentOption, CancellationToken cancellationToken);
 }
 
 /// <summary>

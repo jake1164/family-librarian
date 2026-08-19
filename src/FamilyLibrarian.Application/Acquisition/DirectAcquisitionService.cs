@@ -66,20 +66,42 @@ public sealed class DirectAcquisitionService(
                 return ManualImportResult.Invalid("That option is no longer available.");
             }
 
-            DirectAcquisitionFile file;
+            IReadOnlyList<DirectAcquisitionFile> files;
             try
             {
-                file = await provider.FetchAsync(option, cancellationToken);
+                files = await provider.FetchAsync(option, cancellationToken);
             }
             catch (HttpRequestException exception)
             {
                 return ManualImportResult.Invalid($"The file could not be fetched: {exception.Message}");
             }
 
-            await using var content = file.Content;
-            return await staging.StageAsync(
-                request, format, content, file.Filename, providerId, AuditActions.DirectAcquisitionStaged,
-                candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
+            if (files.Count == 0)
+            {
+                return ManualImportResult.Invalid("The provider returned no file for that option.");
+            }
+
+            if (files.Count == 1)
+            {
+                await using var content = files[0].Content;
+                return await staging.StageAsync(
+                    request, format, content, files[0].Filename, providerId, AuditActions.DirectAcquisitionStaged,
+                    candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
+            }
+
+            try
+            {
+                return await staging.StageBundleAsync(
+                    request, format, files, providerId, AuditActions.DirectAcquisitionStaged,
+                    candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
+            }
+            finally
+            {
+                foreach (var file in files)
+                {
+                    await file.Content.DisposeAsync();
+                }
+            }
         }
 
         var externalProvider = await externalProviders.FindByProviderIdAsync(providerId, cancellationToken);

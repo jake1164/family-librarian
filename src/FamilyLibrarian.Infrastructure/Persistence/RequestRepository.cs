@@ -226,7 +226,8 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                 asset.Id,
                 asset.AssociatedRequestFormatId,
                 asset.StorageState,
-                asset.CreatedAtUtc))
+                asset.CreatedAtUtc,
+                asset.BundleId))
             .ToArrayAsync(cancellationToken);
 
         var latestAssets = assets
@@ -262,14 +263,30 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             .GroupBy(import => import.AssetId)
             .ToDictionary(group => group.Key, group => group.First().Status);
 
+        // A bundle's Delivery (e.g. a chaptered audiobook) is keyed by
+        // BundleId rather than any single track's AssetId, so its lookup
+        // needs both.
+        var bundleIds = latestAssets.Values
+            .Where(asset => asset.BundleId.HasValue)
+            .Select(asset => asset.BundleId!.Value)
+            .Distinct()
+            .ToArray();
+
         var deliveries = await database.Deliveries
             .AsNoTracking()
-            .Where(delivery => assetIds.Contains(delivery.AssetId))
+            .Where(delivery =>
+                (delivery.AssetId != null && assetIds.Contains(delivery.AssetId.Value)) ||
+                (delivery.BundleId != null && bundleIds.Contains(delivery.BundleId.Value)))
             .OrderByDescending(delivery => delivery.CreatedAtUtc)
-            .Select(delivery => new DeliveryProgressRow(delivery.AssetId, delivery.Status))
+            .Select(delivery => new DeliveryProgressRow(delivery.AssetId, delivery.BundleId, delivery.Status))
             .ToArrayAsync(cancellationToken);
-        var latestDeliveries = deliveries
-            .GroupBy(delivery => delivery.AssetId)
+        var latestDeliveriesByAsset = deliveries
+            .Where(delivery => delivery.AssetId.HasValue)
+            .GroupBy(delivery => delivery.AssetId!.Value)
+            .ToDictionary(group => group.Key, group => group.First().Status);
+        var latestDeliveriesByBundle = deliveries
+            .Where(delivery => delivery.BundleId.HasValue)
+            .GroupBy(delivery => delivery.BundleId!.Value)
             .ToDictionary(group => group.Key, group => group.First().Status);
 
         return requests
@@ -291,10 +308,13 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                             latestImports.TryGetValue(asset.AssetId, out var libraryImport)
                                 ? libraryImport
                                 : null;
-                        DeliveryStatus? deliveryStatus =
-                            latestDeliveries.TryGetValue(asset.AssetId, out var delivery)
+                        DeliveryStatus? deliveryStatus = asset.BundleId.HasValue
+                            ? (latestDeliveriesByBundle.TryGetValue(asset.BundleId.Value, out var bundleDelivery)
+                                ? bundleDelivery
+                                : null)
+                            : (latestDeliveriesByAsset.TryGetValue(asset.AssetId, out var delivery)
                                 ? delivery
-                                : null;
+                                : null);
 
                         return format with
                         {
@@ -407,7 +427,8 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         Guid AssetId,
         Guid RequestFormatId,
         MediaAssetStorageState StorageState,
-        DateTimeOffset CreatedAtUtc);
+        DateTimeOffset CreatedAtUtc,
+        Guid? BundleId);
 
     private sealed record SecurityEvaluationProgressRow(
         Guid AssetId,
@@ -415,5 +436,5 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
 
     private sealed record LibraryImportProgressRow(Guid AssetId, LibraryImportStatus Status);
 
-    private sealed record DeliveryProgressRow(Guid AssetId, DeliveryStatus Status);
+    private sealed record DeliveryProgressRow(Guid? AssetId, Guid? BundleId, DeliveryStatus Status);
 }

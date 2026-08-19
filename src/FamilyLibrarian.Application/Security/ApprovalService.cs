@@ -117,7 +117,29 @@ public sealed class ApprovalService(
         // decision that has already been made and committed above. See
         // MediaAssetPublishingCoordinator for why this is safe to call
         // unconditionally and never throws.
-        await publishing.PublishAsync(asset, cancellationToken);
+        if (asset.BundleId is null)
+        {
+            await publishing.PublishAsync(asset, cancellationToken);
+        }
+        else
+        {
+            // A bundle (e.g. a chaptered Gutenberg audiobook) publishes once,
+            // as a single upload, only once every sibling track has reached
+            // Trusted. Earlier tracks to arrive here simply wait; the last
+            // one triggers the publish for the whole set. If a sibling is
+            // instead held (rejected or unmatched), the bundle never
+            // completes and its trusted tracks surface for a librarian on
+            // the ordinary per-asset security review queue.
+            var siblings = await repository.FindAssetsByBundleIdAsync(asset.BundleId.Value, cancellationToken);
+            var trustedSiblings = siblings
+                .Where(sibling => sibling.StorageState == MediaAssetStorageState.Trusted)
+                .OrderBy(sibling => sibling.BundleSequence)
+                .ToArray();
+            if (trustedSiblings.Length == asset.BundleTrackCount)
+            {
+                await publishing.PublishBundleAsync(trustedSiblings, cancellationToken);
+            }
+        }
 
         return ApprovalResult.Success();
     }

@@ -140,6 +140,13 @@ public sealed class AudiobookshelfOwnedLibraryProviderTests
         public Task<AudiobookshelfUploadResult> UploadAsync(
             Stream content, string filename, string title, string? author, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<AudiobookshelfUploadResult> UploadBundleAsync(
+            IReadOnlyList<(Stream Content, string Filename)> tracks,
+            string title,
+            string? author,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeWorkLookup : IWorkLookup

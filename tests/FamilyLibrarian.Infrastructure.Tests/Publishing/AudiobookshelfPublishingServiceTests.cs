@@ -192,6 +192,9 @@ public sealed class AudiobookshelfPublishingServiceTests
         public Task<Delivery?> FindByAssetIdAsync(Guid assetId, CancellationToken cancellationToken) =>
             Task.FromResult(_byId.Values.FirstOrDefault(delivery => delivery.AssetId == assetId));
 
+        public Task<Delivery?> FindByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
+            Task.FromResult(_byId.Values.FirstOrDefault(delivery => delivery.BundleId == bundleId));
+
         public Task<IReadOnlyList<DeliveryView>> ListRecentAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -206,6 +209,13 @@ public sealed class AudiobookshelfPublishingServiceTests
 
         public Task<MediaAsset?> FindAssetAsync(Guid assetId, CancellationToken cancellationToken) =>
             Task.FromResult(Assets.GetValueOrDefault(assetId));
+
+        public Task<IReadOnlyList<MediaAsset>> FindAssetsByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<MediaAsset>>(
+                Assets.Values
+                    .Where(asset => asset.BundleId == bundleId)
+                    .OrderBy(asset => asset.BundleSequence)
+                    .ToArray());
 
         public Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -240,6 +250,10 @@ public sealed class AudiobookshelfPublishingServiceTests
 
         public int UploadCount { get; private set; }
 
+        public int BundleUploadCount { get; private set; }
+
+        public int LastBundleTrackCount { get; private set; }
+
         public Task<string?> FindExistingItemIdAsync(
             string title, string? author, CancellationToken cancellationToken) =>
             Task.FromResult(ExistingItemId);
@@ -248,6 +262,17 @@ public sealed class AudiobookshelfPublishingServiceTests
             Stream content, string filename, string title, string? author, CancellationToken cancellationToken)
         {
             UploadCount++;
+            return Task.FromResult(UploadResult);
+        }
+
+        public Task<AudiobookshelfUploadResult> UploadBundleAsync(
+            IReadOnlyList<(Stream Content, string Filename)> tracks,
+            string title,
+            string? author,
+            CancellationToken cancellationToken)
+        {
+            BundleUploadCount++;
+            LastBundleTrackCount = tracks.Count;
             return Task.FromResult(UploadResult);
         }
     }

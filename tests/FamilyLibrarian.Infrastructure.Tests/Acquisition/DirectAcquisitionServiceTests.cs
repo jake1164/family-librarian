@@ -315,10 +315,12 @@ public sealed class DirectAcquisitionServiceTests
             return Task.FromResult(options);
         }
 
-        public Task<DirectAcquisitionFile> FetchAsync(
+        public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
             FulfillmentOption fulfillmentOption, CancellationToken cancellationToken) =>
-            Task.FromResult(new DirectAcquisitionFile(
-                new MemoryStream(Encoding.UTF8.GetBytes("epub bytes")), "book.epub"));
+            Task.FromResult<IReadOnlyList<DirectAcquisitionFile>>(
+            [
+                new DirectAcquisitionFile(new MemoryStream(Encoding.UTF8.GetBytes("epub bytes")), "book.epub")
+            ]);
     }
 
     private sealed class FakeWorkLookup : IWorkLookup

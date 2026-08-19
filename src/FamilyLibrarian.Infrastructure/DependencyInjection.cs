@@ -170,8 +170,9 @@ public static class DependencyInjection
         if (!manualImportPolicy.IsValid)
         {
             throw new InvalidOperationException(
-                $"{ManualImportPolicy.SectionName} configuration is invalid: MaxUploadSizeBytes must be " +
-                "positive and at least one extension must be allowed for each media type.");
+                $"{ManualImportPolicy.SectionName} configuration is invalid: MaxUploadSizeBytes and " +
+                "MaxAudiobookBundleTracks must be positive, and at least one extension must be allowed " +
+                "for each media type.");
         }
 
         services.AddSingleton(manualImportPolicy);
@@ -351,6 +352,20 @@ public static class DependencyInjection
             serviceProvider.GetRequiredService<GutendexProvider>());
         services.AddTransient<IAutomaticDirectAcquisitionProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<GutendexProvider>());
+
+        // Gutendex collapses same-mimetype files (e.g. every audiobook
+        // chapter's audio/mpeg) down to one URL, so a chaptered audiobook's
+        // full track list has to come from Gutenberg's own per-book RDF
+        // catalog record instead. Separate typed client: different host,
+        // XML rather than JSON.
+        services.AddHttpClient<GutenbergAudiobookRdfClient>(client =>
+        {
+            client.BaseAddress = new Uri("https://www.gutenberg.org/");
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+        });
+        services.AddTransient<IGutenbergAudiobookCatalog>(serviceProvider =>
+            serviceProvider.GetRequiredService<GutenbergAudiobookRdfClient>());
 
         // Publishing destinations (M12): CWA (ebook library, ingest folder) and
         // Audiobookshelf (audiobook delivery, upload API). Neither is a metadata

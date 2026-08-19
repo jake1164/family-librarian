@@ -55,9 +55,23 @@ public sealed class AudiobookshelfApiClient(
         return FindMatchingItemId(body, title, author);
     }
 
-    public async Task<AudiobookshelfUploadResult> UploadAsync(
+    public Task<AudiobookshelfUploadResult> UploadAsync(
         Stream content,
         string filename,
+        string title,
+        string? author,
+        CancellationToken cancellationToken) =>
+        UploadAsync([(content, filename)], title, author, cancellationToken);
+
+    public Task<AudiobookshelfUploadResult> UploadBundleAsync(
+        IReadOnlyList<(Stream Content, string Filename)> tracks,
+        string title,
+        string? author,
+        CancellationToken cancellationToken) =>
+        UploadAsync(tracks, title, author, cancellationToken);
+
+    private async Task<AudiobookshelfUploadResult> UploadAsync(
+        IReadOnlyList<(Stream Content, string Filename)> tracks,
         string title,
         string? author,
         CancellationToken cancellationToken)
@@ -89,9 +103,15 @@ public sealed class AudiobookshelfApiClient(
             form.Add(new StringContent(author), "author");
         }
 
-        using var fileContent = new StreamContent(content);
-        fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-        form.Add(fileContent, "files", filename);
+        // Every track is added under the same "files" field name — the
+        // upload endpoint accepts repeated parts for a multi-file item, the
+        // same way a single-file upload always has.
+        foreach (var (content, filename) in tracks)
+        {
+            var fileContent = new StreamContent(content);
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            form.Add(fileContent, "files", filename);
+        }
 
         using var response = await client.PostAsync($"{settings.BaseUrl.TrimEnd('/')}/api/upload", form, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);

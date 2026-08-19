@@ -329,10 +329,13 @@ public sealed class DirectAcquisitionEndpointTests
             return Task.FromResult(options);
         }
 
-        public Task<DirectAcquisitionFile> FetchAsync(
+        public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
             FulfillmentOption fulfillmentOption, CancellationToken cancellationToken) =>
-            Task.FromResult(new DirectAcquisitionFile(
-                new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
-                "the-hobbit.epub"));
+            Task.FromResult<IReadOnlyList<DirectAcquisitionFile>>(
+            [
+                new DirectAcquisitionFile(
+                    new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
+                    "the-hobbit.epub")
+            ]);
     }
 }

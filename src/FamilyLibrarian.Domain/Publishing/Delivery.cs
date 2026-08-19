@@ -28,9 +28,29 @@ public sealed class Delivery
         CreatedAtUtc = createdAtUtc;
     }
 
+    /// <summary>One delivery attempt for every track of a multi-file bundle together.</summary>
+    public static Delivery ForBundle(Guid bundleId, DateTimeOffset createdAtUtc)
+    {
+        if (bundleId == Guid.Empty)
+        {
+            throw new ArgumentException("A bundle ID is required.", nameof(bundleId));
+        }
+
+        return new Delivery
+        {
+            Id = Guid.NewGuid(),
+            BundleId = bundleId,
+            Status = DeliveryStatus.Uploading,
+            CreatedAtUtc = createdAtUtc
+        };
+    }
+
     public Guid Id { get; private set; } = Guid.NewGuid();
 
-    public Guid AssetId { get; private set; }
+    public Guid? AssetId { get; private set; }
+
+    /// <summary>Set instead of <see cref="AssetId"/> for a multi-file bundle delivery.</summary>
+    public Guid? BundleId { get; private set; }
 
     public DeliveryStatus Status { get; private set; }
 

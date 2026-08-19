@@ -8,6 +8,8 @@ public interface IDeliveryRepository
 
     Task<Delivery?> FindByAssetIdAsync(Guid assetId, CancellationToken cancellationToken);
 
+    Task<Delivery?> FindByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken);
+
     Task<IReadOnlyList<DeliveryView>> ListRecentAsync(CancellationToken cancellationToken);
 
     void Add(Delivery delivery);

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
@@ -35,17 +36,106 @@ public sealed class GutendexProviderTests
 
     private const string NoMatchResponse = """{"count": 0, "next": null, "previous": null, "results": []}""";
 
+    private const string MatchingSoundResponse = """
+        {
+          "count": 1,
+          "next": null,
+          "previous": null,
+          "results": [
+            {
+              "id": 22979,
+              "title": "The Hobbit",
+              "media_type": "Sound",
+              "authors": [{"name": "Tolkien, J. R. R.", "birth_year": 1892, "death_year": 1973}],
+              "formats": {}
+            }
+          ]
+        }
+        """;
+
     [TestMethod]
-    public async Task AnAudiobookRequestReturnsEmptyWithoutCallingTheApi()
+    public async Task AnAudiobookMatchReturnsOneBundleOptionWithEveryRdfTrack()
     {
-        var handler = new RecordingHandler(MatchingResponse);
-        var context = new TestContext(handler, enabled: true);
+        var tracks = new[]
+        {
+            new GutenbergAudioTrack(new Uri("https://www.gutenberg.org/files/22979/mp3/22979-01.mp3"), ".mp3"),
+            new GutenbergAudioTrack(new Uri("https://www.gutenberg.org/files/22979/mp3/22979-02.mp3"), ".mp3")
+        };
+        var catalog = new FakeGutenbergAudiobookCatalog { TracksById = { [22979] = tracks } };
+        var context = new TestContext(new RecordingHandler(MatchingSoundResponse), enabled: true, catalog: catalog);
+        var workId = Guid.NewGuid();
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            workId, RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        var option = options[0];
+        Assert.AreEqual("gutendex", option.ProviderId);
+        Assert.AreEqual("22979", option.ProviderResultId);
+        Assert.AreEqual(RequestMediaType.Audiobook, option.MediaType);
+        Assert.AreEqual(1, catalog.CallCount);
+
+        var files = await context.Provider.FetchAsync(option, CancellationToken.None);
+        Assert.AreEqual(2, files.Count);
+        Assert.AreEqual("gutenberg-22979-01.mp3", files[0].Filename);
+        Assert.AreEqual("gutenberg-22979-02.mp3", files[1].Filename);
+    }
+
+    [TestMethod]
+    public async Task AnAudiobookMatchWithoutASoundMediaTypeIsNotEligible()
+    {
+        const string notSoundResponse = """
+            {
+              "count": 1,
+              "results": [
+                {
+                  "id": 1234,
+                  "title": "The Hobbit",
+                  "media_type": "Text",
+                  "authors": [{"name": "Tolkien, J. R. R."}],
+                  "formats": {}
+                }
+              ]
+            }
+            """;
+        var catalog = new FakeGutenbergAudiobookCatalog();
+        var context = new TestContext(new RecordingHandler(notSoundResponse), enabled: true, catalog: catalog);
 
         var options = await context.Provider.FindDirectAcquisitionsAsync(
             Guid.NewGuid(), RequestMediaType.Audiobook, CancellationToken.None);
 
         Assert.AreEqual(0, options.Count);
-        Assert.AreEqual(0, handler.CallCount);
+        Assert.AreEqual(0, catalog.CallCount);
+    }
+
+    [TestMethod]
+    public async Task AnAudiobookMatchWithNoRdfTracksIsNotEligible()
+    {
+        var catalog = new FakeGutenbergAudiobookCatalog { TracksById = { [22979] = [] } };
+        var context = new TestContext(new RecordingHandler(MatchingSoundResponse), enabled: true, catalog: catalog);
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            Guid.NewGuid(), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
+    }
+
+    [TestMethod]
+    public async Task AnAudiobookMatchExceedingTheBundleTrackLimitIsNotEligible()
+    {
+        var tracks = Enumerable.Range(1, 5)
+            .Select(sequence => new GutenbergAudioTrack(
+                new Uri($"https://www.gutenberg.org/files/22979/mp3/22979-{sequence:00}.mp3"), ".mp3"))
+            .ToArray();
+        var catalog = new FakeGutenbergAudiobookCatalog { TracksById = { [22979] = tracks } };
+        var policy = new ManualImportPolicy { MaxAudiobookBundleTracks = 4 };
+        var context = new TestContext(
+            new RecordingHandler(MatchingSoundResponse), enabled: true, catalog: catalog, importPolicy: policy);
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            Guid.NewGuid(), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
     }
 
     [TestMethod]
@@ -207,10 +297,11 @@ public sealed class GutendexProviderTests
             ExternalActionUri: null,
             ProviderData: "https://www.gutenberg.org/ebooks/1234.epub.noimages");
 
-        var file = await context.Provider.FetchAsync(option, CancellationToken.None);
+        var files = await context.Provider.FetchAsync(option, CancellationToken.None);
 
-        Assert.AreEqual("gutenberg-1234.epub", file.Filename);
-        using var reader = new StreamReader(file.Content);
+        Assert.AreEqual(1, files.Count);
+        Assert.AreEqual("gutenberg-1234.epub", files[0].Filename);
+        using var reader = new StreamReader(files[0].Content);
         Assert.AreEqual("epub file bytes", await reader.ReadToEndAsync());
         Assert.AreEqual(
             "https://www.gutenberg.org/ebooks/1234.epub.noimages", handler.LastRequestUri?.ToString());
@@ -218,7 +309,13 @@ public sealed class GutendexProviderTests
 
     private sealed class TestContext
     {
-        public TestContext(HttpMessageHandler handler, bool enabled, string workTitle = "The Hobbit", string workAuthor = "J. R. R. Tolkien")
+        public TestContext(
+            HttpMessageHandler handler,
+            bool enabled,
+            string workTitle = "The Hobbit",
+            string workAuthor = "J. R. R. Tolkien",
+            IGutenbergAudiobookCatalog? catalog = null,
+            ManualImportPolicy? importPolicy = null)
         {
             var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://gutendex.com/") };
             var descriptor = new ProviderDescriptor(
@@ -235,10 +332,25 @@ public sealed class GutendexProviderTests
                 httpClient,
                 new FakeProviderRegistry(descriptor),
                 new FakeProviderSettingsStore(setting),
-                new FakeWorkLookup(workTitle, workAuthor));
+                new FakeWorkLookup(workTitle, workAuthor),
+                catalog ?? new FakeGutenbergAudiobookCatalog(),
+                importPolicy ?? new ManualImportPolicy());
         }
 
         public GutendexProvider Provider { get; }
+    }
+
+    private sealed class FakeGutenbergAudiobookCatalog : IGutenbergAudiobookCatalog
+    {
+        public Dictionary<int, IReadOnlyList<GutenbergAudioTrack>> TracksById { get; } = [];
+
+        public int CallCount { get; private set; }
+
+        public Task<IReadOnlyList<GutenbergAudioTrack>> FindTracksAsync(int gutenbergId, CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(TracksById.GetValueOrDefault(gutenbergId, []));
+        }
     }
 
     private sealed class FakeProviderRegistry(ProviderDescriptor descriptor) : IProviderRegistry

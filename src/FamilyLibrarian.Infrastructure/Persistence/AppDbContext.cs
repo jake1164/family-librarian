@@ -538,12 +538,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(asset => asset.AssociatedRequestFormatId).HasColumnName("associated_request_format_id");
             entity.Property(asset => asset.SourceAcquisitionCandidateId).HasColumnName("source_acquisition_candidate_id");
             entity.Property(asset => asset.StorageState).HasColumnName("storage_state").HasConversion<string>().HasMaxLength(32);
+            entity.Property(asset => asset.BundleId).HasColumnName("bundle_id");
+            entity.Property(asset => asset.BundleSequence).HasColumnName("bundle_sequence");
+            entity.Property(asset => asset.BundleTrackCount).HasColumnName("bundle_track_count");
             ConfigureTimestamps(entity);
 
             // Duplicate-upload detection looks up by (format, checksum); the asset
             // review surfaces will look up an asset by its owning format.
             entity.HasIndex(asset => asset.Sha256);
             entity.HasIndex(asset => asset.AssociatedRequestFormatId);
+            // Approval-time bundle-completion checks look up every sibling
+            // track sharing one multi-file acquisition's BundleId.
+            entity.HasIndex(asset => asset.BundleId);
 
             entity.HasOne<Work>()
                 .WithMany()
@@ -753,6 +759,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasKey(delivery => delivery.Id);
             entity.Property(delivery => delivery.Id).HasColumnName("id").ValueGeneratedNever();
             entity.Property(delivery => delivery.AssetId).HasColumnName("asset_id");
+            entity.Property(delivery => delivery.BundleId).HasColumnName("bundle_id");
             entity.Property(delivery => delivery.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
             entity.Property(delivery => delivery.ExternalItemId).HasColumnName("external_item_id").HasMaxLength(256);
             entity.Property(delivery => delivery.FailureReason).HasColumnName("failure_reason").HasMaxLength(2_000);
@@ -761,10 +768,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(delivery => delivery.Version).HasColumnName("xmin").IsRowVersion();
 
             entity.HasIndex(delivery => delivery.AssetId);
+            entity.HasIndex(delivery => delivery.BundleId);
 
             entity.HasOne<MediaAsset>()
                 .WithMany()
                 .HasForeignKey(delivery => delivery.AssetId)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }

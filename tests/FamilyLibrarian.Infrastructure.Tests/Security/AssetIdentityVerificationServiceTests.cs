@@ -51,6 +51,9 @@ public sealed class AssetIdentityVerificationServiceTests
         public Task<MediaAsset?> FindAssetAsync(Guid assetId, CancellationToken cancellationToken) =>
             Task.FromResult(asset.Id == assetId ? asset : null);
 
+        public Task<IReadOnlyList<MediaAsset>> FindAssetsByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

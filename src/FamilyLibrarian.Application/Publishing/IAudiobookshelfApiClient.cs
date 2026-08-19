@@ -15,6 +15,17 @@ public interface IAudiobookshelfApiClient
         string title,
         string? author,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Uploads every track of a multi-file audiobook (e.g. a chaptered
+    /// Gutenberg audiobook) in one request, so Audiobookshelf creates a
+    /// single library item with all of them rather than one item per track.
+    /// </summary>
+    Task<AudiobookshelfUploadResult> UploadBundleAsync(
+        IReadOnlyList<(Stream Content, string Filename)> tracks,
+        string title,
+        string? author,
+        CancellationToken cancellationToken);
 }
 
 public sealed record AudiobookshelfUploadResult(bool Succeeded, string? ExternalItemId, string? Error);

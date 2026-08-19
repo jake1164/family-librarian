@@ -64,7 +64,31 @@ public sealed class AudiobookshelfPublishingService(
             return true;
         }
 
-        var asset = await assets.FindAssetAsync(delivery.AssetId, cancellationToken);
+        if (delivery.BundleId is { } bundleId)
+        {
+            var tracks = await assets.FindAssetsByBundleIdAsync(bundleId, cancellationToken);
+            if (tracks.Count == 0)
+            {
+                delivery.MarkFailed("The source files no longer exist.", clock.UtcNow);
+                await repository.SaveChangesAsync(cancellationToken);
+                return true;
+            }
+
+            if (delivery.Status == DeliveryStatus.Failed)
+            {
+                delivery.ResetForRetry();
+                await ExecuteBundlePublishAsync(tracks, delivery, cancellationToken);
+            }
+            else if (delivery.Status == DeliveryStatus.Verifying)
+            {
+                var bundleWork = await workLookup.FindAsync(tracks[0].WorkId, cancellationToken);
+                await TryVerifyAsync(delivery, bundleWork?.Title ?? "Unknown title", bundleWork?.PrimaryAuthor, cancellationToken);
+            }
+
+            return true;
+        }
+
+        var asset = await assets.FindAssetAsync(delivery.AssetId!.Value, cancellationToken);
         if (asset is null)
         {
             delivery.MarkFailed("The source file no longer exists.", clock.UtcNow);
@@ -141,6 +165,112 @@ public sealed class AudiobookshelfPublishingService(
         }
     }
 
+    /// <summary>
+    /// Publishes every track of one multi-file acquisition (e.g. a chaptered
+    /// Gutenberg audiobook) as a single Audiobookshelf upload, once all have
+    /// reached Trusted. Only <see cref="ApprovalService"/> calls this, and
+    /// only after confirming every sibling is Trusted.
+    /// </summary>
+    public async Task PublishBundleAsync(IReadOnlyList<MediaAsset> tracks, CancellationToken cancellationToken)
+    {
+        if (tracks.Count == 0)
+        {
+            return;
+        }
+
+        var settings = await settingsStore.FindAsync(cancellationToken);
+        if (settings is null || !settings.IsEnabled)
+        {
+            return;
+        }
+
+        var bundleId = tracks[0].BundleId!.Value;
+        var delivery = await repository.FindByBundleIdAsync(bundleId, cancellationToken);
+        if (delivery is null)
+        {
+            delivery = Delivery.ForBundle(bundleId, clock.UtcNow);
+            repository.Add(delivery);
+        }
+
+        await ExecuteBundlePublishAsync(tracks, delivery, cancellationToken);
+    }
+
+    private async Task ExecuteBundlePublishAsync(
+        IReadOnlyList<MediaAsset> tracks, Delivery delivery, CancellationToken cancellationToken)
+    {
+        var work = await workLookup.FindAsync(tracks[0].WorkId, cancellationToken);
+        var title = work?.Title ?? "Unknown title";
+        var author = work?.PrimaryAuthor;
+        var bundleId = tracks[0].BundleId!.Value;
+
+        try
+        {
+            var existingItemId = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
+            if (existingItemId is not null)
+            {
+                delivery.MarkDelivered(existingItemId, clock.UtcNow);
+                await repository.SaveChangesAsync(cancellationToken);
+                await AuditBundlePublishedAsync(bundleId, cancellationToken);
+                return;
+            }
+
+            var orderedTracks = tracks.OrderBy(track => track.BundleSequence).ToArray();
+            var openStreams = new List<Stream>(orderedTracks.Length);
+            try
+            {
+                var uploadTracks = new List<(Stream Content, string Filename)>(orderedTracks.Length);
+                foreach (var track in orderedTracks)
+                {
+                    var content = await stagingStore.OpenAsync(
+                        MediaAssetStorageState.Trusted, track.StoredFilename, cancellationToken);
+                    openStreams.Add(content);
+                    var filename = PublishingFilenames.BuildBundleTrackFilename(
+                        title, track.Format, track.BundleSequence ?? 1);
+                    uploadTracks.Add((content, filename));
+                }
+
+                var result = await apiClient.UploadBundleAsync(uploadTracks, title, author, cancellationToken);
+                if (!result.Succeeded)
+                {
+                    delivery.MarkFailed(result.Error ?? "The upload failed.", clock.UtcNow);
+                    await repository.SaveChangesAsync(cancellationToken);
+                    await AuditBundlePublishFailedAsync(bundleId, result.Error, cancellationToken);
+                    return;
+                }
+
+                if (result.ExternalItemId is not null)
+                {
+                    delivery.MarkDelivered(result.ExternalItemId, clock.UtcNow);
+                }
+                else
+                {
+                    delivery.MarkVerifying();
+                }
+
+                await repository.SaveChangesAsync(cancellationToken);
+                await AuditBundlePublishedAsync(bundleId, cancellationToken);
+
+                if (delivery.Status == DeliveryStatus.Verifying)
+                {
+                    await TryVerifyAsync(delivery, title, author, cancellationToken);
+                }
+            }
+            finally
+            {
+                foreach (var stream in openStreams)
+                {
+                    await stream.DisposeAsync();
+                }
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            delivery.MarkFailed(exception.Message, clock.UtcNow);
+            await repository.SaveChangesAsync(cancellationToken);
+            await AuditBundlePublishFailedAsync(bundleId, exception.Message, cancellationToken);
+        }
+    }
+
     private async Task TryVerifyAsync(Delivery delivery, string title, string? author, CancellationToken cancellationToken)
     {
         try
@@ -172,5 +302,21 @@ public sealed class AudiobookshelfPublishingService(
             AuditSubjectTypes.MediaAsset,
             assetId.ToString(),
             new { AssetId = assetId, Destination = "audiobookshelf", Reason = reason },
+            cancellationToken);
+
+    private Task AuditBundlePublishedAsync(Guid bundleId, CancellationToken cancellationToken) =>
+        audit.WriteAsync(
+            AuditActions.AssetPublished,
+            AuditSubjectTypes.MediaAsset,
+            bundleId.ToString(),
+            new { BundleId = bundleId, Destination = "audiobookshelf" },
+            cancellationToken);
+
+    private Task AuditBundlePublishFailedAsync(Guid bundleId, string? reason, CancellationToken cancellationToken) =>
+        audit.WriteAsync(
+            AuditActions.AssetPublishFailed,
+            AuditSubjectTypes.MediaAsset,
+            bundleId.ToString(),
+            new { BundleId = bundleId, Destination = "audiobookshelf", Reason = reason },
             cancellationToken);
 }

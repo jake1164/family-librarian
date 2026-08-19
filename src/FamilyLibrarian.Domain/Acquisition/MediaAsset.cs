@@ -32,7 +32,10 @@ public sealed class MediaAsset
         string detectedMimeType,
         Guid associatedRequestFormatId,
         Guid? sourceAcquisitionCandidateId,
-        DateTimeOffset createdAtUtc)
+        DateTimeOffset createdAtUtc,
+        Guid? bundleId = null,
+        int? bundleSequence = null,
+        int? bundleTrackCount = null)
     {
         if (workId == Guid.Empty)
         {
@@ -91,6 +94,9 @@ public sealed class MediaAsset
         StorageState = MediaAssetStorageTransitions.InitialState;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
+        BundleId = bundleId;
+        BundleSequence = bundleSequence;
+        BundleTrackCount = bundleTrackCount;
     }
 
     public Guid Id { get; private set; } = Guid.NewGuid();
@@ -119,6 +125,20 @@ public sealed class MediaAsset
     public Guid AssociatedRequestFormatId { get; private set; }
 
     public Guid? SourceAcquisitionCandidateId { get; private set; }
+
+    /// <summary>
+    /// Groups sibling tracks of one multi-file acquisition (e.g. a
+    /// chaptered Gutenberg audiobook) that must be published to their
+    /// destination together. <c>null</c> for every ordinary single-file
+    /// asset.
+    /// </summary>
+    public Guid? BundleId { get; private set; }
+
+    /// <summary>1-based ordering of this track within its bundle.</summary>
+    public int? BundleSequence { get; private set; }
+
+    /// <summary>How many sibling tracks make up the complete bundle.</summary>
+    public int? BundleTrackCount { get; private set; }
 
     public MediaAssetStorageState StorageState { get; private set; }
 

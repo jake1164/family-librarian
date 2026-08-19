@@ -46,4 +46,27 @@ public sealed class MediaAssetPublishingCoordinator(
                 cancellationToken);
         }
     }
+
+    /// <summary>
+    /// Publishes every track of one multi-file acquisition together, once
+    /// all have reached Trusted. Bundles are audiobook-only — CWA/ebooks
+    /// never span more than one file — so this always goes to Audiobookshelf.
+    /// </summary>
+    public async Task PublishBundleAsync(IReadOnlyList<MediaAsset> tracks, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await audiobookshelfPublishing.PublishBundleAsync(tracks, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            var bundleId = tracks.Count > 0 ? tracks[0].BundleId : null;
+            await audit.WriteAsync(
+                AuditActions.AssetPublishFailed,
+                AuditSubjectTypes.MediaAsset,
+                bundleId?.ToString() ?? "unknown",
+                new { BundleId = bundleId, Reason = exception.Message },
+                cancellationToken);
+        }
+    }
 }

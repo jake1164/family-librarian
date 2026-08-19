@@ -11,6 +11,13 @@ public sealed class SecurityEvaluationRepository(AppDbContext database) : ISecur
     public Task<MediaAsset?> FindAssetAsync(Guid assetId, CancellationToken cancellationToken) =>
         database.MediaAssets.FirstOrDefaultAsync(asset => asset.Id == assetId, cancellationToken);
 
+    public async Task<IReadOnlyList<MediaAsset>> FindAssetsByBundleIdAsync(
+        Guid bundleId, CancellationToken cancellationToken) =>
+        await database.MediaAssets
+            .Where(asset => asset.BundleId == bundleId)
+            .OrderBy(asset => asset.BundleSequence)
+            .ToListAsync(cancellationToken);
+
     public Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken) =>
         database.SecurityEvaluations
             .Include(evaluation => evaluation.ScanResults)

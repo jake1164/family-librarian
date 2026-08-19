@@ -11,4 +11,11 @@ internal sealed class AlwaysEmptyAudiobookshelfApiClient : IAudiobookshelfApiCli
     public Task<AudiobookshelfUploadResult> UploadAsync(
         Stream content, string filename, string title, string? author, CancellationToken cancellationToken) =>
         Task.FromResult(new AudiobookshelfUploadResult(true, $"li_test_{Guid.NewGuid():N}", null));
+
+    public Task<AudiobookshelfUploadResult> UploadBundleAsync(
+        IReadOnlyList<(Stream Content, string Filename)> tracks,
+        string title,
+        string? author,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new AudiobookshelfUploadResult(true, $"li_test_{Guid.NewGuid():N}", null));
 }
