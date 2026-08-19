@@ -38,6 +38,32 @@ public sealed class EpubAssetIdentityVerifierTests
     }
 
     [TestMethod]
+    public async Task ATitleDifferingOnlyByALeadingArticleIsAccepted()
+    {
+        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Green Mummy", "Fergus Hume"));
+
+        var result = await verifier.VerifyAsync(
+            CreateAsset(),
+            BuildEpub("The Green Mummy", "Fergus Hume"),
+            CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch);
+    }
+
+    [TestMethod]
+    public async Task ACreatorWithAParentheticalFullNameStillMatches()
+    {
+        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Peter Pan", "J. M. Barrie"));
+
+        var result = await verifier.VerifyAsync(
+            CreateAsset(),
+            BuildEpub("Peter Pan", "Barrie, J. M. (James Matthew)"),
+            CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch);
+    }
+
+    [TestMethod]
     public async Task DifferentPackageMetadataIsHeldUnmatched()
     {
         var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Restore Me", "Tahereh Mafi"));

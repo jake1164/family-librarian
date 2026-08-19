@@ -131,14 +131,58 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works) : IAssetIdentit
         path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries)
             .Any(segment => segment is "." or "..");
 
+    // Catalog titles and EPUB package metadata disagree on where a leading
+    // article goes as often as Gutendex search results do (see
+    // GutendexProvider.NormalizeTitleVariants) — e.g. a catalog title of
+    // "Green Mummy" against an EPUB whose <dc:title> is "The Green Mummy".
+    // Without stripping this, a genuinely correct download is held as a
+    // false-negative "Unmatched" identity mismatch.
+    private static readonly string[] LeadingArticles = ["The ", "A ", "An "];
+    private static readonly string[] TrailingArticles = [", The", ", A", ", An"];
+
     private static bool Matches(string expected, string actual) =>
-        string.Equals(Normalize(expected), Normalize(actual), StringComparison.Ordinal);
+        string.Equals(
+            Normalize(NormalizeTitleVariants(expected)),
+            Normalize(NormalizeTitleVariants(actual)),
+            StringComparison.Ordinal);
+
+    private static string NormalizeTitleVariants(string value)
+    {
+        var trimmed = value.Replace("&", " and ", StringComparison.Ordinal).Trim();
+
+        foreach (var article in TrailingArticles)
+        {
+            if (trimmed.EndsWith(article, StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = trimmed[..^article.Length].TrimEnd();
+                break;
+            }
+        }
+
+        foreach (var article in LeadingArticles)
+        {
+            if (trimmed.StartsWith(article, StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed[article.Length..];
+            }
+        }
+
+        return trimmed;
+    }
 
     // EPUB creators commonly use catalog order ("Mafi, Tahereh") while the
-    // family catalog uses display order ("Tahereh Mafi").  Compare the same
-    // normalized name parts without giving up the strict title comparison.
-    private static bool AuthorMatches(string expected, string actual) =>
-        AuthorTokens(expected).SequenceEqual(AuthorTokens(actual), StringComparer.Ordinal);
+    // family catalog uses display order ("Tahereh Mafi"), and can carry a
+    // fuller name than the catalog does (e.g. catalog "J. M. Barrie" vs an
+    // EPUB crediting "Barrie, J. M. (James Matthew)") — see
+    // GutendexProvider.AuthorMatches for the same reasoning. Requiring every
+    // catalog token to appear in the EPUB's token set accepts that without
+    // giving up the strict title comparison or accepting an unrelated name.
+    private static bool AuthorMatches(string expected, string actual)
+    {
+        var expectedTokens = AuthorTokens(expected);
+        var actualTokens = AuthorTokens(actual);
+        return expectedTokens.Length > 0 && expectedTokens.All(actualTokens.Contains);
+    }
 
     private static string[] AuthorTokens(string value)
     {

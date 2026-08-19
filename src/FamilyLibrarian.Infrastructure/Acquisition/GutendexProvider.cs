@@ -303,9 +303,18 @@ public sealed class GutendexProvider(
         return trimmed;
     }
 
+    // Gutendex author names sometimes expand initials into a full-name
+    // parenthetical the catalog doesn't carry (e.g. catalog "J. M. Barrie"
+    // vs Gutendex "Barrie, J. M. (James Matthew)"). Requiring every catalog
+    // token to appear in Gutendex's token set — rather than an exact
+    // token-set match — accepts that without accepting a materially
+    // different name, since every catalog word still has to agree.
     private static bool AuthorMatches(string expected, string? actual) =>
         !string.IsNullOrWhiteSpace(actual) &&
-        AuthorTokens(expected).SequenceEqual(AuthorTokens(actual), StringComparer.Ordinal);
+        IsAuthorSubsetMatch(AuthorTokens(expected), AuthorTokens(actual));
+
+    private static bool IsAuthorSubsetMatch(string[] expectedTokens, string[] actualTokens) =>
+        expectedTokens.Length > 0 && expectedTokens.All(actualTokens.Contains);
 
     private static string[] AuthorTokens(string value) => value
         .Normalize(NormalizationForm.FormKC)

@@ -250,6 +250,32 @@ public sealed class GutendexProviderTests
     }
 
     [TestMethod]
+    public async Task AGutendexAuthorWithAParentheticalFullNameStillMatches()
+    {
+        const string expandedAuthorResponse = """
+            {
+              "count": 1,
+              "results": [
+                {
+                  "id": 22984,
+                  "title": "Peter Pan",
+                  "authors": [{"name": "Barrie, J. M. (James Matthew)"}],
+                  "formats": {"application/epub+zip": "https://www.gutenberg.org/ebooks/22984.epub.noimages"}
+                }
+              ]
+            }
+            """;
+        var context = new TestContext(
+            new RecordingHandler(expandedAuthorResponse), enabled: true, workTitle: "Peter Pan", workAuthor: "J. M. Barrie");
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            Guid.NewGuid(), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual("22984", options[0].ProviderResultId);
+    }
+
+    [TestMethod]
     public async Task ATitleMatchWithADifferentAuthorIsNotEligibleForDirectAcquisition()
     {
         const string differentAuthorResponse = """
