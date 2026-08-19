@@ -51,6 +51,19 @@ public sealed class EpubAssetIdentityVerifierTests
     }
 
     [TestMethod]
+    public async Task ATitleWithAnOldFashionedSubtitleTheCatalogOmitsIsAccepted()
+    {
+        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Little Women", "Louisa May Alcott"));
+
+        var result = await verifier.VerifyAsync(
+            CreateAsset(),
+            BuildEpub("Little Women; Or, Meg, Jo, Beth, and Amy", "Louisa May Alcott"),
+            CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch);
+    }
+
+    [TestMethod]
     public async Task ACreatorWithAParentheticalFullNameStillMatches()
     {
         var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Peter Pan", "J. M. Barrie"));

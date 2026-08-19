@@ -219,7 +219,7 @@ public sealed class GutendexProvider(
 
         if (fulfillmentOption.Format == AudioBundleFormat)
         {
-            return await FetchAudioBundleAsync(fulfillmentOption, cancellationToken);
+            return await FetchAudioBundleAsync(fulfillmentOption);
         }
 
         var url = fulfillmentOption.ProviderData
@@ -232,30 +232,99 @@ public sealed class GutendexProvider(
         return [new DirectAcquisitionFile(stream, $"gutenberg-{fulfillmentOption.ProviderResultId}.epub")];
     }
 
-    private async Task<IReadOnlyList<DirectAcquisitionFile>> FetchAudioBundleAsync(
-        FulfillmentOption fulfillmentOption, CancellationToken cancellationToken)
+    /// <remarks>
+    /// Returns lazily-connecting streams rather than opening every track's
+    /// HTTP request up front: the caller (<c>AcquisitionStagingService</c>)
+    /// reads and writes tracks to disk one at a time, so eagerly opening all
+    /// of them left every later track idle on an open connection while
+    /// earlier ones were still being staged — long enough, for a 15-20
+    /// chapter audiobook, that Gutenberg/Cloudflare closed the idle ones out
+    /// from under it (an uncaught mid-download <see cref="IOException"/>
+    /// that silently killed the whole automatic-fulfillment pass, not just
+    /// this one book). Deferring the connection until first read keeps at
+    /// most one track's connection open at a time, matching the single-file
+    /// path's existing behavior.
+    /// </remarks>
+    private Task<IReadOnlyList<DirectAcquisitionFile>> FetchAudioBundleAsync(FulfillmentOption fulfillmentOption)
     {
         var json = fulfillmentOption.ProviderData
             ?? throw new InvalidOperationException("This Gutendex option has no track list.");
         var tracks = JsonSerializer.Deserialize<AudioBundleTrackData[]>(json)
             ?? throw new InvalidOperationException("This Gutendex option's track list could not be read.");
 
-        var files = new List<DirectAcquisitionFile>(tracks.Length);
-        for (var index = 0; index < tracks.Length; index++)
-        {
-            var response = await httpClient.GetAsync(
-                tracks[index].Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            files.Add(new DirectAcquisitionFile(
-                stream,
-                $"gutenberg-{fulfillmentOption.ProviderResultId}-{index + 1:00}{tracks[index].Extension}"));
-        }
+        IReadOnlyList<DirectAcquisitionFile> files = tracks
+            .Select((track, index) => new DirectAcquisitionFile(
+                new LazyHttpStream(httpClient, track.Url),
+                $"gutenberg-{fulfillmentOption.ProviderResultId}-{index + 1:00}{track.Extension}"))
+            .ToArray();
 
-        return files;
+        return Task.FromResult(files);
     }
 
     private const string AudioBundleFormat = "audio-bundle";
+
+    /// <summary>
+    /// A stream over an HTTP GET that isn't sent until the first read —
+    /// see <see cref="FetchAudioBundleAsync"/> for why a multi-track
+    /// download needs this instead of opening every request immediately.
+    /// </summary>
+    private sealed class LazyHttpStream(HttpClient httpClient, string url) : Stream
+    {
+        private HttpResponseMessage? _response;
+        private Stream? _inner;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            ReadAsync(buffer.AsMemory(offset, count), CancellationToken.None).AsTask().GetAwaiter().GetResult();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_inner is null)
+            {
+                _response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                _response.EnsureSuccessStatusCode();
+                _inner = await _response.Content.ReadAsStreamAsync(cancellationToken);
+            }
+
+            return await _inner.ReadAsync(buffer, cancellationToken);
+        }
+
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _inner?.Dispose();
+                _response?.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (_inner is not null)
+            {
+                await _inner.DisposeAsync();
+            }
+
+            _response?.Dispose();
+            await base.DisposeAsync();
+        }
+    }
 
     private sealed record AudioBundleTrackData(string Url, string Extension);
 

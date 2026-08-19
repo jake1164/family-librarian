@@ -129,12 +129,30 @@ public sealed class AutomaticRequestFulfillmentService(
                 }
 
                 var option = distinctOptions[0];
-                var result = await acquisition.AcquireAndEvaluateAsync(
-                    request.Id,
-                    format.Id,
-                    option.ProviderId,
-                    option.ProviderResultId,
-                    cancellationToken);
+                ManualImportResult result;
+                try
+                {
+                    result = await acquisition.AcquireAndEvaluateAsync(
+                        request.Id,
+                        format.Id,
+                        option.ProviderId,
+                        option.ProviderResultId,
+                        cancellationToken);
+                }
+                catch (Exception exception) when (exception is IOException or HttpRequestException or TaskCanceledException)
+                {
+                    // A transport-level failure mid-download (e.g. the source
+                    // closing an idle connection partway through a multi-file
+                    // audiobook fetch) must not abort the whole batch — every
+                    // other pending request would silently stop being
+                    // processed until the next poll. Treat it exactly like an
+                    // acquisition failure below: unlike a search-phase
+                    // failure (see DescribeProviderFailure), this sends the
+                    // request to review rather than retrying on its own, so
+                    // the reason should not claim otherwise.
+                    result = ManualImportResult.Invalid(
+                        $"The file could not be downloaded: {exception.Message}");
+                }
 
                 if (result.Outcome != ManualImportOutcome.Success)
                 {

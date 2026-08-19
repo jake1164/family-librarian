@@ -82,6 +82,47 @@ public sealed class GutendexProviderTests
     }
 
     [TestMethod]
+    public async Task FetchAsyncForAnAudioBundleOpensEachTrackConnectionLazilyOnlyWhenRead()
+    {
+        // Regression coverage for a real production incident: eagerly
+        // opening every chapter's HTTP request up front left later tracks
+        // idle on an open connection while earlier ones were still being
+        // written to disk, long enough for a 15-20 chapter audiobook that
+        // Gutenberg/Cloudflare closed the idle ones out from under it — an
+        // uncaught IOException that silently killed the whole
+        // automatic-fulfillment background pass. Fetching a bundle must not
+        // issue any HTTP request until each track's stream is actually read,
+        // and reading one track must not touch the next track's connection.
+        var tracks = new[]
+        {
+            new GutenbergAudioTrack(new Uri("https://www.gutenberg.org/files/22979/mp3/22979-01.mp3"), ".mp3"),
+            new GutenbergAudioTrack(new Uri("https://www.gutenberg.org/files/22979/mp3/22979-02.mp3"), ".mp3"),
+            new GutenbergAudioTrack(new Uri("https://www.gutenberg.org/files/22979/mp3/22979-03.mp3"), ".mp3")
+        };
+        var catalog = new FakeGutenbergAudiobookCatalog { TracksById = { [22979] = tracks } };
+        var handler = new RecordingHandler(MatchingSoundResponse);
+        var context = new TestContext(handler, enabled: true, catalog: catalog);
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            Guid.NewGuid(), RequestMediaType.Audiobook, CancellationToken.None);
+        var option = options[0];
+
+        var files = await context.Provider.FetchAsync(option, CancellationToken.None);
+        Assert.AreEqual(3, files.Count);
+        Assert.AreEqual(1, handler.CallCount, "Discovery makes exactly one Gutendex search call; fetching the bundle must not yet open any track connection.");
+
+        for (var index = 0; index < files.Count; index++)
+        {
+            using var reader = new StreamReader(files[index].Content);
+            _ = await reader.ReadToEndAsync();
+            Assert.AreEqual(
+                2 + index,
+                handler.CallCount,
+                $"Track {index} should open exactly one connection when read, and no others should have opened yet.");
+        }
+    }
+
+    [TestMethod]
     public async Task AnAudiobookMatchWithoutASoundMediaTypeIsNotEligible()
     {
         const string notSoundResponse = """

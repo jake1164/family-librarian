@@ -140,11 +140,21 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works) : IAssetIdentit
     private static readonly string[] LeadingArticles = ["The ", "A ", "An "];
     private static readonly string[] TrailingArticles = [", The", ", A", ", An"];
 
-    private static bool Matches(string expected, string actual) =>
-        string.Equals(
-            Normalize(NormalizeTitleVariants(expected)),
-            Normalize(NormalizeTitleVariants(actual)),
-            StringComparison.Ordinal);
+    // Same StartsWith comparison GutendexProvider.TitleMatches already
+    // uses at discovery time, for the same reason: Gutenberg's older
+    // catalog entries often carry a period-piece subtitle the family
+    // catalog doesn't — e.g. an EPUB titled "Little Women; Or, Meg, Jo,
+    // Beth, and Amy" against a catalog title of just "Little Women". A
+    // download discovery already accepted as a legitimate prefix match must
+    // not then be held as an identity mismatch by a stricter exact
+    // comparison here.
+    private static bool Matches(string expected, string actual)
+    {
+        var normalizedExpected = Normalize(NormalizeTitleVariants(expected));
+        var normalizedActual = Normalize(NormalizeTitleVariants(actual));
+        return !string.IsNullOrEmpty(normalizedExpected) &&
+            normalizedActual.StartsWith(normalizedExpected, StringComparison.Ordinal);
+    }
 
     private static string NormalizeTitleVariants(string value)
     {
