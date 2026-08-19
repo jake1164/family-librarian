@@ -28,6 +28,7 @@ public sealed class ExternalProvider
         BaseUrl = RequireText(baseUrl, nameof(baseUrl));
         IsEnabled = false;
         CachedEgressPolicy = EgressPolicy.Normal;
+        RecheckSchedule = ProviderRecheckSchedule.Manual;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
     }
@@ -42,6 +43,12 @@ public sealed class ExternalProvider
     public string BaseUrl { get; private set; } = null!;
 
     public bool IsEnabled { get; private set; }
+
+    /// <summary>
+    /// Administrator-controlled retry cadence for discovery only. It never
+    /// authorizes unattended acquisition from this external provider.
+    /// </summary>
+    public ProviderRecheckSchedule RecheckSchedule { get; private set; }
 
     public string? ProtectedApiKey { get; private set; }
 
@@ -88,6 +95,15 @@ public sealed class ExternalProvider
     public void SetEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
     {
         IsEnabled = isEnabled;
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void SetRecheckSchedule(
+        ProviderRecheckSchedule schedule,
+        Guid? actorUserId,
+        DateTimeOffset updatedAtUtc)
+    {
+        RecheckSchedule = schedule;
         Touch(actorUserId, updatedAtUtc);
     }
 

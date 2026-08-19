@@ -416,6 +416,39 @@ requires-api-key
 manual
 ```
 
+### Scheduled provider checks
+
+An installed provider must not acquire automatic polling merely by advertising a
+manifest capability. The core configuration is the authority for whether an
+otherwise-approved provider may be checked automatically and how often. The
+initial policy vocabulary is deliberately small:
+
+```text
+ONCE     A stable/public-domain source is checked once per requested format.
+DAILY    A changing, approved source may be checked no more than once per day.
+WEEKLY   A lower-priority approved source may be checked no more than once per week.
+MANUAL   No background lookup; an administrator explicitly checks it.
+```
+
+The bundled Gutendex implementation has effective `ONCE` behavior. Registered
+external providers default to `MANUAL`; an administrator may explicitly select
+`DAILY` or `WEEKLY` for each enabled provider. The application owns that policy,
+not the provider manifest.
+
+Each automatic lookup creates an append-only, administrator-only
+provider-attempt entry containing provider ID, request format, attempt time,
+outcome (`match`, `no-match`, `ambiguous`, `blocked`, or `failed`), a safe
+summary, and next eligible check time. It must not record credentials, complete
+untrusted provider payloads, or downloadable artifact URLs. A provider's
+declared egress policy applies to every scheduled check and must still fail
+closed; a failed private route never permits a normal-egress retry.
+
+The newest attempt for each provider is also projected into the administrator's
+in-app attention summary when its outcome is `failed` or `blocked`. This is a
+safe operational indicator, not a replacement for the append-only ledger: it
+contains only provider display name/ID, the bounded safe summary, and the time.
+It must never expose credentials, provider payloads, requesters, or artifact URLs.
+
 ### Private-egress policy
 
 Family Librarian **SHALL NOT** depend on a specific commercial VPN provider.

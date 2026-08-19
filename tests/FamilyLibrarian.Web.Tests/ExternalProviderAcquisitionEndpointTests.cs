@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Catalog;
@@ -101,7 +101,9 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var asset = await database.MediaAssets.SingleAsync(mediaAsset => mediaAsset.Id == result.MediaAssetId);
-        Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
+        Assert.AreEqual(MediaAssetStorageState.Trusted, asset.StorageState);
+        Assert.AreEqual(1, await database.SecurityEvaluations.CountAsync(
+            evaluation => evaluation.AssetId == asset.Id));
 
         var job = await database.AcquisitionJobs.SingleAsync(acquisitionJob => acquisitionJob.Id == result.AcquisitionJobId);
         Assert.AreEqual("fake-external", job.ProviderId);
@@ -145,6 +147,71 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             content: null);
 
         Assert.AreEqual(HttpStatusCode.BadRequest, acquire.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task AScheduledExternalLookupCreatesAnAdminVisibleReviewRecordWithoutDownloading()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient());
+            });
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(admin);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+
+        var create = await admin.PostAsJsonAsync(
+            "/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest("scheduled-external", "Scheduled External", "http://fake-external.test"));
+        var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(provider);
+        (await admin.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true)))
+            .EnsureSuccessStatusCode();
+        (await admin.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule",
+            new SetExternalProviderRecheckScheduleRequest("Daily")))
+            .EnsureSuccessStatusCode();
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, true));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        var format = request.Formats.Single(candidate => candidate.MediaType == "Ebook");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var rechecks = scope.ServiceProvider.GetRequiredService<ExternalProviderRecheckService>();
+            // The shared integration database may also contain another pending
+            // request while the suite runs in parallel. This test's assertions
+            // below remain scoped to the request it created.
+            Assert.IsTrue(await rechecks.ProcessDueAsync(CancellationToken.None) >= 1);
+        }
+
+        var attempts = await admin.GetFromJsonAsync<ProviderAttemptResponse[]>(
+            $"/api/v1/admin/requests/{request.Id}/provider-attempts");
+        Assert.IsNotNull(attempts);
+        var attempt = attempts.Single();
+        Assert.AreEqual("scheduled-external", attempt.ProviderId);
+        Assert.AreEqual("CandidatesFound", attempt.Outcome);
+        Assert.IsNull(attempt.NextEligibleCheckAtUtc);
+
+        await using var verificationScope = factory.Services.CreateAsyncScope();
+        var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var persisted = await database.BookRequests.SingleAsync(bookRequest => bookRequest.Id == request.Id);
+        Assert.AreEqual(RequestStatus.NeedsReview, persisted.Status);
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == format.FormatId));
     }
 
     [TestMethod]
@@ -299,34 +366,8 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         public Task<ExternalProviderArtifact> AcquireAsync(
             string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
             CancellationToken cancellationToken) =>
-            Task.FromResult(new ExternalProviderArtifact(new MemoryStream(BuildMinimalEpubBytes()), "the-hobbit.epub"));
-    }
-
-    /// <summary>Mirrors DirectAcquisitionEndpointTests.BuildMinimalEpubBytes: a minimal, sniffable EPUB.</summary>
-    private static byte[] BuildMinimalEpubBytes()
-    {
-        const string entryName = "mimetype";
-        const string content = "application/epub+zip";
-        var nameBytes = Encoding.ASCII.GetBytes(entryName);
-        var contentBytes = Encoding.ASCII.GetBytes(content);
-
-        using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream);
-
-        writer.Write(0x04034B50u);
-        writer.Write((ushort)20);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write(0u);
-        writer.Write((uint)contentBytes.Length);
-        writer.Write((uint)contentBytes.Length);
-        writer.Write((ushort)nameBytes.Length);
-        writer.Write((ushort)0);
-        writer.Write(nameBytes);
-        writer.Write(contentBytes);
-
-        return stream.ToArray();
+            Task.FromResult(new ExternalProviderArtifact(
+                new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
+                "the-hobbit.epub"));
     }
 }

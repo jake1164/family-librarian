@@ -38,9 +38,31 @@ public interface IRequestRepository
         RequestStatus? status,
         CancellationToken cancellationToken);
 
+    /// <summary>Counts a status for the administrator attention summary.</summary>
+    Task<int> CountForAdminAsync(
+        RequestStatus status,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(0);
+
     Task<BookRequest?> FindRequestForAdminAsync(
         Guid requestId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// A small, bounded batch of requests that have not yet left the automatic
+    /// acquisition queue. This is a server-only background-work query; it never
+    /// exposes requester identity to a provider.
+    /// </summary>
+    Task<IReadOnlyList<BookRequest>> ListPendingForAutomaticFulfillmentAsync(
+        int maximumCount,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<BookRequest>>([]);
+
+    /// <summary>Whether this requested format already has an acquired artifact.</summary>
+    Task<bool> HasAcquiredArtifactAsync(
+        Guid requestFormatId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(false);
 
     Task<AdminBookRequestView?> FindAdminViewAsync(
         Guid requestId,

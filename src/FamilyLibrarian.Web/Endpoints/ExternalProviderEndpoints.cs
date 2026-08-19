@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Contracts.Providers;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Providers;
 
 namespace FamilyLibrarian.Web.Endpoints;
 
@@ -21,6 +22,7 @@ internal static class ExternalProviderEndpoints
         adminExternalProviders.MapPost("/", CreateExternalProviderAsync);
         adminExternalProviders.MapPut("/{id:guid}/details", SetExternalProviderDetailsAsync);
         adminExternalProviders.MapPut("/{id:guid}/enabled", SetExternalProviderEnabledAsync);
+        adminExternalProviders.MapPut("/{id:guid}/recheck-schedule", SetExternalProviderRecheckScheduleAsync);
         adminExternalProviders.MapPut("/{id:guid}/api-key", SetExternalProviderApiKeyAsync);
         adminExternalProviders.MapDelete("/{id:guid}/api-key", ClearExternalProviderApiKeyAsync);
         adminExternalProviders.MapPost("/{id:guid}/test", TestExternalProviderAsync);
@@ -46,6 +48,22 @@ internal static class ExternalProviderEndpoints
         Guid id, SetExternalProviderEnabledRequest request, ExternalProviderAdminService service,
         CancellationToken cancellationToken) =>
         ToExternalProviderResult(await service.SetEnabledAsync(id, request.Enabled, cancellationToken));
+
+    private static async Task<IResult> SetExternalProviderRecheckScheduleAsync(
+        Guid id, SetExternalProviderRecheckScheduleRequest request, ExternalProviderAdminService service,
+        CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<ProviderRecheckSchedule>(request.RecheckSchedule, ignoreCase: true, out var schedule) ||
+            !Enum.IsDefined(schedule))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["recheckSchedule"] = ["Choose Manual, Daily, or Weekly."]
+            });
+        }
+
+        return ToExternalProviderResult(await service.SetRecheckScheduleAsync(id, schedule, cancellationToken));
+    }
 
     private static async Task<IResult> SetExternalProviderApiKeyAsync(
         Guid id, SetExternalProviderApiKeyRequest request, ExternalProviderAdminService service,
@@ -105,6 +123,7 @@ internal static class ExternalProviderEndpoints
         status.DisplayName,
         status.BaseUrl,
         status.IsEnabled,
+        status.RecheckSchedule,
         status.HasApiKey,
         status.ApiKeyHint,
         status.ApiKeySetAtUtc,

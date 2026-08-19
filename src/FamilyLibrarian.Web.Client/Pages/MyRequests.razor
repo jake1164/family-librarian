@@ -1,5 +1,6 @@
 @page "/requests"
 @attribute [Authorize]
+@implements IDisposable
 @inject RequestsApiClient Requests
 
 <PageTitle>My requests · Family Librarian</PageTitle>
@@ -8,7 +9,8 @@
     <div>
         <MudText Typo="Typo.h3">My requests</MudText>
         <MudText Typo="Typo.body1">
-            Books you have asked the family librarian for. Only you can see this list.
+            Books you have asked for. Only you can see this list, and it updates automatically
+            while this page is open as a request moves through acquisition and delivery.
         </MudText>
     </div>
 
@@ -59,7 +61,13 @@
     private string? errorMessage;
     private Guid busyRequestId;
 
-    protected override Task OnInitializedAsync() => LoadAsync();
+    private readonly CancellationTokenSource refreshCancellation = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _ = RefreshPeriodicallyAsync();
+    }
 
     private RenderFragment RequestCard(BookRequestResponse request) =>
         @<MudCard Outlined="true" Class="mb-3">
@@ -199,5 +207,31 @@
         {
             busyRequestId = Guid.Empty;
         }
+    }
+
+    private async Task RefreshPeriodicallyAsync()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+            while (await timer.WaitForNextTickAsync(refreshCancellation.Token))
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadAsync();
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (refreshCancellation.IsCancellationRequested)
+        {
+            // Navigation away from My Requests cancels its lightweight polling.
+        }
+    }
+
+    public void Dispose()
+    {
+        refreshCancellation.Cancel();
+        refreshCancellation.Dispose();
     }
 }

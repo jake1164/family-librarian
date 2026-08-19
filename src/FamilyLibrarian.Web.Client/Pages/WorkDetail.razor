@@ -1,5 +1,6 @@
 @page "/works/{WorkId:guid}"
 @attribute [Authorize]
+@implements IDisposable
 @inject CatalogApiClient Catalog
 @inject RequestsApiClient Requests
 @inject FeedbackApiClient Feedback
@@ -86,12 +87,26 @@
         <MudPaper Class="pa-4" Outlined="true">
             <MudStack Spacing="3">
                 <MudText Typo="Typo.h6">Ask for this book</MudText>
+                <MudText Typo="Typo.body2">
+                    When a trusted free source has one clear match, we fetch it automatically,
+                    scan and verify it, then publish it to the family library.
+                </MudText>
 
                 @if (createdRequest is not null)
                 {
-                    <MudAlert Severity="Severity.Success">
+                    <MudAlert Severity="@RequestStatusSeverity(createdRequest.Status)">
                         Your request is in. @createdRequest.StatusDescription
                     </MudAlert>
+                    @foreach (var format in createdRequest.Formats.Where(format =>
+                        !string.IsNullOrWhiteSpace(format.ProgressDescription)))
+                    {
+                        <MudText Typo="Typo.body2" Color="@ProgressColor(format.ProgressCode)">
+                            @format.MediaType: @format.ProgressDescription
+                        </MudText>
+                    }
+                    <MudText Typo="Typo.caption">
+                        This update refreshes automatically while you are on this page.
+                    </MudText>
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="requests">
                         See my requests
                     </MudButton>
@@ -105,7 +120,7 @@
                     </fieldset>
 
                     <MudTextField @bind-Value="note"
-                                  Label="Anything the librarian should know? (optional)"
+                                  Label="Anything we should know? (optional)"
                                   Variant="Variant.Outlined"
                                   Lines="2"
                                   MaxLength="1000"
@@ -216,6 +231,7 @@
     private string? errorMessage;
     private BookRequestDuplicateResponse? duplicate;
     private BookRequestResponse? createdRequest;
+    private CancellationTokenSource? requestStatusRefreshCancellation;
 
     private WorkFeedbackResponse? feedback;
     private bool isLoadingFeedback = true;
@@ -228,6 +244,7 @@
 
     protected override async Task OnParametersSetAsync()
     {
+        StopRequestStatusRefresh();
         isLoading = true;
         createdRequest = null;
         duplicate = null;
@@ -269,6 +286,22 @@
 
     private static string? OwnedLink(IReadOnlyList<FulfillmentOptionResponse>? options) =>
         options?.FirstOrDefault(option => option.OptionKind == "Owned")?.ExternalActionUri;
+
+    private static Severity RequestStatusSeverity(string status) => status switch
+    {
+        "NeedsReview" => Severity.Warning,
+        "NotAvailable" => Severity.Error,
+        "Available" => Severity.Success,
+        _ => Severity.Info
+    };
+
+    private static Color ProgressColor(string? progressCode) => progressCode switch
+    {
+        "SecurityCheckFailed" or "PublishingNeedsAttention" => Color.Error,
+        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" => Color.Warning,
+        "Available" => Color.Success,
+        _ => Color.Info
+    };
 
     private async Task LoadFeedbackAsync()
     {
@@ -394,6 +427,7 @@
                 case CreateRequestStatus.Created:
                     createdRequest = outcome.Request;
                     duplicate = null;
+                    StartRequestStatusRefresh();
                     break;
                 case CreateRequestStatus.DuplicateWarning:
                     duplicate = outcome.Existing;
@@ -412,4 +446,54 @@
             isSubmitting = false;
         }
     }
+
+    private void StartRequestStatusRefresh()
+    {
+        StopRequestStatusRefresh();
+        requestStatusRefreshCancellation = new CancellationTokenSource();
+        _ = RefreshRequestStatusPeriodicallyAsync(requestStatusRefreshCancellation.Token);
+    }
+
+    private async Task RefreshRequestStatusPeriodicallyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(async () =>
+                {
+                    var currentRequest = createdRequest;
+                    if (currentRequest is null)
+                    {
+                        return;
+                    }
+
+                    var requests = await Requests.GetMineAsync(cancellationToken);
+                    createdRequest = requests.Active
+                        .Concat(requests.History)
+                        .FirstOrDefault(request => request.Id == currentRequest.Id);
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Navigation away or a new request cycle stops this lightweight poll.
+        }
+        catch (HttpRequestException)
+        {
+            // The original request status remains visible; My Requests still offers
+            // an explicit, retryable view if a transient refresh fails.
+        }
+    }
+
+    private void StopRequestStatusRefresh()
+    {
+        requestStatusRefreshCancellation?.Cancel();
+        requestStatusRefreshCancellation?.Dispose();
+        requestStatusRefreshCancellation = null;
+    }
+
+    public void Dispose() => StopRequestStatusRefresh();
 }

@@ -168,6 +168,33 @@ public sealed class ExternalProviderEndpointTests
     }
 
     [TestMethod]
+    public async Task AnAdminCanChooseThePerProviderRecheckSchedule()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        var create = await client.PostAsJsonAsync(
+            "/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest("scheduled-provider", "Scheduled Provider", "http://provider.test"));
+        var created = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(created);
+        Assert.AreEqual("Manual", created.RecheckSchedule);
+
+        var scheduled = await client.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{created.Id}/recheck-schedule",
+            new SetExternalProviderRecheckScheduleRequest("Weekly"));
+        Assert.AreEqual(HttpStatusCode.OK, scheduled.StatusCode);
+        var updated = await scheduled.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(updated);
+        Assert.AreEqual("Weekly", updated.RecheckSchedule);
+
+        var invalid = await client.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{created.Id}/recheck-schedule",
+            new SetExternalProviderRecheckScheduleRequest("Hourly"));
+        Assert.AreEqual(HttpStatusCode.BadRequest, invalid.StatusCode);
+    }
+
+    [TestMethod]
     public async Task AFetchedCatalogsEntriesRoundTripThroughTheApi()
     {
         var fixture = WebTestFixture.Require(_fixture);

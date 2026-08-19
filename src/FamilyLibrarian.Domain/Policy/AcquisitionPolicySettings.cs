@@ -8,8 +8,7 @@ namespace FamilyLibrarian.Domain.Policy;
 /// <c>CwaSettings</c>/<c>AudiobookshelfSettings</c>. Defaults to
 /// <see cref="PolicyProfileIds.ManualChoice"/> (no auto-recommendation) so a
 /// fresh install behaves exactly as it did before this feature existed, until
-/// an admin opts into a ranking profile — the same "safe by default" posture
-/// as a bundled provider's <c>DefaultEnabled: false</c>.
+/// an admin opts into a ranking profile.
 /// </remarks>
 public sealed class AcquisitionPolicySettings
 {

@@ -14,14 +14,14 @@ namespace FamilyLibrarian.Application.Publishing;
 /// folder and, best-effort, verifies it landed via the OPDS catalog.
 /// </summary>
 /// <remarks>
-/// Synchronous handoff plus one immediate verification attempt — no retry
-/// loop, no polling, no background worker. Anything not confirmed
-/// immediately stays <see cref="LibraryImportStatus.AwaitingVerification"/>
-/// until an administrator calls <see cref="RecheckAsync"/> from the Library
-/// Publishing page. A publish failure here is always caught and recorded on
-/// the <see cref="LibraryImport"/> row; it must never propagate out to the
-/// caller (see <c>MediaAssetPublishingCoordinator</c>, which is the actual
-/// caller from the approval flow).
+/// Synchronous handoff plus one immediate verification attempt. Anything not
+/// confirmed immediately stays <see cref="LibraryImportStatus.AwaitingVerification"/>
+/// for the host's read-only background verifier, while an administrator can
+/// also call <see cref="RecheckAsync"/> from the Library Publishing page. A
+/// publish failure here is always caught and recorded on the
+/// <see cref="LibraryImport"/> row; it must never propagate out to the caller
+/// (see <c>MediaAssetPublishingCoordinator</c>, which is the actual caller
+/// from the approval flow).
 /// </remarks>
 public sealed class CwaPublishingService(
     ICwaSettingsStore settingsStore,

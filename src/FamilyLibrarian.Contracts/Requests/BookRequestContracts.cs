@@ -53,6 +53,21 @@ public sealed record BookRequestListResponse(
 public sealed record AdminBookRequestListResponse(
     IReadOnlyList<AdminBookRequestResponse> Requests);
 
+/// <summary>
+/// Small, administrator-only attention summary for the persistent application
+/// chrome and request-review surfaces. It deliberately contains no requester
+/// identity or provider credentials.
+/// </summary>
+public sealed record AdminRequestAttentionResponse(
+    int NeedsReviewCount,
+    IReadOnlyList<AdminProviderIssueResponse> ProviderIssues);
+
+public sealed record AdminProviderIssueResponse(
+    string ProviderId,
+    string DisplayName,
+    string Summary,
+    DateTimeOffset OccurredAtUtc);
+
 public sealed record AdminBookRequestResponse(
     BookRequestResponse Request,
     string RequesterDisplayName,

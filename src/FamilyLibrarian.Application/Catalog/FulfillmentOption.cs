@@ -96,6 +96,19 @@ public interface IDirectAcquisitionProvider
     Task<DirectAcquisitionFile> FetchAsync(FulfillmentOption fulfillmentOption, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// A direct-acquisition provider whose returned options are conservative enough
+/// for the server to fetch without a librarian choosing among them first.
+/// </summary>
+/// <remarks>
+/// This is deliberately an opt-in capability rather than an inference from
+/// <see cref="FulfillmentOption.OptionKind"/> or price. A provider must make
+/// its own title/creator/identifier confidence decision before it implements
+/// this contract. The normal security and identity checks still run after the
+/// file is fetched.
+/// </remarks>
+public interface IAutomaticDirectAcquisitionProvider : IDirectAcquisitionProvider;
+
 public sealed record DirectAcquisitionFile(Stream Content, string Filename);
 
 /// <summary>Advertises matches in a linked owned library (e.g. Calibre-Web). No concrete implementation ships in M8.</summary>

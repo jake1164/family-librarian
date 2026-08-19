@@ -27,13 +27,13 @@ namespace FamilyLibrarian.Application.Providers;
 /// authoritative, so an admin's choice is not silently reverted by config.
 /// </param>
 /// <param name="SetupInstructions">
-/// Short, plain-text steps for obtaining a credential, shown next to the API key
-/// field for a provider an administrator manages themselves. <see langword="null"/>
-/// for a provider that needs no walkthrough.
+/// Short, plain-text information about using or configuring the provider. It is
+/// shown in the provider's administrator card and may be present even when the
+/// provider needs no credential.
 /// </param>
 /// <param name="SetupLinks">
-/// Named links (e.g. the exact console page to enable the API, the page to
-/// create a key) shown alongside <see cref="SetupInstructions"/>.
+/// Named links (for example, a provider's website, documentation, or the exact
+/// console page to enable an API) shown alongside <see cref="SetupInstructions"/>.
 /// </param>
 public sealed record ProviderDescriptor(
     string Id,

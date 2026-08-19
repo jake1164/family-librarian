@@ -5,6 +5,7 @@ using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Security;
+using FamilyLibrarian.Web.Acquisition;
 using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
 using FamilyLibrarian.Web.Publishing;
@@ -15,6 +16,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddHostedService<CwaVerificationHostedService>();
+if (!builder.Environment.IsEnvironment("Testing"))
+{
+    builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
+}
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgresql")
     .AddCheck<SecurityScannerHealthCheck>("malware-scanner");

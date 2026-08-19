@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FamilyLibrarian.Application.Catalog;
@@ -27,7 +28,7 @@ public sealed class GutendexProvider(
     HttpClient httpClient,
     IProviderRegistry registry,
     IProviderSettingsStore settingsStore,
-    IWorkLookup workLookup) : IDirectAcquisitionProvider
+    IWorkLookup workLookup) : IAutomaticDirectAcquisitionProvider
 {
     public string Id => ProviderRegistry.GutendexProviderId;
 
@@ -66,21 +67,17 @@ public sealed class GutendexProvider(
         {
             using var response = await httpClient.GetAsync(
                 $"books?search={Uri.EscapeDataString(query)}", cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                return [];
-            }
+            response.EnsureSuccessStatusCode();
 
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             root = JsonNode.Parse(body);
         }
-        catch (HttpRequestException)
+        catch (JsonException exception)
         {
-            return [];
-        }
-        catch (JsonException)
-        {
-            return [];
+            // A malformed catalog response is a provider health problem, not a
+            // genuine no-match. Wrap it as an HTTP-style provider failure so the
+            // automatic worker records an admin-visible, safe failure outcome.
+            throw new HttpRequestException("Gutendex returned an invalid catalog response.", exception);
         }
 
         var results = root?["results"]?.AsArray();
@@ -92,8 +89,20 @@ public sealed class GutendexProvider(
         foreach (var result in results)
         {
             var title = result?["title"]?.GetValue<string>();
-            if (string.IsNullOrWhiteSpace(title) ||
-                !title.Contains(work.Title, StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(title) || !TitleMatches(work.Title, title))
+            {
+                continue;
+            }
+
+            // Gutendex's search results can include adaptations, reading guides,
+            // and similarly titled works. For unattended acquisition we require
+            // the title to begin with our canonical title *and* an exact match of
+            // normalized creator-name tokens. The downloaded EPUB is then still
+            // independently verified against the Work before it can be trusted.
+            var sourceAuthors = result?["authors"]?.AsArray() ?? [];
+            if (!string.IsNullOrWhiteSpace(work.PrimaryAuthor) &&
+                !sourceAuthors.Any(author =>
+                    AuthorMatches(work.PrimaryAuthor, author?["name"]?.GetValue<string>())))
             {
                 continue;
             }
@@ -147,4 +156,31 @@ public sealed class GutendexProvider(
 
         return new DirectAcquisitionFile(stream, $"gutenberg-{fulfillmentOption.ProviderResultId}.epub");
     }
+
+    private static bool TitleMatches(string expected, string actual)
+    {
+        var normalizedExpected = Normalize(expected);
+        var normalizedActual = Normalize(actual);
+        return !string.IsNullOrEmpty(normalizedExpected) &&
+            normalizedActual.StartsWith(normalizedExpected, StringComparison.Ordinal);
+    }
+
+    private static bool AuthorMatches(string expected, string? actual) =>
+        !string.IsNullOrWhiteSpace(actual) &&
+        AuthorTokens(expected).SequenceEqual(AuthorTokens(actual), StringComparer.Ordinal);
+
+    private static string[] AuthorTokens(string value) => value
+        .Normalize(NormalizationForm.FormKC)
+        .Split(default(char[]), StringSplitOptions.RemoveEmptyEntries)
+        .SelectMany(part => part.Split([',', '.', ';', ':', '-', '_'], StringSplitOptions.RemoveEmptyEntries))
+        .Select(part => new string(part.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray()))
+        .Where(part => !string.IsNullOrEmpty(part))
+        .Order(StringComparer.Ordinal)
+        .ToArray();
+
+    private static string Normalize(string value) => new(value
+        .Normalize(NormalizationForm.FormKC)
+        .Where(char.IsLetterOrDigit)
+        .Select(char.ToLowerInvariant)
+        .ToArray());
 }

@@ -169,8 +169,8 @@ internal static class RequestEndpoints
     // separately so the client never has to parse this sentence.
     private static string DescribeStatus(RequestStatus status) => status switch
     {
-        RequestStatus.PendingAcquisition => "Waiting for the librarian to find this.",
-        RequestStatus.NeedsReview => "The librarian has a question about this request.",
+        RequestStatus.PendingAcquisition => "We’re checking trusted sources and preparing a safe copy when one is available.",
+        RequestStatus.NeedsReview => "A librarian is reviewing this request.",
         RequestStatus.NotAvailable => "The librarian could not find this one for now.",
         RequestStatus.Cancelled => "You cancelled this request.",
         RequestStatus.Available => "Available in the family library.",

@@ -124,6 +124,30 @@ public sealed class MetadataIntegrationsEndpointTests
     }
 
     [TestMethod]
+    public async Task ProviderStatusesIncludeNamedInformationalLinks()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        var providers = await client.GetFromJsonAsync<ProviderListResponse>(
+            "/api/v1/admin/integrations/metadata/");
+        Assert.IsNotNull(providers);
+
+        var openLibrary = providers.Providers.Single(provider => provider.ProviderId == KeylessProvider);
+        var gutendex = providers.Providers.Single(provider => provider.ProviderId == "gutendex");
+
+        CollectionAssert.Contains(
+            openLibrary.SetupLinks.Select(link => link.Url).ToArray(),
+            "https://openlibrary.org/");
+        CollectionAssert.Contains(
+            openLibrary.SetupLinks.Select(link => link.Url).ToArray(),
+            "https://openlibrary.org/developers/api");
+        CollectionAssert.Contains(
+            gutendex.SetupLinks.Select(link => link.Url).ToArray(),
+            "https://www.gutenberg.org/about/");
+    }
+
+    [TestMethod]
     public async Task AStoredCredentialIsStillDecryptableAfterAHostRestart()
     {
         var fixture = WebTestFixture.Require(_fixture);

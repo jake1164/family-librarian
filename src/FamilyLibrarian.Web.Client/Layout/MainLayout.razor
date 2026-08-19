@@ -1,5 +1,7 @@
 @inherits LayoutComponentBase
+@implements IDisposable
 @inject ApiAuthenticationStateProvider AuthenticationStateProvider
+@inject AdminRequestsApiClient AdminRequests
 @inject NavigationManager Navigation
 
 <MudThemeProvider />
@@ -37,7 +39,9 @@
                      AnchorOrigin="Origin.BottomRight"
                      TransformOrigin="Origin.TopRight">
                 <MudMenuItem Href="settings/metadata-providers" Icon="@Icons.Material.Filled.AutoStories">Metadata providers</MudMenuItem>
-                <MudMenuItem Href="settings/sources" Icon="@Icons.Material.Filled.Source">Sources</MudMenuItem>
+                <MudMenuItem Href="settings/sources" Icon="@Icons.Material.Filled.Source">
+                    Sources@(ProviderIssueCount == 0 ? string.Empty : $" · {ProviderIssueCount} issue{(ProviderIssueCount == 1 ? string.Empty : "s")}")
+                </MudMenuItem>
                 <MudMenuItem Href="settings/publishing" Icon="@Icons.Material.Filled.CloudUpload">Publishing</MudMenuItem>
                 <MudMenuItem Href="settings/acquisition-policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudMenuItem>
                 <MudMenuItem Href="settings/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudMenuItem>
@@ -88,7 +92,9 @@
                 <MudNavLink Href="reading" Icon="@Icons.Material.Filled.Star">My reading</MudNavLink>
                 <AuthorizeView Roles="Admin" Context="adminContext">
                     <MudDivider Class="my-2" />
-                    <MudNavLink Href="admin/requests" Icon="@Icons.Material.Filled.Inbox">Queue</MudNavLink>
+                    <MudNavLink Href="admin/requests" Icon="@Icons.Material.Filled.Inbox">
+                        Queue@(NeedsReviewCount == 0 ? string.Empty : $" · {NeedsReviewCount} need review")
+                    </MudNavLink>
                     <MudNavLink Href="admin/security" Icon="@Icons.Material.Filled.Shield">Security queue</MudNavLink>
                 </AuthorizeView>
             </MudNavMenu>
@@ -102,6 +108,34 @@
        sides and the top gap. *@
     <MudMainContent Class="pb-8">
         <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
+            <AuthorizeView Roles="Admin">
+                @if (adminAttention is { } attention && (attention.NeedsReviewCount > 0 || attention.ProviderIssues.Count > 0))
+                {
+                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.body2">
+                                Admin attention:
+                                @if (attention.NeedsReviewCount > 0)
+                                {
+                                    <span>@attention.NeedsReviewCount request@(attention.NeedsReviewCount == 1 ? string.Empty : "s") need review.</span>
+                                }
+                                @if (attention.ProviderIssues.Count > 0)
+                                {
+                                    <span>@attention.ProviderIssues.Count automatic source issue@(attention.ProviderIssues.Count == 1 ? string.Empty : "s") need attention.</span>
+                                }
+                            </MudText>
+                            @if (attention.NeedsReviewCount > 0)
+                            {
+                                <MudLink Href="admin/requests">Open queue</MudLink>
+                            }
+                            @if (attention.ProviderIssues.Count > 0)
+                            {
+                                <MudLink Href="settings/sources">Review sources</MudLink>
+                            }
+                        </MudStack>
+                    </MudAlert>
+                }
+            </AuthorizeView>
             @Body
         </MudContainer>
     </MudMainContent>
@@ -113,11 +147,70 @@
     // and as a dismissible overlay below it, toggled by the app bar's
     // hamburger button.
     private bool isDrawerOpen = true;
+    private AdminRequestAttentionResponse? adminAttention;
+    private CancellationTokenSource? attentionRefreshCancellation;
+
+    private int NeedsReviewCount => adminAttention?.NeedsReviewCount ?? 0;
+
+    private int ProviderIssueCount => adminAttention?.ProviderIssues.Count ?? 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        if (!state.User.IsInRole("Admin"))
+        {
+            return;
+        }
+
+        await RefreshAdminAttentionAsync(CancellationToken.None);
+        attentionRefreshCancellation = new CancellationTokenSource();
+        _ = RefreshAdminAttentionPeriodicallyAsync(attentionRefreshCancellation.Token);
+    }
+
+    private async Task RefreshAdminAttentionAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            adminAttention = await AdminRequests.GetAttentionAsync(cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            // Attention indicators are helpful, but a transient summary failure
+            // must not hide the rest of the authenticated application.
+        }
+    }
+
+    private async Task RefreshAdminAttentionPeriodicallyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(async () =>
+                {
+                    await RefreshAdminAttentionAsync(cancellationToken);
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Application disposal or sign-out stopped the refresh loop.
+        }
+    }
 
     private async Task SignOutAsync()
     {
+        attentionRefreshCancellation?.Cancel();
         await AuthenticationStateProvider.SignOutAsync();
         // forceLoad so nothing cached in the WebAssembly app outlives the session.
         Navigation.NavigateTo("/", forceLoad: true);
+    }
+
+    public void Dispose()
+    {
+        attentionRefreshCancellation?.Cancel();
+        attentionRefreshCancellation?.Dispose();
     }
 }

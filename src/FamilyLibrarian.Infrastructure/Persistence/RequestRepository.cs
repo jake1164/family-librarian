@@ -75,6 +75,11 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         return await AddAdminProgressAsync(views, cancellationToken);
     }
 
+    public Task<int> CountForAdminAsync(
+        RequestStatus status,
+        CancellationToken cancellationToken) =>
+        database.BookRequests.CountAsync(request => request.Status == status, cancellationToken);
+
     public Task<BookRequest?> FindRequestForAdminAsync(
         Guid requestId,
         CancellationToken cancellationToken) =>
@@ -82,6 +87,28 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
             .SingleOrDefaultAsync(request => request.Id == requestId, cancellationToken);
+
+    public async Task<IReadOnlyList<BookRequest>> ListPendingForAutomaticFulfillmentAsync(
+        int maximumCount,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
+
+        return await database.BookRequests
+            .Include(request => request.Formats)
+            .Include(request => request.StatusHistory)
+            .Where(request => request.Status == RequestStatus.PendingAcquisition)
+            .OrderBy(request => request.RequestedAtUtc)
+            .Take(maximumCount)
+            .ToArrayAsync(cancellationToken);
+    }
+
+    public Task<bool> HasAcquiredArtifactAsync(
+        Guid requestFormatId,
+        CancellationToken cancellationToken) =>
+        database.MediaAssets.AnyAsync(
+            asset => asset.AssociatedRequestFormatId == requestFormatId,
+            cancellationToken);
 
     public Task<BookRequest?> FindByFormatIdAsync(
         Guid requestFormatId,

@@ -54,7 +54,15 @@ public sealed class ProviderRegistry : IProviderRegistry
                 RequiresCredential: false,
                 HasExternallyManagedCredential: false,
                 DefaultEnabled: configuration.GetValue(
-                    $"{OpenLibraryMetadataOptions.SectionName}:Enabled", false)),
+                    $"{OpenLibraryMetadataOptions.SectionName}:Enabled", false),
+                SetupInstructions:
+                    "Open Library is an open catalogue from the Internet Archive. " +
+                    "Family Librarian uses its public API for book discovery.",
+                SetupLinks:
+                [
+                    new ProviderSetupLink("Explore Open Library", "https://openlibrary.org/"),
+                    new ProviderSetupLink("API documentation", "https://openlibrary.org/developers/api")
+                ]),
             new ProviderDescriptor(
                 GoogleBooksProviderId,
                 "Google Books",
@@ -72,11 +80,15 @@ public sealed class ProviderRegistry : IProviderRegistry
                     "unlike Open Library, which this app throttles itself.",
                 SetupLinks:
                 [
+                    new ProviderSetupLink("Explore Google Books", "https://books.google.com/"),
                     new ProviderSetupLink(
-                        "1. Enable the Books API",
+                        "Books API documentation",
+                        "https://developers.google.com/books/docs/overview"),
+                    new ProviderSetupLink(
+                        "Enable the Books API",
                         "https://console.cloud.google.com/apis/library/books.googleapis.com"),
                     new ProviderSetupLink(
-                        "2. Create an API key",
+                        "Create an API key",
                         "https://console.cloud.google.com/apis/credentials")
                 ]),
             new ProviderDescriptor(
@@ -85,10 +97,19 @@ public sealed class ProviderRegistry : IProviderRegistry
                 DirectAcquisitionOnly,
                 RequiresCredential: false,
                 HasExternallyManagedCredential: false,
-                // Bundled does not mean enabled: an admin must opt in before
-                // family search terms are used to query a third-party service,
-                // even a free, keyless one.
-                DefaultEnabled: false)
+                // This narrowly scoped, credential-free public-domain source is
+                // ready to use without an admin setup step. It is only queried
+                // after an ebook request, and its files still pass the full
+                // quarantine, malware, format, and identity pipeline.
+                DefaultEnabled: true,
+                SetupInstructions:
+                    "Gutendex is a JSON API that indexes Project Gutenberg's " +
+                    "public-domain ebook catalogue.",
+                SetupLinks:
+                [
+                    new ProviderSetupLink("Gutendex API", "https://gutendex.com/"),
+                    new ProviderSetupLink("About Project Gutenberg", "https://www.gutenberg.org/about/")
+                ])
         ];
     }
 

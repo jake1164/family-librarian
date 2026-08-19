@@ -155,6 +155,7 @@ public static class DependencyInjection
             .ValidateOnStart();
         services.AddScoped<IAssetStagingStore, FileSystemAssetStagingStore>();
         services.AddScoped<IAcquisitionRepository, AcquisitionRepository>();
+        services.AddScoped<IProviderAttemptRepository, ProviderAttemptRepository>();
 
         // Mirrors InvitationPolicy above: a plain settings object, since the
         // Application layer that consumes it takes no dependency on the options
@@ -172,6 +173,9 @@ public static class DependencyInjection
         services.AddScoped<AcquisitionStagingService>();
         services.AddScoped<ManualImportService>();
         services.AddScoped<DirectAcquisitionService>();
+        services.AddScoped<DirectAcquisitionSecurityService>();
+        services.AddScoped<AutomaticRequestFulfillmentService>();
+        services.AddScoped<ExternalProviderRecheckService>();
 
         services.AddOptions<ClamAvScannerOptions>()
             .Bind(configuration.GetSection(ClamAvScannerOptions.SectionName))
@@ -339,6 +343,8 @@ public static class DependencyInjection
             client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
         });
         services.AddTransient<IDirectAcquisitionProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<GutendexProvider>());
+        services.AddTransient<IAutomaticDirectAcquisitionProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<GutendexProvider>());
 
         // Publishing destinations (M12): CWA (ebook library, ingest folder) and

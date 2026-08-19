@@ -5,8 +5,12 @@
 
 <PageTitle>@(book?.Title ?? "Book") · Family Librarian</PageTitle>
 
-<MudStack Spacing="3">
-    <MudButton Variant="Variant.Text" Href="search">Back to search</MudButton>
+<MudStack Spacing="4">
+    <MudStack Row="true">
+        <MudButton Variant="Variant.Text" Href="search" StartIcon="@Icons.Material.Filled.ArrowBack">
+            Back to search
+        </MudButton>
+    </MudStack>
 
     @if (isLoading)
     {
@@ -18,12 +22,50 @@
     }
     else
     {
-        <MudText Typo="Typo.h3">@book.Title</MudText>
-        <MudText Typo="Typo.h6">@string.Join(", ", book.Authors)</MudText>
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudStack Spacing="2">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudText Typo="Typo.overline">Catalog record</MudText>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                        @book.ProviderName
+                    </MudChip>
+                </MudStack>
+
+                <div>
+                    <MudText Typo="Typo.h3">@book.Title</MudText>
+                    <MudText Typo="Typo.h6">@string.Join(", ", book.Authors)</MudText>
+                </div>
+
+                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                    @if (book.PublicationDate is { } publicationDate)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                            Reported publication: @publicationDate.ToString("yyyy")
+                        </MudChip>
+                    }
+                    @if (book.Editions.Count > 0)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                            @EditionCountLabel(book.Editions.Count)
+                        </MudChip>
+                    }
+                </MudStack>
+            </MudStack>
+        </MudPaper>
 
         @if (!string.IsNullOrWhiteSpace(book.Description))
         {
-            <div class="mud-typography mud-typography-body1">@CatalogDescriptionMarkup.ToMarkup(book.Description)</div>
+            <MudPaper Class="pa-4" Outlined="true">
+                <MudText Typo="Typo.h6" Class="mb-2">About this record</MudText>
+                <div class="mud-typography mud-typography-body1">@CatalogDescriptionMarkup.ToMarkup(book.Description)</div>
+            </MudPaper>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                This source did not provide a description for this record. The edition details below
+                can still help you decide whether it is the one you want.
+            </MudAlert>
         }
 
         @if (book.Series.Count > 0)
@@ -40,30 +82,74 @@
         }
 
         <MudPaper Class="pa-4" Outlined="true">
-            <MudText Typo="Typo.h6">Known editions</MudText>
-            @foreach (var edition in book.Editions)
+            <MudText Typo="Typo.h6" Class="mb-1">Known editions</MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                These are the edition details reported by @book.ProviderName for this catalog record.
+            </MudText>
+
+            @if (book.Editions.Count == 0)
             {
-                <MudText Typo="Typo.body2">
-                    @edition.Format · @edition.Title@(string.IsNullOrWhiteSpace(edition.Isbn13) ? string.Empty : $" · ISBN {edition.Isbn13}")
-                </MudText>
+                <MudText Typo="Typo.body2">No edition details were reported.</MudText>
+            }
+            else
+            {
+                <MudStack Spacing="2">
+                    @foreach (var edition in book.Editions)
+                    {
+                        <MudPaper Outlined="true" Class="pa-3">
+                            <MudStack Spacing="1">
+                                <MudText Typo="Typo.subtitle1">@edition.Title</MudText>
+                                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                        @FormatLabel(edition.Format)
+                                    </MudChip>
+                                    @if (edition.PublicationDate is { } editionDate)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                            Published: @editionDate.ToString("yyyy")
+                                        </MudChip>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(edition.Isbn13))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                            ISBN: @edition.Isbn13
+                                        </MudChip>
+                                    }
+                                </MudStack>
+                            </MudStack>
+                        </MudPaper>
+                    }
+                </MudStack>
             }
         </MudPaper>
 
-        <MudButton Variant="Variant.Filled"
-                   Color="Color.Primary"
-                   OnClick="ResolveAsync"
-                   Disabled="@isResolving">
-            @(isResolving ? "Saving…" : "Use this book")
-        </MudButton>
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+            Similar titles are kept separate unless catalog sources report the same ISBN. Contributor
+            names, subtitles, formats, and dates can indicate a different edition, adaptation,
+            retelling, translation, or a separate catalog record.
+        </MudAlert>
+
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h6">Add to the family catalog</MudText>
+                <MudText Typo="Typo.body2">
+                    This saves the selected record. You can then request the format your family wants.
+                </MudText>
+                <MudStack Row="true">
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               OnClick="ResolveAsync"
+                               Disabled="@isResolving">
+                        @(isResolving ? "Saving…" : "Use this book")
+                    </MudButton>
+                </MudStack>
+            </MudStack>
+        </MudPaper>
 
         @if (!string.IsNullOrWhiteSpace(resolveError))
         {
             <MudAlert Severity="Severity.Error">@resolveError</MudAlert>
         }
-
-        <MudText Typo="Typo.body2">
-            Choosing this book saves it to the family catalog, where you can request it.
-        </MudText>
     }
 </MudStack>
 
@@ -114,4 +200,10 @@
             isResolving = false;
         }
     }
+
+    private static string EditionCountLabel(int count) =>
+        count == 1 ? "1 known edition" : $"{count} known editions";
+
+    private static string FormatLabel(string format) =>
+        string.IsNullOrWhiteSpace(format) ? "Format not reported" : format;
 }

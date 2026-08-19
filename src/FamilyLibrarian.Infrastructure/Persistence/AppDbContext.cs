@@ -54,6 +54,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<AcquisitionCandidate> AcquisitionCandidates => Set<AcquisitionCandidate>();
 
+    public DbSet<ProviderAttempt> ProviderAttempts => Set<ProviderAttempt>();
+
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
 
     public DbSet<SecurityEvaluation> SecurityEvaluations => Set<SecurityEvaluation>();
@@ -333,6 +335,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(provider => provider.DisplayName).HasColumnName("display_name").HasMaxLength(128).IsRequired();
             entity.Property(provider => provider.BaseUrl).HasColumnName("base_url").HasMaxLength(1_024).IsRequired();
             entity.Property(provider => provider.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(provider => provider.RecheckSchedule).HasColumnName("recheck_schedule").HasConversion<string>().HasMaxLength(32);
             entity.Property(provider => provider.ProtectedApiKey).HasColumnName("protected_api_key").HasMaxLength(4_096);
             entity.Property(provider => provider.ApiKeyFormatVersion).HasColumnName("api_key_format_version");
             entity.Property(provider => provider.ApiKeyHint).HasColumnName("api_key_hint").HasMaxLength(8);
@@ -440,6 +443,32 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(candidate => candidate.ConfidenceScore).HasColumnName("confidence_score");
             entity.Property(candidate => candidate.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
             ConfigureTimestamps(entity);
+        });
+
+        builder.Entity<ProviderAttempt>(entity =>
+        {
+            entity.ToTable("provider_attempts", "acquisition");
+            entity.HasKey(attempt => attempt.Id);
+            entity.Property(attempt => attempt.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(attempt => attempt.RequestId).HasColumnName("request_id");
+            entity.Property(attempt => attempt.RequestFormatId).HasColumnName("request_format_id");
+            entity.Property(attempt => attempt.ProviderId).HasColumnName("provider_id").HasMaxLength(128).IsRequired();
+            entity.Property(attempt => attempt.Outcome).HasColumnName("outcome").HasConversion<string>().HasMaxLength(32);
+            entity.Property(attempt => attempt.Summary).HasColumnName("summary").HasMaxLength(512).IsRequired();
+            entity.Property(attempt => attempt.AttemptedAtUtc).HasColumnName("attempted_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(attempt => attempt.NextEligibleCheckAtUtc).HasColumnName("next_eligible_check_at_utc").HasColumnType("timestamp with time zone");
+
+            entity.HasIndex(attempt => new { attempt.RequestId, attempt.AttemptedAtUtc });
+            entity.HasIndex(attempt => new { attempt.RequestFormatId, attempt.ProviderId, attempt.AttemptedAtUtc });
+
+            entity.HasOne<BookRequest>()
+                .WithMany()
+                .HasForeignKey(attempt => attempt.RequestId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<RequestFormat>()
+                .WithMany()
+                .HasForeignKey(attempt => attempt.RequestFormatId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<MediaAsset>(entity =>

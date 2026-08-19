@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "Admin")]
 @using FamilyLibrarian.Web.Client.Acquisition
 @using FamilyLibrarian.Web.Client.Catalog
+@using FamilyLibrarian.Contracts.Acquisition
 @inject AdminRequestsApiClient Requests
 @inject MediaAssetsApiClient MediaAssets
 @inject CatalogApiClient Catalog
@@ -55,6 +56,40 @@
                     <MudText Typo="Typo.body2"><em>Requester note:</em> @request.Request.Note</MudText>
                 }
             </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudText Typo="Typo.h6" Class="mb-1">Provider activity</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2">
+                Every automatic lookup is recorded here. Scheduled external sources only report candidates for review;
+                they never download a file without a librarian action.
+            </MudText>
+            @if (providerAttempts.Count == 0)
+            {
+                <MudText Typo="Typo.body2">No provider lookups have been recorded yet.</MudText>
+            }
+            else
+            {
+                <MudList T="string" Dense="true">
+                    @foreach (var attempt in providerAttempts)
+                    {
+                        <MudListItem T="string">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.ProviderId</MudChip>
+                                <MudChip T="string" Size="Size.Small" Color="@ProviderAttemptColor(attempt.Outcome)">@attempt.Outcome</MudChip>
+                            </MudStack>
+                            <MudText Typo="Typo.body2">@attempt.Summary</MudText>
+                            <MudText Typo="Typo.caption">
+                                @attempt.AttemptedAtUtc.ToLocalTime().ToString("g")
+                                @if (attempt.NextEligibleCheckAtUtc is not null)
+                                {
+                                    <span> · Next eligible @attempt.NextEligibleCheckAtUtc.Value.ToLocalTime().ToString("g")</span>
+                                }
+                            </MudText>
+                        </MudListItem>
+                    }
+                </MudList>
+            }
         </MudPaper>
 
         <MudPaper Outlined="true" Class="pa-4">
@@ -155,6 +190,7 @@
 
     private AdminBookRequestResponse? request;
     private WorkFulfillmentOptionsResponse? fulfillment;
+    private IReadOnlyList<ProviderAttemptResponse> providerAttempts = [];
     private string? adminNote;
     private string? transitionReason;
     private bool isLoading = true;
@@ -172,6 +208,7 @@
             request = await Requests.GetAsync(RequestId);
             adminNote = request?.Request.AdminNote;
             fulfillment = request is null ? null : await Catalog.GetFulfillmentOptionsAsync(request.Request.WorkId);
+            providerAttempts = request is null ? [] : await Requests.GetProviderAttemptsAsync(RequestId);
         }
         catch (HttpRequestException)
         {
@@ -214,7 +251,7 @@
             if (outcome.Succeeded)
             {
                 Snackbar.Add(
-                    $"Fetched from {option.ProviderId}. Visit the Security Queue to scan and approve it.",
+                    $"Fetched from {option.ProviderId}. It is being scanned, verified, and published automatically when it passes.",
                     Severity.Success);
             }
             else
@@ -293,7 +330,7 @@
             if (outcome.Succeeded)
             {
                 Snackbar.Add(
-                    "File scanned automatically. Visit the Security Queue to review and approve it.", Severity.Success);
+                    "File is being scanned and verified. It will publish automatically when it passes.", Severity.Success);
             }
             else
             {
@@ -339,5 +376,14 @@
         "NotAvailable" or "Cancelled" => Color.Error,
         "NeedsReview" => Color.Warning,
         _ => Color.Primary
+    };
+
+    private static Color ProviderAttemptColor(string outcome) => outcome switch
+    {
+        "Acquired" => Color.Success,
+        "CandidatesFound" => Color.Info,
+        "NoMatch" => Color.Default,
+        "Blocked" => Color.Warning,
+        _ => Color.Error
     };
 }

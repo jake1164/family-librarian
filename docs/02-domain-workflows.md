@@ -422,6 +422,19 @@ configured private-egress gateway. It must fail closed when that gateway is
 unavailable; the job may wait for private egress or fail, but must never fall
 back silently to normal host Internet access.
 
+**Provider-attempt ledger:** `AcquisitionJob` is created only after an artifact
+is successfully staged, so it cannot explain providers that found no result.
+The append-only `ProviderAttempt` ledger records every automatic lookup with the
+request format, provider ID, outcome, safe summary, attempted time, and next
+eligible check time. The administrator request-detail page displays the ledger.
+It never contains download URLs, provider credentials, or untrusted response
+bodies.
+
+The provider-attempt record is distinct from a successful `AcquisitionJob`:
+one request format can have several unsuccessful provider checks and no job at
+all, then later have one job that stages an artifact. The administrator timeline
+must present both in chronological order.
+
 Required malware-scanner health is a separate, mandatory acquisition gate. The
 application checks it before creating a manual-upload, linked-library staging,
 or provider-download attempt. If it is unavailable, the request format remains
@@ -961,12 +974,45 @@ available, the request moves to completed history with an explicit status
 event. A background verifier performs the OPDS rechecks, so administrators do
 not have to drive that normal asynchronous CWA step by hand.
 
-**Requester progress:** My Requests supplements the stable request status with
-one safe, per-format workflow message whenever a file has entered the pipeline:
+**Automatic public-domain ebook path:** a second background worker processes
+pending ebook formats. Gutendex is enabled by default and is only eligible for
+unattended acquisition when it returns exactly one result whose normalized title
+starts with the canonical title and whose creator-name tokens exactly match the
+canonical primary author. The worker then re-derives the candidate on the
+server, downloads it into quarantine, runs malware and EPUB structure checks,
+verifies package title/creator identity, and lets the existing approval and CWA
+publishing path continue. A result that is missing, ambiguous, unavailable, or
+cannot be acquired moves the request to `NeedsReview`; it is never guessed or
+retried continuously.
+
+This is intentionally limited to the bundled provider that explicitly opts in
+to automatic acquisition. Gutendex has effective `Once` behavior: each outcome
+is recorded and it is not repeatedly queried. Admin-registered external
+providers default to `Manual`, but an administrator may select `Daily` or
+`Weekly` per enabled provider. A scheduled external lookup follows the declared
+egress policy and records the outcome; a result moves the request to
+`NeedsReview` and never downloads the external artifact automatically.
+
+**Cancel and ask again:** reopening a cancelled request begins a fresh
+acquisition cycle. Previous provider attempts remain visible in the audit
+timeline, but they cannot suppress new automatic or scheduled checks for the
+reopened request.
+
+**Requester progress:** My Requests and the selected Work page supplement the
+stable request status with one safe, per-format workflow message whenever a file has entered the pipeline:
 awaiting scan, scanning, awaiting approval, security review required, needs
 librarian identification, approved and publishing, awaiting destination
 verification, or publishing needs attention. It intentionally excludes uploaded filenames, scan evidence,
 destination failure details, and librarian-only notes.
+
+**Administrator attention:** the application chrome exposes a persistent,
+admin-only attention summary whenever one or more requests are in
+`NeedsReview` or a source's latest automatic lookup failed or was blocked. The
+summary links directly to Queue and Sources; Queue keeps the review count visible
+instead of leaving it behind a filter, and Sources shows the latest bounded,
+secret-free provider-attempt summary. The detailed request activity ledger
+remains the provenance view. Requesters never receive provider IDs, transport
+failures, URLs, credentials, or diagnostic details.
 
 There is still no general `CheckingLibrary`, `Searching`, `Acquiring`, or
 `Processing` request state machine; audiobook confirmation and

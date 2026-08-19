@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FamilyLibrarian.Contracts.Requests;
+using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Web.Client.Authentication;
 
 namespace FamilyLibrarian.Web.Client.Requests;
@@ -8,6 +9,12 @@ namespace FamilyLibrarian.Web.Client.Requests;
 /// <summary>Typed client for the administrator's request-review queue.</summary>
 public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTokenProvider antiforgery)
 {
+    public async Task<AdminRequestAttentionResponse> GetAttentionAsync(
+        CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<AdminRequestAttentionResponse>(
+            "api/v1/admin/requests/attention", cancellationToken)
+        ?? new AdminRequestAttentionResponse(0, []);
+
     public async Task<IReadOnlyList<AdminBookRequestResponse>> GetQueueAsync(
         string? status,
         CancellationToken cancellationToken = default)
@@ -24,6 +31,12 @@ public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTok
         CancellationToken cancellationToken = default) =>
         httpClient.GetFromJsonAsync<AdminBookRequestResponse>(
             $"api/v1/admin/requests/{requestId}", cancellationToken);
+
+    public async Task<IReadOnlyList<ProviderAttemptResponse>> GetProviderAttemptsAsync(
+        Guid requestId,
+        CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<ProviderAttemptResponse[]>(
+            $"api/v1/admin/requests/{requestId}/provider-attempts", cancellationToken) ?? [];
 
     public Task<AdminRequestActionOutcome> ChangeStatusAsync(
         Guid requestId,

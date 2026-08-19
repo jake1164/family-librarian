@@ -6,6 +6,7 @@
 @using Microsoft.AspNetCore.Authorization
 @inject ExternalProviderApiClient Api
 @inject MetadataIntegrationsApiClient BuiltInSourcesApi
+@inject AdminRequestsApiClient AdminRequests
 @inject ISnackbar Snackbar
 
 <PageTitle>Sources | Family Librarian</PageTitle>
@@ -31,6 +32,7 @@
     {
         @foreach (var source in builtInSources)
         {
+            var issue = ProviderIssueFor(source.ProviderId);
             <MudPaper Outlined="true" Class="pa-3 mb-2">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                     <MudText Typo="Typo.subtitle1" Class="flex-grow-1">@source.DisplayName</MudText>
@@ -49,6 +51,49 @@
                         <span>Provides direct acquisition options during fulfillment.</span>
                     }
                 </MudText>
+                @if (issue is not null)
+                {
+                    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
+                        <MudText Typo="Typo.subtitle2">Automatic lookup needs attention</MudText>
+                        <MudText Typo="Typo.body2">@issue.Summary</MudText>
+                        <MudText Typo="Typo.caption">
+                            Last automatic lookup: @issue.OccurredAtUtc.ToLocalTime().ToString("g").
+                            This source is not retried repeatedly; a new or reopened request can try it again.
+                        </MudText>
+                    </MudAlert>
+                }
+                else if (source.IsEnabled)
+                {
+                    <MudText Typo="Typo.caption" Class="mt-1">
+                        Automatic lookup is enabled for new ebook requests. This stable public-domain source is checked once per request cycle.
+                    </MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption" Class="mt-1">
+                        Automatic lookup is disabled for this source.
+                    </MudText>
+                }
+                @if (!string.IsNullOrWhiteSpace(source.SetupInstructions) || source.SetupLinks.Count > 0)
+                {
+                    <MudStack Spacing="1" Class="mt-2">
+                        @if (!string.IsNullOrWhiteSpace(source.SetupInstructions))
+                        {
+                            <MudText Typo="Typo.body2">@source.SetupInstructions</MudText>
+                        }
+                        @if (source.SetupLinks.Count > 0)
+                        {
+                            <MudStack Row="true" Spacing="3" Wrap="Wrap.Wrap">
+                                @foreach (var link in source.SetupLinks)
+                                {
+                                    <MudLink Href="@link.Url" Target="_blank" rel="noopener noreferrer">
+                                        @link.Label
+                                    </MudLink>
+                                }
+                            </MudStack>
+                        }
+                    </MudStack>
+                }
                 @if (source.LastTestedAtUtc is not null)
                 {
                     <MudText Typo="Typo.caption" Class="mt-1">@source.LastTestMessage</MudText>
@@ -182,6 +227,12 @@
                                         @(entry.License is null ? "" : $" · License: {entry.License}")
                                         @(entry.TrustLabel is null ? "" : $" · {entry.TrustLabel}")
                                     </MudText>
+                                    @if (IsSafeExternalUrl(entry.HomepageUrl))
+                                    {
+                                        <MudLink Href="@entry.HomepageUrl" Target="_blank" rel="noopener noreferrer" Class="mb-2">
+                                            Visit provider website
+                                        </MudLink>
+                                    }
                                     <MudSpacer />
                                     <MudButton Variant="Variant.Outlined" Size="Size.Small" Class="align-self-start"
                                                OnClick="@(() => InstallCatalogEntry(entry))">
@@ -221,6 +272,7 @@
     {
         @foreach (var provider in providers)
         {
+            var issue = ProviderIssueFor(provider.ProviderId);
             <MudPaper Outlined="true" Class="pa-3 mb-3">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                     <MudText Typo="Typo.h6" Class="flex-grow-1">@provider.DisplayName</MudText>
@@ -228,6 +280,33 @@
                     <MudSwitch T="bool" Value="provider.IsEnabled" Disabled="@providersBusy"
                                ValueChanged="@(enabled => SetProviderEnabledAsync(provider.Id, enabled))" Label="Enabled" />
                 </MudStack>
+
+                @if (issue is not null)
+                {
+                    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
+                        <MudText Typo="Typo.subtitle2">Latest automatic recheck needs attention</MudText>
+                        <MudText Typo="Typo.body2">@issue.Summary</MudText>
+                        <MudText Typo="Typo.caption">Checked @issue.OccurredAtUtc.ToLocalTime().ToString("g").</MudText>
+                    </MudAlert>
+                }
+
+                <MudDivider Class="my-2" />
+                <MudText Typo="Typo.subtitle2">Automatic rechecks</MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    Choose whether this source should look again for requests that did not have a high-confidence
+                    automatic copy. A found candidate is recorded for review; no external file is downloaded automatically.
+                </MudText>
+                <MudSelect T="string" Label="Recheck schedule" Value="provider.RecheckSchedule"
+                           ValueChanged="@(value => SetProviderRecheckScheduleAsync(provider.Id, value))"
+                           Disabled="@(providersBusy || !provider.IsEnabled)" Class="mb-2">
+                    <MudSelectItem T="string" Value="@("Manual")">Manual — do not retry automatically</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Daily")">Daily</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Weekly")">Weekly</MudSelectItem>
+                </MudSelect>
+                @if (!provider.IsEnabled)
+                {
+                    <MudText Typo="Typo.caption">Enable this source to allow its selected recheck schedule to run.</MudText>
+                }
 
                 <MudStack Row="true" Spacing="2" Class="mt-2">
                     <MudTextField T="string" Label="Base URL" Value="@provider.BaseUrl" Disabled="@providersBusy" Class="flex-grow-1"
@@ -342,18 +421,32 @@
     private bool sourceLoadFailed;
     private bool builtInSourcesBusy;
     private readonly Dictionary<string, int> builtInSourceGenerations = new(StringComparer.OrdinalIgnoreCase);
+    private AdminRequestAttentionResponse? attention;
 
     private bool CanRegister =>
         !string.IsNullOrWhiteSpace(newProviderId) && !string.IsNullOrWhiteSpace(newProviderDisplayName) &&
         !string.IsNullOrWhiteSpace(newProviderBaseUrl);
 
     protected override Task OnInitializedAsync() =>
-        Task.WhenAll(LoadGatewayAsync(), LoadCatalogsAsync(), LoadProvidersAsync(), LoadBuiltInSourcesAsync());
+        Task.WhenAll(
+            LoadGatewayAsync(),
+            LoadCatalogsAsync(),
+            LoadProvidersAsync(),
+            LoadBuiltInSourcesAsync(),
+            LoadAttentionAsync());
 
     private string? GetApiKeyDraft(Guid id) => apiKeyDrafts.GetValueOrDefault(id);
 
     private int BuiltInSourceGeneration(string providerId) =>
         builtInSourceGenerations.GetValueOrDefault(providerId);
+
+    private AdminProviderIssueResponse? ProviderIssueFor(string providerId) =>
+        attention?.ProviderIssues.FirstOrDefault(issue =>
+            string.Equals(issue.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsSafeExternalUrl(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
 
     private async Task LoadBuiltInSourcesAsync()
     {
@@ -366,6 +459,19 @@
         catch (HttpRequestException)
         {
             sourceLoadFailed = true;
+        }
+    }
+
+    private async Task LoadAttentionAsync()
+    {
+        try
+        {
+            attention = await AdminRequests.GetAttentionAsync();
+        }
+        catch (HttpRequestException)
+        {
+            // The Sources page remains usable if the informational summary is
+            // temporarily unavailable; source configuration is still loaded.
         }
     }
 
@@ -576,6 +682,26 @@
             if (!result.Succeeded)
             {
                 Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+            }
+
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task SetProviderRecheckScheduleAsync(Guid id, string schedule)
+    {
+        providersBusy = true;
+        try
+        {
+            var result = await Api.SetProviderRecheckScheduleAsync(id, schedule);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
             }
 
             await LoadProvidersAsync();

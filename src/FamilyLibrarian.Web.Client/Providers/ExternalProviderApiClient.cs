@@ -37,6 +37,12 @@ public sealed class ExternalProviderApiClient(HttpClient httpClient, Antiforgery
             HttpMethod.Put, $"{ProvidersPath}/{id}/enabled",
             new SetExternalProviderEnabledRequest(enabled), cancellationToken);
 
+    public Task<ExternalProviderResult> SetProviderRecheckScheduleAsync(
+        Guid id, string recheckSchedule, CancellationToken cancellationToken = default) =>
+        SendProviderAsync(
+            HttpMethod.Put, $"{ProvidersPath}/{id}/recheck-schedule",
+            new SetExternalProviderRecheckScheduleRequest(recheckSchedule), cancellationToken);
+
     public Task<ExternalProviderResult> SetProviderApiKeyAsync(
         Guid id, string apiKey, CancellationToken cancellationToken = default) =>
         SendProviderAsync(

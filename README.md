@@ -141,17 +141,27 @@ only runs while no administrator exists, so that would leave no way back in.
 
 Search the catalog, open a book, save it to the family catalog, then request it as
 an ebook, an audiobook, or both, and follow it under **My requests** — where you
-can also cancel a request or ask again. Requests are private to the account that
-made them.
+can also cancel a request or ask again. Asking again starts a fresh acquisition
+cycle while retaining prior provider activity as history. Requests are private
+to the account that made them. For ebooks, the built-in public-domain Gutendex source is enabled by
+default: when it finds one high-confidence title-and-author match, Family
+Librarian automatically downloads it, applies the security and identity checks,
+and sends a clean verified copy to CWA. **My requests** and the book page refresh
+while open so the requester can follow safe, plain-language progress without
+seeing provider diagnostics.
 
 Administrators also get:
 
 - **Queue**, to review family requests and act on them (add a note, mark
-  needs-review/unavailable, or cancel);
+  needs-review/unavailable, or cancel). A persistent in-app admin alert and the
+  Queue navigation label show any requests that need review;
 - **Metadata providers**, for enabling book-information providers and storing a
   Google Books key;
-- **Sources**, for enabling Gutendex and configuring external acquisition
-  sources and their private network;
+- **Sources**, for reviewing the built-in Gutendex source and configuring
+  external acquisition sources, their private network, and a per-source manual,
+  daily, or weekly recheck schedule. The page also shows the latest safe
+  automatic-source failure directly, so an operator does not have to trace a
+  request timeline to discover it;
 - **Security queue**, for quarantined, rejected, unmatched, and removed-file
   security records. Confirmed malware bytes are deleted automatically; clean,
   matching EPUB imports proceed automatically;
@@ -159,6 +169,12 @@ Administrators also get:
 - **Publishing activity**, for reviewing each handoff after an approved file was
   sent to either destination, with a **Recheck** action for anything not yet
   confirmed.
+
+Each admin request detail page includes an append-only provider-activity
+timeline, including no-match, found-candidate, blocked, failed, and acquired
+outcomes. External sources default to **Manual**; an admin can opt a source into
+daily or weekly discovery rechecks. Those rechecks only surface candidates for
+librarian review — they never download an external file automatically.
 
 In VS Code, the Run and Debug selector provides three Compose-backed container
 modes:

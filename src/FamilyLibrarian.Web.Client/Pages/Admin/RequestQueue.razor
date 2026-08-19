@@ -20,6 +20,28 @@
         <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
     }
 
+    @if (attention is { } summary && summary.NeedsReviewCount > 0)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                <MudText Typo="Typo.body2">
+                    @summary.NeedsReviewCount request@(summary.NeedsReviewCount == 1 ? string.Empty : "s") need librarian review.
+                </MudText>
+                <MudButton Variant="Variant.Text" Color="Color.Warning" Disabled="@isLoading"
+                           OnClick='@(() => SelectStatusAsync("NeedsReview"))'>
+                    Show needs review
+                </MudButton>
+            </MudStack>
+        </MudAlert>
+    }
+
+    @if (attention is { } sourceAttention && sourceAttention.ProviderIssues.Count > 0)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">
+            An automatic source needs attention. Review <MudLink Href="settings/sources">Sources</MudLink> for the safe diagnostic and next step.
+        </MudAlert>
+    }
+
     <MudPaper Outlined="true" Class="pa-4">
         <MudStack Spacing="2">
             <MudText Typo="Typo.h6">Batch upload</MudText>
@@ -55,7 +77,7 @@
                        Color="Color.Primary"
                        Disabled="@isLoading"
                        OnClick="() => SelectStatusAsync(filter.Status)">
-                @filter.Label
+                @FilterLabel(filter)
             </MudButton>
         }
     </MudStack>
@@ -129,6 +151,7 @@
     private bool isUploading;
     private string? errorMessage;
     private IReadOnlyList<BatchUploadResult> batchResults = [];
+    private AdminRequestAttentionResponse? attention;
 
     protected override Task OnInitializedAsync() => LoadAsync();
 
@@ -145,6 +168,15 @@
         try
         {
             requests = await Requests.GetQueueAsync(selectedStatus);
+            try
+            {
+                attention = await Requests.GetAttentionAsync();
+            }
+            catch (HttpRequestException)
+            {
+                // A failed attention refresh must not make the queue itself
+                // disappear. The persistent layout will retry independently.
+            }
         }
         catch (HttpRequestException)
         {
@@ -156,6 +188,11 @@
             isLoading = false;
         }
     }
+
+    private string FilterLabel((string? Status, string Label) filter) =>
+        filter.Status == "NeedsReview" && attention?.NeedsReviewCount is > 0
+            ? $"{filter.Label} ({attention.NeedsReviewCount})"
+            : filter.Label;
 
     private async Task ImportBatchAsync(InputFileChangeEventArgs args)
     {

@@ -75,6 +75,18 @@ public sealed class GutendexProviderTests
     }
 
     [TestMethod]
+    public async Task AnUnavailableCatalogIsReportedAsAProviderFailureRatherThanANoMatch()
+    {
+        var context = new TestContext(new StatusHandler(HttpStatusCode.ServiceUnavailable), enabled: true);
+
+        var exception = await Assert.ThrowsExactlyAsync<HttpRequestException>(() =>
+            context.Provider.FindDirectAcquisitionsAsync(
+                Guid.NewGuid(), RequestMediaType.Ebook, CancellationToken.None));
+
+        Assert.AreEqual(HttpStatusCode.ServiceUnavailable, exception.StatusCode);
+    }
+
+    [TestMethod]
     public async Task AMatchReturnsOneDirectAcquisitionOptionWithTheEpubUrl()
     {
         var handler = new RecordingHandler(MatchingResponse);
@@ -92,6 +104,30 @@ public sealed class GutendexProviderTests
         Assert.AreEqual(OptionKind.DirectAcquisition, option.OptionKind);
         Assert.AreEqual(AcquisitionMethod.DirectDownload, option.AcquisitionMethod);
         Assert.AreEqual("https://www.gutenberg.org/ebooks/1234.epub.noimages", option.ProviderData);
+    }
+
+    [TestMethod]
+    public async Task ATitleMatchWithADifferentAuthorIsNotEligibleForDirectAcquisition()
+    {
+        const string differentAuthorResponse = """
+            {
+              "count": 1,
+              "results": [
+                {
+                  "id": 1234,
+                  "title": "The Hobbit",
+                  "authors": [{"name": "Somebody Else"}],
+                  "formats": {"application/epub+zip": "https://www.gutenberg.org/ebooks/1234.epub.noimages"}
+                }
+              ]
+            }
+            """;
+        var context = new TestContext(new RecordingHandler(differentAuthorResponse), enabled: true);
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            Guid.NewGuid(), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
     }
 
     [TestMethod]
@@ -129,7 +165,7 @@ public sealed class GutendexProviderTests
 
     private sealed class TestContext
     {
-        public TestContext(RecordingHandler handler, bool enabled)
+        public TestContext(HttpMessageHandler handler, bool enabled)
         {
             var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://gutendex.com/") };
             var descriptor = new ProviderDescriptor(
@@ -139,8 +175,8 @@ public sealed class GutendexProviderTests
                 RequiresCredential: false,
                 HasExternallyManagedCredential: false,
                 DefaultEnabled: false);
-            var setting = enabled ? new ProviderSetting("gutendex", Now) : null;
-            setting?.SetEnabled(true, null, Now);
+            var setting = new ProviderSetting("gutendex", Now);
+            setting.SetEnabled(enabled, null, Now);
 
             Provider = new GutendexProvider(
                 httpClient,
@@ -196,5 +232,13 @@ public sealed class GutendexProviderTests
             };
             return Task.FromResult(response);
         }
+    }
+
+    private sealed class StatusHandler(HttpStatusCode statusCode) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(statusCode));
     }
 }

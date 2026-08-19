@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Catalog;
@@ -61,8 +61,11 @@ public sealed class DirectAcquisitionEndpointTests
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var asset = await database.MediaAssets.SingleAsync(a => a.Id == result.MediaAssetId);
-        Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
+        Assert.AreEqual(MediaAssetStorageState.Trusted, asset.StorageState);
         Assert.AreEqual(formatId, asset.AssociatedRequestFormatId);
+
+        Assert.AreEqual(1, await database.SecurityEvaluations.CountAsync(
+            evaluation => evaluation.AssetId == asset.Id));
 
         var job = await database.AcquisitionJobs.SingleAsync(j => j.Id == result.AcquisitionJobId);
         Assert.AreEqual("gutendex", job.ProviderId);
@@ -114,13 +117,102 @@ public sealed class DirectAcquisitionEndpointTests
         Assert.AreEqual(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    private static FamilyLibrarianAppFactory CreateFactory(WebTestFixture fixture, IDirectAcquisitionProvider provider) =>
+    [TestMethod]
+    public async Task AHighConfidenceAutomaticMatchIsFetchedScannedAndTrustedWithoutAnAdminAction()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: true));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var fulfillment = scope.ServiceProvider.GetRequiredService<AutomaticRequestFulfillmentService>();
+            Assert.AreEqual(1, await fulfillment.ProcessPendingAsync(CancellationToken.None));
+        }
+
+        await using var verificationScope = factory.Services.CreateAsyncScope();
+        var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var asset = await database.MediaAssets.SingleAsync(asset => asset.AssociatedRequestFormatId == formatId);
+        Assert.AreEqual(MediaAssetStorageState.Trusted, asset.StorageState);
+        Assert.AreEqual(1, await database.SecurityEvaluations.CountAsync(
+            evaluation => evaluation.AssetId == asset.Id));
+        Assert.IsNotNull(await database.BookRequests.FindAsync(requestId));
+    }
+
+    [TestMethod]
+    public async Task AnUncertainAutomaticSearchMovesTheRequestToReviewInsteadOfGuessing()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: false));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var fulfillment = scope.ServiceProvider.GetRequiredService<AutomaticRequestFulfillmentService>();
+            Assert.AreEqual(0, await fulfillment.ProcessPendingAsync(CancellationToken.None));
+        }
+
+        await using var verificationScope = factory.Services.CreateAsyncScope();
+        var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await database.BookRequests.SingleAsync(request => request.Id == requestId);
+        Assert.AreEqual(RequestStatus.NeedsReview, request.Status);
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == formatId));
+    }
+
+    [TestMethod]
+    public async Task CancellingAndAskingAgainStartsANewAutomaticLookupCycle()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: false));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        var firstCycle = await requester.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(firstCycle);
+        var needsReview = firstCycle.Active.Single(request => request.Id == requestId);
+        Assert.AreEqual("NeedsReview", needsReview.Status);
+
+        var cancelled = await requester.PostAsJsonAsync(
+            $"/api/v1/requests/{requestId}/transitions",
+            new ChangeBookRequestStatusRequest("Cancelled", null, needsReview.Version));
+        var cancelledRequest = await cancelled.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.AreEqual(HttpStatusCode.OK, cancelled.StatusCode);
+        Assert.IsNotNull(cancelledRequest);
+
+        var reopened = await requester.PostAsJsonAsync(
+            $"/api/v1/requests/{requestId}/transitions",
+            new ChangeBookRequestStatusRequest("PendingAcquisition", null, cancelledRequest.Version));
+        Assert.AreEqual(HttpStatusCode.OK, reopened.StatusCode);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(2, await database.ProviderAttempts.CountAsync(attempt =>
+            attempt.RequestId == requestId && attempt.RequestFormatId == formatId && attempt.ProviderId == "gutendex"));
+    }
+
+    private static async Task ProcessAutomaticFulfillmentAsync(FamilyLibrarianAppFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var fulfillment = scope.ServiceProvider.GetRequiredService<AutomaticRequestFulfillmentService>();
+        await fulfillment.ProcessPendingAsync(CancellationToken.None);
+    }
+
+    private static FamilyLibrarianAppFactory CreateFactory(WebTestFixture fixture, IAutomaticDirectAcquisitionProvider provider) =>
         new(
             fixture.ConnectionString,
             services =>
             {
                 services.RemoveAll<IDirectAcquisitionProvider>();
-                services.AddSingleton(provider);
+                services.RemoveAll<IAutomaticDirectAcquisitionProvider>();
+                services.AddSingleton<IDirectAcquisitionProvider>(provider);
+                services.AddSingleton<IAutomaticDirectAcquisitionProvider>(provider);
             });
 
     private static async Task<HttpClient> CreateTokenClientAsync(FamilyLibrarianAppFactory factory, bool isAdmin = true)
@@ -158,36 +250,8 @@ public sealed class DirectAcquisitionEndpointTests
         return (request.Id, format.FormatId);
     }
 
-    /// <summary>Mirrors <c>ManualImportEndpointTests.BuildMinimalEpubBytes</c>: a minimal, sniffable EPUB.</summary>
-    private static byte[] BuildMinimalEpubBytes()
-    {
-        const string entryName = "mimetype";
-        const string content = "application/epub+zip";
-        var nameBytes = Encoding.ASCII.GetBytes(entryName);
-        var contentBytes = Encoding.ASCII.GetBytes(content);
-
-        using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream);
-
-        writer.Write(0x04034B50u);
-        writer.Write((ushort)20);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write(0u);
-        writer.Write((uint)contentBytes.Length);
-        writer.Write((uint)contentBytes.Length);
-        writer.Write((ushort)nameBytes.Length);
-        writer.Write((ushort)0);
-        writer.Write(nameBytes);
-        writer.Write(contentBytes);
-
-        return stream.ToArray();
-    }
-
     /// <summary>Always reports one "1234" DirectAcquisition match (or none), and fetches a fake EPUB.</summary>
-    private sealed class FakeProvider(bool matches) : IDirectAcquisitionProvider
+    private sealed class FakeProvider(bool matches) : IAutomaticDirectAcquisitionProvider
     {
         public string Id => "gutendex";
 
@@ -225,6 +289,8 @@ public sealed class DirectAcquisitionEndpointTests
 
         public Task<DirectAcquisitionFile> FetchAsync(
             FulfillmentOption fulfillmentOption, CancellationToken cancellationToken) =>
-            Task.FromResult(new DirectAcquisitionFile(new MemoryStream(BuildMinimalEpubBytes()), "book.epub"));
+            Task.FromResult(new DirectAcquisitionFile(
+                new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
+                "the-hobbit.epub"));
     }
 }

@@ -56,6 +56,15 @@
     else if (results.Count > 0)
     {
         <MudText Typo="Typo.h5">Results</MudText>
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+            <MudText Typo="Typo.subtitle2">Why do similar results appear separately?</MudText>
+            <MudText Typo="Typo.body2">
+                Family Librarian combines records only when catalog sources report the exact same ISBN.
+                Matching titles and author names alone can describe different editions, illustrated or
+                abridged versions, retellings, translations, or separate catalog records. Open a result
+                to compare its known editions before saving it to the family catalog.
+            </MudText>
+        </MudAlert>
         @foreach (var result in results)
         {
             <MudCard Outlined="true">
@@ -63,13 +72,27 @@
                     <MudStack Spacing="1">
                         <MudText Typo="Typo.h5">@result.Title</MudText>
                         <MudText Typo="Typo.body1">@string.Join(", ", result.Authors)</MudText>
+                        <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                            @if (result.PublicationDate is { } publicationDate)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                    Reported publication: @publicationDate.ToString("yyyy")
+                                </MudChip>
+                            }
+                            @if (result.Editions.Count > 0)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                    @EditionCountLabel(result.Editions.Count)
+                                </MudChip>
+                            }
+                        </MudStack>
                         @if (result.Series.FirstOrDefault(series => series.IsPrimary) is { } series)
                         {
                             <MudText Typo="Typo.body2" Color="Color.Secondary">
                                 @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · Book {series.PositionLabel}")
                             </MudText>
                         }
-                        <MudText Typo="Typo.body2">@result.ProviderName</MudText>
+                        <MudText Typo="Typo.body2">Source: @result.ProviderName</MudText>
                     </MudStack>
                 </MudCardContent>
                 <MudCardActions>
@@ -142,4 +165,7 @@
 
     private void OpenDetails(CatalogBookCandidateResponse result) =>
         Navigation.NavigateTo($"search/{Uri.EscapeDataString(result.ProviderId)}/{Uri.EscapeDataString(result.ExternalId)}");
+
+    private static string EditionCountLabel(int count) =>
+        count == 1 ? "1 known edition" : $"{count} known editions";
 }

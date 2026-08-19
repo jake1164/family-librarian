@@ -1,9 +1,11 @@
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Domain.Acquisition;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
 
@@ -21,7 +23,9 @@ internal static class AdminRequestEndpoints
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
         adminRequests.MapGet("/", ListAdminRequestsAsync);
+        adminRequests.MapGet("/attention", GetAttentionAsync);
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
+        adminRequests.MapGet("/{requestId:guid}/provider-attempts", ListProviderAttemptsAsync);
         adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
         adminRequests.MapPut("/{requestId:guid}/note", SetAdminRequestNoteAsync);
         adminRequests.MapPost("/{requestId:guid}/formats/{formatId:guid}/manual-import", ManualImportAsync);
@@ -62,6 +66,63 @@ internal static class AdminRequestEndpoints
     {
         var request = await requests.GetForAdminAsync(requestId, cancellationToken);
         return request is null ? Results.NotFound() : Results.Ok(ToAdminRequestResponse(request));
+    }
+
+    private static async Task<IResult> GetAttentionAsync(
+        IRequestRepository requests,
+        IProviderAttemptRepository attempts,
+        IProviderRegistry registry,
+        IExternalProviderStore externalProviders,
+        CancellationToken cancellationToken)
+    {
+        // All three stores are scoped over the same AppDbContext. EF Core does
+        // not allow concurrent operations on that context, so keep these small
+        // administrative projections sequential rather than fanning them out.
+        var needsReviewCount = await requests.CountForAdminAsync(RequestStatus.NeedsReview, cancellationToken);
+        var latestAttempts = await attempts.ListLatestByProviderAsync(cancellationToken);
+        var registeredExternalProviders = await externalProviders.ListAsync(cancellationToken);
+
+        var displayNames = registry.GetInstalledProviders()
+            .ToDictionary(provider => provider.Id, provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase);
+        foreach (var provider in registeredExternalProviders)
+        {
+            displayNames[provider.ProviderId] = provider.DisplayName;
+        }
+
+        var providerIssues = latestAttempts
+            .Where(attempt => attempt.Outcome is ProviderAttemptOutcome.Failed or ProviderAttemptOutcome.Blocked)
+            .OrderByDescending(attempt => attempt.AttemptedAtUtc)
+            .Select(attempt => new AdminProviderIssueResponse(
+                attempt.ProviderId,
+                displayNames.GetValueOrDefault(attempt.ProviderId, attempt.ProviderId),
+                attempt.Summary,
+                attempt.AttemptedAtUtc))
+            .ToArray();
+
+        return Results.Ok(new AdminRequestAttentionResponse(needsReviewCount, providerIssues));
+    }
+
+    private static async Task<IResult> ListProviderAttemptsAsync(
+        Guid requestId,
+        IRequestRepository requests,
+        IProviderAttemptRepository attempts,
+        CancellationToken cancellationToken)
+    {
+        if (await requests.FindRequestForAdminAsync(requestId, cancellationToken) is null)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Ok((await attempts.ListForRequestAsync(requestId, cancellationToken))
+            .Select(attempt => new ProviderAttemptResponse(
+                attempt.Id,
+                attempt.RequestFormatId,
+                attempt.ProviderId,
+                attempt.Outcome.ToString(),
+                attempt.Summary,
+                attempt.AttemptedAtUtc,
+                attempt.NextEligibleCheckAtUtc))
+            .ToArray());
     }
 
     private static async Task<IResult> ChangeAdminRequestStatusAsync(
@@ -196,10 +257,10 @@ internal static class AdminRequestEndpoints
         Guid formatId,
         string providerId,
         string providerResultId,
-        DirectAcquisitionService acquisitions,
+        DirectAcquisitionSecurityService acquisitions,
         CancellationToken cancellationToken)
     {
-        var result = await acquisitions.AcquireAsync(
+        var result = await acquisitions.AcquireAndEvaluateAsync(
             requestId, formatId, providerId, providerResultId, cancellationToken);
         return ToManualImportResult(result);
     }

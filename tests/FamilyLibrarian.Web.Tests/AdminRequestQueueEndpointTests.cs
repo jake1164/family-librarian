@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Requests;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
@@ -116,6 +117,49 @@ public sealed class AdminRequestQueueEndpointTests
             new SetAdminBookRequestNoteRequest("attempted cross-site write", 1));
 
         Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task AttentionSummaryMakesReviewWorkAndLatestSourceFailureVisibleToAnAdmin()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var owner = await CreateTokenClientAsync(fixture, isAdmin: false);
+        var workId = await ResolveWorkAsync(owner, "a-wrinkle-in-time");
+        var created = await CreateRequestAsync(owner, workId);
+
+        using var admin = await CreateTokenClientAsync(fixture, isAdmin: true);
+        var moved = await admin.PostAsJsonAsync(
+            $"/api/v1/admin/requests/{created.Id}/transitions",
+            new ChangeBookRequestStatusRequest("NeedsReview", "Two copies need review.", created.Version));
+        Assert.AreEqual(HttpStatusCode.OK, moved.StatusCode);
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var formatId = created.Formats.Single().FormatId;
+            database.ProviderAttempts.Add(new ProviderAttempt(
+                created.Id,
+                formatId,
+                "gutendex",
+                ProviderAttemptOutcome.Failed,
+                "The automatic provider could not be reached; automatic retry is disabled for this source.",
+                DateTimeOffset.UtcNow,
+                nextEligibleCheckAtUtc: null));
+            await database.SaveChangesAsync();
+        }
+
+        var response = await admin.GetAsync("/api/v1/admin/requests/attention");
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        var attention = await response.Content.ReadFromJsonAsync<AdminRequestAttentionResponse>();
+        Assert.IsNotNull(attention);
+        Assert.IsTrue(attention.NeedsReviewCount >= 1);
+        var sourceIssue = attention.ProviderIssues.Single(issue => issue.ProviderId == "gutendex");
+        Assert.AreEqual("Gutendex (Project Gutenberg)", sourceIssue.DisplayName);
+        StringAssert.Contains(sourceIssue.Summary, "could not be reached");
+
+        using var nonAdmin = await CreateTokenClientAsync(fixture, isAdmin: false);
+        var forbidden = await nonAdmin.GetAsync("/api/v1/admin/requests/attention");
+        Assert.AreEqual(HttpStatusCode.Forbidden, forbidden.StatusCode);
     }
 
     private static async Task<HttpClient> CreateTokenClientAsync(

@@ -68,6 +68,25 @@ public sealed class ExternalProviderAdminService(
         return ExternalProviderCommandResult.Success(ToStatus(provider));
     }
 
+    public async Task<ExternalProviderCommandResult> SetRecheckScheduleAsync(
+        Guid id, ProviderRecheckSchedule schedule, CancellationToken cancellationToken)
+    {
+        var provider = await store.FindAsync(id, cancellationToken);
+        if (provider is null)
+        {
+            return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
+        }
+
+        provider.SetRecheckSchedule(schedule, currentUser.UserId, clock.UtcNow);
+        await store.SaveChangesAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            AuditActions.ExternalProviderRecheckScheduleChanged, AuditSubjectTypes.ExternalProvider, id.ToString(),
+            new { provider.ProviderId, Schedule = schedule.ToString() }, cancellationToken);
+
+        return ExternalProviderCommandResult.Success(ToStatus(provider));
+    }
+
     public async Task<ExternalProviderCommandResult> SetDetailsAsync(
         Guid id, string displayName, string baseUrl, CancellationToken cancellationToken)
     {
@@ -253,6 +272,7 @@ public sealed class ExternalProviderAdminService(
         provider.DisplayName,
         provider.BaseUrl,
         provider.IsEnabled,
+        provider.RecheckSchedule.ToString(),
         provider.HasApiKey,
         provider.ApiKeyHint,
         provider.ApiKeySetAtUtc,
@@ -272,6 +292,7 @@ public sealed record ExternalProviderStatus(
     string DisplayName,
     string BaseUrl,
     bool IsEnabled,
+    string RecheckSchedule,
     bool HasApiKey,
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,

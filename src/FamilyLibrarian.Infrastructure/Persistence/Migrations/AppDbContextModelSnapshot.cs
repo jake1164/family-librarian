@@ -293,6 +293,55 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("acquisition_candidates", "acquisition");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("AttemptedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("attempted_at_utc");
+
+                    b.Property<DateTimeOffset?>("NextEligibleCheckAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_eligible_check_at_utc");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("outcome");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<Guid>("RequestFormatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_format_id");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("summary");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestFormatId", "ProviderId", "AttemptedAtUtc");
+
+                    b.HasIndex("RequestId", "AttemptedAtUtc");
+
+                    b.ToTable("provider_attempts", "acquisition");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.AcquisitionJob", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1030,6 +1079,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("boolean")
                         .HasColumnName("is_enabled");
+
+                    b.Property<string>("RecheckSchedule")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("recheck_schedule");
 
                     b.Property<string>("LastTestMessage")
                         .HasMaxLength(512)
@@ -2178,6 +2233,21 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
                         .WithMany()
                         .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAttempt", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
+                        .WithMany()
+                        .HasForeignKey("RequestFormatId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

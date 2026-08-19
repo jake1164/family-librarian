@@ -6,6 +6,7 @@ public sealed record ExternalProviderResponse(
     string DisplayName,
     string BaseUrl,
     bool IsEnabled,
+    string RecheckSchedule,
     bool HasApiKey,
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,
@@ -23,6 +24,9 @@ public sealed record CreateExternalProviderRequest(string ProviderId, string Dis
 public sealed record SetExternalProviderDetailsRequest(string DisplayName, string BaseUrl);
 
 public sealed record SetExternalProviderEnabledRequest(bool Enabled);
+
+/// <summary>One of <c>Manual</c>, <c>Daily</c>, or <c>Weekly</c>.</summary>
+public sealed record SetExternalProviderRecheckScheduleRequest(string RecheckSchedule);
 
 public sealed record SetExternalProviderApiKeyRequest(string ApiKey);
 

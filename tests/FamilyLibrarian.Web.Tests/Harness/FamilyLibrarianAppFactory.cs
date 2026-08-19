@@ -131,12 +131,9 @@ internal sealed class FamilyLibrarianAppFactory(
             services.RemoveAll<IAudiobookshelfApiClient>();
             services.AddSingleton<IAudiobookshelfApiClient, AlwaysEmptyAudiobookshelfApiClient>();
 
-            // Gutendex is disabled by default (ProviderRegistry.DefaultEnabled:
-            // false) so the real provider already never calls out in an
-            // ordinary test, but swap it for a fake anyway — same defense in
-            // depth as the two destinations above, and it lets a test that does
-            // enable direct acquisition control the result deterministically
-            // instead of depending on gutendex.com.
+            // Gutendex is enabled by default, so always replace it in ordinary
+            // tests. This lets a test that exercises direct acquisition control
+            // the result deterministically instead of depending on gutendex.com.
             services.RemoveAll<IDirectAcquisitionProvider>();
             services.AddSingleton<IDirectAcquisitionProvider, AlwaysEmptyDirectAcquisitionProvider>();
 
