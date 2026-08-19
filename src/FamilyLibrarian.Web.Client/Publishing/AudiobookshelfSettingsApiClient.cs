@@ -25,13 +25,31 @@ public sealed class AudiobookshelfSettingsApiClient(HttpClient httpClient, Antif
     public Task<AudiobookshelfResult> ClearApiTokenAsync(CancellationToken cancellationToken = default) =>
         SendAsync<object>(HttpMethod.Delete, $"{BasePath}/api-token", null, cancellationToken);
 
-    public async Task<PublishingConnectionTestResponse?> TestAsync(CancellationToken cancellationToken = default)
+    public async Task<PublishingConnectionTestResponse?> TestAsync(
+        TestAudiobookshelfRequest request, CancellationToken cancellationToken = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/test");
-        await antiforgery.AttachAsync(request, cancellationToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/test")
+        {
+            Content = JsonContent.Create(request)
+        };
+        await antiforgery.AttachAsync(httpRequest, cancellationToken);
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
         return response.IsSuccessStatusCode
             ? await response.Content.ReadFromJsonAsync<PublishingConnectionTestResponse>(cancellationToken)
+            : null;
+    }
+
+    public async Task<AudiobookshelfLibraryDiscoveryResponse?> DiscoverLibrariesAsync(
+        DiscoverAudiobookshelfLibrariesRequest request, CancellationToken cancellationToken = default)
+    {
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/libraries")
+        {
+            Content = JsonContent.Create(request)
+        };
+        await antiforgery.AttachAsync(httpRequest, cancellationToken);
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<AudiobookshelfLibraryDiscoveryResponse>(cancellationToken)
             : null;
     }
 

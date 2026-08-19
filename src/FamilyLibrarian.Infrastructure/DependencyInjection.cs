@@ -367,6 +367,7 @@ public static class DependencyInjection
         services.AddScoped<ICwaConnectionTester, CwaConnectionTester>();
         services.AddScoped<IAudiobookshelfApiClient, AudiobookshelfApiClient>();
         services.AddScoped<IAudiobookshelfConnectionTester, AudiobookshelfConnectionTester>();
+        services.AddScoped<IAudiobookshelfLibraryDiscoveryClient, AudiobookshelfLibraryDiscoveryClient>();
 
         services.AddScoped<CwaSettingsService>();
         services.AddScoped<AudiobookshelfSettingsService>();

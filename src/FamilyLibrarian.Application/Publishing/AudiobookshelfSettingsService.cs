@@ -10,6 +10,7 @@ public sealed class AudiobookshelfSettingsService(
     IAudiobookshelfSettingsStore store,
     ICredentialProtector protector,
     IAudiobookshelfConnectionTester connectionTester,
+    IAudiobookshelfLibraryDiscoveryClient libraryDiscoveryClient,
     IAuditWriter audit,
     ICurrentUser currentUser,
     IClock clock)
@@ -101,23 +102,87 @@ public sealed class AudiobookshelfSettingsService(
         return AudiobookshelfCommandResult.Success(ToStatus(settings));
     }
 
-    public async Task<AudiobookshelfCommandResult> TestConnectionAsync(
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// Tests the base URL, library ID, folder ID, and API token currently in
+    /// the administrator's form without changing persisted configuration, the
+    /// stored token, audit state, or last-test status — mirroring
+    /// <c>CwaSettingsService</c>'s non-persistent ingest/OPDS tests. A blank
+    /// <paramref name="apiToken"/> falls back to the stored token so an
+    /// administrator can test a base URL/library/folder change without
+    /// retyping a token they already saved.
+    /// </summary>
+    public async Task<ConnectionTestOutcome> TestConfigurationAsync(
+        string? baseUrl, string? libraryId, string? folderId, string? apiToken, CancellationToken cancellationToken)
     {
-        var settings = await store.GetOrCreateAsync(cancellationToken);
-        var outcome = await connectionTester.TestAsync(settings, cancellationToken);
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return new ConnectionTestOutcome(false, "No base URL is configured.");
+        }
 
-        settings.RecordTestResult(outcome.Succeeded, outcome.Message, currentUser.UserId, clock.UtcNow);
-        await store.SaveChangesAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(libraryId))
+        {
+            return new ConnectionTestOutcome(false, "No library ID is configured.");
+        }
 
-        await audit.WriteAsync(
-            AuditActions.PublishingDestinationTested,
-            AuditSubjectTypes.PublishingDestination,
-            "audiobookshelf",
-            new { Destination = "audiobookshelf", outcome.Succeeded },
-            cancellationToken);
+        var persisted = await store.FindAsync(cancellationToken);
+        var candidate = new AudiobookshelfSettings(clock.UtcNow);
+        candidate.SetSettings(baseUrl, libraryId, folderId, currentUser.UserId, clock.UtcNow);
 
-        return AudiobookshelfCommandResult.Success(ToStatus(settings));
+        var trimmedToken = apiToken?.Trim();
+        if (!string.IsNullOrEmpty(trimmedToken))
+        {
+            candidate.SetApiToken(
+                protector.Protect(ApiTokenPurpose, trimmedToken),
+                protector.FormatVersion,
+                BuildHint(trimmedToken),
+                currentUser.UserId,
+                clock.UtcNow);
+        }
+        else if (persisted?.HasApiToken == true)
+        {
+            candidate.SetApiToken(
+                persisted.ProtectedApiToken!,
+                persisted.ApiTokenFormatVersion,
+                persisted.ApiTokenHint,
+                currentUser.UserId,
+                clock.UtcNow);
+        }
+
+        return await connectionTester.TestAsync(candidate, cancellationToken);
+    }
+
+    /// <summary>
+    /// Lists the libraries (and their folders) on the Audiobookshelf instance
+    /// at <paramref name="baseUrl"/>, so the settings UI can offer them as a
+    /// pick-list instead of the administrator having to find raw IDs
+    /// elsewhere. A blank <paramref name="apiToken"/> falls back to the
+    /// stored token.
+    /// </summary>
+    public async Task<AudiobookshelfLibraryDiscoveryOutcome> DiscoverLibrariesAsync(
+        string? baseUrl, string? apiToken, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return AudiobookshelfLibraryDiscoveryOutcome.Failure("A base URL is required.");
+        }
+
+        var token = apiToken?.Trim();
+        if (string.IsNullOrEmpty(token))
+        {
+            var persisted = await store.FindAsync(cancellationToken);
+            if (persisted?.HasApiToken == true)
+            {
+                token = protector.Unprotect(
+                    ApiTokenPurpose, persisted.ProtectedApiToken!, persisted.ApiTokenFormatVersion);
+            }
+        }
+
+        if (string.IsNullOrEmpty(token))
+        {
+            return AudiobookshelfLibraryDiscoveryOutcome.Failure("An API token is required.");
+        }
+
+        return await libraryDiscoveryClient.ListLibrariesAsync(baseUrl.Trim(), token, cancellationToken);
     }
 
     private static AudiobookshelfStatus ToStatus(AudiobookshelfSettings? settings) => settings is null

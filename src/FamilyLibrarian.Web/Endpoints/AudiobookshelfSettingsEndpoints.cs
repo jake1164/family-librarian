@@ -22,6 +22,7 @@ internal static class AudiobookshelfSettingsEndpoints
         audiobookshelfSettings.MapPut("/api-token", SetAudiobookshelfApiTokenAsync);
         audiobookshelfSettings.MapDelete("/api-token", ClearAudiobookshelfApiTokenAsync);
         audiobookshelfSettings.MapPost("/test", TestAudiobookshelfConnectionAsync);
+        audiobookshelfSettings.MapPost("/libraries", DiscoverAudiobookshelfLibrariesAsync);
     }
 
     private static async Task<IResult> GetAudiobookshelfSettingsAsync(
@@ -52,11 +53,30 @@ internal static class AudiobookshelfSettingsEndpoints
         ToAudiobookshelfResult(await service.ClearApiTokenAsync(cancellationToken));
 
     private static async Task<IResult> TestAudiobookshelfConnectionAsync(
-        AudiobookshelfSettingsService service, CancellationToken cancellationToken)
+        TestAudiobookshelfRequest request,
+        AudiobookshelfSettingsService service,
+        CancellationToken cancellationToken)
     {
-        var result = await service.TestConnectionAsync(cancellationToken);
-        return Results.Ok(new PublishingConnectionTestResponse(
-            result.Status!.LastTestSucceeded ?? false, result.Status.LastTestMessage ?? string.Empty));
+        var outcome = await service.TestConfigurationAsync(
+            request.BaseUrl, request.LibraryId, request.FolderId, request.ApiToken, cancellationToken);
+        return Results.Ok(new PublishingConnectionTestResponse(outcome.Succeeded, outcome.Message));
+    }
+
+    private static async Task<IResult> DiscoverAudiobookshelfLibrariesAsync(
+        DiscoverAudiobookshelfLibrariesRequest request,
+        AudiobookshelfSettingsService service,
+        CancellationToken cancellationToken)
+    {
+        var outcome = await service.DiscoverLibrariesAsync(request.BaseUrl, request.ApiToken, cancellationToken);
+        return Results.Ok(new AudiobookshelfLibraryDiscoveryResponse(
+            outcome.Succeeded,
+            outcome.Error,
+            outcome.Libraries
+                .Select(library => new AudiobookshelfLibraryOption(
+                    library.Id,
+                    library.Name,
+                    library.Folders.Select(folder => new AudiobookshelfFolderOption(folder.Id, folder.Path)).ToList()))
+                .ToList()));
     }
 
     private static IResult ToAudiobookshelfResult(AudiobookshelfCommandResult result) => result.Outcome switch

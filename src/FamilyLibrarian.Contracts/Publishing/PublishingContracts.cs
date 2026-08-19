@@ -93,6 +93,28 @@ public sealed record AudiobookshelfSettingsResponse(
 
 public sealed record SetAudiobookshelfSettingsRequest(string? BaseUrl, string? LibraryId, string? FolderId);
 
+/// <summary>
+/// A non-persistent Audiobookshelf connection probe. Values reflect the
+/// administrator's current form; when <see cref="ApiToken"/> is blank the
+/// probe falls back to the stored token instead of requiring it be retyped.
+/// </summary>
+public sealed record TestAudiobookshelfRequest(
+    string? BaseUrl,
+    string? LibraryId,
+    string? FolderId,
+    string? ApiToken);
+
+/// <summary>A lookup request for an Audiobookshelf instance's libraries and folders, so the administrator can pick IDs instead of guessing them.</summary>
+public sealed record DiscoverAudiobookshelfLibrariesRequest(string? BaseUrl, string? ApiToken);
+
+public sealed record AudiobookshelfFolderOption(string Id, string Path);
+
+public sealed record AudiobookshelfLibraryOption(
+    string Id, string Name, IReadOnlyList<AudiobookshelfFolderOption> Folders);
+
+public sealed record AudiobookshelfLibraryDiscoveryResponse(
+    bool Succeeded, string? Error, IReadOnlyList<AudiobookshelfLibraryOption> Libraries);
+
 public sealed record LibraryImportResponse(
     Guid Id,
     Guid RequestId,
