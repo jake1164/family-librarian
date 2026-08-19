@@ -1,0 +1,237 @@
+@implements IDisposable
+@inject FamilyLibrarian.Web.Client.Notifications.NotificationsApiClient Notifications
+@inject FamilyLibrarian.Web.Client.Requests.AdminRequestsApiClient AdminRequests
+
+<MudMenu AnchorOrigin="Origin.BottomRight"
+         TransformOrigin="Origin.TopRight"
+         OpenChanged="OnOpenChangedAsync">
+    <ActivatorContent>
+        <MudBadge Content="@UnreadCount"
+                  Color="Color.Error"
+                  Overlap="true"
+                  Visible="@(UnreadCount > 0)">
+            <MudIconButton Icon="@Icons.Material.Filled.Notifications"
+                           Color="Color.Inherit"
+                           aria-label="Notifications"
+                           OnClick="context.ToggleAsync" />
+        </MudBadge>
+    </ActivatorContent>
+    <ChildContent>
+        <MudStack Spacing="0" Style="width: 380px; max-width: 90vw;">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="pa-3">
+                <MudText Typo="Typo.subtitle1">Notifications</MudText>
+                <MudLink Disabled="@(!entries.Any(entry => entry.Id is not null))" OnClick="ClearAllAsync">
+                    Clear all
+                </MudLink>
+            </MudStack>
+            <MudDivider />
+            @if (entries.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="pa-4" Align="Align.Center">
+                    You're all caught up.
+                </MudText>
+            }
+            else
+            {
+                <MudStack Spacing="0" Class="pa-0" Style="max-height: 420px; overflow-y: auto;">
+                    @foreach (var entry in entries)
+                    {
+                        <MudStack Row="true" Spacing="2" Class="pa-3" @key="((object?)entry.Id ?? entry.Title)">
+                            <MudIcon Icon="@SeverityIcon(entry.Severity)" Color="@SeverityColor(entry.Severity)" Class="mt-1" />
+                            <MudStack Spacing="0" Class="flex-grow-1">
+                                <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                                    <MudText Typo="Typo.body2" Style="font-weight: 600;">@entry.Title</MudText>
+                                    @if (entry.RepeatCount > 1)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@(entry.RepeatCount + " times")</MudChip>
+                                    }
+                                </MudStack>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@FormatRelativeTime(entry.Timestamp)</MudText>
+                                @if (!string.IsNullOrWhiteSpace(entry.Detail))
+                                {
+                                    <MudText Typo="Typo.body2">@entry.Detail</MudText>
+                                }
+                            </MudStack>
+                            @if (entry.Id is { } id)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                               Size="Size.Small"
+                                               aria-label="Dismiss"
+                                               OnClick="@(() => DismissAsync(id))" />
+                            }
+                        </MudStack>
+                        <MudDivider />
+                    }
+                </MudStack>
+            }
+        </MudStack>
+    </ChildContent>
+</MudMenu>
+
+@code {
+    [Parameter]
+    public bool IsAdmin { get; set; }
+
+    private readonly List<TrayEntry> entries = [];
+    private CancellationTokenSource? refreshCancellation;
+
+    private int UnreadCount => entries.Count(entry => !entry.IsRead);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        refreshCancellation = new CancellationTokenSource();
+        _ = RefreshPeriodicallyAsync(refreshCancellation.Token);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // IsAdmin can flip after first render (e.g. authentication state resolves
+        // after this component has already initialized), and the provider-issue
+        // merge below depends on it.
+        await RefreshAsync();
+    }
+
+    private async Task RefreshPeriodicallyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(async () =>
+                {
+                    await RefreshAsync();
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Component disposal stopped the refresh loop.
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        var notifications = await Notifications.GetAsync();
+        var merged = notifications
+            .Select(notification => new TrayEntry(
+                notification.Id,
+                notification.Severity,
+                notification.Title,
+                notification.Detail,
+                notification.RepeatCount,
+                notification.LastOccurredAtUtc,
+                notification.IsRead))
+            .ToList();
+
+        if (IsAdmin)
+        {
+            try
+            {
+                var attention = await AdminRequests.GetAttentionAsync();
+                merged.AddRange(attention.ProviderIssues.Select(issue => new TrayEntry(
+                    Id: null,
+                    Severity: "Error",
+                    Title: $"Provider '{issue.DisplayName}' fetch failed",
+                    Detail: issue.Summary,
+                    RepeatCount: 1,
+                    Timestamp: issue.OccurredAtUtc,
+                    IsRead: false)));
+            }
+            catch (HttpRequestException)
+            {
+                // A transient failure here must not hide the request/user
+                // notifications that already loaded successfully.
+            }
+        }
+
+        entries.Clear();
+        entries.AddRange(merged.OrderByDescending(entry => entry.Timestamp));
+    }
+
+    private async Task OnOpenChangedAsync(bool open)
+    {
+        if (!open)
+        {
+            return;
+        }
+
+        var unread = entries.Where(entry => entry.Id is not null && !entry.IsRead).ToArray();
+        foreach (var entry in unread)
+        {
+            await Notifications.MarkReadAsync(entry.Id!.Value);
+        }
+
+        for (var i = 0; i < entries.Count; i++)
+        {
+            if (entries[i].Id is not null)
+            {
+                entries[i] = entries[i] with { IsRead = true };
+            }
+        }
+    }
+
+    private async Task DismissAsync(Guid id)
+    {
+        await Notifications.DismissAsync(id);
+        entries.RemoveAll(entry => entry.Id == id);
+    }
+
+    private async Task ClearAllAsync()
+    {
+        await Notifications.DismissAllAsync();
+        entries.RemoveAll(entry => entry.Id is not null);
+    }
+
+    private static string SeverityIcon(string severity) => severity switch
+    {
+        "Error" => Icons.Material.Filled.Error,
+        "Warning" => Icons.Material.Filled.Warning,
+        _ => Icons.Material.Filled.Info
+    };
+
+    private static Color SeverityColor(string severity) => severity switch
+    {
+        "Error" => Color.Error,
+        "Warning" => Color.Warning,
+        _ => Color.Info
+    };
+
+    private static string FormatRelativeTime(DateTimeOffset timestamp)
+    {
+        var elapsed = DateTimeOffset.UtcNow - timestamp;
+        if (elapsed < TimeSpan.FromMinutes(1))
+        {
+            return "just now";
+        }
+
+        if (elapsed < TimeSpan.FromHours(1))
+        {
+            return $"{(int)elapsed.TotalMinutes}m ago";
+        }
+
+        if (elapsed < TimeSpan.FromDays(1))
+        {
+            return $"{(int)elapsed.TotalHours}h ago";
+        }
+
+        return $"{(int)elapsed.TotalDays}d ago";
+    }
+
+    public void Dispose()
+    {
+        refreshCancellation?.Cancel();
+        refreshCancellation?.Dispose();
+    }
+
+    private sealed record TrayEntry(
+        Guid? Id,
+        string Severity,
+        string Title,
+        string? Detail,
+        int RepeatCount,
+        DateTimeOffset Timestamp,
+        bool IsRead);
+}

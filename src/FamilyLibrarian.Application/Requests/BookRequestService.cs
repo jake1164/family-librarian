@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Requests;
 
@@ -18,7 +19,8 @@ public sealed class BookRequestService(
     IRequestRepository repository,
     ICurrentUser currentUser,
     IClock clock,
-    IAuditWriter audit)
+    IAuditWriter audit,
+    NotificationService notifications)
 {
     /// <summary>
     /// The status changes a requester may make. Moving a request to
@@ -219,6 +221,17 @@ public sealed class BookRequestService(
             cancellationToken);
 
         var view = await repository.FindAdminViewAsync(requestId, cancellationToken);
+
+        if (to == RequestStatus.NeedsReview)
+        {
+            await notifications.RecordRequestNeedsReviewAsync(requestId, view!.Request.WorkTitle, reason, cancellationToken);
+        }
+        else if (to is RequestStatus.Available or RequestStatus.NotAvailable)
+        {
+            await notifications.RecordRequestStatusForUserAsync(
+                request.UserId, requestId, view!.Request.WorkTitle, to, cancellationToken);
+        }
+
         return BookRequestCommandResult.Success(view!.Request);
     }
 

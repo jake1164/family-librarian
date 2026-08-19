@@ -55,6 +55,7 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/external-providers/")]
     [DataRow("/api/v1/admin/private-egress-gateway/")]
     [DataRow("/api/v1/admin/provider-catalogs/")]
+    [DataRow("/api/v1/notifications/")]
     public async Task AnAnonymousCallerIsChallengedOnAProtectedRoute(string route)
     {
         var fixture = WebTestFixture.Require(_fixture);

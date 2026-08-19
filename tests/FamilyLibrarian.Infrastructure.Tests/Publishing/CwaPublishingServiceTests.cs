@@ -1,10 +1,12 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
@@ -150,6 +152,11 @@ public sealed class CwaPublishingServiceTests
         Assert.AreEqual(RequestStatus.Available, request.Status);
         Assert.AreEqual(RequestFormatStatus.Available, request.Formats.Single().Status);
         Assert.AreEqual(RequestStatus.Available, request.StatusHistory.Last().ToStatus);
+
+        var notification = context.NotificationRepository.Added.Single();
+        Assert.AreEqual(NotificationAudience.SingleUser, notification.Audience);
+        Assert.AreEqual(request.UserId, notification.RecipientUserId);
+        Assert.AreEqual("\"The Hobbit\" is available", notification.Title);
     }
 
     [TestMethod]
@@ -204,10 +211,12 @@ public sealed class CwaPublishingServiceTests
             RequestFulfillment = new FakeRequestFulfillmentStore();
             WorkLookup = new FakeWorkLookup();
             Audit = new RecordingAuditWriter();
+            NotificationRepository = new RecordingNotificationRepository();
 
             Service = new CwaPublishingService(
                 SettingsStore, Repository, Assets, StagingStore, TransportFactory, CatalogClient, RequestFulfillment, WorkLookup,
-                Audit, new FixedClock());
+                Audit, new FixedClock(),
+                new NotificationService(NotificationRepository, new StubCurrentUser(), new FixedClock()));
         }
 
         public CwaSettings Settings { get; } = new(Now);
@@ -231,6 +240,8 @@ public sealed class CwaPublishingServiceTests
         public FakeWorkLookup WorkLookup { get; }
 
         public RecordingAuditWriter Audit { get; }
+
+        public RecordingNotificationRepository NotificationRepository { get; }
 
         public CwaPublishingService Service { get; }
 
@@ -384,5 +395,53 @@ public sealed class CwaPublishingServiceTests
     private sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class StubCurrentUser : ICurrentUser
+    {
+        public Guid? UserId => null;
+
+        public string? DisplayName => null;
+    }
+
+    /// <summary>Records what would have been written, without a real store behind it.</summary>
+    private sealed class RecordingNotificationRepository : INotificationRepository
+    {
+        public List<NotificationEvent> Added { get; } = [];
+
+        public Task<NotificationEvent?> FindLatestAsync(
+            NotificationAudience audience,
+            Guid? recipientUserId,
+            string category,
+            string? subjectType,
+            string? subjectId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<NotificationEvent?>(null);
+
+        public Task AddAsync(NotificationEvent notification, CancellationToken cancellationToken)
+        {
+            Added.Add(notification);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<NotificationReceipt>> ListReceiptsAsync(
+            Guid notificationEventId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<NotificationReceipt>>([]);
+
+        public Task RemoveReceiptsAsync(IReadOnlyList<NotificationReceipt> receipts, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<IReadOnlyList<(NotificationEvent Event, NotificationReceipt? Receipt)>> ListForViewerAsync(
+            Guid userId, bool isAdmin, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<(NotificationEvent Event, NotificationReceipt? Receipt)>>([]);
+
+        public Task<NotificationReceipt?> FindReceiptAsync(
+            Guid notificationEventId, Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<NotificationReceipt?>(null);
+
+        public Task AddReceiptAsync(NotificationReceipt receipt, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

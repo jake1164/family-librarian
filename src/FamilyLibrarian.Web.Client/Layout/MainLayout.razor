@@ -3,20 +3,25 @@
 @inject ApiAuthenticationStateProvider AuthenticationStateProvider
 @inject AdminRequestsApiClient AdminRequests
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
+@using FamilyLibrarian.Web.Client.Theme
 
-<MudThemeProvider />
+<MudThemeProvider @bind-IsDarkMode="isDarkMode"
+                   ObserveSystemDarkModeChange="@(themeMode == ThemeMode.System)"
+                   Theme="AppTheme.Default" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
 
 <MudLayout>
     <MudAppBar Elevation="1">
-        @* Only signed-in users have anywhere to navigate to. *@
+        @* Only signed-in users have anywhere to navigate to. Always visible
+           (not just d-md-none/mobile) since the drawer is now a persistent
+           mini rail that this button expands/collapses at any width. *@
         <AuthorizeView>
             <MudIconButton Icon="@Icons.Material.Filled.Menu"
                            Color="Color.Inherit"
                            Edge="Edge.Start"
-                           Class="d-md-none"
                            aria-label="Open navigation"
                            OnClick="@(() => isDrawerOpen = !isDrawerOpen)" />
         </AuthorizeView>
@@ -27,11 +32,18 @@
 
         <MudSpacer />
 
-        @* Config/setup pages an admin visits rarely — everyday destinations
-           (Search/My Requests/My Reading/Queue/Security Queue) live in the
-           sidebar drawer instead. Hiding this is UX only — every page carries
-           [Authorize] and every endpoint behind it independently authorizes
-           the caller. *@
+        <AuthorizeView>
+            <Authorized>
+                <NotificationTray IsAdmin="@isAdmin" />
+            </Authorized>
+        </AuthorizeView>
+
+        @* Config/setup pages an admin visits rarely stay tucked in this
+           dropdown rather than taking up rows in the nav rail; the
+           everyday admin destinations (Queue/Security queue/Accounts/
+           Publishing activity) live in the drawer instead. Hiding this is
+           UX only — every page carries [Authorize] and every endpoint
+           behind it independently authorizes the caller. *@
         <AuthorizeView Roles="Admin">
             <MudMenu Icon="@Icons.Material.Filled.Settings"
                      Color="Color.Inherit"
@@ -46,15 +58,44 @@
                 <MudMenuItem Href="settings/acquisition-policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudMenuItem>
                 <MudMenuItem Href="settings/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudMenuItem>
             </MudMenu>
-            <MudMenu Icon="@Icons.Material.Filled.People"
-                     Color="Color.Inherit"
-                     AriaLabel="Administration menu"
-                     AnchorOrigin="Origin.BottomRight"
-                     TransformOrigin="Origin.BottomRight">
-                <MudMenuItem Href="admin/accounts" Icon="@Icons.Material.Filled.People">Accounts</MudMenuItem>
-                <MudMenuItem Href="admin/publishing" Icon="@Icons.Material.Filled.Assessment">Publishing activity</MudMenuItem>
-            </MudMenu>
         </AuthorizeView>
+
+        <MudMenu Icon="@ThemeMenuIcon"
+                  Color="Color.Inherit"
+                  AriaLabel="Theme"
+                  AnchorOrigin="Origin.BottomRight"
+                  TransformOrigin="Origin.TopRight">
+            <MudMenuItem OnClick="@(() => SetThemeModeAsync(ThemeMode.Light))">
+                <div class="d-flex align-center" style="gap: 0.5rem; min-width: 8rem;">
+                    <MudIcon Icon="@Icons.Material.Filled.LightMode" Size="Size.Small" />
+                    <MudText>Light</MudText>
+                    @if (themeMode == ThemeMode.Light)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" Class="ml-auto" />
+                    }
+                </div>
+            </MudMenuItem>
+            <MudMenuItem OnClick="@(() => SetThemeModeAsync(ThemeMode.Dark))">
+                <div class="d-flex align-center" style="gap: 0.5rem; min-width: 8rem;">
+                    <MudIcon Icon="@Icons.Material.Filled.DarkMode" Size="Size.Small" />
+                    <MudText>Dark</MudText>
+                    @if (themeMode == ThemeMode.Dark)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" Class="ml-auto" />
+                    }
+                </div>
+            </MudMenuItem>
+            <MudMenuItem OnClick="@(() => SetThemeModeAsync(ThemeMode.System))">
+                <div class="d-flex align-center" style="gap: 0.5rem; min-width: 8rem;">
+                    <MudIcon Icon="@Icons.Material.Filled.BrightnessAuto" Size="Size.Small" />
+                    <MudText>Auto</MudText>
+                    @if (themeMode == ThemeMode.System)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" Class="ml-auto" />
+                    }
+                </div>
+            </MudMenuItem>
+        </MudMenu>
 
         <AuthorizeView>
             <Authorized>
@@ -78,24 +119,32 @@
         </AuthorizeView>
     </MudAppBar>
 
-    @* Responsive: an overlay drawer below md (toggled by the hamburger above),
-       a permanently visible sidebar from md up — the ABS-style persistent nav
-       this whole layout is modeled on. *@
+    @* Mini variant: a persistent icon-only rail at all screen widths that the
+       app bar's hamburger expands to show labels alongside the icons (and
+       collapses back to icons-only) — the M3Undle-style rail this is modeled
+       on, rather than a responsive drawer that hides below md. *@
     <AuthorizeView>
         <MudDrawer @bind-Open="isDrawerOpen"
-                   Variant="DrawerVariant.Responsive"
-                   Breakpoint="Breakpoint.Md"
+                   Variant="DrawerVariant.Mini"
+                   ClipMode="DrawerClipMode.Always"
                    Elevation="2">
             <MudNavMenu>
                 <MudNavLink Href="search" Icon="@Icons.Material.Filled.Search">Search</MudNavLink>
                 <MudNavLink Href="requests" Icon="@Icons.Material.Filled.MenuBook">My requests</MudNavLink>
                 <MudNavLink Href="reading" Icon="@Icons.Material.Filled.Star">My reading</MudNavLink>
+                @* Everyday admin destinations. The config/setup pages that
+                   are visited rarely (Metadata providers, Sources,
+                   Publishing, Acquisition policy, Authentication) stay in
+                   the Settings dropdown up in the app bar instead of taking
+                   rows here. Hiding this is UX only — every page carries
+                   [Authorize] and every endpoint behind it independently
+                   authorizes the caller. *@
                 <AuthorizeView Roles="Admin" Context="adminContext">
                     <MudDivider Class="my-2" />
-                    <MudNavLink Href="admin/requests" Icon="@Icons.Material.Filled.Inbox">
-                        Queue@(NeedsReviewCount == 0 ? string.Empty : $" · {NeedsReviewCount} need review")
-                    </MudNavLink>
+                    <MudNavLink Href="admin/requests" Icon="@Icons.Material.Filled.Inbox">Queue</MudNavLink>
                     <MudNavLink Href="admin/security" Icon="@Icons.Material.Filled.Shield">Security queue</MudNavLink>
+                    <MudNavLink Href="admin/accounts" Icon="@Icons.Material.Filled.People">Accounts</MudNavLink>
+                    <MudNavLink Href="admin/publishing" Icon="@Icons.Material.Filled.Assessment">Publishing activity</MudNavLink>
                 </AuthorizeView>
             </MudNavMenu>
         </MudDrawer>
@@ -108,56 +157,72 @@
        sides and the top gap. *@
     <MudMainContent Class="pb-8">
         <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
-            <AuthorizeView Roles="Admin">
-                @if (adminAttention is { } attention && (attention.NeedsReviewCount > 0 || attention.ProviderIssues.Count > 0))
-                {
-                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
-                            <MudText Typo="Typo.body2">
-                                Admin attention:
-                                @if (attention.NeedsReviewCount > 0)
-                                {
-                                    <span>@attention.NeedsReviewCount request@(attention.NeedsReviewCount == 1 ? string.Empty : "s") need review.</span>
-                                }
-                                @if (attention.ProviderIssues.Count > 0)
-                                {
-                                    <span>@attention.ProviderIssues.Count automatic source issue@(attention.ProviderIssues.Count == 1 ? string.Empty : "s") need attention.</span>
-                                }
-                            </MudText>
-                            @if (attention.NeedsReviewCount > 0)
-                            {
-                                <MudLink Href="admin/requests">Open queue</MudLink>
-                            }
-                            @if (attention.ProviderIssues.Count > 0)
-                            {
-                                <MudLink Href="settings/sources">Review sources</MudLink>
-                            }
-                        </MudStack>
-                    </MudAlert>
-                }
-            </AuthorizeView>
             @Body
         </MudContainer>
     </MudMainContent>
+
+    @* Sticky status footer, ABS/M3Undle-style. Nothing to surface here yet —
+       it's just the shell (app name + version) so future status indicators
+       (queue depth, scan health, etc.) have somewhere to land without another
+       layout pass. *@
+    <MudAppBar Bottom="true" Dense="true" Elevation="1">
+        <MudText Typo="Typo.caption">Family Librarian</MudText>
+        <MudSpacer />
+    </MudAppBar>
 </MudLayout>
 
 @code {
-    // True by default: DrawerVariant.Responsive renders as a permanently
-    // visible sidebar from md up (matching the standard MudBlazor template),
-    // and as a dismissible overlay below it, toggled by the app bar's
-    // hamburger button.
-    private bool isDrawerOpen = true;
+    private const string ThemeModeStorageKey = "familylibrarian.thememode";
+
+    private enum ThemeMode
+    {
+        Light,
+        Dark,
+        System,
+    }
+
+    // False by default: DrawerVariant.Mini renders as a persistent icon-only
+    // rail when closed and expands to show labels alongside the icons when
+    // open, toggled by the app bar's hamburger button.
+    private bool isDrawerOpen;
+    private bool isAdmin;
+    private bool isDarkMode;
+    private ThemeMode themeMode = ThemeMode.System;
     private AdminRequestAttentionResponse? adminAttention;
     private CancellationTokenSource? attentionRefreshCancellation;
 
-    private int NeedsReviewCount => adminAttention?.NeedsReviewCount ?? 0;
-
     private int ProviderIssueCount => adminAttention?.ProviderIssues.Count ?? 0;
+
+    private string ThemeMenuIcon => themeMode switch
+    {
+        ThemeMode.Light => Icons.Material.Filled.LightMode,
+        ThemeMode.Dark => Icons.Material.Filled.DarkMode,
+        _ => Icons.Material.Filled.BrightnessAuto,
+    };
 
     protected override async Task OnInitializedAsync()
     {
+        // ObserveSystemDarkModeChange on the MudThemeProvider below owns
+        // isDarkMode whenever themeMode is System — it queries the OS
+        // preference itself and keeps isDarkMode current via @bind-IsDarkMode
+        // as long as the OS preference changes while the app is open. An
+        // explicit Light/Dark choice sets isDarkMode directly instead and
+        // turns that observation off.
+        var savedMode = await JS.InvokeAsync<string?>("localStorage.getItem", ThemeModeStorageKey);
+        themeMode = savedMode switch
+        {
+            "light" => ThemeMode.Light,
+            "dark" => ThemeMode.Dark,
+            _ => ThemeMode.System,
+        };
+        if (themeMode != ThemeMode.System)
+        {
+            isDarkMode = themeMode == ThemeMode.Dark;
+        }
+
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        if (!state.User.IsInRole("Admin"))
+        isAdmin = state.User.IsInRole("Admin");
+        if (!isAdmin)
         {
             return;
         }
@@ -165,6 +230,23 @@
         await RefreshAdminAttentionAsync(CancellationToken.None);
         attentionRefreshCancellation = new CancellationTokenSource();
         _ = RefreshAdminAttentionPeriodicallyAsync(attentionRefreshCancellation.Token);
+    }
+
+    private async Task SetThemeModeAsync(ThemeMode mode)
+    {
+        themeMode = mode;
+        if (mode != ThemeMode.System)
+        {
+            isDarkMode = mode == ThemeMode.Dark;
+        }
+
+        var storedValue = mode switch
+        {
+            ThemeMode.Light => "light",
+            ThemeMode.Dark => "dark",
+            _ => "system",
+        };
+        await JS.InvokeVoidAsync("localStorage.setItem", ThemeModeStorageKey, storedValue);
     }
 
     private async Task RefreshAdminAttentionAsync(CancellationToken cancellationToken)

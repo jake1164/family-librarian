@@ -4,6 +4,7 @@ using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Feedback;
+using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Policy;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Publishing;
@@ -47,6 +48,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<RequestFormat> RequestFormats => Set<RequestFormat>();
 
     public DbSet<RequestStatusHistory> RequestStatusHistory => Set<RequestStatusHistory>();
+
+    public DbSet<NotificationEvent> NotificationEvents => Set<NotificationEvent>();
+
+    public DbSet<NotificationReceipt> NotificationReceipts => Set<NotificationReceipt>();
 
     public DbSet<UserWorkFeedback> UserWorkFeedback => Set<UserWorkFeedback>();
 
@@ -107,6 +112,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
         ConfigureCatalog(builder);
         ConfigureRequests(builder);
+        ConfigureNotifications(builder);
         ConfigureFeedback(builder);
         ConfigureProviders(builder);
         ConfigureAcquisition(builder);
@@ -299,6 +305,50 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(history => history.OccurredAtUtc).HasColumnName("occurred_at_utc").HasColumnType("timestamp with time zone");
 
             entity.HasIndex(history => new { history.RequestId, history.OccurredAtUtc });
+        });
+    }
+
+    private static void ConfigureNotifications(ModelBuilder builder)
+    {
+        builder.Entity<NotificationEvent>(entity =>
+        {
+            entity.ToTable("notification_events", "notifications");
+            entity.HasKey(notification => notification.Id);
+            entity.Property(notification => notification.Id).HasColumnName("id");
+            entity.Property(notification => notification.Audience).HasColumnName("audience").HasConversion<string>().HasMaxLength(32);
+            entity.Property(notification => notification.RecipientUserId).HasColumnName("recipient_user_id");
+            entity.Property(notification => notification.Category).HasColumnName("category").HasMaxLength(128).IsRequired();
+            entity.Property(notification => notification.Severity).HasColumnName("severity").HasConversion<string>().HasMaxLength(16);
+            entity.Property(notification => notification.Title).HasColumnName("title").HasMaxLength(NotificationEvent.MaxTitleLength).IsRequired();
+            entity.Property(notification => notification.Detail).HasColumnName("detail").HasMaxLength(NotificationEvent.MaxDetailLength);
+            entity.Property(notification => notification.SubjectType).HasColumnName("subject_type").HasMaxLength(128);
+            entity.Property(notification => notification.SubjectId).HasColumnName("subject_id").HasMaxLength(256);
+            entity.Property(notification => notification.RepeatCount).HasColumnName("repeat_count");
+            entity.Property(notification => notification.OccurredAtUtc).HasColumnName("occurred_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(notification => notification.LastOccurredAtUtc).HasColumnName("last_occurred_at_utc").HasColumnType("timestamp with time zone");
+
+            entity.HasIndex(notification => new
+            {
+                notification.Audience,
+                notification.RecipientUserId,
+                notification.Category,
+                notification.SubjectType,
+                notification.SubjectId
+            });
+            entity.HasIndex(notification => notification.LastOccurredAtUtc);
+        });
+
+        builder.Entity<NotificationReceipt>(entity =>
+        {
+            entity.ToTable("notification_receipts", "notifications");
+            entity.HasKey(receipt => receipt.Id);
+            entity.Property(receipt => receipt.Id).HasColumnName("id");
+            entity.Property(receipt => receipt.NotificationEventId).HasColumnName("notification_event_id");
+            entity.Property(receipt => receipt.UserId).HasColumnName("user_id");
+            entity.Property(receipt => receipt.ReadAtUtc).HasColumnName("read_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(receipt => receipt.DismissedAtUtc).HasColumnName("dismissed_at_utc").HasColumnType("timestamp with time zone");
+
+            entity.HasIndex(receipt => new { receipt.NotificationEventId, receipt.UserId }).IsUnique();
         });
     }
 

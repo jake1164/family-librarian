@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
@@ -23,7 +24,8 @@ public sealed class ExternalProviderRecheckService(
     ICredentialProtector protector,
     PrivateEgressRouteResolver routeResolver,
     IWorkLookup workLookup,
-    IClock clock)
+    IClock clock,
+    NotificationService notifications)
 {
     private const int BatchSize = 20;
 
@@ -99,7 +101,9 @@ public sealed class ExternalProviderRecheckService(
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
                             $"Found {candidates.Count} candidate(s); librarian review is required before acquisition.",
                             nextEligibleCheckAtUtc: null);
-                        MarkForReview(request, $"{provider.DisplayName} found a candidate that needs librarian review.");
+                        await MarkForReviewAsync(
+                            request, work.Title, $"{provider.DisplayName} found a candidate that needs librarian review.",
+                            cancellationToken);
                         break;
                     }
                     catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or CryptographicException)
@@ -141,11 +145,15 @@ public sealed class ExternalProviderRecheckService(
         attempts.Add(new ProviderAttempt(
             request.Id, format.Id, provider.ProviderId, outcome, summary, clock.UtcNow, nextEligibleCheckAtUtc));
 
-    private void MarkForReview(BookRequest request, string reason)
+    private async Task MarkForReviewAsync(
+        BookRequest request, string workTitle, string reason, CancellationToken cancellationToken)
     {
-        if (request.Status == RequestStatus.PendingAcquisition)
+        if (request.Status != RequestStatus.PendingAcquisition)
         {
-            request.TransitionTo(RequestStatus.NeedsReview, actorUserId: null, reason, clock.UtcNow);
+            return;
         }
+
+        request.TransitionTo(RequestStatus.NeedsReview, actorUserId: null, reason, clock.UtcNow);
+        await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
     }
 }

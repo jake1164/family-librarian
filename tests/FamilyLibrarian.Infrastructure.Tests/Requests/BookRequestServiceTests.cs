@@ -1,6 +1,8 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Requests;
@@ -310,7 +312,12 @@ public sealed class BookRequestServiceTests
     }
 
     private static BookRequestService Create(IRequestRepository repository, Guid? userId) =>
-        new(repository, new StubCurrentUser(userId), new FixedClock(), new NullAuditWriter());
+        new(
+            repository,
+            new StubCurrentUser(userId),
+            new FixedClock(),
+            new NullAuditWriter(),
+            new NotificationService(new NullNotificationRepository(), new StubCurrentUser(userId), new FixedClock()));
 
     private sealed class StubCurrentUser(Guid? userId) : ICurrentUser
     {
@@ -332,6 +339,42 @@ public sealed class BookRequestServiceTests
             string? subjectId,
             object? detail,
             CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    /// <summary>Notifications are not what these tests are about; every call is a no-op.</summary>
+    private sealed class NullNotificationRepository : INotificationRepository
+    {
+        public Task<NotificationEvent?> FindLatestAsync(
+            NotificationAudience audience,
+            Guid? recipientUserId,
+            string category,
+            string? subjectType,
+            string? subjectId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<NotificationEvent?>(null);
+
+        public Task AddAsync(NotificationEvent notification, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<IReadOnlyList<NotificationReceipt>> ListReceiptsAsync(
+            Guid notificationEventId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<NotificationReceipt>>([]);
+
+        public Task RemoveReceiptsAsync(IReadOnlyList<NotificationReceipt> receipts, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<IReadOnlyList<(NotificationEvent Event, NotificationReceipt? Receipt)>> ListForViewerAsync(
+            Guid userId, bool isAdmin, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<(NotificationEvent Event, NotificationReceipt? Receipt)>>([]);
+
+        public Task<NotificationReceipt?> FindReceiptAsync(
+            Guid notificationEventId, Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<NotificationReceipt?>(null);
+
+        public Task AddReceiptAsync(NotificationReceipt receipt, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class InMemoryRequestRepository : IRequestRepository

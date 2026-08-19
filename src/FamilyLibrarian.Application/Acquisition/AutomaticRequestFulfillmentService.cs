@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Domain.Acquisition;
@@ -25,7 +26,8 @@ public sealed class AutomaticRequestFulfillmentService(
     IExternalProviderStore externalProviders,
     IEnumerable<IAutomaticDirectAcquisitionProvider> providers,
     DirectAcquisitionSecurityService acquisition,
-    IClock clock)
+    IClock clock,
+    NotificationService notifications)
 {
     private const int BatchSize = 20;
 
@@ -97,9 +99,9 @@ public sealed class AutomaticRequestFulfillmentService(
                     // terminal automatic attempt and belongs in the review queue.
                     if (distinctOptions.Length > 1 || !await HasScheduledExternalProviderAsync(cancellationToken))
                     {
-                        MarkForReview(request, distinctOptions.Length == 0
+                        await MarkForReviewAsync(request, distinctOptions.Length == 0
                             ? "No high-confidence automatic copy was found."
-                            : "More than one high-confidence automatic copy was found.");
+                            : "More than one high-confidence automatic copy was found.", cancellationToken);
                     }
 
                     await attempts.SaveChangesAsync(cancellationToken);
@@ -121,7 +123,7 @@ public sealed class AutomaticRequestFulfillmentService(
                         request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Failed,
                         result.Error ?? "The automatic copy could not be acquired.", clock.UtcNow,
                         nextEligibleCheckAtUtc: null));
-                    MarkForReview(request, result.Error ?? "The automatic copy could not be acquired.");
+                    await MarkForReviewAsync(request, result.Error ?? "The automatic copy could not be acquired.", cancellationToken);
                     await attempts.SaveChangesAsync(cancellationToken);
                     await requests.SaveChangesAsync(cancellationToken);
                     break;
@@ -151,12 +153,17 @@ public sealed class AutomaticRequestFulfillmentService(
     private static bool IsCurrentPendingCycleAttempt(ProviderAttempt? attempt, BookRequest request) =>
         attempt is not null && attempt.AttemptedAtUtc >= request.StatusChangedAtUtc;
 
-    private void MarkForReview(BookRequest request, string reason)
+    private async Task MarkForReviewAsync(BookRequest request, string reason, CancellationToken cancellationToken)
     {
-        if (request.Status == RequestStatus.PendingAcquisition)
+        if (request.Status != RequestStatus.PendingAcquisition)
         {
-            request.TransitionTo(RequestStatus.NeedsReview, actorUserId: null, reason, clock.UtcNow);
+            return;
         }
+
+        request.TransitionTo(RequestStatus.NeedsReview, actorUserId: null, reason, clock.UtcNow);
+        // No title lookup is wired into this service; showing the work ID here
+        // rather than adding a new repository call for it.
+        await notifications.RecordRequestNeedsReviewAsync(request.Id, request.WorkId.ToString(), reason, cancellationToken);
     }
 
     private static string DescribeProviderFailure(Exception exception) => exception switch

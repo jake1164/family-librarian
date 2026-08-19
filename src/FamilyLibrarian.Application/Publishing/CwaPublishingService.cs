@@ -1,11 +1,13 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Publishing;
+using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Publishing;
 
@@ -33,7 +35,8 @@ public sealed class CwaPublishingService(
     IBookRequestFulfillmentStore requestFulfillment,
     IWorkLookup workLookup,
     IAuditWriter audit,
-    IClock clock)
+    IClock clock,
+    NotificationService notifications)
 {
     public async Task PublishAsync(MediaAsset asset, CancellationToken cancellationToken)
     {
@@ -168,7 +171,7 @@ public sealed class CwaPublishingService(
             if (bookId is not null)
             {
                 import.MarkAvailable(bookId, clock.UtcNow);
-                await MarkRequestFormatAvailableAsync(asset, cancellationToken);
+                await MarkRequestFormatAvailableAsync(asset, title, cancellationToken);
                 await repository.SaveChangesAsync(cancellationToken);
             }
         }
@@ -180,11 +183,22 @@ public sealed class CwaPublishingService(
         }
     }
 
-    private async Task MarkRequestFormatAvailableAsync(MediaAsset asset, CancellationToken cancellationToken)
+    private async Task MarkRequestFormatAvailableAsync(
+        MediaAsset asset, string title, CancellationToken cancellationToken)
     {
         var request = await requestFulfillment.FindByFormatIdAsync(
             asset.AssociatedRequestFormatId,
             cancellationToken);
-        request?.MarkFormatAvailable(asset.AssociatedRequestFormatId, clock.UtcNow);
+        if (request is null)
+        {
+            return;
+        }
+
+        var becameAvailable = request.MarkFormatAvailable(asset.AssociatedRequestFormatId, clock.UtcNow);
+        if (becameAvailable)
+        {
+            await notifications.RecordRequestStatusForUserAsync(
+                request.UserId, request.Id, title, RequestStatus.Available, cancellationToken);
+        }
     }
 }

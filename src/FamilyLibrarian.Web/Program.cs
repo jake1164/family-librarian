@@ -195,6 +195,7 @@ app.MapCurrentUserEndpoints();
 app.MapCatalogEndpoints();
 app.MapRequestEndpoints();
 app.MapAdminRequestEndpoints();
+app.MapNotificationEndpoints();
 app.MapFeedbackEndpoints();
 app.MapSecurityQueueEndpoints();
 app.MapInvitationEndpoints();

@@ -4,6 +4,7 @@ using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Policy;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
@@ -143,6 +144,10 @@ public static class DependencyInjection
         services.AddScoped<IRequestRepository>(provider => provider.GetRequiredService<RequestRepository>());
         services.AddScoped<IBookRequestFulfillmentStore>(provider => provider.GetRequiredService<RequestRepository>());
         services.AddScoped<BookRequestService>();
+
+        services.AddScoped<NotificationRepository>();
+        services.AddScoped<INotificationRepository>(provider => provider.GetRequiredService<NotificationRepository>());
+        services.AddScoped<NotificationService>();
 
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
         services.AddScoped<UserWorkFeedbackService>();
