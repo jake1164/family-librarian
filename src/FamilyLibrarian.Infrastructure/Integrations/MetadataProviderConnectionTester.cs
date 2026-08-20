@@ -19,6 +19,7 @@ public sealed class MetadataProviderConnectionTester(
 
     public async Task<MetadataProviderTestOutcome> TestAsync(
         string providerId,
+        string? candidateCredential,
         CancellationToken cancellationToken)
     {
         var provider = providers.FirstOrDefault(candidate =>
@@ -27,6 +28,13 @@ public sealed class MetadataProviderConnectionTester(
         {
             return new MetadataProviderTestOutcome(false, "That provider is not installed.");
         }
+
+        // A candidate credential lets an admin verify a key before saving it. It
+        // is scoped to just this probe and never reaches the store.
+        var trimmedCandidate = candidateCredential?.Trim();
+        using var credentialOverride = string.IsNullOrEmpty(trimmedCandidate)
+            ? null
+            : MetadataCredentialTestOverride.Begin(providerId, trimmedCandidate);
 
         try
         {

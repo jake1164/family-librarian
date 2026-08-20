@@ -36,6 +36,12 @@ public sealed record SetProviderEnabledRequest(bool Enabled);
 
 public sealed record SetProviderCredentialRequest(string Credential);
 
+/// <summary>
+/// An optional not-yet-saved credential to probe with instead of the stored one.
+/// Never persisted; used for this single test call only.
+/// </summary>
+public sealed record ProviderTestRequest(string? Credential);
+
 public sealed record ProviderTestResponse(
     bool Succeeded,
     string Message,

@@ -60,12 +60,18 @@ public sealed class MetadataIntegrationsApiClient(
 
     public async Task<ProviderTestResponse?> TestAsync(
         string providerId,
+        string? candidateCredential = null,
         CancellationToken cancellationToken = default)
     {
-        using var request = await CreateRequestAsync<object>(
+        // A candidate credential (typed but not yet saved) lets the admin verify a
+        // key works before committing to Save key. It never reaches the store.
+        var payload = string.IsNullOrWhiteSpace(candidateCredential)
+            ? null
+            : new ProviderTestRequest(candidateCredential);
+        using var request = await CreateRequestAsync(
             HttpMethod.Post,
             $"{BasePath}/{Uri.EscapeDataString(providerId)}/test",
-            payload: null,
+            payload,
             cancellationToken);
         using var response = await httpClient.SendAsync(request, cancellationToken);
 

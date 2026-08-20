@@ -54,16 +54,23 @@ internal static class MetadataIntegrationEndpoints
 
     private static async Task<IResult> TestProviderAsync(
         string providerId,
+        ProviderTestRequest? request,
         ProviderAdminService admin,
         MetadataProviderConnectionTester tester,
         CancellationToken cancellationToken)
     {
-        if (await admin.GetStatusAsync(providerId, cancellationToken) is null)
+        var status = await admin.GetStatusAsync(providerId, cancellationToken);
+        if (status is null)
         {
             return Results.NotFound();
         }
 
-        var outcome = await tester.TestAsync(providerId, cancellationToken);
+        // An externally managed credential comes from deployment config, not this
+        // page, so a candidate typed here (which shouldn't exist in that case
+        // anyway, since the UI hides the field) is never allowed to shadow it.
+        var candidateCredential = status.IsExternallyManaged ? null : request?.Credential;
+
+        var outcome = await tester.TestAsync(providerId, candidateCredential, cancellationToken);
         var recorded = await admin.RecordTestResultAsync(
             providerId,
             outcome.Succeeded,

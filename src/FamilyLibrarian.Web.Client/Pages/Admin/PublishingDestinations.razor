@@ -131,14 +131,14 @@ else
             <MudText Typo="Typo.h6" GutterBottom="true">Optional import verification (OPDS)</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
                 OPDS is CWA's HTTP catalog and is separate from SFTP delivery. Enter CWA's site root,
-                not its <code>/opds</code> page: for example, <code>https://books.sydneyelvis.net</code>,
-                not <code>https://books.sydneyelvis.net/opds</code>. Family Librarian adds the
+                not its <code>/opds</code> page: for example, <code>https://books.example.com</code>,
+                not <code>https://books.example.com/opds</code>. Family Librarian adds the
                 <code>/opds/search/...</code> path itself. The OPDS test checks the current form values
                 without saving them.
             </MudText>
             <MudStack Spacing="3">
                 <MudTextField T="string" Label="CWA site root URL" @bind-Value="cwaOpdsBaseUrl"
-                              Placeholder="https://books.sydneyelvis.net"
+                              Placeholder="https://books.example.com"
                               HelperText="Enter the CWA site root; do not add /opds."
                               Disabled="@cwaBusy" />
                 <MudTextField T="string" Label="OPDS username" @bind-Value="cwaOpdsUsername" Disabled="@cwaBusy" />
@@ -225,8 +225,8 @@ else
         <MudDivider Class="my-3" />
         <MudText Typo="Typo.body2" Class="mb-2">
             Test checks the base URL, library ID, folder ID, and API token currently in this form (a stored token is
-            used if the token field above is blank) without saving them. Save settings and Save token are the only
-            actions that persist anything.
+            used if the token field above is blank) without saving them. Save settings also saves a token typed into
+            the field above; use Save token to store a token without changing the other fields.
         </MudText>
         <MudButton Variant="Variant.Outlined" Disabled="@audiobookshelfBusy" OnClick="TestAudiobookshelfAsync">Test connection</MudButton>
         @if (audiobookshelfTestResult is not null)
@@ -479,7 +479,43 @@ else
     private async Task LoadAudiobookshelfAsync() { try { audiobookshelf = await AudiobookshelfApi.GetAsync(); ApplyAudiobookshelfFields(audiobookshelf); } catch (HttpRequestException) { audiobookshelfLoadFailed = true; } }
     private void ApplyAudiobookshelfFields(AudiobookshelfSettingsResponse? settings) { if (settings is null) return; audiobookshelfBaseUrl = settings.BaseUrl; audiobookshelfLibraryId = settings.LibraryId; audiobookshelfFolderId = settings.FolderId; }
     private Task SetAudiobookshelfEnabledAsync(bool enabled) => RunAudiobookshelfAsync(() => AudiobookshelfApi.SetEnabledAsync(enabled));
-    private Task SaveAudiobookshelfSettingsAsync() => RunAudiobookshelfAsync(() => AudiobookshelfApi.SetSettingsAsync(new SetAudiobookshelfSettingsRequest(audiobookshelfBaseUrl, audiobookshelfLibraryId, audiobookshelfFolderId)));
+    private async Task SaveAudiobookshelfSettingsAsync()
+    {
+        audiobookshelfBusy = true;
+        try
+        {
+            var result = await AudiobookshelfApi.SetSettingsAsync(new SetAudiobookshelfSettingsRequest(audiobookshelfBaseUrl, audiobookshelfLibraryId, audiobookshelfFolderId));
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            audiobookshelf = result.Settings;
+            ApplyAudiobookshelfFields(audiobookshelf);
+
+            if (!string.IsNullOrWhiteSpace(audiobookshelfApiTokenDraft))
+            {
+                var tokenResult = await AudiobookshelfApi.SetApiTokenAsync(audiobookshelfApiTokenDraft);
+                if (!tokenResult.Succeeded)
+                {
+                    Snackbar.Add(tokenResult.Error ?? "The API token could not be saved.", Severity.Error);
+                    return;
+                }
+
+                audiobookshelf = tokenResult.Settings;
+                ApplyAudiobookshelfFields(audiobookshelf);
+                audiobookshelfApiTokenDraft = null;
+            }
+
+            Snackbar.Add("Saved the Audiobookshelf settings.", Severity.Success);
+        }
+        finally
+        {
+            audiobookshelfBusy = false;
+            audiobookshelfSwitchGeneration++;
+        }
+    }
     private async Task SaveAudiobookshelfApiTokenAsync() { if (string.IsNullOrWhiteSpace(audiobookshelfApiTokenDraft)) return; if (await RunAudiobookshelfAsync(() => AudiobookshelfApi.SetApiTokenAsync(audiobookshelfApiTokenDraft))) { audiobookshelfApiTokenDraft = null; Snackbar.Add("Saved the Audiobookshelf API token.", Severity.Success); } }
     private Task ClearAudiobookshelfApiTokenAsync() => RunAudiobookshelfAsync(() => AudiobookshelfApi.ClearApiTokenAsync());
 

@@ -29,6 +29,15 @@ public sealed class MetadataCredentialSource(
         string providerId,
         CancellationToken cancellationToken)
     {
+        // A connection test can supply a candidate key that hasn't been saved yet;
+        // it takes priority for the single outbound call it wraps and never
+        // touches configuration or the store.
+        var candidate = MetadataCredentialTestOverride.TryGet(providerId);
+        if (candidate is not null)
+        {
+            return candidate;
+        }
+
         var configured = ReadFromConfiguration(providerId);
         if (!string.IsNullOrWhiteSpace(configured))
         {

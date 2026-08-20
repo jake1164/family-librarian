@@ -1,10 +1,13 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Notifications;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Publishing;
+using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Publishing;
 
@@ -26,8 +29,10 @@ public sealed class AudiobookshelfPublishingService(
     IAssetStagingStore stagingStore,
     IAudiobookshelfApiClient apiClient,
     IWorkLookup workLookup,
+    IBookRequestFulfillmentStore requestFulfillment,
     IAuditWriter audit,
-    IClock clock)
+    IClock clock,
+    NotificationService notifications)
 {
     public async Task PublishAsync(MediaAsset asset, CancellationToken cancellationToken)
     {
@@ -82,7 +87,9 @@ public sealed class AudiobookshelfPublishingService(
             else if (delivery.Status == DeliveryStatus.Verifying)
             {
                 var bundleWork = await workLookup.FindAsync(tracks[0].WorkId, cancellationToken);
-                await TryVerifyAsync(delivery, bundleWork?.Title ?? "Unknown title", bundleWork?.PrimaryAuthor, cancellationToken);
+                await TryVerifyAsync(
+                    delivery, tracks[0].AssociatedRequestFormatId,
+                    bundleWork?.Title ?? "Unknown title", bundleWork?.PrimaryAuthor, cancellationToken);
             }
 
             return true;
@@ -104,7 +111,9 @@ public sealed class AudiobookshelfPublishingService(
         else if (delivery.Status == DeliveryStatus.Verifying)
         {
             var work = await workLookup.FindAsync(asset.WorkId, cancellationToken);
-            await TryVerifyAsync(delivery, work?.Title ?? "Unknown title", work?.PrimaryAuthor, cancellationToken);
+            await TryVerifyAsync(
+                delivery, asset.AssociatedRequestFormatId,
+                work?.Title ?? "Unknown title", work?.PrimaryAuthor, cancellationToken);
         }
 
         return true;
@@ -122,6 +131,7 @@ public sealed class AudiobookshelfPublishingService(
             if (existingItemId is not null)
             {
                 delivery.MarkDelivered(existingItemId, clock.UtcNow);
+                await MarkRequestFormatAvailableAsync(asset.AssociatedRequestFormatId, title, cancellationToken);
                 await repository.SaveChangesAsync(cancellationToken);
                 await AuditPublishedAsync(asset.Id, cancellationToken);
                 return;
@@ -143,6 +153,7 @@ public sealed class AudiobookshelfPublishingService(
             if (result.ExternalItemId is not null)
             {
                 delivery.MarkDelivered(result.ExternalItemId, clock.UtcNow);
+                await MarkRequestFormatAvailableAsync(asset.AssociatedRequestFormatId, title, cancellationToken);
             }
             else
             {
@@ -154,14 +165,15 @@ public sealed class AudiobookshelfPublishingService(
 
             if (delivery.Status == DeliveryStatus.Verifying)
             {
-                await TryVerifyAsync(delivery, title, author, cancellationToken);
+                await TryVerifyAsync(delivery, asset.AssociatedRequestFormatId, title, author, cancellationToken);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            delivery.MarkFailed(exception.Message, clock.UtcNow);
+            var reason = DescribeFailure(exception);
+            delivery.MarkFailed(reason, clock.UtcNow);
             await repository.SaveChangesAsync(cancellationToken);
-            await AuditPublishFailedAsync(asset.Id, exception.Message, cancellationToken);
+            await AuditPublishFailedAsync(asset.Id, reason, cancellationToken);
         }
     }
 
@@ -209,6 +221,7 @@ public sealed class AudiobookshelfPublishingService(
             if (existingItemId is not null)
             {
                 delivery.MarkDelivered(existingItemId, clock.UtcNow);
+                await MarkRequestFormatAvailableAsync(tracks[0].AssociatedRequestFormatId, title, cancellationToken);
                 await repository.SaveChangesAsync(cancellationToken);
                 await AuditBundlePublishedAsync(bundleId, cancellationToken);
                 return;
@@ -241,6 +254,7 @@ public sealed class AudiobookshelfPublishingService(
                 if (result.ExternalItemId is not null)
                 {
                     delivery.MarkDelivered(result.ExternalItemId, clock.UtcNow);
+                    await MarkRequestFormatAvailableAsync(tracks[0].AssociatedRequestFormatId, title, cancellationToken);
                 }
                 else
                 {
@@ -252,7 +266,7 @@ public sealed class AudiobookshelfPublishingService(
 
                 if (delivery.Status == DeliveryStatus.Verifying)
                 {
-                    await TryVerifyAsync(delivery, title, author, cancellationToken);
+                    await TryVerifyAsync(delivery, tracks[0].AssociatedRequestFormatId, title, author, cancellationToken);
                 }
             }
             finally
@@ -265,13 +279,28 @@ public sealed class AudiobookshelfPublishingService(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            delivery.MarkFailed(exception.Message, clock.UtcNow);
+            var reason = DescribeFailure(exception);
+            delivery.MarkFailed(reason, clock.UtcNow);
             await repository.SaveChangesAsync(cancellationToken);
-            await AuditBundlePublishFailedAsync(bundleId, exception.Message, cancellationToken);
+            await AuditBundlePublishFailedAsync(bundleId, reason, cancellationToken);
         }
     }
 
-    private async Task TryVerifyAsync(Delivery delivery, string title, string? author, CancellationToken cancellationToken)
+    /// <summary>
+    /// .NET's <see cref="HttpContent"/> wraps a mid-upload stream failure in a
+    /// generic "Error while copying content to a stream." message and puts the
+    /// actual cause (e.g. a connection reset, or a reverse proxy's body-size
+    /// limit rejecting a large multi-file request) on <see cref="Exception.InnerException"/>.
+    /// Surfacing it here is the difference between an admin being able to
+    /// diagnose a failed delivery and a dead end.
+    /// </summary>
+    private static string DescribeFailure(Exception exception) =>
+        exception.InnerException is { } inner
+            ? $"{exception.Message} ({inner.Message})"
+            : exception.Message;
+
+    private async Task TryVerifyAsync(
+        Delivery delivery, Guid requestFormatId, string title, string? author, CancellationToken cancellationToken)
     {
         try
         {
@@ -279,12 +308,30 @@ public sealed class AudiobookshelfPublishingService(
             if (itemId is not null)
             {
                 delivery.MarkDelivered(itemId, clock.UtcNow);
+                await MarkRequestFormatAvailableAsync(requestFormatId, title, cancellationToken);
                 await repository.SaveChangesAsync(cancellationToken);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // Best-effort: leave Verifying for a later manual recheck.
+        }
+    }
+
+    private async Task MarkRequestFormatAvailableAsync(
+        Guid requestFormatId, string title, CancellationToken cancellationToken)
+    {
+        var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
+        if (request is null)
+        {
+            return;
+        }
+
+        var becameAvailable = request.MarkFormatAvailable(requestFormatId, clock.UtcNow);
+        if (becameAvailable)
+        {
+            await notifications.RecordRequestStatusForUserAsync(
+                request.UserId, request.Id, title, RequestStatus.Available, cancellationToken);
         }
     }
 

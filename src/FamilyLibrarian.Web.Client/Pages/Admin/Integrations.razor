@@ -150,6 +150,11 @@ else
                         Test connection
                     </MudButton>
 
+                    @if (!string.IsNullOrWhiteSpace(credentialDrafts.GetValueOrDefault(provider.ProviderId)))
+                    {
+                        <MudText Typo="Typo.caption">Tests the key above, not yet saved.</MudText>
+                    }
+
                     @if (provider.LastTestedAtUtc is not null)
                     {
                         <MudText Typo="Typo.body2">
@@ -237,7 +242,12 @@ else
         busyProviderId = provider.ProviderId;
         try
         {
-            var result = await IntegrationsApi.TestAsync(provider.ProviderId);
+            // A key typed into the draft field but not yet saved is tested in
+            // place of the stored one, so an admin can verify it works before
+            // committing to Save key.
+            var result = await IntegrationsApi.TestAsync(
+                provider.ProviderId,
+                credentialDrafts.GetValueOrDefault(provider.ProviderId));
             if (result is null)
             {
                 Snackbar.Add("The connection test could not be run.", Severity.Error);

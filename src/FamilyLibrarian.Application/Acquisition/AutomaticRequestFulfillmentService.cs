@@ -139,19 +139,23 @@ public sealed class AutomaticRequestFulfillmentService(
                         option.ProviderResultId,
                         cancellationToken);
                 }
-                catch (Exception exception) when (exception is IOException or HttpRequestException or TaskCanceledException)
+                catch (Exception exception) when (exception is IOException or HttpRequestException or TaskCanceledException or InvalidOperationException)
                 {
                     // A transport-level failure mid-download (e.g. the source
                     // closing an idle connection partway through a multi-file
-                    // audiobook fetch) must not abort the whole batch — every
-                    // other pending request would silently stop being
-                    // processed until the next poll. Treat it exactly like an
-                    // acquisition failure below: unlike a search-phase
-                    // failure (see DescribeProviderFailure), this sends the
-                    // request to review rather than retrying on its own, so
-                    // the reason should not claim otherwise.
+                    // audiobook fetch), or the security/approval pipeline
+                    // rejecting the asset's state (AutomatedSecurityPipeline
+                    // throws InvalidOperationException when approval fails
+                    // for a reason other than an identity mismatch), must not
+                    // abort the whole batch — every other pending request
+                    // would silently stop being processed until the next
+                    // poll. Treat it exactly like an acquisition failure
+                    // below: unlike a search-phase failure (see
+                    // DescribeProviderFailure), this sends the request to
+                    // review rather than retrying on its own, so the reason
+                    // should not claim otherwise.
                     result = ManualImportResult.Invalid(
-                        $"The file could not be downloaded: {exception.Message}");
+                        $"The file could not be processed: {exception.Message}");
                 }
 
                 if (result.Outcome != ManualImportOutcome.Success)
