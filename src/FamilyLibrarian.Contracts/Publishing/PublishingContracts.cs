@@ -40,7 +40,8 @@ public sealed record CwaSettingsResponse(
     DateTimeOffset? OpdsPasswordSetAtUtc,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
-    string? LastTestMessage);
+    string? LastTestMessage,
+    bool IsIngestConfigured);
 
 public sealed record SetCwaSettingsRequest(
     string TransportMode,

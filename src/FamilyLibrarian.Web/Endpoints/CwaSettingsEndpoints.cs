@@ -201,5 +201,6 @@ internal static class CwaSettingsEndpoints
         status.OpdsPasswordSetAtUtc,
         status.LastTestedAtUtc,
         status.LastTestSucceeded,
-        status.LastTestMessage);
+        status.LastTestMessage,
+        status.IsIngestConfigured);
 }

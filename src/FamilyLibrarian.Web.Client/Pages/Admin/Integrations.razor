@@ -29,6 +29,14 @@ else
     <MudStack Spacing="4">
         @foreach (var provider in providers.Where(provider => provider.Capabilities.Contains("Metadata", StringComparer.Ordinal)))
         {
+            var needsSetup = NeedsSetup(provider);
+            // The detail section (key/test) tracks Enabled directly — off means
+            // collapsed to just the name and description. expandedSetup covers
+            // the one case that would otherwise be a dead end: flipping the
+            // switch on an unconfigured provider (see SetEnabledAsync) reveals
+            // the key field instead of calling an API that would only reject it.
+            var expanded = provider.IsEnabled || provider.IsExternallyManaged || expandedSetup.Contains(provider.ProviderId);
+
             <MudPaper Class="pa-4" Elevation="1">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                     <MudText Typo="Typo.h6">@provider.DisplayName</MudText>
@@ -39,7 +47,7 @@ else
                             Managed by this deployment
                         </MudChip>
                     }
-                    @if (provider.IsMisconfigured)
+                    @if (needsSetup)
                     {
                         <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
                             Needs an API key
@@ -95,79 +103,89 @@ else
                     </MudAlert>
                 }
 
-                @if (!provider.IsExternallyManaged && provider.RequiresCredential)
+                @if (expanded)
                 {
-                    <MudDivider Class="my-3" />
-
-                    <MudText Typo="Typo.subtitle2">API key</MudText>
-                    @if (provider.HasStoredCredential)
+                    @if (!provider.IsExternallyManaged && provider.RequiresCredential)
                     {
-                        <MudText Typo="Typo.body2" Class="mb-2">
-                            A key ending in <strong>@provider.CredentialHint</strong> was saved
-                            @(provider.CredentialSetAtUtc?.ToLocalTime().ToString("f")).
-                            Enter a new key to replace it.
-                        </MudText>
-                    }
-                    else
-                    {
-                        <MudText Typo="Typo.body2" Class="mb-2">No key is stored yet.</MudText>
-                    }
+                        <MudDivider Class="my-3" />
 
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-                        <MudTextField T="string"
-                                      @bind-Value="credentialDrafts[provider.ProviderId]"
-                                      Label="@(provider.HasStoredCredential ? "Replace API key" : "API key")"
-                                      InputType="InputType.Password"
-                                      Immediate="true"
-                                      Disabled="@(busyProviderId is not null)"
-                                      Class="flex-grow-1" />
-
-                        <MudButton Variant="Variant.Filled"
-                                   Color="Color.Primary"
-                                   Disabled="@(busyProviderId is not null || string.IsNullOrWhiteSpace(credentialDrafts[provider.ProviderId]))"
-                                   OnClick="@(() => SaveCredentialAsync(provider))">
-                            Save key
-                        </MudButton>
-
+                        <MudText Typo="Typo.subtitle2">API key</MudText>
                         @if (provider.HasStoredCredential)
                         {
-                            <MudButton Variant="Variant.Outlined"
-                                       Color="Color.Error"
-                                       Disabled="@(busyProviderId is not null)"
-                                       OnClick="@(() => ClearCredentialAsync(provider))">
-                                Remove key
+                            <MudText Typo="Typo.body2" Class="mb-2">
+                                A key ending in <strong>@provider.CredentialHint</strong> was saved
+                                @(provider.CredentialSetAtUtc?.ToLocalTime().ToString("f")).
+                                Enter a new key to replace it.
+                            </MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body2" Class="mb-2">No key is stored yet.</MudText>
+                        }
+
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudTextField T="string"
+                                          @bind-Value="credentialDrafts[provider.ProviderId]"
+                                          Label="@(provider.HasStoredCredential ? "Replace API key" : "API key")"
+                                          InputType="InputType.Password"
+                                          Immediate="true"
+                                          Disabled="@(busyProviderId is not null)"
+                                          Class="flex-grow-1" />
+
+                            <MudButton Variant="Variant.Filled"
+                                       Color="Color.Primary"
+                                       Disabled="@(busyProviderId is not null || string.IsNullOrWhiteSpace(credentialDrafts[provider.ProviderId]))"
+                                       OnClick="@(() => SaveCredentialAsync(provider))">
+                                Save key
                             </MudButton>
+
+                            @if (provider.HasStoredCredential)
+                            {
+                                <MudButton Variant="Variant.Outlined"
+                                           Color="Color.Error"
+                                           Disabled="@(busyProviderId is not null)"
+                                           OnClick="@(() => ClearCredentialAsync(provider))">
+                                    Remove key
+                                </MudButton>
+                            }
+                        </MudStack>
+                    }
+
+                    <MudDivider Class="my-3" />
+
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+                        <MudButton Variant="Variant.Outlined"
+                                   Disabled="@(busyProviderId is not null)"
+                                   OnClick="@(() => TestAsync(provider))">
+                            Test connection
+                        </MudButton>
+
+                        @if (!string.IsNullOrWhiteSpace(credentialDrafts.GetValueOrDefault(provider.ProviderId)))
+                        {
+                            <MudText Typo="Typo.caption">Tests the key above, not yet saved.</MudText>
+                        }
+
+                        @if (provider.LastTestedAtUtc is not null)
+                        {
+                            <MudText Typo="Typo.body2">
+                                <MudIcon Icon="@(provider.LastTestSucceeded == true ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Error)"
+                                         Color="@(provider.LastTestSucceeded == true ? Color.Success : Color.Error)"
+                                         Size="Size.Small" />
+                                @provider.LastTestMessage
+                                <MudText Typo="Typo.caption" Class="ml-1">
+                                    (@provider.LastTestedAtUtc.Value.ToLocalTime().ToString("f"))
+                                </MudText>
+                            </MudText>
                         }
                     </MudStack>
-                }
 
-                <MudDivider Class="my-3" />
-
-                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
-                    <MudButton Variant="Variant.Outlined"
-                               Disabled="@(busyProviderId is not null)"
-                               OnClick="@(() => TestAsync(provider))">
-                        Test connection
-                    </MudButton>
-
-                    @if (!string.IsNullOrWhiteSpace(credentialDrafts.GetValueOrDefault(provider.ProviderId)))
+                    @if (needsSetup)
                     {
-                        <MudText Typo="Typo.caption">Tests the key above, not yet saved.</MudText>
-                    }
-
-                    @if (provider.LastTestedAtUtc is not null)
-                    {
-                        <MudText Typo="Typo.body2">
-                            <MudIcon Icon="@(provider.LastTestSucceeded == true ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Error)"
-                                     Color="@(provider.LastTestSucceeded == true ? Color.Success : Color.Error)"
-                                     Size="Size.Small" />
-                            @provider.LastTestMessage
-                            <MudText Typo="Typo.caption" Class="ml-1">
-                                (@provider.LastTestedAtUtc.Value.ToLocalTime().ToString("f"))
-                            </MudText>
+                        <MudText Typo="Typo.caption" Class="mt-2">
+                            Save a working API key above to enable this provider.
                         </MudText>
                     }
-                </MudStack>
+                }
             </MudPaper>
         }
     </MudStack>
@@ -180,10 +198,18 @@ else
     // the @key on each provider's MudSwitch forces a fresh instance rather than
     // risking stale optimistic checked-state from a prior click.
     private readonly Dictionary<string, int> switchGenerations = new(StringComparer.OrdinalIgnoreCase);
+    // Providers whose detail section is showing even though they're not
+    // Enabled — set when flipping the switch on an unconfigured provider reveals
+    // its key field instead of calling the API (see SetEnabledAsync), and
+    // cleared again once the provider is actually switched off for real.
+    private readonly HashSet<string> expandedSetup = new(StringComparer.OrdinalIgnoreCase);
     private string? busyProviderId;
     private bool loadFailed;
 
     private int SwitchGeneration(string providerId) => switchGenerations.GetValueOrDefault(providerId);
+
+    private void Expand(string providerId) => expandedSetup.Add(providerId);
+    private void Collapse(string providerId) => expandedSetup.Remove(providerId);
 
     protected override Task OnInitializedAsync() => LoadAsync();
 
@@ -203,9 +229,31 @@ else
         }
     }
 
+    private static bool NeedsSetup(ProviderStatusResponse provider) =>
+        provider.RequiresCredential && !provider.IsExternallyManaged && !provider.HasStoredCredential;
+
     private async Task SetEnabledAsync(ProviderStatusResponse provider, bool enabled)
     {
-        await RunAsync(provider, () => IntegrationsApi.SetEnabledAsync(provider.ProviderId, enabled));
+        if (enabled && NeedsSetup(provider))
+        {
+            // The server will refuse to enable a provider with no stored key, so
+            // there's nothing to gain from the round trip. Flipping the switch
+            // here instead reveals the key field — the switch doubles as the
+            // only "let me configure this" control there is. Bumping the
+            // generation forces MudSwitch to re-mount at its real (still off)
+            // value, undoing the optimistic flip it already rendered on click.
+            Expand(provider.ProviderId);
+            switchGenerations[provider.ProviderId] = SwitchGeneration(provider.ProviderId) + 1;
+            return;
+        }
+
+        if (await RunAsync(provider, () => IntegrationsApi.SetEnabledAsync(provider.ProviderId, enabled)) && !enabled)
+        {
+            // Once switched off, the detail section should actually collapse
+            // rather than stay open because an earlier attempt to configure it
+            // left it expanded.
+            Collapse(provider.ProviderId);
+        }
     }
 
     private async Task SaveCredentialAsync(ProviderStatusResponse provider)

@@ -25,14 +25,42 @@ else if (cwa is null)
 }
 else
 {
+    // Needs setup: ingest delivery isn't configured enough for SetEnabledAsync to
+    // accept turning CWA on.
+    var cwaNeedsSetup = !cwa.IsIngestConfigured;
+    // The delivery/OPDS panels track Enabled directly — off means collapsed to
+    // just the name and description. expandedSetup covers the one case that
+    // would otherwise be a dead end: flipping the switch while unconfigured
+    // (see SetCwaEnabledAsync) reveals the panels instead of calling an API
+    // that would only reject it.
+    var cwaExpanded = cwa.IsEnabled || expandedSetup.Contains("cwa");
+
     <MudPaper Class="pa-4 mb-6" Elevation="1">
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
             <MudText Typo="Typo.h6">CWA (ebook library)</MudText>
+            @if (cwaNeedsSetup)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                    Needs setup
+                </MudChip>
+            }
+
             <MudSpacer />
+
             <MudSwitch T="bool" @key="@("cwa:" + cwaSwitchGeneration)" Value="cwa.IsEnabled"
                        ValueChanged="@(enabled => SetCwaEnabledAsync(enabled))" Color="Color.Primary" Disabled="@cwaBusy"
                        Label="@(cwa.IsEnabled ? "Enabled" : "Disabled")" />
         </MudStack>
+
+        @if (!cwaExpanded)
+        {
+            <MudText Typo="Typo.body2" Class="mt-3 mb-3">
+                Publish approved ebooks straight into CWA's library, over a local path or SFTP,
+                with an optional OPDS connection to verify imports.
+            </MudText>
+        }
+        else
+        {
         <MudDivider Class="my-3" />
 
         <MudPaper Outlined="true" Class="pa-4 mb-4">
@@ -160,6 +188,7 @@ else
                 </MudAlert>
             }
         </MudPaper>
+        }
     </MudPaper>
 }
 
@@ -173,18 +202,54 @@ else if (audiobookshelf is null)
 }
 else
 {
+    // Audiobookshelf has no server-side gate blocking Enabled without a
+    // configuration (unlike CWA), but the shape here mirrors CWA closely enough
+    // that leaving it always expanded while CWA collapses would read as
+    // inconsistent on the same page. "Configured" is a UI-only judgment call:
+    // enough to actually run a search — base URL, library, and a token.
+    var audiobookshelfNeedsSetup = string.IsNullOrWhiteSpace(audiobookshelf.BaseUrl) ||
+        string.IsNullOrWhiteSpace(audiobookshelf.LibraryId) || !audiobookshelf.HasApiToken;
+    // Unlike CWA, nothing blocks enabling Audiobookshelf while unconfigured, so
+    // the switch alone (no interception needed) is enough to drive this.
+    var audiobookshelfExpanded = audiobookshelf.IsEnabled;
+
     <MudPaper Class="pa-4 mb-6" Elevation="1">
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-            <MudText Typo="Typo.h6">Audiobookshelf</MudText><MudSpacer />
+            <MudText Typo="Typo.h6">Audiobookshelf</MudText>
+            @if (audiobookshelfNeedsSetup)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                    Needs setup
+                </MudChip>
+            }
+            <MudSpacer />
             <MudSwitch T="bool" @key="@("abs:" + audiobookshelfSwitchGeneration)" Value="audiobookshelf.IsEnabled" ValueChanged="@(enabled => SetAudiobookshelfEnabledAsync(enabled))" Color="Color.Primary" Disabled="@audiobookshelfBusy" Label="@(audiobookshelf.IsEnabled ? "Enabled" : "Disabled")" />
         </MudStack>
+
+        @if (!audiobookshelfExpanded)
+        {
+            <MudText Typo="Typo.body2" Class="mt-3 mb-3">
+                Publish approved audiobooks into an Audiobookshelf library and folder.
+            </MudText>
+        }
+        else
+        {
         <MudDivider Class="my-3" />
         <MudText Typo="Typo.body2" Class="mb-2">
-            Don't know the library or folder ID? Enter the base URL and an API token below (a stored token is used if
-            you leave the token field blank), then use Discover libraries to look them up and pick from a list.
+            Discover libraries needs a base URL and an API token (a stored token is used if you leave the
+            field below blank) to look up libraries and folders, so enter both before using it.
         </MudText>
         <MudStack Spacing="3">
             <MudTextField T="string" Label="Base URL" @bind-Value="audiobookshelfBaseUrl" Disabled="@audiobookshelfBusy" />
+
+            <MudText Typo="Typo.subtitle2">API token</MudText>
+            <MudText Typo="Typo.body2">@(audiobookshelf.HasApiToken ? $"A token ending in {audiobookshelf.ApiTokenHint} was saved {audiobookshelf.ApiTokenSetAtUtc?.ToLocalTime().ToString("f")}." : "No token is stored yet.")</MudText>
+            <MudStack Row="true" Spacing="2">
+                <MudTextField T="string" @bind-Value="audiobookshelfApiTokenDraft" Label="Replace API token" InputType="InputType.Password" Disabled="@audiobookshelfBusy" Class="flex-grow-1" />
+                <MudButton Variant="Variant.Filled" Disabled="@(audiobookshelfBusy || string.IsNullOrWhiteSpace(audiobookshelfApiTokenDraft))" OnClick="SaveAudiobookshelfApiTokenAsync">Save token</MudButton>
+                @if (audiobookshelf.HasApiToken) { <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@audiobookshelfBusy" OnClick="ClearAudiobookshelfApiTokenAsync">Remove</MudButton> }
+            </MudStack>
+
             <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
                 <MudButton Variant="Variant.Outlined" Disabled="@(audiobookshelfBusy || string.IsNullOrWhiteSpace(audiobookshelfBaseUrl))" OnClick="DiscoverAudiobookshelfLibrariesAsync">Discover libraries</MudButton>
                 @if (audiobookshelfDiscoveryError is not null) { <MudText Typo="Typo.body2" Color="Color.Error">@audiobookshelfDiscoveryError</MudText> }
@@ -213,14 +278,6 @@ else
                           HelperText="Filled in after picking a library above, or enter it directly." />
         </MudStack>
         <MudDivider Class="my-3" />
-        <MudText Typo="Typo.subtitle2">API token</MudText>
-        <MudText Typo="Typo.body2" Class="mb-2">@(audiobookshelf.HasApiToken ? $"A token ending in {audiobookshelf.ApiTokenHint} was saved {audiobookshelf.ApiTokenSetAtUtc?.ToLocalTime().ToString("f")}." : "No token is stored yet.")</MudText>
-        <MudStack Row="true" Spacing="2">
-            <MudTextField T="string" @bind-Value="audiobookshelfApiTokenDraft" Label="Replace API token" InputType="InputType.Password" Disabled="@audiobookshelfBusy" Class="flex-grow-1" />
-            <MudButton Variant="Variant.Filled" Disabled="@(audiobookshelfBusy || string.IsNullOrWhiteSpace(audiobookshelfApiTokenDraft))" OnClick="SaveAudiobookshelfApiTokenAsync">Save token</MudButton>
-            @if (audiobookshelf.HasApiToken) { <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@audiobookshelfBusy" OnClick="ClearAudiobookshelfApiTokenAsync">Remove</MudButton> }
-        </MudStack>
-        <MudDivider Class="my-3" />
         <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@audiobookshelfBusy" OnClick="SaveAudiobookshelfSettingsAsync">Save settings</MudButton>
         <MudDivider Class="my-3" />
         <MudText Typo="Typo.body2" Class="mb-2">
@@ -235,10 +292,20 @@ else
                 @audiobookshelfTestResult.Message
             </MudAlert>
         }
+        }
     </MudPaper>
 }
 
 @code {
+    // Destinations ("cwa", "audiobookshelf") whose panels are showing even
+    // though they're not Enabled — set when flipping the switch on an
+    // unconfigured destination reveals its settings instead of calling the API
+    // (see SetCwaEnabledAsync/SetAudiobookshelfEnabledAsync), and cleared again
+    // once the destination is actually switched off for real.
+    private readonly HashSet<string> expandedSetup = new(StringComparer.OrdinalIgnoreCase);
+    private void Expand(string destinationId) => expandedSetup.Add(destinationId);
+    private void Collapse(string destinationId) => expandedSetup.Remove(destinationId);
+
     private CwaSettingsResponse? cwa;
     private bool cwaLoadFailed, cwaBusy;
     private int cwaSwitchGeneration;
@@ -258,7 +325,28 @@ else
     private async Task LoadCwaAsync() { try { cwa = await CwaApi.GetAsync(); ApplyCwaFields(cwa); } catch (HttpRequestException) { cwaLoadFailed = true; } }
     private void ApplyCwaFields(CwaSettingsResponse? settings) { if (settings is null) return; cwaTransportMode = settings.TransportMode; cwaLocalIngestPath = settings.LocalIngestPath; cwaSftpHost = settings.SftpHost; cwaSftpPort = settings.SftpPort; cwaSftpUsername = settings.SftpUsername; cwaSftpIngestPath = settings.SftpIngestPath; cwaSftpAuthenticationMode = settings.SftpAuthenticationMode; if (!string.IsNullOrWhiteSpace(settings.SftpHostKeyFingerprint)) cwaPendingSftpHostKeyFingerprint = null; cwaOpdsBaseUrl = settings.OpdsBaseUrl; cwaOpdsUsername = settings.OpdsUsername; }
     private string CwaIngestTestButtonLabel => cwaTransportMode == "Sftp" ? "Test SFTP" : "Test local path";
-    private Task SetCwaEnabledAsync(bool enabled) => RunCwaAsync(() => CwaApi.SetEnabledAsync(enabled));
+    private async Task SetCwaEnabledAsync(bool enabled)
+    {
+        if (enabled && cwa is { IsIngestConfigured: false })
+        {
+            // The server will refuse to enable CWA until ingest delivery is
+            // configured, so there's nothing to gain from the round trip.
+            // Flipping the switch here instead reveals the delivery panel — the
+            // switch doubles as the only "let me configure this" control there
+            // is. Bumping the generation undoes MudSwitch's optimistic flip.
+            Expand("cwa");
+            cwaSwitchGeneration++;
+            return;
+        }
+
+        if (await RunCwaAsync(() => CwaApi.SetEnabledAsync(enabled)) && !enabled)
+        {
+            // Once switched off, the panels should actually collapse rather than
+            // stay open because an earlier attempt to configure it left it
+            // expanded.
+            Collapse("cwa");
+        }
+    }
     private Task ClearCwaSftpPassphraseAsync() => RunCwaAsync(() => CwaApi.ClearSftpPassphraseAsync());
     private Task ClearCwaSftpPasswordAsync() => RunCwaAsync(() => CwaApi.ClearSftpPasswordAsync());
     private Task TrustCwaSftpHostKeyAsync()
@@ -478,7 +566,8 @@ else
     private async Task<bool> RunCwaAsync(Func<Task<CwaResult>> action) { cwaBusy = true; try { var result = await action(); if (!result.Succeeded) { Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error); return false; } cwa = result.Settings; ApplyCwaFields(cwa); return true; } finally { cwaBusy = false; cwaSwitchGeneration++; } }
     private async Task LoadAudiobookshelfAsync() { try { audiobookshelf = await AudiobookshelfApi.GetAsync(); ApplyAudiobookshelfFields(audiobookshelf); } catch (HttpRequestException) { audiobookshelfLoadFailed = true; } }
     private void ApplyAudiobookshelfFields(AudiobookshelfSettingsResponse? settings) { if (settings is null) return; audiobookshelfBaseUrl = settings.BaseUrl; audiobookshelfLibraryId = settings.LibraryId; audiobookshelfFolderId = settings.FolderId; }
-    private Task SetAudiobookshelfEnabledAsync(bool enabled) => RunAudiobookshelfAsync(() => AudiobookshelfApi.SetEnabledAsync(enabled));
+    private Task SetAudiobookshelfEnabledAsync(bool enabled) =>
+        RunAudiobookshelfAsync(() => AudiobookshelfApi.SetEnabledAsync(enabled));
     private async Task SaveAudiobookshelfSettingsAsync()
     {
         audiobookshelfBusy = true;

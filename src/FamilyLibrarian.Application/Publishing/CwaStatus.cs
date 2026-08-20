@@ -30,4 +30,21 @@ public sealed record CwaStatus(
     DateTimeOffset? OpdsPasswordSetAtUtc,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
-    string? LastTestMessage);
+    string? LastTestMessage)
+{
+    /// <summary>
+    /// True once ingest delivery has enough to enable. Mirrors
+    /// <c>CwaSettingsService</c>'s <c>GetConfigurationError</c> exactly, so the
+    /// settings UI can show the Enabled switch only when flipping it would
+    /// actually be accepted.
+    /// </summary>
+    public bool IsIngestConfigured => TransportMode == CwaTransportMode.Local
+        ? !string.IsNullOrWhiteSpace(LocalIngestPath)
+        : !string.IsNullOrWhiteSpace(SftpHost) &&
+            !string.IsNullOrWhiteSpace(SftpUsername) &&
+            !string.IsNullOrWhiteSpace(SftpIngestPath) &&
+            !string.IsNullOrWhiteSpace(SftpHostKeyFingerprint) &&
+            (SftpAuthenticationMode == CwaSftpAuthenticationMode.Password
+                ? HasSftpPassword
+                : HasSftpPrivateKey);
+}
