@@ -74,6 +74,8 @@ public static class AuditActions
     public const string ProviderCatalogAdded = "provider_catalog.added";
     public const string ProviderCatalogRemoved = "provider_catalog.removed";
     public const string ProviderCatalogRefreshed = "provider_catalog.refreshed";
+
+    public const string SettingsBackupImported = "settings_backup.imported";
 }
 
 public static class AuditSubjectTypes
@@ -89,4 +91,5 @@ public static class AuditSubjectTypes
     public const string ExternalProvider = "external_provider";
     public const string PrivateEgressGateway = "private_egress_gateway";
     public const string ProviderCatalog = "provider_catalog";
+    public const string SettingsBackup = "settings_backup";
 }

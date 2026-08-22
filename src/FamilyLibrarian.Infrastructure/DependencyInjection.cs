@@ -20,6 +20,7 @@ using FamilyLibrarian.Infrastructure.Policy;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Publishing;
 using FamilyLibrarian.Infrastructure.Security;
+using FamilyLibrarian.Infrastructure.SettingsBackups;
 using FamilyLibrarian.Infrastructure.Time;
 using System.Net.Http.Headers;
 using System.Net.Mail;
@@ -420,6 +421,8 @@ public static class DependencyInjection
         services.AddScoped<IPrivateEgressGatewayTester, PrivateEgressGatewayTester>();
         services.AddScoped<PrivateEgressGatewayService>();
         services.AddScoped<PrivateEgressRouteResolver>();
+
+        services.AddScoped<SettingsBackupService>();
 
         services.AddScoped<IProviderCatalogStore, ProviderCatalogStore>();
         services.AddScoped<IProviderCatalogFetcher, ProviderCatalogFetcher>();

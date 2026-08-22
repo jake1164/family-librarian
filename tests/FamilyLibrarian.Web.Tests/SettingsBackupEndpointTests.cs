@@ -1,0 +1,127 @@
+using System.Net;
+using System.Net.Http.Json;
+using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Contracts.Publishing;
+using FamilyLibrarian.Contracts.SettingsBackups;
+using FamilyLibrarian.Infrastructure.Persistence;
+using FamilyLibrarian.Web.Tests.Harness;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace FamilyLibrarian.Web.Tests;
+
+/// <summary>
+/// Exercises the portable settings archive through the authenticated endpoint
+/// boundary, including Data Protection ciphertext validation on import.
+/// </summary>
+[TestClass]
+public sealed class SettingsBackupEndpointTests
+{
+    private const string Passphrase = "settings-backup-passphrase-8675309";
+    private const string SftpPrivateKey = "test-sftp-key-do-not-leak-8675309";
+
+    private static WebTestFixture? _fixture;
+
+    [ClassInitialize]
+    public static async Task InitializeAsync(TestContext testContext)
+    {
+        ArgumentNullException.ThrowIfNull(testContext);
+        _fixture = await WebTestFixture.CreateAsync();
+    }
+
+    [ClassCleanup]
+    public static async Task CleanupAsync()
+    {
+        if (_fixture is not null)
+        {
+            await _fixture.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task AnEncryptedArchiveCanPreviewAndSeedACleanMatchingInstance()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        var settings = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/",
+            new SetCwaSettingsRequest("Local", "/data/cwa-ingest", null, null, null, null, "PrivateKey", null, null));
+        Assert.AreEqual(HttpStatusCode.OK, settings.StatusCode);
+
+        var secret = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/sftp-key", new SetPublishingSecretRequest(SftpPrivateKey));
+        Assert.AreEqual(HttpStatusCode.OK, secret.StatusCode);
+
+        var export = await client.PostAsJsonAsync(
+            "/api/v1/admin/settings-backup/", new CreateSettingsBackupRequest(Passphrase));
+        Assert.AreEqual(HttpStatusCode.OK, export.StatusCode);
+        var archive = await export.Content.ReadAsByteArrayAsync();
+        Assert.IsFalse(
+            System.Text.Encoding.UTF8.GetString(archive).Contains(SftpPrivateKey, StringComparison.Ordinal),
+            "An archive must not expose a stored credential as plaintext.");
+
+        await ClearCwaSettingsAsync(fixture);
+
+        var tampered = archive.ToArray();
+        tampered[^1] ^= 0x01;
+        using (var tamperedForm = CreateArchiveForm(tampered))
+        using (var malformedPreview = await client.PostAsync(
+            "/api/v1/admin/settings-backup/preview", tamperedForm))
+        {
+            Assert.AreEqual(HttpStatusCode.BadRequest, malformedPreview.StatusCode);
+        }
+
+        using var previewForm = CreateArchiveForm(archive);
+        using var previewResponse = await client.PostAsync(
+            "/api/v1/admin/settings-backup/preview", previewForm);
+        Assert.AreEqual(HttpStatusCode.OK, previewResponse.StatusCode);
+        var preview = await previewResponse.Content.ReadFromJsonAsync<SettingsBackupPreviewResponse>();
+        Assert.IsNotNull(preview);
+        Assert.IsTrue(preview.CanImport);
+        Assert.AreEqual(1, preview.Counts.CwaSettings);
+
+        using var importForm = CreateArchiveForm(archive);
+        using var importResponse = await client.PostAsync("/api/v1/admin/settings-backup/import", importForm);
+        Assert.AreEqual(HttpStatusCode.OK, importResponse.StatusCode);
+        var imported = await importResponse.Content.ReadFromJsonAsync<SettingsBackupImportResponse>();
+        Assert.IsNotNull(imported);
+        Assert.AreEqual(1, imported.Counts.CwaSettings);
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var protector = scope.ServiceProvider.GetRequiredService<ICredentialProtector>();
+        var restored = await database.CwaSettings.AsNoTracking().SingleAsync();
+        Assert.IsNotNull(restored.ProtectedSftpPrivateKey);
+        var restoredSecret = protector.Unprotect(
+            PublishingSecretPurposes.CwaSftpPrivateKey,
+            restored.ProtectedSftpPrivateKey,
+            restored.SftpPrivateKeyFormatVersion);
+        Assert.AreEqual(SftpPrivateKey, restoredSecret);
+    }
+
+    private static async Task<HttpClient> CreateAdminClientWithTokenAsync(WebTestFixture fixture)
+    {
+        var client = await fixture.CreateAdminClientAsync();
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        return client;
+    }
+
+    private static MultipartFormDataContent CreateArchiveForm(byte[] archive)
+    {
+        var form = new MultipartFormDataContent();
+        form.Add(new StringContent(Passphrase), "passphrase");
+        form.Add(new ByteArrayContent(archive), "archive", "settings.family-librarian-settings");
+        return form;
+    }
+
+    private static async Task ClearCwaSettingsAsync(WebTestFixture fixture)
+    {
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await database.CwaSettings.ExecuteDeleteAsync();
+    }
+}

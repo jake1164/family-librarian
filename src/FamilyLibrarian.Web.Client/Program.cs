@@ -10,6 +10,7 @@ using FamilyLibrarian.Web.Client.Policy;
 using FamilyLibrarian.Web.Client.Providers;
 using FamilyLibrarian.Web.Client.Publishing;
 using FamilyLibrarian.Web.Client.Requests;
+using FamilyLibrarian.Web.Client.SettingsBackups;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using MudBlazor.Services;
@@ -42,5 +43,6 @@ builder.Services.AddScoped<LibraryPublishingApiClient>();
 builder.Services.AddScoped<PolicyApiClient>();
 builder.Services.AddScoped<OidcSettingsApiClient>();
 builder.Services.AddScoped<ExternalProviderApiClient>();
+builder.Services.AddScoped<SettingsBackupApiClient>();
 
 await builder.Build().RunAsync();

@@ -1,0 +1,155 @@
+@page "/settings/backup"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.SettingsBackups
+@using FamilyLibrarian.Web.Client.SettingsBackups
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@inject SettingsBackupApiClient BackupApi
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+<PageTitle>Settings backup | Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Settings backup</MudText>
+<MudAlert Severity="Severity.Info" Class="mb-4">
+    Export only integration and household configuration. This does not contain accounts,
+    invitations, catalogue records, requests, activity, or files. A settings archive can only
+    be imported into a fresh, unconfigured instance with the same Data Protection key ring.
+</MudAlert>
+
+<MudPaper Class="pa-4 mb-6" Elevation="1">
+    <MudText Typo="Typo.h6" GutterBottom="true">Export settings</MudText>
+    <MudText Typo="Typo.body2" Class="mb-3">
+        Choose a passphrase of at least 12 characters. It is required again to import this archive and is never stored.
+    </MudText>
+    <MudTextField T="string" Label="Archive passphrase" @bind-Value="exportPassphrase"
+                  InputType="InputType.Password" autocomplete="new-password" Disabled="@busy" />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" Disabled="@(busy || string.IsNullOrWhiteSpace(exportPassphrase))" OnClick="ExportAsync">
+        Download encrypted settings archive
+    </MudButton>
+</MudPaper>
+
+<MudPaper Class="pa-4" Elevation="1">
+    <MudText Typo="Typo.h6" GutterBottom="true">Import settings</MudText>
+    <MudText Typo="Typo.body2" Class="mb-3">
+        Preview verifies the archive and confirms the target has no existing settings before it applies anything.
+    </MudText>
+    <InputFile OnChange="SelectArchive" disabled="@busy" aria-label="Choose settings archive" />
+    @if (archive is not null)
+    {
+        <MudText Typo="Typo.caption" Class="mt-2">@archive.Name (@archive.Size bytes)</MudText>
+    }
+    <MudTextField T="string" Label="Archive passphrase" @bind-Value="importPassphrase"
+                  InputType="InputType.Password" autocomplete="new-password" Disabled="@busy" Class="mt-3" />
+    <MudStack Row="true" Spacing="2" Class="mt-3">
+        <MudButton Variant="Variant.Outlined" Disabled="@(busy || archive is null || string.IsNullOrWhiteSpace(importPassphrase))" OnClick="PreviewAsync">Preview</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Warning" Disabled="@(busy || preview?.CanImport != true)" OnClick="ImportAsync">Import these settings</MudButton>
+    </MudStack>
+
+    @if (preview is not null)
+    {
+        <MudDivider Class="my-3" />
+        <MudText Typo="Typo.subtitle2">Archive preview</MudText>
+        <MudText Typo="Typo.body2">Created @preview.CreatedUtc.ToLocalTime().ToString("f") · app @preview.AppVersion · schema @preview.SchemaVersion</MudText>
+        <MudList T="string" Dense="true">
+            @foreach (var item in Summary(preview.Counts))
+            {
+                <MudListItem T="string">@item</MudListItem>
+            }
+        </MudList>
+        @if (!preview.CanImport)
+        {
+            <MudAlert Severity="Severity.Warning">This instance already has @string.Join(", ", preview.ExistingSections). Import will not modify it.</MudAlert>
+        }
+    }
+</MudPaper>
+
+@code {
+    private IBrowserFile? archive;
+    private string? exportPassphrase;
+    private string? importPassphrase;
+    private SettingsBackupPreviewResponse? preview;
+    private bool busy;
+
+    private void SelectArchive(InputFileChangeEventArgs args)
+    {
+        archive = args.File;
+        preview = null;
+    }
+
+    private async Task ExportAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await BackupApi.ExportAsync(exportPassphrase!);
+            if (!result.Succeeded || result.Archive is null || result.Filename is null)
+            {
+                Snackbar.Add(result.Error ?? "The settings archive could not be created.", Severity.Error);
+                return;
+            }
+
+            await JS.InvokeVoidAsync("familyLibrarian.download", result.Filename, result.Archive);
+            exportPassphrase = null;
+            Snackbar.Add("Encrypted settings archive downloaded.", Severity.Success);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task PreviewAsync()
+    {
+        if (archive is null) return;
+        busy = true;
+        try
+        {
+            var result = await BackupApi.PreviewAsync(archive, importPassphrase!);
+            if (!result.Succeeded || result.Preview is null)
+            {
+                Snackbar.Add(result.Error ?? "The settings archive could not be previewed.", Severity.Error);
+                return;
+            }
+
+            preview = result.Preview;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ImportAsync()
+    {
+        if (archive is null || preview?.CanImport != true) return;
+        busy = true;
+        try
+        {
+            var result = await BackupApi.ImportAsync(archive, importPassphrase!);
+            if (!result.Succeeded || result.Import is null)
+            {
+                Snackbar.Add(result.Error ?? "The settings archive could not be imported.", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Settings imported. Connection checks will use them immediately.", Severity.Success);
+            importPassphrase = null;
+            preview = null;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static IEnumerable<string> Summary(SettingsBackupCountsResponse counts)
+    {
+        yield return $"CWA settings: {counts.CwaSettings}";
+        yield return $"Audiobookshelf settings: {counts.AudiobookshelfSettings}";
+        yield return $"Private-egress gateway settings: {counts.PrivateEgressGatewaySettings}";
+        yield return $"Metadata-provider settings: {counts.ProviderSettings}";
+        yield return $"OIDC settings: {counts.OidcSettings}";
+        yield return $"Acquisition-policy settings: {counts.AcquisitionPolicySettings}";
+    }
+}
