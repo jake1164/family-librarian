@@ -90,7 +90,7 @@ internal static class SettingsBackupEndpoints
             throw new SettingsBackupException("Choose a settings archive no larger than 1 MiB.");
         }
 
-        await using var stream = archive.OpenReadStream(MaxArchiveBytes);
+        await using var stream = archive.OpenReadStream();
         using var buffer = new MemoryStream((int)archive.Length);
         await stream.CopyToAsync(buffer, cancellationToken);
         return buffer.ToArray();

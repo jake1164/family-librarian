@@ -40,24 +40,24 @@ public sealed class SettingsBackupApiClient(HttpClient httpClient, AntiforgeryTo
         IBrowserFile archive,
         string passphrase,
         CancellationToken cancellationToken = default) =>
-        SendArchiveAsync("preview", archive, passphrase, cancellationToken, static async (response, token) =>
+        SendArchiveAsync("preview", archive, passphrase, static async (response, token) =>
             new SettingsBackupPreviewResult(true, null,
-                await response.Content.ReadFromJsonAsync<SettingsBackupPreviewResponse>(token)));
+                await response.Content.ReadFromJsonAsync<SettingsBackupPreviewResponse>(token)), cancellationToken);
 
     public Task<SettingsBackupImportResult> ImportAsync(
         IBrowserFile archive,
         string passphrase,
         CancellationToken cancellationToken = default) =>
-        SendArchiveAsync("import", archive, passphrase, cancellationToken, static async (response, token) =>
+        SendArchiveAsync("import", archive, passphrase, static async (response, token) =>
             new SettingsBackupImportResult(true, null,
-                await response.Content.ReadFromJsonAsync<SettingsBackupImportResponse>(token)));
+                await response.Content.ReadFromJsonAsync<SettingsBackupImportResponse>(token)), cancellationToken);
 
     private async Task<T> SendArchiveAsync<T>(
         string operation,
         IBrowserFile archive,
         string passphrase,
-        CancellationToken cancellationToken,
-        Func<HttpResponseMessage, CancellationToken, Task<T>> success)
+        Func<HttpResponseMessage, CancellationToken, Task<T>> success,
+        CancellationToken cancellationToken)
     {
         await using var stream = archive.OpenReadStream(MaxArchiveBytes, cancellationToken);
         using var form = new MultipartFormDataContent();

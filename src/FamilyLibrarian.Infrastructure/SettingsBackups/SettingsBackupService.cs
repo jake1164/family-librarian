@@ -5,7 +5,6 @@ using System.Text.Json;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
-using FamilyLibrarian.Application.Policy;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Accounts;
@@ -151,7 +150,7 @@ public sealed class SettingsBackupService(
         return new SettingsBackupImportResult(payload.Manifest.BackupId, counts);
     }
 
-    private byte[] Encrypt(byte[] plaintext, string passphrase)
+    private static byte[] Encrypt(byte[] plaintext, string passphrase)
     {
         var salt = RandomNumberGenerator.GetBytes(SaltBytes);
         var nonce = RandomNumberGenerator.GetBytes(NonceBytes);
@@ -189,7 +188,7 @@ public sealed class SettingsBackupService(
         }
     }
 
-    private SettingsArchivePayload ReadPayload(ReadOnlySpan<byte> archiveBytes, string passphrase)
+    private static SettingsArchivePayload ReadPayload(ReadOnlySpan<byte> archiveBytes, string passphrase)
     {
         ValidatePassphrase(passphrase);
         if (archiveBytes.Length == 0 || archiveBytes.Length > MaxArchiveBytes)
