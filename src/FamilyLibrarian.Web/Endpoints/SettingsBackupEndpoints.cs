@@ -1,5 +1,6 @@
 using FamilyLibrarian.Contracts.SettingsBackups;
 using FamilyLibrarian.Infrastructure.SettingsBackups;
+using Microsoft.AspNetCore.Mvc;
 
 namespace FamilyLibrarian.Web.Endpoints;
 
@@ -43,7 +44,7 @@ internal static class SettingsBackupEndpoints
 
     private static async Task<IResult> PreviewAsync(
         IFormFile archive,
-        string passphrase,
+        [FromForm] string passphrase,
         SettingsBackupService service,
         CancellationToken cancellationToken)
     {
@@ -67,7 +68,7 @@ internal static class SettingsBackupEndpoints
 
     private static async Task<IResult> ImportAsync(
         IFormFile archive,
-        string passphrase,
+        [FromForm] string passphrase,
         SettingsBackupService service,
         CancellationToken cancellationToken)
     {
