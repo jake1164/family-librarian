@@ -1079,6 +1079,10 @@ A V1 release is useful when:
 10. The user receives a batched ready notification.
 11. The request appears in completed history.
 12. Family Librarian retains the information needed for future series/author recommendations.
+13. An operator can create a complete backup and restore PostgreSQL, CWA, and
+    Audiobookshelf in a disposable environment using the documented recovery
+    procedure; the restored deployment passes its health checks before it is
+    returned to service.
 
 ---
 

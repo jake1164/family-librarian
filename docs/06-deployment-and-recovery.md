@@ -154,6 +154,26 @@ newer `pg_restore` client. After restart, inspect `migrate` and verify both
 health endpoints before allowing normal use. The migration job may apply
 forward-only schema changes if the restored backup predates the deployed image.
 
+## Initial-product full backup and recovery milestone
+
+The PostgreSQL dump above is necessary but is not a complete household recovery
+on its own. Before Family Librarian's initial product is considered complete,
+the operator must be able to create and restore a full backup covering:
+
+- PostgreSQL, including the persisted Data Protection key ring and stored
+  configuration ciphertext;
+- CWA configuration and its complete Calibre library;
+- Audiobookshelf configuration and its complete library; and
+- the deployment-specific secret and certificate recovery procedure, without
+  placing raw secrets in the backup manifest or repository.
+
+The shipped procedure or tooling must identify the component versions and
+backup time, preserve integrity information, and be proven by restoring all
+components together in a disposable environment. The recovery proof includes
+the migration job and health checks, one CWA ownership/OPDS lookup, and one
+Audiobookshelf library lookup. A settings-only archive may speed up development
+or lab setup, but it is not a substitute for this full recovery capability.
+
 ## Reverse proxy and secrets
 
 Place a TLS-terminating reverse proxy in front of port 8080 for an internet
