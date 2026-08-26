@@ -209,6 +209,7 @@ app.MapOidcSettingsEndpoints();
 app.MapExternalProviderEndpoints();
 app.MapPrivateEgressGatewayEndpoints();
 app.MapProviderCatalogEndpoints();
+app.MapSettingsBackupEndpoints();
 
 app.MapFallbackToFile("index.html");
 

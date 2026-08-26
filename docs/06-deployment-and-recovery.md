@@ -205,3 +205,21 @@ the encryption decorative against anyone who obtains one. The application logs
 a warning at startup when this is unset rather than refusing to start, since a
 first deployment has no certificate to provide yet; treat that warning as a
 todo, not routine output, once real provider credentials are in use.
+
+## Settings-only archive
+
+An administrator can create an encrypted settings-only archive from **Settings
+backup** in the application. It contains current integration, provider, OIDC,
+private-egress, and acquisition-policy configuration, including the existing
+Data Protection ciphertext for credentials. It does not contain accounts,
+catalogue data, requests, audit history, notifications, jobs, files, or the
+Data Protection key ring. It is not a replacement for the PostgreSQL backup
+and restore procedure above.
+
+Import is intentionally create-only: use it only to seed a fresh instance with
+none of those settings configured. Before import, the target validates that all
+credential ciphertext can be opened by its Data Protection key ring. An archive
+with secrets can therefore be imported only when the target has the matching
+key ring; copying only the key-encryption certificate is not sufficient. Keep
+the archive and passphrase separate, restrict access to both, and use the full
+PostgreSQL backup for disaster recovery or a complete migration.

@@ -49,7 +49,15 @@ public sealed class SftpCwaIngestTransport(
                     var destinationPath = CombineRemotePath(ingestDirectoryPath, targetFilename);
 
                     client.UploadFile(content, temporaryPath, canOverride: false);
-                    client.RenameFile(temporaryPath, destinationPath);
+                    // isPosix: true is load-bearing, not cosmetic. Without it, SSH.NET's
+                    // RenameFile falls back (confirmed for real against atmoz/sftp) to a
+                    // hardlink-then-unlink pair instead of an actual rename() syscall: the
+                    // new path gets a bare inotify CREATE with no CLOSE_WRITE/MOVED_TO ever
+                    // following it, which CWA's ingest watcher never reacts to -- the file
+                    // sits in the ingest folder forever, undetected. The posix-rename
+                    // extension forces a real atomic rename, producing the MOVED_FROM/
+                    // MOVED_TO pair CWA's watcher actually listens for.
+                    client.RenameFile(temporaryPath, destinationPath, isPosix: true);
                 }
                 finally
                 {

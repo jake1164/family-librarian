@@ -17,5 +17,15 @@
     </div>
     <script src="_framework/blazor.webassembly.js"></script>
     <script src="_content/MudBlazor/MudBlazor.min.js"></script>
+    <script>
+        window.familyLibrarian = window.familyLibrarian || {};
+        window.familyLibrarian.download = (filename, bytes) => {
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+            link.download = filename;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        };
+    </script>
 </body>
 </html>
