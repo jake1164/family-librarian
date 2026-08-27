@@ -128,6 +128,13 @@ internal sealed class FamilyLibrarianAppFactory(
             services.AddSingleton<ICwaIngestTransportFactory, AlwaysSucceedsCwaIngestTransportFactory>();
             services.RemoveAll<ICwaCatalogClient>();
             services.AddSingleton<ICwaCatalogClient, AlwaysEmptyCwaCatalogClient>();
+            // Enabling CWA requires a passing connection test for the saved
+            // configuration (docs/01 §12.1.1) -- this default-safe double lets an
+            // ordinary test reach that state without a reachable CWA instance. A
+            // test that specifically exercises a failing/rejected connection test
+            // overrides this via configureTestServices, same as the others below.
+            services.RemoveAll<ICwaConnectionTester>();
+            services.AddSingleton<ICwaConnectionTester, AlwaysSucceedsCwaConnectionTester>();
             services.RemoveAll<IAudiobookshelfApiClient>();
             services.AddSingleton<IAudiobookshelfApiClient, AlwaysEmptyAudiobookshelfApiClient>();
 

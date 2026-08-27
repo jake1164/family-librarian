@@ -171,7 +171,8 @@ public sealed class PublishingSettingsEndpointTests
         await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/",
             new SetCwaSettingsRequest(
-                "Sftp", null, "sftp.example.test", 22, "cwa", "/ingest", "Password", null, null));
+                "Sftp", null, "sftp.example.test", 22, "cwa", "/ingest", "Password",
+                "https://cwa.example.test", null));
         await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/sftp-password", new SetPublishingSecretRequest(CwaSftpPassword));
 
@@ -183,6 +184,15 @@ public sealed class PublishingSettingsEndpointTests
         var trust = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/sftp-host-key", new TrustSftpHostKeyRequest(fingerprint));
         Assert.AreEqual(HttpStatusCode.OK, trust.StatusCode);
+
+        // Trusting the host key alone still is not enough -- enabling also requires
+        // a passing connection test for the saved configuration (docs/01 §12.1.1).
+        var enableBeforeTest = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/enabled", new SetPublishingEnabledRequest(true));
+        Assert.AreEqual(HttpStatusCode.BadRequest, enableBeforeTest.StatusCode);
+
+        var test = await client.PostAsJsonAsync("/api/v1/admin/publishing/cwa/test", new { });
+        Assert.AreEqual(HttpStatusCode.OK, test.StatusCode);
 
         var enableAfterTrust = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/enabled", new SetPublishingEnabledRequest(true));

@@ -479,6 +479,39 @@ public sealed class CwaSettingsService(
 
     private static string? GetConfigurationError(CwaSettings settings)
     {
+        var ingestError = GetIngestConfigurationError(settings);
+        if (ingestError is not null)
+        {
+            return ingestError;
+        }
+
+        // docs/01 §12.1.1: the OPDS catalog connection is required in every CWA
+        // deployment, independent of ingest transport -- ownership lookup and
+        // post-ingest verification depend on it even when the ingest transport
+        // works perfectly. Enabling CWA with a working ingest transport and no
+        // (or untested) OPDS connection was a known gap: ownership lookup and
+        // post-ingest correlation would silently return "not found" forever.
+        if (string.IsNullOrWhiteSpace(settings.OpdsBaseUrl))
+        {
+            return "An OPDS catalog URL is required before enabling CWA, independent of the ingest " +
+                   "transport -- ownership lookup and post-ingest verification depend on it.";
+        }
+
+        // LastTestSucceeded is reset to null by every settings/secret mutation
+        // (CwaSettings.ResetTestResult()), so this is specifically "a successful
+        // test for the *currently saved* configuration," not a stale pass from
+        // before the last edit.
+        if (settings.LastTestSucceeded != true)
+        {
+            return "Test the connection (ingest and OPDS) and confirm it succeeds before enabling CWA. " +
+                   "Any settings change since the last test invalidates it.";
+        }
+
+        return null;
+    }
+
+    private static string? GetIngestConfigurationError(CwaSettings settings)
+    {
         if (settings.TransportMode == CwaTransportMode.Local)
         {
             return string.IsNullOrWhiteSpace(settings.LocalIngestPath)

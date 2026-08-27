@@ -162,6 +162,12 @@ public sealed class WorkFulfillmentOptionsEndpointTests
                 "Local", "/data/cwa-ingest-test", null, null, null, null, "PrivateKey", "https://cwa.example.test", null));
         settings.EnsureSuccessStatusCode();
 
+        // Enabling requires a passing connection test for the saved configuration
+        // (docs/01 §12.1.1) -- FamilyLibrarianAppFactory registers a default-safe
+        // ICwaConnectionTester double, so this succeeds without a reachable CWA.
+        var test = await client.PostAsJsonAsync("/api/v1/admin/publishing/cwa/test", new { });
+        test.EnsureSuccessStatusCode();
+
         var enabled = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/enabled",
             new FamilyLibrarian.Contracts.Publishing.SetPublishingEnabledRequest(true));
