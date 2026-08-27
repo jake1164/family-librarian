@@ -34,7 +34,7 @@ public sealed class LibraryImportTests
     public void MarkAvailableRecordsTheBookIdAndCompletion()
     {
         var import = new LibraryImport(Guid.NewGuid(), Now);
-        import.MarkAwaitingVerification();
+        import.MarkAwaitingVerification("The Hobbit-abc123.epub");
 
         import.MarkAvailable("42", Now.AddMinutes(1));
 
@@ -42,6 +42,25 @@ public sealed class LibraryImportTests
         Assert.AreEqual("42", import.ExternalBookId);
         Assert.AreEqual(Now.AddMinutes(1), import.CompletedAtUtc);
         Assert.IsNull(import.FailureReason);
+    }
+
+    [TestMethod]
+    public void MarkAwaitingVerificationRecordsTheDeliveredFilename()
+    {
+        var import = new LibraryImport(Guid.NewGuid(), Now);
+
+        import.MarkAwaitingVerification("The Hobbit-abc123.epub");
+
+        Assert.AreEqual(LibraryImportStatus.AwaitingVerification, import.Status);
+        Assert.AreEqual("The Hobbit-abc123.epub", import.TargetFilename);
+    }
+
+    [TestMethod]
+    public void MarkAwaitingVerificationRequiresATargetFilename()
+    {
+        var import = new LibraryImport(Guid.NewGuid(), Now);
+
+        Assert.ThrowsExactly<ArgumentException>(() => import.MarkAwaitingVerification(" "));
     }
 
     [TestMethod]

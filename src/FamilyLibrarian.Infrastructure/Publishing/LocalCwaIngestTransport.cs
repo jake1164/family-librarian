@@ -46,4 +46,26 @@ public sealed class LocalCwaIngestTransport(string ingestDirectoryPath) : ICwaIn
             throw;
         }
     }
+
+    public Task TouchAsync(string targetFilename, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetFilename);
+
+        var destinationPath = Path.Combine(ingestDirectoryPath, targetFilename);
+        if (!File.Exists(destinationPath))
+        {
+            // Nothing delivered yet (or it failed outright) -- a later
+            // successful write will produce its own fresh watcher event.
+            return Task.CompletedTask;
+        }
+
+        // A same-filesystem rename-out-and-back, not File.SetLastWriteTimeUtc:
+        // an mtime-only change fires inotify's ATTRIB event, which CWA's
+        // watcher does not react to. Renaming produces the same MOVED_FROM/
+        // MOVED_TO pair the original successful write already relies on.
+        var relocatedPath = Path.Combine(ingestDirectoryPath, $".{Guid.NewGuid():N}.rescan");
+        File.Move(destinationPath, relocatedPath);
+        File.Move(relocatedPath, destinationPath);
+        return Task.CompletedTask;
+    }
 }

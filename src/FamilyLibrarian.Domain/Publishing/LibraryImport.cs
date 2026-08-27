@@ -39,6 +39,16 @@ public sealed class LibraryImport
     /// <summary>The Calibre book id, populated only once found via the OPDS catalog.</summary>
     public string? ExternalBookId { get; private set; }
 
+    /// <summary>
+    /// The exact filename delivered to CWA's ingest folder for this attempt --
+    /// includes a random component (see <c>PublishingFilenames.BuildTargetFilename</c>),
+    /// so it must be recorded rather than recomputed. A recheck that needs to
+    /// re-signal the same already-delivered file to CWA's watcher (see
+    /// <c>ICwaIngestTransport.TouchAsync</c>) targets this name, never a freshly
+    /// generated one -- recomputing would silently touch a file that doesn't exist.
+    /// </summary>
+    public string? TargetFilename { get; private set; }
+
     public string? FailureReason { get; private set; }
 
     public DateTimeOffset CreatedAtUtc { get; private set; }
@@ -47,9 +57,15 @@ public sealed class LibraryImport
 
     public uint Version { get; private set; }
 
-    public void MarkAwaitingVerification()
+    public void MarkAwaitingVerification(string targetFilename)
     {
+        if (string.IsNullOrWhiteSpace(targetFilename))
+        {
+            throw new ArgumentException("A target filename is required.", nameof(targetFilename));
+        }
+
         Status = LibraryImportStatus.AwaitingVerification;
+        TargetFilename = targetFilename;
         FailureReason = null;
     }
 

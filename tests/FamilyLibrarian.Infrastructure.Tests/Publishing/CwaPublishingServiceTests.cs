@@ -129,6 +129,29 @@ public sealed class CwaPublishingServiceTests
         Assert.AreEqual(LibraryImportStatus.Available, reloaded!.Status);
         // Re-verification never re-transports the file.
         Assert.AreEqual(1, context.Transport.WriteCount);
+        // Found on this pass -- no need to re-signal the watcher.
+        Assert.AreEqual(0, context.Transport.TouchCount);
+    }
+
+    [TestMethod]
+    public async Task RecheckTouchesTheTransportWhenStillNotFound()
+    {
+        var context = context_Configured();
+        var asset = context.CreateAsset();
+        context.CatalogClient.NextBookId = null;
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+        var import = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(LibraryImportStatus.AwaitingVerification, import!.Status);
+
+        // Still not found on this recheck -- CWA may have missed the file
+        // entirely (stopped/restarting at handoff time), so give its watcher
+        // another chance without re-uploading.
+        await context.Service.RecheckAsync(import.Id, CancellationToken.None);
+
+        var reloaded = await context.Repository.FindAsync(import.Id, CancellationToken.None);
+        Assert.AreEqual(LibraryImportStatus.AwaitingVerification, reloaded!.Status);
+        Assert.AreEqual(1, context.Transport.WriteCount);
+        Assert.AreEqual(1, context.Transport.TouchCount);
     }
 
     [TestMethod]
@@ -342,6 +365,8 @@ public sealed class CwaPublishingServiceTests
     {
         public int WriteCount { get; private set; }
 
+        public int TouchCount { get; private set; }
+
         public bool ThrowOnWrite { get; set; }
 
         public Task WriteAsync(Stream content, string targetFilename, CancellationToken cancellationToken)
@@ -352,6 +377,12 @@ public sealed class CwaPublishingServiceTests
             }
 
             WriteCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task TouchAsync(string targetFilename, CancellationToken cancellationToken)
+        {
+            TouchCount++;
             return Task.CompletedTask;
         }
     }

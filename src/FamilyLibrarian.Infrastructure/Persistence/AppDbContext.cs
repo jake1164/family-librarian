@@ -740,6 +740,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(import => import.AssetId).HasColumnName("asset_id");
             entity.Property(import => import.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
             entity.Property(import => import.ExternalBookId).HasColumnName("external_book_id").HasMaxLength(256);
+            entity.Property(import => import.TargetFilename).HasColumnName("target_filename").HasMaxLength(512);
             entity.Property(import => import.FailureReason).HasColumnName("failure_reason").HasMaxLength(2_000);
             entity.Property(import => import.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(import => import.CompletedAtUtc).HasColumnName("completed_at_utc").HasColumnType("timestamp with time zone");

@@ -8,6 +8,9 @@ internal sealed class AlwaysSucceedsCwaIngestTransport : ICwaIngestTransport
 {
     public Task WriteAsync(Stream content, string targetFilename, CancellationToken cancellationToken) =>
         Task.CompletedTask;
+
+    public Task TouchAsync(string targetFilename, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 }
 
 internal sealed class AlwaysSucceedsCwaIngestTransportFactory : ICwaIngestTransportFactory

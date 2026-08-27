@@ -67,6 +67,46 @@ public sealed class SftpCwaIngestTransport(
             cancellationToken);
     }
 
+    public Task TouchAsync(string targetFilename, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetFilename);
+
+        return Task.Run(
+            () =>
+            {
+                var authMethod = SftpAuthentication.Create(
+                    authenticationMode, username, credential, privateKeyPassphrase);
+                var connectionInfo = new ConnectionInfo(host, port, username, authMethod);
+
+                using var client = new SftpClient(connectionInfo);
+                SftpHostKeyTrust.RequireTrustedFingerprint(client, trustedHostKeyFingerprint, _ => { });
+                client.Connect();
+                try
+                {
+                    var destinationPath = CombineRemotePath(ingestDirectoryPath, targetFilename);
+                    if (!client.Exists(destinationPath))
+                    {
+                        // Nothing delivered yet (or it failed outright) -- a later
+                        // successful write will produce its own fresh watcher event.
+                        return;
+                    }
+
+                    // Same rename-out-and-back as the local transport, and isPosix: true
+                    // for the same reason WriteAsync's rename needs it -- without it,
+                    // SSH.NET's fallback rename produces a bare CREATE with no
+                    // CLOSE_WRITE/MOVED_TO, which CWA's watcher never reacts to.
+                    var relocatedPath = CombineRemotePath(ingestDirectoryPath, $".{Guid.NewGuid():N}.rescan");
+                    client.RenameFile(destinationPath, relocatedPath, isPosix: true);
+                    client.RenameFile(relocatedPath, destinationPath, isPosix: true);
+                }
+                finally
+                {
+                    client.Disconnect();
+                }
+            },
+            cancellationToken);
+    }
+
     private static string CombineRemotePath(string directory, string filename) =>
         $"{directory.TrimEnd('/')}/{filename}";
 }

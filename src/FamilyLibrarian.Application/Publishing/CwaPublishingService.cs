@@ -90,7 +90,17 @@ public sealed class CwaPublishingService(
         else if (import.Status == LibraryImportStatus.AwaitingVerification)
         {
             var work = await workLookup.FindAsync(asset.WorkId, cancellationToken);
-            await TryVerifyAsync(import, asset, work?.Title ?? "Unknown title", work?.PrimaryAuthor, cancellationToken);
+            var title = work?.Title ?? "Unknown title";
+            await TryVerifyAsync(import, asset, title, work?.PrimaryAuthor, cancellationToken);
+
+            if (import.Status == LibraryImportStatus.AwaitingVerification)
+            {
+                // Not found yet -- give CWA's watcher another chance at the file
+                // it may have missed entirely (stopped/restarting at handoff
+                // time; inotify has no startup backfill scan). Best-effort, and
+                // never re-transports content -- see TryTouchAsync.
+                await TryTouchAsync(import, settings, cancellationToken);
+            }
         }
 
         return true;
@@ -98,7 +108,9 @@ public sealed class CwaPublishingService(
 
     /// <summary>
     /// Rechecks every CWA handoff still awaiting catalog confirmation. This
-    /// only performs OPDS reads; it never transports the source file again.
+    /// only performs OPDS reads and, when still unconfirmed, a same-content
+    /// re-signal via <see cref="ICwaIngestTransport.TouchAsync"/> -- it never
+    /// transports the source file's content again.
     /// </summary>
     public async Task<int> RecheckAwaitingVerificationAsync(CancellationToken cancellationToken)
     {
@@ -130,7 +142,7 @@ public sealed class CwaPublishingService(
             var targetFilename = PublishingFilenames.BuildTargetFilename(title, asset.Format);
             await transport.WriteAsync(content, targetFilename, cancellationToken);
 
-            import.MarkAwaitingVerification();
+            import.MarkAwaitingVerification(targetFilename);
             await repository.SaveChangesAsync(cancellationToken);
 
             await audit.WriteAsync(
@@ -180,6 +192,39 @@ public sealed class CwaPublishingService(
             // Verification is best-effort: a catalog-lookup hiccup leaves the
             // import AwaitingVerification for a later manual recheck rather
             // than failing an otherwise-successful handoff.
+        }
+    }
+
+    /// <summary>
+    /// Re-signals the already-delivered file to CWA's watcher, without
+    /// re-transporting its content. See <see cref="ICwaIngestTransport.TouchAsync"/>
+    /// for why: CWA's ingest watcher has no startup backfill scan, so a file
+    /// delivered while CWA was stopped or mid-restart is otherwise invisible
+    /// to it forever. Best-effort, matching <see cref="TryVerifyAsync"/> -- a
+    /// touch failure must not fail an otherwise-pending recheck; the next
+    /// cycle tries again.
+    /// </summary>
+    /// <remarks>
+    /// Targets <see cref="LibraryImport.TargetFilename"/>, the name actually
+    /// recorded at write time -- never <c>PublishingFilenames.BuildTargetFilename</c>
+    /// called again here, which would mint a fresh random-suffixed name that
+    /// does not exist at the destination and make every touch a silent no-op.
+    /// </remarks>
+    private async Task TryTouchAsync(LibraryImport import, CwaSettings settings, CancellationToken cancellationToken)
+    {
+        if (import.TargetFilename is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var transport = transportFactory.Create(settings);
+            await transport.TouchAsync(import.TargetFilename, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Best-effort: see the doc comment above.
         }
     }
 
