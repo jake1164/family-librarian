@@ -47,6 +47,19 @@ public sealed class GutenbergFileResolver(GutenbergMirrorOptions options) : IGut
         }
 
         var segments = sourcePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length >= 3 &&
+            string.Equals(segments[0], "files", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(segments[1], out var filesBookId) &&
+            filesBookId > 0)
+        {
+            // The RDF catalogue uses Gutenberg's public web path
+            // (/files/{id}/...), while its rsync-compatible mirrors store the
+            // main collection under one directory per digit (/1/2/3/{id}/...).
+            // Generated formats remain under /cache/epub and are handled below.
+            var splitDirectory = string.Join('/', segments[1].Select(digit => digit.ToString()));
+            return $"/{splitDirectory}/{filesBookId}/{string.Join('/', segments[2..])}";
+        }
+
         if (segments.Length == 2 && string.Equals(segments[0], "ebooks", StringComparison.OrdinalIgnoreCase))
         {
             var token = segments[1];
