@@ -37,6 +37,12 @@ public enum MediaAssetStorageState
     Processing = 2,
     Rejected = 3,
     Trusted = 4,
+    /// <summary>
+    /// The destination confirmed the import and the local staged bytes were
+    /// removed — docs/01 §13's "verify destination reference, remove local
+    /// media copy." The asset row remains as the auditable record of what
+    /// was published and where; there is no local file left to open.
+    /// </summary>
     Archived = 5,
     /// <summary>
     /// The file passed security checks but its content could not be matched to

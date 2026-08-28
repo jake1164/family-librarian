@@ -300,6 +300,43 @@ public sealed class BookRequestServiceTests
     }
 
     [TestMethod]
+    public async Task ARequestForAFormatThatIsNotReadyIsRejected()
+    {
+        var repository = new InMemoryRequestRepository();
+        var readiness = new StubFormatReadinessService().NotReady(RequestMediaType.Ebook);
+        var service = Create(repository, Reader, readiness);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            CancellationToken.None);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
+        StringAssert.Contains(result.Error, "Ebook");
+        Assert.AreEqual(0, repository.Requests.Count);
+    }
+
+    [TestMethod]
+    public async Task AMixedFormatRequestIsRejectedWhenAnyFormatIsNotReady()
+    {
+        var repository = new InMemoryRequestRepository();
+        var readiness = new StubFormatReadinessService().NotReady(RequestMediaType.Audiobook);
+        var service = Create(repository, Reader, readiness);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook, RequestMediaType.Audiobook],
+            null,
+            confirmDuplicate: false,
+            CancellationToken.None);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, repository.Requests.Count);
+    }
+
+    [TestMethod]
     public void OnlyCancelAndReopenAreOfferedToARequester()
     {
         CollectionAssert.AreEqual(
@@ -311,13 +348,15 @@ public sealed class BookRequestServiceTests
             BookRequestService.RequesterTransitionsFrom(RequestStatus.Cancelled).ToArray());
     }
 
-    private static BookRequestService Create(IRequestRepository repository, Guid? userId) =>
+    private static BookRequestService Create(
+        IRequestRepository repository, Guid? userId, IFormatReadinessService? readiness = null) =>
         new(
             repository,
             new StubCurrentUser(userId),
             new FixedClock(),
             new NullAuditWriter(),
-            new NotificationService(new NullNotificationRepository(), new StubCurrentUser(userId), new FixedClock()));
+            new NotificationService(new NullNotificationRepository(), new StubCurrentUser(userId), new FixedClock()),
+            readiness ?? new StubFormatReadinessService());
 
     private sealed class StubCurrentUser(Guid? userId) : ICurrentUser
     {
@@ -329,6 +368,23 @@ public sealed class BookRequestServiceTests
     private sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    /// <summary>Ready for every format unless told otherwise, so existing tests need no changes.</summary>
+    private sealed class StubFormatReadinessService : IFormatReadinessService
+    {
+        private readonly HashSet<RequestMediaType> notReady = [];
+
+        public StubFormatReadinessService NotReady(RequestMediaType mediaType)
+        {
+            notReady.Add(mediaType);
+            return this;
+        }
+
+        public Task<FormatReadiness> CheckAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            Task.FromResult(notReady.Contains(mediaType)
+                ? FormatReadiness.NotReady($"{mediaType} is not ready in this test.")
+                : FormatReadiness.Ready);
     }
 
     private sealed class NullAuditWriter : IAuditWriter

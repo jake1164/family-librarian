@@ -2,6 +2,7 @@ using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -116,6 +117,13 @@ internal sealed class FamilyLibrarianAppFactory(
         {
             services.RemoveAll<IMalwareScanner>();
             services.AddSingleton<IMalwareScanner, AlwaysCleanTestMalwareScanner>();
+
+            // Same posture again: an ordinary test must never depend on CWA or
+            // Audiobookshelf being configured, enabled, and passing a test just
+            // to create a request. A test that specifically exercises the
+            // format-readiness gate overrides this via configureTestServices.
+            services.RemoveAll<IFormatReadinessService>();
+            services.AddSingleton<IFormatReadinessService, AlwaysReadyFormatReadinessService>();
 
             // Same posture for the two publishing destinations: no ordinary test
             // depends on a reachable CWA or Audiobookshelf instance. Nothing calls

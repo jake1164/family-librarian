@@ -25,6 +25,23 @@ public sealed class CwaSettingsService(
         return ToStatus(settings);
     }
 
+    /// <summary>
+    /// Whether a user may request an Ebook right now: CWA enabled and passing
+    /// the same configuration bar <see cref="SetEnabledAsync"/> already
+    /// requires to turn it on. Returns the reason when not ready, or
+    /// <see langword="null"/> when ready.
+    /// </summary>
+    public async Task<string?> GetRequestReadinessErrorAsync(CancellationToken cancellationToken)
+    {
+        var settings = await store.FindAsync(cancellationToken);
+        if (settings is null || !settings.IsEnabled)
+        {
+            return "CWA is not enabled.";
+        }
+
+        return GetConfigurationError(settings);
+    }
+
     public async Task<CwaCommandResult> SetEnabledAsync(
         bool isEnabled, CancellationToken cancellationToken)
     {

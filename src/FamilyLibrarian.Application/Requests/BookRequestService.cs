@@ -20,7 +20,8 @@ public sealed class BookRequestService(
     ICurrentUser currentUser,
     IClock clock,
     IAuditWriter audit,
-    NotificationService notifications)
+    NotificationService notifications,
+    IFormatReadinessService readiness)
 {
     /// <summary>
     /// The status changes a requester may make. Moving a request to
@@ -77,6 +78,16 @@ public sealed class BookRequestService(
         if (!await repository.WorkExistsAsync(workId, cancellationToken))
         {
             return CreateBookRequestResult.WorkNotFound();
+        }
+
+        foreach (var mediaType in requestedFormats)
+        {
+            var check = await readiness.CheckAsync(mediaType, cancellationToken);
+            if (!check.IsReady)
+            {
+                return CreateBookRequestResult.Invalid(
+                    $"{mediaType} requests aren't available right now: {check.Reason}");
+            }
         }
 
         return await repository.InCreateRequestScopeAsync(

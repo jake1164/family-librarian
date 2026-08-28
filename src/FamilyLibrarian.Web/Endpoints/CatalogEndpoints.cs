@@ -2,6 +2,7 @@ using System.Text.Json;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Policy;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Policy;
 using FamilyLibrarian.Domain.Requests;
@@ -191,18 +192,27 @@ internal static class CatalogEndpoints
         IWorkFulfillmentOptionsService fulfillment,
         AcquisitionPolicyService policyService,
         IPolicyRanker ranker,
+        IFormatReadinessService readiness,
         CancellationToken cancellationToken)
     {
         var ebook = await fulfillment.GetOptionsAsync(workId, RequestMediaType.Ebook, cancellationToken);
         var audiobook = await fulfillment.GetOptionsAsync(workId, RequestMediaType.Audiobook, cancellationToken);
         var profileId = await policyService.GetEffectiveProfileIdAsync(cancellationToken);
 
+        var ebookReadiness = await readiness.CheckAsync(RequestMediaType.Ebook, cancellationToken);
+        var audiobookReadiness = await readiness.CheckAsync(RequestMediaType.Audiobook, cancellationToken);
+
         return Results.Ok(new WorkFulfillmentOptionsResponse(
             ebook.Select(ToFulfillmentOptionResponse).ToArray(),
             audiobook.Select(ToFulfillmentOptionResponse).ToArray(),
             ToRecommendationResponse(ranker.Recommend(ebook, profileId)),
-            ToRecommendationResponse(ranker.Recommend(audiobook, profileId))));
+            ToRecommendationResponse(ranker.Recommend(audiobook, profileId)),
+            ToFormatReadinessResponse(ebookReadiness),
+            ToFormatReadinessResponse(audiobookReadiness)));
     }
+
+    private static FormatReadinessResponse ToFormatReadinessResponse(FormatReadiness readiness) =>
+        new(readiness.IsReady, readiness.Reason);
 
     private static FulfillmentOptionResponse ToFulfillmentOptionResponse(FulfillmentOption option) => new(
         option.ProviderId,

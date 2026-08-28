@@ -115,9 +115,18 @@
                 {
                     <fieldset class="pa-0" style="border: 0;">
                         <legend class="mud-typography mud-typography-body2">Which format would you like?</legend>
-                        <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@isSubmitting" />
-                        <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@isSubmitting" />
+                        <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@(isSubmitting || !IsEbookReady)" />
+                        <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@(isSubmitting || !IsAudiobookReady)" />
                     </fieldset>
+
+                    @if (fulfillment?.EbookReadiness is { IsReady: false } ebookReadiness)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">Ebook: @ebookReadiness.Reason</MudText>
+                    }
+                    @if (fulfillment?.AudiobookReadiness is { IsReady: false } audiobookReadiness)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">Audiobook: @audiobookReadiness.Reason</MudText>
+                    }
 
                     <MudTextField @bind-Value="note"
                                   Label="Anything we should know? (optional)"
@@ -243,6 +252,11 @@
 
     private bool HasFormatSelected => wantsEbook || wantsAudiobook;
 
+    // A missing readiness signal (null) means "unknown" — treated as ready so
+    // an older/failed fetch never blocks a request the server would accept.
+    private bool IsEbookReady => fulfillment?.EbookReadiness is not { IsReady: false };
+    private bool IsAudiobookReady => fulfillment?.AudiobookReadiness is not { IsReady: false };
+
     protected override async Task OnParametersSetAsync()
     {
         StopRequestStatusRefresh();
@@ -289,6 +303,14 @@
                 if (!cancellationToken.IsCancellationRequested)
                 {
                     fulfillment = loaded;
+                    if (loaded.EbookReadiness is { IsReady: false })
+                    {
+                        wantsEbook = false;
+                    }
+                    if (loaded.AudiobookReadiness is { IsReady: false })
+                    {
+                        wantsAudiobook = false;
+                    }
                     StateHasChanged();
                 }
             });

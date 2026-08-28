@@ -23,6 +23,25 @@ public sealed class AudiobookshelfSettingsService(
         return ToStatus(settings);
     }
 
+    /// <summary>
+    /// Whether a user may request an Audiobook right now. Mirrors
+    /// <c>CwaSettingsService.GetRequestReadinessErrorAsync</c>'s shape and bar
+    /// (enabled, fully configured, and a passing test for the currently saved
+    /// configuration) even though <see cref="SetEnabledAsync"/> does not itself
+    /// require a passing test. Returns the reason when not ready, or
+    /// <see langword="null"/> when ready.
+    /// </summary>
+    public async Task<string?> GetRequestReadinessErrorAsync(CancellationToken cancellationToken)
+    {
+        var settings = await store.FindAsync(cancellationToken);
+        if (settings is null || !settings.IsEnabled)
+        {
+            return "Audiobookshelf is not enabled.";
+        }
+
+        return GetConfigurationError(settings);
+    }
+
     public async Task<AudiobookshelfCommandResult> SetEnabledAsync(
         bool isEnabled, CancellationToken cancellationToken)
     {
@@ -100,6 +119,31 @@ public sealed class AudiobookshelfSettingsService(
             cancellationToken);
 
         return AudiobookshelfCommandResult.Success(ToStatus(settings));
+    }
+
+    /// <summary>
+    /// Tests the currently *persisted* configuration and records the result,
+    /// mirroring <c>CwaSettingsService.TestConnectionAsync</c>. Unlike
+    /// <see cref="TestConfigurationAsync"/>, this is what actually lets
+    /// <c>LastTestSucceeded</c> become true — required for the format-readiness
+    /// gate, since nothing else in this service ever records a test result.
+    /// </summary>
+    public async Task<AudiobookshelfConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken)
+    {
+        var settings = await store.GetOrCreateAsync(cancellationToken);
+        var outcome = await connectionTester.TestAsync(settings, cancellationToken);
+
+        settings.RecordTestResult(outcome.Succeeded, outcome.Message, currentUser.UserId, clock.UtcNow);
+        await store.SaveChangesAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            AuditActions.PublishingDestinationTested,
+            AuditSubjectTypes.PublishingDestination,
+            "audiobookshelf",
+            new { Destination = "audiobookshelf", outcome.Succeeded },
+            cancellationToken);
+
+        return new AudiobookshelfConnectionTestResult(ToStatus(settings), outcome);
     }
 
     /// <summary>
@@ -200,7 +244,39 @@ public sealed class AudiobookshelfSettingsService(
             settings.LastTestMessage);
 
     private static string? BuildHint(string value) => value.Length <= 4 ? null : value[^4..];
+
+    private static string? GetConfigurationError(AudiobookshelfSettings settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings.BaseUrl))
+        {
+            return "A base URL is required before enabling Audiobookshelf.";
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.LibraryId))
+        {
+            return "A library must be selected before enabling Audiobookshelf.";
+        }
+
+        if (!settings.HasApiToken)
+        {
+            return "An API token is required before enabling Audiobookshelf.";
+        }
+
+        // LastTestSucceeded is reset to null by every settings/secret mutation
+        // (AudiobookshelfSettings.ResetTestResult()), so this is specifically "a
+        // successful test for the *currently saved* configuration," not a stale
+        // pass from before the last edit.
+        if (settings.LastTestSucceeded != true)
+        {
+            return "Test the connection and confirm it succeeds before enabling Audiobookshelf. " +
+                   "Any settings change since the last test invalidates it.";
+        }
+
+        return null;
+    }
 }
+
+public sealed record AudiobookshelfConnectionTestResult(AudiobookshelfStatus Status, ConnectionTestOutcome Outcome);
 
 public sealed record AudiobookshelfCommandResult(
     PublishingCommandOutcome Outcome, AudiobookshelfStatus? Status, string? Error)

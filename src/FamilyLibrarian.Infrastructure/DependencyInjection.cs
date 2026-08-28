@@ -144,6 +144,7 @@ public static class DependencyInjection
         services.AddScoped<RequestRepository>();
         services.AddScoped<IRequestRepository>(provider => provider.GetRequiredService<RequestRepository>());
         services.AddScoped<IBookRequestFulfillmentStore>(provider => provider.GetRequiredService<RequestRepository>());
+        services.AddScoped<IFormatReadinessService, FormatReadinessService>();
         services.AddScoped<BookRequestService>();
 
         services.AddScoped<NotificationRepository>();

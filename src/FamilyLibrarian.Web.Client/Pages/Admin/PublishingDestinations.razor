@@ -188,6 +188,32 @@ else
                 </MudAlert>
             }
         </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4 mt-4">
+            <MudText Typo="Typo.h6" GutterBottom="true">Confirm saved configuration</MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Enabling CWA requires a passing test of the delivery and OPDS settings you just
+                saved above — unlike the two tests above, this one is recorded, and is what
+                actually unlocks the Enabled switch. Save delivery and OPDS settings first; this
+                test checks what is currently saved, not this form's unsaved values.
+            </MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@cwaBusy"
+                       OnClick="TestCwaConnectionAsync">Test saved connection</MudButton>
+            @if (cwaConnectionTestResult is not null)
+            {
+                <MudAlert Severity="@(cwaConnectionTestResult.Succeeded ? Severity.Success : Severity.Warning)" Class="mt-3">
+                    @cwaConnectionTestResult.Message
+                </MudAlert>
+            }
+            else if (cwa.LastTestedAtUtc is { } lastTestedAtUtc)
+            {
+                <MudText Typo="Typo.caption" Class="mt-3">
+                    Last tested @lastTestedAtUtc.ToLocalTime().ToString("g") —
+                    @(cwa.LastTestSucceeded == true ? "succeeded." : "failed.")
+                    @cwa.LastTestMessage
+                </MudText>
+            }
+        </MudPaper>
         }
     </MudPaper>
 }
@@ -312,7 +338,7 @@ else
     private string cwaTransportMode = "Local", cwaSftpAuthenticationMode = "PrivateKey";
     private string? cwaLocalIngestPath, cwaSftpHost, cwaSftpUsername, cwaSftpIngestPath, cwaSftpPrivateKeyDraft, cwaSftpPassphraseDraft, cwaSftpPasswordDraft, cwaPendingSftpHostKeyFingerprint, cwaApprovedSftpHostKeyFingerprint, cwaOpdsBaseUrl, cwaOpdsUsername, cwaOpdsPasswordDraft;
     private int? cwaSftpPort;
-    private PublishingConnectionTestResponse? cwaIngestTestResult, cwaOpdsTestResult;
+    private PublishingConnectionTestResponse? cwaIngestTestResult, cwaOpdsTestResult, cwaConnectionTestResult;
     private AudiobookshelfSettingsResponse? audiobookshelf;
     private bool audiobookshelfLoadFailed, audiobookshelfBusy;
     private int audiobookshelfSwitchGeneration;
@@ -447,6 +473,31 @@ else
                 return;
             }
 
+        }
+        finally
+        {
+            cwaBusy = false;
+            cwaSwitchGeneration++;
+        }
+    }
+
+    private async Task TestCwaConnectionAsync()
+    {
+        cwaBusy = true;
+        try
+        {
+            cwaConnectionTestResult = await CwaApi.TestConnectionAsync();
+            if (cwaConnectionTestResult is null)
+            {
+                Snackbar.Add("The connection test could not be run.", Severity.Error);
+                return;
+            }
+
+            // The test endpoint only returns pass/fail, not the updated
+            // settings -- reload so LastTestSucceeded (and so whether the
+            // Enable switch will actually be accepted) reflects this result.
+            cwa = await CwaApi.GetAsync();
+            ApplyCwaFields(cwa);
         }
         finally
         {

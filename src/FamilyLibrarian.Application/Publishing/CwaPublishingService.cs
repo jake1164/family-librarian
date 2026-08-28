@@ -184,7 +184,12 @@ public sealed class CwaPublishingService(
             {
                 import.MarkAvailable(bookId, clock.UtcNow);
                 await MarkRequestFormatAvailableAsync(asset, title, cancellationToken);
+                asset.TransitionStorageState(MediaAssetStorageState.Archived, clock.UtcNow);
                 await repository.SaveChangesAsync(cancellationToken);
+
+                // Cleanup runs only after the Available/Archived state is
+                // durably saved -- see DeleteTrustedBytesAsync.
+                await DeleteTrustedBytesAsync(asset, cancellationToken);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -225,6 +230,30 @@ public sealed class CwaPublishingService(
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // Best-effort: see the doc comment above.
+        }
+    }
+
+    /// <summary>
+    /// Permanently removes the local trusted copy once CWA has confirmed the
+    /// import — docs/01 §13's "remove local media copy." The asset is already
+    /// Archived and saved by the time this runs, so a cleanup failure here is
+    /// a leftover-file nuisance for an operator to notice, never a reason to
+    /// roll back or retry an otherwise-successful publish.
+    /// </summary>
+    private async Task DeleteTrustedBytesAsync(MediaAsset asset, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await stagingStore.DeleteAsync(MediaAssetStorageState.Trusted, asset.StoredFilename, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await audit.WriteAsync(
+                AuditActions.AssetArchiveCleanupFailed,
+                AuditSubjectTypes.MediaAsset,
+                asset.Id.ToString(),
+                new { asset.Id, Destination = "cwa", Reason = exception.Message },
+                cancellationToken);
         }
     }
 

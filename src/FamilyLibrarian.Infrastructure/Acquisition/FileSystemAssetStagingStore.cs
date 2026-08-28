@@ -143,13 +143,15 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
     private string ZoneDirectory(MediaAssetStorageState zone) =>
         Path.Combine(_options.RootPath, ZoneFolderName(zone));
 
+    // Archived, like Destroyed, has no physical folder: docs/01 §13 requires
+    // the local copy to be removed once a destination confirms import, not
+    // relocated to a retained "archive" folder.
     private static string ZoneFolderName(MediaAssetStorageState zone) => zone switch
     {
         MediaAssetStorageState.Quarantine => "quarantine",
         MediaAssetStorageState.Processing => "processing",
         MediaAssetStorageState.Rejected => "rejected",
         MediaAssetStorageState.Trusted => "trusted",
-        MediaAssetStorageState.Archived => "archived",
         MediaAssetStorageState.Unmatched => "unmatched",
         _ => throw new ArgumentOutOfRangeException(nameof(zone), zone, "Unknown storage zone.")
     };

@@ -131,6 +131,8 @@ public sealed class CwaPublishingServiceTests
         Assert.AreEqual(1, context.Transport.WriteCount);
         // Found on this pass -- no need to re-signal the watcher.
         Assert.AreEqual(0, context.Transport.TouchCount);
+        Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState);
+        Assert.AreEqual(1, context.StagingStore.Deleted.Count);
     }
 
     [TestMethod]
@@ -199,6 +201,39 @@ public sealed class CwaPublishingServiceTests
         Assert.AreEqual(1, checkedCount);
         Assert.AreEqual(LibraryImportStatus.Available, reloaded!.Status);
         Assert.AreEqual(1, context.Transport.WriteCount);
+    }
+
+    [TestMethod]
+    public async Task AVerifiedImportArchivesTheAssetAndDeletesTheTrustedBytes()
+    {
+        var context = context_Configured();
+        var asset = context.CreateAsset();
+        context.CatalogClient.NextBookId = "42";
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState);
+        var deleted = context.StagingStore.Deleted.Single();
+        Assert.AreEqual(MediaAssetStorageState.Trusted, deleted.Zone);
+        Assert.AreEqual(asset.StoredFilename, deleted.StoredFilename);
+    }
+
+    [TestMethod]
+    public async Task ACleanupFailureAfterVerificationStillLeavesTheImportAvailable()
+    {
+        // The request/import outcome the household sees must never depend on
+        // an unrelated local filesystem cleanup succeeding.
+        var context = context_Configured();
+        var asset = context.CreateAsset();
+        context.CatalogClient.NextBookId = "42";
+        context.StagingStore.ThrowOnDelete = true;
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        var import = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(LibraryImportStatus.Available, import!.Status);
+        Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState);
+        Assert.AreEqual(1, context.Audit.Entries.Count(entry => entry.Action == "asset.archive_cleanup_failed"));
     }
 
     [TestMethod]
@@ -283,6 +318,10 @@ public sealed class CwaPublishingServiceTests
                 associatedRequestFormatId: associatedRequestFormatId ?? Guid.NewGuid(),
                 sourceAcquisitionCandidateId: null,
                 Now);
+            // Only a Trusted asset ever reaches the publishing service in
+            // production (ApprovalService transitions it before dispatching).
+            asset.TransitionStorageState(MediaAssetStorageState.Processing, Now);
+            asset.TransitionStorageState(MediaAssetStorageState.Trusted, Now);
             Assets.Assets[asset.Id] = asset;
             return asset;
         }
@@ -346,6 +385,10 @@ public sealed class CwaPublishingServiceTests
 
     private sealed class FakeStagingStore : IAssetStagingStore
     {
+        public List<(MediaAssetStorageState Zone, string StoredFilename)> Deleted { get; } = [];
+
+        public bool ThrowOnDelete { get; set; }
+
         public Task<StagedFile> WriteToQuarantineAsync(
             Stream content, string originalFilename, long maxSizeBytes, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -359,6 +402,18 @@ public sealed class CwaPublishingServiceTests
             MediaAssetStorageState toZone,
             string storedFilename,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task DeleteAsync(
+            MediaAssetStorageState zone, string storedFilename, CancellationToken cancellationToken)
+        {
+            if (ThrowOnDelete)
+            {
+                throw new IOException("Simulated delete failure.");
+            }
+
+            Deleted.Add((zone, storedFilename));
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeTransport : ICwaIngestTransport

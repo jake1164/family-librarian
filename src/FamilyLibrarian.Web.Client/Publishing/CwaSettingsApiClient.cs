@@ -45,6 +45,16 @@ public sealed class CwaSettingsApiClient(HttpClient httpClient, AntiforgeryToken
     public Task<CwaResult> ClearOpdsPasswordAsync(CancellationToken cancellationToken = default) =>
         SendAsync<object>(HttpMethod.Delete, $"{BasePath}/opds-password", null, cancellationToken);
 
+    /// <summary>
+    /// Tests and records against the currently *saved* configuration — this is
+    /// what actually lets <c>LastTestSucceeded</c> become true, which enabling
+    /// CWA requires. Unlike <see cref="TestIngestAsync"/>/<see cref="TestOpdsAsync"/>,
+    /// there is no draft form to pass: save delivery and OPDS settings first.
+    /// </summary>
+    public Task<PublishingConnectionTestResponse?> TestConnectionAsync(
+        CancellationToken cancellationToken = default) =>
+        TestAsync("test", payload: null, cancellationToken);
+
     public Task<PublishingConnectionTestResponse?> TestIngestAsync(
         TestCwaIngestRequest request,
         CancellationToken cancellationToken = default) =>

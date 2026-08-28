@@ -68,6 +68,7 @@ public sealed class AudiobookshelfSettings
         BaseUrl = Trim(baseUrl);
         LibraryId = Trim(libraryId);
         FolderId = Trim(folderId);
+        ResetTestResult();
         Touch(actorUserId, updatedAtUtc);
     }
 

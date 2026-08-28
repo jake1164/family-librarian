@@ -99,6 +99,89 @@ public sealed class AudiobookshelfPublishingServiceTests
     }
 
     [TestMethod]
+    public async Task ASuccessfulUploadArchivesTheAssetAndDeletesTheTrustedBytes()
+    {
+        var context = ConfiguredContext();
+        var asset = context.CreateAsset();
+        context.ApiClient.ExistingItemId = null;
+        context.ApiClient.UploadResult = new AudiobookshelfUploadResult(true, "li_new", null);
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState);
+        var deleted = context.StagingStore.Deleted.Single();
+        Assert.AreEqual(MediaAssetStorageState.Trusted, deleted.Zone);
+        Assert.AreEqual(asset.StoredFilename, deleted.StoredFilename);
+    }
+
+    [TestMethod]
+    public async Task AnExistingMatchArchivesTheAssetAndDeletesTheTrustedBytes()
+    {
+        var context = ConfiguredContext();
+        var asset = context.CreateAsset();
+        context.ApiClient.ExistingItemId = "li_already-there";
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState);
+        Assert.AreEqual(1, context.StagingStore.Deleted.Count);
+    }
+
+    [TestMethod]
+    public async Task ACleanupFailureAfterDeliveryStillLeavesTheDeliveryDelivered()
+    {
+        // The request/delivery outcome the household sees must never depend
+        // on an unrelated local filesystem cleanup succeeding.
+        var context = ConfiguredContext();
+        var asset = context.CreateAsset();
+        context.ApiClient.ExistingItemId = "li_already-there";
+        context.StagingStore.ThrowOnDelete = true;
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(DeliveryStatus.Delivered, delivery!.Status);
+        Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState);
+        Assert.AreEqual(1, context.Audit.Entries.Count(entry => entry.Action == "asset.archive_cleanup_failed"));
+    }
+
+    [TestMethod]
+    public async Task ADeferredMatchFoundOnRecheckArchivesTheAssetAndDeletesTheTrustedBytes()
+    {
+        var context = ConfiguredContext();
+        var asset = context.CreateAsset();
+        context.ApiClient.ExistingItemId = null;
+        context.ApiClient.UploadResult = new AudiobookshelfUploadResult(true, null, null);
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+        var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(DeliveryStatus.Verifying, delivery!.Status);
+        Assert.AreEqual(MediaAssetStorageState.Trusted, asset.StorageState);
+
+        context.ApiClient.ExistingItemId = "li_found-on-recheck";
+        await context.Service.RecheckAsync(delivery.Id, CancellationToken.None);
+
+        var reloaded = await context.Repository.FindAsync(delivery.Id, CancellationToken.None);
+        Assert.AreEqual(DeliveryStatus.Delivered, reloaded!.Status);
+        Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState);
+        Assert.AreEqual(1, context.StagingStore.Deleted.Count);
+    }
+
+    [TestMethod]
+    public async Task ASuccessfulBundleUploadArchivesEveryTrackAndDeletesEachTrustedFile()
+    {
+        var context = ConfiguredContext();
+        var tracks = context.CreateBundleTracks(3);
+        context.ApiClient.ExistingItemId = null;
+        context.ApiClient.UploadResult = new AudiobookshelfUploadResult(true, "li_bundle", null);
+
+        await context.Service.PublishBundleAsync(tracks, CancellationToken.None);
+
+        Assert.IsTrue(tracks.All(track => track.StorageState == MediaAssetStorageState.Archived));
+        Assert.AreEqual(3, context.StagingStore.Deleted.Count);
+        Assert.AreEqual(1, context.ApiClient.BundleUploadCount);
+    }
+
+    [TestMethod]
     public async Task RecheckOnAnUnknownDeliveryReturnsFalse()
     {
         var context = ConfiguredContext();
@@ -174,8 +257,45 @@ public sealed class AudiobookshelfPublishingServiceTests
                 associatedRequestFormatId: Guid.NewGuid(),
                 sourceAcquisitionCandidateId: null,
                 Now);
+            // Only a Trusted asset ever reaches the publishing service in
+            // production (ApprovalService transitions it before dispatching).
+            asset.TransitionStorageState(MediaAssetStorageState.Processing, Now);
+            asset.TransitionStorageState(MediaAssetStorageState.Trusted, Now);
             Assets.Assets[asset.Id] = asset;
             return asset;
+        }
+
+        public List<MediaAsset> CreateBundleTracks(int count)
+        {
+            var bundleId = Guid.NewGuid();
+            var formatId = Guid.NewGuid();
+            var workId = Guid.NewGuid();
+            var tracks = new List<MediaAsset>();
+            for (var sequence = 1; sequence <= count; sequence++)
+            {
+                var track = new MediaAsset(
+                    workId,
+                    editionId: null,
+                    RequestMediaType.Audiobook,
+                    ".m4b",
+                    $"Track {sequence}.m4b",
+                    $"{Guid.NewGuid():N}.m4b",
+                    sizeBytes: 4096,
+                    sha256: new string('c', 64),
+                    detectedMimeType: "audio/mp4",
+                    associatedRequestFormatId: formatId,
+                    sourceAcquisitionCandidateId: null,
+                    Now,
+                    bundleId: bundleId,
+                    bundleSequence: sequence,
+                    bundleTrackCount: count);
+                track.TransitionStorageState(MediaAssetStorageState.Processing, Now);
+                track.TransitionStorageState(MediaAssetStorageState.Trusted, Now);
+                Assets.Assets[track.Id] = track;
+                tracks.Add(track);
+            }
+
+            return tracks;
         }
     }
 
@@ -238,6 +358,10 @@ public sealed class AudiobookshelfPublishingServiceTests
 
     private sealed class FakeStagingStore : IAssetStagingStore
     {
+        public List<(MediaAssetStorageState Zone, string StoredFilename)> Deleted { get; } = [];
+
+        public bool ThrowOnDelete { get; set; }
+
         public Task<StagedFile> WriteToQuarantineAsync(
             Stream content, string originalFilename, long maxSizeBytes, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -251,6 +375,18 @@ public sealed class AudiobookshelfPublishingServiceTests
             MediaAssetStorageState toZone,
             string storedFilename,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task DeleteAsync(
+            MediaAssetStorageState zone, string storedFilename, CancellationToken cancellationToken)
+        {
+            if (ThrowOnDelete)
+            {
+                throw new IOException("Simulated delete failure.");
+            }
+
+            Deleted.Add((zone, storedFilename));
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeApiClient : IAudiobookshelfApiClient
