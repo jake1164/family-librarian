@@ -35,7 +35,7 @@ public sealed class AudiobookshelfApiClientTests
         Assert.AreEqual("http://abs.example/api/upload", handler.RequestUri);
         StringAssert.Contains(handler.Body, "name=0; filename=01.mp3");
         StringAssert.Contains(handler.Body, "name=1; filename=02.mp3");
-        StringAssert.DoesNotContain(handler.Body, "name=files");
+        Assert.IsFalse(handler.Body.Contains("name=files", StringComparison.Ordinal));
     }
 
     private sealed class RecordingHandler : HttpMessageHandler
