@@ -55,18 +55,70 @@
                 </MudText>
                 @if (source.ProviderId == "gutendex")
                 {
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-2" Wrap="Wrap.Wrap">
-                        <MudText Typo="Typo.caption" Class="flex-grow-1">
-                            @GutenbergDownloadStatus
-                        </MudText>
-                        <MudButton Variant="Variant.Outlined"
-                                   Size="Size.Small"
-                                   StartIcon="@Icons.Material.Filled.Refresh"
-                                   Disabled="@(!source.IsEnabled || gutenbergCatalogBusy || GutenbergCatalogIsSynchronizing)"
-                                   OnClick="RefreshGutenbergCatalogAsync">
-                            @(gutenbergCatalogBusy || GutenbergCatalogIsSynchronizing ? "Refreshing…" : "Refresh now")
-                        </MudButton>
-                    </MudStack>
+                    <MudPaper Outlined="true" Class="pa-3 mt-3">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.subtitle2" Class="flex-grow-1">Local catalogue status</MudText>
+                            @if (gutenbergCatalogStatus is not null)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="@GutenbergCatalogStateColor">
+                                    @GutenbergCatalogStateLabel
+                                </MudChip>
+                            }
+                            <MudButton Variant="Variant.Outlined"
+                                       Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.Refresh"
+                                       Disabled="@(!source.IsEnabled || gutenbergCatalogBusy || GutenbergCatalogIsSynchronizing)"
+                                       OnClick="RefreshGutenbergCatalogAsync">
+                                @(gutenbergCatalogBusy || GutenbergCatalogIsSynchronizing ? "Refreshing…" : "Refresh now")
+                            </MudButton>
+                        </MudStack>
+
+                        @if (gutenbergCatalogStatusUnavailable)
+                        {
+                            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
+                                The catalogue status could not be loaded. Refresh the page and try again.
+                            </MudAlert>
+                        }
+                        else if (gutenbergCatalogStatus is null)
+                        {
+                            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" aria-label="Loading local catalogue status" />
+                        }
+                        else
+                        {
+                            @if (GutenbergCatalogIsSynchronizing)
+                            {
+                                <MudProgressLinear Indeterminate="true" Color="Color.Info" Class="mt-2" aria-label="Refreshing Project Gutenberg catalogue" />
+                            }
+
+                            <MudText Typo="Typo.body2" Class="mt-2">@GutenbergCatalogSummary</MudText>
+                            <MudGrid Class="mt-1">
+                                <MudItem xs="12" sm="6" md="3">
+                                    <MudText Typo="Typo.caption">Available locally</MudText>
+                                    <MudText Typo="Typo.body2">@GutenbergAvailableRecords</MudText>
+                                </MudItem>
+                                <MudItem xs="12" sm="6" md="3">
+                                    <MudText Typo="Typo.caption">Last successful download</MudText>
+                                    <MudText Typo="Typo.body2">@GutenbergLastSuccessfulDownload</MudText>
+                                </MudItem>
+                                <MudItem xs="12" sm="6" md="3">
+                                    <MudText Typo="Typo.caption">Latest refresh attempt</MudText>
+                                    <MudText Typo="Typo.body2">@GutenbergLastAttempt</MudText>
+                                </MudItem>
+                            </MudGrid>
+
+                            @if (!string.IsNullOrWhiteSpace(gutenbergCatalogStatus.FailureMessage))
+                            {
+                                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
+                                    <MudText Typo="Typo.subtitle2">Latest refresh failed</MudText>
+                                    <MudText Typo="Typo.body2">@gutenbergCatalogStatus.FailureMessage</MudText>
+                                    @if (gutenbergCatalogStatus.IsReady)
+                                    {
+                                        <MudText Typo="Typo.caption">The last successful local catalogue remains available for searches.</MudText>
+                                    }
+                                </MudAlert>
+                            }
+                        }
+                    </MudPaper>
                     @if (!source.IsEnabled)
                     {
                         <MudText Typo="Typo.caption" Class="mt-2">
@@ -473,6 +525,7 @@
     private AdminRequestAttentionResponse? attention;
     private GutenbergCatalogStatusResponse? gutenbergCatalogStatus;
     private bool gutenbergCatalogBusy;
+    private bool gutenbergCatalogRefreshInProgress;
     private bool gutenbergCatalogStatusUnavailable;
     private bool gutenbergCatalogPurgeConfirmation;
 
@@ -529,17 +582,62 @@
         }
     }
 
-    private string GutenbergDownloadStatus => gutenbergCatalogStatus switch
-    {
-        { LastSuccessfulSyncUtc: { } downloadedAt } =>
-            $"Catalogue file last downloaded: {downloadedAt.ToLocalTime():g} ({gutenbergCatalogStatus.BookCount:N0} books).",
-        { LastAttemptUtc: { } attemptedAt } =>
-            $"Catalogue file has not been downloaded successfully yet. Last refresh attempt: {attemptedAt.ToLocalTime():g}.",
-        null when gutenbergCatalogStatusUnavailable => "Catalogue status is temporarily unavailable.",
-        _ => "Catalogue file has not been downloaded yet."
-    };
+    private bool GutenbergCatalogIsSynchronizing => gutenbergCatalogRefreshInProgress ||
+        gutenbergCatalogStatus?.Status is "Downloading" or "Parsing" or "Importing";
 
-    private bool GutenbergCatalogIsSynchronizing => gutenbergCatalogStatus?.Status is "Downloading" or "Parsing" or "Importing";
+    private string GutenbergCatalogStateLabel => gutenbergCatalogRefreshInProgress
+        ? "Refreshing"
+        : gutenbergCatalogStatus?.Status switch
+        {
+            "Downloading" => "Downloading",
+            "Parsing" => "Parsing",
+            "Importing" => "Importing",
+            "Completed" when gutenbergCatalogStatus.IsReady => "Ready",
+            "Failed" => "Refresh failed",
+            "NeverSynced" => "Not downloaded",
+            _ => gutenbergCatalogStatus?.Status ?? "Checking"
+        };
+
+    private Color GutenbergCatalogStateColor => gutenbergCatalogRefreshInProgress
+        ? Color.Info
+        : gutenbergCatalogStatus?.Status switch
+        {
+            "Downloading" or "Parsing" or "Importing" => Color.Info,
+            "Completed" when gutenbergCatalogStatus.IsReady => Color.Success,
+            "Failed" => Color.Error,
+            _ => Color.Warning
+        };
+
+    private string GutenbergCatalogSummary => gutenbergCatalogRefreshInProgress
+        ? gutenbergCatalogStatus?.IsReady == true
+            ? "Refreshing the local catalogue. The existing local snapshot remains searchable."
+            : "Refreshing the first local catalogue. Searches will be available after validation completes."
+        : gutenbergCatalogStatus?.Status switch
+        {
+            "Downloading" => gutenbergCatalogStatus.IsReady
+                ? "Downloading an updated catalogue. The existing local snapshot remains searchable."
+                : "Downloading the first local catalogue. Searches will be available after validation completes.",
+            "Parsing" or "Importing" => gutenbergCatalogStatus.IsReady
+                ? "Building an updated catalogue. The existing local snapshot remains searchable."
+                : "Building the first local catalogue. Searches will be available after validation completes.",
+            "Failed" when gutenbergCatalogStatus.IsReady =>
+                "The latest refresh failed, but the previous local catalogue is still searchable.",
+            "Failed" => "The local catalogue is unavailable until a refresh succeeds.",
+            "Completed" when gutenbergCatalogStatus.IsReady => "The local catalogue is ready for automatic request lookup.",
+            _ => "The local catalogue has not been downloaded yet."
+        };
+
+    private string GutenbergAvailableRecords => gutenbergCatalogStatus is { IsReady: true } status
+        ? $"{status.BookCount:N0} books · {status.FormatCount:N0} formats"
+        : "No searchable local records yet";
+
+    private string GutenbergLastSuccessfulDownload => gutenbergCatalogStatus?.LastSuccessfulSyncUtc is { } downloadedAt
+        ? downloadedAt.ToLocalTime().ToString("g")
+        : "Never";
+
+    private string GutenbergLastAttempt => gutenbergCatalogStatus?.LastAttemptUtc is { } attemptedAt
+        ? attemptedAt.ToLocalTime().ToString("g")
+        : "Never";
 
     private async Task LoadGutenbergCatalogStatusAsync()
     {
@@ -558,6 +656,7 @@
     private async Task RefreshGutenbergCatalogAsync()
     {
         gutenbergCatalogBusy = true;
+        gutenbergCatalogRefreshInProgress = true;
         try
         {
             var result = await GutenbergCatalog.RefreshAsync();
@@ -579,6 +678,7 @@
         }
         finally
         {
+            gutenbergCatalogRefreshInProgress = false;
             gutenbergCatalogBusy = false;
         }
     }
