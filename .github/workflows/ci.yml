@@ -102,7 +102,6 @@ jobs:
       - name: Build image
         id: build
         run: docker build --target final -t family-librarian:ci-${{ github.sha }} .
-
       - name: Scan image with Trivy
         id: scan
         uses: aquasecurity/trivy-action@v0.36.0
@@ -111,6 +110,11 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
+
+          # SARIF normally ignores the severity filter and includes everything.
+          # Keep SARIF limited to the severities that actually gate CI.
+          limit-severities-for-sarif: true
+
           # A CVE with no available fix isn't something changing this
           # repository's code or pinned versions can resolve.
           ignore-unfixed: true
