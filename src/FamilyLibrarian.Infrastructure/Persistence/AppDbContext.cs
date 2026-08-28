@@ -1,4 +1,5 @@
 using FamilyLibrarian.Infrastructure.Identity;
+using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
@@ -83,6 +84,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<ProviderCatalog> ProviderCatalogs => Set<ProviderCatalog>();
 
+    internal DbSet<GutenbergCatalogBookEntity> GutenbergCatalogBooks => Set<GutenbergCatalogBookEntity>();
+
+    internal DbSet<GutenbergCatalogPersonEntity> GutenbergCatalogPeople => Set<GutenbergCatalogPersonEntity>();
+
+    internal DbSet<GutenbergCatalogLanguageEntity> GutenbergCatalogLanguages => Set<GutenbergCatalogLanguageEntity>();
+
+    internal DbSet<GutenbergCatalogFormatEntity> GutenbergCatalogFormats => Set<GutenbergCatalogFormatEntity>();
+
+    internal DbSet<GutenbergCatalogSyncStateEntity> GutenbergCatalogSyncStates => Set<GutenbergCatalogSyncStateEntity>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         builder.HasDefaultSchema("identity");
@@ -121,6 +132,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         ConfigurePublishing(builder);
         ConfigurePolicy(builder);
         ConfigureAuthentication(builder);
+        ConfigureGutenbergCatalog(builder);
     }
 
     private static void ConfigureAuthentication(ModelBuilder builder)
@@ -930,6 +942,92 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 reference.ExternalId
             }).IsUnique();
             entity.HasIndex(reference => new { reference.EntityType, reference.EntityId });
+        });
+    }
+
+    private static void ConfigureGutenbergCatalog(ModelBuilder builder)
+    {
+        builder.Entity<GutenbergCatalogBookEntity>(entity =>
+        {
+            entity.ToTable("catalog_books", "gutenberg");
+            entity.HasKey(book => book.Id);
+            entity.Property(book => book.Id).HasColumnName("id");
+            entity.Property(book => book.GenerationId).HasColumnName("generation_id");
+            entity.Property(book => book.GutenbergId).HasColumnName("gutenberg_id");
+            entity.Property(book => book.Title).HasColumnName("title").HasMaxLength(2_000).IsRequired();
+            entity.Property(book => book.NormalizedTitle).HasColumnName("normalized_title").HasMaxLength(2_000).IsRequired();
+            entity.Property(book => book.MediaType).HasColumnName("media_type").HasMaxLength(64).IsRequired();
+            entity.Property(book => book.IssuedDate).HasColumnName("issued_date");
+            entity.Property(book => book.RightsStatus).HasColumnName("rights_status").HasMaxLength(32).IsRequired();
+            entity.Property(book => book.RightsText).HasColumnName("rights_text").HasMaxLength(2_000);
+            entity.Property(book => book.DownloadCount).HasColumnName("download_count");
+            entity.Property(book => book.Summary).HasColumnName("summary").HasMaxLength(32_000);
+            entity.HasIndex(book => new { book.GenerationId, book.GutenbergId }).IsUnique();
+            entity.HasIndex(book => new { book.GenerationId, book.NormalizedTitle });
+            entity.HasMany(book => book.People).WithOne(person => person.Book).HasForeignKey(person => person.BookId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(book => book.Languages).WithOne(language => language.Book).HasForeignKey(language => language.BookId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(book => book.Formats).WithOne(format => format.Book).HasForeignKey(format => format.BookId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<GutenbergCatalogPersonEntity>(entity =>
+        {
+            entity.ToTable("catalog_people", "gutenberg");
+            entity.HasKey(person => person.Id);
+            entity.Property(person => person.Id).HasColumnName("id");
+            entity.Property(person => person.BookId).HasColumnName("book_id");
+            entity.Property(person => person.Name).HasColumnName("name").HasMaxLength(1_024).IsRequired();
+            entity.Property(person => person.NormalizedName).HasColumnName("normalized_name").HasMaxLength(1_024).IsRequired();
+            entity.Property(person => person.BirthYear).HasColumnName("birth_year");
+            entity.Property(person => person.DeathYear).HasColumnName("death_year");
+            entity.Property(person => person.Role).HasColumnName("role").HasMaxLength(32).IsRequired();
+            entity.Property(person => person.SortOrder).HasColumnName("sort_order");
+            entity.HasIndex(person => new { person.BookId, person.SortOrder });
+            entity.HasIndex(person => person.NormalizedName);
+        });
+
+        builder.Entity<GutenbergCatalogLanguageEntity>(entity =>
+        {
+            entity.ToTable("catalog_languages", "gutenberg");
+            entity.HasKey(language => language.Id);
+            entity.Property(language => language.Id).HasColumnName("id");
+            entity.Property(language => language.BookId).HasColumnName("book_id");
+            entity.Property(language => language.LanguageCode).HasColumnName("language_code").HasMaxLength(32).IsRequired();
+            entity.HasIndex(language => new { language.BookId, language.LanguageCode }).IsUnique();
+        });
+
+        builder.Entity<GutenbergCatalogFormatEntity>(entity =>
+        {
+            entity.ToTable("catalog_formats", "gutenberg");
+            entity.HasKey(format => format.Id);
+            entity.Property(format => format.Id).HasColumnName("id");
+            entity.Property(format => format.BookId).HasColumnName("book_id");
+            entity.Property(format => format.SourcePath).HasColumnName("source_path").HasMaxLength(2_048).IsRequired();
+            entity.Property(format => format.MimeType).HasColumnName("mime_type").HasMaxLength(256).IsRequired();
+            entity.Property(format => format.FormatKind).HasColumnName("format_kind").HasMaxLength(32).IsRequired();
+            entity.Property(format => format.FileSizeBytes).HasColumnName("file_size_bytes");
+            entity.Property(format => format.ModifiedAtUtc).HasColumnName("modified_at_utc").HasColumnType("timestamp with time zone");
+            entity.HasIndex(format => new { format.BookId, format.FormatKind });
+        });
+
+        builder.Entity<GutenbergCatalogSyncStateEntity>(entity =>
+        {
+            entity.ToTable("catalog_sync_states", "gutenberg");
+            entity.HasKey(state => state.Id);
+            entity.Property(state => state.Id).HasColumnName("id").HasMaxLength(32);
+            entity.Property(state => state.ActiveGenerationId).HasColumnName("active_generation_id");
+            entity.Property(state => state.LastAttemptUtc).HasColumnName("last_attempt_utc").HasColumnType("timestamp with time zone");
+            entity.Property(state => state.LastSuccessfulSyncUtc).HasColumnName("last_successful_sync_utc").HasColumnType("timestamp with time zone");
+            entity.Property(state => state.LastSourceModifiedUtc).HasColumnName("last_source_modified_utc").HasColumnType("timestamp with time zone");
+            entity.Property(state => state.LastArchiveSizeBytes).HasColumnName("last_archive_size_bytes");
+            entity.Property(state => state.BookCount).HasColumnName("book_count");
+            entity.Property(state => state.FormatCount).HasColumnName("format_count");
+            entity.Property(state => state.ParseErrorCount).HasColumnName("parse_error_count");
+            entity.Property(state => state.LastDuration).HasColumnName("last_duration");
+            entity.Property(state => state.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+            entity.Property(state => state.FailureMessage).HasColumnName("failure_message").HasMaxLength(2_000);
         });
     }
 

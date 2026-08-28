@@ -975,7 +975,7 @@ event. A background verifier performs the OPDS rechecks, so administrators do
 not have to drive that normal asynchronous CWA step by hand.
 
 **Automatic public-domain ebook path:** a second background worker processes
-pending ebook formats. Gutendex is enabled by default and is only eligible for
+pending ebook formats. The locally indexed Project Gutenberg source is enabled by default and is only eligible for
 unattended acquisition when it returns exactly one result whose normalized title
 starts with the canonical title and whose creator-name tokens exactly match the
 canonical primary author. The worker then re-derives the candidate on the
@@ -986,18 +986,18 @@ cannot be acquired moves the request to `NeedsReview`; it is never guessed or
 retried continuously.
 
 This is intentionally limited to the bundled provider that explicitly opts in
-to automatic acquisition. Gutendex has effective `Once` behavior: each outcome
+to automatic acquisition. Project Gutenberg has effective `Once` behavior: each outcome
 is recorded and it is not repeatedly queried. Admin-registered external
 providers default to `Manual`, but an administrator may select `Daily` or
 `Weekly` per enabled provider. A scheduled external lookup follows the declared
 egress policy and records the outcome; a result moves the request to
 `NeedsReview` and never downloads the external artifact automatically.
 
-Gutendex is a separate JSON catalog API that indexes Project Gutenberg; it is
-not the Project Gutenberg website itself. The website can therefore remain
-reachable while catalog requests time out. A source timeout is recorded by the
-automatic request worker as an administrator-visible provider failure. The same
-source's optional fulfillment-options lookup degrades to no options, so it must
+Project Gutenberg discovery reads the locally imported daily RDF catalogue, so it
+continues to work when external catalogue APIs are blocked. The source's mirror
+download failure is recorded by the automatic request worker as an
+administrator-visible provider failure. The same source's optional
+fulfillment-options lookup degrades to no options, so it must
 not fail or delay the core Work and request detail views.
 
 **Cancel and ask again:** reopening a cancelled request begins a fresh

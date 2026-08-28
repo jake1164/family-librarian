@@ -8,7 +8,7 @@ using FamilyLibrarian.Domain.Audit;
 namespace FamilyLibrarian.Application.Acquisition;
 
 /// <summary>
-/// Fetches a file from a bundled free-source provider (e.g. Gutendex) or a
+/// Fetches a file from a bundled free-source provider (e.g. Project Gutenberg) or a
 /// registered external provider, and stages it exactly like a manual upload.
 /// </summary>
 /// <remarks>

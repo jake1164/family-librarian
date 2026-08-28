@@ -154,7 +154,7 @@ public sealed class AdminRequestQueueEndpointTests
         Assert.IsNotNull(attention);
         Assert.IsTrue(attention.NeedsReviewCount >= 1);
         var sourceIssue = attention.ProviderIssues.Single(issue => issue.ProviderId == "gutendex");
-        Assert.AreEqual("Gutendex (Project Gutenberg)", sourceIssue.DisplayName);
+        Assert.AreEqual("Project Gutenberg", sourceIssue.DisplayName);
         StringAssert.Contains(sourceIssue.Summary, "could not be reached");
 
         using var nonAdmin = await CreateTokenClientAsync(fixture, isAdmin: false);

@@ -2100,6 +2100,259 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("security_scan_results", "security");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogBookEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int?>("DownloadCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("download_count");
+
+                    b.Property<Guid>("GenerationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("generation_id");
+
+                    b.Property<int>("GutenbergId")
+                        .HasColumnType("integer")
+                        .HasColumnName("gutenberg_id");
+
+                    b.Property<DateOnly?>("IssuedDate")
+                        .HasColumnType("date")
+                        .HasColumnName("issued_date");
+
+                    b.Property<string>("MediaType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("media_type");
+
+                    b.Property<string>("NormalizedTitle")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("normalized_title");
+
+                    b.Property<string>("RightsStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("rights_status");
+
+                    b.Property<string>("RightsText")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("rights_text");
+
+                    b.Property<string>("Summary")
+                        .HasMaxLength(32000)
+                        .HasColumnType("character varying(32000)")
+                        .HasColumnName("summary");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("title");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GenerationId", "GutenbergId")
+                        .IsUnique();
+
+                    b.HasIndex("GenerationId", "NormalizedTitle");
+
+                    b.ToTable("catalog_books", "gutenberg");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogFormatEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("BookId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("book_id");
+
+                    b.Property<long?>("FileSizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("file_size_bytes");
+
+                    b.Property<string>("FormatKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("format_kind");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("mime_type");
+
+                    b.Property<DateTimeOffset?>("ModifiedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("modified_at_utc");
+
+                    b.Property<string>("SourcePath")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("source_path");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BookId", "FormatKind");
+
+                    b.ToTable("catalog_formats", "gutenberg");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogLanguageEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("BookId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("book_id");
+
+                    b.Property<string>("LanguageCode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("language_code");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BookId", "LanguageCode")
+                        .IsUnique();
+
+                    b.ToTable("catalog_languages", "gutenberg");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogPersonEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int?>("BirthYear")
+                        .HasColumnType("integer")
+                        .HasColumnName("birth_year");
+
+                    b.Property<long>("BookId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("book_id");
+
+                    b.Property<int?>("DeathYear")
+                        .HasColumnType("integer")
+                        .HasColumnName("death_year");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("normalized_name");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("role");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer")
+                        .HasColumnName("sort_order");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NormalizedName");
+
+                    b.HasIndex("BookId", "SortOrder");
+
+                    b.ToTable("catalog_people", "gutenberg");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogSyncStateEntity", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("ActiveGenerationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("active_generation_id");
+
+                    b.Property<int>("BookCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("book_count");
+
+                    b.Property<string>("FailureMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("failure_message");
+
+                    b.Property<int>("FormatCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("format_count");
+
+                    b.Property<long?>("LastArchiveSizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_archive_size_bytes");
+
+                    b.Property<DateTimeOffset?>("LastAttemptUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_attempt_utc");
+
+                    b.Property<TimeSpan?>("LastDuration")
+                        .HasColumnType("interval")
+                        .HasColumnName("last_duration");
+
+                    b.Property<DateTimeOffset?>("LastSourceModifiedUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_source_modified_utc");
+
+                    b.Property<DateTimeOffset?>("LastSuccessfulSyncUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_successful_sync_utc");
+
+                    b.Property<int>("ParseErrorCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("parse_error_count");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("catalog_sync_states", "gutenberg");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Infrastructure.Identity.AppUser", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2562,6 +2815,39 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogFormatEntity", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogBookEntity", "Book")
+                        .WithMany("Formats")
+                        .HasForeignKey("BookId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Book");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogLanguageEntity", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogBookEntity", "Book")
+                        .WithMany("Languages")
+                        .HasForeignKey("BookId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Book");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogPersonEntity", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogBookEntity", "Book")
+                        .WithMany("People")
+                        .HasForeignKey("BookId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Book");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole<System.Guid>", null)
@@ -2651,6 +2937,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("ScanResults");
 
                     b.Navigation("ValidationResults");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Infrastructure.Gutenberg.GutenbergCatalogBookEntity", b =>
+                {
+                    b.Navigation("Formats");
+
+                    b.Navigation("Languages");
+
+                    b.Navigation("People");
                 });
 #pragma warning restore 612, 618
         }
