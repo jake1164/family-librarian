@@ -204,6 +204,7 @@ public static class DependencyInjection
         // Program.cs) refuses to serve if this collection is ever empty.
         services.AddSingleton<IAssetValidator, FileTypeValidator>();
         services.AddSingleton<IAssetValidator, EpubValidator>();
+        services.AddSingleton<IAssetValidator, AudioValidator>();
         services.AddScoped<IAssetIdentityVerifier, EpubAssetIdentityVerifier>();
 
         services.AddScoped<IAcquisitionBoundaryGuard, AcquisitionBoundaryGuard>();

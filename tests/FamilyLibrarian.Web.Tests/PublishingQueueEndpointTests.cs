@@ -244,10 +244,24 @@ public sealed class PublishingQueueEndpointTests
 
     private static byte[] BuildMinimalMp3Bytes()
     {
-        // A bare ID3 tag header is enough for SignatureFileTypeDetector to sniff "audio/mpeg".
-        var header = new byte[] { 0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-        var padding = new byte[64];
-        return [.. header, .. padding];
+        // Beyond SignatureFileTypeDetector's magic-byte sniff, AudioValidator
+        // now requires two chained, structurally valid MPEG frames -- a bare
+        // ID3 header with no real frame behind it (the previous fixture) no
+        // longer passes. MPEG1 Audio Layer III, bitrate index 9 (128 kbps),
+        // sample-rate index 0 (44100 Hz), no padding.
+        var id3Header = new byte[] { 0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+        return [.. id3Header, .. BuildMp3Frame(), .. BuildMp3Frame()];
+    }
+
+    private static byte[] BuildMp3Frame()
+    {
+        const int bitrateKbps = 128;
+        const int sampleRateHz = 44100;
+        var frame = new byte[144 * bitrateKbps * 1000 / sampleRateHz];
+        frame[0] = 0xFF;
+        frame[1] = 0xFB; // sync(3)=111, version(2)=11 (MPEG1), layer(2)=01 (Layer III), protection=1
+        frame[2] = 9 << 4; // bitrate index 9, sample-rate index 0, no padding
+        return frame;
     }
 
     private sealed class DeterministicCatalogClient(string? bookIdOnFirstCall) : ICwaCatalogClient
