@@ -1,5 +1,7 @@
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Infrastructure.Gutenberg;
+using FamilyLibrarian.Infrastructure.Providers;
 using Microsoft.Extensions.Options;
 
 namespace FamilyLibrarian.Web.Gutenberg;
@@ -19,18 +21,11 @@ public sealed partial class GutenbergCatalogHostedService(
         {
             try
             {
-                await using var scope = scopeFactory.CreateAsyncScope();
-                var synchronizer = scope.ServiceProvider.GetRequiredService<IGutenbergCatalogSynchronizer>();
-                var catalog = scope.ServiceProvider.GetRequiredService<IGutenbergCatalog>();
-                var status = await catalog.GetStatusAsync(stoppingToken);
-                if (!status.IsReady)
-                {
-                    await synchronizer.SynchronizeAsync(stoppingToken);
-                }
+                await SynchronizeIfEnabledAsync(onlyWhenMissing: true, stoppingToken);
 
                 var delay = NextScheduledRun(timeProvider.GetUtcNow()) - timeProvider.GetUtcNow();
                 await Task.Delay(delay, stoppingToken);
-                await synchronizer.SynchronizeAsync(stoppingToken);
+                await SynchronizeIfEnabledAsync(onlyWhenMissing: false, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -42,6 +37,30 @@ public sealed partial class GutenbergCatalogHostedService(
                 await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
             }
         }
+    }
+
+    private async Task SynchronizeIfEnabledAsync(bool onlyWhenMissing, CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var registry = scope.ServiceProvider.GetRequiredService<IProviderRegistry>();
+        var settings = scope.ServiceProvider.GetRequiredService<IProviderSettingsStore>();
+        var descriptor = registry.Find(ProviderRegistry.GutenbergProviderId);
+        if (descriptor is null || !ProviderState.IsEnabled(
+                descriptor,
+                await settings.FindAsync(descriptor.Id, cancellationToken)))
+        {
+            return;
+        }
+
+        var catalog = scope.ServiceProvider.GetRequiredService<IGutenbergCatalog>();
+        var status = await catalog.GetStatusAsync(cancellationToken);
+        if (onlyWhenMissing && status.IsReady)
+        {
+            return;
+        }
+
+        var synchronizer = scope.ServiceProvider.GetRequiredService<IGutenbergCatalogSynchronizer>();
+        await synchronizer.SynchronizeAsync(cancellationToken);
     }
 
     private DateTimeOffset NextScheduledRun(DateTimeOffset now)

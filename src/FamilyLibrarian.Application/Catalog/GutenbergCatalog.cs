@@ -22,6 +22,13 @@ public interface IGutenbergCatalogSynchronizer
     Task<GutenbergCatalogSyncResult> SynchronizeAsync(CancellationToken cancellationToken);
 }
 
+/// <summary>Destructive maintenance operations for the locally stored RDF catalogue.</summary>
+public interface IGutenbergCatalogMaintenance
+{
+    /// <summary>Deletes imported catalogue data while retaining the schema and application history.</summary>
+    Task<GutenbergCatalogPurgeResult> PurgeAsync(CancellationToken cancellationToken);
+}
+
 public sealed record GutenbergCatalogSearchQuery(
     string Query,
     RequestMediaType MediaType,
@@ -75,3 +82,5 @@ public sealed record GutenbergCatalogStatus(
     string? FailureMessage);
 
 public sealed record GutenbergCatalogSyncResult(bool Succeeded, GutenbergCatalogStatus Status, string? Error = null);
+
+public sealed record GutenbergCatalogPurgeResult(int DeletedBookCount);

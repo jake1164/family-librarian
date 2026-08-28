@@ -1,12 +1,14 @@
 @page "/settings/sources"
 @attribute [Authorize(Roles = "Admin")]
 @using FamilyLibrarian.Contracts.Providers
+@using FamilyLibrarian.Web.Client.Gutenberg
 @using FamilyLibrarian.Web.Client.Integrations
 @using FamilyLibrarian.Web.Client.Providers
 @using Microsoft.AspNetCore.Authorization
 @inject ExternalProviderApiClient Api
 @inject MetadataIntegrationsApiClient BuiltInSourcesApi
 @inject AdminRequestsApiClient AdminRequests
+@inject GutenbergCatalogApiClient GutenbergCatalog
 @inject ISnackbar Snackbar
 
 <PageTitle>Sources | Family Librarian</PageTitle>
@@ -51,6 +53,53 @@
                         <span>Provides direct acquisition options during fulfillment.</span>
                     }
                 </MudText>
+                @if (source.ProviderId == "gutendex")
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-2" Wrap="Wrap.Wrap">
+                        <MudText Typo="Typo.caption" Class="flex-grow-1">
+                            @GutenbergDownloadStatus
+                        </MudText>
+                        <MudButton Variant="Variant.Outlined"
+                                   Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Refresh"
+                                   Disabled="@(!source.IsEnabled || gutenbergCatalogBusy || GutenbergCatalogIsSynchronizing)"
+                                   OnClick="RefreshGutenbergCatalogAsync">
+                            @(gutenbergCatalogBusy || GutenbergCatalogIsSynchronizing ? "Refreshing…" : "Refresh now")
+                        </MudButton>
+                    </MudStack>
+                    @if (!source.IsEnabled)
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-2">
+                            Turning this source off retains the downloaded catalogue but stops automatic lookup and daily refreshes.
+                        </MudText>
+                        @if (gutenbergCatalogPurgeConfirmation)
+                        {
+                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-2">
+                                <MudText Typo="Typo.body2">
+                                    Delete the local Project Gutenberg catalogue? This permanently removes the imported catalogue records, not requests or provider activity.
+                                </MudText>
+                                <MudStack Row="true" Spacing="2" Class="mt-2">
+                                    <MudButton Variant="Variant.Outlined" Disabled="@gutenbergCatalogBusy"
+                                               OnClick="CancelGutenbergCatalogPurge">
+                                        Keep catalogue
+                                    </MudButton>
+                                    <MudButton Variant="Variant.Filled" Color="Color.Error" Disabled="@(gutenbergCatalogBusy || GutenbergCatalogIsSynchronizing)"
+                                               OnClick="PurgeGutenbergCatalogAsync">
+                                        Delete local catalogue
+                                    </MudButton>
+                                </MudStack>
+                            </MudAlert>
+                        }
+                        else
+                        {
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" Class="mt-2"
+                                       Disabled="@(gutenbergCatalogBusy || GutenbergCatalogIsSynchronizing)"
+                                       OnClick="BeginGutenbergCatalogPurge">
+                                Delete local catalogue
+                            </MudButton>
+                        }
+                    }
+                }
                 @if (issue is not null)
                 {
                     <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
@@ -422,6 +471,10 @@
     private bool builtInSourcesBusy;
     private readonly Dictionary<string, int> builtInSourceGenerations = new(StringComparer.OrdinalIgnoreCase);
     private AdminRequestAttentionResponse? attention;
+    private GutenbergCatalogStatusResponse? gutenbergCatalogStatus;
+    private bool gutenbergCatalogBusy;
+    private bool gutenbergCatalogStatusUnavailable;
+    private bool gutenbergCatalogPurgeConfirmation;
 
     private bool CanRegister =>
         !string.IsNullOrWhiteSpace(newProviderId) && !string.IsNullOrWhiteSpace(newProviderDisplayName) &&
@@ -433,7 +486,8 @@
             LoadCatalogsAsync(),
             LoadProvidersAsync(),
             LoadBuiltInSourcesAsync(),
-            LoadAttentionAsync());
+            LoadAttentionAsync(),
+            LoadGutenbergCatalogStatusAsync());
 
     private string? GetApiKeyDraft(Guid id) => apiKeyDrafts.GetValueOrDefault(id);
 
@@ -475,6 +529,91 @@
         }
     }
 
+    private string GutenbergDownloadStatus => gutenbergCatalogStatus switch
+    {
+        { LastSuccessfulSyncUtc: { } downloadedAt } =>
+            $"Catalogue file last downloaded: {downloadedAt.ToLocalTime():g} ({gutenbergCatalogStatus.BookCount:N0} books).",
+        { LastAttemptUtc: { } attemptedAt } =>
+            $"Catalogue file has not been downloaded successfully yet. Last refresh attempt: {attemptedAt.ToLocalTime():g}.",
+        null when gutenbergCatalogStatusUnavailable => "Catalogue status is temporarily unavailable.",
+        _ => "Catalogue file has not been downloaded yet."
+    };
+
+    private bool GutenbergCatalogIsSynchronizing => gutenbergCatalogStatus?.Status is "Downloading" or "Parsing" or "Importing";
+
+    private async Task LoadGutenbergCatalogStatusAsync()
+    {
+        try
+        {
+            gutenbergCatalogStatus = await GutenbergCatalog.GetStatusAsync();
+            gutenbergCatalogStatusUnavailable = false;
+        }
+        catch (HttpRequestException)
+        {
+            // Source settings remain usable while the informational status is unavailable.
+            gutenbergCatalogStatusUnavailable = true;
+        }
+    }
+
+    private async Task RefreshGutenbergCatalogAsync()
+    {
+        gutenbergCatalogBusy = true;
+        try
+        {
+            var result = await GutenbergCatalog.RefreshAsync();
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "The Project Gutenberg catalogue could not be refreshed.", Severity.Error);
+                await LoadGutenbergCatalogStatusAsync();
+                return;
+            }
+
+            gutenbergCatalogStatus = result.Status;
+            gutenbergCatalogStatusUnavailable = false;
+            Snackbar.Add("Project Gutenberg catalogue refreshed.", Severity.Success);
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add("The Project Gutenberg catalogue could not be refreshed.", Severity.Error);
+            await LoadGutenbergCatalogStatusAsync();
+        }
+        finally
+        {
+            gutenbergCatalogBusy = false;
+        }
+    }
+
+    private void BeginGutenbergCatalogPurge() => gutenbergCatalogPurgeConfirmation = true;
+
+    private void CancelGutenbergCatalogPurge() => gutenbergCatalogPurgeConfirmation = false;
+
+    private async Task PurgeGutenbergCatalogAsync()
+    {
+        gutenbergCatalogBusy = true;
+        try
+        {
+            var result = await GutenbergCatalog.PurgeAsync();
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "The local Project Gutenberg catalogue could not be deleted.", Severity.Error);
+                return;
+            }
+
+            gutenbergCatalogStatus = null;
+            gutenbergCatalogStatusUnavailable = false;
+            gutenbergCatalogPurgeConfirmation = false;
+            Snackbar.Add($"Deleted {result.DeletedBookCount:N0} Project Gutenberg catalogue records.", Severity.Success);
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add("The local Project Gutenberg catalogue could not be deleted.", Severity.Error);
+        }
+        finally
+        {
+            gutenbergCatalogBusy = false;
+        }
+    }
+
     private async Task SetBuiltInSourceEnabledAsync(ProviderStatusResponse source, bool enabled)
     {
         builtInSourcesBusy = true;
@@ -488,6 +627,10 @@
             }
 
             await LoadBuiltInSourcesAsync();
+            if (source.ProviderId == "gutendex")
+            {
+                gutenbergCatalogPurgeConfirmation = false;
+            }
         }
         finally
         {

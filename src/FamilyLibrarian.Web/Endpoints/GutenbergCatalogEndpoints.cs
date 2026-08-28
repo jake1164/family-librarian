@@ -13,6 +13,8 @@ internal static class GutenbergCatalogEndpoints
         group.MapGet("/status", GetStatusAsync);
         group.MapPost("/sync", SynchronizeAsync)
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
+        group.MapDelete("/catalog", PurgeAsync)
+            .AddEndpointFilter<AntiforgeryEndpointFilter>();
         return endpoints;
     }
 
@@ -22,13 +24,40 @@ internal static class GutenbergCatalogEndpoints
         Results.Ok(await catalog.GetStatusAsync(cancellationToken));
 
     private static async Task<IResult> SynchronizeAsync(
+        IGutenbergCatalog catalog,
         IGutenbergCatalogSynchronizer synchronizer,
         CancellationToken cancellationToken)
     {
+        var currentStatus = await catalog.GetStatusAsync(cancellationToken);
+        if (currentStatus.Status is "Downloading" or "Parsing" or "Importing")
+        {
+            return Results.Conflict(new
+            {
+                detail = "The Project Gutenberg catalogue is already being refreshed."
+            });
+        }
+
         var result = await synchronizer.SynchronizeAsync(cancellationToken);
         return result.Succeeded ? Results.Ok(result.Status) : Results.Problem(
             title: "Project Gutenberg catalogue synchronization failed.",
             detail: result.Error,
             statusCode: StatusCodes.Status502BadGateway);
+    }
+
+    private static async Task<IResult> PurgeAsync(
+        IGutenbergCatalog catalog,
+        IGutenbergCatalogMaintenance maintenance,
+        CancellationToken cancellationToken)
+    {
+        var currentStatus = await catalog.GetStatusAsync(cancellationToken);
+        if (currentStatus.Status is "Downloading" or "Parsing" or "Importing")
+        {
+            return Results.Conflict(new
+            {
+                detail = "The Project Gutenberg catalogue cannot be deleted while a refresh is in progress."
+            });
+        }
+
+        return Results.Ok(await maintenance.PurgeAsync(cancellationToken));
     }
 }
