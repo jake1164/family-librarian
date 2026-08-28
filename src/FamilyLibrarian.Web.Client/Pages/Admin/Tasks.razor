@@ -1,0 +1,343 @@
+@page "/admin/tasks"
+@attribute [Authorize(Roles = "Admin")]
+@implements IDisposable
+@using FamilyLibrarian.Contracts.Operations
+@using FamilyLibrarian.Contracts.Acquisition
+@using FamilyLibrarian.Contracts.Publishing
+@using FamilyLibrarian.Web.Client.Operations
+@inject AdminTasksApiClient TasksApi
+
+<PageTitle>Tasks · Family Librarian</PageTitle>
+
+<MudStack Spacing="4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+        <div>
+            <MudText Typo="Typo.h3">Tasks</MudText>
+            <MudText Typo="Typo.body1">
+                One operational view of requests, source activity, file safety, and publishing.
+            </MudText>
+        </div>
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
+                   OnClick="LoadAsync" Disabled="@isLoading">
+            Refresh
+        </MudButton>
+    </MudStack>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+    }
+    else if (snapshot is null)
+    {
+        <MudProgressCircular Indeterminate="true" aria-label="Loading operational tasks" />
+    }
+    else
+    {
+        <MudText Typo="Typo.caption" Color="Color.Secondary">
+            Updated @snapshot.GeneratedAtUtc.ToLocalTime().ToString("g"). This page refreshes while open.
+        </MudText>
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6" md="4">
+                <SummaryCard Icon="@Icons.Material.Filled.PendingActions" Label="Active requests"
+                             Value="@snapshot.Summary.ActiveRequests" Color="Color.Primary" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <SummaryCard Icon="@Icons.Material.Filled.Visibility" Label="Needs review"
+                             Value="@snapshot.Summary.NeedsReview" Color="Color.Warning" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <SummaryCard Icon="@Icons.Material.Filled.Shield" Label="Security attention"
+                             Value="@snapshot.Summary.SecurityAttention" Color="Color.Warning" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <SummaryCard Icon="@Icons.Material.Filled.CloudDownload" Label="Source attention"
+                             Value="@snapshot.Summary.SourceAttention" Color="Color.Error" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <SummaryCard Icon="@Icons.Material.Filled.Publish" Label="Publishing attention"
+                             Value="@snapshot.Summary.PublishingAttention" Color="Color.Warning" />
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudText Typo="Typo.h5">Requests</MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Every family request and its latest format-level progress.
+            </MudText>
+            @if (snapshot.Requests.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true">There are no requests yet.</MudAlert>
+            }
+            else
+            {
+                <MudList T="string" Dense="true">
+                    @foreach (var request in snapshot.Requests)
+                    {
+                        <MudListItem T="string">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                                <MudLink Href="@($"admin/requests/{request.Request.Id}")">@request.Request.WorkTitle</MudLink>
+                                <MudChip T="string" Size="Size.Small" Color="@RequestStatusColor(request.Request.Status)">
+                                    @request.Request.StatusDescription
+                                </MudChip>
+                                @foreach (var format in request.Request.Formats)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                        @format.MediaType: @(format.ProgressDescription ?? format.Status)
+                                    </MudChip>
+                                }
+                            </MudStack>
+                            <MudText Typo="Typo.caption">
+                                @request.RequesterDisplayName · requested @request.Request.RequestedAtUtc.ToLocalTime().ToString("g")
+                            </MudText>
+                        </MudListItem>
+                    }
+                </MudList>
+            }
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudText Typo="Typo.h5">Source and download activity</MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                The latest 50 provider lookups and acquisition outcomes. A lookup can find no match or be blocked before any file download begins.
+            </MudText>
+            @if (snapshot.ProviderAttempts.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true">No source activity has been recorded yet.</MudAlert>
+            }
+            else
+            {
+                <MudList T="string" Dense="true">
+                    @foreach (var attempt in snapshot.ProviderAttempts)
+                    {
+                        <MudListItem T="string">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                                <MudLink Href="@($"admin/requests/{attempt.RequestId}")">@attempt.WorkTitle</MudLink>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.ProviderId</MudChip>
+                                <MudChip T="string" Size="Size.Small" Color="@AttemptColor(attempt.Outcome)">@attempt.Outcome</MudChip>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.MediaType</MudChip>
+                            </MudStack>
+                            <MudText Typo="Typo.body2">@attempt.Summary</MudText>
+                            <MudText Typo="Typo.caption">
+                                @attempt.RequesterDisplayName · @attempt.AttemptedAtUtc.ToLocalTime().ToString("g")
+                                @if (attempt.NextEligibleCheckAtUtc is not null)
+                                {
+                                    <span> · next eligible @attempt.NextEligibleCheckAtUtc.Value.ToLocalTime().ToString("g")</span>
+                                }
+                            </MudText>
+                        </MudListItem>
+                    }
+                </MudList>
+            }
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudText Typo="Typo.h5">File intake and security</MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                The latest 50 uploads or acquired files, including ClamAV and format-validation results when a scan has run.
+            </MudText>
+            @if (snapshot.SecurityActivity.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true">No file activity has been recorded yet.</MudAlert>
+            }
+            else
+            {
+                <MudList T="string" Dense="true">
+                    @foreach (var asset in snapshot.SecurityActivity)
+                    {
+                        <MudListItem T="string">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                                <MudLink Href="@($"admin/requests/{asset.RequestId}")">@asset.WorkTitle</MudLink>
+                                <MudChip T="string" Size="Size.Small" Color="@StorageColor(asset.StorageState)">@asset.StorageState</MudChip>
+                                @if (asset.LatestEvaluation is not null)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="@EvaluationColor(asset.LatestEvaluation.Status)">
+                                        Scan: @asset.LatestEvaluation.Status
+                                    </MudChip>
+                                }
+                            </MudStack>
+                            <MudText Typo="Typo.body2">@asset.OriginalFilename · @asset.MediaType · @FormatSize(asset.SizeBytes)</MudText>
+                            @if (asset.LatestEvaluation is { } evaluation)
+                            {
+                                @foreach (var scan in evaluation.ScanResults)
+                                {
+                                    <MudText Typo="Typo.caption">
+                                        @scan.ScannerId: @scan.Status@(string.IsNullOrWhiteSpace(scan.ThreatName) ? string.Empty : $" — {scan.ThreatName}")
+                                    </MudText>
+                                }
+                                @foreach (var validation in evaluation.ValidationResults)
+                                {
+                                    <MudText Typo="Typo.caption">
+                                        @validation.ValidatorId: @(validation.IsValid ? "valid" : "invalid")@(string.IsNullOrWhiteSpace(validation.Message) ? string.Empty : $" — {validation.Message}")
+                                    </MudText>
+                                }
+                            }
+                            <MudText Typo="Typo.caption">Updated @asset.UpdatedAtUtc.ToLocalTime().ToString("g")</MudText>
+                        </MudListItem>
+                    }
+                </MudList>
+            }
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudText Typo="Typo.h5">Publishing</MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Recent handoffs to CWA for ebooks and Audiobookshelf for audiobooks.
+            </MudText>
+            @if (snapshot.LibraryImports.Count == 0 && snapshot.Deliveries.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true">No publishing activity has been recorded yet.</MudAlert>
+            }
+            else
+            {
+                <MudList T="string" Dense="true">
+                    @foreach (var import in snapshot.LibraryImports)
+                    {
+                        <MudListItem T="string">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                                <MudLink Href="@($"admin/requests/{import.RequestId}")">@import.WorkTitle</MudLink>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">CWA</MudChip>
+                                <MudChip T="string" Size="Size.Small" Color="@PublishingColor(import.Status)">@import.Status</MudChip>
+                            </MudStack>
+                            <MudText Typo="Typo.caption">@PublishingDescription(import.OriginalFilename, import.FailureReason, import.CreatedAtUtc)</MudText>
+                        </MudListItem>
+                    }
+                    @foreach (var delivery in snapshot.Deliveries)
+                    {
+                        <MudListItem T="string">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                                <MudLink Href="@($"admin/requests/{delivery.RequestId}")">@delivery.WorkTitle</MudLink>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Audiobookshelf</MudChip>
+                                <MudChip T="string" Size="Size.Small" Color="@PublishingColor(delivery.Status)">@delivery.Status</MudChip>
+                            </MudStack>
+                            <MudText Typo="Typo.caption">@PublishingDescription(delivery.OriginalFilename, delivery.FailureReason, delivery.CreatedAtUtc)</MudText>
+                        </MudListItem>
+                    }
+                </MudList>
+            }
+        </MudPaper>
+    }
+</MudStack>
+
+@code {
+    private AdminTasksResponse? snapshot;
+    private string? errorMessage;
+    private bool isLoading = true;
+    private CancellationTokenSource? refreshCancellation;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        refreshCancellation = new CancellationTokenSource();
+        _ = RefreshPeriodicallyAsync(refreshCancellation.Token);
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+        try
+        {
+            snapshot = await TasksApi.GetAsync();
+            if (snapshot is null)
+            {
+                errorMessage = "The task dashboard did not return a response. Please try again.";
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "The task dashboard could not be loaded. Please try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RefreshPeriodicallyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadAsync();
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Navigation away from this page stops refresh work.
+        }
+    }
+
+    public void Dispose()
+    {
+        refreshCancellation?.Cancel();
+        refreshCancellation?.Dispose();
+    }
+
+    private static Color RequestStatusColor(string status) => status switch
+    {
+        "Available" => Color.Success,
+        "NeedsReview" => Color.Warning,
+        "NotAvailable" or "Cancelled" => Color.Default,
+        _ => Color.Primary
+    };
+
+    private static Color AttemptColor(string outcome) => outcome switch
+    {
+        "Acquired" => Color.Success,
+        "Failed" or "Blocked" => Color.Error,
+        "CandidatesFound" => Color.Info,
+        _ => Color.Default
+    };
+
+    private static Color StorageColor(string state) => state switch
+    {
+        "Trusted" => Color.Success,
+        "Rejected" or "Destroyed" => Color.Error,
+        "Unmatched" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static Color EvaluationColor(string status) => status switch
+    {
+        "Passed" => Color.Success,
+        "Failed" => Color.Error,
+        "ReviewRequired" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static Color PublishingColor(string status) => status switch
+    {
+        "Available" or "Delivered" => Color.Success,
+        "Failed" => Color.Error,
+        "AwaitingVerification" or "Verifying" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static string PublishingDescription(string filename, string? failureReason, DateTimeOffset createdAtUtc) =>
+        string.IsNullOrWhiteSpace(failureReason)
+            ? $"{filename} · started {createdAtUtc.ToLocalTime():g}"
+            : $"{filename} · {failureReason}";
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024)
+        {
+            return $"{bytes} B";
+        }
+
+        if (bytes < 1024 * 1024)
+        {
+            return $"{bytes / 1024d:F1} KB";
+        }
+
+        return $"{bytes / 1024d / 1024d:F1} MB";
+    }
+}

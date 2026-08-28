@@ -32,7 +32,7 @@ internal static class SecurityQueueEndpoints
         return Results.Ok(new MediaAssetAdminListResponse(entries.Select(ToMediaAssetAdminResponse).ToArray()));
     }
 
-    private static MediaAssetAdminResponse ToMediaAssetAdminResponse(MediaAssetQueueEntry entry) => new(
+    internal static MediaAssetAdminResponse ToMediaAssetAdminResponse(MediaAssetQueueEntry entry) => new(
         entry.Asset.AssetId,
         entry.Asset.RequestId,
         entry.Asset.WorkId,

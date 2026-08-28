@@ -37,7 +37,7 @@ internal static class PublishingQueueEndpoints
         Guid id, AudiobookshelfPublishingService service, CancellationToken cancellationToken) =>
         await service.RecheckAsync(id, cancellationToken) ? Results.NoContent() : Results.NotFound();
 
-    private static LibraryImportResponse ToLibraryImportResponse(LibraryImportView view) => new(
+    internal static LibraryImportResponse ToLibraryImportResponse(LibraryImportView view) => new(
         view.Id,
         view.RequestId,
         view.WorkId,
@@ -49,7 +49,7 @@ internal static class PublishingQueueEndpoints
         view.CreatedAtUtc,
         view.CompletedAtUtc);
 
-    private static DeliveryResponse ToDeliveryResponse(DeliveryView view) => new(
+    internal static DeliveryResponse ToDeliveryResponse(DeliveryView view) => new(
         view.Id,
         view.RequestId,
         view.WorkId,

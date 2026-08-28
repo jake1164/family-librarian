@@ -40,7 +40,7 @@
 
         @* Config/setup pages an admin visits rarely stay tucked in this
            dropdown rather than taking up rows in the nav rail; the
-           everyday admin destinations (Queue/Security queue/Accounts/
+           everyday admin destinations (Tasks/Queue/Security queue/Accounts/
            Publishing activity) live in the drawer instead. Hiding this is
            UX only — every page carries [Authorize] and every endpoint
            behind it independently authorizes the caller. *@
@@ -142,6 +142,7 @@
                    authorizes the caller. *@
                 <AuthorizeView Roles="Admin" Context="adminContext">
                     <MudDivider Class="my-2" />
+                    <MudNavLink Href="admin/tasks" Icon="@Icons.Material.Filled.TaskAlt">Tasks</MudNavLink>
                     <MudNavLink Href="admin/requests" Icon="@Icons.Material.Filled.Inbox">Queue</MudNavLink>
                     <MudNavLink Href="admin/security" Icon="@Icons.Material.Filled.Shield">Security queue</MudNavLink>
                     <MudNavLink Href="admin/accounts" Icon="@Icons.Material.Filled.People">Accounts</MudNavLink>

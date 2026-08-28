@@ -1,0 +1,23 @@
+<MudPaper Outlined="true" Class="pa-3 h-100">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+        <MudIcon Icon="@Icon" Color="@Color" Size="Size.Large" aria-hidden="true" />
+        <div>
+            <MudText Typo="Typo.caption">@Label</MudText>
+            <MudText Typo="Typo.h4" Color="@Color">@Value</MudText>
+        </div>
+    </MudStack>
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Icon { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = null!;
+
+    [Parameter]
+    public int Value { get; set; }
+
+    [Parameter]
+    public Color Color { get; set; } = Color.Default;
+}

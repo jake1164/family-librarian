@@ -17,6 +17,10 @@ public interface IAcquisitionRepository
     /// </summary>
     Task<IReadOnlyList<MediaAssetAdminView>> ListActiveAsync(CancellationToken cancellationToken);
 
+    /// <summary>Recent staged-file activity, including completed scans and
+    /// publishing handoffs, for the administrator's operational history.</summary>
+    Task<IReadOnlyList<MediaAssetAdminView>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken);
+
     void AddJob(AcquisitionJob job);
 
     void AddAsset(MediaAsset asset);
