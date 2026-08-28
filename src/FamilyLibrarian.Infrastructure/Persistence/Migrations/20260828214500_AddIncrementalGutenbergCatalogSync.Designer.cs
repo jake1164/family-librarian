@@ -3,6 +3,7 @@ using System;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,10 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260828214500_AddIncrementalGutenbergCatalogSync")]
+    partial class AddIncrementalGutenbergCatalogSync
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2324,14 +2326,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("format_count");
 
-                    b.Property<int>("InProgressBookCount")
-                        .HasColumnType("integer")
-                        .HasColumnName("in_progress_book_count");
-
-                    b.Property<int>("InProgressFormatCount")
-                        .HasColumnType("integer")
-                        .HasColumnName("in_progress_format_count");
-
                     b.Property<long?>("LastArchiveSizeBytes")
                         .HasColumnType("bigint")
                         .HasColumnName("last_archive_size_bytes");
@@ -2343,10 +2337,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<TimeSpan?>("LastDuration")
                         .HasColumnType("interval")
                         .HasColumnName("last_duration");
-
-                    b.Property<DateTimeOffset?>("LastProgressUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_progress_utc");
 
                     b.Property<DateTimeOffset?>("LastSourceModifiedUtc")
                         .HasColumnType("timestamp with time zone")

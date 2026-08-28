@@ -229,7 +229,7 @@ public sealed class WorkFulfillmentOptionsService(
 
     /// <summary>
     /// Same unified <see cref="FulfillmentOption"/> shape as every other
-    /// direct-acquisition source (Gutendex included) — an external provider's
+    /// direct-acquisition source (Project Gutenberg included) — an external provider's
     /// results need no special handling anywhere downstream (UI, recommendation
     /// policy, acquire endpoint). A provider whose declared egress policy the
     /// gateway cannot currently satisfy is silently skipped, same "degrade to no

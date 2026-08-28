@@ -3,6 +3,7 @@ using System;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260828162649_SeparateLegacyGutendexAttempts")]
+    partial class SeparateLegacyGutendexAttempts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2148,12 +2151,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(2000)")
                         .HasColumnName("rights_text");
 
-                    b.Property<string>("SourceFingerprint")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("source_fingerprint");
-
                     b.Property<string>("Summary")
                         .HasMaxLength(32000)
                         .HasColumnType("character varying(32000)")
@@ -2324,14 +2321,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("format_count");
 
-                    b.Property<int>("InProgressBookCount")
-                        .HasColumnType("integer")
-                        .HasColumnName("in_progress_book_count");
-
-                    b.Property<int>("InProgressFormatCount")
-                        .HasColumnType("integer")
-                        .HasColumnName("in_progress_format_count");
-
                     b.Property<long?>("LastArchiveSizeBytes")
                         .HasColumnType("bigint")
                         .HasColumnName("last_archive_size_bytes");
@@ -2344,10 +2333,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("interval")
                         .HasColumnName("last_duration");
 
-                    b.Property<DateTimeOffset?>("LastProgressUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_progress_utc");
-
                     b.Property<DateTimeOffset?>("LastSourceModifiedUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_source_modified_utc");
@@ -2355,10 +2340,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LastSuccessfulSyncUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_successful_sync_utc");
-
-                    b.Property<DateTimeOffset?>("LastSuccessfulIncrementalSyncUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_successful_incremental_sync_utc");
 
                     b.Property<int>("ParseErrorCount")
                         .HasColumnType("integer")

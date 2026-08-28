@@ -1,12 +1,15 @@
 @page "/settings/sources"
 @attribute [Authorize(Roles = "Admin")]
+@implements IDisposable
 @using FamilyLibrarian.Contracts.Providers
+@using FamilyLibrarian.Web.Client.Gutenberg
 @using FamilyLibrarian.Web.Client.Integrations
 @using FamilyLibrarian.Web.Client.Providers
 @using Microsoft.AspNetCore.Authorization
 @inject ExternalProviderApiClient Api
 @inject MetadataIntegrationsApiClient BuiltInSourcesApi
 @inject AdminRequestsApiClient AdminRequests
+@inject GutenbergCatalogApiClient GutenbergCatalog
 @inject ISnackbar Snackbar
 
 <PageTitle>Sources | Family Librarian</PageTitle>
@@ -44,13 +47,123 @@
                 <MudText Typo="Typo.body2" Class="mt-2">
                     @if (source.ProviderId == "gutendex")
                     {
-                        <span>Searches Project Gutenberg's public-domain catalogue for downloadable ebooks when a family request is fulfilled.</span>
+                        <span>Searches the locally imported Project Gutenberg catalogue; downloads use configured mirrors when a family request is fulfilled.</span>
                     }
                     else
                     {
                         <span>Provides direct acquisition options during fulfillment.</span>
                     }
                 </MudText>
+                @if (source.ProviderId == "gutendex")
+                {
+                    <MudPaper Outlined="true" Class="pa-3 mt-3">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.subtitle2" Class="flex-grow-1">Local catalogue status</MudText>
+                            @if (gutenbergCatalogStatus is not null)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="@GutenbergCatalogStateColor">
+                                    @GutenbergCatalogStateLabel
+                                </MudChip>
+                            }
+                            <MudButton Variant="Variant.Outlined"
+                                       Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.Refresh"
+                                       Disabled="@(!source.IsEnabled || gutenbergCatalogBusy || GutenbergCatalogOperationInProgress)"
+                                       OnClick="RefreshGutenbergCatalogAsync">
+                                @(gutenbergCatalogBusy || GutenbergCatalogIsSynchronizing ? "Refreshing…" : "Refresh now")
+                            </MudButton>
+                        </MudStack>
+
+                        @if (gutenbergCatalogStatusUnavailable)
+                        {
+                            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
+                                The catalogue status could not be loaded. Refresh the page and try again.
+                            </MudAlert>
+                        }
+                        else if (gutenbergCatalogStatus is null)
+                        {
+                            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" aria-label="Loading local catalogue status" />
+                        }
+                        else
+                        {
+                            @if (GutenbergCatalogIsSynchronizing || GutenbergCatalogIsPurging)
+                            {
+                                <MudProgressLinear Indeterminate="true" Color="Color.Info" Class="mt-2"
+                                                   aria-label="@(GutenbergCatalogIsPurging ? "Deleting Project Gutenberg catalogue records" : "Refreshing Project Gutenberg catalogue")" />
+                            }
+
+                            <MudText Typo="Typo.body2" Class="mt-2">@GutenbergCatalogSummary</MudText>
+                            @if (GutenbergCatalogIsSynchronizing)
+                            {
+                                <MudText Typo="Typo.caption" Class="mt-1">@GutenbergImportProgressSummary</MudText>
+                            }
+                            <MudGrid Class="mt-1">
+                                <MudItem xs="12" sm="6" md="3">
+                                    <MudText Typo="Typo.caption">Available locally</MudText>
+                                    <MudText Typo="Typo.body2">@GutenbergAvailableRecords</MudText>
+                                </MudItem>
+                                <MudItem xs="12" sm="6" md="3">
+                                    <MudText Typo="Typo.caption">Last full catalogue download</MudText>
+                                    <MudText Typo="Typo.body2">@GutenbergLastSuccessfulDownload</MudText>
+                                </MudItem>
+                                <MudItem xs="12" sm="6" md="3">
+                                    <MudText Typo="Typo.caption">Latest refresh attempt</MudText>
+                                    <MudText Typo="Typo.body2">@GutenbergLastAttempt</MudText>
+                                </MudItem>
+                            </MudGrid>
+
+                            @if (!string.IsNullOrWhiteSpace(gutenbergCatalogStatus.FailureMessage))
+                            {
+                                <MudAlert Severity="@GutenbergCatalogMessageSeverity" Variant="Variant.Outlined" Class="mt-2">
+                                    <MudText Typo="Typo.subtitle2">@GutenbergCatalogMessageTitle</MudText>
+                                    <MudText Typo="Typo.body2">@gutenbergCatalogStatus.FailureMessage</MudText>
+                                    @if (gutenbergCatalogStatus.IsReady)
+                                    {
+                                        <MudText Typo="Typo.caption">The last successful local catalogue remains available for searches.</MudText>
+                                    }
+                                </MudAlert>
+                            }
+                        }
+                    </MudPaper>
+                    @if (!source.IsEnabled)
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-2">
+                            Turning this source off retains the downloaded catalogue but stops automatic lookup and daily refreshes.
+                        </MudText>
+                        @if (GutenbergCatalogIsPurging)
+                        {
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-2">
+                                <MudText Typo="Typo.body2">Deleting local catalogue records. This page will update when deletion completes.</MudText>
+                            </MudAlert>
+                        }
+                        else if (GutenbergCatalogHasRecords && gutenbergCatalogPurgeConfirmation)
+                        {
+                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-2">
+                                <MudText Typo="Typo.body2">
+                                    Delete the local Project Gutenberg catalogue? This permanently removes the imported catalogue records, not requests or provider activity.
+                                </MudText>
+                                <MudStack Row="true" Spacing="2" Class="mt-2">
+                                    <MudButton Variant="Variant.Outlined" Disabled="@gutenbergCatalogBusy"
+                                               OnClick="CancelGutenbergCatalogPurge">
+                                        Keep catalogue
+                                    </MudButton>
+                                    <MudButton Variant="Variant.Filled" Color="Color.Error" Disabled="@(gutenbergCatalogBusy || GutenbergCatalogOperationInProgress)"
+                                               OnClick="PurgeGutenbergCatalogAsync">
+                                        @(gutenbergCatalogBusy ? "Deleting…" : "Delete local catalogue")
+                                    </MudButton>
+                                </MudStack>
+                            </MudAlert>
+                        }
+                        else if (GutenbergCatalogHasRecords)
+                        {
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" Class="mt-2"
+                                       Disabled="@(gutenbergCatalogBusy || GutenbergCatalogOperationInProgress)"
+                                       OnClick="BeginGutenbergCatalogPurge">
+                                Delete local catalogue
+                            </MudButton>
+                        }
+                    }
+                }
                 @if (issue is not null)
                 {
                     <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
@@ -422,6 +535,15 @@
     private bool builtInSourcesBusy;
     private readonly Dictionary<string, int> builtInSourceGenerations = new(StringComparer.OrdinalIgnoreCase);
     private AdminRequestAttentionResponse? attention;
+    private GutenbergCatalogStatusResponse? gutenbergCatalogStatus;
+    private bool gutenbergCatalogBusy;
+    private bool gutenbergCatalogRefreshInProgress;
+    private bool gutenbergCatalogStatusUnavailable;
+    private bool gutenbergCatalogPurgeConfirmation;
+    private bool gutenbergCatalogPurgeInProgress;
+    private readonly CancellationTokenSource gutenbergCatalogStatusPollingCancellation = new();
+    private Task? gutenbergCatalogStatusPollingTask;
+    private bool isDisposed;
 
     private bool CanRegister =>
         !string.IsNullOrWhiteSpace(newProviderId) && !string.IsNullOrWhiteSpace(newProviderDisplayName) &&
@@ -433,7 +555,8 @@
             LoadCatalogsAsync(),
             LoadProvidersAsync(),
             LoadBuiltInSourcesAsync(),
-            LoadAttentionAsync());
+            LoadAttentionAsync(),
+            LoadGutenbergCatalogStatusAsync());
 
     private string? GetApiKeyDraft(Guid id) => apiKeyDrafts.GetValueOrDefault(id);
 
@@ -475,6 +598,255 @@
         }
     }
 
+    private bool GutenbergCatalogIsSynchronizing => gutenbergCatalogRefreshInProgress ||
+        IsGutenbergCatalogOperationStatus(gutenbergCatalogStatus?.Status);
+
+    private bool GutenbergCatalogIsPurging => gutenbergCatalogPurgeInProgress ||
+        gutenbergCatalogStatus?.Status == "Purging";
+
+    private bool GutenbergCatalogOperationInProgress => GutenbergCatalogIsSynchronizing || GutenbergCatalogIsPurging;
+
+    private bool GutenbergCatalogHasRecords => gutenbergCatalogStatus?.BookCount > 0;
+
+    private string GutenbergCatalogStateLabel => GutenbergCatalogIsPurging
+        ? "Deleting records"
+        : gutenbergCatalogRefreshInProgress
+        ? "Refreshing"
+        : gutenbergCatalogStatus?.Status switch
+        {
+            "CheckingUpdates" => "Checking changes",
+            "Downloading" => "Downloading",
+            "Parsing" => "Parsing",
+            "Importing" => "Importing",
+            "Retrying" => "Retrying",
+            "Completed" when gutenbergCatalogStatus.IsReady => "Ready",
+            "Failed" => "Refresh failed",
+            "NeverSynced" => "Not downloaded",
+            _ => gutenbergCatalogStatus?.Status ?? "Checking"
+        };
+
+    private Color GutenbergCatalogStateColor => GutenbergCatalogIsPurging
+        ? Color.Info
+        : gutenbergCatalogRefreshInProgress
+        ? Color.Info
+        : gutenbergCatalogStatus?.Status switch
+        {
+            "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" => Color.Info,
+            "Retrying" => Color.Warning,
+            "Completed" when gutenbergCatalogStatus.IsReady => Color.Success,
+            "Failed" => Color.Error,
+            _ => Color.Warning
+        };
+
+    private string GutenbergCatalogSummary => GutenbergCatalogIsPurging
+        ? "Deleting the local catalogue. Search records will be removed when this operation completes."
+        : gutenbergCatalogRefreshInProgress
+        ? gutenbergCatalogStatus?.IsReady == true
+            ? "Refreshing the local catalogue. The existing local snapshot remains searchable."
+            : "Refreshing the first local catalogue. Searches will be available after validation completes."
+        : gutenbergCatalogStatus?.Status switch
+        {
+            "CheckingUpdates" => gutenbergCatalogStatus.IsReady
+                ? "Checking Project Gutenberg's daily new-and-updated-books feed. The local catalogue remains searchable."
+                : "Checking Project Gutenberg for the first local catalogue update.",
+            "Downloading" => gutenbergCatalogStatus.IsReady
+                ? "Downloading an updated catalogue. The existing local snapshot remains searchable."
+                : "Downloading the first local catalogue. Searches will be available after validation completes.",
+            "Parsing" or "Importing" => gutenbergCatalogStatus.IsReady
+                ? "Building an updated catalogue. The existing local snapshot remains searchable."
+                : "Building the first local catalogue. Searches will be available after validation completes.",
+            "Retrying" => gutenbergCatalogStatus.IsReady
+                ? "Retrying the refresh after a transient archive error. The existing local snapshot remains searchable."
+                : "Retrying the first catalogue download after a transient archive error.",
+            "Failed" when gutenbergCatalogStatus.IsReady =>
+                "The latest refresh failed, but the previous local catalogue is still searchable.",
+            "Failed" => "The local catalogue is unavailable until a refresh succeeds.",
+            "Completed" when gutenbergCatalogStatus.IsReady => "The local catalogue is ready for automatic request lookup.",
+            _ => "The local catalogue has not been downloaded yet."
+        };
+
+    private string GutenbergImportProgressSummary => gutenbergCatalogStatus is not { } status
+        ? "Waiting for the catalogue importer to report its first progress update."
+        : $"Imported so far: {status.InProgressBookCount:N0} books · {status.InProgressFormatCount:N0} formats. " +
+          (status.LastProgressUtc is { } progressedAt
+              ? $"Last progress: {progressedAt.ToLocalTime():g}."
+              : "No progress timestamp is available yet.");
+
+    private string GutenbergAvailableRecords => gutenbergCatalogStatus is { IsReady: true } status
+        ? $"{status.BookCount:N0} books · {status.FormatCount:N0} formats"
+        : "No searchable local records yet";
+
+    private string GutenbergLastSuccessfulDownload => gutenbergCatalogStatus?.LastSuccessfulSyncUtc is { } downloadedAt
+        ? downloadedAt.ToLocalTime().ToString("g")
+        : "Never";
+
+    private Severity GutenbergCatalogMessageSeverity =>
+        gutenbergCatalogStatus?.Status == "Retrying" ? Severity.Warning : Severity.Error;
+
+    private string GutenbergCatalogMessageTitle =>
+        gutenbergCatalogStatus?.Status == "Retrying" ? "Refresh retrying" : "Latest refresh failed";
+
+    private string GutenbergLastAttempt => gutenbergCatalogStatus?.LastAttemptUtc is { } attemptedAt
+        ? attemptedAt.ToLocalTime().ToString("g")
+        : "Never";
+
+    private async Task LoadGutenbergCatalogStatusAsync()
+    {
+        try
+        {
+            gutenbergCatalogStatus = await GutenbergCatalog.GetStatusAsync();
+            gutenbergCatalogStatusUnavailable = false;
+            StartGutenbergCatalogStatusPollingIfNeeded();
+        }
+        catch (HttpRequestException)
+        {
+            // Source settings remain usable while the informational status is unavailable.
+            gutenbergCatalogStatusUnavailable = true;
+        }
+    }
+
+    private void StartGutenbergCatalogStatusPollingIfNeeded()
+    {
+        if (!GutenbergCatalogOperationInProgress ||
+            gutenbergCatalogStatusPollingTask is { IsCompleted: false } ||
+            isDisposed)
+        {
+            return;
+        }
+
+        gutenbergCatalogStatusPollingTask = PollGutenbergCatalogStatusAsync();
+    }
+
+    private async Task PollGutenbergCatalogStatusAsync()
+    {
+        try
+        {
+            while (!gutenbergCatalogStatusPollingCancellation.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), gutenbergCatalogStatusPollingCancellation.Token);
+                var status = await GutenbergCatalog.GetStatusAsync(gutenbergCatalogStatusPollingCancellation.Token);
+                await InvokeAsync(() =>
+                {
+                    if (isDisposed)
+                    {
+                        return;
+                    }
+
+                    gutenbergCatalogStatus = status;
+                    gutenbergCatalogStatusUnavailable = false;
+                    StateHasChanged();
+                });
+
+                if (!IsGutenbergCatalogOperationStatus(status?.Status))
+                {
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (gutenbergCatalogStatusPollingCancellation.IsCancellationRequested)
+        {
+            // Page navigation stops this page's display polling; the server-side
+            // purge itself continues and the next visit resumes from its status.
+        }
+        catch (HttpRequestException)
+        {
+            await InvokeAsync(() =>
+            {
+                if (!isDisposed)
+                {
+                    gutenbergCatalogStatusUnavailable = true;
+                    StateHasChanged();
+                }
+            });
+        }
+    }
+
+    private async Task RefreshGutenbergCatalogAsync()
+    {
+        gutenbergCatalogBusy = true;
+        gutenbergCatalogRefreshInProgress = true;
+        StartGutenbergCatalogStatusPollingIfNeeded();
+        try
+        {
+            var result = await GutenbergCatalog.RefreshAsync();
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "The Project Gutenberg catalogue could not be refreshed.", Severity.Error);
+                await LoadGutenbergCatalogStatusAsync();
+                return;
+            }
+
+            gutenbergCatalogStatus = result.Status;
+            gutenbergCatalogStatusUnavailable = false;
+            Snackbar.Add("Project Gutenberg catalogue refreshed.", Severity.Success);
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add("The Project Gutenberg catalogue could not be refreshed.", Severity.Error);
+            await LoadGutenbergCatalogStatusAsync();
+        }
+        finally
+        {
+            gutenbergCatalogRefreshInProgress = false;
+            gutenbergCatalogBusy = false;
+        }
+    }
+
+    private void BeginGutenbergCatalogPurge() => gutenbergCatalogPurgeConfirmation = true;
+
+    private void CancelGutenbergCatalogPurge() => gutenbergCatalogPurgeConfirmation = false;
+
+    private async Task PurgeGutenbergCatalogAsync()
+    {
+        gutenbergCatalogBusy = true;
+        gutenbergCatalogPurgeInProgress = true;
+        try
+        {
+            var result = await GutenbergCatalog.PurgeAsync();
+            if (isDisposed)
+            {
+                return;
+            }
+
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "The local Project Gutenberg catalogue could not be deleted.", Severity.Error);
+                await LoadGutenbergCatalogStatusAsync();
+                return;
+            }
+
+            await LoadGutenbergCatalogStatusAsync();
+            gutenbergCatalogPurgeConfirmation = false;
+            Snackbar.Add($"Deleted {result.DeletedBookCount:N0} Project Gutenberg catalogue records.", Severity.Success);
+        }
+        catch (HttpRequestException)
+        {
+            if (!isDisposed)
+            {
+                Snackbar.Add("The local Project Gutenberg catalogue could not be deleted.", Severity.Error);
+                await LoadGutenbergCatalogStatusAsync();
+            }
+        }
+        finally
+        {
+            if (!isDisposed)
+            {
+                gutenbergCatalogPurgeInProgress = false;
+                gutenbergCatalogBusy = false;
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        isDisposed = true;
+        gutenbergCatalogStatusPollingCancellation.Cancel();
+        gutenbergCatalogStatusPollingCancellation.Dispose();
+    }
+
+    private static bool IsGutenbergCatalogOperationStatus(string? status) => status is
+        "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying" or "Purging";
+
     private async Task SetBuiltInSourceEnabledAsync(ProviderStatusResponse source, bool enabled)
     {
         builtInSourcesBusy = true;
@@ -488,6 +860,10 @@
             }
 
             await LoadBuiltInSourcesAsync();
+            if (source.ProviderId == "gutendex")
+            {
+                gutenbergCatalogPurgeConfirmation = false;
+            }
         }
         finally
         {

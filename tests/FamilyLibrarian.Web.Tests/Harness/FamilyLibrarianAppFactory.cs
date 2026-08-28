@@ -146,9 +146,9 @@ internal sealed class FamilyLibrarianAppFactory(
             services.RemoveAll<IAudiobookshelfApiClient>();
             services.AddSingleton<IAudiobookshelfApiClient, AlwaysEmptyAudiobookshelfApiClient>();
 
-            // Gutendex is enabled by default, so always replace it in ordinary
-            // tests. This lets a test that exercises direct acquisition control
-            // the result deterministically instead of depending on gutendex.com.
+            // The local Project Gutenberg provider is enabled by default, so
+            // always replace it in ordinary tests. This lets a test that
+            // exercises direct acquisition control the result deterministically.
             services.RemoveAll<IDirectAcquisitionProvider>();
             services.AddSingleton<IDirectAcquisitionProvider, AlwaysEmptyDirectAcquisitionProvider>();
 

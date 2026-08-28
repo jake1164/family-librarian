@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
 using FamilyLibrarian.Application.Integrations;
@@ -103,14 +104,16 @@ public sealed class AudiobookshelfApiClient(
             form.Add(new StringContent(author), "author");
         }
 
-        // Every track is added under the same "files" field name — the
-        // upload endpoint accepts repeated parts for a multi-file item, the
-        // same way a single-file upload always has.
-        foreach (var (content, filename) in tracks)
+        // Audiobookshelf expects every uploaded file under its zero-based
+        // numeric field name ("0", "1", ...), rather than a repeated
+        // generic field. This is how its upload handler retains every track
+        // in a multipart audiobook bundle.
+        for (var index = 0; index < tracks.Count; index++)
         {
+            var (content, filename) = tracks[index];
             var fileContent = new StreamContent(content);
             fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-            form.Add(fileContent, "files", filename);
+            form.Add(fileContent, index.ToString(CultureInfo.InvariantCulture), filename);
         }
 
         using var response = await client.PostAsync($"{settings.BaseUrl.TrimEnd('/')}/api/upload", form, cancellationToken);

@@ -7,6 +7,7 @@ public static class AuditActions
     public const string ProviderCredentialSet = "provider.credential_set";
     public const string ProviderCredentialCleared = "provider.credential_cleared";
     public const string ProviderTested = "provider.tested";
+    public const string GutenbergCatalogPurged = "gutenberg_catalog.purged";
 
     public const string InvitationCreated = "invitation.created";
     public const string InvitationRevoked = "invitation.revoked";

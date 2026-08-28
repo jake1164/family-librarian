@@ -12,6 +12,7 @@ using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Acquisition;
+using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
@@ -341,34 +342,55 @@ public static class DependencyInjection
         services.AddTransient<IBookMetadataProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<GoogleBooksBookMetadataProvider>());
 
-        // Gutendex (M11): a free, keyless, fixed-address JSON API — no
-        // per-request settings lookup needed, unlike CWA/Audiobookshelf, so a
-        // plain typed client with a fixed BaseAddress is enough, same as Open
-        // Library/Google Books above.
-        services.AddHttpClient<GutendexProvider>(client =>
+        services.AddOptions<GutenbergCatalogOptions>()
+            .Bind(configuration.GetSection(GutenbergCatalogOptions.SectionName))
+            .Validate(options => Uri.TryCreate(options.ArchiveUrl, UriKind.Absolute, out var uri) &&
+                uri.Scheme == Uri.UriSchemeHttps,
+                $"{GutenbergCatalogOptions.SectionName}:ArchiveUrl must be an HTTPS URL.")
+            .Validate(options => Uri.TryCreate(options.RecentUpdatesFeedUrl, UriKind.Absolute, out var uri) &&
+                uri.Scheme == Uri.UriSchemeHttps,
+                $"{GutenbergCatalogOptions.SectionName}:RecentUpdatesFeedUrl must be an HTTPS URL.")
+            .Validate(options => Uri.TryCreate(options.EbookRdfBaseUrl, UriKind.Absolute, out var uri) &&
+                uri.Scheme == Uri.UriSchemeHttps,
+                $"{GutenbergCatalogOptions.SectionName}:EbookRdfBaseUrl must be an HTTPS URL.")
+            .Validate(options => options.SyncHourEastern is >= 0 and <= 23,
+                $"{GutenbergCatalogOptions.SectionName}:SyncHourEastern must be between 0 and 23.")
+            .Validate(options => options.BatchSize is >= 100 and <= 5_000,
+                $"{GutenbergCatalogOptions.SectionName}:BatchSize must be between 100 and 5000.")
+            .Validate(options => options.ImportMaxAttempts is >= 1 and <= 5,
+                $"{GutenbergCatalogOptions.SectionName}:ImportMaxAttempts must be between 1 and 5.")
+            .Validate(options => options.ImportRetryDelay >= TimeSpan.Zero && options.ImportRetryDelay <= TimeSpan.FromMinutes(5),
+                $"{GutenbergCatalogOptions.SectionName}:ImportRetryDelay must be between zero and five minutes.")
+            .Validate(options => options.MaximumIncrementalGapHours is >= 25 and <= 168,
+                $"{GutenbergCatalogOptions.SectionName}:MaximumIncrementalGapHours must be between 25 and 168.")
+            .ValidateOnStart();
+        var mirrorOptions = new GutenbergMirrorOptions();
+        configuration.GetSection(GutenbergMirrorOptions.SectionName).Bind(mirrorOptions);
+        if (mirrorOptions.BaseUris.Count < 2 || mirrorOptions.BaseUris.Any(uri =>
+                !Uri.TryCreate(uri, UriKind.Absolute, out var parsed) || parsed.Scheme != Uri.UriSchemeHttps))
         {
-            client.BaseAddress = new Uri("https://gutendex.com/");
-            client.Timeout = TimeSpan.FromSeconds(15);
+            throw new InvalidOperationException($"{GutenbergMirrorOptions.SectionName}:BaseUris must contain at least two HTTPS mirror URLs.");
+        }
+        services.AddSingleton(mirrorOptions);
+        services.AddScoped<IGutenbergCatalog, GutenbergCatalogRepository>();
+        services.AddScoped<IGutenbergCatalogSynchronizer, GutenbergCatalogSynchronizer>();
+        services.AddScoped<IGutenbergCatalogMaintenance, GutenbergCatalogMaintenance>();
+        services.AddSingleton<IGutenbergFileResolver, GutenbergFileResolver>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddHttpClient<GutenbergCatalogSynchronizer>(client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(15);
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+        });
+        services.AddHttpClient<GutenbergProvider>(client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(5);
             client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
         });
         services.AddTransient<IDirectAcquisitionProvider>(serviceProvider =>
-            serviceProvider.GetRequiredService<GutendexProvider>());
+            serviceProvider.GetRequiredService<GutenbergProvider>());
         services.AddTransient<IAutomaticDirectAcquisitionProvider>(serviceProvider =>
-            serviceProvider.GetRequiredService<GutendexProvider>());
-
-        // Gutendex collapses same-mimetype files (e.g. every audiobook
-        // chapter's audio/mpeg) down to one URL, so a chaptered audiobook's
-        // full track list has to come from Gutenberg's own per-book RDF
-        // catalog record instead. Separate typed client: different host,
-        // XML rather than JSON.
-        services.AddHttpClient<GutenbergAudiobookRdfClient>(client =>
-        {
-            client.BaseAddress = new Uri("https://www.gutenberg.org/");
-            client.Timeout = TimeSpan.FromSeconds(15);
-            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
-        });
-        services.AddTransient<IGutenbergAudiobookCatalog>(serviceProvider =>
-            serviceProvider.GetRequiredService<GutenbergAudiobookRdfClient>());
+            serviceProvider.GetRequiredService<GutenbergProvider>());
 
         // Publishing destinations (M12): CWA (ebook library, ingest folder) and
         // Audiobookshelf (audiobook delivery, upload API). Neither is a metadata
