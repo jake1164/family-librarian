@@ -1,3 +1,6 @@
+using FamilyLibrarian.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -5,6 +8,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace FamilyLibrarian.Infrastructure.Persistence.Migrations;
 
 /// <summary>Persists observable progress for an in-flight Project Gutenberg catalogue import.</summary>
+[DbContext(typeof(AppDbContext))]
+[Migration("20260828221000_AddGutenbergImportProgress")]
 public partial class AddGutenbergImportProgress : Migration
 {
     /// <inheritdoc />
