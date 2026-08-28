@@ -29,7 +29,7 @@ internal static class GutenbergCatalogEndpoints
         CancellationToken cancellationToken)
     {
         var currentStatus = await catalog.GetStatusAsync(cancellationToken);
-        if (currentStatus.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying")
+        if (currentStatus.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying" or "Purging")
         {
             return Results.Conflict(new
             {
@@ -52,14 +52,16 @@ internal static class GutenbergCatalogEndpoints
         CancellationToken cancellationToken)
     {
         var currentStatus = await catalog.GetStatusAsync(cancellationToken);
-        if (currentStatus.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying")
+        if (currentStatus.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying" or "Purging")
         {
             return Results.Conflict(new
             {
-                detail = "The Project Gutenberg catalogue cannot be deleted while a refresh is in progress."
+                detail = "The Project Gutenberg catalogue cannot be deleted while another catalogue operation is in progress."
             });
         }
 
-        return Results.Ok(await maintenance.PurgeAsync(cancellationToken));
+        // Deletion continues server-side if the administrator navigates away.
+        // Its persisted Purging status lets the page resume progress tracking.
+        return Results.Ok(await maintenance.PurgeAsync(CancellationToken.None));
     }
 }
