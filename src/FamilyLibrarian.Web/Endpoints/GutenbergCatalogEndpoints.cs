@@ -29,7 +29,7 @@ internal static class GutenbergCatalogEndpoints
         CancellationToken cancellationToken)
     {
         var currentStatus = await catalog.GetStatusAsync(cancellationToken);
-        if (currentStatus.Status is "Downloading" or "Parsing" or "Importing" or "Retrying")
+        if (currentStatus.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying")
         {
             return Results.Conflict(new
             {
@@ -37,7 +37,9 @@ internal static class GutenbergCatalogEndpoints
             });
         }
 
-        var result = await synchronizer.SynchronizeAsync(cancellationToken);
+        var result = currentStatus.IsReady
+            ? await synchronizer.SynchronizeIncrementalAsync(cancellationToken)
+            : await synchronizer.SynchronizeAsync(cancellationToken);
         return result.Succeeded ? Results.Ok(result.Status) : Results.Problem(
             title: "Project Gutenberg catalogue synchronization failed.",
             detail: result.Error,
@@ -50,7 +52,7 @@ internal static class GutenbergCatalogEndpoints
         CancellationToken cancellationToken)
     {
         var currentStatus = await catalog.GetStatusAsync(cancellationToken);
-        if (currentStatus.Status is "Downloading" or "Parsing" or "Importing" or "Retrying")
+        if (currentStatus.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying")
         {
             return Results.Conflict(new
             {

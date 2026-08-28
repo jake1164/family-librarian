@@ -16,10 +16,14 @@ public interface IGutenbergCatalog
         CancellationToken cancellationToken);
 }
 
-/// <summary>Imports the daily RDF archive into a new, validated catalogue generation.</summary>
+/// <summary>Synchronizes the locally stored Project Gutenberg catalogue.</summary>
 public interface IGutenbergCatalogSynchronizer
 {
+    /// <summary>Builds a complete validated snapshot. Used for first import and recovery after a missed feed window.</summary>
     Task<GutenbergCatalogSyncResult> SynchronizeAsync(CancellationToken cancellationToken);
+
+    /// <summary>Upserts only the books reported as new or updated by Project Gutenberg's daily feed.</summary>
+    Task<GutenbergCatalogSyncResult> SynchronizeIncrementalAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>Destructive maintenance operations for the locally stored RDF catalogue.</summary>

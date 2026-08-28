@@ -8,6 +8,9 @@ internal sealed class GutenbergCatalogBookEntity
 
     public int GutenbergId { get; set; }
 
+    /// <summary>SHA-256 of the source RDF used to avoid rewriting an unchanged record.</summary>
+    public string SourceFingerprint { get; set; } = string.Empty;
+
     public string Title { get; set; } = string.Empty;
 
     public string NormalizedTitle { get; set; } = string.Empty;
@@ -93,6 +96,8 @@ internal sealed class GutenbergCatalogSyncStateEntity
     public DateTimeOffset? LastAttemptUtc { get; set; }
 
     public DateTimeOffset? LastSuccessfulSyncUtc { get; set; }
+
+    public DateTimeOffset? LastSuccessfulIncrementalSyncUtc { get; set; }
 
     public DateTimeOffset? LastSourceModifiedUtc { get; set; }
 

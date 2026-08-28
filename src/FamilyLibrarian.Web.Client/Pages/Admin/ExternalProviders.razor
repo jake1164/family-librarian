@@ -97,7 +97,7 @@
                                     <MudText Typo="Typo.body2">@GutenbergAvailableRecords</MudText>
                                 </MudItem>
                                 <MudItem xs="12" sm="6" md="3">
-                                    <MudText Typo="Typo.caption">Last successful download</MudText>
+                                    <MudText Typo="Typo.caption">Last full catalogue download</MudText>
                                     <MudText Typo="Typo.body2">@GutenbergLastSuccessfulDownload</MudText>
                                 </MudItem>
                                 <MudItem xs="12" sm="6" md="3">
@@ -583,12 +583,13 @@
     }
 
     private bool GutenbergCatalogIsSynchronizing => gutenbergCatalogRefreshInProgress ||
-        gutenbergCatalogStatus?.Status is "Downloading" or "Parsing" or "Importing" or "Retrying";
+        gutenbergCatalogStatus?.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying";
 
     private string GutenbergCatalogStateLabel => gutenbergCatalogRefreshInProgress
         ? "Refreshing"
         : gutenbergCatalogStatus?.Status switch
         {
+            "CheckingUpdates" => "Checking changes",
             "Downloading" => "Downloading",
             "Parsing" => "Parsing",
             "Importing" => "Importing",
@@ -603,7 +604,7 @@
         ? Color.Info
         : gutenbergCatalogStatus?.Status switch
         {
-            "Downloading" or "Parsing" or "Importing" => Color.Info,
+            "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" => Color.Info,
             "Retrying" => Color.Warning,
             "Completed" when gutenbergCatalogStatus.IsReady => Color.Success,
             "Failed" => Color.Error,
@@ -616,6 +617,9 @@
             : "Refreshing the first local catalogue. Searches will be available after validation completes."
         : gutenbergCatalogStatus?.Status switch
         {
+            "CheckingUpdates" => gutenbergCatalogStatus.IsReady
+                ? "Checking Project Gutenberg's daily new-and-updated-books feed. The local catalogue remains searchable."
+                : "Checking Project Gutenberg for the first local catalogue update.",
             "Downloading" => gutenbergCatalogStatus.IsReady
                 ? "Downloading an updated catalogue. The existing local snapshot remains searchable."
                 : "Downloading the first local catalogue. Searches will be available after validation completes.",

@@ -60,6 +60,12 @@ public sealed partial class GutenbergCatalogHostedService(
         }
 
         var synchronizer = scope.ServiceProvider.GetRequiredService<IGutenbergCatalogSynchronizer>();
+        if (status.IsReady)
+        {
+            await synchronizer.SynchronizeIncrementalAsync(cancellationToken);
+            return;
+        }
+
         await synchronizer.SynchronizeAsync(cancellationToken);
     }
 

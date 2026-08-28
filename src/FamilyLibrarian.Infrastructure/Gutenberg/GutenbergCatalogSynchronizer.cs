@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 using FamilyLibrarian.Application.Catalog;
@@ -50,6 +52,99 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         }
 
         throw new InvalidOperationException("The Project Gutenberg catalogue import retry loop completed unexpectedly.");
+    }
+
+    public async Task<GutenbergCatalogSyncResult> SynchronizeIncrementalAsync(CancellationToken cancellationToken)
+    {
+        var state = await GetOrCreateStateAsync(cancellationToken);
+        if (RequiresFullReconciliation(state))
+        {
+            return await SynchronizeAsync(cancellationToken);
+        }
+
+        var startedAt = timeProvider.GetUtcNow();
+        state.LastAttemptUtc = startedAt;
+        state.Status = "CheckingUpdates";
+        state.FailureMessage = null;
+        await database.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            var updates = await DownloadRecentUpdatesAsync(cancellationToken);
+            var generationId = state.ActiveGenerationId!.Value;
+            var books = new List<GutenbergCatalogBookEntity>(updates.Count);
+            foreach (var gutenbergId in updates)
+            {
+                using var response = await httpClient.GetAsync(
+                    CreateRdfUri(gutenbergId),
+                    HttpCompletionOption.ResponseHeadersRead,
+                    cancellationToken);
+                response.EnsureSuccessStatusCode();
+                await using var rdf = await response.Content.ReadAsStreamAsync(cancellationToken);
+                var book = ParseBook(rdf, generationId);
+                if (book is null || book.GutenbergId != gutenbergId)
+                {
+                    throw new InvalidDataException($"The RDF record for Project Gutenberg eBook #{gutenbergId} was invalid.");
+                }
+
+                books.Add(book);
+            }
+
+            state.Status = "Importing";
+            await database.SaveChangesAsync(cancellationToken);
+            await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+            foreach (var book in books)
+            {
+                var existing = await database.GutenbergCatalogBooks
+                    .Include(item => item.People)
+                    .Include(item => item.Languages)
+                    .Include(item => item.Formats)
+                    .SingleOrDefaultAsync(
+                        item => item.GenerationId == generationId && item.GutenbergId == book.GutenbergId,
+                        cancellationToken);
+                if (existing is null)
+                {
+                    database.GutenbergCatalogBooks.Add(book);
+                }
+                else if (!string.Equals(existing.SourceFingerprint, book.SourceFingerprint, StringComparison.Ordinal))
+                {
+                    ApplyUpdate(existing, book);
+                }
+            }
+
+            await database.SaveChangesAsync(cancellationToken);
+            var now = timeProvider.GetUtcNow();
+            state.LastSuccessfulIncrementalSyncUtc = now;
+            state.BookCount = await database.GutenbergCatalogBooks.CountAsync(
+                item => item.GenerationId == generationId,
+                cancellationToken);
+            state.FormatCount = await database.GutenbergCatalogFormats.CountAsync(
+                item => item.Book.GenerationId == generationId,
+                cancellationToken);
+            state.LastDuration = now - startedAt;
+            state.Status = "Completed";
+            state.FailureMessage = null;
+            await database.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            LogIncrementalSyncCompleted(updates.Count, state.BookCount, state.FormatCount, state.LastDuration);
+            return new GutenbergCatalogSyncResult(true, GutenbergCatalogRepository.ToStatus(state, null));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogIncrementalSyncFailed(exception);
+            database.ChangeTracker.Clear();
+            var failedState = await GetOrCreateStateAsync(CancellationToken.None);
+            failedState.Status = "Failed";
+            failedState.FailureMessage = exception.Message;
+            failedState.LastDuration = timeProvider.GetUtcNow() - startedAt;
+            await database.SaveChangesAsync(CancellationToken.None);
+            return new GutenbergCatalogSyncResult(false, GutenbergCatalogRepository.ToStatus(failedState, null), exception.Message);
+        }
     }
 
     private async Task<GutenbergCatalogSyncResult> SynchronizeOnceAsync(CancellationToken cancellationToken)
@@ -202,6 +297,78 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             .ExecuteDeleteAsync(cancellationToken);
     }
 
+    private bool RequiresFullReconciliation(GutenbergCatalogSyncStateEntity state)
+    {
+        if (state.ActiveGenerationId is null)
+        {
+            return true;
+        }
+
+        var lastSuccessfulCheck = state.LastSuccessfulIncrementalSyncUtc ?? state.LastSuccessfulSyncUtc;
+        return lastSuccessfulCheck is null ||
+            timeProvider.GetUtcNow() - lastSuccessfulCheck > TimeSpan.FromHours(options.Value.MaximumIncrementalGapHours);
+    }
+
+    private async Task<IReadOnlyList<int>> DownloadRecentUpdatesAsync(CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync(options.Value.RecentUpdatesFeedUrl, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = XmlReader.Create(stream, new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            IgnoreComments = true,
+            IgnoreProcessingInstructions = true
+        });
+        var document = XDocument.Load(reader, LoadOptions.None);
+        return document.Descendants("item")
+            .Select(item => item.Element("link")?.Value.Trim())
+            .Select(TryGetGutenbergIdFromLink)
+            .Where(id => id is not null)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToArray();
+    }
+
+    private Uri CreateRdfUri(int gutenbergId) => new(
+        new Uri(options.Value.EbookRdfBaseUrl, UriKind.Absolute),
+        $"{gutenbergId}/pg{gutenbergId}.rdf");
+
+    private static int? TryGetGutenbergIdFromLink(string? link)
+    {
+        if (!Uri.TryCreate(link, UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        var segments = uri.Segments.Select(segment => segment.Trim('/')).Where(segment => segment.Length > 0).ToArray();
+        return segments.Length >= 2 &&
+            string.Equals(segments[^2], "ebooks", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(segments[^1], CultureInfo.InvariantCulture, out var gutenbergId)
+            ? gutenbergId
+            : null;
+    }
+
+    private static void ApplyUpdate(GutenbergCatalogBookEntity target, GutenbergCatalogBookEntity source)
+    {
+        target.SourceFingerprint = source.SourceFingerprint;
+        target.Title = source.Title;
+        target.NormalizedTitle = source.NormalizedTitle;
+        target.MediaType = source.MediaType;
+        target.IssuedDate = source.IssuedDate;
+        target.RightsStatus = source.RightsStatus;
+        target.RightsText = source.RightsText;
+        target.DownloadCount = source.DownloadCount;
+        target.Summary = source.Summary;
+        target.People.Clear();
+        target.Languages.Clear();
+        target.Formats.Clear();
+        target.People.AddRange(source.People);
+        target.Languages.AddRange(source.Languages);
+        target.Formats.AddRange(source.Formats);
+    }
+
     private async Task RemoveUnpublishedGenerationsAsync(Guid? activeGenerationId, CancellationToken cancellationToken)
     {
         var unpublished = activeGenerationId is { } activeGenerationIdValue
@@ -308,6 +475,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         {
             GenerationId = generationId,
             GutenbergId = gutenbergId,
+            SourceFingerprint = ComputeFingerprint(document),
             Title = title,
             NormalizedTitle = GutenbergCatalogRepository.Normalize(title),
             MediaType = Value(ebook, DcTerms + "type", Rdf + "value") ?? "Unknown",
@@ -353,6 +521,9 @@ internal sealed partial class GutenbergCatalogSynchronizer(
 
         return book;
     }
+
+    private static string ComputeFingerprint(XDocument document) => Convert.ToHexString(
+        SHA256.HashData(Encoding.UTF8.GetBytes(document.ToString(SaveOptions.DisableFormatting))));
 
     private static void AddPeople(GutenbergCatalogBookEntity book, XElement ebook, XName relation, GutenbergPersonRole role)
     {
@@ -427,6 +598,12 @@ internal sealed partial class GutenbergCatalogSynchronizer(
 
     [LoggerMessage(EventId = 902, Level = LogLevel.Warning, Message = "gutenberg.catalog.import.failed")]
     private partial void LogImportFailed(Exception exception);
+
+    [LoggerMessage(EventId = 905, Level = LogLevel.Information, Message = "gutenberg.catalog.incremental.completed: {UpdatedFeedEntries} feed entries checked; {BookCount} books and {FormatCount} formats are locally searchable in {Duration}.")]
+    private partial void LogIncrementalSyncCompleted(int updatedFeedEntries, int bookCount, int formatCount, TimeSpan? duration);
+
+    [LoggerMessage(EventId = 906, Level = LogLevel.Warning, Message = "gutenberg.catalog.incremental.failed")]
+    private partial void LogIncrementalSyncFailed(Exception exception);
 
     [LoggerMessage(EventId = 904, Level = LogLevel.Warning, Message = "gutenberg.catalog.import.retrying: attempt {Attempt} of {MaximumAttempts}.")]
     private partial void LogImportRetrying(int attempt, int maximumAttempts, Exception exception);

@@ -6,7 +6,15 @@ public sealed class GutenbergCatalogOptions
 
     public const string DefaultArchiveUrl = "https://www.gutenberg.org/cache/epub/feeds/rdf-files.tar.bz2";
 
+    public const string DefaultRecentUpdatesFeedUrl = "https://www.gutenberg.org/cache/epub/feeds/today.rss";
+
+    public const string DefaultEbookRdfBaseUrl = "https://www.gutenberg.org/cache/epub/";
+
     public string ArchiveUrl { get; set; } = DefaultArchiveUrl;
+
+    public string RecentUpdatesFeedUrl { get; set; } = DefaultRecentUpdatesFeedUrl;
+
+    public string EbookRdfBaseUrl { get; set; } = DefaultEbookRdfBaseUrl;
 
     public int SyncHourEastern { get; set; } = 13;
 
@@ -20,4 +28,10 @@ public sealed class GutenbergCatalogOptions
     public int ImportMaxAttempts { get; set; } = 3;
 
     public TimeSpan ImportRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// The new/updated-books feed covers only roughly one day. A longer gap
+    /// requires a complete reconciliation so no updates are silently missed.
+    /// </summary>
+    public int MaximumIncrementalGapHours { get; set; } = 36;
 }

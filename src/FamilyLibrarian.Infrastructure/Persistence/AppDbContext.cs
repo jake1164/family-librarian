@@ -954,6 +954,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(book => book.Id).HasColumnName("id");
             entity.Property(book => book.GenerationId).HasColumnName("generation_id");
             entity.Property(book => book.GutenbergId).HasColumnName("gutenberg_id");
+            entity.Property(book => book.SourceFingerprint).HasColumnName("source_fingerprint").HasMaxLength(64).IsRequired();
             entity.Property(book => book.Title).HasColumnName("title").HasMaxLength(2_000).IsRequired();
             entity.Property(book => book.NormalizedTitle).HasColumnName("normalized_title").HasMaxLength(2_000).IsRequired();
             entity.Property(book => book.MediaType).HasColumnName("media_type").HasMaxLength(64).IsRequired();
@@ -1020,6 +1021,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(state => state.ActiveGenerationId).HasColumnName("active_generation_id");
             entity.Property(state => state.LastAttemptUtc).HasColumnName("last_attempt_utc").HasColumnType("timestamp with time zone");
             entity.Property(state => state.LastSuccessfulSyncUtc).HasColumnName("last_successful_sync_utc").HasColumnType("timestamp with time zone");
+            entity.Property(state => state.LastSuccessfulIncrementalSyncUtc).HasColumnName("last_successful_incremental_sync_utc").HasColumnType("timestamp with time zone");
             entity.Property(state => state.LastSourceModifiedUtc).HasColumnName("last_source_modified_utc").HasColumnType("timestamp with time zone");
             entity.Property(state => state.LastArchiveSizeBytes).HasColumnName("last_archive_size_bytes");
             entity.Property(state => state.BookCount).HasColumnName("book_count");

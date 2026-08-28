@@ -347,6 +347,12 @@ public static class DependencyInjection
             .Validate(options => Uri.TryCreate(options.ArchiveUrl, UriKind.Absolute, out var uri) &&
                 uri.Scheme == Uri.UriSchemeHttps,
                 $"{GutenbergCatalogOptions.SectionName}:ArchiveUrl must be an HTTPS URL.")
+            .Validate(options => Uri.TryCreate(options.RecentUpdatesFeedUrl, UriKind.Absolute, out var uri) &&
+                uri.Scheme == Uri.UriSchemeHttps,
+                $"{GutenbergCatalogOptions.SectionName}:RecentUpdatesFeedUrl must be an HTTPS URL.")
+            .Validate(options => Uri.TryCreate(options.EbookRdfBaseUrl, UriKind.Absolute, out var uri) &&
+                uri.Scheme == Uri.UriSchemeHttps,
+                $"{GutenbergCatalogOptions.SectionName}:EbookRdfBaseUrl must be an HTTPS URL.")
             .Validate(options => options.SyncHourEastern is >= 0 and <= 23,
                 $"{GutenbergCatalogOptions.SectionName}:SyncHourEastern must be between 0 and 23.")
             .Validate(options => options.BatchSize is >= 100 and <= 5_000,
@@ -355,6 +361,8 @@ public static class DependencyInjection
                 $"{GutenbergCatalogOptions.SectionName}:ImportMaxAttempts must be between 1 and 5.")
             .Validate(options => options.ImportRetryDelay >= TimeSpan.Zero && options.ImportRetryDelay <= TimeSpan.FromMinutes(5),
                 $"{GutenbergCatalogOptions.SectionName}:ImportRetryDelay must be between zero and five minutes.")
+            .Validate(options => options.MaximumIncrementalGapHours is >= 25 and <= 168,
+                $"{GutenbergCatalogOptions.SectionName}:MaximumIncrementalGapHours must be between 25 and 168.")
             .ValidateOnStart();
         var mirrorOptions = new GutenbergMirrorOptions();
         configuration.GetSection(GutenbergMirrorOptions.SectionName).Bind(mirrorOptions);
