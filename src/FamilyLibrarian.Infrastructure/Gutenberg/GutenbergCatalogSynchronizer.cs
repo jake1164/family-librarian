@@ -66,6 +66,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         state.LastAttemptUtc = startedAt;
         state.Status = "CheckingUpdates";
         state.FailureMessage = null;
+        ResetImportProgress(state, startedAt);
         await database.SaveChangesAsync(cancellationToken);
 
         try
@@ -91,6 +92,9 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             }
 
             state.Status = "Importing";
+            state.InProgressBookCount = books.Count;
+            state.InProgressFormatCount = books.Sum(book => book.Formats.Count);
+            state.LastProgressUtc = timeProvider.GetUtcNow();
             await database.SaveChangesAsync(cancellationToken);
             await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
             foreach (var book in books)
@@ -121,6 +125,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             state.FormatCount = await database.GutenbergCatalogFormats.CountAsync(
                 item => item.Book.GenerationId == generationId,
                 cancellationToken);
+            ResetImportProgress(state, timeProvider.GetUtcNow());
             state.LastDuration = now - startedAt;
             state.Status = "Completed";
             state.FailureMessage = null;
@@ -155,6 +160,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         state.LastAttemptUtc = startedAt;
         state.Status = "Downloading";
         state.FailureMessage = null;
+        ResetImportProgress(state, startedAt);
         await database.SaveChangesAsync(cancellationToken);
 
         var generationId = Guid.NewGuid();
@@ -170,6 +176,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             response.EnsureSuccessStatusCode();
             state.LastArchiveSizeBytes = response.Content.Headers.ContentLength;
             state.LastSourceModifiedUtc = response.Content.Headers.LastModified;
+            state.LastProgressUtc = timeProvider.GetUtcNow();
             await database.SaveChangesAsync(cancellationToken);
 
             await using var archive = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -196,6 +203,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
                 }
 
                 state.Status = "Parsing";
+                state.LastProgressUtc = timeProvider.GetUtcNow();
                 await database.SaveChangesAsync(cancellationToken);
                 temporaryTar.Position = 0;
                 using var tar = new TarReader(temporaryTar, leaveOpen: true);
@@ -230,7 +238,10 @@ internal sealed partial class GutenbergCatalogSynchronizer(
                     if (bookCount > 0 && bookCount % options.Value.BatchSize == 0)
                     {
                         state.Status = "Importing";
+                        state.InProgressBookCount = bookCount;
+                        state.InProgressFormatCount = formatCount;
                         state.ParseErrorCount = parseErrorCount;
+                        state.LastProgressUtc = timeProvider.GetUtcNow();
                         await database.SaveChangesAsync(cancellationToken);
                         database.ChangeTracker.Clear();
                         state = await GetOrCreateStateAsync(cancellationToken);
@@ -255,6 +266,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             state.LastSuccessfulSyncUtc = timeProvider.GetUtcNow();
             state.BookCount = bookCount;
             state.FormatCount = formatCount;
+            ResetImportProgress(state, timeProvider.GetUtcNow());
             state.ParseErrorCount = parseErrorCount;
             state.LastDuration = timeProvider.GetUtcNow() - startedAt;
             state.Status = "Completed";
@@ -295,6 +307,13 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         await database.GutenbergCatalogBooks
             .Where(book => book.GenerationId == generationId)
             .ExecuteDeleteAsync(cancellationToken);
+    }
+
+    private static void ResetImportProgress(GutenbergCatalogSyncStateEntity state, DateTimeOffset progressedAt)
+    {
+        state.InProgressBookCount = 0;
+        state.InProgressFormatCount = 0;
+        state.LastProgressUtc = progressedAt;
     }
 
     private bool RequiresFullReconciliation(GutenbergCatalogSyncStateEntity state)

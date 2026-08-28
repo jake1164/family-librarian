@@ -82,6 +82,9 @@ public sealed record GutenbergCatalogStatus(
     DateTimeOffset? NextScheduledSyncUtc,
     int BookCount,
     int FormatCount,
+    int InProgressBookCount,
+    int InProgressFormatCount,
+    DateTimeOffset? LastProgressUtc,
     string Status,
     string? FailureMessage);
 

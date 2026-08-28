@@ -1026,6 +1026,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(state => state.LastArchiveSizeBytes).HasColumnName("last_archive_size_bytes");
             entity.Property(state => state.BookCount).HasColumnName("book_count");
             entity.Property(state => state.FormatCount).HasColumnName("format_count");
+            entity.Property(state => state.InProgressBookCount).HasColumnName("in_progress_book_count");
+            entity.Property(state => state.InProgressFormatCount).HasColumnName("in_progress_format_count");
+            entity.Property(state => state.LastProgressUtc).HasColumnName("last_progress_utc").HasColumnType("timestamp with time zone");
             entity.Property(state => state.ParseErrorCount).HasColumnName("parse_error_count");
             entity.Property(state => state.LastDuration).HasColumnName("last_duration");
             entity.Property(state => state.Status).HasColumnName("status").HasMaxLength(32).IsRequired();

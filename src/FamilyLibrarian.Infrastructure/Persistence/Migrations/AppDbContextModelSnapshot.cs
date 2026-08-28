@@ -2324,6 +2324,14 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("format_count");
 
+                    b.Property<int>("InProgressBookCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("in_progress_book_count");
+
+                    b.Property<int>("InProgressFormatCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("in_progress_format_count");
+
                     b.Property<long?>("LastArchiveSizeBytes")
                         .HasColumnType("bigint")
                         .HasColumnName("last_archive_size_bytes");
@@ -2335,6 +2343,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<TimeSpan?>("LastDuration")
                         .HasColumnType("interval")
                         .HasColumnName("last_duration");
+
+                    b.Property<DateTimeOffset?>("LastProgressUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_progress_utc");
 
                     b.Property<DateTimeOffset?>("LastSourceModifiedUtc")
                         .HasColumnType("timestamp with time zone")

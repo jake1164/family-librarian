@@ -107,6 +107,12 @@ internal sealed class GutenbergCatalogSyncStateEntity
 
     public int FormatCount { get; set; }
 
+    public int InProgressBookCount { get; set; }
+
+    public int InProgressFormatCount { get; set; }
+
+    public DateTimeOffset? LastProgressUtc { get; set; }
+
     public int ParseErrorCount { get; set; }
 
     public TimeSpan? LastDuration { get; set; }

@@ -93,6 +93,10 @@
                             }
 
                             <MudText Typo="Typo.body2" Class="mt-2">@GutenbergCatalogSummary</MudText>
+                            @if (GutenbergCatalogIsSynchronizing)
+                            {
+                                <MudText Typo="Typo.caption" Class="mt-1">@GutenbergImportProgressSummary</MudText>
+                            }
                             <MudGrid Class="mt-1">
                                 <MudItem xs="12" sm="6" md="3">
                                     <MudText Typo="Typo.caption">Available locally</MudText>
@@ -595,7 +599,7 @@
     }
 
     private bool GutenbergCatalogIsSynchronizing => gutenbergCatalogRefreshInProgress ||
-        gutenbergCatalogStatus?.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying";
+        IsGutenbergCatalogOperationStatus(gutenbergCatalogStatus?.Status);
 
     private bool GutenbergCatalogIsPurging => gutenbergCatalogPurgeInProgress ||
         gutenbergCatalogStatus?.Status == "Purging";
@@ -661,6 +665,13 @@
             _ => "The local catalogue has not been downloaded yet."
         };
 
+    private string GutenbergImportProgressSummary => gutenbergCatalogStatus is not { } status
+        ? "Waiting for the catalogue importer to report its first progress update."
+        : $"Imported so far: {status.InProgressBookCount:N0} books · {status.InProgressFormatCount:N0} formats. " +
+          (status.LastProgressUtc is { } progressedAt
+              ? $"Last progress: {progressedAt.ToLocalTime():g}."
+              : "No progress timestamp is available yet.");
+
     private string GutenbergAvailableRecords => gutenbergCatalogStatus is { IsReady: true } status
         ? $"{status.BookCount:N0} books · {status.FormatCount:N0} formats"
         : "No searchable local records yet";
@@ -696,7 +707,7 @@
 
     private void StartGutenbergCatalogStatusPollingIfNeeded()
     {
-        if (!GutenbergCatalogIsPurging ||
+        if (!GutenbergCatalogOperationInProgress ||
             gutenbergCatalogStatusPollingTask is { IsCompleted: false } ||
             isDisposed)
         {
@@ -726,7 +737,7 @@
                     StateHasChanged();
                 });
 
-                if (status?.Status != "Purging")
+                if (!IsGutenbergCatalogOperationStatus(status?.Status))
                 {
                     return;
                 }
@@ -754,6 +765,7 @@
     {
         gutenbergCatalogBusy = true;
         gutenbergCatalogRefreshInProgress = true;
+        StartGutenbergCatalogStatusPollingIfNeeded();
         try
         {
             var result = await GutenbergCatalog.RefreshAsync();
@@ -831,6 +843,9 @@
         gutenbergCatalogStatusPollingCancellation.Cancel();
         gutenbergCatalogStatusPollingCancellation.Dispose();
     }
+
+    private static bool IsGutenbergCatalogOperationStatus(string? status) => status is
+        "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying" or "Purging";
 
     private async Task SetBuiltInSourceEnabledAsync(ProviderStatusResponse source, bool enabled)
     {

@@ -72,6 +72,9 @@ internal sealed class GutenbergCatalogMaintenance(
         state.LastArchiveSizeBytes = null;
         state.BookCount = 0;
         state.FormatCount = 0;
+        state.InProgressBookCount = 0;
+        state.InProgressFormatCount = 0;
+        state.LastProgressUtc = null;
         state.ParseErrorCount = 0;
         state.LastDuration = null;
         state.Status = "NeverSynced";

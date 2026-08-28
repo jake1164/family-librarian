@@ -74,6 +74,9 @@ internal sealed class GutenbergCatalogRepository(AppDbContext database) : IGuten
         nextScheduledSyncUtc,
         state?.BookCount ?? 0,
         state?.FormatCount ?? 0,
+        state?.InProgressBookCount ?? 0,
+        state?.InProgressFormatCount ?? 0,
+        state?.LastProgressUtc,
         state?.Status ?? "NeverSynced",
         state?.FailureMessage);
 

@@ -18,7 +18,10 @@ public sealed class GutenbergCatalogOptions
 
     public int SyncHourEastern { get; set; } = 13;
 
-    public int BatchSize { get; set; } = 1_000;
+    // A committed batch also provides the durable progress update shown to
+    // administrators. Keep this small enough that a first import becomes
+    // observable promptly without making every RDF record its own transaction.
+    public int BatchSize { get; set; } = 250;
 
     public int MinimumBookCount { get; set; } = 50_000;
 

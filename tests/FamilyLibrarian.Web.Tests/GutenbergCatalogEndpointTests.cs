@@ -30,7 +30,7 @@ public sealed class GutenbergCatalogEndpointTests
     }
 
     [TestMethod]
-    public async Task ARunningPurgeIsVisibleAndPreventsAnotherCatalogueOperation()
+    public async Task AnInProgressCatalogueOperationReportsProgressAndPreventsAnotherOperation()
     {
         var fixture = WebTestFixture.Require(_fixture);
         await SeedPurgingStatusAsync(fixture);
@@ -39,6 +39,9 @@ public sealed class GutenbergCatalogEndpointTests
         var status = await client.GetFromJsonAsync<GutenbergCatalogStatusResponse>("/api/v1/admin/gutenberg/status");
         Assert.IsNotNull(status);
         Assert.AreEqual("Purging", status.Status);
+        Assert.AreEqual(1_000, status.InProgressBookCount);
+        Assert.AreEqual(2_500, status.InProgressFormatCount);
+        Assert.IsNotNull(status.LastProgressUtc);
 
         var refresh = await client.PostAsync("/api/v1/admin/gutenberg/sync", content: null);
         var purge = await client.DeleteAsync("/api/v1/admin/gutenberg/catalog");
@@ -61,11 +64,19 @@ public sealed class GutenbergCatalogEndpointTests
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await database.Database.ExecuteSqlAsync($"""
             INSERT INTO gutenberg.catalog_sync_states
-                (id, book_count, format_count, parse_error_count, status)
-            VALUES ('gutenberg', 0, 0, 0, 'Purging')
-            ON CONFLICT (id) DO UPDATE SET status = 'Purging';
+                (id, book_count, format_count, in_progress_book_count, in_progress_format_count, last_progress_utc, parse_error_count, status)
+            VALUES ('gutenberg', 0, 0, 1000, 2500, NOW(), 0, 'Purging')
+            ON CONFLICT (id) DO UPDATE SET
+                in_progress_book_count = 1000,
+                in_progress_format_count = 2500,
+                last_progress_utc = NOW(),
+                status = 'Purging';
             """);
     }
 
-    private sealed record GutenbergCatalogStatusResponse(string Status);
+    private sealed record GutenbergCatalogStatusResponse(
+        string Status,
+        int InProgressBookCount,
+        int InProgressFormatCount,
+        DateTimeOffset? LastProgressUtc);
 }
