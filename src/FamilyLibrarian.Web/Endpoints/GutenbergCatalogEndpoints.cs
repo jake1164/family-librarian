@@ -29,7 +29,7 @@ internal static class GutenbergCatalogEndpoints
         CancellationToken cancellationToken)
     {
         var currentStatus = await catalog.GetStatusAsync(cancellationToken);
-        if (currentStatus.Status is "Downloading" or "Parsing" or "Importing")
+        if (currentStatus.Status is "Downloading" or "Parsing" or "Importing" or "Retrying")
         {
             return Results.Conflict(new
             {
@@ -50,7 +50,7 @@ internal static class GutenbergCatalogEndpoints
         CancellationToken cancellationToken)
     {
         var currentStatus = await catalog.GetStatusAsync(cancellationToken);
-        if (currentStatus.Status is "Downloading" or "Parsing" or "Importing")
+        if (currentStatus.Status is "Downloading" or "Parsing" or "Importing" or "Retrying")
         {
             return Results.Conflict(new
             {

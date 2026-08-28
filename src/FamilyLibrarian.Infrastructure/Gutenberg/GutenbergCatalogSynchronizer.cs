@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Formats.Tar;
 using System.Globalization;
 using System.Xml;
@@ -7,7 +8,6 @@ using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Org.BouncyCastle.Utilities.Bzip2;
 
 namespace FamilyLibrarian.Infrastructure.Gutenberg;
 
@@ -24,8 +24,39 @@ internal sealed partial class GutenbergCatalogSynchronizer(
 
     public async Task<GutenbergCatalogSyncResult> SynchronizeAsync(CancellationToken cancellationToken)
     {
+        var maximumAttempts = options.Value.ImportMaxAttempts;
+        for (var attempt = 1; attempt <= maximumAttempts; attempt++)
+        {
+            try
+            {
+                return await SynchronizeOnceAsync(cancellationToken);
+            }
+            catch (RetryableCatalogImportException exception) when (attempt < maximumAttempts)
+            {
+                database.ChangeTracker.Clear();
+                var state = await GetOrCreateStateAsync(CancellationToken.None);
+                state.Status = "Retrying";
+                state.FailureMessage = $"Attempt {attempt} of {maximumAttempts} failed: {exception.Message} Retrying automatically.";
+                await database.SaveChangesAsync(CancellationToken.None);
+                LogImportRetrying(attempt, maximumAttempts, exception);
+                await Task.Delay(options.Value.ImportRetryDelay, cancellationToken);
+            }
+            catch (RetryableCatalogImportException exception)
+            {
+                database.ChangeTracker.Clear();
+                var state = await GetOrCreateStateAsync(CancellationToken.None);
+                return new GutenbergCatalogSyncResult(false, GutenbergCatalogRepository.ToStatus(state, null), exception.Message);
+            }
+        }
+
+        throw new InvalidOperationException("The Project Gutenberg catalogue import retry loop completed unexpectedly.");
+    }
+
+    private async Task<GutenbergCatalogSyncResult> SynchronizeOnceAsync(CancellationToken cancellationToken)
+    {
         var startedAt = timeProvider.GetUtcNow();
         var state = await GetOrCreateStateAsync(cancellationToken);
+        await RemoveUnpublishedGenerationsAsync(state.ActiveGenerationId, cancellationToken);
         state.LastAttemptUtc = startedAt;
         state.Status = "Downloading";
         state.FailureMessage = null;
@@ -44,48 +75,81 @@ internal sealed partial class GutenbergCatalogSynchronizer(
             response.EnsureSuccessStatusCode();
             state.LastArchiveSizeBytes = response.Content.Headers.ContentLength;
             state.LastSourceModifiedUtc = response.Content.Headers.LastModified;
-            state.Status = "Parsing";
             await database.SaveChangesAsync(cancellationToken);
 
             await using var archive = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var decompressed = new CBZip2InputStream(archive);
-            using var tar = new TarReader(decompressed, leaveOpen: false);
-            TarEntry? entry;
-            while ((entry = tar.GetNextEntry()) is not null)
+            using var decompressor = StartDecompressor();
+            var temporaryTarPath = Path.Combine(Path.GetTempPath(), $"family-librarian-gutenberg-{Guid.NewGuid():N}.tar");
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile) ||
-                    entry.DataStream is null ||
-                    !entry.Name.EndsWith(".rdf", StringComparison.OrdinalIgnoreCase))
+                var copyArchive = CopyArchiveToDecompressorAsync(archive, decompressor, cancellationToken);
+                var readDecompressorError = decompressor.StandardError.ReadToEndAsync(cancellationToken);
+                await using var temporaryTar = new FileStream(
+                    temporaryTarPath,
+                    FileMode.CreateNew,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1024 * 1024,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan);
+                await decompressor.StandardOutput.BaseStream.CopyToAsync(temporaryTar, cancellationToken);
+                await copyArchive;
+                await decompressor.WaitForExitAsync(cancellationToken);
+                var decompressorError = await readDecompressorError;
+                if (decompressor.ExitCode != 0)
                 {
-                    continue;
+                    throw new InvalidDataException($"The bzip2 decoder failed: {decompressorError.Trim()}");
                 }
 
-                try
+                state.Status = "Parsing";
+                await database.SaveChangesAsync(cancellationToken);
+                temporaryTar.Position = 0;
+                using var tar = new TarReader(temporaryTar, leaveOpen: true);
+                TarEntry? entry;
+                while ((entry = tar.GetNextEntry()) is not null)
                 {
-                    var book = ParseBook(entry.DataStream, generationId);
-                    if (book is null)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile) ||
+                        entry.DataStream is null ||
+                        !entry.Name.EndsWith(".rdf", StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    formatCount += book.Formats.Count;
-                    database.GutenbergCatalogBooks.Add(book);
-                    bookCount++;
+                    try
+                    {
+                        var book = ParseBook(entry.DataStream, generationId);
+                        if (book is null)
+                        {
+                            continue;
+                        }
+
+                        formatCount += book.Formats.Count;
+                        database.GutenbergCatalogBooks.Add(book);
+                        bookCount++;
+                    }
+                    catch (Exception exception) when (exception is XmlException or FormatException or InvalidDataException)
+                    {
+                        parseErrorCount++;
+                    }
+
+                    if (bookCount > 0 && bookCount % options.Value.BatchSize == 0)
+                    {
+                        state.Status = "Importing";
+                        state.ParseErrorCount = parseErrorCount;
+                        await database.SaveChangesAsync(cancellationToken);
+                        database.ChangeTracker.Clear();
+                        state = await GetOrCreateStateAsync(cancellationToken);
+                    }
                 }
-                catch (Exception exception) when (exception is XmlException or FormatException or InvalidDataException)
+            }
+            finally
+            {
+                if (!decompressor.HasExited)
                 {
-                    parseErrorCount++;
+                    decompressor.Kill(entireProcessTree: true);
                 }
 
-                if (bookCount > 0 && bookCount % options.Value.BatchSize == 0)
-                {
-                    state.Status = "Importing";
-                    state.ParseErrorCount = parseErrorCount;
-                    await database.SaveChangesAsync(cancellationToken);
-                    database.ChangeTracker.Clear();
-                    state = await GetOrCreateStateAsync(cancellationToken);
-                }
+                File.Delete(temporaryTarPath);
             }
 
             await database.SaveChangesAsync(cancellationToken);
@@ -107,21 +171,74 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            await RemoveImportedGenerationAsync(generationId, CancellationToken.None);
             throw;
         }
         catch (Exception exception)
         {
             LogImportFailed(exception);
             database.ChangeTracker.Clear();
+            await RemoveImportedGenerationAsync(generationId, CancellationToken.None);
             var failedState = await GetOrCreateStateAsync(CancellationToken.None);
             failedState.Status = "Failed";
             failedState.FailureMessage = exception.Message;
             failedState.ParseErrorCount = parseErrorCount;
             failedState.LastDuration = timeProvider.GetUtcNow() - startedAt;
             await database.SaveChangesAsync(CancellationToken.None);
+            if (IsRetryableImportFailure(exception))
+            {
+                throw new RetryableCatalogImportException(exception);
+            }
+
             return new GutenbergCatalogSyncResult(false, GutenbergCatalogRepository.ToStatus(failedState, null), exception.Message);
         }
     }
+
+    private async Task RemoveImportedGenerationAsync(Guid generationId, CancellationToken cancellationToken)
+    {
+        database.ChangeTracker.Clear();
+        await database.GutenbergCatalogBooks
+            .Where(book => book.GenerationId == generationId)
+            .ExecuteDeleteAsync(cancellationToken);
+    }
+
+    private async Task RemoveUnpublishedGenerationsAsync(Guid? activeGenerationId, CancellationToken cancellationToken)
+    {
+        var unpublished = activeGenerationId is { } activeGenerationIdValue
+            ? database.GutenbergCatalogBooks.Where(book => book.GenerationId != activeGenerationIdValue)
+            : database.GutenbergCatalogBooks;
+        await unpublished.ExecuteDeleteAsync(cancellationToken);
+    }
+
+    private static Process StartDecompressor()
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "bzip2",
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        startInfo.ArgumentList.Add("--decompress");
+        startInfo.ArgumentList.Add("--stdout");
+        return Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start the bzip2 decoder.");
+    }
+
+    private static async Task CopyArchiveToDecompressorAsync(
+        Stream archive,
+        Process decompressor,
+        CancellationToken cancellationToken)
+    {
+        await using var input = decompressor.StandardInput.BaseStream;
+        await archive.CopyToAsync(input, cancellationToken);
+    }
+
+    private static bool IsRetryableImportFailure(Exception exception) =>
+        exception is HttpRequestException or IOException;
+
+    private sealed class RetryableCatalogImportException(Exception innerException)
+        : Exception(innerException.Message, innerException);
 
     private async Task<GutenbergCatalogSyncStateEntity> GetOrCreateStateAsync(CancellationToken cancellationToken)
     {
@@ -310,4 +427,7 @@ internal sealed partial class GutenbergCatalogSynchronizer(
 
     [LoggerMessage(EventId = 902, Level = LogLevel.Warning, Message = "gutenberg.catalog.import.failed")]
     private partial void LogImportFailed(Exception exception);
+
+    [LoggerMessage(EventId = 904, Level = LogLevel.Warning, Message = "gutenberg.catalog.import.retrying: attempt {Attempt} of {MaximumAttempts}.")]
+    private partial void LogImportRetrying(int attempt, int maximumAttempts, Exception exception);
 }

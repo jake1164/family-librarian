@@ -108,8 +108,8 @@
 
                             @if (!string.IsNullOrWhiteSpace(gutenbergCatalogStatus.FailureMessage))
                             {
-                                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
-                                    <MudText Typo="Typo.subtitle2">Latest refresh failed</MudText>
+                                <MudAlert Severity="@GutenbergCatalogMessageSeverity" Variant="Variant.Outlined" Class="mt-2">
+                                    <MudText Typo="Typo.subtitle2">@GutenbergCatalogMessageTitle</MudText>
                                     <MudText Typo="Typo.body2">@gutenbergCatalogStatus.FailureMessage</MudText>
                                     @if (gutenbergCatalogStatus.IsReady)
                                     {
@@ -583,7 +583,7 @@
     }
 
     private bool GutenbergCatalogIsSynchronizing => gutenbergCatalogRefreshInProgress ||
-        gutenbergCatalogStatus?.Status is "Downloading" or "Parsing" or "Importing";
+        gutenbergCatalogStatus?.Status is "Downloading" or "Parsing" or "Importing" or "Retrying";
 
     private string GutenbergCatalogStateLabel => gutenbergCatalogRefreshInProgress
         ? "Refreshing"
@@ -592,6 +592,7 @@
             "Downloading" => "Downloading",
             "Parsing" => "Parsing",
             "Importing" => "Importing",
+            "Retrying" => "Retrying",
             "Completed" when gutenbergCatalogStatus.IsReady => "Ready",
             "Failed" => "Refresh failed",
             "NeverSynced" => "Not downloaded",
@@ -603,6 +604,7 @@
         : gutenbergCatalogStatus?.Status switch
         {
             "Downloading" or "Parsing" or "Importing" => Color.Info,
+            "Retrying" => Color.Warning,
             "Completed" when gutenbergCatalogStatus.IsReady => Color.Success,
             "Failed" => Color.Error,
             _ => Color.Warning
@@ -620,6 +622,9 @@
             "Parsing" or "Importing" => gutenbergCatalogStatus.IsReady
                 ? "Building an updated catalogue. The existing local snapshot remains searchable."
                 : "Building the first local catalogue. Searches will be available after validation completes.",
+            "Retrying" => gutenbergCatalogStatus.IsReady
+                ? "Retrying the refresh after a transient archive error. The existing local snapshot remains searchable."
+                : "Retrying the first catalogue download after a transient archive error.",
             "Failed" when gutenbergCatalogStatus.IsReady =>
                 "The latest refresh failed, but the previous local catalogue is still searchable.",
             "Failed" => "The local catalogue is unavailable until a refresh succeeds.",
@@ -634,6 +639,12 @@
     private string GutenbergLastSuccessfulDownload => gutenbergCatalogStatus?.LastSuccessfulSyncUtc is { } downloadedAt
         ? downloadedAt.ToLocalTime().ToString("g")
         : "Never";
+
+    private Severity GutenbergCatalogMessageSeverity =>
+        gutenbergCatalogStatus?.Status == "Retrying" ? Severity.Warning : Severity.Error;
+
+    private string GutenbergCatalogMessageTitle =>
+        gutenbergCatalogStatus?.Status == "Retrying" ? "Refresh retrying" : "Latest refresh failed";
 
     private string GutenbergLastAttempt => gutenbergCatalogStatus?.LastAttemptUtc is { } attemptedAt
         ? attemptedAt.ToLocalTime().ToString("g")

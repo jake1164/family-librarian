@@ -15,4 +15,9 @@ public sealed class GutenbergCatalogOptions
     public int MinimumBookCount { get; set; } = 50_000;
 
     public int MinimumPreviousCatalogPercent { get; set; } = 95;
+
+    /// <summary>Total attempts for one scheduled or administrator-triggered import.</summary>
+    public int ImportMaxAttempts { get; set; } = 3;
+
+    public TimeSpan ImportRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 }

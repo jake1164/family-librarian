@@ -351,6 +351,10 @@ public static class DependencyInjection
                 $"{GutenbergCatalogOptions.SectionName}:SyncHourEastern must be between 0 and 23.")
             .Validate(options => options.BatchSize is >= 100 and <= 5_000,
                 $"{GutenbergCatalogOptions.SectionName}:BatchSize must be between 100 and 5000.")
+            .Validate(options => options.ImportMaxAttempts is >= 1 and <= 5,
+                $"{GutenbergCatalogOptions.SectionName}:ImportMaxAttempts must be between 1 and 5.")
+            .Validate(options => options.ImportRetryDelay >= TimeSpan.Zero && options.ImportRetryDelay <= TimeSpan.FromMinutes(5),
+                $"{GutenbergCatalogOptions.SectionName}:ImportRetryDelay must be between zero and five minutes.")
             .ValidateOnStart();
         var mirrorOptions = new GutenbergMirrorOptions();
         configuration.GetSection(GutenbergMirrorOptions.SectionName).Bind(mirrorOptions);
