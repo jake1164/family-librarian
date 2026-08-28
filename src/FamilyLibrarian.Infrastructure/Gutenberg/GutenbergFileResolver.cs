@@ -14,7 +14,10 @@ public sealed class GutenbergMirrorOptions
     public List<string> BaseUris { get; set; } =
     [
         "https://gutenberg.pglaf.org/",
-        "https://mirror.cs.odu.edu/gutenberg/"
+        "https://mirror.cs.odu.edu/gutenberg/",
+        // Some Project Gutenberg audio files are intentionally served only
+        // through the public web endpoint, not copied to the file mirrors.
+        "https://www.gutenberg.org/"
     ];
 }
 
@@ -27,16 +30,27 @@ public sealed class GutenbergFileResolver(GutenbergMirrorOptions options) : IGut
             return [];
         }
 
-        var relativePath = NormalizePath(sourcePath, formatKind);
         return options.BaseUris
-            .Select(value => Uri.TryCreate(value, UriKind.Absolute, out var baseUri) &&
-                             baseUri.Scheme == Uri.UriSchemeHttps &&
-                             Uri.TryCreate(baseUri, relativePath.TrimStart('/'), out var resolved)
-                ? resolved
-                : null)
+            .Select(value => ResolveUri(value, sourcePath, formatKind))
             .OfType<Uri>()
             .Distinct()
             .ToArray();
+    }
+
+    private static Uri? ResolveUri(string value, string sourcePath, GutenbergFormatKind formatKind)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var baseUri) ||
+            baseUri.Scheme != Uri.UriSchemeHttps)
+        {
+            return null;
+        }
+
+        // The public website retains the RDF catalogue's /files layout. The
+        // rsync-compatible mirrors use their split-digit directory layout.
+        var relativePath = string.Equals(baseUri.Host, "www.gutenberg.org", StringComparison.OrdinalIgnoreCase)
+            ? sourcePath
+            : NormalizePath(sourcePath, formatKind);
+        return Uri.TryCreate(baseUri, relativePath.TrimStart('/'), out var resolved) ? resolved : null;
     }
 
     private static string NormalizePath(string sourcePath, GutenbergFormatKind formatKind)

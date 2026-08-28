@@ -24,6 +24,12 @@ public sealed class GutenbergFileResolverTests
         "https://mirror-two.example/catalog/2/6/2/9/7/26297/mp3/26297-01.mp3"
     ];
 
+    private static readonly string[] PublicWebsiteFallbackExpectedUrls =
+    [
+        "https://mirror-one.example/2/6/2/9/7/26297/mp3/26297-01.mp3",
+        "https://www.gutenberg.org/files/26297/mp3/26297-01.mp3"
+    ];
+
     private readonly GutenbergFileResolver _resolver = new(new GutenbergMirrorOptions
     {
         BaseUris = ["https://mirror-one.example/", "https://mirror-two.example/catalog/"]
@@ -56,6 +62,21 @@ public sealed class GutenbergFileResolverTests
 
         CollectionAssert.AreEqual(
             AudioExpectedUrls,
+            urls.Select(url => url.ToString()).ToArray());
+    }
+
+    [TestMethod]
+    public void PublicWebsiteFallsBackToTheOriginalAudioPath()
+    {
+        var resolver = new GutenbergFileResolver(new GutenbergMirrorOptions
+        {
+            BaseUris = ["https://mirror-one.example/", "https://www.gutenberg.org/"]
+        });
+
+        var urls = resolver.Resolve("/files/26297/mp3/26297-01.mp3", GutenbergFormatKind.AudioMp3);
+
+        CollectionAssert.AreEqual(
+            PublicWebsiteFallbackExpectedUrls,
             urls.Select(url => url.ToString()).ToArray());
     }
 }
