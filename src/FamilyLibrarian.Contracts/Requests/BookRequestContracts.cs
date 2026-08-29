@@ -7,11 +7,15 @@ namespace FamilyLibrarian.Contracts.Requests;
 /// <param name="ConfirmDuplicate">
 /// Set after the caller has seen a duplicate warning and still wants the request.
 /// </param>
+/// <param name="ConfirmOwned">
+/// Set after the caller has seen an already-owned warning and still wants the request.
+/// </param>
 public sealed record CreateBookRequestRequest(
     Guid WorkId,
     IReadOnlyList<string> Formats,
     string? Note,
-    bool ConfirmDuplicate);
+    bool ConfirmDuplicate,
+    bool ConfirmOwned);
 
 public sealed record ChangeBookRequestStatusRequest(
     string Status,
@@ -97,3 +101,26 @@ public sealed record BookRequestDuplicateResponse(
     string Message,
     IReadOnlyList<string> OverlappingFormats,
     BookRequestResponse? ExistingRequest);
+
+public sealed record BookRequestOwnedFormatResponse(
+    string MediaType,
+    string ProviderId,
+    string? ExternalActionUri);
+
+/// <summary>
+/// The 409 answer to a create for a format already present in a linked
+/// library (e.g. CWA/Audiobookshelf).
+/// </summary>
+public sealed record BookRequestOwnedResponse(
+    string Message,
+    IReadOnlyList<BookRequestOwnedFormatResponse> OwnedFormats);
+
+/// <summary>
+/// Unified 409 envelope for request creation: exactly one of
+/// <see cref="Duplicate"/> or <see cref="Owned"/> is populated, selected by
+/// <see cref="Kind"/> ("Duplicate" or "Owned").
+/// </summary>
+public sealed record CreateBookRequestConflictResponse(
+    string Kind,
+    BookRequestDuplicateResponse? Duplicate,
+    BookRequestOwnedResponse? Owned);

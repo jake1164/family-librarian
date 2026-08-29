@@ -238,7 +238,7 @@ public sealed class EndpointAuthorizationTests
 
         var response = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(Guid.NewGuid(), ["Ebook"], null, false));
+            new CreateBookRequestRequest(Guid.NewGuid(), ["Ebook"], null, false, false));
 
         Assert.AreEqual(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -253,7 +253,7 @@ public sealed class EndpointAuthorizationTests
         // missing, which is exactly the shape of a cross-site forgery.
         var response = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(Guid.NewGuid(), ["Ebook"], null, false));
+            new CreateBookRequestRequest(Guid.NewGuid(), ["Ebook"], null, false, false));
 
         Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
     }

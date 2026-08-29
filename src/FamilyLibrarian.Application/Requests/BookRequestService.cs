@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Domain.Audit;
@@ -21,7 +22,8 @@ public sealed class BookRequestService(
     IClock clock,
     IAuditWriter audit,
     NotificationService notifications,
-    IFormatReadinessService readiness)
+    IFormatReadinessService readiness,
+    IWorkFulfillmentOptionsService fulfillmentOptions)
 {
     /// <summary>
     /// The status changes a requester may make. Moving a request to
@@ -54,6 +56,7 @@ public sealed class BookRequestService(
         IReadOnlyList<RequestMediaType> mediaTypes,
         string? note,
         bool confirmDuplicate,
+        bool confirmOwned,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(mediaTypes);
@@ -87,6 +90,33 @@ public sealed class BookRequestService(
             {
                 return CreateBookRequestResult.Invalid(
                     $"{mediaType} requests aren't available right now: {check.Reason}");
+            }
+        }
+
+        // Ownership calls out to whatever owned-library providers are
+        // registered (e.g. a live CWA/Audiobookshelf lookup), so it is
+        // checked here — before the per-(user, workId) creation lock below —
+        // and, like the duplicate check, only warns rather than blocks: it is
+        // reported first when both an owned match and a duplicate exist,
+        // since it is cheaper (no lock) and is the more fundamental "why are
+        // you requesting this at all" signal. Confirming past it and
+        // resubmitting then lets the duplicate check run normally.
+        if (!confirmOwned)
+        {
+            var owned = new List<OwnedFormatOption>();
+            foreach (var mediaType in requestedFormats)
+            {
+                var options = await fulfillmentOptions.GetOptionsAsync(workId, mediaType, cancellationToken);
+                var ownedOption = options.FirstOrDefault(option => option.OptionKind == OptionKind.Owned);
+                if (ownedOption is not null)
+                {
+                    owned.Add(new OwnedFormatOption(mediaType, ownedOption.ProviderId, ownedOption.ExternalActionUri));
+                }
+            }
+
+            if (owned.Count > 0)
+            {
+                return CreateBookRequestResult.AlreadyOwned(owned);
             }
         }
 
@@ -371,30 +401,38 @@ public sealed record CreateBookRequestResult(
     CreateBookRequestOutcome Outcome,
     BookRequestView? Request,
     IReadOnlyList<RequestMediaType> OverlappingFormats,
-    string? Error)
+    string? Error,
+    IReadOnlyList<OwnedFormatOption> OwnedFormats)
 {
     public static CreateBookRequestResult Created(BookRequestView request) =>
-        new(CreateBookRequestOutcome.Created, request, [], null);
+        new(CreateBookRequestOutcome.Created, request, [], null, []);
 
     public static CreateBookRequestResult Duplicate(
         BookRequestView? existing,
         IReadOnlyList<RequestMediaType> overlappingFormats) =>
-        new(CreateBookRequestOutcome.DuplicateWarning, existing, overlappingFormats, null);
+        new(CreateBookRequestOutcome.DuplicateWarning, existing, overlappingFormats, null, []);
+
+    public static CreateBookRequestResult AlreadyOwned(IReadOnlyList<OwnedFormatOption> ownedFormats) =>
+        new(CreateBookRequestOutcome.OwnedWarning, null, [], null, ownedFormats);
 
     public static CreateBookRequestResult WorkNotFound() =>
-        new(CreateBookRequestOutcome.WorkNotFound, null, [], null);
+        new(CreateBookRequestOutcome.WorkNotFound, null, [], null, []);
 
     public static CreateBookRequestResult Invalid(string error) =>
-        new(CreateBookRequestOutcome.Invalid, null, [], error);
+        new(CreateBookRequestOutcome.Invalid, null, [], error, []);
 
     public static CreateBookRequestResult Unauthenticated() =>
-        new(CreateBookRequestOutcome.Unauthenticated, null, [], null);
+        new(CreateBookRequestOutcome.Unauthenticated, null, [], null, []);
 }
+
+/// <summary>One already-owned format found while creating a request, for the confirmable warning.</summary>
+public sealed record OwnedFormatOption(RequestMediaType MediaType, string ProviderId, Uri? ExternalActionUri);
 
 public enum CreateBookRequestOutcome
 {
     Created,
     DuplicateWarning,
+    OwnedWarning,
     WorkNotFound,
     Invalid,
     Unauthenticated

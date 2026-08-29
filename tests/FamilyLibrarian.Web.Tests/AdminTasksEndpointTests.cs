@@ -42,7 +42,7 @@ public sealed class AdminTasksEndpointTests
         var workId = await ResolveWorkAsync(reader, "the-hobbit");
         var create = await reader.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(workId, ["Ebook"], "For the dashboard.", false));
+            new CreateBookRequestRequest(workId, ["Ebook"], "For the dashboard.", false, false));
         Assert.AreEqual(HttpStatusCode.Created, create.StatusCode);
         var request = await create.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);

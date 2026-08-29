@@ -79,7 +79,7 @@
                 </MudStack>
                 <MudText Typo="Typo.caption" Class="mt-2">
                     Already having a copy doesn't guarantee everyone in the household can get to it —
-                    you can still ask for it below.
+                    asking for it below will ask you to confirm you still want a new copy.
                 </MudText>
             </MudPaper>
         }
@@ -151,6 +151,23 @@
                         </MudAlert>
                     }
 
+                    @if (owned is not null)
+                    {
+                        <MudAlert Severity="Severity.Warning">
+                            @owned.Message
+                            @foreach (var format in owned.OwnedFormats)
+                            {
+                                <MudText Typo="Typo.body2">
+                                    @format.MediaType is already in your library.
+                                    @if (!string.IsNullOrEmpty(format.ExternalActionUri))
+                                    {
+                                        <MudLink Href="@format.ExternalActionUri" Target="_blank" rel="noopener noreferrer">Open it</MudLink>
+                                    }
+                                </MudText>
+                            }
+                        </MudAlert>
+                    }
+
                     @if (!string.IsNullOrWhiteSpace(errorMessage))
                     {
                         <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
@@ -159,18 +176,30 @@
                     <MudStack Row="true" Spacing="2">
                         <MudButton Variant="Variant.Filled"
                                    Color="Color.Primary"
-                                   OnClick="() => SubmitAsync(false)"
+                                   OnClick="SubmitAsync"
                                    Disabled="@(isSubmitting || !HasFormatSelected)">
                             @(isSubmitting ? "Sending…" : "Request this book")
                         </MudButton>
 
                         @* Shown only after the host has reported an overlap, so the
                            confirmation is a deliberate second choice. *@
-        @if (duplicate is not null)
+                        @if (duplicate is not null)
                         {
                             <MudButton Variant="Variant.Outlined"
                                        Color="Color.Warning"
-                                       OnClick="() => SubmitAsync(true)"
+                                       OnClick="ConfirmDuplicateAsync"
+                                       Disabled="@isSubmitting">
+                                Request it anyway
+                            </MudButton>
+                        }
+
+                        @* Shown only after the host has reported an already-owned
+                           format, so the confirmation is a deliberate second choice. *@
+                        @if (owned is not null)
+                        {
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Warning"
+                                       OnClick="ConfirmOwnedAsync"
                                        Disabled="@isSubmitting">
                                 Request it anyway
                             </MudButton>
@@ -238,7 +267,10 @@
     private string? note;
     private bool isSubmitting;
     private string? errorMessage;
+    private bool confirmDuplicate;
+    private bool confirmOwned;
     private BookRequestDuplicateResponse? duplicate;
+    private BookRequestOwnedResponse? owned;
     private BookRequestResponse? createdRequest;
     private CancellationTokenSource? requestStatusRefreshCancellation;
     private CancellationTokenSource? fulfillmentLoadCancellation;
@@ -265,6 +297,9 @@
         fulfillment = null;
         createdRequest = null;
         duplicate = null;
+        owned = null;
+        confirmDuplicate = false;
+        confirmOwned = false;
         errorMessage = null;
 
         try
@@ -443,7 +478,19 @@
         }
     }
 
-    private async Task SubmitAsync(bool confirmDuplicate)
+    private Task ConfirmDuplicateAsync()
+    {
+        confirmDuplicate = true;
+        return SubmitAsync();
+    }
+
+    private Task ConfirmOwnedAsync()
+    {
+        confirmOwned = true;
+        return SubmitAsync();
+    }
+
+    private async Task SubmitAsync()
     {
         if (!HasFormatSelected)
         {
@@ -467,16 +514,22 @@
                 formats.Add("Audiobook");
             }
 
-            var outcome = await Requests.CreateAsync(WorkId, formats, note, confirmDuplicate);
+            var outcome = await Requests.CreateAsync(WorkId, formats, note, confirmDuplicate, confirmOwned);
             switch (outcome.Status)
             {
                 case CreateRequestStatus.Created:
                     createdRequest = outcome.Request;
                     duplicate = null;
+                    owned = null;
                     StartRequestStatusRefresh();
                     break;
                 case CreateRequestStatus.DuplicateWarning:
                     duplicate = outcome.Existing;
+                    owned = null;
+                    break;
+                case CreateRequestStatus.OwnedWarning:
+                    owned = outcome.Owned;
+                    duplicate = null;
                     break;
                 default:
                     errorMessage = outcome.Error;

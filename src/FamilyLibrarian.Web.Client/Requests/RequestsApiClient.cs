@@ -23,12 +23,13 @@ public sealed class RequestsApiClient(HttpClient httpClient, AntiforgeryTokenPro
         IReadOnlyList<string> formats,
         string? note,
         bool confirmDuplicate,
+        bool confirmOwned,
         CancellationToken cancellationToken = default)
     {
         using var response = await SendAsync(
             HttpMethod.Post,
             "api/v1/requests/",
-            new CreateBookRequestRequest(workId, formats, note, confirmDuplicate),
+            new CreateBookRequestRequest(workId, formats, note, confirmDuplicate, confirmOwned),
             cancellationToken);
 
         if (response.IsSuccessStatusCode)
@@ -37,12 +38,15 @@ public sealed class RequestsApiClient(HttpClient httpClient, AntiforgeryTokenPro
                 await response.Content.ReadFromJsonAsync<BookRequestResponse>(cancellationToken));
         }
 
-        // The host answers an overlapping request with 409 and the outstanding
-        // one, so the user can decide rather than being blocked.
+        // The host answers an overlapping-request or already-owned format with
+        // 409 and a discriminated payload, so the user can decide rather than
+        // being blocked.
         if (response.StatusCode == HttpStatusCode.Conflict)
         {
-            return CreateRequestOutcome.Duplicate(
-                await response.Content.ReadFromJsonAsync<BookRequestDuplicateResponse>(cancellationToken));
+            var conflict = await response.Content.ReadFromJsonAsync<CreateBookRequestConflictResponse>(cancellationToken);
+            return conflict?.Kind == "Owned"
+                ? CreateRequestOutcome.AlreadyOwned(conflict.Owned)
+                : CreateRequestOutcome.Duplicate(conflict?.Duplicate);
         }
 
         return CreateRequestOutcome.Failed(await ReadErrorAsync(response, cancellationToken));
@@ -150,22 +154,27 @@ public sealed record CreateRequestOutcome(
     CreateRequestStatus Status,
     BookRequestResponse? Request,
     BookRequestDuplicateResponse? Existing,
+    BookRequestOwnedResponse? Owned,
     string? Error)
 {
     public static CreateRequestOutcome Created(BookRequestResponse? request) =>
-        new(CreateRequestStatus.Created, request, null, null);
+        new(CreateRequestStatus.Created, request, null, null, null);
 
     public static CreateRequestOutcome Duplicate(BookRequestDuplicateResponse? existing) =>
-        new(CreateRequestStatus.DuplicateWarning, null, existing, null);
+        new(CreateRequestStatus.DuplicateWarning, null, existing, null, null);
+
+    public static CreateRequestOutcome AlreadyOwned(BookRequestOwnedResponse? owned) =>
+        new(CreateRequestStatus.OwnedWarning, null, null, owned, null);
 
     public static CreateRequestOutcome Failed(string error) =>
-        new(CreateRequestStatus.Failed, null, null, error);
+        new(CreateRequestStatus.Failed, null, null, null, error);
 }
 
 public enum CreateRequestStatus
 {
     Created,
     DuplicateWarning,
+    OwnedWarning,
     Failed
 }
 

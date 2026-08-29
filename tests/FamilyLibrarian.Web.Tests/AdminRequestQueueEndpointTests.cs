@@ -184,7 +184,7 @@ public sealed class AdminRequestQueueEndpointTests
         var hobbitWorkId = await ResolveWorkAsync(owner, "the-hobbit");
         var withoutAttemptCreate = await owner.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(hobbitWorkId, ["Ebook"], "For the recheck test.", false));
+            new CreateBookRequestRequest(hobbitWorkId, ["Ebook"], "For the recheck test.", false, false));
         Assert.AreEqual(HttpStatusCode.Created, withoutAttemptCreate.StatusCode);
         var withoutAttempt = await withoutAttemptCreate.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(withoutAttempt);
@@ -268,7 +268,7 @@ public sealed class AdminRequestQueueEndpointTests
     {
         var response = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(workId, ["Audiobook"], "For a road trip.", false));
+            new CreateBookRequestRequest(workId, ["Audiobook"], "For a road trip.", false, false));
         Assert.AreEqual(HttpStatusCode.Created, response.StatusCode);
         var request = await response.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
