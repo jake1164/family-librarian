@@ -2,6 +2,7 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
@@ -12,6 +13,7 @@ using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Acquisition;
+using FamilyLibrarian.Infrastructure.Communications;
 using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
@@ -150,6 +152,12 @@ public static class DependencyInjection
         services.AddScoped<NotificationRepository>();
         services.AddScoped<INotificationRepository>(provider => provider.GetRequiredService<NotificationRepository>());
         services.AddScoped<NotificationService>();
+
+        // SMTP remains dormant until it is configured and an administrator
+        // explicitly tests it; registration itself never opens a connection.
+        services.AddScoped<ISmtpSettingsStore, SmtpSettingsStore>();
+        services.AddScoped<ISmtpTestSender, MailKitSmtpTestSender>();
+        services.AddScoped<SmtpSettingsService>();
 
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
         services.AddScoped<UserWorkFeedbackService>();

@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
@@ -124,6 +125,12 @@ internal sealed class FamilyLibrarianAppFactory(
             // format-readiness gate overrides this via configureTestServices.
             services.RemoveAll<IFormatReadinessService>();
             services.AddSingleton<IFormatReadinessService, AlwaysReadyFormatReadinessService>();
+
+            // SMTP is configured and probed by individual admin tests. Keep the
+            // default probe in-process so the shared fixture never depends on
+            // a reachable mail server.
+            services.RemoveAll<ISmtpTestSender>();
+            services.AddSingleton<ISmtpTestSender, AlwaysSucceedsSmtpTestSender>();
 
             // Same posture for the two publishing destinations: no ordinary test
             // depends on a reachable CWA or Audiobookshelf instance. Nothing calls

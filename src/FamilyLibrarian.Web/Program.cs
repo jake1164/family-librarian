@@ -200,6 +200,7 @@ app.MapAdminRequestEndpoints();
 app.MapAdminTasksEndpoints();
 app.MapGutenbergCatalogEndpoints();
 app.MapNotificationEndpoints();
+app.MapSmtpSettingsEndpoints();
 app.MapFeedbackEndpoints();
 app.MapSecurityQueueEndpoints();
 app.MapInvitationEndpoints();

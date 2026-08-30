@@ -1,0 +1,235 @@
+@page "/settings/communications"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Communications
+@using FamilyLibrarian.Web.Client.Communications
+@using Microsoft.AspNetCore.Authorization
+@inject SmtpSettingsApiClient SmtpApi
+@inject ISnackbar Snackbar
+
+<PageTitle>Communications settings | Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Communications settings</MudText>
+<MudText Typo="Typo.body1" Class="mb-4">
+    Configure optional outbound providers. SMTP is currently used only for an
+    administrator test email; operational alert routing will be added separately.
+</MudText>
+
+@if (loadFailed)
+{
+    <MudAlert Severity="Severity.Error">We could not load SMTP settings.</MudAlert>
+}
+else if (smtp is null)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading SMTP settings" />
+}
+else
+{
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudText Typo="Typo.h6">SMTP (outbound email)</MudText>
+            @if (NeedsSetup)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Needs setup</MudChip>
+            }
+            <MudSpacer />
+            <MudSwitch T="bool" Value="smtp.IsEnabled" ValueChanged="SetEnabledAsync" Color="Color.Primary"
+                       Disabled="@busy" Label="@(smtp.IsEnabled ? "Enabled" : "Disabled")" />
+        </MudStack>
+
+        <MudText Typo="Typo.body2" Class="mt-3 mb-3">
+            SMTP connections must use TLS. StartTLS is typical for port 587;
+            SSL/TLS on connect is typical for port 465. A saved configuration
+            must successfully send a test email before it can be enabled.
+        </MudText>
+
+        <MudStack Spacing="3">
+            <MudTextField T="string" Label="SMTP host" @bind-Value="host" Disabled="@busy"
+                          Placeholder="smtp.example.com" />
+            <MudNumericField T="int?" Label="Port" @bind-Value="port" Disabled="@busy" />
+            <MudSelect T="string" Label="TLS mode" @bind-Value="securityMode" Disabled="@busy">
+                <MudSelectItem Value="@("StartTls")">StartTLS</MudSelectItem>
+                <MudSelectItem Value="@("SslOnConnect")">SSL/TLS on connect</MudSelectItem>
+            </MudSelect>
+            <MudTextField T="string" Label="SMTP username (optional for a trusted relay)" @bind-Value="username"
+                          autocomplete="off" Disabled="@busy" />
+
+            <MudText Typo="Typo.subtitle2">SMTP password</MudText>
+            <MudText Typo="Typo.body2">
+                @(smtp.HasPassword
+                    ? $"A password is stored (saved {smtp.PasswordSetAtUtc?.ToLocalTime().ToString("g")}). Leave this blank to keep it."
+                    : "No password is stored. Leave both username and password blank only for a trusted relay.")
+            </MudText>
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                <MudTextField T="string" Label="Replace SMTP password" @bind-Value="passwordDraft"
+                              InputType="InputType.Password" autocomplete="new-password" Disabled="@busy" Class="flex-grow-1" />
+                <MudButton Variant="Variant.Filled" Disabled="@(busy || string.IsNullOrWhiteSpace(passwordDraft))"
+                           OnClick="SavePasswordAsync">Save password</MudButton>
+                @if (smtp.HasPassword)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@busy"
+                               OnClick="ClearPasswordAsync">Remove</MudButton>
+                }
+            </MudStack>
+
+            <MudTextField T="string" Label="Sender email address" @bind-Value="fromAddress" Disabled="@busy"
+                          Placeholder="family-librarian@example.com" />
+            <MudTextField T="string" Label="Sender display name (optional)" @bind-Value="fromName" Disabled="@busy"
+                          Placeholder="Family Librarian" />
+        </MudStack>
+
+        <MudStack Row="true" Spacing="2" Class="mt-4">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveSettingsAsync">Save settings</MudButton>
+        </MudStack>
+
+        <MudDivider Class="my-4" />
+        <MudText Typo="Typo.h6" GutterBottom="true">Send test email</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            This sends a real message using the saved configuration and records only the outcome—not the recipient address.
+        </MudText>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudTextField T="string" Label="Test recipient" @bind-Value="testRecipient" Disabled="@busy" Class="flex-grow-1" />
+            <MudButton Variant="Variant.Outlined" Disabled="@(busy || string.IsNullOrWhiteSpace(testRecipient))"
+                       OnClick="SendTestAsync">Send test</MudButton>
+        </MudStack>
+        @if (testResult is not null)
+        {
+            <MudAlert Severity="@(testResult.Succeeded ? Severity.Success : Severity.Warning)" Class="mt-3">
+                @testResult.Message
+            </MudAlert>
+        }
+        else if (smtp.LastTestedAtUtc is { } lastTested)
+        {
+            <MudText Typo="Typo.caption" Class="mt-3">
+                Last tested @lastTested.ToLocalTime().ToString("g") —
+                @(smtp.LastTestSucceeded == true ? "succeeded." : "failed.") @smtp.LastTestMessage
+            </MudText>
+        }
+    </MudPaper>
+}
+
+@code {
+    private SmtpSettingsResponse? smtp;
+    private bool loadFailed, busy;
+    private string securityMode = "StartTls";
+    private string? host, username, fromAddress, fromName, passwordDraft, testRecipient;
+    private int? port;
+    private SmtpTestResponse? testResult;
+
+    private bool NeedsSetup => string.IsNullOrWhiteSpace(smtp?.Host) || smtp?.Port is null ||
+        string.IsNullOrWhiteSpace(smtp?.FromAddress);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            smtp = await SmtpApi.GetAsync();
+            ApplyFields(smtp);
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await SmtpApi.SetSettingsAsync(new SetSmtpSettingsRequest(
+                host, port, securityMode, username, fromAddress, fromName));
+            ApplyResult(result, "SMTP settings saved.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SetEnabledAsync(bool enabled)
+    {
+        busy = true;
+        try
+        {
+            ApplyResult(await SmtpApi.SetEnabledAsync(enabled), enabled ? "SMTP enabled." : "SMTP disabled.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SavePasswordAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await SmtpApi.SetPasswordAsync(passwordDraft!);
+            if (result.Succeeded)
+            {
+                passwordDraft = null;
+            }
+            ApplyResult(result, "SMTP password saved.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ClearPasswordAsync()
+    {
+        busy = true;
+        try
+        {
+            ApplyResult(await SmtpApi.ClearPasswordAsync(), "SMTP password removed.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SendTestAsync()
+    {
+        busy = true;
+        try
+        {
+            testResult = await SmtpApi.SendTestAsync(testRecipient!)
+                ?? new SmtpTestResponse(false, "The SMTP test could not be completed.");
+            if (testResult.Succeeded)
+            {
+                smtp = await SmtpApi.GetAsync();
+                ApplyFields(smtp);
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void ApplyResult(SmtpSettingsResult result, string successMessage)
+    {
+        if (!result.Succeeded)
+        {
+            Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+            return;
+        }
+
+        smtp = result.Settings;
+        ApplyFields(smtp);
+        Snackbar.Add(successMessage, Severity.Success);
+    }
+
+    private void ApplyFields(SmtpSettingsResponse? settings)
+    {
+        if (settings is null) return;
+        host = settings.Host;
+        port = settings.Port;
+        securityMode = settings.SecurityMode;
+        username = settings.Username;
+        fromAddress = settings.FromAddress;
+        fromName = settings.FromName;
+    }
+}

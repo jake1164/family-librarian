@@ -4,6 +4,7 @@ using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Feedback;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Policy;
@@ -53,6 +54,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<NotificationEvent> NotificationEvents => Set<NotificationEvent>();
 
     public DbSet<NotificationReceipt> NotificationReceipts => Set<NotificationReceipt>();
+
+    public DbSet<SmtpSettings> SmtpSettings => Set<SmtpSettings>();
 
     public DbSet<UserWorkFeedback> UserWorkFeedback => Set<UserWorkFeedback>();
 
@@ -124,6 +127,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         ConfigureCatalog(builder);
         ConfigureRequests(builder);
         ConfigureNotifications(builder);
+        ConfigureCommunications(builder);
         ConfigureFeedback(builder);
         ConfigureProviders(builder);
         ConfigureAcquisition(builder);
@@ -162,6 +166,38 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
             entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
+    }
+
+    private static void ConfigureCommunications(ModelBuilder builder)
+    {
+        builder.Entity<SmtpSettings>(entity =>
+        {
+            entity.ToTable("smtp_settings", "communications");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(settings => settings.Host).HasColumnName("host").HasMaxLength(256);
+            entity.Property(settings => settings.Port).HasColumnName("port");
+            entity.Property(settings => settings.SecurityMode).HasColumnName("security_mode")
+                .HasConversion<string>().HasMaxLength(32).HasDefaultValue(SmtpSecurityMode.StartTls);
+            entity.Property(settings => settings.Username).HasColumnName("username").HasMaxLength(256);
+            entity.Property(settings => settings.ProtectedPassword).HasColumnName("protected_password").HasMaxLength(2_048);
+            entity.Property(settings => settings.PasswordFormatVersion).HasColumnName("password_format_version");
+            entity.Property(settings => settings.PasswordSetAtUtc).HasColumnName("password_set_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.FromAddress).HasColumnName("from_address").HasMaxLength(320);
+            entity.Property(settings => settings.FromName).HasColumnName("from_name").HasMaxLength(256);
+            entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
+            entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc")
+                .HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
         });
     }
