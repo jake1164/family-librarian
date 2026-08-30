@@ -56,7 +56,8 @@ if [[ "$AUDIOBOOKSHELF_BACKUP_MODE" == directories ]]; then
   required_directories+=("$AUDIOBOOKSHELF_CONFIGURATION_DIRECTORY" "$AUDIOBOOKSHELF_LIBRARY_DIRECTORY")
 fi
 
-for required_directory in "${required_directories[@]}"; do
+for required_directory in "${required_directories[@]-}"; do
+  [[ -n "$required_directory" ]] || continue
   [[ -d "$required_directory" ]] || { echo "Configured backup directory does not exist: $required_directory" >&2; exit 2; }
 done
 
