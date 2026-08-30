@@ -45,6 +45,14 @@ public sealed class MailKitSmtpTestSender(ICredentialProtector protector) : ISmt
         {
             using var client = new SmtpClient();
             client.Timeout = (int)TimeSpan.FromSeconds(15).TotalMilliseconds;
+            // MailKit performs full online revocation (CRL/OCSP) checking by
+            // default, unlike most SMTP clients. That fails a household's own
+            // mail relay using an internally-issued/self-signed certificate,
+            // or any deployment with restricted outbound egress that can't
+            // reach a revocation responder, even though the certificate is
+            // otherwise valid and trusted. Chain/trust/expiry/hostname
+            // validation still applies; only revocation freshness is relaxed.
+            client.CheckCertificateRevocation = false;
             await client.ConnectAsync(
                 settings.Host!, settings.Port!.Value, ToSecureSocketOptions(settings.SecurityMode), cancellationToken);
 
