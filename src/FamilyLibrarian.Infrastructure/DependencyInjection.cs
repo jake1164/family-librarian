@@ -159,6 +159,19 @@ public static class DependencyInjection
         services.AddScoped<ISmtpTestSender, MailKitSmtpTestSender>();
         services.AddScoped<SmtpSettingsService>();
 
+        // The provider-neutral outbound communications foundation: features
+        // enqueue through OutboundCommunicationService, and the dispatcher
+        // (run by a hosted service) attempts every registered
+        // IOutboundCommunicationProvider that reports itself enabled. SMTP is
+        // the only provider today; adding another (e.g. Matrix) means another
+        // IOutboundCommunicationProvider registration, not a redesign here.
+        services.AddScoped<OutboundCommunicationRepository>();
+        services.AddScoped<IOutboundCommunicationStore>(provider => provider.GetRequiredService<OutboundCommunicationRepository>());
+        services.AddScoped<OutboundCommunicationService>();
+        services.AddScoped<OutboundCommunicationDispatcher>();
+        services.AddScoped<IUserEmailLookup, UserEmailLookup>();
+        services.AddScoped<IOutboundCommunicationProvider, SmtpOutboundCommunicationProvider>();
+
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
         services.AddScoped<UserWorkFeedbackService>();
 

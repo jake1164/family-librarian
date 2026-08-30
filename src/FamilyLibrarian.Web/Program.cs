@@ -6,6 +6,7 @@ using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web.Acquisition;
+using FamilyLibrarian.Web.Communications;
 using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
 using FamilyLibrarian.Web.Gutenberg;
@@ -21,6 +22,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
+    builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();
 }
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgresql")

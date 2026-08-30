@@ -1,18 +1,16 @@
-using System.Net.Sockets;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Communications;
-using MailKit.Net.Smtp;
-using MailKit.Security;
 using MimeKit;
 
 namespace FamilyLibrarian.Infrastructure.Communications;
 
 /// <summary>
-/// MailKit-backed SMTP test sender. This is purposely limited to the explicit
-/// administrator probe; operational notification delivery will use the same
-/// transport behind a durable delivery outbox in a later slice.
+/// MailKit-backed SMTP test sender: the explicit administrator probe used to
+/// validate settings before they can be enabled. Real notification delivery
+/// goes through <see cref="SmtpOutboundCommunicationProvider"/> instead, over
+/// the same <see cref="SmtpMailTransport"/>.
 /// </summary>
 public sealed class MailKitSmtpTestSender(ICredentialProtector protector) : ISmtpTestSender
 {
@@ -43,58 +41,12 @@ public sealed class MailKitSmtpTestSender(ICredentialProtector protector) : ISmt
 
         try
         {
-            using var client = new SmtpClient();
-            client.Timeout = (int)TimeSpan.FromSeconds(15).TotalMilliseconds;
-            // MailKit performs full online revocation (CRL/OCSP) checking by
-            // default, unlike most SMTP clients. That fails a household's own
-            // mail relay using an internally-issued/self-signed certificate,
-            // or any deployment with restricted outbound egress that can't
-            // reach a revocation responder, even though the certificate is
-            // otherwise valid and trusted. Chain/trust/expiry/hostname
-            // validation still applies; only revocation freshness is relaxed.
-            client.CheckCertificateRevocation = false;
-            await client.ConnectAsync(
-                settings.Host!, settings.Port!.Value, ToSecureSocketOptions(settings.SecurityMode), cancellationToken);
-
-            if (!string.IsNullOrWhiteSpace(settings.Username))
-            {
-                await client.AuthenticateAsync(settings.Username, password!, cancellationToken);
-            }
-
-            await client.SendAsync(message, cancellationToken);
-            await client.DisconnectAsync(true, cancellationToken);
+            await SmtpMailTransport.SendAsync(settings, password, message, cancellationToken);
             return new ConnectionTestOutcome(true, "SMTP accepted the test email for delivery.");
         }
-        catch (AuthenticationException)
+        catch (SmtpTransportException exception)
         {
-            return new ConnectionTestOutcome(false, "SMTP authentication was rejected.");
-        }
-        catch (SslHandshakeException)
-        {
-            return new ConnectionTestOutcome(false, "SMTP TLS negotiation failed. Check the selected security mode and server certificate.");
-        }
-        catch (SmtpCommandException)
-        {
-            return new ConnectionTestOutcome(false, "The SMTP server rejected the test email.");
-        }
-        catch (SmtpProtocolException)
-        {
-            return new ConnectionTestOutcome(false, "The SMTP server returned an invalid protocol response.");
-        }
-        catch (SocketException)
-        {
-            return new ConnectionTestOutcome(false, "The SMTP server could not be reached.");
-        }
-        catch (IOException)
-        {
-            return new ConnectionTestOutcome(false, "The SMTP connection was interrupted.");
+            return new ConnectionTestOutcome(false, exception.Message);
         }
     }
-
-    private static SecureSocketOptions ToSecureSocketOptions(SmtpSecurityMode mode) => mode switch
-    {
-        SmtpSecurityMode.StartTls => SecureSocketOptions.StartTls,
-        SmtpSecurityMode.SslOnConnect => SecureSocketOptions.SslOnConnect,
-        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported SMTP security mode.")
-    };
 }

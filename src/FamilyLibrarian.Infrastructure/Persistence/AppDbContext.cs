@@ -57,6 +57,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<SmtpSettings> SmtpSettings => Set<SmtpSettings>();
 
+    public DbSet<OutboundCommunication> OutboundCommunications => Set<OutboundCommunication>();
+
+    public DbSet<OutboundCommunicationDelivery> OutboundCommunicationDeliveries => Set<OutboundCommunicationDelivery>();
+
     public DbSet<UserWorkFeedback> UserWorkFeedback => Set<UserWorkFeedback>();
 
     public DbSet<AcquisitionJob> AcquisitionJobs => Set<AcquisitionJob>();
@@ -199,6 +203,51 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc")
                 .HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
+
+        builder.Entity<OutboundCommunication>(entity =>
+        {
+            entity.ToTable("outbound_communications", "communications");
+            entity.HasKey(communication => communication.Id);
+            entity.Property(communication => communication.Id).HasColumnName("id");
+            entity.Property(communication => communication.RecipientUserId).HasColumnName("recipient_user_id");
+            entity.Property(communication => communication.CommunicationType).HasColumnName("communication_type").HasMaxLength(128).IsRequired();
+            entity.Property(communication => communication.Subject).HasColumnName("subject").HasMaxLength(256);
+            entity.Property(communication => communication.Body).HasColumnName("body").HasMaxLength(4_000).IsRequired();
+            entity.Property(communication => communication.RelatedEntityType).HasColumnName("related_entity_type").HasMaxLength(128);
+            entity.Property(communication => communication.RelatedEntityId).HasColumnName("related_entity_id");
+            entity.Property(communication => communication.Link).HasColumnName("link").HasMaxLength(2_048);
+            entity.Property(communication => communication.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(communication => communication.ProcessedAtUtc).HasColumnName("processed_at_utc").HasColumnType("timestamp with time zone");
+
+            // The dispatcher's poll loop scans for unprocessed rows in queue order.
+            entity.HasIndex(communication => new { communication.ProcessedAtUtc, communication.CreatedAtUtc });
+
+            entity.HasOne<AppUser>()
+                .WithMany()
+                .HasForeignKey(communication => communication.RecipientUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(communication => communication.Deliveries)
+                .WithOne(delivery => delivery.Communication)
+                .HasForeignKey(delivery => delivery.OutboundCommunicationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.Navigation(communication => communication.Deliveries).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        builder.Entity<OutboundCommunicationDelivery>(entity =>
+        {
+            entity.ToTable("outbound_communication_deliveries", "communications");
+            entity.HasKey(delivery => delivery.Id);
+            entity.Property(delivery => delivery.Id).HasColumnName("id");
+            entity.Property(delivery => delivery.OutboundCommunicationId).HasColumnName("outbound_communication_id");
+            entity.Property(delivery => delivery.ProviderId).HasColumnName("provider_id").HasMaxLength(64).IsRequired();
+            entity.Property(delivery => delivery.Succeeded).HasColumnName("succeeded");
+            entity.Property(delivery => delivery.Error).HasColumnName("error").HasMaxLength(1_024);
+            entity.Property(delivery => delivery.AttemptedAtUtc).HasColumnName("attempted_at_utc").HasColumnType("timestamp with time zone");
+
+            entity.HasIndex(delivery => new { delivery.OutboundCommunicationId, delivery.ProviderId });
         });
     }
 
