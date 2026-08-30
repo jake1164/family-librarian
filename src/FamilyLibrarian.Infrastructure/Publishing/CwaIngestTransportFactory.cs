@@ -1,10 +1,15 @@
+using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Publishing;
+using Microsoft.Extensions.Logging;
 
 namespace FamilyLibrarian.Infrastructure.Publishing;
 
-public sealed class CwaIngestTransportFactory(ICredentialProtector protector) : ICwaIngestTransportFactory
+public sealed class CwaIngestTransportFactory(
+    ICredentialProtector protector,
+    IClock clock,
+    ILogger<SftpCwaIngestTransport> logger) : ICwaIngestTransportFactory
 {
     public ICwaIngestTransport Create(CwaSettings settings)
     {
@@ -50,7 +55,9 @@ public sealed class CwaIngestTransportFactory(ICredentialProtector protector) : 
                 settings.SftpAuthenticationMode,
                 credential,
                 passphrase,
-                settings.SftpHostKeyFingerprint);
+                settings.SftpHostKeyFingerprint,
+                clock,
+                logger);
         }
 
         if (string.IsNullOrWhiteSpace(settings.LocalIngestPath))
