@@ -268,8 +268,11 @@ can be reviewed without treating it as trusted content.
 If a required malware scanner is unavailable or unhealthy, Family Librarian must
 fail closed: it must not accept uploads, start provider downloads, or stage a
 linked-library file. Existing user requests remain recorded and move to a
-scanner-waiting state for backfill once scanner health is restored; catalog
-search and request creation continue to work.
+scanner-waiting state for backfill once scanner health is restored. Catalog
+search remains available. The current pilot implementation also prevents
+creation of a request for a format whose required scanner or destination has
+not passed its readiness check; it explains that safe failure in the request
+UI rather than creating work that cannot yet be fulfilled.
 
 #### Audiobook Delivery
 
@@ -293,8 +296,10 @@ Browser/PWA device delivery should be prototyped separately before becoming a ha
 
 #### Notifications
 
-- Batched notification model.
-- Email provider initially.
+- Authenticated in-app notifications for ready/failure and administrator
+  attention are the initial implementation.
+- Email/invitation delivery and batching are opt-in post-pilot work unless a
+  deployment explicitly makes email a pilot requirement.
 - Pluggable notification providers.
 - Support future actionable push notifications.
 
@@ -633,16 +638,12 @@ file handoff. Neither depends on the other. This document is being updated to
 make that separation an explicit, documented requirement rather than an
 implicit consequence of how the settings happened to be modeled.
 
-**Known gap:** the OPDS connection is currently optional even when CWA is
-enabled — `CwaSettingsService` only requires ingest-transport fields before
-allowing `IsEnabled = true`. An administrator can enable CWA with a working
-ingest transport and no OPDS URL configured at all, in which case ownership
-lookup (`CwaOwnedLibraryProvider`) and post-ingest correlation
-(`CwaPublishingService`) both silently return "not found" forever, and new
-requests will keep re-acquiring and re-ingesting books CWA already has. Since
-this document requires HTTP(S)/OPDS catalog access in every CWA deployment,
-enabling CWA without a working OPDS connection should be treated as a
-misconfiguration, not a supported ingest-only mode.
+**Resolved implementation gap (2026-08-28):** CWA cannot be enabled unless its
+OPDS URL and credentials are configured and the currently saved configuration
+has passed the persisted connection test. Any settings or credential change
+invalidates that pass. An ingest-only CWA deployment is therefore rejected as a
+misconfiguration rather than silently reporting every ownership/verification
+lookup as not found.
 
 **Known gap:** there is currently no way to retrieve an existing artifact's
 bytes back out of CWA. `ICwaCatalogClient.FindBookIdAsync` resolves only a
@@ -1076,7 +1077,8 @@ A V1 release is useful when:
 7. The file passes quarantine/security validation.
 8. A clean, valid file is approved by policy; the admin only handles exceptional results.
 9. The audiobook can be delivered to Audiobookshelf, while an approved ebook can be published to a configured CWA library or downloaded/delivered through an available provider.
-10. The user receives a batched ready notification.
+10. The user receives an authenticated in-app ready notification. Email or
+    batching is optional until a deployment elects to make it a pilot gate.
 11. The request appears in completed history.
 12. Family Librarian retains the information needed for future series/author recommendations.
 13. An operator can create a complete backup and restore PostgreSQL, CWA, and
