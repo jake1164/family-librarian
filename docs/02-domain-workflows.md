@@ -291,22 +291,18 @@ Family Librarian media copy. The application may stage its requested file into
 quarantine, then create a provenance record after the normal safety pipeline
 passes and the selected destination verifies import.
 
-**Implementation note (current state):** `WorkFormatAvailability` as specified
-here is not yet what actually answers "is this owned." The shipped
-`WorkFormatAvailabilityService` is a placeholder that always returns
-`OwnershipState.NotOwned` (no `MediaAsset` existed yet when it was written) and
-is not called by any endpoint. The real, working ownership signal today is the
-separate `FulfillmentOption`/`IOwnedLibraryProvider` model
-(`docs/03-provider-api-contracts.md` §3), specifically `CwaOwnedLibraryProvider`
-and `AudiobookshelfOwnedLibraryProvider`, surfaced through
-`GET /works/{workId}/fulfillment-options` and rendered on the work detail page.
-These two models need to be reconciled — either `WorkFormatAvailability`
-becomes a real read model backed by the owned-library providers, or it is
-retired in favor of `FulfillmentOption` — before either is extended further.
-Whichever remains should also be the thing request creation consults (see the
-implementation note under "Request Workflow" below): today
-`BookRequestService.CreateAsync` checks only for a duplicate active request,
-never for an existing owned artifact.
+**Implementation note (current state, 2026-08-29):** the placeholder
+`WorkFormatAvailability` implementation was retired. The working ownership
+read model is `FulfillmentOption`/`IOwnedLibraryProvider`
+(`docs/03-provider-api-contracts.md` §3), specifically
+`CwaOwnedLibraryProvider` and `AudiobookshelfOwnedLibraryProvider`, surfaced
+through `GET /works/{workId}/fulfillment-options` and rendered on the work
+detail page. `BookRequestService.CreateAsync` queries the same model before it
+creates a request. An owned match produces a deliberate, confirmable warning;
+it does not silently create needless acquisition work. Identifier-first
+matching, suitability checks, and a deliberate replacement reason remain
+required before an existing match can automatically satisfy an irreversible
+fulfillment decision.
 
 ---
 
@@ -1022,13 +1018,14 @@ remains the provenance view. Requesters never receive provider IDs, transport
 failures, URLs, credentials, or diagnostic details.
 
 There is still no general `CheckingLibrary`, `Searching`, `Acquiring`, or
-`Processing` request state machine; audiobook confirmation and
-existing-ownership checks at request creation remain future work. This is not
-a documentation error to "fix" by shrinking the target model; it reflects
-where implementation has reached versus where this document says it is headed.
-Expanding `RequestStatus`/`RequestFormatStatus` toward the states above, and
-wiring the existing-ownership check into request creation, are required before
-the "existing-artifact fulfillment" flows in
+`Processing` request state machine; audiobook confirmation remains future work.
+Existing-ownership checks at request creation now produce a confirmable warning,
+but are not yet strong enough to automatically satisfy an irreversible
+fulfillment decision. This is not a documentation error to "fix" by shrinking
+the target model; it reflects where implementation has reached versus where this
+document says it is headed.
+Expanding `RequestStatus`/`RequestFormatStatus` toward the states above is
+still required before the "existing-artifact fulfillment" flows in
 `docs/01-product-architecture-spec.md` can work end to end.
 
 ---

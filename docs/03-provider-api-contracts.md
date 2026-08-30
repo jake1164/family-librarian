@@ -665,8 +665,9 @@ approval result. When any required scanner is unhealthy, the host rejects manual
 file uploads before reading file bytes and prevents acquisition providers and
 linked-library adapters from downloading or staging files. It records a
 `WaitingForSecurityScanner` request/job state instead. Metadata/catalog search
-and user request creation remain permitted so the held work can be resumed after
-scanner health recovers.
+remains permitted. The pilot implementation also refuses creation of a request
+format that is not ready because its scanner or destination is unhealthy; it
+does not create a request that cannot be processed safely.
 
 If a scanner becomes unavailable after an ingress operation has started, the
 asset stays quarantined and no destination, download, or notification operation

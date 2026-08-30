@@ -114,21 +114,62 @@ rollback executes migration `Down` operations and may lose data. See
 
 ## Back up PostgreSQL
 
-Create an output directory owned by the operator, then make a compressed custom
-format PostgreSQL backup. The command keeps the database password inside the
-container rather than placing it in a command-line argument or shell history.
+Use the versioned full-backup tooling in `scripts/backups/` for every normal
+backup. It creates an atomic, permission-restricted backup set containing the
+PostgreSQL custom-format dump, selected CWA/Audiobookshelf configuration and
+library archives, a versioned manifest, and SHA-256 checksums. The PostgreSQL
+password stays inside the Compose container rather than appearing in shell
+history.
+
+Copy `scripts/backups/backup.env.example` to a directory outside the repository
+that only the backup operator can read. Configure each installed permanent
+library as `directories` and supply the host-visible configuration and library
+paths; set a library to `disabled` only when that integration is not installed.
+The secret recovery reference is a runbook/secret-manager identifier, never a
+raw certificate, password, or access token.
 
 ```bash
-mkdir -p backups
-docker compose exec -T postgres \
-  pg_dump -U family_librarian -d family_librarian -Fc \
-  > backups/family-librarian-$(date +%F-%H%M%S).dump
+install -d -m 700 /etc/family-librarian
+cp scripts/backups/backup.env.example /etc/family-librarian/backup.env
+chmod 600 /etc/family-librarian/backup.env
+# Edit the copied file, then create and verify a backup set:
+scripts/backups/create-backup.sh --config /etc/family-librarian/backup.env
+scripts/backups/verify-backup.sh --backup /var/backups/family-librarian/family-librarian-YYYYMMDDTHHMMSSZ
 ```
 
-Protect the backup with the same care as the database: it contains account
+The scripts intentionally run on the deployment host rather than inside the web
+container. A web-container scheduler would need Docker-daemon access to run
+`pg_dump` and reach arbitrary CWA/Audiobookshelf directories, effectively
+granting the browser-facing app host-level control. For a remote library, mount
+or otherwise expose the directories through a trusted host path, or use that
+library's own backup facility and do not call the resulting set complete until
+it is included and verified.
+
+Protect every backup set with the same care as the database: it contains account
 emails, request history, provider configuration ciphertext, and the persisted
 Data Protection key ring. Store at least one encrypted copy away from the host
 running the application, and verify restores periodically.
+
+### Schedule daily or weekly backups
+
+The scheduler is opt-in and host-managed. Generate the cron line for the chosen
+frequency, inspect it, then add it to the backup operator's crontab. Daily runs
+at 02:15 local server time; weekly runs at 02:15 every Sunday. The script only
+prints a line—it never edits a crontab itself.
+
+```bash
+scripts/backups/print-cron-entry.sh \
+  --frequency daily \
+  --repository /srv/family-librarian \
+  --config /etc/family-librarian/backup.env \
+  --log /var/log/family-librarian-backup.log
+
+# Use --frequency weekly for the weekly alternative.
+```
+
+Test a backup manually before enabling a schedule, monitor the generated log,
+and arrange off-host replication/encryption separately. Scheduling a backup is
+not evidence that it can be restored.
 
 The Compose volume is durable only while the Docker volume exists. `docker
 compose down` preserves it; `docker compose down -v` destroys it. Do not use
@@ -137,28 +178,38 @@ is intended.
 
 ## Restore a backup
 
-Restoring replaces the database contents. First stop the application so no
-request, account, or provider-setting write races the restore:
+Restoring replaces PostgreSQL. The restore tooling requires an explicit
+`--confirm-replace-postgres`, verifies every checksum first, and refuses to
+write CWA/Audiobookshelf data into a non-empty target directory. Stop the
+external CWA/Audiobookshelf services before restoring their files; the script
+does not control containers outside this Compose project.
 
 ```bash
-docker compose stop family-librarian
-docker compose exec -T postgres \
-  pg_restore -U family_librarian -d family_librarian \
-  --clean --if-exists --no-owner --no-privileges \
-  < backups/family-librarian-YYYY-MM-DD-HHMMSS.dump
-docker compose up -d
+scripts/backups/restore-backup.sh \
+  --backup /var/backups/family-librarian/family-librarian-YYYYMMDDTHHMMSSZ \
+  --confirm-replace-postgres \
+  --cwa-configuration-target /srv/restore/cwa-config \
+  --cwa-library-target /srv/restore/cwa-library \
+  --audiobookshelf-configuration-target /srv/restore/audiobookshelf-config \
+  --audiobookshelf-library-target /srv/restore/audiobookshelf-library
 ```
 
-Use a backup created from the same PostgreSQL major version or a compatible
-newer `pg_restore` client. After restart, inspect `migrate` and verify both
-health endpoints before allowing normal use. The migration job may apply
-forward-only schema changes if the restored backup predates the deployed image.
+Omit a destination pair only if the backup manifest records that integration as
+disabled. The destination directories must be new or empty; after the restore,
+attach them to the appropriate external services according to their own
+deployment documentation. Use a backup created from the same PostgreSQL major
+version or a compatible newer `pg_restore` client. The script starts the
+one-shot migration job and Family Librarian, but do not reopen the deployment
+until the migration logs and both health endpoints have passed.
 
 ## Initial-product full backup and recovery milestone
 
-The PostgreSQL dump above is necessary but is not a complete household recovery
-on its own. Before Family Librarian's initial product is considered complete,
-the operator must be able to create and restore a full backup covering:
+The backup/restore tooling above implements the repeatable backup-set format,
+integrity verification, explicit PostgreSQL replacement, and safe external-file
+restore targets. It is not a completed recovery milestone until an operator has
+configured it for the real household topology and proved a disposable restore.
+Before Family Librarian's initial product is considered complete, the operator
+must be able to create and restore a full backup covering:
 
 - PostgreSQL, including the persisted Data Protection key ring and stored
   configuration ciphertext;
