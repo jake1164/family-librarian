@@ -152,6 +152,6 @@ public sealed class AudiobookshelfOwnedLibraryProviderTests
     private sealed class FakeWorkLookup : IWorkLookup
     {
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien"));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien", []));
     }
 }

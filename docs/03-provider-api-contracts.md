@@ -249,20 +249,32 @@ directly, and rather than any SFTP-based retrieval. This is required before
 any direct-device or browser-delivery work can proceed for an already-owned
 book; see `docs/01-product-architecture-spec.md` §15.1.
 
-**OPDS integration stability.** `CwaCatalogClient`'s current implementation is
-a thin, best-effort Atom-feed scraper: it calls CWA's `/opds/search/{title}`
-endpoint, string-matches the entry title (substring, case-insensitive) and, if
-known, the author, then extracts a book ID from an acquisition/download link
-via a regular expression (`/opds/(?:book|download)/(\d+)`). It does not use
-ISBN, series, or any other retained identifier, and "not found" is
-indistinguishable from "found the wrong book because of a title collision."
-This is an accepted starting point — CWA does not expose a richer
-machine-readable ownership API — but it means correlation and ownership
-lookup are both weaker than this document's identifier-first principle calls
-for, and should be strengthened (ISBN in the OPDS query/response where CWA
-supports it, tighter entry disambiguation) before being relied on for
-irreversible decisions such as skipping acquisition of a book that turns out
-to be a different edition.
+**OPDS integration stability.** `CwaCatalogClient` is identifier-first,
+2026-08-31: for each ISBN-13 known for the requested Work, it queries CWA's
+`/opds/search/{query}` endpoint using the ISBN itself as the query string,
+and accepts the result only when that query returns exactly one distinct
+book ID — a numeric ISBN string does not suffer the title-collision ambiguity
+a substring match does. Whether CWA's search actually indexes ISBN is
+unconfirmed (CWA does not expose a richer machine-readable ownership API);
+if it doesn't, the ISBN query simply returns zero or many results and this
+falls through to the title/author fallback, so there is no correctness risk
+in trying it regardless. The title/author fallback string-matches the entry
+title (substring, case-insensitive) and, if known, the author, but now
+collects every matching entry rather than the first: a single distinct book
+ID is accepted, while more than one distinct ID is treated as ambiguous and
+returns "not found" rather than guessing. It also rejects an otherwise-
+matching entry whose title carries a known derivative/combined-work marker
+(e.g. "Summary of Debt of Honor", "Debt of Honor / Executive Orders") — see
+`docs/family-librarian-book-matching-design-findings.md` §5/§6/§8. This
+guard is a fixed, non-exhaustive keyword list, not the fuller
+`ExpectedBookProfile`/`CandidateMatchResult` evidence model that document
+describes for the separate acquisition-provider matching pipeline — that
+remains future work if CWA correlation needs it. Still weaker than full
+identifier-first matching: a missing `<author>` element on a CWA entry is not
+treated as a mismatch (CWA's OPDS template does not reliably include one),
+and no per-edition ISBN is threaded through — any ISBN known for the Work is
+tried, not specifically the edition being published. Both are accepted,
+documented gaps rather than oversights.
 
 `ILibraryDestination` publishes an already approved staged artifact and verifies
 the result. The destination becomes the permanent store for the media; Family

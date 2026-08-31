@@ -6,4 +6,8 @@ public interface IWorkLookup
     Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken);
 }
 
-public sealed record WorkSummary(Guid WorkId, string Title, string? PrimaryAuthor);
+/// <param name="Isbn13s">
+/// Every distinct ISBN-13 known across the Work's editions, in no particular
+/// order. Empty when the Work has no editions with a recorded ISBN.
+/// </param>
+public sealed record WorkSummary(Guid WorkId, string Title, string? PrimaryAuthor, IReadOnlyList<string> Isbn13s);

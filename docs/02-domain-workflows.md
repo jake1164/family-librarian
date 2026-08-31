@@ -660,14 +660,17 @@ already implements this correctly: it hands the file to whichever
 to resolve the resulting book ID before marking the import `Available`. See
 `docs/01-product-architecture-spec.md` §12.1.1 for the full topology model.
 
-**Correlation today is best-effort, not identifier-based.** The current OPDS
-lookup matches on title (substring) and, when known, author — there is no
-ISBN or provider-ID correlation. This is an accepted fallback per this
-document's identifier-first/title-author-fallback principle, but it means a
-common title, an omnibus edition, or a retitled translation can produce an
-ambiguous or wrong match. Strengthening this (retained ISBN first, title/author
-only as fallback) is listed as required work, not a nice-to-have, once CWA
-ownership/correlation moves beyond the first opt-in integration.
+**Correlation is now identifier-first, 2026-08-31.** The OPDS lookup
+(`CwaCatalogClient`) tries each ISBN-13 known for the Work as a search query
+before falling back to title/author matching — see
+`docs/03-provider-api-contracts.md` "OPDS integration stability" for the
+full algorithm, including the ambiguity-safe fallback (more than one distinct
+title/author match now returns "not found" rather than guessing) and the
+derivative/combined-title guard (rejects "Summary of X", "X / Y", etc.).
+Whether CWA's search indexes ISBN is unconfirmed, but the fallback degrades
+safely either way. Remaining gaps: no per-edition ISBN selection (any ISBN
+known for the Work is tried), and a CWA entry missing an `<author>` element
+is not treated as a mismatch.
 
 **Existing-artifact suitability is not yet modeled.** A `LibraryImport`
 reaching `Available`, or a `FulfillmentOption` with `OptionKind.Owned`, is

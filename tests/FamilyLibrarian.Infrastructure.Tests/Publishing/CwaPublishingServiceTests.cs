@@ -61,6 +61,20 @@ public sealed class CwaPublishingServiceTests
     }
 
     [TestMethod]
+    public async Task PublishPassesTheWorksKnownIsbnsToTheCatalogClient()
+    {
+        var context = context_Configured();
+        var isbns = new[] { "9780000000001", "9780000000002" };
+        context.WorkLookup.Isbn13s = isbns;
+        var asset = context.CreateAsset();
+        context.CatalogClient.NextBookId = "42";
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        CollectionAssert.AreEquivalent(isbns, context.CatalogClient.LastIsbn13Candidates!.ToArray());
+    }
+
+    [TestMethod]
     public async Task APublishNotYetFoundInTheCatalogStaysAwaitingVerification()
     {
         var context = context_Configured();
@@ -451,8 +465,14 @@ public sealed class CwaPublishingServiceTests
     {
         public string? NextBookId { get; set; }
 
-        public Task<string?> FindBookIdAsync(string title, string? author, CancellationToken cancellationToken) =>
-            Task.FromResult(NextBookId);
+        public IReadOnlyCollection<string>? LastIsbn13Candidates { get; private set; }
+
+        public Task<string?> FindBookIdAsync(
+            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken)
+        {
+            LastIsbn13Candidates = isbn13Candidates;
+            return Task.FromResult(NextBookId);
+        }
     }
 
     private sealed class FakeRequestFulfillmentStore : IBookRequestFulfillmentStore
@@ -465,8 +485,10 @@ public sealed class CwaPublishingServiceTests
 
     private sealed class FakeWorkLookup : IWorkLookup
     {
+        public IReadOnlyList<string> Isbn13s { get; set; } = [];
+
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien"));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien", Isbn13s));
     }
 
     private sealed class RecordingAuditWriter : IAuditWriter

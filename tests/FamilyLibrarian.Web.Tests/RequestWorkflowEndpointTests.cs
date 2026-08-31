@@ -345,7 +345,8 @@ public sealed class RequestWorkflowEndpointTests
 
     private sealed class DeterministicCatalogClient(string? bookId) : ICwaCatalogClient
     {
-        public Task<string?> FindBookIdAsync(string title, string? author, CancellationToken cancellationToken) =>
+        public Task<string?> FindBookIdAsync(
+            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken) =>
             Task.FromResult(bookId);
     }
 

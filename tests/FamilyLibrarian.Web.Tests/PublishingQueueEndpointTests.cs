@@ -268,7 +268,8 @@ public sealed class PublishingQueueEndpointTests
     {
         public string? NextBookId { get; set; } = bookIdOnFirstCall;
 
-        public Task<string?> FindBookIdAsync(string title, string? author, CancellationToken cancellationToken) =>
+        public Task<string?> FindBookIdAsync(
+            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken) =>
             Task.FromResult(NextBookId);
     }
 }
