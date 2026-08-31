@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Contracts.Communications;
 using FamilyLibrarian.Contracts.Publishing;
 using FamilyLibrarian.Contracts.SettingsBackups;
 using FamilyLibrarian.Infrastructure.Persistence;
@@ -20,6 +22,7 @@ public sealed class SettingsBackupEndpointTests
 {
     private const string Passphrase = "settings-backup-passphrase-8675309";
     private const string SftpPrivateKey = "test-sftp-key-do-not-leak-8675309";
+    private const string SmtpPassword = "test-smtp-password-do-not-leak-8675309";
 
     private static WebTestFixture? _fixture;
 
@@ -54,6 +57,14 @@ public sealed class SettingsBackupEndpointTests
             "/api/v1/admin/publishing/cwa/sftp-key", new SetPublishingSecretRequest(SftpPrivateKey));
         Assert.AreEqual(HttpStatusCode.OK, secret.StatusCode);
 
+        var smtpSettings = await client.PutAsJsonAsync(
+            "/api/v1/admin/communications/smtp/",
+            new SetSmtpSettingsRequest("smtp.example.test", 587, "StartTls", "mailer", "library@example.test", "Family Librarian"));
+        Assert.AreEqual(HttpStatusCode.OK, smtpSettings.StatusCode);
+        var smtpPassword = await client.PutAsJsonAsync(
+            "/api/v1/admin/communications/smtp/password", new SetSmtpPasswordRequest(SmtpPassword));
+        Assert.AreEqual(HttpStatusCode.OK, smtpPassword.StatusCode);
+
         var export = await client.PostAsJsonAsync(
             "/api/v1/admin/settings-backup/", new CreateSettingsBackupRequest(Passphrase));
         Assert.AreEqual(HttpStatusCode.OK, export.StatusCode);
@@ -61,8 +72,11 @@ public sealed class SettingsBackupEndpointTests
         Assert.IsFalse(
             System.Text.Encoding.UTF8.GetString(archive).Contains(SftpPrivateKey, StringComparison.Ordinal),
             "An archive must not expose a stored credential as plaintext.");
+        Assert.IsFalse(
+            System.Text.Encoding.UTF8.GetString(archive).Contains(SmtpPassword, StringComparison.Ordinal),
+            "An archive must not expose a stored SMTP password as plaintext.");
 
-        await ClearCwaSettingsAsync(fixture);
+        await ClearSettingsAsync(fixture);
 
         var tampered = archive.ToArray();
         tampered[^1] ^= 0x01;
@@ -81,6 +95,7 @@ public sealed class SettingsBackupEndpointTests
         Assert.IsNotNull(preview);
         Assert.IsTrue(preview.CanImport);
         Assert.AreEqual(1, preview.Counts.CwaSettings);
+        Assert.AreEqual(1, preview.Counts.SmtpSettings);
 
         using var importForm = CreateArchiveForm(archive);
         using var importResponse = await client.PostAsync("/api/v1/admin/settings-backup/import", importForm);
@@ -88,6 +103,7 @@ public sealed class SettingsBackupEndpointTests
         var imported = await importResponse.Content.ReadFromJsonAsync<SettingsBackupImportResponse>();
         Assert.IsNotNull(imported);
         Assert.AreEqual(1, imported.Counts.CwaSettings);
+        Assert.AreEqual(1, imported.Counts.SmtpSettings);
 
         await using var scope = fixture.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -99,6 +115,14 @@ public sealed class SettingsBackupEndpointTests
             restored.ProtectedSftpPrivateKey,
             restored.SftpPrivateKeyFormatVersion);
         Assert.AreEqual(SftpPrivateKey, restoredSecret);
+
+        var restoredSmtp = await database.SmtpSettings.AsNoTracking().SingleAsync();
+        Assert.IsNotNull(restoredSmtp.ProtectedPassword);
+        var restoredSmtpPassword = protector.Unprotect(
+            CommunicationSecretPurposes.SmtpPassword,
+            restoredSmtp.ProtectedPassword,
+            restoredSmtp.PasswordFormatVersion);
+        Assert.AreEqual(SmtpPassword, restoredSmtpPassword);
     }
 
     private static async Task<HttpClient> CreateAdminClientWithTokenAsync(WebTestFixture fixture)
@@ -117,10 +141,11 @@ public sealed class SettingsBackupEndpointTests
         return form;
     }
 
-    private static async Task ClearCwaSettingsAsync(WebTestFixture fixture)
+    private static async Task ClearSettingsAsync(WebTestFixture fixture)
     {
         await using var scope = fixture.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await database.CwaSettings.ExecuteDeleteAsync();
+        await database.SmtpSettings.ExecuteDeleteAsync();
     }
 }

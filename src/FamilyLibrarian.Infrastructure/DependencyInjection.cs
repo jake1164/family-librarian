@@ -2,6 +2,7 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
@@ -12,6 +13,7 @@ using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Acquisition;
+using FamilyLibrarian.Infrastructure.Communications;
 using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
@@ -150,6 +152,25 @@ public static class DependencyInjection
         services.AddScoped<NotificationRepository>();
         services.AddScoped<INotificationRepository>(provider => provider.GetRequiredService<NotificationRepository>());
         services.AddScoped<NotificationService>();
+
+        // SMTP remains dormant until it is configured and an administrator
+        // explicitly tests it; registration itself never opens a connection.
+        services.AddScoped<ISmtpSettingsStore, SmtpSettingsStore>();
+        services.AddScoped<ISmtpTestSender, MailKitSmtpTestSender>();
+        services.AddScoped<SmtpSettingsService>();
+
+        // The provider-neutral outbound communications foundation: features
+        // enqueue through OutboundCommunicationService, and the dispatcher
+        // (run by a hosted service) attempts every registered
+        // IOutboundCommunicationProvider that reports itself enabled. SMTP is
+        // the only provider today; adding another (e.g. Matrix) means another
+        // IOutboundCommunicationProvider registration, not a redesign here.
+        services.AddScoped<OutboundCommunicationRepository>();
+        services.AddScoped<IOutboundCommunicationStore>(provider => provider.GetRequiredService<OutboundCommunicationRepository>());
+        services.AddScoped<OutboundCommunicationService>();
+        services.AddScoped<OutboundCommunicationDispatcher>();
+        services.AddScoped<IUserEmailLookup, UserEmailLookup>();
+        services.AddScoped<IOutboundCommunicationProvider, SmtpOutboundCommunicationProvider>();
 
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
         services.AddScoped<UserWorkFeedbackService>();

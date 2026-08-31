@@ -6,6 +6,7 @@ public sealed record CreateSettingsBackupRequest(string Passphrase);
 public sealed record SettingsBackupCountsResponse(
     int CwaSettings,
     int AudiobookshelfSettings,
+    int SmtpSettings,
     int PrivateEgressGatewaySettings,
     int ProviderSettings,
     int OidcSettings,

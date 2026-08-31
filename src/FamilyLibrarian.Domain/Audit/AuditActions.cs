@@ -45,6 +45,13 @@ public static class AuditActions
     public const string PublishingDestinationSecretCleared = "publishing_destination.secret_cleared";
     public const string PublishingDestinationTested = "publishing_destination.tested";
 
+    public const string CommunicationProviderEnabled = "communication_provider.enabled";
+    public const string CommunicationProviderDisabled = "communication_provider.disabled";
+    public const string CommunicationProviderSettingsChanged = "communication_provider.settings_changed";
+    public const string CommunicationProviderSecretSet = "communication_provider.secret_set";
+    public const string CommunicationProviderSecretCleared = "communication_provider.secret_cleared";
+    public const string CommunicationProviderTested = "communication_provider.tested";
+
     public const string AcquisitionPolicyDefaultChanged = "acquisition_policy.default_changed";
 
     public const string OidcEnabled = "oidc.enabled";
@@ -88,6 +95,7 @@ public static class AuditSubjectTypes
     public const string BookRequest = "book_request";
     public const string MediaAsset = "media_asset";
     public const string PublishingDestination = "publishing_destination";
+    public const string CommunicationProvider = "communication_provider";
     public const string AcquisitionPolicy = "acquisition_policy";
     public const string Oidc = "oidc";
     public const string ExternalProvider = "external_provider";

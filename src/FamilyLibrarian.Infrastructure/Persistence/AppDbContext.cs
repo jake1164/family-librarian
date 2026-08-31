@@ -4,6 +4,7 @@ using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Feedback;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Policy;
@@ -53,6 +54,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<NotificationEvent> NotificationEvents => Set<NotificationEvent>();
 
     public DbSet<NotificationReceipt> NotificationReceipts => Set<NotificationReceipt>();
+
+    public DbSet<SmtpSettings> SmtpSettings => Set<SmtpSettings>();
+
+    public DbSet<OutboundCommunication> OutboundCommunications => Set<OutboundCommunication>();
+
+    public DbSet<OutboundCommunicationDelivery> OutboundCommunicationDeliveries => Set<OutboundCommunicationDelivery>();
 
     public DbSet<UserWorkFeedback> UserWorkFeedback => Set<UserWorkFeedback>();
 
@@ -124,6 +131,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         ConfigureCatalog(builder);
         ConfigureRequests(builder);
         ConfigureNotifications(builder);
+        ConfigureCommunications(builder);
         ConfigureFeedback(builder);
         ConfigureProviders(builder);
         ConfigureAcquisition(builder);
@@ -163,6 +171,83 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
+    }
+
+    private static void ConfigureCommunications(ModelBuilder builder)
+    {
+        builder.Entity<SmtpSettings>(entity =>
+        {
+            entity.ToTable("smtp_settings", "communications");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(settings => settings.Host).HasColumnName("host").HasMaxLength(256);
+            entity.Property(settings => settings.Port).HasColumnName("port");
+            entity.Property(settings => settings.SecurityMode).HasColumnName("security_mode")
+                .HasConversion<string>().HasMaxLength(32).HasDefaultValue(SmtpSecurityMode.StartTls);
+            entity.Property(settings => settings.Username).HasColumnName("username").HasMaxLength(256);
+            entity.Property(settings => settings.ProtectedPassword).HasColumnName("protected_password").HasMaxLength(2_048);
+            entity.Property(settings => settings.PasswordFormatVersion).HasColumnName("password_format_version");
+            entity.Property(settings => settings.PasswordSetAtUtc).HasColumnName("password_set_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.FromAddress).HasColumnName("from_address").HasMaxLength(320);
+            entity.Property(settings => settings.FromName).HasColumnName("from_name").HasMaxLength(256);
+            entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
+            entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
+
+        builder.Entity<OutboundCommunication>(entity =>
+        {
+            entity.ToTable("outbound_communications", "communications");
+            entity.HasKey(communication => communication.Id);
+            entity.Property(communication => communication.Id).HasColumnName("id");
+            entity.Property(communication => communication.RecipientUserId).HasColumnName("recipient_user_id");
+            entity.Property(communication => communication.CommunicationType).HasColumnName("communication_type").HasMaxLength(128).IsRequired();
+            entity.Property(communication => communication.Subject).HasColumnName("subject").HasMaxLength(256);
+            entity.Property(communication => communication.Body).HasColumnName("body").HasMaxLength(4_000).IsRequired();
+            entity.Property(communication => communication.RelatedEntityType).HasColumnName("related_entity_type").HasMaxLength(128);
+            entity.Property(communication => communication.RelatedEntityId).HasColumnName("related_entity_id");
+            entity.Property(communication => communication.Link).HasColumnName("link").HasMaxLength(2_048);
+            entity.Property(communication => communication.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(communication => communication.ProcessedAtUtc).HasColumnName("processed_at_utc").HasColumnType("timestamp with time zone");
+
+            // The dispatcher's poll loop scans for unprocessed rows in queue order.
+            entity.HasIndex(communication => new { communication.ProcessedAtUtc, communication.CreatedAtUtc });
+
+            entity.HasOne<AppUser>()
+                .WithMany()
+                .HasForeignKey(communication => communication.RecipientUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(communication => communication.Deliveries)
+                .WithOne(delivery => delivery.Communication)
+                .HasForeignKey(delivery => delivery.OutboundCommunicationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.Navigation(communication => communication.Deliveries).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        builder.Entity<OutboundCommunicationDelivery>(entity =>
+        {
+            entity.ToTable("outbound_communication_deliveries", "communications");
+            entity.HasKey(delivery => delivery.Id);
+            entity.Property(delivery => delivery.Id).HasColumnName("id");
+            entity.Property(delivery => delivery.OutboundCommunicationId).HasColumnName("outbound_communication_id");
+            entity.Property(delivery => delivery.ProviderId).HasColumnName("provider_id").HasMaxLength(64).IsRequired();
+            entity.Property(delivery => delivery.Succeeded).HasColumnName("succeeded");
+            entity.Property(delivery => delivery.Error).HasColumnName("error").HasMaxLength(1_024);
+            entity.Property(delivery => delivery.AttemptedAtUtc).HasColumnName("attempted_at_utc").HasColumnType("timestamp with time zone");
+
+            entity.HasIndex(delivery => new { delivery.OutboundCommunicationId, delivery.ProviderId });
         });
     }
 

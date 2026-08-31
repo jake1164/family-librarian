@@ -1,8 +1,10 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Requests;
@@ -22,6 +24,7 @@ public sealed class BookRequestService(
     IClock clock,
     IAuditWriter audit,
     NotificationService notifications,
+    OutboundCommunicationService outboundCommunications,
     IFormatReadinessService readiness,
     IWorkFulfillmentOptionsService fulfillmentOptions)
 {
@@ -271,6 +274,14 @@ public sealed class BookRequestService(
         {
             await notifications.RecordRequestStatusForUserAsync(
                 request.UserId, requestId, view!.Request.WorkTitle, to, cancellationToken);
+            await outboundCommunications.EnqueueAsync(
+                request.UserId,
+                OutboundCommunicationTypes.RequestStatusChanged,
+                body: BuildRequestStatusChangedBody(view!.Request.WorkTitle, to),
+                subject: $"Family Librarian — {view!.Request.WorkTitle}",
+                relatedEntityType: "BookRequest",
+                relatedEntityId: requestId,
+                cancellationToken);
         }
 
         return BookRequestCommandResult.Success(view!.Request);
@@ -394,6 +405,13 @@ public sealed class BookRequestService(
         RequestStatus.NotAvailable => "marked unavailable",
         RequestStatus.Cancelled => "cancelled",
         _ => status.ToString()
+    };
+
+    private static string BuildRequestStatusChangedBody(string workTitle, RequestStatus to) => to switch
+    {
+        RequestStatus.Available => $"\"{workTitle}\" is available in Family Librarian.",
+        RequestStatus.NotAvailable => $"\"{workTitle}\" could not be found and has been marked unavailable.",
+        _ => $"\"{workTitle}\" status changed to {Describe(to)}."
     };
 }
 

@@ -1,8 +1,10 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Requests;
 
@@ -512,6 +514,7 @@ public sealed class BookRequestServiceTests
             new FixedClock(),
             new NullAuditWriter(),
             new NotificationService(new NullNotificationRepository(), new StubCurrentUser(userId), new FixedClock()),
+            new OutboundCommunicationService(new NullOutboundCommunicationStore(), new FixedClock()),
             readiness ?? new StubFormatReadinessService(),
             fulfillment ?? new StubFulfillmentOptionsService());
 
@@ -620,6 +623,19 @@ public sealed class BookRequestServiceTests
 
         public Task AddReceiptAsync(NotificationReceipt receipt, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    /// <summary>Outbound communications are not what these tests are about; every call is a no-op.</summary>
+    private sealed class NullOutboundCommunicationStore : IOutboundCommunicationStore
+    {
+        public Task EnqueueAsync(OutboundCommunication communication, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<IReadOnlyList<OutboundCommunication>> GetUnprocessedBatchAsync(
+            int maxCount, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<OutboundCommunication>>([]);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }

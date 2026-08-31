@@ -3,6 +3,7 @@ using System;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260830171620_AddSmtpSettings")]
+    partial class AddSmtpSettings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -951,102 +954,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("work_authors", "catalog");
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Communications.OutboundCommunication", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("Body")
-                        .IsRequired()
-                        .HasMaxLength(4000)
-                        .HasColumnType("character varying(4000)")
-                        .HasColumnName("body");
-
-                    b.Property<string>("CommunicationType")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("communication_type");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<string>("Link")
-                        .HasMaxLength(2048)
-                        .HasColumnType("character varying(2048)")
-                        .HasColumnName("link");
-
-                    b.Property<DateTimeOffset?>("ProcessedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("processed_at_utc");
-
-                    b.Property<Guid>("RecipientUserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("recipient_user_id");
-
-                    b.Property<Guid?>("RelatedEntityId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("related_entity_id");
-
-                    b.Property<string>("RelatedEntityType")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("related_entity_type");
-
-                    b.Property<string>("Subject")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
-                        .HasColumnName("subject");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RecipientUserId");
-
-                    b.HasIndex("ProcessedAtUtc", "CreatedAtUtc");
-
-                    b.ToTable("outbound_communications", "communications");
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Communications.OutboundCommunicationDelivery", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("AttemptedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("attempted_at_utc");
-
-                    b.Property<string>("Error")
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)")
-                        .HasColumnName("error");
-
-                    b.Property<Guid>("OutboundCommunicationId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("outbound_communication_id");
-
-                    b.Property<string>("ProviderId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("provider_id");
-
-                    b.Property<bool>("Succeeded")
-                        .HasColumnType("boolean")
-                        .HasColumnName("succeeded");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OutboundCommunicationId", "ProviderId");
-
-                    b.ToTable("outbound_communication_deliveries", "communications");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Communications.SmtpSettings", b =>
@@ -2919,26 +2826,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("Work");
                 });
 
-            modelBuilder.Entity("FamilyLibrarian.Domain.Communications.OutboundCommunication", b =>
-                {
-                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
-                        .WithMany()
-                        .HasForeignKey("RecipientUserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Communications.OutboundCommunicationDelivery", b =>
-                {
-                    b.HasOne("FamilyLibrarian.Domain.Communications.OutboundCommunication", "Communication")
-                        .WithMany("Deliveries")
-                        .HasForeignKey("OutboundCommunicationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Communication");
-                });
-
             modelBuilder.Entity("FamilyLibrarian.Domain.Feedback.UserWorkFeedback", b =>
                 {
                     b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
@@ -3150,11 +3037,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("Editions");
 
                     b.Navigation("SeriesEntries");
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Communications.OutboundCommunication", b =>
-                {
-                    b.Navigation("Deliveries");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.BookRequest", b =>
