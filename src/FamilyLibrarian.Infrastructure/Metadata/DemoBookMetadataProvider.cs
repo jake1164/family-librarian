@@ -9,6 +9,8 @@ namespace FamilyLibrarian.Infrastructure.Metadata;
 /// </summary>
 public sealed class DemoBookMetadataProvider : IBookMetadataProvider
 {
+    private const int PageSize = 10;
+
     private static readonly IReadOnlyList<BookCandidate> Books =
     [
         new(
@@ -56,19 +58,26 @@ public sealed class DemoBookMetadataProvider : IBookMetadataProvider
 
     public string DisplayName => "Family Librarian sample catalog";
 
-    public Task<IReadOnlyList<BookCandidate>> SearchAsync(
+    public Task<BookCandidateSearchPage> SearchAsync(
         BookSearchQuery query,
         CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(query.Text);
+        query.Validate();
         cancellationToken.ThrowIfCancellationRequested();
 
         var terms = query.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var results = Books
+        var matches = Books
             .Where(book => terms.All(term => Matches(book, term)))
             .ToArray();
+        var offset = (query.Page - 1) * PageSize;
+        var results = matches
+            .Skip(offset)
+            .Take(PageSize)
+            .ToArray();
 
-        return Task.FromResult<IReadOnlyList<BookCandidate>>(results);
+        return Task.FromResult(new BookCandidateSearchPage(
+            results,
+            matches.Length > offset + results.Length));
     }
 
     public Task<BookCandidate?> GetDetailsAsync(string externalId, CancellationToken cancellationToken)

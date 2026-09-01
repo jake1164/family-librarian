@@ -12,4 +12,6 @@ public sealed class CatalogSearchState
     public IReadOnlyList<CatalogBookCandidateResponse> Results { get; set; } = [];
     public IReadOnlyList<string> UnavailableProviders { get; set; } = [];
     public bool HasSearched { get; set; }
+    public int CurrentPage { get; set; } = 1;
+    public bool HasMore { get; set; }
 }

@@ -30,6 +30,7 @@ internal static class CatalogEndpoints
 
     private static async Task<IResult> SearchCatalogAsync(
         string? q,
+        int? page,
         IActiveMetadataProviderResolver providerResolver,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
@@ -43,7 +44,16 @@ internal static class CatalogEndpoints
             });
         }
 
-        var query = new BookSearchQuery(searchText);
+        var searchPage = page ?? 1;
+        if (searchPage is < 1 or > BookSearchQuery.MaximumPage)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["page"] = [$"Enter a page between 1 and {BookSearchQuery.MaximumPage}."]
+            });
+        }
+
+        var query = new BookSearchQuery(searchText, searchPage);
         var logger = loggerFactory.CreateLogger("FamilyLibrarian.MetadataSearch");
         var providers = await providerResolver.GetActiveProvidersAsync(cancellationToken);
         var searches = providers.Select(provider =>
@@ -55,14 +65,16 @@ internal static class CatalogEndpoints
                 .Where(result => result.Succeeded)
                 .SelectMany(result => result.Candidates)
                 .ToArray(), searchText)
-                .Select(ToResponse)
+                .Select(candidate => ToResponse(candidate, searchText))
                 .ToArray(),
             providerResults
                 .Select(result => new CatalogProviderSearchStatusResponse(
                     result.ProviderId,
                     result.ProviderName,
                     result.Succeeded))
-                .ToArray()));
+                .ToArray(),
+            searchPage,
+            providerResults.Any(result => result.Succeeded && result.HasMore)));
     }
 
     private static async Task<IResult> GetCatalogCandidateAsync(
@@ -238,12 +250,13 @@ internal static class CatalogEndpoints
     {
         try
         {
-            var candidates = await provider.SearchAsync(query, cancellationToken);
+            var searchPage = await provider.SearchAsync(query, cancellationToken);
             return new ProviderSearchResult(
                 provider.Id,
                 provider.DisplayName,
                 true,
-                candidates);
+                searchPage.Candidates,
+                searchPage.HasMore);
         }
         catch (HttpRequestException exception)
         {
@@ -258,7 +271,7 @@ internal static class CatalogEndpoints
             MetadataProviderLog.SearchTimedOut(logger, provider.Id, exception);
         }
 
-        return new ProviderSearchResult(provider.Id, provider.DisplayName, false, []);
+        return new ProviderSearchResult(provider.Id, provider.DisplayName, false, [], false);
     }
 
     private static void LogProviderFailure(
@@ -270,7 +283,12 @@ internal static class CatalogEndpoints
             provider.Id,
             exception);
 
-    private static CatalogBookCandidateResponse ToResponse(BookCandidate candidate) => new(
+    private static CatalogBookCandidateResponse ToResponse(BookCandidate candidate) =>
+        ToResponse(candidate, string.Empty);
+
+    private static CatalogBookCandidateResponse ToResponse(
+        BookCandidate candidate,
+        string searchText) => new(
         candidate.ProviderId,
         candidate.ProviderName,
         candidate.ExternalId,
@@ -291,7 +309,8 @@ internal static class CatalogEndpoints
         candidate.Publisher,
         candidate.PageCount,
         candidate.Subjects,
-        candidate.SourceUrl);
+        candidate.SourceUrl,
+        BookCandidateGrouper.GetMatchKind(candidate, searchText).ToString());
 
     private static async Task<CatalogWorkResponse> ToWorkResponseAsync(
         Domain.Catalog.Work work,
@@ -337,5 +356,6 @@ internal static class CatalogEndpoints
         string ProviderId,
         string ProviderName,
         bool Succeeded,
-        IReadOnlyList<BookCandidate> Candidates);
+        IReadOnlyList<BookCandidate> Candidates,
+        bool HasMore);
 }

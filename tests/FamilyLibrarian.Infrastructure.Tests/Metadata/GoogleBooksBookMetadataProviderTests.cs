@@ -52,8 +52,9 @@ public sealed class GoogleBooksBookMetadataProviderTests
             new BookSearchQuery("Project Hail Mary"),
             CancellationToken.None);
 
-        Assert.HasCount(1, results);
-        var candidate = results[0];
+        Assert.HasCount(1, results.Candidates);
+        Assert.IsFalse(results.HasMore);
+        var candidate = results.Candidates[0];
         Assert.AreEqual("googlebooks", candidate.ProviderId);
         Assert.AreEqual("Google Books", candidate.ProviderName);
         Assert.AreEqual("google-volume-123", candidate.ExternalId);
@@ -107,11 +108,44 @@ public sealed class GoogleBooksBookMetadataProviderTests
             new BookSearchQuery("978-0-547-92822-7"),
             CancellationToken.None);
 
-        Assert.HasCount(1, results);
-        Assert.IsNull(results[0].PublicationDate);
-        Assert.AreEqual("9780547928227", results[0].Editions[0].Isbn13);
+        Assert.HasCount(1, results.Candidates);
+        Assert.IsNull(results.Candidates[0].PublicationDate);
+        Assert.AreEqual("9780547928227", results.Candidates[0].Editions[0].Isbn13);
         Assert.IsNotNull(requestedUri);
         StringAssert.Contains(requestedUri.Query, "q=isbn%3A9780547928227");
+    }
+
+    [TestMethod]
+    public async Task SearchAsyncRequestsTheSelectedPageAndReportsMoreResults()
+    {
+        Uri? requestedUri = null;
+        using var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            requestedUri = request.RequestUri;
+            return JsonResponse(
+                """
+                {
+                  "totalItems": 21,
+                  "items": [
+                    {
+                      "id": "clancy-11",
+                      "volumeInfo": { "title": "Red Storm Rising" }
+                    }
+                  ]
+                }
+                """);
+        });
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var results = await provider.SearchAsync(
+            new BookSearchQuery("Tom Clancy", Page: 2),
+            CancellationToken.None);
+
+        Assert.HasCount(1, results.Candidates);
+        Assert.IsTrue(results.HasMore);
+        Assert.IsNotNull(requestedUri);
+        StringAssert.Contains(requestedUri.Query, "startIndex=10");
     }
 
     [TestMethod]

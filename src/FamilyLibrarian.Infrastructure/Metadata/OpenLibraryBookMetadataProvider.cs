@@ -33,11 +33,11 @@ public sealed class OpenLibraryBookMetadataProvider(
 
     public string DisplayName => "Open Library";
 
-    public Task<IReadOnlyList<BookCandidate>> SearchAsync(
+    public Task<BookCandidateSearchPage> SearchAsync(
         BookSearchQuery query,
         CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(query.Text);
+        query.Validate();
 
         var providerQuery = IsbnNormalizer.TryNormalizeQuery(query.Text, out var isbn)
             ? $"isbn:{isbn}"
@@ -47,6 +47,7 @@ public sealed class OpenLibraryBookMetadataProvider(
             providerQuery,
             SearchFields,
             _options.MaxResults,
+            query.Page,
             cancellationToken);
     }
 
@@ -59,26 +60,29 @@ public sealed class OpenLibraryBookMetadataProvider(
             return null;
         }
 
-        var candidates = await SearchCoreAsync(
+        var result = await SearchCoreAsync(
             $"key:/works/{externalId}",
             SearchFields,
             1,
+            1,
             cancellationToken);
 
-        return candidates.SingleOrDefault(candidate =>
+        return result.Candidates.SingleOrDefault(candidate =>
             string.Equals(candidate.ExternalId, externalId, StringComparison.Ordinal));
     }
 
-    private async Task<IReadOnlyList<BookCandidate>> SearchCoreAsync(
+    private async Task<BookCandidateSearchPage> SearchCoreAsync(
         string query,
         string fields,
         int limit,
+        int page,
         CancellationToken cancellationToken)
     {
         var requestUri =
             $"search.json?q={Uri.EscapeDataString(query)}" +
             $"&fields={Uri.EscapeDataString(fields)}" +
-            $"&limit={limit.ToString(CultureInfo.InvariantCulture)}";
+            $"&limit={limit.ToString(CultureInfo.InvariantCulture)}" +
+            $"&page={page.ToString(CultureInfo.InvariantCulture)}";
 
         var response = await httpClient.GetFromJsonAsync<OpenLibrarySearchResponse>(
             requestUri,
@@ -86,14 +90,22 @@ public sealed class OpenLibraryBookMetadataProvider(
 
         if (response?.Documents is not { Count: > 0 })
         {
-            return [];
+            return new BookCandidateSearchPage([], false);
         }
 
-        return response.Documents
+        var candidates = response.Documents
             .Select(ToCandidate)
             .Where(candidate => candidate is not null)
             .Cast<BookCandidate>()
             .ToArray();
+
+        var returnedCount = response.Documents.Count;
+        var offset = (page - 1) * limit;
+        var hasMore = response.NumberFound is { } numberFound
+            ? numberFound > offset + returnedCount
+            : returnedCount == limit;
+
+        return new BookCandidateSearchPage(candidates, hasMore);
     }
 
     private BookCandidate? ToCandidate(OpenLibrarySearchDocument document)
@@ -272,6 +284,9 @@ public sealed class OpenLibraryBookMetadataProvider(
 
     private sealed class OpenLibrarySearchResponse
     {
+        [JsonPropertyName("num_found")]
+        public int? NumberFound { get; init; }
+
         [JsonPropertyName("docs")]
         public IReadOnlyList<OpenLibrarySearchDocument>? Documents { get; init; }
     }

@@ -27,29 +27,10 @@ public static class BookCandidateGrouper
                 .ToArray();
         }
 
-        var titleMatches = groupedCandidates
-            .Select(candidate => new { Candidate = candidate, Match = GetTitleMatch(candidate.Title, searchText) })
-            .ToArray();
-
-        // A precise title match is a much stronger signal than the broad matches
-        // providers often return. Keep edition/capitalization variants, but avoid
-        // presenting unrelated partial, translated, or keyword-only results.
-        if (titleMatches.Any(result => result.Match == TitleMatch.Exact))
-        {
-            return titleMatches
-                .Where(result => result.Match == TitleMatch.Exact)
-                .OrderByDescending(result => GetCompletenessScore(result.Candidate))
-                .ThenBy(result => result.Candidate.Title, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(result => GetFirstAuthor(result.Candidate), StringComparer.OrdinalIgnoreCase)
-                .Select(result => result.Candidate)
-                .ToArray();
-        }
-
-        return titleMatches
-            .OrderByDescending(result => result.Match)
-            .ThenBy(result => result.Candidate.Title, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(result => GetFirstAuthor(result.Candidate), StringComparer.OrdinalIgnoreCase)
-            .Select(result => result.Candidate)
+        return groupedCandidates
+            .OrderByDescending(candidate => GetMatchKind(candidate, searchText))
+            .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(candidate => GetFirstAuthor(candidate), StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
@@ -81,7 +62,26 @@ public static class BookCandidateGrouper
     private static string? GetFirstAuthor(BookCandidate candidate) =>
         candidate.Authors.Count == 0 ? null : candidate.Authors[0];
 
-    private static TitleMatch GetTitleMatch(string title, string searchText)
+    public static BookCandidateMatchKind GetMatchKind(BookCandidate candidate, string searchText)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        var titleMatch = GetTextMatch(candidate.Title, searchText);
+        var authorMatch = candidate.Authors
+            .Select(author => GetTextMatch(author, searchText))
+            .DefaultIfEmpty(TitleMatch.None)
+            .Max();
+        var match = titleMatch > authorMatch ? titleMatch : authorMatch;
+
+        return match switch
+        {
+            TitleMatch.Exact => BookCandidateMatchKind.Exact,
+            TitleMatch.StartsWithSearch => BookCandidateMatchKind.Close,
+            _ => BookCandidateMatchKind.Other
+        };
+    }
+
+    private static TitleMatch GetTextMatch(string title, string searchText)
     {
         var normalizedTitle = NormalizeForSearch(title);
         var normalizedSearchText = NormalizeForSearch(searchText);
@@ -141,4 +141,11 @@ public static class BookCandidateGrouper
         StartsWithSearch,
         Exact
     }
+}
+
+public enum BookCandidateMatchKind
+{
+    Other,
+    Close,
+    Exact
 }

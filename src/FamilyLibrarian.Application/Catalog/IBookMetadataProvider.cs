@@ -6,7 +6,7 @@ public interface IBookMetadataProvider
 
     string DisplayName { get; }
 
-    Task<IReadOnlyList<BookCandidate>> SearchAsync(
+    Task<BookCandidateSearchPage> SearchAsync(
         BookSearchQuery query,
         CancellationToken cancellationToken);
 
@@ -14,3 +14,7 @@ public interface IBookMetadataProvider
         string externalId,
         CancellationToken cancellationToken);
 }
+
+public sealed record BookCandidateSearchPage(
+    IReadOnlyList<BookCandidate> Candidates,
+    bool HasMore);

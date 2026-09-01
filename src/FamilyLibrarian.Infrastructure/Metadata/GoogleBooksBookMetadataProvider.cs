@@ -18,11 +18,11 @@ public sealed class GoogleBooksBookMetadataProvider(
 
     public string DisplayName => "Google Books";
 
-    public async Task<IReadOnlyList<BookCandidate>> SearchAsync(
+    public async Task<BookCandidateSearchPage> SearchAsync(
         BookSearchQuery query,
         CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(query.Text);
+        query.Validate();
 
         var providerQuery = IsbnNormalizer.TryNormalizeQuery(query.Text, out var isbn)
             ? $"isbn:{isbn}"
@@ -30,17 +30,25 @@ public sealed class GoogleBooksBookMetadataProvider(
         var requestUri =
             $"volumes?q={Uri.EscapeDataString(providerQuery)}" +
             $"&maxResults={_options.MaxResults.ToString(CultureInfo.InvariantCulture)}" +
+            $"&startIndex={((query.Page - 1) * _options.MaxResults).ToString(CultureInfo.InvariantCulture)}" +
             "&printType=books&projection=full";
 
         var response = await httpClient.GetFromJsonAsync<GoogleBooksVolumesResponse>(
             requestUri,
             cancellationToken);
 
-        return response?.Items?
+        var items = response?.Items ?? [];
+        var candidates = items
             .Select(ToCandidate)
             .Where(candidate => candidate is not null)
             .Cast<BookCandidate>()
-            .ToArray() ?? [];
+            .ToArray();
+        var offset = (query.Page - 1) * _options.MaxResults;
+        var hasMore = response?.TotalItems is { } totalItems
+            ? totalItems > offset + items.Count
+            : items.Count == _options.MaxResults;
+
+        return new BookCandidateSearchPage(candidates, hasMore);
     }
 
     public async Task<BookCandidate?> GetDetailsAsync(
@@ -182,6 +190,9 @@ public sealed class GoogleBooksBookMetadataProvider(
 
     private sealed class GoogleBooksVolumesResponse
     {
+        [JsonPropertyName("totalItems")]
+        public int? TotalItems { get; init; }
+
         [JsonPropertyName("items")]
         public IReadOnlyList<GoogleBooksVolume>? Items { get; init; }
     }

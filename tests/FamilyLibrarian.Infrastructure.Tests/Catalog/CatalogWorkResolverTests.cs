@@ -28,7 +28,7 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
-    public void GroupExactIsbnMatchesPrefersExactTitleMatchesAndExcludesBroadProviderMatches()
+    public void GroupExactIsbnMatchesRanksExactTitleMatchesAheadOfBroadProviderMatches()
     {
         var results = BookCandidateGrouper.GroupExactIsbnMatches(
             [
@@ -39,7 +39,7 @@ public sealed class CatalogWorkResolverTests
             ],
             "sum of all fears");
 
-        Assert.HasCount(1, results);
+        Assert.HasCount(4, results);
         Assert.AreEqual("The Sum of All Fears", results[0].Title);
     }
 
@@ -153,10 +153,10 @@ public sealed class CatalogWorkResolverTests
 
         public string DisplayName => "Stub catalog";
 
-        public Task<IReadOnlyList<BookCandidate>> SearchAsync(
+        public Task<BookCandidateSearchPage> SearchAsync(
             BookSearchQuery query,
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<BookCandidate>>([candidate]);
+            Task.FromResult(new BookCandidateSearchPage([candidate], false));
 
         public Task<BookCandidate?> GetDetailsAsync(string externalId, CancellationToken cancellationToken)
         {

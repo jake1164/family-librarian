@@ -1,0 +1,24 @@
+@if (!string.IsNullOrWhiteSpace(SourceUrl))
+{
+    <MudTooltip Text="@($"Open on {ProviderName}")">
+        <a href="@SourceUrl" target="_blank" rel="noopener" class="provider-source-link">
+            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                @ProviderName
+            </MudChip>
+        </a>
+    </MudTooltip>
+}
+else
+{
+    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+        @ProviderName
+    </MudChip>
+}
+
+@code {
+    [Parameter]
+    public string ProviderName { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? SourceUrl { get; set; }
+}

@@ -4,7 +4,6 @@
 @using System.Text.RegularExpressions
 @inject CatalogApiClient Catalog
 @inject CatalogSearchState SearchState
-@inject IDialogService DialogService
 
 <PageTitle>Search · Family Librarian</PageTitle>
 
@@ -24,11 +23,11 @@
                               Variant="Variant.Outlined"
                               Immediate="true"
                               Class="flex-grow-1"
-                              Disabled="@isSearching" />
+                              Disabled="@(isSearching || isLoadingMore)" />
                 <MudButton ButtonType="ButtonType.Submit"
                            Variant="Variant.Filled"
                            Color="Color.Primary"
-                           Disabled="@isSearching">
+                           Disabled="@(isSearching || isLoadingMore)">
                     Search
                 </MudButton>
             </MudStack>
@@ -57,9 +56,15 @@
     }
     else if (results.Count > 0)
     {
+        var bestMatches = results.Where(IsBestMatch).ToArray();
+        var otherMatches = results.Where(result => !IsBestMatch(result)).ToArray();
+        var visibleResults = bestMatches.Length == 0 || showOtherMatches
+            ? results
+            : bestMatches;
+
         <MudText Typo="Typo.h5">Results</MudText>
         <MudStack Spacing="0">
-            @foreach (var result in results)
+            @foreach (var result in visibleResults)
             {
                 <MudStack Row="true" Spacing="3" Class="pa-3" @key="ResultKey(result)">
                     @if (!string.IsNullOrWhiteSpace(result.CoverUrl) && !failedCovers.Contains(ResultKey(result)))
@@ -98,19 +103,11 @@
                                 @PlainSnippet(result.Description)
                             </MudText>
                         }
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-1">
-                            <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                @result.ProviderName
-                                @(string.IsNullOrWhiteSpace(result.Publisher) ? string.Empty : $" · {result.Publisher}")
-                                @(result.PublicationDate is { } publicationDate ? $" · {publicationDate:yyyy}" : string.Empty)
-                            </MudText>
-                            @if (!string.IsNullOrWhiteSpace(result.SourceUrl))
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-1" Wrap="Wrap.Wrap">
+                            <ProviderChip ProviderName="@result.ProviderName" SourceUrl="@result.SourceUrl" />
+                            @if (SecondaryDetails(result) is { Length: > 0 } secondaryDetails)
                             {
-                                <MudButton Variant="Variant.Text"
-                                           Size="Size.Small"
-                                           OnClick="() => ShowSourceAsync(result)">
-                                    View on @result.ProviderName
-                                </MudButton>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@secondaryDetails</MudText>
                             }
                             @if (result.Editions.Count > 1)
                             {
@@ -126,6 +123,25 @@
                 <MudDivider />
             }
         </MudStack>
+
+        @if (bestMatches.Length > 0 && otherMatches.Length > 0 && !showOtherMatches)
+        {
+            <MudButton Variant="Variant.Outlined"
+                       Color="Color.Secondary"
+                       OnClick="ShowOtherMatches">
+                Show @otherMatches.Length other @(otherMatches.Length == 1 ? "match" : "matches")
+            </MudButton>
+        }
+
+        @if (hasMore)
+        {
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       Disabled="@isLoadingMore"
+                       OnClick="LoadMoreAsync">
+                @(isLoadingMore ? "Loading more…" : "Load more results")
+            </MudButton>
+        }
     }
 </MudStack>
 
@@ -134,6 +150,10 @@
     private IReadOnlyList<CatalogBookCandidateResponse> results = [];
     private bool hasSearched;
     private bool isSearching;
+    private bool isLoadingMore;
+    private bool showOtherMatches;
+    private int currentPage = 1;
+    private bool hasMore;
     private string? errorMessage;
     private IReadOnlyList<string> unavailableProviders = [];
 
@@ -143,6 +163,8 @@
         results = SearchState.Results;
         unavailableProviders = SearchState.UnavailableProviders;
         hasSearched = SearchState.HasSearched;
+        currentPage = SearchState.CurrentPage;
+        hasMore = SearchState.HasMore;
     }
 
     private async Task SearchAsync()
@@ -158,15 +180,20 @@
         hasSearched = true;
         errorMessage = null;
         unavailableProviders = [];
+        showOtherMatches = false;
+        currentPage = 1;
+        hasMore = false;
 
         try
         {
-            var response = await Catalog.SearchAsync(query);
+            var response = await Catalog.SearchAsync(query, currentPage);
             results = response.Results;
             unavailableProviders = response.Providers
                 .Where(provider => !provider.Succeeded)
                 .Select(provider => provider.ProviderName)
                 .ToArray();
+            currentPage = response.Page;
+            hasMore = response.HasMore;
         }
         catch (HttpRequestException)
         {
@@ -183,6 +210,45 @@
         SearchState.Results = results;
         SearchState.UnavailableProviders = unavailableProviders;
         SearchState.HasSearched = hasSearched;
+        SearchState.CurrentPage = currentPage;
+        SearchState.HasMore = hasMore;
+    }
+
+    private async Task LoadMoreAsync()
+    {
+        isLoadingMore = true;
+        errorMessage = null;
+        showOtherMatches = true;
+
+        try
+        {
+            var response = await Catalog.SearchAsync(searchText.Trim(), currentPage + 1);
+            results = results
+                .Concat(response.Results)
+                .DistinctBy(ResultKey)
+                .ToArray();
+            unavailableProviders = unavailableProviders
+                .Concat(response.Providers
+                    .Where(provider => !provider.Succeeded)
+                    .Select(provider => provider.ProviderName))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            currentPage = response.Page;
+            hasMore = response.HasMore;
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "More catalog results are unavailable. Please try again.";
+        }
+        finally
+        {
+            isLoadingMore = false;
+        }
+
+        SearchState.Results = results;
+        SearchState.UnavailableProviders = unavailableProviders;
+        SearchState.CurrentPage = currentPage;
+        SearchState.HasMore = hasMore;
     }
 
     private readonly HashSet<string> failedCovers = [];
@@ -190,29 +256,31 @@
     private static string ResultKey(CatalogBookCandidateResponse result) =>
         $"{result.ProviderId}:{result.ExternalId}";
 
+    private static bool IsBestMatch(CatalogBookCandidateResponse result) =>
+        result.MatchKind is "Exact" or "Close";
+
+    private void ShowOtherMatches() => showOtherMatches = true;
+
     private static string DetailsHref(CatalogBookCandidateResponse result) =>
         $"search/{Uri.EscapeDataString(result.ProviderId)}/{Uri.EscapeDataString(result.ExternalId)}";
 
     private void OnCoverError(CatalogBookCandidateResponse result) =>
         failedCovers.Add(ResultKey(result));
 
-    private async Task ShowSourceAsync(CatalogBookCandidateResponse result)
+    private static string SecondaryDetails(CatalogBookCandidateResponse result)
     {
-        if (string.IsNullOrWhiteSpace(result.SourceUrl))
+        var parts = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(result.Publisher))
         {
-            return;
+            parts.Add(result.Publisher);
         }
 
-        var parameters = new DialogParameters<ProviderSourceDialog>
+        if (result.PublicationDate is { } publicationDate)
         {
-            { dialog => dialog.SourceUrl, result.SourceUrl },
-            { dialog => dialog.ProviderName, result.ProviderName }
-        };
+            parts.Add(publicationDate.ToString("yyyy"));
+        }
 
-        await DialogService.ShowAsync<ProviderSourceDialog>(
-            result.ProviderName,
-            parameters,
-            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+        return string.Join(" · ", parts);
     }
 
     private const int MaxSnippetSentences = 2;
