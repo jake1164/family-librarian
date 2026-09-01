@@ -16,8 +16,7 @@ public sealed class OpenLibraryBookMetadataProvider(
     private const string SearchFields =
         "key,title,author_name,first_publish_date,cover_i,editions," +
         "editions.key,editions.title,editions.isbn,editions.publish_date,editions.format," +
-        "publisher,subject,number_of_pages_median";
-    private const string DetailFields = SearchFields + ",description";
+        "publisher,subject,number_of_pages_median,description";
 
     private static readonly string[] ExactDateFormats =
     [
@@ -62,7 +61,7 @@ public sealed class OpenLibraryBookMetadataProvider(
 
         var candidates = await SearchCoreAsync(
             $"key:/works/{externalId}",
-            DetailFields,
+            SearchFields,
             1,
             cancellationToken);
 
