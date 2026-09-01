@@ -16,7 +16,7 @@ public sealed class OpenLibraryBookMetadataProvider(
     private const string SearchFields =
         "key,title,author_name,first_publish_date,cover_i,editions," +
         "editions.key,editions.title,editions.isbn,editions.publish_date,editions.format," +
-        "publisher,subject,number_of_pages_median,description";
+        "publisher,subject,number_of_pages_median,description,language";
 
     private static readonly string[] ExactDateFormats =
     [
@@ -141,7 +141,8 @@ public sealed class OpenLibraryBookMetadataProvider(
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(MaximumSubjects)
                 .ToArray(),
-            SourceUrl: $"https://openlibrary.org/works/{externalId}");
+            SourceUrl: $"https://openlibrary.org/works/{externalId}",
+            Language: LanguageCodeNormalizer.Normalize(FirstString(document.Languages)));
     }
 
     private static BookEditionCandidate[] GetEditions(
@@ -325,6 +326,9 @@ public sealed class OpenLibraryBookMetadataProvider(
 
         [JsonPropertyName("editions")]
         public OpenLibraryEditions? Editions { get; init; }
+
+        [JsonPropertyName("language")]
+        public JsonElement Languages { get; init; }
     }
 
     private sealed class OpenLibraryEditions

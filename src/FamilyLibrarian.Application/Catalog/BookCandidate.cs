@@ -14,7 +14,8 @@ public sealed record BookCandidate(
     string? Publisher = null,
     int? PageCount = null,
     IReadOnlyList<string>? Subjects = null,
-    string? SourceUrl = null)
+    string? SourceUrl = null,
+    string? Language = null)
 {
     public IReadOnlyList<string> Subjects { get; init; } = Subjects ?? [];
 }

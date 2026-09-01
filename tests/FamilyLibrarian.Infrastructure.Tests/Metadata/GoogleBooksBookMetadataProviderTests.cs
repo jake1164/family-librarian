@@ -31,6 +31,7 @@ public sealed class GoogleBooksBookMetadataProviderTests
                         "publishedDate": "2021-05-04",
                         "publisher": " Ballantine Books ",
                         "pageCount": 496,
+                        "language": "en",
                         "categories": ["Fiction / Science Fiction / General", "Fiction / Science Fiction / General"],
                         "industryIdentifiers": [
                           { "type": "ISBN_10", "identifier": "0-593-13520-2" },
@@ -71,6 +72,7 @@ public sealed class GoogleBooksBookMetadataProviderTests
         Assert.AreEqual(496, candidate.PageCount);
         Assert.HasCount(1, candidate.Subjects);
         Assert.AreEqual("Fiction / Science Fiction / General", candidate.Subjects[0]);
+        Assert.AreEqual("en", candidate.Language);
         Assert.IsNotNull(requestedUri);
         StringAssert.Contains(requestedUri.Query, "q=Project%20Hail%20Mary");
         StringAssert.Contains(requestedUri.Query, "key=test-api-key");

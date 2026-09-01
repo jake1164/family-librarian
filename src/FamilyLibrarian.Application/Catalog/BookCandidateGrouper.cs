@@ -22,17 +22,30 @@ public static class BookCandidateGrouper
         if (string.IsNullOrWhiteSpace(searchText))
         {
             return groupedCandidates
-                .OrderBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(GetLanguageRank)
+                .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(candidate => GetFirstAuthor(candidate), StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
 
         return groupedCandidates
             .OrderByDescending(candidate => GetMatchKind(candidate, searchText))
+            .ThenByDescending(GetLanguageRank)
             .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
             .ThenBy(candidate => GetFirstAuthor(candidate), StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
+
+    // No per-user/global language preference exists yet, so this is a fixed
+    // default rather than a setting. Unknown-language candidates are treated
+    // as neutral (not demoted) since we can't confirm they're a mismatch.
+    private const string DefaultPreferredLanguage = "en";
+
+    private static int GetLanguageRank(BookCandidate candidate) =>
+        candidate.Language is null ||
+        string.Equals(candidate.Language, DefaultPreferredLanguage, StringComparison.OrdinalIgnoreCase)
+            ? 1
+            : 0;
 
     private static string GetExactMatchKey(BookCandidate candidate)
     {

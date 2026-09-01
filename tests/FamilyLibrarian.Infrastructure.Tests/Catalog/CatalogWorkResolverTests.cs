@@ -44,6 +44,39 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
+    public void GroupExactIsbnMatchesRanksPreferredLanguageAheadOfOtherLanguagesOnTiedMatchKind()
+    {
+        // Titles are chosen so that alphabetical order alone (the tiebreak below
+        // the language rank) would put the Spanish edition first; only the
+        // language tiebreak should push it behind the English and unknown-language
+        // candidates.
+        var spanish = CreateCandidate("Amenaza inminente", "spanish-edition") with
+        {
+            Editions = [],
+            Language = "es"
+        };
+        var english = CreateCandidate("Clear and Present Danger", "english-edition") with
+        {
+            Editions = [],
+            Language = "en"
+        };
+        var unknownLanguage = CreateCandidate("Bystander", "unknown-language") with
+        {
+            Editions = [],
+            Language = null
+        };
+
+        var results = BookCandidateGrouper.GroupExactIsbnMatches(
+            [spanish, english, unknownLanguage],
+            "tom clancy");
+
+        Assert.HasCount(3, results);
+        Assert.AreEqual("unknown-language", results[0].ExternalId);
+        Assert.AreEqual("english-edition", results[1].ExternalId);
+        Assert.AreEqual("spanish-edition", results[2].ExternalId);
+    }
+
+    [TestMethod]
     public async Task ResolveAsyncCreatesCanonicalWorkAndProvenance()
     {
         var repository = new InMemoryCatalogRepository();

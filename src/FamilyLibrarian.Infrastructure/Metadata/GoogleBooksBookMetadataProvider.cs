@@ -103,7 +103,8 @@ public sealed class GoogleBooksBookMetadataProvider(
             volume.VolumeInfo?.Publisher?.Trim() is { Length: > 0 } publisher ? publisher : null,
             volume.VolumeInfo?.PageCount is > 0 ? volume.VolumeInfo.PageCount : null,
             subjects,
-            SourceUrl: $"https://books.google.com/books?id={Uri.EscapeDataString(externalId!)}");
+            SourceUrl: $"https://books.google.com/books?id={Uri.EscapeDataString(externalId!)}",
+            Language: LanguageCodeNormalizer.Normalize(volume.VolumeInfo?.Language));
     }
 
     private static string? GetTitle(GoogleBooksVolumeInfo? volumeInfo)
@@ -237,6 +238,9 @@ public sealed class GoogleBooksBookMetadataProvider(
 
         [JsonPropertyName("imageLinks")]
         public GoogleBooksImageLinks? ImageLinks { get; init; }
+
+        [JsonPropertyName("language")]
+        public string? Language { get; init; }
     }
 
     private sealed class GoogleBooksIndustryIdentifier

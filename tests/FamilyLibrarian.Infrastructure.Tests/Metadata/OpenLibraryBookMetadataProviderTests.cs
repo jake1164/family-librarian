@@ -29,6 +29,7 @@ public sealed class OpenLibraryBookMetadataProviderTests
                       "publisher": ["Ballantine Books", "Ballantine Books"],
                       "subject": ["Science fiction", "Space flight", "Science fiction"],
                       "number_of_pages_median": 476,
+                      "language": ["eng"],
                       "editions": {
                         "docs": [
                           {
@@ -77,6 +78,7 @@ public sealed class OpenLibraryBookMetadataProviderTests
         Assert.HasCount(2, candidate.Subjects);
         Assert.AreEqual("Science fiction", candidate.Subjects[0]);
         Assert.AreEqual("Space flight", candidate.Subjects[1]);
+        Assert.AreEqual("en", candidate.Language);
         Assert.IsNotNull(requestedUri);
         StringAssert.Contains(requestedUri.Query, "q=Project%20Hail%20Mary");
         StringAssert.Contains(requestedUri.Query, "limit=10");
