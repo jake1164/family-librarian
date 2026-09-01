@@ -28,6 +28,22 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
+    public void GroupExactIsbnMatchesPrefersExactTitleMatchesAndExcludesBroadProviderMatches()
+    {
+        var results = BookCandidateGrouper.GroupExactIsbnMatches(
+            [
+                CreateCandidate("Dim sum of all fears", "dim-sum") with { Editions = [] },
+                CreateCandidate("Kol ha-peḥadim kulam", "translated") with { Editions = [] },
+                CreateCandidate("Sea of Islands", "sea") with { Editions = [] },
+                CreateCandidate("The Sum of All Fears", "sum-of-all-fears") with { Editions = [] }
+            ],
+            "sum of all fears");
+
+        Assert.HasCount(1, results);
+        Assert.AreEqual("The Sum of All Fears", results[0].Title);
+    }
+
+    [TestMethod]
     public async Task ResolveAsyncCreatesCanonicalWorkAndProvenance()
     {
         var repository = new InMemoryCatalogRepository();
@@ -108,16 +124,18 @@ public sealed class CatalogWorkResolverTests
         Assert.AreEqual(existing.Id, repository.ExternalReferences.Single().EntityId);
     }
 
-    private static BookCandidate CreateCandidate() => new(
+    private static BookCandidate CreateCandidate(
+        string title = "Project Hail Mary",
+        string externalId = "work-1") => new(
         "stub",
         "Stub catalog",
-        "work-1",
-        "Project Hail Mary",
+        externalId,
+        title,
         ["Andy Weir"],
         "A science-fiction novel.",
         null,
         new DateOnly(2021, 5, 4),
-        [new BookEditionCandidate("Project Hail Mary", "9780593135204", "Ebook", new DateOnly(2021, 5, 4))],
+        [new BookEditionCandidate(title, "9780593135204", "Ebook", new DateOnly(2021, 5, 4))],
         [new BookSeriesCandidate("Project Hail Mary Universe", "2.5", true)]);
 
     private sealed class FixedClock : IClock

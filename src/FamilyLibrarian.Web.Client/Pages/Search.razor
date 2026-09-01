@@ -4,6 +4,7 @@
 @using System.Text.RegularExpressions
 @inject CatalogApiClient Catalog
 @inject CatalogSearchState SearchState
+@inject IDialogService DialogService
 
 <PageTitle>Search · Family Librarian</PageTitle>
 
@@ -103,6 +104,14 @@
                                 @(string.IsNullOrWhiteSpace(result.Publisher) ? string.Empty : $" · {result.Publisher}")
                                 @(result.PublicationDate is { } publicationDate ? $" · {publicationDate:yyyy}" : string.Empty)
                             </MudText>
+                            @if (!string.IsNullOrWhiteSpace(result.SourceUrl))
+                            {
+                                <MudButton Variant="Variant.Text"
+                                           Size="Size.Small"
+                                           OnClick="() => ShowSourceAsync(result)">
+                                    View on @result.ProviderName
+                                </MudButton>
+                            }
                             @if (result.Editions.Count > 1)
                             {
                                 <MudButton Variant="Variant.Outlined"
@@ -186,6 +195,25 @@
 
     private void OnCoverError(CatalogBookCandidateResponse result) =>
         failedCovers.Add(ResultKey(result));
+
+    private async Task ShowSourceAsync(CatalogBookCandidateResponse result)
+    {
+        if (string.IsNullOrWhiteSpace(result.SourceUrl))
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters<ProviderSourceDialog>
+        {
+            { dialog => dialog.SourceUrl, result.SourceUrl },
+            { dialog => dialog.ProviderName, result.ProviderName }
+        };
+
+        await DialogService.ShowAsync<ProviderSourceDialog>(
+            result.ProviderName,
+            parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+    }
 
     private const int MaxSnippetSentences = 2;
     private const int MaxSnippetLength = 320;

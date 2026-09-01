@@ -2,6 +2,7 @@
 @attribute [Authorize]
 @inject CatalogApiClient Catalog
 @inject NavigationManager Navigation
+@inject IDialogService DialogService
 
 <PageTitle>@(book?.Title ?? "Book") · Family Librarian</PageTitle>
 
@@ -46,6 +47,12 @@
                         <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
                             @book.ProviderName
                         </MudChip>
+                        @if (!string.IsNullOrWhiteSpace(book.SourceUrl))
+                        {
+                            <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="ShowSourceAsync">
+                                View on @book.ProviderName
+                            </MudButton>
+                        }
                     </MudStack>
 
                     <div>
@@ -242,6 +249,25 @@
         {
             isResolving = false;
         }
+    }
+
+    private async Task ShowSourceAsync()
+    {
+        if (book is null || string.IsNullOrWhiteSpace(book.SourceUrl))
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters<ProviderSourceDialog>
+        {
+            { dialog => dialog.SourceUrl, book.SourceUrl },
+            { dialog => dialog.ProviderName, book.ProviderName }
+        };
+
+        await DialogService.ShowAsync<ProviderSourceDialog>(
+            book.ProviderName,
+            parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
     }
 
     private static string EditionCountLabel(int count) =>

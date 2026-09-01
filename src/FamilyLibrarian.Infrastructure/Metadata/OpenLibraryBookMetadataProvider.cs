@@ -128,7 +128,8 @@ public sealed class OpenLibraryBookMetadataProvider(
                 .Where(subject => !string.IsNullOrWhiteSpace(subject))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(MaximumSubjects)
-                .ToArray());
+                .ToArray(),
+            SourceUrl: $"https://openlibrary.org/works/{externalId}");
     }
 
     private static BookEditionCandidate[] GetEditions(

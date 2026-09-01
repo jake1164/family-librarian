@@ -94,7 +94,8 @@ public sealed class GoogleBooksBookMetadataProvider(
             [],
             volume.VolumeInfo?.Publisher?.Trim() is { Length: > 0 } publisher ? publisher : null,
             volume.VolumeInfo?.PageCount is > 0 ? volume.VolumeInfo.PageCount : null,
-            subjects);
+            subjects,
+            SourceUrl: $"https://books.google.com/books?id={Uri.EscapeDataString(externalId!)}");
     }
 
     private static string? GetTitle(GoogleBooksVolumeInfo? volumeInfo)

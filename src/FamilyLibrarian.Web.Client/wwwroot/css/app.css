@@ -43,3 +43,10 @@ html, body {
     display: -webkit-box;
     overflow: hidden;
 }
+
+.provider-source-frame {
+    border: none;
+    border-radius: 4px;
+    height: 70vh;
+    width: 100%;
+}

@@ -13,7 +13,8 @@ public sealed record BookCandidate(
     IReadOnlyList<BookSeriesCandidate> Series,
     string? Publisher = null,
     int? PageCount = null,
-    IReadOnlyList<string>? Subjects = null)
+    IReadOnlyList<string>? Subjects = null,
+    string? SourceUrl = null)
 {
     public IReadOnlyList<string> Subjects { get; init; } = Subjects ?? [];
 }

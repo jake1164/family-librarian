@@ -22,7 +22,8 @@ public sealed record CatalogBookCandidateResponse(
     IReadOnlyList<CatalogSeriesResponse> Series,
     string? Publisher,
     int? PageCount,
-    IReadOnlyList<string> Subjects);
+    IReadOnlyList<string> Subjects,
+    string? SourceUrl);
 
 public sealed record CatalogEditionResponse(
     string Title,

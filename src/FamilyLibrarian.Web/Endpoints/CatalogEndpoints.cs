@@ -54,7 +54,7 @@ internal static class CatalogEndpoints
             BookCandidateGrouper.GroupExactIsbnMatches(providerResults
                 .Where(result => result.Succeeded)
                 .SelectMany(result => result.Candidates)
-                .ToArray())
+                .ToArray(), searchText)
                 .Select(ToResponse)
                 .ToArray(),
             providerResults
@@ -290,7 +290,8 @@ internal static class CatalogEndpoints
             series.IsPrimary)).ToArray(),
         candidate.Publisher,
         candidate.PageCount,
-        candidate.Subjects);
+        candidate.Subjects,
+        candidate.SourceUrl);
 
     private static async Task<CatalogWorkResponse> ToWorkResponseAsync(
         Domain.Catalog.Work work,
