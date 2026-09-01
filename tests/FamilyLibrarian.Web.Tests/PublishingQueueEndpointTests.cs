@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Authentication;
@@ -268,8 +269,10 @@ public sealed class PublishingQueueEndpointTests
     {
         public string? NextBookId { get; set; } = bookIdOnFirstCall;
 
-        public Task<string?> FindBookIdAsync(
+        public Task<BookMatchResult> FindBookIdAsync(
             string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken) =>
-            Task.FromResult(NextBookId);
+            Task.FromResult(NextBookId is null
+                ? BookMatchResult.NoMatchResult
+                : BookMatchResult.Match(new CandidateBook(NextBookId, title, author)));
     }
 }

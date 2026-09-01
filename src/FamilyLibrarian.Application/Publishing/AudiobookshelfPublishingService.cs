@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
@@ -127,16 +128,24 @@ public sealed class AudiobookshelfPublishingService(
 
         try
         {
-            var existingItemId = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
-            if (existingItemId is not null)
+            var existing = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
+            if (existing.Decision == BookMatchDecision.Match)
             {
-                delivery.MarkDelivered(existingItemId, clock.UtcNow);
+                delivery.MarkDelivered(existing.MatchedId!, clock.UtcNow);
                 await MarkRequestFormatAvailableAsync(asset.AssociatedRequestFormatId, title, cancellationToken);
                 ArchiveTrusted([asset]);
                 await repository.SaveChangesAsync(cancellationToken);
                 await AuditPublishedAsync(asset.Id, cancellationToken);
                 await DeleteTrustedBytesAsync([asset], cancellationToken);
                 return;
+            }
+
+            if (existing.Decision == BookMatchDecision.Ambiguous)
+            {
+                // Multiple library items match -- guessing one as "already
+                // delivered" risks attaching the wrong edition, so this falls
+                // through to a normal upload instead, same as NoMatch.
+                await AuditMatchAmbiguousAsync(asset.Id, existing.Candidates, cancellationToken);
             }
 
             await using var content = await stagingStore.OpenAsync(
@@ -229,16 +238,21 @@ public sealed class AudiobookshelfPublishingService(
 
         try
         {
-            var existingItemId = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
-            if (existingItemId is not null)
+            var existing = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
+            if (existing.Decision == BookMatchDecision.Match)
             {
-                delivery.MarkDelivered(existingItemId, clock.UtcNow);
+                delivery.MarkDelivered(existing.MatchedId!, clock.UtcNow);
                 await MarkRequestFormatAvailableAsync(tracks[0].AssociatedRequestFormatId, title, cancellationToken);
                 ArchiveTrusted(tracks);
                 await repository.SaveChangesAsync(cancellationToken);
                 await AuditBundlePublishedAsync(bundleId, cancellationToken);
                 await DeleteTrustedBytesAsync(tracks, cancellationToken);
                 return;
+            }
+
+            if (existing.Decision == BookMatchDecision.Ambiguous)
+            {
+                await AuditMatchAmbiguousAsync(bundleId, existing.Candidates, cancellationToken);
             }
 
             var orderedTracks = tracks.OrderBy(track => track.BundleSequence).ToArray();
@@ -332,10 +346,10 @@ public sealed class AudiobookshelfPublishingService(
     {
         try
         {
-            var itemId = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
-            if (itemId is not null)
+            var result = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
+            if (result.Decision == BookMatchDecision.Match)
             {
-                delivery.MarkDelivered(itemId, clock.UtcNow);
+                delivery.MarkDelivered(result.MatchedId!, clock.UtcNow);
                 await MarkRequestFormatAvailableAsync(assets[0].AssociatedRequestFormatId, title, cancellationToken);
                 ArchiveTrusted(assets);
                 await repository.SaveChangesAsync(cancellationToken);
@@ -343,6 +357,11 @@ public sealed class AudiobookshelfPublishingService(
                 // Cleanup runs only after the Delivered/Archived state is
                 // durably saved -- see DeleteTrustedBytesAsync.
                 await DeleteTrustedBytesAsync(assets, cancellationToken);
+            }
+            else if (result.Decision == BookMatchDecision.Ambiguous)
+            {
+                // Left Verifying -- genuine ambiguity, not a bug to guess past.
+                await AuditMatchAmbiguousAsync(assets[0].Id, result.Candidates, cancellationToken);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -435,5 +454,14 @@ public sealed class AudiobookshelfPublishingService(
             AuditSubjectTypes.MediaAsset,
             bundleId.ToString(),
             new { BundleId = bundleId, Destination = "audiobookshelf", Reason = reason },
+            cancellationToken);
+
+    private Task AuditMatchAmbiguousAsync(
+        Guid subjectId, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken) =>
+        audit.WriteAsync(
+            AuditActions.AssetMatchAmbiguous,
+            AuditSubjectTypes.MediaAsset,
+            subjectId.ToString(),
+            new { SubjectId = subjectId, Destination = "audiobookshelf", Candidates = candidates },
             cancellationToken);
 }
