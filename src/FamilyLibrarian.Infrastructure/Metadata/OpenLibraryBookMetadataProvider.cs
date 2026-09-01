@@ -12,9 +12,11 @@ public sealed class OpenLibraryBookMetadataProvider(
     IOptions<OpenLibraryMetadataOptions> options) : IBookMetadataProvider
 {
     private const int MaximumDescriptionLength = 8_000;
+    private const int MaximumSubjects = 8;
     private const string SearchFields =
         "key,title,author_name,first_publish_date,cover_i,editions," +
-        "editions.key,editions.title,editions.isbn,editions.publish_date,editions.format";
+        "editions.key,editions.title,editions.isbn,editions.publish_date,editions.format," +
+        "publisher,subject,number_of_pages_median";
     private const string DetailFields = SearchFields + ",description";
 
     private static readonly string[] ExactDateFormats =
@@ -120,7 +122,14 @@ public sealed class OpenLibraryBookMetadataProvider(
             GetCoverUrl(document.CoverId),
             TryParseExactDate(FirstString(document.FirstPublishDates)),
             GetEditions(document, title),
-            []);
+            [],
+            FirstString(document.Publishers),
+            document.NumberOfPagesMedian is > 0 ? document.NumberOfPagesMedian : null,
+            GetStrings(document.Subjects)
+                .Where(subject => !string.IsNullOrWhiteSpace(subject))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(MaximumSubjects)
+                .ToArray());
     }
 
     private static BookEditionCandidate[] GetEditions(
@@ -289,6 +298,15 @@ public sealed class OpenLibraryBookMetadataProvider(
 
         [JsonPropertyName("cover_i")]
         public int? CoverId { get; init; }
+
+        [JsonPropertyName("publisher")]
+        public JsonElement Publishers { get; init; }
+
+        [JsonPropertyName("subject")]
+        public JsonElement Subjects { get; init; }
+
+        [JsonPropertyName("number_of_pages_median")]
+        public int? NumberOfPagesMedian { get; init; }
 
         [JsonPropertyName("editions")]
         public OpenLibraryEditions? Editions { get; init; }

@@ -23,31 +23,69 @@
     else
     {
         <MudPaper Class="pa-4" Elevation="1">
-            <MudStack Spacing="2">
-                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
-                    <MudText Typo="Typo.overline">Catalog record</MudText>
-                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
-                        @book.ProviderName
-                    </MudChip>
-                </MudStack>
-
-                <div>
-                    <MudText Typo="Typo.h3">@book.Title</MudText>
-                    <MudText Typo="Typo.h6">@string.Join(", ", book.Authors)</MudText>
-                </div>
-
-                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
-                    @if (book.PublicationDate is { } publicationDate)
-                    {
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                            Reported publication: @publicationDate.ToString("yyyy")
+            <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Start">
+                @if (!string.IsNullOrWhiteSpace(book.CoverUrl) && !coverFailed)
+                {
+                    <img src="@book.CoverUrl"
+                         alt=""
+                         class="book-detail-cover"
+                         @onerror="() => coverFailed = true" />
+                }
+                else
+                {
+                    <MudPaper Outlined="true" Class="book-detail-cover d-flex align-center justify-center">
+                        <MudIcon Icon="@Icons.Material.Filled.MenuBook" Size="Size.Large" Color="Color.Default" />
+                    </MudPaper>
+                }
+                <MudStack Spacing="2" Class="flex-grow-1" Style="min-width: 0;">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                        <MudText Typo="Typo.overline">Catalog record</MudText>
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                            @book.ProviderName
                         </MudChip>
-                    }
-                    @if (book.Editions.Count > 0)
+                    </MudStack>
+
+                    <div>
+                        <MudText Typo="Typo.h3">@book.Title</MudText>
+                        <MudText Typo="Typo.h6">@string.Join(", ", book.Authors)</MudText>
+                    </div>
+
+                    <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                        @if (book.PublicationDate is { } publicationDate)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                First reported: @publicationDate.ToString("MMMM d, yyyy")
+                            </MudChip>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(book.Publisher))
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                @book.Publisher
+                            </MudChip>
+                        }
+                        @if (book.PageCount is { } pageCount)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                @pageCount pages
+                            </MudChip>
+                        }
+                        @if (book.Editions.Count > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                @EditionCountLabel(book.Editions.Count)
+                            </MudChip>
+                        }
+                    </MudStack>
+                    @if (book.Subjects.Count > 0)
                     {
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                            @EditionCountLabel(book.Editions.Count)
-                        </MudChip>
+                        <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                            @foreach (var subject in book.Subjects)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Secondary">
+                                    @subject
+                                </MudChip>
+                            }
+                        </MudStack>
                     }
                 </MudStack>
             </MudStack>
@@ -163,11 +201,13 @@
     private CatalogBookCandidateResponse? book;
     private bool isLoading = true;
     private bool isResolving;
+    private bool coverFailed;
     private string? resolveError;
 
     protected override async Task OnParametersSetAsync()
     {
         isLoading = true;
+        coverFailed = false;
         try
         {
             book = await Catalog.GetCandidateAsync(ProviderId, ExternalId);

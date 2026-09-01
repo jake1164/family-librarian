@@ -29,6 +29,9 @@ public sealed class GoogleBooksBookMetadataProviderTests
                         "authors": ["Andy Weir", "Andy Weir"],
                         "description": "  A description from the provider.  ",
                         "publishedDate": "2021-05-04",
+                        "publisher": " Ballantine Books ",
+                        "pageCount": 496,
+                        "categories": ["Fiction / Science Fiction / General", "Fiction / Science Fiction / General"],
                         "industryIdentifiers": [
                           { "type": "ISBN_10", "identifier": "0-593-13520-2" },
                           { "type": "ISBN_13", "identifier": "9780593135204" }
@@ -63,6 +66,10 @@ public sealed class GoogleBooksBookMetadataProviderTests
         Assert.HasCount(1, candidate.Editions);
         Assert.AreEqual("9780593135204", candidate.Editions[0].Isbn13);
         Assert.AreEqual("Unknown format", candidate.Editions[0].Format);
+        Assert.AreEqual("Ballantine Books", candidate.Publisher);
+        Assert.AreEqual(496, candidate.PageCount);
+        Assert.HasCount(1, candidate.Subjects);
+        Assert.AreEqual("Fiction / Science Fiction / General", candidate.Subjects[0]);
         Assert.IsNotNull(requestedUri);
         StringAssert.Contains(requestedUri.Query, "q=Project%20Hail%20Mary");
         StringAssert.Contains(requestedUri.Query, "key=test-api-key");

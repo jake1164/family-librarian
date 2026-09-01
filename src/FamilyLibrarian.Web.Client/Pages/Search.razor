@@ -1,8 +1,9 @@
 @page "/search"
 @attribute [Authorize]
+@using System.Net
+@using System.Text.RegularExpressions
 @inject CatalogApiClient Catalog
 @inject CatalogSearchState SearchState
-@inject NavigationManager Navigation
 
 <PageTitle>Search · Family Librarian</PageTitle>
 
@@ -56,54 +57,57 @@
     else if (results.Count > 0)
     {
         <MudText Typo="Typo.h5">Results</MudText>
-        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-            <MudText Typo="Typo.subtitle2">Why do similar results appear separately?</MudText>
-            <MudText Typo="Typo.body2">
-                Family Librarian combines records only when catalog sources report the exact same ISBN.
-                Matching titles and author names alone can describe different editions, illustrated or
-                abridged versions, retellings, translations, or separate catalog records. Open a result
-                to compare its known editions before saving it to the family catalog.
-            </MudText>
-        </MudAlert>
-        @foreach (var result in results)
-        {
-            <MudCard Outlined="true">
-                <MudCardContent>
-                    <MudStack Spacing="1">
-                        <MudText Typo="Typo.h5">@result.Title</MudText>
-                        <MudText Typo="Typo.body1">@string.Join(", ", result.Authors)</MudText>
-                        <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
-                            @if (result.PublicationDate is { } publicationDate)
-                            {
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                                    Reported publication: @publicationDate.ToString("yyyy")
-                                </MudChip>
-                            }
-                            @if (result.Editions.Count > 0)
-                            {
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                                    @EditionCountLabel(result.Editions.Count)
-                                </MudChip>
-                            }
-                        </MudStack>
+        <MudStack Spacing="0">
+            @foreach (var result in results)
+            {
+                <MudStack Row="true" Spacing="3" Class="pa-3" @key="ResultKey(result)">
+                    @if (!string.IsNullOrWhiteSpace(result.CoverUrl) && !failedCovers.Contains(ResultKey(result)))
+                    {
+                        <img src="@result.CoverUrl"
+                             alt=""
+                             loading="lazy"
+                             class="search-result-cover"
+                             @onerror="() => OnCoverError(result)" />
+                    }
+                    else
+                    {
+                        <MudPaper Outlined="true" Class="search-result-cover d-flex align-center justify-center">
+                            <MudIcon Icon="@Icons.Material.Filled.MenuBook" Color="Color.Default" />
+                        </MudPaper>
+                    }
+                    <MudStack Spacing="1" Class="flex-grow-1" Style="min-width: 0;">
+                        <MudLink Typo="Typo.h6" Class="search-result-title" Href="@DetailsHref(result)">@result.Title</MudLink>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">@string.Join(", ", result.Authors)</MudText>
                         @if (result.Series.FirstOrDefault(series => series.IsPrimary) is { } series)
                         {
-                            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
                                 @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · Book {series.PositionLabel}")
                             </MudText>
                         }
-                        <MudText Typo="Typo.body2">Source: @result.ProviderName</MudText>
+                        @if (!string.IsNullOrWhiteSpace(result.Description))
+                        {
+                            <MudText Typo="Typo.body2" Class="search-result-description">@PlainSnippet(result.Description)</MudText>
+                        }
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-1">
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                @result.ProviderName
+                                @(string.IsNullOrWhiteSpace(result.Publisher) ? string.Empty : $" · {result.Publisher}")
+                                @(result.PublicationDate is { } publicationDate ? $" · {publicationDate:yyyy}" : string.Empty)
+                            </MudText>
+                            @if (result.Editions.Count > 1)
+                            {
+                                <MudButton Variant="Variant.Outlined"
+                                           Size="Size.Small"
+                                           Href="@DetailsHref(result)">
+                                    @result.Editions.Count more editions
+                                </MudButton>
+                            }
+                        </MudStack>
                     </MudStack>
-                </MudCardContent>
-                <MudCardActions>
-                    <MudButton Variant="Variant.Text"
-                               Color="Color.Primary"
-                               OnClick="() => OpenDetails(result)">
-                        View details
-                    </MudButton>
-                </MudCardActions>
-            </MudCard>
-        }
+                </MudStack>
+                <MudDivider />
+            }
+        </MudStack>
     }
 </MudStack>
 
@@ -163,9 +167,43 @@
         SearchState.HasSearched = hasSearched;
     }
 
-    private void OpenDetails(CatalogBookCandidateResponse result) =>
-        Navigation.NavigateTo($"search/{Uri.EscapeDataString(result.ProviderId)}/{Uri.EscapeDataString(result.ExternalId)}");
+    private readonly HashSet<string> failedCovers = [];
 
-    private static string EditionCountLabel(int count) =>
-        count == 1 ? "1 known edition" : $"{count} known editions";
+    private static string ResultKey(CatalogBookCandidateResponse result) =>
+        $"{result.ProviderId}:{result.ExternalId}";
+
+    private static string DetailsHref(CatalogBookCandidateResponse result) =>
+        $"search/{Uri.EscapeDataString(result.ProviderId)}/{Uri.EscapeDataString(result.ExternalId)}";
+
+    private void OnCoverError(CatalogBookCandidateResponse result) =>
+        failedCovers.Add(ResultKey(result));
+
+    private const int MaxSnippetSentences = 2;
+    private const int MaxSnippetLength = 320;
+
+    private static readonly Regex HtmlTagPattern = new("<[^>]+>", RegexOptions.Compiled);
+    private static readonly Regex WhitespacePattern = new(@"\s+", RegexOptions.Compiled);
+    private static readonly Regex SentencePattern = new(@"[^.!?]+[.!?]+", RegexOptions.Compiled);
+
+    private static string PlainSnippet(string description)
+    {
+        var decoded = WebUtility.HtmlDecode(description);
+        var plainText = WhitespacePattern
+            .Replace(HtmlTagPattern.Replace(decoded, " "), " ")
+            .Trim();
+
+        var allSentences = SentencePattern.Matches(plainText)
+            .Select(match => match.Value.Trim())
+            .Where(sentence => sentence.Length > 0)
+            .ToArray();
+        var sentences = allSentences.Take(MaxSnippetSentences).ToArray();
+        var snippet = sentences.Length > 0 ? string.Join(" ", sentences) : plainText;
+
+        if (snippet.Length > MaxSnippetLength)
+        {
+            return string.Concat(snippet.AsSpan(0, MaxSnippetLength).TrimEnd(), "…");
+        }
+
+        return allSentences.Length > sentences.Length ? $"{snippet} …" : snippet;
+    }
 }

@@ -26,6 +26,9 @@ public sealed class OpenLibraryBookMetadataProviderTests
                       "author_name": ["Andy Weir", "Andy Weir"],
                       "first_publish_date": ["2021-05-04"],
                       "cover_i": 12345,
+                      "publisher": ["Ballantine Books", "Ballantine Books"],
+                      "subject": ["Science fiction", "Space flight", "Science fiction"],
+                      "number_of_pages_median": 476,
                       "editions": {
                         "docs": [
                           {
@@ -68,6 +71,11 @@ public sealed class OpenLibraryBookMetadataProviderTests
         Assert.AreEqual("9780593135204", candidate.Editions[0].Isbn13);
         Assert.AreEqual("Ebook", candidate.Editions[0].Format);
         Assert.AreEqual(new DateOnly(2021, 5, 4), candidate.Editions[0].PublicationDate);
+        Assert.AreEqual("Ballantine Books", candidate.Publisher);
+        Assert.AreEqual(476, candidate.PageCount);
+        Assert.HasCount(2, candidate.Subjects);
+        Assert.AreEqual("Science fiction", candidate.Subjects[0]);
+        Assert.AreEqual("Space flight", candidate.Subjects[1]);
         Assert.IsNotNull(requestedUri);
         StringAssert.Contains(requestedUri.Query, "q=Project%20Hail%20Mary");
         StringAssert.Contains(requestedUri.Query, "limit=10");

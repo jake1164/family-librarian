@@ -19,7 +19,10 @@ public sealed record CatalogBookCandidateResponse(
     string? CoverUrl,
     DateOnly? PublicationDate,
     IReadOnlyList<CatalogEditionResponse> Editions,
-    IReadOnlyList<CatalogSeriesResponse> Series);
+    IReadOnlyList<CatalogSeriesResponse> Series,
+    string? Publisher,
+    int? PageCount,
+    IReadOnlyList<string> Subjects);
 
 public sealed record CatalogEditionResponse(
     string Title,

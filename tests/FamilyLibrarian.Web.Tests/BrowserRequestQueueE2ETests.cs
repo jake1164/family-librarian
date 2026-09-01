@@ -55,7 +55,7 @@ public sealed class BrowserRequestQueueE2ETests
         await page.GetByLabel("Title, author, or ISBN", new() { Exact = true }).PressAsync("Enter");
         await Assertions.Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Results", Exact = true }))
             .ToBeVisibleAsync();
-        await page.GetByRole(AriaRole.Button, new() { Name = "View details", Exact = true }).First.ClickAsync();
+        await page.Locator("a.search-result-title").First.ClickAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Use this book", Exact = true }).ClickAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Request this book", Exact = true }).ClickAsync();
         await Assertions.Expect(page.GetByText("Your request is in.", new() { Exact = false })).ToBeVisibleAsync();

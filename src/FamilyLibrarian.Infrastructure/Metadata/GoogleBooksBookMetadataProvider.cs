@@ -75,6 +75,11 @@ public sealed class GoogleBooksBookMetadataProvider(
             .ToArray() ?? [];
         var publicationDate = TryParseExactDate(volume.VolumeInfo?.PublishedDate);
         var isbn13 = GetIsbn13(volume.VolumeInfo?.IndustryIdentifiers);
+        var subjects = volume.VolumeInfo?.Categories?
+            .Where(category => !string.IsNullOrWhiteSpace(category))
+            .Select(category => category.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
 
         return new BookCandidate(
             Id,
@@ -86,7 +91,10 @@ public sealed class GoogleBooksBookMetadataProvider(
             GetCoverUrl(volume.VolumeInfo?.ImageLinks),
             publicationDate,
             [new BookEditionCandidate(title, isbn13, "Unknown format", publicationDate)],
-            []);
+            [],
+            volume.VolumeInfo?.Publisher?.Trim() is { Length: > 0 } publisher ? publisher : null,
+            volume.VolumeInfo?.PageCount is > 0 ? volume.VolumeInfo.PageCount : null,
+            subjects);
     }
 
     private static string? GetTitle(GoogleBooksVolumeInfo? volumeInfo)
@@ -202,6 +210,15 @@ public sealed class GoogleBooksBookMetadataProvider(
 
         [JsonPropertyName("publishedDate")]
         public string? PublishedDate { get; init; }
+
+        [JsonPropertyName("publisher")]
+        public string? Publisher { get; init; }
+
+        [JsonPropertyName("pageCount")]
+        public int? PageCount { get; init; }
+
+        [JsonPropertyName("categories")]
+        public IReadOnlyList<string>? Categories { get; init; }
 
         [JsonPropertyName("industryIdentifiers")]
         public IReadOnlyList<GoogleBooksIndustryIdentifier>? IndustryIdentifiers { get; init; }

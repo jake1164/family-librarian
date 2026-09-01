@@ -20,3 +20,26 @@ html, body {
     right: 0.75rem;
     top: 0.5rem;
 }
+
+.search-result-cover {
+    border-radius: 4px;
+    flex: 0 0 auto;
+    height: 144px;
+    object-fit: cover;
+    width: 96px;
+}
+
+.book-detail-cover {
+    border-radius: 4px;
+    flex: 0 0 auto;
+    height: 240px;
+    object-fit: cover;
+    width: 160px;
+}
+
+.search-result-description {
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    display: -webkit-box;
+    overflow: hidden;
+}

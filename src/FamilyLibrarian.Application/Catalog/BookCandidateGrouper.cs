@@ -33,6 +33,9 @@ public static class BookCandidateGrouper
     private static int GetCompletenessScore(BookCandidate candidate) =>
         (string.IsNullOrWhiteSpace(candidate.Description) ? 0 : 2) +
         (string.IsNullOrWhiteSpace(candidate.CoverUrl) ? 0 : 1) +
+        (string.IsNullOrWhiteSpace(candidate.Publisher) ? 0 : 1) +
+        (candidate.PageCount is null ? 0 : 1) +
+        (candidate.Subjects.Count == 0 ? 0 : 1) +
         candidate.Authors.Count +
         candidate.Editions.Count +
         candidate.Series.Count;

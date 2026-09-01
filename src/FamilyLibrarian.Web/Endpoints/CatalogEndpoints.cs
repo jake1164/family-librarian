@@ -287,7 +287,10 @@ internal static class CatalogEndpoints
         candidate.Series.Select(series => new CatalogSeriesResponse(
             series.Name,
             series.PositionLabel,
-            series.IsPrimary)).ToArray());
+            series.IsPrimary)).ToArray(),
+        candidate.Publisher,
+        candidate.PageCount,
+        candidate.Subjects);
 
     private static async Task<CatalogWorkResponse> ToWorkResponseAsync(
         Domain.Catalog.Work work,
