@@ -1,6 +1,7 @@
 @page "/reading"
 @attribute [Authorize]
 @inject FeedbackApiClient Feedback
+@inject RequestsApiClient Requests
 
 <PageTitle>My reading · Family Librarian</PageTitle>
 
@@ -21,37 +22,104 @@
     {
         <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
     }
-    else if (items.Count == 0)
-    {
-        <MudAlert Severity="Severity.Info">
-            Nothing logged yet. Rate a book from its
-            <MudLink Href="search">search result</MudLink> once you have finished it.
-        </MudAlert>
-    }
     else
     {
-        @foreach (var item in items)
+        @if (candidates.Count > 0)
         {
-            <MudCard Outlined="true" Class="mb-3">
-                <MudCardContent>
-                    <MudStack Spacing="1">
-                        <MudText Typo="Typo.h6">
-                            <MudLink Href="@($"works/{item.WorkId}")">@item.WorkTitle</MudLink>
-                        </MudText>
-                        <MudText Typo="Typo.body2">@string.Join(", ", item.Authors)</MudText>
-                        <MudRating SelectedValue="item.Rating" MaxValue="5" ReadOnly="true" />
-                        <MudText Typo="Typo.caption">
-                            Finished @item.CompletedOn.ToString("d")
-                        </MudText>
+            <MudPaper Class="pa-4" Outlined="true">
+                <MudStack Spacing="2">
+                    <MudText Typo="Typo.h6">Log a book you've finished</MudText>
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                        <MudSelect T="Guid" @bind-Value="selectedCandidateWorkId" Label="Which book?" Class="flex-grow-1" Style="min-width: 240px;">
+                            @foreach (var candidate in candidates)
+                            {
+                                <MudSelectItem T="Guid" Value="candidate.WorkId">
+                                    @candidate.WorkTitle — @string.Join(", ", candidate.Authors)
+                                </MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   OnClick="AddRowForSelectedCandidate"
+                                   Disabled="@(selectedCandidateWorkId == Guid.Empty)">
+                            Add
+                        </MudButton>
                     </MudStack>
-                </MudCardContent>
-            </MudCard>
+                </MudStack>
+            </MudPaper>
+        }
+
+        @if (rows.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info">
+                Nothing logged yet. Once a book you asked for is available, use
+                "Log a book you've finished" above to rate it.
+            </MudAlert>
+        }
+        else
+        {
+            @foreach (var row in rows)
+            {
+                <MudCard Outlined="true" Class="mb-3" @key="row.WorkId">
+                    <MudCardContent>
+                        <MudStack Spacing="2">
+                            <MudText Typo="Typo.h6">
+                                <MudLink Href="@($"works/{row.WorkId}")">@row.WorkTitle</MudLink>
+                            </MudText>
+                            <MudText Typo="Typo.body2">@string.Join(", ", row.Authors)</MudText>
+
+                            <MudDatePicker @bind-Date="row.CompletedOnDate"
+                                           Label="Date finished"
+                                           Editable="true"
+                                           Disabled="@row.IsSaving" />
+                            <MudRating @bind-SelectedValue="row.Rating" MaxValue="5" Disabled="@row.IsSaving" />
+
+                            @if (!string.IsNullOrWhiteSpace(row.Error))
+                            {
+                                <MudAlert Severity="Severity.Error">@row.Error</MudAlert>
+                            }
+
+                            <MudStack Row="true" Spacing="2">
+                                <MudButton Variant="Variant.Filled"
+                                           Color="Color.Primary"
+                                           OnClick="() => SaveRowAsync(row)"
+                                           Disabled="@(row.IsSaving || row.CompletedOnDate is null || row.Rating is 0)">
+                                    @(row.IsSaving ? "Saving…" : row.IsLogged ? "Update" : "Log as finished")
+                                </MudButton>
+
+                                <MudButton Variant="Variant.Text"
+                                           Color="Color.Error"
+                                           OnClick="() => RemoveRowAsync(row)"
+                                           Disabled="@row.IsSaving">
+                                    @(row.IsLogged ? "Remove" : "Cancel")
+                                </MudButton>
+                            </MudStack>
+                        </MudStack>
+                    </MudCardContent>
+                </MudCard>
+            }
         }
     }
 </MudStack>
 
 @code {
-    private IReadOnlyList<WorkFeedbackResponse> items = [];
+    private sealed class ReadingRow
+    {
+        public required Guid WorkId { get; init; }
+        public required string WorkTitle { get; init; }
+        public required IReadOnlyList<string> Authors { get; init; }
+        public uint? Version { get; set; }
+        public DateTime? CompletedOnDate { get; set; }
+        public int Rating { get; set; }
+        public bool IsSaving { get; set; }
+        public bool IsLogged { get; set; }
+        public string? Error { get; set; }
+    }
+
+    private readonly List<ReadingRow> rows = [];
+    private IReadOnlyList<BookRequestResponse> availableRequests = [];
+    private IReadOnlyList<BookRequestResponse> candidates = [];
+    private Guid selectedCandidateWorkId;
     private bool isLoading = true;
     private string? errorMessage;
 
@@ -62,17 +130,135 @@
 
         try
         {
-            var response = await Feedback.GetMineAsync();
-            items = response.Items;
+            var feedback = await Feedback.GetMineAsync();
+            rows.Clear();
+            rows.AddRange(feedback.Items.Select(item => new ReadingRow
+            {
+                WorkId = item.WorkId,
+                WorkTitle = item.WorkTitle,
+                Authors = item.Authors,
+                Version = item.Version,
+                CompletedOnDate = item.CompletedOn.ToDateTime(TimeOnly.MinValue),
+                Rating = item.Rating,
+                IsLogged = true
+            }));
+
+            var requests = await Requests.GetMineAsync();
+            availableRequests = requests.Active
+                .Concat(requests.History)
+                .Where(request => request.Status == "Available")
+                .DistinctBy(request => request.WorkId)
+                .ToArray();
+            RefreshCandidates();
         }
         catch (HttpRequestException)
         {
             errorMessage = "Your reading list could not be loaded. Please try again.";
-            items = [];
         }
         finally
         {
             isLoading = false;
+        }
+    }
+
+    private void RefreshCandidates()
+    {
+        var loggedWorkIds = rows.Select(row => row.WorkId).ToHashSet();
+        candidates = availableRequests
+            .Where(request => !loggedWorkIds.Contains(request.WorkId))
+            .ToArray();
+        selectedCandidateWorkId = candidates.Count > 0 ? candidates[0].WorkId : Guid.Empty;
+    }
+
+    private void AddRowForSelectedCandidate()
+    {
+        var candidate = candidates.FirstOrDefault(c => c.WorkId == selectedCandidateWorkId);
+        if (candidate is null)
+        {
+            return;
+        }
+
+        rows.Insert(0, new ReadingRow
+        {
+            WorkId = candidate.WorkId,
+            WorkTitle = candidate.WorkTitle,
+            Authors = candidate.Authors
+        });
+
+        RefreshCandidates();
+    }
+
+    private async Task SaveRowAsync(ReadingRow row)
+    {
+        if (row.CompletedOnDate is null || row.Rating is < 1 or > 5)
+        {
+            row.Error = "Choose a date finished and a rating.";
+            return;
+        }
+
+        row.IsSaving = true;
+        row.Error = null;
+
+        try
+        {
+            var outcome = await Feedback.SetAsync(
+                row.WorkId,
+                DateOnly.FromDateTime(row.CompletedOnDate.Value),
+                row.Rating,
+                row.Version);
+
+            if (outcome.Succeeded && outcome.Feedback is { } feedback)
+            {
+                row.Version = feedback.Version;
+                row.IsLogged = true;
+            }
+            else
+            {
+                row.Error = outcome.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            row.Error = "That could not be saved. Please try again.";
+        }
+        finally
+        {
+            row.IsSaving = false;
+        }
+    }
+
+    private async Task RemoveRowAsync(ReadingRow row)
+    {
+        if (row.Version is null)
+        {
+            rows.Remove(row);
+            RefreshCandidates();
+            return;
+        }
+
+        row.IsSaving = true;
+        row.Error = null;
+
+        try
+        {
+            var outcome = await Feedback.RemoveAsync(row.WorkId, row.Version.Value);
+            if (outcome.Succeeded)
+            {
+                rows.Remove(row);
+                RefreshCandidates();
+            }
+            else
+            {
+                row.Error = outcome.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            row.Error = "That could not be removed. Please try again.";
+        }
+        finally
+        {
+            row.IsSaving = false;
         }
     }
 }
