@@ -2,6 +2,18 @@ html, body {
     font-family: system-ui, sans-serif;
 }
 
+:root {
+    --family-librarian-status-footer-height: 48px;
+}
+
+/* The status app bar is fixed at the bottom of the viewport. Reserve its full
+   height plus a comfortable action gap so the final control on any page can be
+   scrolled completely into view, including on devices with a home indicator. */
+.family-librarian-main-content {
+    padding-bottom: calc(
+        var(--family-librarian-status-footer-height) + 2rem + env(safe-area-inset-bottom, 0px)) !important;
+}
+
 #blazor-error-ui {
     background: #fff3cd;
     bottom: 0;

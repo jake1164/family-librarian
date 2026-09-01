@@ -156,9 +156,9 @@
     @* No `pa-` class here. MudBlazor's own .mud-main-content sets
        padding-top: var(--mud-appbar-height) to clear the fixed app bar, and the
        spacing utilities are declared !important — so pa-6 would win and slide
-       the page under the bar. Bottom padding only; the container handles the
-       sides and the top gap. *@
-    <MudMainContent Class="pb-8">
+       the page under the bar. The custom class reserves room for the fixed
+       status footer; the container handles the sides and the top gap. *@
+    <MudMainContent Class="family-librarian-main-content">
         <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
             @Body
         </MudContainer>
@@ -168,7 +168,7 @@
        it's just the shell (app name + version) so future status indicators
        (queue depth, scan health, etc.) have somewhere to land without another
        layout pass. *@
-    <MudAppBar Bottom="true" Dense="true" Elevation="1">
+    <MudAppBar Bottom="true" Dense="true" Elevation="1" Class="family-librarian-status-footer">
         <MudText Typo="Typo.caption">Family Librarian</MudText>
         <MudSpacer />
     </MudAppBar>
