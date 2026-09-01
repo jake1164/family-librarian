@@ -115,6 +115,9 @@ public sealed class OpenLibraryBookMetadataProvider(
 
         return candidate with
         {
+            Title = string.IsNullOrWhiteSpace(preferredEdition.Title)
+                ? candidate.Title
+                : preferredEdition.Title.Trim(),
             CoverUrl = GetCoverUrl(
                 preferredEdition.Covers is { Count: > 0 } covers ? covers[0] : null) ??
                     candidate.CoverUrl,
@@ -191,28 +194,48 @@ public sealed class OpenLibraryBookMetadataProvider(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
 
-        // The work-level cover/publisher/language fields are aggregated across
-        // every edition OL has ever indexed for this work (every translation,
-        // reprint, and format), so they can each come from a different edition
-        // and disagree with one another (e.g. an English title with a French
-        // publisher). The single edition doc included in the response is one
-        // real, self-consistent edition, so prefer its values where present.
+        // The work-level title/cover/publisher/language fields are aggregated
+        // across every edition OL has ever indexed for this work (every
+        // translation, reprint, and format), so a work can be titled in one
+        // language while its cover/publisher come from another. The single
+        // edition doc included in the response is one real, self-consistent
+        // edition - trust its title/cover/publisher/language as a set only
+        // when that edition itself is in the preferred language, otherwise
+        // mixing its fields with the (differently-languaged) work title would
+        // just trade one kind of mismatch for another.
         var editionDocuments = document.Editions?.Documents;
         var primaryEdition = editionDocuments is { Count: > 0 } ? editionDocuments[0] : null;
+        var primaryEditionLanguage = primaryEdition is null
+            ? null
+            : LanguageCodeNormalizer.Normalize(FirstString(primaryEdition.Languages));
+        var useEditionFields = string.Equals(
+            primaryEditionLanguage,
+            PreferredLanguage,
+            StringComparison.OrdinalIgnoreCase);
+
+        var displayTitle = useEditionFields && !string.IsNullOrWhiteSpace(primaryEdition!.Title)
+            ? primaryEdition.Title.Trim()
+            : title;
+        var coverId = useEditionFields ? primaryEdition!.CoverId ?? document.CoverId : document.CoverId;
+        var publisher = useEditionFields
+            ? FirstString(primaryEdition!.Publishers) ?? FirstString(document.Publishers)
+            : FirstString(document.Publishers);
+        var language = useEditionFields
+            ? PreferredLanguage
+            : LanguageCodeNormalizer.Normalize(FirstString(document.Languages));
 
         return new BookCandidate(
             Id,
             DisplayName,
             externalId,
-            title,
+            displayTitle,
             authors,
             GetDescription(document.Description),
-            GetCoverUrl(primaryEdition?.CoverId ?? document.CoverId),
+            GetCoverUrl(coverId),
             TryParseExactDate(FirstString(document.FirstPublishDates)),
-            GetEditions(document, title),
+            GetEditions(document, displayTitle),
             [],
-            (primaryEdition is null ? null : FirstString(primaryEdition.Publishers)) ??
-                FirstString(document.Publishers),
+            publisher,
             document.NumberOfPagesMedian is > 0 ? document.NumberOfPagesMedian : null,
             GetStrings(document.Subjects)
                 .Where(subject => !string.IsNullOrWhiteSpace(subject))
@@ -220,9 +243,7 @@ public sealed class OpenLibraryBookMetadataProvider(
                 .Take(MaximumSubjects)
                 .ToArray(),
             SourceUrl: $"https://openlibrary.org/works/{externalId}",
-            Language: LanguageCodeNormalizer.Normalize(
-                (primaryEdition is null ? null : FirstString(primaryEdition.Languages)) ??
-                    FirstString(document.Languages)));
+            Language: language);
     }
 
     private static BookEditionCandidate[] GetEditions(
@@ -451,6 +472,9 @@ public sealed class OpenLibraryBookMetadataProvider(
     {
         [JsonPropertyName("key")]
         public string? Key { get; init; }
+
+        [JsonPropertyName("title")]
+        public string? Title { get; init; }
 
         [JsonPropertyName("languages")]
         public IReadOnlyList<OpenLibraryLanguageRef>? Languages { get; init; }

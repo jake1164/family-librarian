@@ -130,6 +130,107 @@ public sealed class OpenLibraryBookMetadataProviderTests
     }
 
     [TestMethod]
+    public async Task SearchAsyncUsesEditionTitleWhenEditionMatchesPreferredLanguage()
+    {
+        // Open Library sometimes catalogs a translation as its own separate
+        // Work, so the work's own title can be in a different language than
+        // the one included edition. When that edition is in the preferred
+        // language, its own title should replace the work's title too - not
+        // just its cover and publisher - so the result isn't a German work
+        // title paired with an English cover/publisher.
+        using var handler = new StubHttpMessageHandler((_, _) =>
+            JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL159397W",
+                      "title": "Der Kardinal im Kreml",
+                      "author_name": ["Tom Clancy"],
+                      "cover_i": 1009206,
+                      "publisher": ["Goldmann"],
+                      "language": ["chi", "ger", "eng"],
+                      "editions": {
+                        "docs": [
+                          {
+                            "title": "The Cardinal of the Kremlin",
+                            "cover_i": 10767990,
+                            "publisher": ["HarperCollins Publishers"],
+                            "language": ["eng"]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """));
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var results = await provider.SearchAsync(
+            new BookSearchQuery("Tom Clancy"),
+            CancellationToken.None);
+
+        Assert.HasCount(1, results.Candidates);
+        var candidate = results.Candidates[0];
+        Assert.AreEqual("The Cardinal of the Kremlin", candidate.Title);
+        Assert.AreEqual("HarperCollins Publishers", candidate.Publisher);
+        Assert.AreEqual("en", candidate.Language);
+        Assert.AreEqual(
+            "https://covers.openlibrary.org/b/id/10767990-L.jpg?default=false",
+            candidate.CoverUrl);
+    }
+
+    [TestMethod]
+    public async Task SearchAsyncKeepsWorkFieldsTogetherWhenTheIncludedEditionIsNotPreferredLanguage()
+    {
+        // The included edition can just as easily be a non-preferred-language
+        // one. Mixing its cover/publisher with the (differently-languaged)
+        // work title would trade one mismatch for another, so everything
+        // should fall back to the work-level fields together as a set.
+        using var handler = new StubHttpMessageHandler((_, _) =>
+            JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL448924W",
+                      "title": "Clear and Present Danger",
+                      "author_name": ["Tom Clancy"],
+                      "cover_i": 538280,
+                      "publisher": ["Putnam Adult"],
+                      "language": ["fre", "eng"],
+                      "editions": {
+                        "docs": [
+                          {
+                            "title": "Danger immediat",
+                            "cover_i": 15112051,
+                            "publisher": ["France loisir"],
+                            "language": ["fre"]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """));
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var results = await provider.SearchAsync(
+            new BookSearchQuery("Tom Clancy"),
+            CancellationToken.None);
+
+        Assert.HasCount(1, results.Candidates);
+        var candidate = results.Candidates[0];
+        Assert.AreEqual("Clear and Present Danger", candidate.Title);
+        Assert.AreEqual("Putnam Adult", candidate.Publisher);
+        Assert.AreEqual(
+            "https://covers.openlibrary.org/b/id/538280-L.jpg?default=false",
+            candidate.CoverUrl);
+    }
+
+    [TestMethod]
     public async Task SearchAsyncUsesValidatedIsbnQueryAndDoesNotInventYearPrecision()
     {
         Uri? requestedUri = null;
@@ -255,6 +356,7 @@ public sealed class OpenLibraryBookMetadataProviderTests
                         },
                         {
                           "key": "/books/OL2ENG",
+                          "title": "Clear and Present Danger",
                           "languages": [{ "key": "/languages/eng" }],
                           "publishers": ["G. P. Putnam's Sons"],
                           "number_of_pages": 338,
@@ -294,6 +396,57 @@ public sealed class OpenLibraryBookMetadataProviderTests
             "https://covers.openlibrary.org/b/id/222-L.jpg?default=false",
             candidate.CoverUrl);
         Assert.AreEqual("https://openlibrary.org/books/OL2ENG", candidate.SourceUrl);
+        Assert.AreEqual("Clear and Present Danger", candidate.Title);
+    }
+
+    [TestMethod]
+    public async Task GetDetailsAsyncReplacesAForeignWorkTitleWithThePreferredEditionsOwnTitle()
+    {
+        using var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("editions.json", StringComparison.Ordinal))
+            {
+                return JsonResponse(
+                    """
+                    {
+                      "entries": [
+                        {
+                          "key": "/books/OL14417712M",
+                          "title": "The Cardinal of the Kremlin",
+                          "languages": [{ "key": "/languages/eng" }],
+                          "publishers": ["HarperCollins Publishers"],
+                          "covers": [10767990]
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL159397W",
+                      "title": "Der Kardinal im Kreml",
+                      "author_name": ["Tom Clancy"],
+                      "cover_i": 1009206,
+                      "publisher": ["Goldmann"],
+                      "language": ["chi", "ger", "eng"]
+                    }
+                  ]
+                }
+                """);
+        });
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var candidate = await provider.GetDetailsAsync("OL159397W", CancellationToken.None);
+
+        Assert.IsNotNull(candidate);
+        Assert.AreEqual("The Cardinal of the Kremlin", candidate.Title);
+        Assert.AreEqual("HarperCollins Publishers", candidate.Publisher);
+        Assert.AreEqual("https://openlibrary.org/books/OL14417712M", candidate.SourceUrl);
     }
 
     [TestMethod]
