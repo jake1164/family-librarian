@@ -1,7 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
-using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
@@ -182,10 +181,10 @@ public sealed class CwaPublishingService(
     {
         try
         {
-            var result = await catalogClient.FindBookIdAsync(title, author, isbn13Candidates, cancellationToken);
-            if (result.Decision == BookMatchDecision.Match)
+            var bookId = await catalogClient.FindBookIdAsync(title, author, isbn13Candidates, cancellationToken);
+            if (bookId is not null)
             {
-                import.MarkAvailable(result.MatchedId!, clock.UtcNow);
+                import.MarkAvailable(bookId, clock.UtcNow);
                 await MarkRequestFormatAvailableAsync(asset, title, cancellationToken);
                 asset.TransitionStorageState(MediaAssetStorageState.Archived, clock.UtcNow);
                 await repository.SaveChangesAsync(cancellationToken);
@@ -193,18 +192,6 @@ public sealed class CwaPublishingService(
                 // Cleanup runs only after the Available/Archived state is
                 // durably saved -- see DeleteTrustedBytesAsync.
                 await DeleteTrustedBytesAsync(asset, cancellationToken);
-            }
-            else if (result.Decision == BookMatchDecision.Ambiguous)
-            {
-                // Left AwaitingVerification -- this is genuine ambiguity (e.g.
-                // multiple catalog editions), not a bug to guess past. The
-                // audit entry makes it diagnosable instead of silently stuck.
-                await audit.WriteAsync(
-                    AuditActions.AssetMatchAmbiguous,
-                    AuditSubjectTypes.MediaAsset,
-                    asset.Id.ToString(),
-                    new { asset.Id, Destination = "cwa", Candidates = result.Candidates },
-                    cancellationToken);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

@@ -1,33 +1,25 @@
 using System.Net;
 using FamilyLibrarian.Application.Integrations;
-using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Infrastructure.Publishing;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Publishing;
 
-/// <summary>
-/// HTTP/Atom-plumbing coverage for <see cref="CwaCatalogClient"/> -- ISBN
-/// query ordering, feed parsing, and delegation to
-/// <see cref="IBookMatchService"/>. Matching-decision edge cases (unwanted
-/// variants, author conflicts, ambiguity) are covered directly against
-/// <see cref="DeterministicBookMatcher"/> in DeterministicBookMatcherTests.
-/// </summary>
 [TestClass]
 public sealed class CwaCatalogClientTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
-    public async Task NoOpdsConfiguredReturnsNoMatch()
+    public async Task NoOpdsConfiguredReturnsNull()
     {
         var context = new TestContext();
         context.SettingsStore.Exists = false;
 
         var result = await context.Client.FindBookIdAsync("Debt of Honor", "Tom Clancy", [], CancellationToken.None);
 
-        Assert.AreEqual(BookMatchDecision.NoMatch, result.Decision);
+        Assert.IsNull(result);
     }
 
     [TestMethod]
@@ -39,12 +31,11 @@ public sealed class CwaCatalogClientTests
 
         var result = await context.Client.FindBookIdAsync("Debt of Honor", "Tom Clancy", [], CancellationToken.None);
 
-        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
-        Assert.AreEqual("42", result.MatchedId);
+        Assert.AreEqual("42", result);
     }
 
     [TestMethod]
-    public async Task MultipleDistinctTitleMatchesAreAmbiguous()
+    public async Task MultipleDistinctTitleMatchesAreAmbiguousAndReturnNull()
     {
         var context = ConfiguredContext();
         context.Handler.Responses["Debt of Honor"] = Feed(
@@ -53,8 +44,7 @@ public sealed class CwaCatalogClientTests
 
         var result = await context.Client.FindBookIdAsync("Debt of Honor", "Tom Clancy", [], CancellationToken.None);
 
-        Assert.AreEqual(BookMatchDecision.Ambiguous, result.Decision);
-        Assert.AreEqual(2, result.Candidates.Count);
+        Assert.IsNull(result);
     }
 
     [TestMethod]
@@ -69,7 +59,7 @@ public sealed class CwaCatalogClientTests
         var result = await context.Client.FindBookIdAsync(
             "Debt of Honor", "Tom Clancy", ["9780000000001"], CancellationToken.None);
 
-        Assert.AreEqual("77", result.MatchedId);
+        Assert.AreEqual("77", result);
         Assert.IsFalse(context.Handler.RequestedUris.Any(
             uri => uri.AbsolutePath.EndsWith("/Debt%20of%20Honor", StringComparison.Ordinal)));
     }
@@ -85,7 +75,7 @@ public sealed class CwaCatalogClientTests
         var result = await context.Client.FindBookIdAsync(
             "Debt of Honor", "Tom Clancy", ["9780000000001"], CancellationToken.None);
 
-        Assert.AreEqual("42", result.MatchedId);
+        Assert.AreEqual("42", result);
     }
 
     [TestMethod]
@@ -101,7 +91,7 @@ public sealed class CwaCatalogClientTests
         var result = await context.Client.FindBookIdAsync(
             "Debt of Honor", "Tom Clancy", ["9780000000001"], CancellationToken.None);
 
-        Assert.AreEqual("42", result.MatchedId);
+        Assert.AreEqual("42", result);
     }
 
     [TestMethod]
@@ -113,7 +103,7 @@ public sealed class CwaCatalogClientTests
 
         var result = await context.Client.FindBookIdAsync("Debt of Honor", "Tom Clancy", [], CancellationToken.None);
 
-        Assert.AreEqual(BookMatchDecision.NoMatch, result.Decision);
+        Assert.IsNull(result);
     }
 
     [TestMethod]
@@ -125,7 +115,7 @@ public sealed class CwaCatalogClientTests
 
         var result = await context.Client.FindBookIdAsync("Debt of Honor", "Tom Clancy", [], CancellationToken.None);
 
-        Assert.AreEqual(BookMatchDecision.NoMatch, result.Decision);
+        Assert.IsNull(result);
     }
 
     private static string Feed(params (string Title, string? Author, string BookId)[] entries)
@@ -159,9 +149,7 @@ public sealed class CwaCatalogClientTests
         public TestContext()
         {
             SettingsStore = new FakeCwaSettingsStore(Settings);
-            var matchService = new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver());
-            Client = new CwaCatalogClient(
-                new TestHttpClientFactory(Handler), SettingsStore, new TestCredentialProtector(), matchService);
+            Client = new CwaCatalogClient(new TestHttpClientFactory(Handler), SettingsStore, new TestCredentialProtector());
         }
 
         public CwaSettings Settings { get; } = new(Now);

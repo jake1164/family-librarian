@@ -1,7 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
-using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
@@ -252,24 +251,6 @@ public sealed class CwaPublishingServiceTests
     }
 
     [TestMethod]
-    public async Task AnAmbiguousMatchStaysAwaitingVerificationAndWritesAnAuditEntry()
-    {
-        var context = context_Configured();
-        var asset = context.CreateAsset();
-        context.CatalogClient.NextAmbiguousCandidates =
-        [
-            new CandidateBook("1", "The Hobbit", "J. R. R. Tolkien"),
-            new CandidateBook("2", "The Hobbit (Illustrated)", "J. R. R. Tolkien")
-        ];
-
-        await context.Service.PublishAsync(asset, CancellationToken.None);
-
-        var import = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
-        Assert.AreEqual(LibraryImportStatus.AwaitingVerification, import!.Status);
-        Assert.AreEqual(1, context.Audit.Entries.Count(entry => entry.Action == "asset.match_ambiguous"));
-    }
-
-    [TestMethod]
     public async Task RecheckOnAnUnknownImportReturnsFalse()
     {
         var context = context_Configured();
@@ -484,22 +465,13 @@ public sealed class CwaPublishingServiceTests
     {
         public string? NextBookId { get; set; }
 
-        public IReadOnlyList<CandidateBook>? NextAmbiguousCandidates { get; set; }
-
         public IReadOnlyCollection<string>? LastIsbn13Candidates { get; private set; }
 
-        public Task<BookMatchResult> FindBookIdAsync(
+        public Task<string?> FindBookIdAsync(
             string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken)
         {
             LastIsbn13Candidates = isbn13Candidates;
-            if (NextAmbiguousCandidates is not null)
-            {
-                return Task.FromResult(BookMatchResult.Ambiguous(NextAmbiguousCandidates));
-            }
-
-            return Task.FromResult(NextBookId is null
-                ? BookMatchResult.NoMatchResult
-                : BookMatchResult.Match(new CandidateBook(NextBookId, title, author)));
+            return Task.FromResult(NextBookId);
         }
     }
 

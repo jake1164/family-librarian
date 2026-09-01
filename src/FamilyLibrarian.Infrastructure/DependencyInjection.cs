@@ -5,7 +5,6 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
-using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Policy;
 using FamilyLibrarian.Application.Providers;
@@ -422,14 +421,6 @@ public static class DependencyInjection
         services.AddScoped<ILibraryImportRepository, LibraryImportRepository>();
         services.AddScoped<IDeliveryRepository, DeliveryRepository>();
         services.AddScoped<IWorkLookup, WorkLookup>();
-
-        // Shared destination-matching core: one deterministic matcher used by
-        // both CWA and Audiobookshelf to decide "is this candidate the
-        // requested book." Swapping IAmbiguityResolver for a real
-        // implementation later upgrades both destinations at once.
-        services.AddSingleton<IBookMatcher, DeterministicBookMatcher>();
-        services.AddSingleton<IAmbiguityResolver, NoOpAmbiguityResolver>();
-        services.AddSingleton<IBookMatchService, BookMatchService>();
 
         services.AddScoped<ICwaIngestTransportFactory, CwaIngestTransportFactory>();
         services.AddScoped<ICwaCatalogClient, CwaCatalogClient>();

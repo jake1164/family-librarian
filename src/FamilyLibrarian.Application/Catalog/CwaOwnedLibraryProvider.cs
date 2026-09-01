@@ -1,4 +1,3 @@
-using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Requests;
 
@@ -42,13 +41,11 @@ public sealed class CwaOwnedLibraryProvider(
             return [];
         }
 
-        var result = await catalogClient.FindBookIdAsync(work.Title, work.PrimaryAuthor, work.Isbn13s, cancellationToken);
-        if (result.Decision != BookMatchDecision.Match)
+        var bookId = await catalogClient.FindBookIdAsync(work.Title, work.PrimaryAuthor, work.Isbn13s, cancellationToken);
+        if (bookId is null)
         {
             return [];
         }
-
-        var bookId = result.MatchedId!;
 
         return
         [

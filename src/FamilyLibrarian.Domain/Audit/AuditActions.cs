@@ -36,7 +36,6 @@ public static class AuditActions
     public const string AssetMalwareDestructionFailed = "asset.malware_destruction_failed";
     public const string AssetPublished = "asset.published";
     public const string AssetPublishFailed = "asset.publish_failed";
-    public const string AssetMatchAmbiguous = "asset.match_ambiguous";
     public const string AssetArchiveCleanupFailed = "asset.archive_cleanup_failed";
 
     public const string PublishingDestinationEnabled = "publishing_destination.enabled";

@@ -1,6 +1,5 @@
 using System.Net.Http.Json;
 using FamilyLibrarian.Application.Catalog;
-using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
@@ -192,11 +191,9 @@ public sealed class WorkFulfillmentOptionsEndpointTests
 
     private sealed class DeterministicCatalogClient(string? bookId) : ICwaCatalogClient
     {
-        public Task<BookMatchResult> FindBookIdAsync(
+        public Task<string?> FindBookIdAsync(
             string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken) =>
-            Task.FromResult(bookId is null
-                ? BookMatchResult.NoMatchResult
-                : BookMatchResult.Match(new CandidateBook(bookId, title, author)));
+            Task.FromResult(bookId);
     }
 
     private sealed class TimingOutDirectAcquisitionProvider : IDirectAcquisitionProvider

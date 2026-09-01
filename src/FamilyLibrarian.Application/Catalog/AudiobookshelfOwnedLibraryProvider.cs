@@ -1,4 +1,3 @@
-using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Requests;
 
@@ -37,13 +36,11 @@ public sealed class AudiobookshelfOwnedLibraryProvider(
             return [];
         }
 
-        var result = await apiClient.FindExistingItemIdAsync(work.Title, work.PrimaryAuthor, cancellationToken);
-        if (result.Decision != BookMatchDecision.Match)
+        var itemId = await apiClient.FindExistingItemIdAsync(work.Title, work.PrimaryAuthor, cancellationToken);
+        if (itemId is null)
         {
             return [];
         }
-
-        var itemId = result.MatchedId!;
 
         return
         [

@@ -1,5 +1,3 @@
-using FamilyLibrarian.Application.Matching;
-
 namespace FamilyLibrarian.Application.Publishing;
 
 /// <summary>Thin wrapper over the Audiobookshelf REST API's upload/search surface.</summary>
@@ -7,11 +5,9 @@ public interface IAudiobookshelfApiClient
 {
     /// <summary>
     /// Searches the configured library for an item already matching this
-    /// title/author, so a retried upload never creates a duplicate. See
-    /// <see cref="ICwaCatalogClient.FindBookIdAsync"/> for the same
-    /// "ambiguous is not a guess" posture applied to this destination.
+    /// title/author, so a retried upload never creates a duplicate.
     /// </summary>
-    Task<BookMatchResult> FindExistingItemIdAsync(string title, string? author, CancellationToken cancellationToken);
+    Task<string?> FindExistingItemIdAsync(string title, string? author, CancellationToken cancellationToken);
 
     Task<AudiobookshelfUploadResult> UploadAsync(
         Stream content,
