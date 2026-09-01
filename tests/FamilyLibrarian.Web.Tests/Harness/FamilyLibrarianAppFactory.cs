@@ -1,7 +1,9 @@
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -117,6 +119,19 @@ internal sealed class FamilyLibrarianAppFactory(
             services.RemoveAll<IMalwareScanner>();
             services.AddSingleton<IMalwareScanner, AlwaysCleanTestMalwareScanner>();
 
+            // Same posture again: an ordinary test must never depend on CWA or
+            // Audiobookshelf being configured, enabled, and passing a test just
+            // to create a request. A test that specifically exercises the
+            // format-readiness gate overrides this via configureTestServices.
+            services.RemoveAll<IFormatReadinessService>();
+            services.AddSingleton<IFormatReadinessService, AlwaysReadyFormatReadinessService>();
+
+            // SMTP is configured and probed by individual admin tests. Keep the
+            // default probe in-process so the shared fixture never depends on
+            // a reachable mail server.
+            services.RemoveAll<ISmtpTestSender>();
+            services.AddSingleton<ISmtpTestSender, AlwaysSucceedsSmtpTestSender>();
+
             // Same posture for the two publishing destinations: no ordinary test
             // depends on a reachable CWA or Audiobookshelf instance. Nothing calls
             // these unless a test explicitly configures and enables the
@@ -138,9 +153,9 @@ internal sealed class FamilyLibrarianAppFactory(
             services.RemoveAll<IAudiobookshelfApiClient>();
             services.AddSingleton<IAudiobookshelfApiClient, AlwaysEmptyAudiobookshelfApiClient>();
 
-            // Gutendex is enabled by default, so always replace it in ordinary
-            // tests. This lets a test that exercises direct acquisition control
-            // the result deterministically instead of depending on gutendex.com.
+            // The local Project Gutenberg provider is enabled by default, so
+            // always replace it in ordinary tests. This lets a test that
+            // exercises direct acquisition control the result deterministically.
             services.RemoveAll<IDirectAcquisitionProvider>();
             services.AddSingleton<IDirectAcquisitionProvider, AlwaysEmptyDirectAcquisitionProvider>();
 

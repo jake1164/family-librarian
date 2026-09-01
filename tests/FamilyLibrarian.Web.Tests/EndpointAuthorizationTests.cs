@@ -48,6 +48,7 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/media-assets/")]
     [DataRow("/api/v1/admin/publishing/cwa/")]
     [DataRow("/api/v1/admin/publishing/audiobookshelf/")]
+    [DataRow("/api/v1/admin/communications/smtp/")]
     [DataRow("/api/v1/admin/publishing/queue")]
     [DataRow("/api/v1/admin/policy/profiles")]
     [DataRow("/api/v1/admin/policy/settings")]
@@ -117,6 +118,7 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/media-assets/")]
     [DataRow("/api/v1/admin/publishing/cwa/")]
     [DataRow("/api/v1/admin/publishing/audiobookshelf/")]
+    [DataRow("/api/v1/admin/communications/smtp/")]
     [DataRow("/api/v1/admin/publishing/queue")]
     [DataRow("/api/v1/admin/policy/profiles")]
     [DataRow("/api/v1/admin/policy/settings")]
@@ -238,7 +240,7 @@ public sealed class EndpointAuthorizationTests
 
         var response = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(Guid.NewGuid(), ["Ebook"], null, false));
+            new CreateBookRequestRequest(Guid.NewGuid(), ["Ebook"], null, false, false));
 
         Assert.AreEqual(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -253,7 +255,7 @@ public sealed class EndpointAuthorizationTests
         // missing, which is exactly the shape of a cross-site forgery.
         var response = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(Guid.NewGuid(), ["Ebook"], null, false));
+            new CreateBookRequestRequest(Guid.NewGuid(), ["Ebook"], null, false, false));
 
         Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
     }

@@ -4,11 +4,13 @@ using System.Text;
 using System.Text.Json;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Policy;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Publishing;
@@ -60,6 +62,7 @@ public sealed class SettingsBackupService(
             SettingsDocumentVersion,
             ToCwaDocument(await database.CwaSettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken)),
             ToAudiobookshelfDocument(await database.AudiobookshelfSettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken)),
+            ToSmtpDocument(await database.SmtpSettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken)),
             ToGatewayDocument(await database.PrivateEgressGatewaySettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken)),
             (await database.ProviderSettings.AsNoTracking().OrderBy(setting => setting.ProviderId).ToArrayAsync(cancellationToken))
                 .Select(ToProviderDocument).ToArray(),
@@ -78,7 +81,7 @@ public sealed class SettingsBackupService(
                 // unprotecting every stored credential before it writes anything.
                 null,
                 null,
-                ["CwaSettings", "AudiobookshelfSettings", "PrivateEgressGatewaySettings", "ProviderSettings", "OidcSettings", "AcquisitionPolicySettings"]),
+                ["CwaSettings", "AudiobookshelfSettings", "SmtpSettings", "PrivateEgressGatewaySettings", "ProviderSettings", "OidcSettings", "AcquisitionPolicySettings"]),
             document);
 
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
@@ -308,6 +311,7 @@ public sealed class SettingsBackupService(
         var existing = new List<string>();
         if (await database.CwaSettings.AnyAsync(cancellationToken)) existing.Add("CwaSettings");
         if (await database.AudiobookshelfSettings.AnyAsync(cancellationToken)) existing.Add("AudiobookshelfSettings");
+        if (await database.SmtpSettings.AnyAsync(cancellationToken)) existing.Add("SmtpSettings");
         if (await database.PrivateEgressGatewaySettings.AnyAsync(cancellationToken)) existing.Add("PrivateEgressGatewaySettings");
         if (await database.ProviderSettings.AnyAsync(cancellationToken)) existing.Add("ProviderSettings");
         if (await database.OidcSettings.AnyAsync(cancellationToken)) existing.Add("OidcSettings");
@@ -335,6 +339,11 @@ public sealed class SettingsBackupService(
             ValidateCredential(PublishingSecretPurposes.AudiobookshelfApiToken, audiobookshelf.ApiToken?.ProtectedValue, audiobookshelf.ApiToken?.FormatVersion ?? 0);
         }
 
+        if (document.Smtp is { } smtp)
+        {
+            ValidateCredential(CommunicationSecretPurposes.SmtpPassword, smtp.Password?.ProtectedValue, smtp.Password?.FormatVersion ?? 0);
+        }
+
         if (document.Oidc is { } oidc)
         {
             ValidateCredential(AuthenticationSecretPurposes.OidcClientSecret, oidc.ClientSecret?.ProtectedValue, oidc.ClientSecret?.FormatVersion ?? 0);
@@ -355,6 +364,7 @@ public sealed class SettingsBackupService(
     {
         if (document.Cwa is { } cwa) database.CwaSettings.Add(CreateCwa(cwa));
         if (document.Audiobookshelf is { } audiobookshelf) database.AudiobookshelfSettings.Add(CreateAudiobookshelf(audiobookshelf));
+        if (document.Smtp is { } smtp) database.SmtpSettings.Add(CreateSmtp(smtp));
         if (document.Gateway is { } gateway) database.PrivateEgressGatewaySettings.Add(CreateGateway(gateway));
         foreach (var provider in document.ProviderSettings) database.ProviderSettings.Add(CreateProvider(provider));
         if (document.Oidc is { } oidc) database.OidcSettings.Add(CreateOidc(oidc));
@@ -381,6 +391,29 @@ public sealed class SettingsBackupService(
         var settings = new AudiobookshelfSettings(clock.UtcNow);
         settings.SetSettings(source.BaseUrl, source.LibraryId, source.FolderId, null, clock.UtcNow);
         ApplySecret(source.ApiToken, settings.SetApiToken, null, clock.UtcNow);
+        settings.SetEnabled(source.IsEnabled, null, clock.UtcNow);
+        return settings;
+    }
+
+    private SmtpSettings CreateSmtp(SmtpSettingsDocument source)
+    {
+        var settings = new SmtpSettings(clock.UtcNow);
+        settings.SetSettings(
+            source.Host,
+            source.Port,
+            ParseEnum<SmtpSecurityMode>(source.SecurityMode),
+            source.Username,
+            source.FromAddress,
+            source.FromName,
+            null,
+            clock.UtcNow);
+        ApplySecret(
+            source.Password?.ProtectedValue,
+            source.Password?.FormatVersion ?? 0,
+            source.Password?.Hint,
+            (value, formatVersion, _, actor, at) => settings.SetPassword(value, formatVersion, actor, at),
+            null,
+            clock.UtcNow);
         settings.SetEnabled(source.IsEnabled, null, clock.UtcNow);
         return settings;
     }
@@ -491,6 +524,7 @@ public sealed class SettingsBackupService(
     private static SettingsBackupCounts ToCounts(SettingsDocument document) => new(
         document.Cwa is null ? 0 : 1,
         document.Audiobookshelf is null ? 0 : 1,
+        document.Smtp is null ? 0 : 1,
         document.Gateway is null ? 0 : 1,
         document.ProviderSettings.Count,
         document.Oidc is null ? 0 : 1,
@@ -508,6 +542,16 @@ public sealed class SettingsBackupService(
     private static AudiobookshelfSettingsDocument? ToAudiobookshelfDocument(AudiobookshelfSettings? settings) => settings is null ? null : new(
         settings.IsEnabled, settings.BaseUrl, settings.LibraryId, settings.FolderId,
         ToSecret(settings.ProtectedApiToken, settings.ApiTokenFormatVersion, settings.ApiTokenHint));
+
+    private static SmtpSettingsDocument? ToSmtpDocument(SmtpSettings? settings) => settings is null ? null : new(
+        settings.IsEnabled,
+        settings.Host,
+        settings.Port,
+        settings.SecurityMode.ToString(),
+        settings.Username,
+        ToSecret(settings.ProtectedPassword, settings.PasswordFormatVersion, null),
+        settings.FromAddress,
+        settings.FromName);
 
     private static PrivateEgressGatewaySettingsDocument? ToGatewayDocument(PrivateEgressGatewaySettings? settings) =>
         settings is null ? null : new(settings.IsEnabled, settings.GatewayEndpoint);
@@ -546,6 +590,7 @@ public sealed record SettingsBackupImportResult(Guid BackupId, SettingsBackupCou
 public sealed record SettingsBackupCounts(
     int CwaSettings,
     int AudiobookshelfSettings,
+    int SmtpSettings,
     int PrivateEgressGatewaySettings,
     int ProviderSettings,
     int OidcSettings,
@@ -579,6 +624,7 @@ internal sealed record SettingsDocument(
     int Version,
     CwaSettingsDocument? Cwa,
     AudiobookshelfSettingsDocument? Audiobookshelf,
+    SmtpSettingsDocument? Smtp,
     PrivateEgressGatewaySettingsDocument? Gateway,
     IReadOnlyList<ProviderSettingDocument> ProviderSettings,
     OidcSettingsDocument? Oidc,
@@ -609,6 +655,16 @@ internal sealed record AudiobookshelfSettingsDocument(
     string? LibraryId,
     string? FolderId,
     SecretDocument? ApiToken);
+
+internal sealed record SmtpSettingsDocument(
+    bool IsEnabled,
+    string? Host,
+    int? Port,
+    string SecurityMode,
+    string? Username,
+    SecretDocument? Password,
+    string? FromAddress,
+    string? FromName);
 
 internal sealed record PrivateEgressGatewaySettingsDocument(bool IsEnabled, string? GatewayEndpoint);
 

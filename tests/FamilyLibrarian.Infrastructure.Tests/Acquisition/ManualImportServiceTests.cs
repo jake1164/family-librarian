@@ -211,6 +211,11 @@ public sealed class ManualImportServiceTests
         public Task<IReadOnlyList<MediaAssetAdminView>> ListActiveAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<IReadOnlyList<MediaAssetAdminView>> ListRecentAsync(
+            int maximumCount,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void AddJob(AcquisitionJob job) => Jobs.Add(job);
 
         public void AddAsset(MediaAsset asset) => Assets.Add(asset);

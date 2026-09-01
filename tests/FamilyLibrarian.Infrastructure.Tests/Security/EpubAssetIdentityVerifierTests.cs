@@ -150,6 +150,6 @@ public sealed class EpubAssetIdentityVerifierTests
     private sealed class StubWorkLookup(string title, string author) : IWorkLookup
     {
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, title, author));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, title, author, []));
     }
 }

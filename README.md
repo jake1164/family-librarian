@@ -143,8 +143,8 @@ Search the catalog, open a book, save it to the family catalog, then request it 
 an ebook, an audiobook, or both, and follow it under **My requests** — where you
 can also cancel a request or ask again. Asking again starts a fresh acquisition
 cycle while retaining prior provider activity as history. Requests are private
-to the account that made them. For ebooks, the built-in public-domain Gutendex source is enabled by
-default: when it finds one high-confidence title-and-author match, Family
+to the account that made them. For ebooks, the built-in public-domain Project Gutenberg source is enabled by
+default after its local RDF catalogue has finished its first sync: when it finds one high-confidence title-and-author match, Family
 Librarian automatically downloads it, applies the security and identity checks,
 and sends a clean verified copy to CWA. **My requests** and the book page refresh
 while open so the requester can follow safe, plain-language progress without
@@ -157,13 +157,13 @@ Administrators also get:
   Queue navigation label show any requests that need review;
 - **Metadata providers**, for enabling book-information providers and storing a
   Google Books key;
-- **Sources**, for reviewing the built-in Gutendex source and configuring
+- **Sources**, for reviewing the built-in Project Gutenberg source and configuring
   external acquisition sources, their private network, and a per-source manual,
   daily, or weekly recheck schedule. The page also shows the latest safe
   automatic-source failure directly, so an operator does not have to trace a
-  request timeline to discover it. Gutendex is a separate catalog API over
-  Project Gutenberg data: the Gutenberg website may be reachable while that API
-  is slow or unavailable. Source failures remain visible to administrators but
+  request timeline to discover it. Project Gutenberg searches use the daily RDF
+  catalogue imported into PostgreSQL; actual ebook downloads use configured mirrors.
+  Source failures remain visible to administrators but
   do not prevent Work or request pages from loading;
 - **Security queue**, for quarantined, rejected, unmatched, and removed-file
   security records. Confirmed malware bytes are deleted automatically; clean,

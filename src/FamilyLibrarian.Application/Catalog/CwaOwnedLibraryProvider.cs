@@ -41,7 +41,7 @@ public sealed class CwaOwnedLibraryProvider(
             return [];
         }
 
-        var bookId = await catalogClient.FindBookIdAsync(work.Title, work.PrimaryAuthor, cancellationToken);
+        var bookId = await catalogClient.FindBookIdAsync(work.Title, work.PrimaryAuthor, work.Isbn13s, cancellationToken);
         if (bookId is null)
         {
             return [];

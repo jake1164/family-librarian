@@ -40,7 +40,7 @@
 
         @* Config/setup pages an admin visits rarely stay tucked in this
            dropdown rather than taking up rows in the nav rail; the
-           everyday admin destinations (Queue/Security queue/Accounts/
+           everyday admin destinations (Tasks/Queue/Security queue/Accounts/
            Publishing activity) live in the drawer instead. Hiding this is
            UX only — every page carries [Authorize] and every endpoint
            behind it independently authorizes the caller. *@
@@ -55,6 +55,7 @@
                     Sources@(ProviderIssueCount == 0 ? string.Empty : $" · {ProviderIssueCount} issue{(ProviderIssueCount == 1 ? string.Empty : "s")}")
                 </MudMenuItem>
                 <MudMenuItem Href="settings/publishing" Icon="@Icons.Material.Filled.CloudUpload">Publishing</MudMenuItem>
+                <MudMenuItem Href="settings/communications" Icon="@Icons.Material.Filled.Email">Communications</MudMenuItem>
                 <MudMenuItem Href="settings/acquisition-policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudMenuItem>
                 <MudMenuItem Href="settings/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudMenuItem>
                 <MudMenuItem Href="settings/backup" Icon="@Icons.Material.Filled.Backup">Settings backup</MudMenuItem>
@@ -142,6 +143,7 @@
                    authorizes the caller. *@
                 <AuthorizeView Roles="Admin" Context="adminContext">
                     <MudDivider Class="my-2" />
+                    <MudNavLink Href="admin/tasks" Icon="@Icons.Material.Filled.TaskAlt">Tasks</MudNavLink>
                     <MudNavLink Href="admin/requests" Icon="@Icons.Material.Filled.Inbox">Queue</MudNavLink>
                     <MudNavLink Href="admin/security" Icon="@Icons.Material.Filled.Shield">Security queue</MudNavLink>
                     <MudNavLink Href="admin/accounts" Icon="@Icons.Material.Filled.People">Accounts</MudNavLink>

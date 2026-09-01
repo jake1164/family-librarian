@@ -29,4 +29,12 @@ public sealed record WorkFulfillmentOptionsResponse(
     IReadOnlyList<FulfillmentOptionResponse> Ebook,
     IReadOnlyList<FulfillmentOptionResponse> Audiobook,
     RecommendationResponse? EbookRecommendation = null,
-    RecommendationResponse? AudiobookRecommendation = null);
+    RecommendationResponse? AudiobookRecommendation = null,
+    FormatReadinessResponse? EbookReadiness = null,
+    FormatReadinessResponse? AudiobookReadiness = null);
+
+/// <summary>
+/// Whether a user may request this format right now — a null value means
+/// readiness wasn't computed (e.g. an older client), not that it's unready.
+/// </summary>
+public sealed record FormatReadinessResponse(bool IsReady, string? Reason);

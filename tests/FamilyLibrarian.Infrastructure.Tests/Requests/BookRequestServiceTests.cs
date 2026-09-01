@@ -1,7 +1,10 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Requests;
 
@@ -29,6 +32,7 @@ public sealed class BookRequestServiceTests
             [RequestMediaType.Ebook, RequestMediaType.Audiobook],
             "Please, for the trip.",
             confirmDuplicate: false,
+            confirmOwned: false,
             CancellationToken.None);
 
         Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
@@ -51,6 +55,7 @@ public sealed class BookRequestServiceTests
             [RequestMediaType.Ebook],
             null,
             confirmDuplicate: false,
+            confirmOwned: false,
             CancellationToken.None);
 
         // Without the lock, two simultaneous submissions would both read an empty
@@ -70,6 +75,7 @@ public sealed class BookRequestServiceTests
             [RequestMediaType.Ebook, RequestMediaType.Audiobook],
             null,
             confirmDuplicate: false,
+            confirmOwned: false,
             CancellationToken.None);
 
         Assert.AreEqual(CreateBookRequestOutcome.DuplicateWarning, result.Outcome);
@@ -91,6 +97,7 @@ public sealed class BookRequestServiceTests
             [RequestMediaType.Audiobook],
             null,
             confirmDuplicate: false,
+            confirmOwned: false,
             CancellationToken.None);
 
         Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
@@ -109,6 +116,7 @@ public sealed class BookRequestServiceTests
             [RequestMediaType.Ebook],
             null,
             confirmDuplicate: true,
+            confirmOwned: false,
             CancellationToken.None);
 
         Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
@@ -129,6 +137,7 @@ public sealed class BookRequestServiceTests
             [RequestMediaType.Ebook],
             null,
             confirmDuplicate: false,
+            confirmOwned: false,
             CancellationToken.None);
 
         Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
@@ -146,6 +155,7 @@ public sealed class BookRequestServiceTests
             [RequestMediaType.Ebook],
             null,
             confirmDuplicate: false,
+            confirmOwned: false,
             CancellationToken.None);
 
         Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
@@ -162,6 +172,7 @@ public sealed class BookRequestServiceTests
             [RequestMediaType.Ebook],
             null,
             confirmDuplicate: false,
+            confirmOwned: false,
             CancellationToken.None);
 
         Assert.AreEqual(CreateBookRequestOutcome.WorkNotFound, result.Outcome);
@@ -179,6 +190,7 @@ public sealed class BookRequestServiceTests
             [RequestMediaType.Ebook],
             null,
             confirmDuplicate: false,
+            confirmOwned: false,
             CancellationToken.None);
 
         Assert.AreEqual(CreateBookRequestOutcome.Unauthenticated, result.Outcome);
@@ -196,6 +208,7 @@ public sealed class BookRequestServiceTests
             [],
             null,
             confirmDuplicate: false,
+            confirmOwned: false,
             CancellationToken.None);
 
         Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
@@ -300,6 +313,185 @@ public sealed class BookRequestServiceTests
     }
 
     [TestMethod]
+    public async Task ARequestForAFormatThatIsNotReadyIsRejected()
+    {
+        var repository = new InMemoryRequestRepository();
+        var readiness = new StubFormatReadinessService().NotReady(RequestMediaType.Ebook);
+        var service = Create(repository, Reader, readiness);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
+        StringAssert.Contains(result.Error, "Ebook");
+        Assert.AreEqual(0, repository.Requests.Count);
+    }
+
+    [TestMethod]
+    public async Task AMixedFormatRequestIsRejectedWhenAnyFormatIsNotReady()
+    {
+        var repository = new InMemoryRequestRepository();
+        var readiness = new StubFormatReadinessService().NotReady(RequestMediaType.Audiobook);
+        var service = Create(repository, Reader, readiness);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook, RequestMediaType.Audiobook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, repository.Requests.Count);
+    }
+
+    [TestMethod]
+    public async Task AnOwnedFormatWarnsInsteadOfCreatingARequest()
+    {
+        var repository = new InMemoryRequestRepository();
+        var link = new Uri("https://cwa.example.test/book/42");
+        var fulfillment = new StubFulfillmentOptionsService().Owned(RequestMediaType.Ebook, "cwa", link);
+        var service = Create(repository, Reader, fulfillment: fulfillment);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None);
+
+        Assert.AreEqual(CreateBookRequestOutcome.OwnedWarning, result.Outcome);
+        var owned = result.OwnedFormats.Single();
+        Assert.AreEqual(RequestMediaType.Ebook, owned.MediaType);
+        Assert.AreEqual("cwa", owned.ProviderId);
+        Assert.AreEqual(link, owned.ExternalActionUri);
+        Assert.AreEqual(0, repository.Requests.Count);
+    }
+
+    [TestMethod]
+    public async Task AConfirmedOwnedRequestIsAllowedThrough()
+    {
+        var repository = new InMemoryRequestRepository();
+        var fulfillment = new StubFulfillmentOptionsService().Owned(RequestMediaType.Ebook, "cwa");
+        var service = Create(repository, Reader, fulfillment: fulfillment);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: true,
+            CancellationToken.None);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
+        Assert.AreEqual(1, repository.Requests.Count);
+    }
+
+    [TestMethod]
+    public async Task AnUnrequestedFormatBeingOwnedDoesNotBlock()
+    {
+        var repository = new InMemoryRequestRepository();
+        var fulfillment = new StubFulfillmentOptionsService().Owned(RequestMediaType.Ebook, "cwa");
+        var service = Create(repository, Reader, fulfillment: fulfillment);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Audiobook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
+    }
+
+    [TestMethod]
+    public async Task OwnershipIsCheckedBeforeEnteringTheCreateRequestScope()
+    {
+        var repository = new InMemoryRequestRepository();
+        var fulfillment = new StubFulfillmentOptionsService().Owned(RequestMediaType.Ebook, "cwa");
+        var service = Create(repository, Reader, fulfillment: fulfillment);
+
+        await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None);
+
+        // No lock was ever taken for a warning that never touches storage.
+        Assert.AreEqual(0, repository.ScopeCount);
+    }
+
+    [TestMethod]
+    public async Task WhenBothOwnedAndDuplicateApplyOwnershipIsReportedFirst()
+    {
+        var repository = new InMemoryRequestRepository();
+        repository.Seed(new BookRequest(Reader, Work, [RequestMediaType.Ebook], null, Now));
+        var fulfillment = new StubFulfillmentOptionsService().Owned(RequestMediaType.Ebook, "cwa");
+        var service = Create(repository, Reader, fulfillment: fulfillment);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None);
+
+        Assert.AreEqual(CreateBookRequestOutcome.OwnedWarning, result.Outcome);
+        // The duplicate check lives inside the lock and never ran this round.
+        Assert.AreEqual(0, repository.ScopeCount);
+    }
+
+    [TestMethod]
+    public async Task ConfirmingOwnershipThenStillSurfacesAnUnconfirmedDuplicate()
+    {
+        var repository = new InMemoryRequestRepository();
+        repository.Seed(new BookRequest(Reader, Work, [RequestMediaType.Ebook], null, Now));
+        var fulfillment = new StubFulfillmentOptionsService().Owned(RequestMediaType.Ebook, "cwa");
+        var service = Create(repository, Reader, fulfillment: fulfillment);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: true,
+            CancellationToken.None);
+
+        Assert.AreEqual(CreateBookRequestOutcome.DuplicateWarning, result.Outcome);
+    }
+
+    [TestMethod]
+    public async Task ConfirmingBothOwnershipAndDuplicateCreatesTheRequest()
+    {
+        var repository = new InMemoryRequestRepository();
+        repository.Seed(new BookRequest(Reader, Work, [RequestMediaType.Ebook], null, Now));
+        var fulfillment = new StubFulfillmentOptionsService().Owned(RequestMediaType.Ebook, "cwa");
+        var service = Create(repository, Reader, fulfillment: fulfillment);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: true,
+            confirmOwned: true,
+            CancellationToken.None);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
+        Assert.AreEqual(2, repository.Requests.Count);
+    }
+
+    [TestMethod]
     public void OnlyCancelAndReopenAreOfferedToARequester()
     {
         CollectionAssert.AreEqual(
@@ -311,13 +503,20 @@ public sealed class BookRequestServiceTests
             BookRequestService.RequesterTransitionsFrom(RequestStatus.Cancelled).ToArray());
     }
 
-    private static BookRequestService Create(IRequestRepository repository, Guid? userId) =>
+    private static BookRequestService Create(
+        IRequestRepository repository,
+        Guid? userId,
+        IFormatReadinessService? readiness = null,
+        IWorkFulfillmentOptionsService? fulfillment = null) =>
         new(
             repository,
             new StubCurrentUser(userId),
             new FixedClock(),
             new NullAuditWriter(),
-            new NotificationService(new NullNotificationRepository(), new StubCurrentUser(userId), new FixedClock()));
+            new NotificationService(new NullNotificationRepository(), new StubCurrentUser(userId), new FixedClock()),
+            new OutboundCommunicationService(new NullOutboundCommunicationStore(), new FixedClock()),
+            readiness ?? new StubFormatReadinessService(),
+            fulfillment ?? new StubFulfillmentOptionsService());
 
     private sealed class StubCurrentUser(Guid? userId) : ICurrentUser
     {
@@ -329,6 +528,57 @@ public sealed class BookRequestServiceTests
     private sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    /// <summary>Ready for every format unless told otherwise, so existing tests need no changes.</summary>
+    private sealed class StubFormatReadinessService : IFormatReadinessService
+    {
+        private readonly HashSet<RequestMediaType> notReady = [];
+
+        public StubFormatReadinessService NotReady(RequestMediaType mediaType)
+        {
+            notReady.Add(mediaType);
+            return this;
+        }
+
+        public Task<FormatReadiness> CheckAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            Task.FromResult(notReady.Contains(mediaType)
+                ? FormatReadiness.NotReady($"{mediaType} is not ready in this test.")
+                : FormatReadiness.Ready);
+    }
+
+    /// <summary>Nothing owned for any format unless told otherwise, so existing tests need no changes.</summary>
+    private sealed class StubFulfillmentOptionsService : IWorkFulfillmentOptionsService
+    {
+        private readonly Dictionary<RequestMediaType, FulfillmentOption> owned = [];
+
+        public StubFulfillmentOptionsService Owned(RequestMediaType mediaType, string providerId, Uri? externalActionUri = null)
+        {
+            owned[mediaType] = new FulfillmentOption(
+                ProviderId: providerId,
+                ProviderResultId: "test-result",
+                WorkId: Work,
+                EditionId: null,
+                MediaType: mediaType,
+                OptionKind: OptionKind.Owned,
+                AcquisitionMethod: AcquisitionMethod.OwnedImport,
+                Format: null,
+                Language: null,
+                Quality: null,
+                Availability: null,
+                Cost: null,
+                Currency: null,
+                LicenseOrUsageStatus: null,
+                DrmStatus: null,
+                ExternalActionUri: externalActionUri,
+                ProviderData: null);
+            return this;
+        }
+
+        public Task<IReadOnlyList<FulfillmentOption>> GetOptionsAsync(
+            Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<FulfillmentOption>>(
+                owned.TryGetValue(mediaType, out var option) ? [option] : []);
     }
 
     private sealed class NullAuditWriter : IAuditWriter
@@ -373,6 +623,19 @@ public sealed class BookRequestServiceTests
 
         public Task AddReceiptAsync(NotificationReceipt receipt, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    /// <summary>Outbound communications are not what these tests are about; every call is a no-op.</summary>
+    private sealed class NullOutboundCommunicationStore : IOutboundCommunicationStore
+    {
+        public Task EnqueueAsync(OutboundCommunication communication, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<IReadOnlyList<OutboundCommunication>> GetUnprocessedBatchAsync(
+            int maxCount, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<OutboundCommunication>>([]);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }

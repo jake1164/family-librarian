@@ -50,6 +50,7 @@ internal static class RequestEndpoints
             mediaTypes,
             request.Note,
             request.ConfirmDuplicate,
+            request.ConfirmOwned,
             cancellationToken);
 
         return result.Outcome switch
@@ -60,10 +61,26 @@ internal static class RequestEndpoints
             // 409, not an error: the request is legitimate but the user should see
             // the outstanding one first and confirm they still want another.
             CreateBookRequestOutcome.DuplicateWarning => Results.Conflict(
-                new BookRequestDuplicateResponse(
-                    "You already have an outstanding request for this book.",
-                    result.OverlappingFormats.Select(mediaType => mediaType.ToString()).ToArray(),
-                    result.Request is null ? null : ToRequestResponse(result.Request))),
+                new CreateBookRequestConflictResponse(
+                    "Duplicate",
+                    new BookRequestDuplicateResponse(
+                        "You already have an outstanding request for this book.",
+                        result.OverlappingFormats.Select(mediaType => mediaType.ToString()).ToArray(),
+                        result.Request is null ? null : ToRequestResponse(result.Request)),
+                    null)),
+            // 409: the format is already in a linked library — the user should
+            // confirm they still want a new acquisition rather than one being
+            // created silently alongside the existing copy.
+            CreateBookRequestOutcome.OwnedWarning => Results.Conflict(
+                new CreateBookRequestConflictResponse(
+                    "Owned",
+                    null,
+                    new BookRequestOwnedResponse(
+                        "You already have this book in your library.",
+                        result.OwnedFormats.Select(format => new BookRequestOwnedFormatResponse(
+                            format.MediaType.ToString(),
+                            format.ProviderId,
+                            format.ExternalActionUri?.ToString())).ToArray()))),
             CreateBookRequestOutcome.WorkNotFound => Results.NotFound(),
             CreateBookRequestOutcome.Unauthenticated => Results.Unauthorized(),
             _ => Results.ValidationProblem(new Dictionary<string, string[]>

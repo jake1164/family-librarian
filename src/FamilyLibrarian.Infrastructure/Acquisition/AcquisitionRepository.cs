@@ -49,6 +49,33 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
         return await query.ToArrayAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<MediaAssetAdminView>> ListRecentAsync(
+        int maximumCount,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
+
+        var query =
+            from asset in database.MediaAssets
+            join format in database.RequestFormats on asset.AssociatedRequestFormatId equals format.Id
+            join work in database.Works on asset.WorkId equals work.Id
+            orderby asset.UpdatedAtUtc descending
+            select new MediaAssetAdminView(
+                asset.Id,
+                format.RequestId,
+                asset.WorkId,
+                work.CanonicalTitle,
+                asset.MediaType,
+                asset.Format,
+                asset.OriginalFilename,
+                asset.SizeBytes,
+                asset.StorageState,
+                asset.CreatedAtUtc,
+                asset.UpdatedAtUtc);
+
+        return await query.Take(maximumCount).ToArrayAsync(cancellationToken);
+    }
+
     public void AddJob(AcquisitionJob job) => database.AcquisitionJobs.Add(job);
 
     public void AddAsset(MediaAsset asset) => database.MediaAssets.Add(asset);

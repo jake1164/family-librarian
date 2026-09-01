@@ -7,6 +7,7 @@ public static class AuditActions
     public const string ProviderCredentialSet = "provider.credential_set";
     public const string ProviderCredentialCleared = "provider.credential_cleared";
     public const string ProviderTested = "provider.tested";
+    public const string GutenbergCatalogPurged = "gutenberg_catalog.purged";
 
     public const string InvitationCreated = "invitation.created";
     public const string InvitationRevoked = "invitation.revoked";
@@ -35,6 +36,7 @@ public static class AuditActions
     public const string AssetMalwareDestructionFailed = "asset.malware_destruction_failed";
     public const string AssetPublished = "asset.published";
     public const string AssetPublishFailed = "asset.publish_failed";
+    public const string AssetArchiveCleanupFailed = "asset.archive_cleanup_failed";
 
     public const string PublishingDestinationEnabled = "publishing_destination.enabled";
     public const string PublishingDestinationDisabled = "publishing_destination.disabled";
@@ -42,6 +44,13 @@ public static class AuditActions
     public const string PublishingDestinationSecretSet = "publishing_destination.secret_set";
     public const string PublishingDestinationSecretCleared = "publishing_destination.secret_cleared";
     public const string PublishingDestinationTested = "publishing_destination.tested";
+
+    public const string CommunicationProviderEnabled = "communication_provider.enabled";
+    public const string CommunicationProviderDisabled = "communication_provider.disabled";
+    public const string CommunicationProviderSettingsChanged = "communication_provider.settings_changed";
+    public const string CommunicationProviderSecretSet = "communication_provider.secret_set";
+    public const string CommunicationProviderSecretCleared = "communication_provider.secret_cleared";
+    public const string CommunicationProviderTested = "communication_provider.tested";
 
     public const string AcquisitionPolicyDefaultChanged = "acquisition_policy.default_changed";
 
@@ -86,6 +95,7 @@ public static class AuditSubjectTypes
     public const string BookRequest = "book_request";
     public const string MediaAsset = "media_asset";
     public const string PublishingDestination = "publishing_destination";
+    public const string CommunicationProvider = "communication_provider";
     public const string AcquisitionPolicy = "acquisition_policy";
     public const string Oidc = "oidc";
     public const string ExternalProvider = "external_provider";

@@ -132,16 +132,15 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works) : IAssetIdentit
             .Any(segment => segment is "." or "..");
 
     // Catalog titles and EPUB package metadata disagree on where a leading
-    // article goes as often as Gutendex search results do (see
-    // GutendexProvider.NormalizeTitleVariants) — e.g. a catalog title of
+    // article goes — e.g. a catalog title of
     // "Green Mummy" against an EPUB whose <dc:title> is "The Green Mummy".
     // Without stripping this, a genuinely correct download is held as a
     // false-negative "Unmatched" identity mismatch.
     private static readonly string[] LeadingArticles = ["The ", "A ", "An "];
     private static readonly string[] TrailingArticles = [", The", ", A", ", An"];
 
-    // Same StartsWith comparison GutendexProvider.TitleMatches already
-    // uses at discovery time, for the same reason: Gutenberg's older
+    // The same StartsWith comparison used at discovery time, for the same
+    // reason: Gutenberg's older
     // catalog entries often carry a period-piece subtitle the family
     // catalog doesn't — e.g. an EPUB titled "Little Women; Or, Meg, Jo,
     // Beth, and Amy" against a catalog title of just "Little Women". A
@@ -183,8 +182,7 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works) : IAssetIdentit
     // EPUB creators commonly use catalog order ("Mafi, Tahereh") while the
     // family catalog uses display order ("Tahereh Mafi"), and can carry a
     // fuller name than the catalog does (e.g. catalog "J. M. Barrie" vs an
-    // EPUB crediting "Barrie, J. M. (James Matthew)") — see
-    // GutendexProvider.AuthorMatches for the same reasoning. Requiring every
+    // EPUB crediting "Barrie, J. M. (James Matthew)"). Requiring every
     // catalog token to appear in the EPUB's token set accepts that without
     // giving up the strict title comparison or accepting an unrelated name.
     private static bool AuthorMatches(string expected, string actual)

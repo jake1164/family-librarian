@@ -80,6 +80,19 @@ public sealed class CwaOwnedLibraryProviderTests
         Assert.IsNotNull(option.ExternalActionUri);
     }
 
+    [TestMethod]
+    public async Task PassesTheWorksKnownIsbnsToTheCatalogClient()
+    {
+        var context = ConfiguredContext();
+        var isbns = new[] { "9780000000001" };
+        context.WorkLookup.Isbn13s = isbns;
+        context.CatalogClient.NextBookId = "42";
+
+        await context.Provider.FindOwnedMatchesAsync(Guid.NewGuid(), RequestMediaType.Ebook, CancellationToken.None);
+
+        CollectionAssert.AreEquivalent(isbns, context.CatalogClient.LastIsbn13Candidates!.ToArray());
+    }
+
     private static TestContext ConfiguredContext()
     {
         var context = new TestContext();
@@ -130,16 +143,22 @@ public sealed class CwaOwnedLibraryProviderTests
 
         public int CallCount { get; private set; }
 
-        public Task<string?> FindBookIdAsync(string title, string? author, CancellationToken cancellationToken)
+        public IReadOnlyCollection<string>? LastIsbn13Candidates { get; private set; }
+
+        public Task<string?> FindBookIdAsync(
+            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken)
         {
             CallCount++;
+            LastIsbn13Candidates = isbn13Candidates;
             return Task.FromResult(NextBookId);
         }
     }
 
     private sealed class FakeWorkLookup : IWorkLookup
     {
+        public IReadOnlyList<string> Isbn13s { get; set; } = [];
+
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien"));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien", Isbn13s));
     }
 }

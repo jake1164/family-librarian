@@ -204,7 +204,7 @@ public sealed class SecurityGateEndpointTests
 
         var created = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(work.Id, ["Ebook"], null, true));
+            new CreateBookRequestRequest(work.Id, ["Ebook"], null, true, false));
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);

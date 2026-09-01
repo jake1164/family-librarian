@@ -291,22 +291,18 @@ Family Librarian media copy. The application may stage its requested file into
 quarantine, then create a provenance record after the normal safety pipeline
 passes and the selected destination verifies import.
 
-**Implementation note (current state):** `WorkFormatAvailability` as specified
-here is not yet what actually answers "is this owned." The shipped
-`WorkFormatAvailabilityService` is a placeholder that always returns
-`OwnershipState.NotOwned` (no `MediaAsset` existed yet when it was written) and
-is not called by any endpoint. The real, working ownership signal today is the
-separate `FulfillmentOption`/`IOwnedLibraryProvider` model
-(`docs/03-provider-api-contracts.md` §3), specifically `CwaOwnedLibraryProvider`
-and `AudiobookshelfOwnedLibraryProvider`, surfaced through
-`GET /works/{workId}/fulfillment-options` and rendered on the work detail page.
-These two models need to be reconciled — either `WorkFormatAvailability`
-becomes a real read model backed by the owned-library providers, or it is
-retired in favor of `FulfillmentOption` — before either is extended further.
-Whichever remains should also be the thing request creation consults (see the
-implementation note under "Request Workflow" below): today
-`BookRequestService.CreateAsync` checks only for a duplicate active request,
-never for an existing owned artifact.
+**Implementation note (current state, 2026-08-29):** the placeholder
+`WorkFormatAvailability` implementation was retired. The working ownership
+read model is `FulfillmentOption`/`IOwnedLibraryProvider`
+(`docs/03-provider-api-contracts.md` §3), specifically
+`CwaOwnedLibraryProvider` and `AudiobookshelfOwnedLibraryProvider`, surfaced
+through `GET /works/{workId}/fulfillment-options` and rendered on the work
+detail page. `BookRequestService.CreateAsync` queries the same model before it
+creates a request. An owned match produces a deliberate, confirmable warning;
+it does not silently create needless acquisition work. Identifier-first
+matching, suitability checks, and a deliberate replacement reason remain
+required before an existing match can automatically satisfy an irreversible
+fulfillment decision.
 
 ---
 
@@ -664,14 +660,17 @@ already implements this correctly: it hands the file to whichever
 to resolve the resulting book ID before marking the import `Available`. See
 `docs/01-product-architecture-spec.md` §12.1.1 for the full topology model.
 
-**Correlation today is best-effort, not identifier-based.** The current OPDS
-lookup matches on title (substring) and, when known, author — there is no
-ISBN or provider-ID correlation. This is an accepted fallback per this
-document's identifier-first/title-author-fallback principle, but it means a
-common title, an omnibus edition, or a retitled translation can produce an
-ambiguous or wrong match. Strengthening this (retained ISBN first, title/author
-only as fallback) is listed as required work, not a nice-to-have, once CWA
-ownership/correlation moves beyond the first opt-in integration.
+**Correlation is now identifier-first, 2026-08-31.** The OPDS lookup
+(`CwaCatalogClient`) tries each ISBN-13 known for the Work as a search query
+before falling back to title/author matching — see
+`docs/03-provider-api-contracts.md` "OPDS integration stability" for the
+full algorithm, including the ambiguity-safe fallback (more than one distinct
+title/author match now returns "not found" rather than guessing) and the
+derivative/combined-title guard (rejects "Summary of X", "X / Y", etc.).
+Whether CWA's search indexes ISBN is unconfirmed, but the fallback degrades
+safely either way. Remaining gaps: no per-edition ISBN selection (any ISBN
+known for the Work is tried), and a CWA entry missing an `<author>` element
+is not treated as a mismatch.
 
 **Existing-artifact suitability is not yet modeled.** A `LibraryImport`
 reaching `Available`, or a `FulfillmentOption` with `OptionKind.Owned`, is
@@ -975,7 +974,7 @@ event. A background verifier performs the OPDS rechecks, so administrators do
 not have to drive that normal asynchronous CWA step by hand.
 
 **Automatic public-domain ebook path:** a second background worker processes
-pending ebook formats. Gutendex is enabled by default and is only eligible for
+pending ebook formats. The locally indexed Project Gutenberg source is enabled by default and is only eligible for
 unattended acquisition when it returns exactly one result whose normalized title
 starts with the canonical title and whose creator-name tokens exactly match the
 canonical primary author. The worker then re-derives the candidate on the
@@ -986,18 +985,18 @@ cannot be acquired moves the request to `NeedsReview`; it is never guessed or
 retried continuously.
 
 This is intentionally limited to the bundled provider that explicitly opts in
-to automatic acquisition. Gutendex has effective `Once` behavior: each outcome
+to automatic acquisition. Project Gutenberg has effective `Once` behavior: each outcome
 is recorded and it is not repeatedly queried. Admin-registered external
 providers default to `Manual`, but an administrator may select `Daily` or
 `Weekly` per enabled provider. A scheduled external lookup follows the declared
 egress policy and records the outcome; a result moves the request to
 `NeedsReview` and never downloads the external artifact automatically.
 
-Gutendex is a separate JSON catalog API that indexes Project Gutenberg; it is
-not the Project Gutenberg website itself. The website can therefore remain
-reachable while catalog requests time out. A source timeout is recorded by the
-automatic request worker as an administrator-visible provider failure. The same
-source's optional fulfillment-options lookup degrades to no options, so it must
+Project Gutenberg discovery reads the locally imported daily RDF catalogue, so it
+continues to work when external catalogue APIs are blocked. The source's mirror
+download failure is recorded by the automatic request worker as an
+administrator-visible provider failure. The same source's optional
+fulfillment-options lookup degrades to no options, so it must
 not fail or delay the core Work and request detail views.
 
 **Cancel and ask again:** reopening a cancelled request begins a fresh
@@ -1022,13 +1021,14 @@ remains the provenance view. Requesters never receive provider IDs, transport
 failures, URLs, credentials, or diagnostic details.
 
 There is still no general `CheckingLibrary`, `Searching`, `Acquiring`, or
-`Processing` request state machine; audiobook confirmation and
-existing-ownership checks at request creation remain future work. This is not
-a documentation error to "fix" by shrinking the target model; it reflects
-where implementation has reached versus where this document says it is headed.
-Expanding `RequestStatus`/`RequestFormatStatus` toward the states above, and
-wiring the existing-ownership check into request creation, are required before
-the "existing-artifact fulfillment" flows in
+`Processing` request state machine; audiobook confirmation remains future work.
+Existing-ownership checks at request creation now produce a confirmable warning,
+but are not yet strong enough to automatically satisfy an irreversible
+fulfillment decision. This is not a documentation error to "fix" by shrinking
+the target model; it reflects where implementation has reached versus where this
+document says it is headed.
+Expanding `RequestStatus`/`RequestFormatStatus` toward the states above is
+still required before the "existing-artifact fulfillment" flows in
 `docs/01-product-architecture-spec.md` can work end to end.
 
 ---

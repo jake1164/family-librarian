@@ -7,6 +7,10 @@ public interface IProviderAttemptRepository
 {
     Task<IReadOnlyList<ProviderAttempt>> ListForRequestAsync(Guid requestId, CancellationToken cancellationToken);
 
+    /// <summary>Recent entries from the append-only source lookup ledger, for
+    /// the administrator's cross-request operational view.</summary>
+    Task<IReadOnlyList<ProviderAttempt>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken);
+
     Task<ProviderAttempt?> FindLatestForFormatAsync(
         Guid requestFormatId,
         string providerId,

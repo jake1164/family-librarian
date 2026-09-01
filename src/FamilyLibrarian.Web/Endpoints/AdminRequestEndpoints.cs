@@ -116,6 +116,10 @@ internal static class AdminRequestEndpoints
 
         var providerIssues = latestAttempts
             .Where(attempt => attempt.IssueKind is not null)
+            // Historic provider activity stays available on the request's
+            // timeline, but only currently installed/registered providers can
+            // be an active source-health issue.
+            .Where(attempt => displayNames.ContainsKey(attempt.ProviderId))
             .OrderByDescending(attempt => attempt.AttemptedAtUtc)
             .Select(attempt => new AdminProviderIssueResponse(
                 attempt.ProviderId,

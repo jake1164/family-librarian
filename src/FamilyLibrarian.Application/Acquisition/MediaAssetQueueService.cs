@@ -22,6 +22,23 @@ public sealed class MediaAssetQueueService(
     public async Task<IReadOnlyList<MediaAssetQueueEntry>> ListAsync(CancellationToken cancellationToken)
     {
         var assets = await acquisition.ListActiveAsync(cancellationToken);
+        return await AddLatestEvaluationsAsync(assets, cancellationToken);
+    }
+
+    /// <summary>Recent file intake and scan activity, including assets that
+    /// already progressed beyond the action queue.</summary>
+    public async Task<IReadOnlyList<MediaAssetQueueEntry>> ListRecentAsync(
+        int maximumCount,
+        CancellationToken cancellationToken)
+    {
+        var assets = await acquisition.ListRecentAsync(maximumCount, cancellationToken);
+        return await AddLatestEvaluationsAsync(assets, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<MediaAssetQueueEntry>> AddLatestEvaluationsAsync(
+        IReadOnlyList<MediaAssetAdminView> assets,
+        CancellationToken cancellationToken)
+    {
         var entries = new List<MediaAssetQueueEntry>(assets.Count);
         foreach (var asset in assets)
         {

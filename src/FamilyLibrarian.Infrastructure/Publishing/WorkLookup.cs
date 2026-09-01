@@ -17,7 +17,12 @@ public sealed class WorkLookup(AppDbContext database) : IWorkLookup
                 work.Authors
                     .OrderBy(author => author.Ordinal)
                     .Select(author => author.Author.CanonicalName)
-                    .FirstOrDefault());
+                    .FirstOrDefault(),
+                work.Editions
+                    .Where(edition => edition.Isbn13 != null)
+                    .Select(edition => edition.Isbn13!)
+                    .Distinct()
+                    .ToList());
 
         return await query.SingleOrDefaultAsync(cancellationToken);
     }

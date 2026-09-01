@@ -205,6 +205,11 @@ public sealed class DirectAcquisitionServiceTests
         public Task<IReadOnlyList<MediaAssetAdminView>> ListActiveAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<IReadOnlyList<MediaAssetAdminView>> ListRecentAsync(
+            int maximumCount,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void AddJob(AcquisitionJob job) => Jobs.Add(job);
 
         public void AddAsset(MediaAsset asset) => Assets.Add(asset);
@@ -326,7 +331,7 @@ public sealed class DirectAcquisitionServiceTests
     private sealed class FakeWorkLookup : IWorkLookup
     {
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien"));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien", []));
     }
 
     private sealed class NoExternalProviders : IExternalProviderStore

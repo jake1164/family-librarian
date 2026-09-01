@@ -86,6 +86,25 @@ jobs:
             exit 1
           fi
 
+  # scripts/backups/*.sh have no .NET equivalent, so `dotnet test` above
+  # never runs them. backup-restore-postgres.test.sh drives a real, disposable
+  # `docker compose` project (see that file), which needs the same
+  # preinstalled Docker daemon the Testcontainers-based .NET tests rely on.
+  backup-restore-scripts:
+    name: Backup/restore scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run backup/restore script tests
+        run: |
+          set -euo pipefail
+          for test_file in tests/scripts/*.test.sh; do
+            echo "::group::$test_file"
+            bash "$test_file"
+            echo "::endgroup::"
+          done
+
   # Builds the same image Compose and the release pipeline publish (a bare
   # `docker build` selects the Dockerfile's last stage, `final` — the debug
   # stage with vsdbg is declared earlier specifically so it can never be
@@ -102,7 +121,6 @@ jobs:
       - name: Build image
         id: build
         run: docker build --target final -t family-librarian:ci-${{ github.sha }} .
-
       - name: Scan image with Trivy
         id: scan
         uses: aquasecurity/trivy-action@v0.36.0
@@ -111,6 +129,11 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
+
+          # SARIF normally ignores the severity filter and includes everything.
+          # Keep SARIF limited to the severities that actually gate CI.
+          limit-severities-for-sarif: true
+
           # A CVE with no available fix isn't something changing this
           # repository's code or pinned versions can resolve.
           ignore-unfixed: true

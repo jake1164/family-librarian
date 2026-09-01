@@ -1,8 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
+using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Web.Tests.Harness;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace FamilyLibrarian.Web.Tests;
 
@@ -78,13 +83,59 @@ public sealed class RequestWorkflowEndpointTests
         var second = await CreateRequestAsync(client, workId, ["Ebook"], null);
 
         Assert.AreEqual(HttpStatusCode.Conflict, second.StatusCode);
-        var duplicate = await second.Content.ReadFromJsonAsync<BookRequestDuplicateResponse>();
-        Assert.IsNotNull(duplicate);
-        CollectionAssert.AreEqual(EbookOnly, duplicate.OverlappingFormats.ToArray());
-        Assert.IsNotNull(duplicate.ExistingRequest);
+        var conflict = await second.Content.ReadFromJsonAsync<CreateBookRequestConflictResponse>();
+        Assert.IsNotNull(conflict);
+        Assert.AreEqual("Duplicate", conflict.Kind);
+        Assert.IsNotNull(conflict.Duplicate);
+        CollectionAssert.AreEqual(EbookOnly, conflict.Duplicate.OverlappingFormats.ToArray());
+        Assert.IsNotNull(conflict.Duplicate.ExistingRequest);
 
         // The warning is not a wall: confirming it creates the repeat request.
         var confirmed = await CreateRequestAsync(client, workId, ["Ebook"], null, confirmDuplicate: true);
+        Assert.AreEqual(HttpStatusCode.Created, confirmed.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task ARequestForAnOwnedEbookIsAnsweredWithAnOwnedWarning()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<ICwaCatalogClient>();
+                services.AddSingleton<ICwaCatalogClient>(new DeterministicCatalogClient("42"));
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsync(client, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
+        var userToken = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, userToken);
+
+        using var adminClient = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsync(adminClient, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        var adminToken = await WebTestFixture.GetAntiforgeryTokenAsync(adminClient);
+        adminClient.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, adminToken);
+        await ConfigureCwaAsync(adminClient);
+
+        var workId = await ResolveWorkAsync(client, "the-hobbit");
+
+        var response = await CreateRequestAsync(client, workId, ["Ebook"], null);
+
+        Assert.AreEqual(HttpStatusCode.Conflict, response.StatusCode);
+        var conflict = await response.Content.ReadFromJsonAsync<CreateBookRequestConflictResponse>();
+        Assert.IsNotNull(conflict);
+        Assert.AreEqual("Owned", conflict.Kind);
+        Assert.IsNotNull(conflict.Owned);
+        var owned = conflict.Owned.OwnedFormats.Single();
+        Assert.AreEqual("Ebook", owned.MediaType);
+        Assert.AreEqual("cwa", owned.ProviderId);
+
+        // The warning is not a wall: confirming it creates the request anyway.
+        // confirmDuplicate is also set here since this demo work/user pair is
+        // shared with other tests in this class against the same database —
+        // this assertion is only about the ownership confirmation itself.
+        var confirmed = await CreateRequestAsync(
+            client, workId, ["Ebook"], null, confirmDuplicate: true, confirmOwned: true);
         Assert.AreEqual(HttpStatusCode.Created, confirmed.StatusCode);
     }
 
@@ -245,23 +296,58 @@ public sealed class RequestWorkflowEndpointTests
         Guid workId,
         string[] formats,
         string? note,
-        bool confirmDuplicate = false) =>
+        bool confirmDuplicate = false,
+        bool confirmOwned = false) =>
         client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(workId, formats, note, confirmDuplicate));
+            new CreateBookRequestRequest(workId, formats, note, confirmDuplicate, confirmOwned));
 
     private static async Task<BookRequestResponse> CreateAndReadRequestAsync(
         HttpClient client,
         Guid workId,
         string[] formats,
-        bool confirmDuplicate = false)
+        bool confirmDuplicate = false,
+        bool confirmOwned = false)
     {
-        var response = await CreateRequestAsync(client, workId, formats, null, confirmDuplicate);
+        var response = await CreateRequestAsync(client, workId, formats, null, confirmDuplicate, confirmOwned);
         Assert.AreEqual(HttpStatusCode.Created, response.StatusCode);
 
         var request = await response.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
         return request;
+    }
+
+    private static async Task SignInAsync(HttpClient client, string email, string password)
+    {
+        var response = await client.PostAsJsonAsync("/api/auth/login", new LoginRequest { Email = email, Password = password });
+        Assert.AreEqual(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    private static async Task ConfigureCwaAsync(HttpClient client)
+    {
+        var settings = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/",
+            new FamilyLibrarian.Contracts.Publishing.SetCwaSettingsRequest(
+                "Local", "/data/cwa-ingest-test", null, null, null, null, "PrivateKey", "https://cwa.example.test", null));
+        settings.EnsureSuccessStatusCode();
+
+        // Enabling requires a passing connection test for the saved configuration
+        // (docs/01 §12.1.1) -- FamilyLibrarianAppFactory registers a default-safe
+        // ICwaConnectionTester double, so this succeeds without a reachable CWA.
+        var test = await client.PostAsJsonAsync("/api/v1/admin/publishing/cwa/test", new { });
+        test.EnsureSuccessStatusCode();
+
+        var enabled = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/cwa/enabled",
+            new FamilyLibrarian.Contracts.Publishing.SetPublishingEnabledRequest(true));
+        enabled.EnsureSuccessStatusCode();
+    }
+
+    private sealed class DeterministicCatalogClient(string? bookId) : ICwaCatalogClient
+    {
+        public Task<string?> FindBookIdAsync(
+            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken) =>
+            Task.FromResult(bookId);
     }
 
     /// <summary>

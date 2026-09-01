@@ -6,8 +6,10 @@ using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web.Acquisition;
+using FamilyLibrarian.Web.Communications;
 using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
+using FamilyLibrarian.Web.Gutenberg;
 using FamilyLibrarian.Web.Publishing;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
@@ -19,6 +21,8 @@ builder.Services.AddHostedService<CwaVerificationHostedService>();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
+    builder.Services.AddHostedService<GutenbergCatalogHostedService>();
+    builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();
 }
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgresql")
@@ -195,7 +199,10 @@ app.MapCurrentUserEndpoints();
 app.MapCatalogEndpoints();
 app.MapRequestEndpoints();
 app.MapAdminRequestEndpoints();
+app.MapAdminTasksEndpoints();
+app.MapGutenbergCatalogEndpoints();
 app.MapNotificationEndpoints();
+app.MapSmtpSettingsEndpoints();
 app.MapFeedbackEndpoints();
 app.MapSecurityQueueEndpoints();
 app.MapInvitationEndpoints();

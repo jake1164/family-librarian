@@ -7,11 +7,18 @@
     <ProjectReference Include="../FamilyLibrarian.Domain/FamilyLibrarian.Domain.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Lets the orphan-sweep unit tests exercise the internal ISftpDirectoryClient
+         seam directly, since the real SSH.NET types it stands in for are sealed
+         or have no public constructor. -->
+    <InternalsVisibleTo Include="FamilyLibrarian.Infrastructure.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
     <PackageReference Include="BouncyCastle.Cryptography" />
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+    <PackageReference Include="MailKit" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="SSH.NET" />
   </ItemGroup>

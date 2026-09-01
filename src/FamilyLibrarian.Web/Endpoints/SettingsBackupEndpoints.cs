@@ -103,6 +103,7 @@ internal static class SettingsBackupEndpoints
     private static SettingsBackupCountsResponse ToCounts(SettingsBackupCounts counts) => new(
         counts.CwaSettings,
         counts.AudiobookshelfSettings,
+        counts.SmtpSettings,
         counts.PrivateEgressGatewaySettings,
         counts.ProviderSettings,
         counts.OidcSettings,

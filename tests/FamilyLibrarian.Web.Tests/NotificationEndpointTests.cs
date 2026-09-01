@@ -135,7 +135,7 @@ public sealed class NotificationEndpointTests
     {
         var response = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(workId, ["Ebook"], null, false));
+            new CreateBookRequestRequest(workId, ["Ebook"], null, false, false));
         Assert.AreEqual(HttpStatusCode.Created, response.StatusCode);
         var request = await response.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);

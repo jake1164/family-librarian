@@ -110,6 +110,52 @@ public sealed class CwaSettingsServiceTests
         Assert.AreEqual(PublishingCommandOutcome.Success, result.Outcome);
     }
 
+    [TestMethod]
+    public async Task RequestReadinessIsRejectedWhenNeverEnabled()
+    {
+        var context = new TestContext();
+        await context.SetLocalIngestAndOpdsAsync();
+        context.ConnectionTester.NextOutcome = new ConnectionTestOutcome(true, "Connected.");
+        await context.Service.TestConnectionAsync(CwaConnectionTestTarget.All, CancellationToken.None);
+
+        var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
+
+        StringAssert.Contains(error, "CWA is not enabled");
+    }
+
+    [TestMethod]
+    public async Task RequestReadinessSucceedsOnceEnabledWithAPassingTest()
+    {
+        var context = new TestContext();
+        await context.SetLocalIngestAndOpdsAsync();
+        context.ConnectionTester.NextOutcome = new ConnectionTestOutcome(true, "Connected.");
+        await context.Service.TestConnectionAsync(CwaConnectionTestTarget.All, CancellationToken.None);
+        await context.Service.SetEnabledAsync(true, CancellationToken.None);
+
+        var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
+
+        Assert.IsNull(error);
+    }
+
+    [TestMethod]
+    public async Task RequestReadinessIsRejectedAfterEnablingWhenSettingsChangeInvalidatesTheTest()
+    {
+        // Enabling doesn't lock settings: a later change can invalidate the test
+        // result without SetEnabledAsync running again, so readiness must
+        // re-check the current configuration, not just the IsEnabled flag.
+        var context = new TestContext();
+        await context.SetLocalIngestAndOpdsAsync();
+        context.ConnectionTester.NextOutcome = new ConnectionTestOutcome(true, "Connected.");
+        await context.Service.TestConnectionAsync(CwaConnectionTestTarget.All, CancellationToken.None);
+        await context.Service.SetEnabledAsync(true, CancellationToken.None);
+
+        await context.SetLocalIngestAndOpdsAsync(localIngestPath: "/ingest-changed");
+
+        var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
+
+        StringAssert.Contains(error, "Test the connection");
+    }
+
     private sealed class TestContext
     {
         public TestContext()

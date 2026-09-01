@@ -14,6 +14,20 @@ public sealed class ProviderAttemptRepository(AppDbContext database) : IProvider
             .OrderByDescending(attempt => attempt.AttemptedAtUtc)
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<ProviderAttempt>> ListRecentAsync(
+        int maximumCount,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
+
+        return await database.ProviderAttempts
+            .AsNoTracking()
+            .OrderByDescending(attempt => attempt.AttemptedAtUtc)
+            .ThenByDescending(attempt => attempt.Id)
+            .Take(maximumCount)
+            .ToArrayAsync(cancellationToken);
+    }
+
     public Task<ProviderAttempt?> FindLatestForFormatAsync(
         Guid requestFormatId,
         string providerId,

@@ -88,7 +88,7 @@ public sealed class AudiobookshelfPublishingService(
             {
                 var bundleWork = await workLookup.FindAsync(tracks[0].WorkId, cancellationToken);
                 await TryVerifyAsync(
-                    delivery, tracks[0].AssociatedRequestFormatId,
+                    delivery, tracks,
                     bundleWork?.Title ?? "Unknown title", bundleWork?.PrimaryAuthor, cancellationToken);
             }
 
@@ -112,7 +112,7 @@ public sealed class AudiobookshelfPublishingService(
         {
             var work = await workLookup.FindAsync(asset.WorkId, cancellationToken);
             await TryVerifyAsync(
-                delivery, asset.AssociatedRequestFormatId,
+                delivery, [asset],
                 work?.Title ?? "Unknown title", work?.PrimaryAuthor, cancellationToken);
         }
 
@@ -132,8 +132,10 @@ public sealed class AudiobookshelfPublishingService(
             {
                 delivery.MarkDelivered(existingItemId, clock.UtcNow);
                 await MarkRequestFormatAvailableAsync(asset.AssociatedRequestFormatId, title, cancellationToken);
+                ArchiveTrusted([asset]);
                 await repository.SaveChangesAsync(cancellationToken);
                 await AuditPublishedAsync(asset.Id, cancellationToken);
+                await DeleteTrustedBytesAsync([asset], cancellationToken);
                 return;
             }
 
@@ -150,10 +152,16 @@ public sealed class AudiobookshelfPublishingService(
                 return;
             }
 
+            // Close the read handle before any possible cleanup delete below --
+            // safe to call again when the `await using` above disposes it a
+            // second time at scope exit.
+            await content.DisposeAsync();
+
             if (result.ExternalItemId is not null)
             {
                 delivery.MarkDelivered(result.ExternalItemId, clock.UtcNow);
                 await MarkRequestFormatAvailableAsync(asset.AssociatedRequestFormatId, title, cancellationToken);
+                ArchiveTrusted([asset]);
             }
             else
             {
@@ -165,7 +173,11 @@ public sealed class AudiobookshelfPublishingService(
 
             if (delivery.Status == DeliveryStatus.Verifying)
             {
-                await TryVerifyAsync(delivery, asset.AssociatedRequestFormatId, title, author, cancellationToken);
+                await TryVerifyAsync(delivery, [asset], title, author, cancellationToken);
+            }
+            else
+            {
+                await DeleteTrustedBytesAsync([asset], cancellationToken);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -222,13 +234,16 @@ public sealed class AudiobookshelfPublishingService(
             {
                 delivery.MarkDelivered(existingItemId, clock.UtcNow);
                 await MarkRequestFormatAvailableAsync(tracks[0].AssociatedRequestFormatId, title, cancellationToken);
+                ArchiveTrusted(tracks);
                 await repository.SaveChangesAsync(cancellationToken);
                 await AuditBundlePublishedAsync(bundleId, cancellationToken);
+                await DeleteTrustedBytesAsync(tracks, cancellationToken);
                 return;
             }
 
             var orderedTracks = tracks.OrderBy(track => track.BundleSequence).ToArray();
             var openStreams = new List<Stream>(orderedTracks.Length);
+            var shouldDeleteAfterUpload = false;
             try
             {
                 var uploadTracks = new List<(Stream Content, string Filename)>(orderedTracks.Length);
@@ -255,6 +270,7 @@ public sealed class AudiobookshelfPublishingService(
                 {
                     delivery.MarkDelivered(result.ExternalItemId, clock.UtcNow);
                     await MarkRequestFormatAvailableAsync(tracks[0].AssociatedRequestFormatId, title, cancellationToken);
+                    ArchiveTrusted(orderedTracks);
                 }
                 else
                 {
@@ -266,7 +282,14 @@ public sealed class AudiobookshelfPublishingService(
 
                 if (delivery.Status == DeliveryStatus.Verifying)
                 {
-                    await TryVerifyAsync(delivery, tracks[0].AssociatedRequestFormatId, title, author, cancellationToken);
+                    await TryVerifyAsync(delivery, orderedTracks, title, author, cancellationToken);
+                }
+                else
+                {
+                    // Deferred past the stream-closing `finally` below -- the
+                    // upload streams opened from the Trusted zone above must
+                    // be closed before their backing files can be deleted.
+                    shouldDeleteAfterUpload = true;
                 }
             }
             finally
@@ -275,6 +298,11 @@ public sealed class AudiobookshelfPublishingService(
                 {
                     await stream.DisposeAsync();
                 }
+            }
+
+            if (shouldDeleteAfterUpload)
+            {
+                await DeleteTrustedBytesAsync(orderedTracks, cancellationToken);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -300,7 +328,7 @@ public sealed class AudiobookshelfPublishingService(
             : exception.Message;
 
     private async Task TryVerifyAsync(
-        Delivery delivery, Guid requestFormatId, string title, string? author, CancellationToken cancellationToken)
+        Delivery delivery, IReadOnlyList<MediaAsset> assets, string title, string? author, CancellationToken cancellationToken)
     {
         try
         {
@@ -308,13 +336,55 @@ public sealed class AudiobookshelfPublishingService(
             if (itemId is not null)
             {
                 delivery.MarkDelivered(itemId, clock.UtcNow);
-                await MarkRequestFormatAvailableAsync(requestFormatId, title, cancellationToken);
+                await MarkRequestFormatAvailableAsync(assets[0].AssociatedRequestFormatId, title, cancellationToken);
+                ArchiveTrusted(assets);
                 await repository.SaveChangesAsync(cancellationToken);
+
+                // Cleanup runs only after the Delivered/Archived state is
+                // durably saved -- see DeleteTrustedBytesAsync.
+                await DeleteTrustedBytesAsync(assets, cancellationToken);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // Best-effort: leave Verifying for a later manual recheck.
+        }
+    }
+
+    /// <summary>Moves every given asset from Trusted to Archived, in memory only -- the caller saves.</summary>
+    private void ArchiveTrusted(IReadOnlyList<MediaAsset> assets)
+    {
+        foreach (var asset in assets)
+        {
+            asset.TransitionStorageState(MediaAssetStorageState.Archived, clock.UtcNow);
+        }
+    }
+
+    /// <summary>
+    /// Permanently removes each asset's local trusted copy once Audiobookshelf
+    /// has confirmed delivery — docs/01 §13's "remove local media copy." Every
+    /// asset is already Archived and saved by the time this runs, so a
+    /// cleanup failure here is a leftover-file nuisance for an operator to
+    /// notice, never a reason to roll back or retry an otherwise-successful
+    /// publish.
+    /// </summary>
+    private async Task DeleteTrustedBytesAsync(IReadOnlyList<MediaAsset> assets, CancellationToken cancellationToken)
+    {
+        foreach (var asset in assets)
+        {
+            try
+            {
+                await stagingStore.DeleteAsync(MediaAssetStorageState.Trusted, asset.StoredFilename, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                await audit.WriteAsync(
+                    AuditActions.AssetArchiveCleanupFailed,
+                    AuditSubjectTypes.MediaAsset,
+                    asset.Id.ToString(),
+                    new { asset.Id, Destination = "audiobookshelf", Reason = exception.Message },
+                    cancellationToken);
+            }
         }
     }
 

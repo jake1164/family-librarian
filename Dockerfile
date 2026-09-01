@@ -26,7 +26,11 @@ ENV ASPNETCORE_URLS=http://+:8080
 # first run inherits this ownership instead of root:root — the security
 # pipeline's storage zones live here, and the app runs as the non-root
 # $APP_UID user below.
-RUN mkdir -p /data/family-librarian && chown -R $APP_UID:$APP_UID /data/family-librarian
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bzip2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /data/family-librarian \
+    && chown -R $APP_UID:$APP_UID /data/family-librarian
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "FamilyLibrarian.Web.dll"]
 
