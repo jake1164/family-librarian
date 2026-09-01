@@ -13,7 +13,7 @@
 <MudDialogProvider />
 <MudSnackbarProvider />
 
-<MudLayout>
+<MudLayout id="family-librarian-page-top">
     <MudAppBar Elevation="1">
         @* Only signed-in users have anywhere to navigate to. Always visible
            (not just d-md-none/mobile) since the drawer is now a persistent
@@ -163,6 +163,14 @@
             @Body
         </MudContainer>
     </MudMainContent>
+
+    <MudFab Href="#family-librarian-page-top"
+            StartIcon="@Icons.Material.Filled.KeyboardArrowUp"
+            Color="Color.Primary"
+            Size="Size.Medium"
+            Class="family-librarian-go-to-top"
+            aria-label="Go to top"
+            title="Go to top" />
 
     @* Sticky status footer, ABS/M3Undle-style. Nothing to surface here yet —
        it's just the shell (app name + version) so future status indicators

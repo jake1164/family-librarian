@@ -14,6 +14,16 @@ html, body {
         var(--family-librarian-status-footer-height) + 2rem + env(safe-area-inset-bottom, 0px)) !important;
 }
 
+/* This persistent FAB uses the layout's fragment target, so it works without
+   JavaScript and stays clear of the fixed status footer and device safe area. */
+.family-librarian-go-to-top {
+    bottom: calc(
+        var(--family-librarian-status-footer-height) + 1rem + env(safe-area-inset-bottom, 0px));
+    position: fixed;
+    right: max(1rem, env(safe-area-inset-right, 0px));
+    z-index: var(--mud-zindex-appbar, 1100);
+}
+
 #blazor-error-ui {
     background: #fff3cd;
     bottom: 0;
