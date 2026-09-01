@@ -32,7 +32,8 @@
     {
         @foreach (var source in builtInSources)
         {
-            var issue = ProviderIssueFor(source.ProviderId);
+            var configurationIssue = ProviderIssueFor(source.ProviderId, "Configuration");
+            var operationalIssue = ProviderIssueFor(source.ProviderId, "Operational");
             <MudPaper Outlined="true" Class="pa-3 mb-2">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                     <MudText Typo="Typo.subtitle1" Class="flex-grow-1">@source.DisplayName</MudText>
@@ -51,24 +52,35 @@
                         <span>Provides direct acquisition options during fulfillment.</span>
                     }
                 </MudText>
-                @if (issue is not null)
+                @if (configurationIssue is not null)
                 {
-                    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
-                        <MudText Typo="Typo.subtitle2">Automatic lookup needs attention</MudText>
-                        <MudText Typo="Typo.body2">@issue.Summary</MudText>
+                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-2">
+                        <MudText Typo="Typo.subtitle2">Configuration needs attention</MudText>
+                        <MudText Typo="Typo.body2">@configurationIssue.Summary</MudText>
                         <MudText Typo="Typo.caption">
-                            Last automatic lookup: @issue.OccurredAtUtc.ToLocalTime().ToString("g").
-                            This source is not retried repeatedly; a new or reopened request can try it again.
+                            Last blocked automatic lookup: @configurationIssue.OccurredAtUtc.ToLocalTime().ToString("g").
+                            Review this source's settings and the acquisition policy before rechecking affected requests.
                         </MudText>
                     </MudAlert>
                 }
-                else if (source.IsEnabled)
+                @if (operationalIssue is not null)
+                {
+                    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
+                        <MudText Typo="Typo.subtitle2">Latest automatic lookup failed</MudText>
+                        <MudText Typo="Typo.body2">@operationalIssue.Summary</MudText>
+                        <MudText Typo="Typo.caption">
+                            Last operational failure: @operationalIssue.OccurredAtUtc.ToLocalTime().ToString("g").
+                            This is separate from source configuration; the source will be tried again when eligible.
+                        </MudText>
+                    </MudAlert>
+                }
+                @if (configurationIssue is null && operationalIssue is null && source.IsEnabled)
                 {
                     <MudText Typo="Typo.caption" Class="mt-1">
                         Automatic lookup is enabled for new ebook requests. This stable public-domain source is checked once per request cycle.
                     </MudText>
                 }
-                else
+                else if (configurationIssue is null && operationalIssue is null)
                 {
                     <MudText Typo="Typo.caption" Class="mt-1">
                         Automatic lookup is disabled for this source.
@@ -272,7 +284,8 @@
     {
         @foreach (var provider in providers)
         {
-            var issue = ProviderIssueFor(provider.ProviderId);
+            var configurationIssue = ProviderIssueFor(provider.ProviderId, "Configuration");
+            var operationalIssue = ProviderIssueFor(provider.ProviderId, "Operational");
             <MudPaper Outlined="true" Class="pa-3 mb-3">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                     <MudText Typo="Typo.h6" Class="flex-grow-1">@provider.DisplayName</MudText>
@@ -281,12 +294,20 @@
                                ValueChanged="@(enabled => SetProviderEnabledAsync(provider.Id, enabled))" Label="Enabled" />
                 </MudStack>
 
-                @if (issue is not null)
+                @if (configurationIssue is not null)
+                {
+                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-2">
+                        <MudText Typo="Typo.subtitle2">Configuration needs attention</MudText>
+                        <MudText Typo="Typo.body2">@configurationIssue.Summary</MudText>
+                        <MudText Typo="Typo.caption">Blocked @configurationIssue.OccurredAtUtc.ToLocalTime().ToString("g").</MudText>
+                    </MudAlert>
+                }
+                @if (operationalIssue is not null)
                 {
                     <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-2">
-                        <MudText Typo="Typo.subtitle2">Latest automatic recheck needs attention</MudText>
-                        <MudText Typo="Typo.body2">@issue.Summary</MudText>
-                        <MudText Typo="Typo.caption">Checked @issue.OccurredAtUtc.ToLocalTime().ToString("g").</MudText>
+                        <MudText Typo="Typo.subtitle2">Latest automatic recheck failed</MudText>
+                        <MudText Typo="Typo.body2">@operationalIssue.Summary</MudText>
+                        <MudText Typo="Typo.caption">Failed @operationalIssue.OccurredAtUtc.ToLocalTime().ToString("g").</MudText>
                     </MudAlert>
                 }
 
@@ -440,9 +461,10 @@
     private int BuiltInSourceGeneration(string providerId) =>
         builtInSourceGenerations.GetValueOrDefault(providerId);
 
-    private AdminProviderIssueResponse? ProviderIssueFor(string providerId) =>
+    private AdminProviderIssueResponse? ProviderIssueFor(string providerId, string issueKind) =>
         attention?.ProviderIssues.FirstOrDefault(issue =>
-            string.Equals(issue.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
+            string.Equals(issue.ProviderId, providerId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(issue.IssueKind, issueKind, StringComparison.Ordinal));
 
     private static bool IsSafeExternalUrl(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) &&

@@ -133,8 +133,10 @@
                 var attention = await AdminRequests.GetAttentionAsync();
                 merged.AddRange(attention.ProviderIssues.Select(issue => new TrayEntry(
                     Id: null,
-                    Severity: "Error",
-                    Title: $"Provider '{issue.DisplayName}' fetch failed",
+                    Severity: issue.IssueKind == "Configuration" ? "Warning" : "Error",
+                    Title: issue.IssueKind == "Configuration"
+                        ? $"Provider '{issue.DisplayName}' configuration needs attention"
+                        : $"Provider '{issue.DisplayName}' lookup failed",
                     Detail: issue.Summary,
                     RepeatCount: 1,
                     Timestamp: issue.OccurredAtUtc,

@@ -6,7 +6,6 @@ using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain.Requests;
-using FamilyLibrarian.Domain.Acquisition;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
 
@@ -116,13 +115,14 @@ internal static class AdminRequestEndpoints
         }
 
         var providerIssues = latestAttempts
-            .Where(attempt => attempt.Outcome is ProviderAttemptOutcome.Failed or ProviderAttemptOutcome.Blocked)
+            .Where(attempt => attempt.IssueKind is not null)
             .OrderByDescending(attempt => attempt.AttemptedAtUtc)
             .Select(attempt => new AdminProviderIssueResponse(
                 attempt.ProviderId,
                 displayNames.GetValueOrDefault(attempt.ProviderId, attempt.ProviderId),
                 attempt.Summary,
-                attempt.AttemptedAtUtc))
+                attempt.AttemptedAtUtc,
+                attempt.IssueKind!.Value.ToString()))
             .ToArray();
 
         return Results.Ok(new AdminRequestAttentionResponse(needsReviewCount, providerIssues));
