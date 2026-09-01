@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
@@ -179,6 +180,30 @@ public sealed class AudiobookshelfPublishingServiceTests
         Assert.IsTrue(tracks.All(track => track.StorageState == MediaAssetStorageState.Archived));
         Assert.AreEqual(3, context.StagingStore.Deleted.Count);
         Assert.AreEqual(1, context.ApiClient.BundleUploadCount);
+    }
+
+    [TestMethod]
+    public async Task AnAmbiguousExistingMatchDoesNotShortCircuitAndUploadsInstead()
+    {
+        // Guards against the naive-matcher bug: guessing one of several
+        // matching library items as "already delivered" risks attaching the
+        // wrong edition, so ambiguity must fall through to a normal upload.
+        var context = ConfiguredContext();
+        var asset = context.CreateAsset();
+        context.ApiClient.AmbiguousCandidates =
+        [
+            new CandidateBook("1", "The Hobbit", "J. R. R. Tolkien"),
+            new CandidateBook("2", "The Hobbit (Illustrated)", "J. R. R. Tolkien")
+        ];
+        context.ApiClient.UploadResult = new AudiobookshelfUploadResult(true, "li_new", null);
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(DeliveryStatus.Delivered, delivery!.Status);
+        Assert.AreEqual("li_new", delivery.ExternalItemId);
+        Assert.AreEqual(1, context.ApiClient.UploadCount);
+        Assert.AreEqual(1, context.Audit.Entries.Count(entry => entry.Action == "asset.match_ambiguous"));
     }
 
     [TestMethod]
@@ -393,6 +418,8 @@ public sealed class AudiobookshelfPublishingServiceTests
     {
         public string? ExistingItemId { get; set; }
 
+        public IReadOnlyList<CandidateBook>? AmbiguousCandidates { get; set; }
+
         public AudiobookshelfUploadResult UploadResult { get; set; } = new(true, "li_default", null);
 
         public int UploadCount { get; private set; }
@@ -401,9 +428,18 @@ public sealed class AudiobookshelfPublishingServiceTests
 
         public int LastBundleTrackCount { get; private set; }
 
-        public Task<string?> FindExistingItemIdAsync(
-            string title, string? author, CancellationToken cancellationToken) =>
-            Task.FromResult(ExistingItemId);
+        public Task<BookMatchResult> FindExistingItemIdAsync(
+            string title, string? author, CancellationToken cancellationToken)
+        {
+            if (AmbiguousCandidates is not null)
+            {
+                return Task.FromResult(BookMatchResult.Ambiguous(AmbiguousCandidates));
+            }
+
+            return Task.FromResult(ExistingItemId is null
+                ? BookMatchResult.NoMatchResult
+                : BookMatchResult.Match(new CandidateBook(ExistingItemId, title, author)));
+        }
 
         public Task<AudiobookshelfUploadResult> UploadAsync(
             Stream content, string filename, string title, string? author, CancellationToken cancellationToken)
