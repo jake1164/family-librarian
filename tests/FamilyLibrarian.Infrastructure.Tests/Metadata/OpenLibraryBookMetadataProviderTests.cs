@@ -85,6 +85,51 @@ public sealed class OpenLibraryBookMetadataProviderTests
     }
 
     [TestMethod]
+    public async Task SearchAsyncPrefersEditionLevelCoverPublisherAndLanguageOverWorkAggregate()
+    {
+        using var handler = new StubHttpMessageHandler((_, _) =>
+            JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL448924W",
+                      "title": "Clear and Present Danger",
+                      "author_name": ["Tom Clancy"],
+                      "cover_i": 999,
+                      "publisher": ["France loisir"],
+                      "language": ["fre", "eng"],
+                      "editions": {
+                        "docs": [
+                          {
+                            "title": "Clear and Present Danger",
+                            "cover_i": 15249157,
+                            "publisher": ["G. P. Putnam's Sons"],
+                            "language": ["eng"]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """));
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var results = await provider.SearchAsync(
+            new BookSearchQuery("Tom Clancy"),
+            CancellationToken.None);
+
+        Assert.HasCount(1, results.Candidates);
+        var candidate = results.Candidates[0];
+        Assert.AreEqual(
+            "https://covers.openlibrary.org/b/id/15249157-L.jpg?default=false",
+            candidate.CoverUrl);
+        Assert.AreEqual("G. P. Putnam's Sons", candidate.Publisher);
+        Assert.AreEqual("en", candidate.Language);
+    }
+
+    [TestMethod]
     public async Task SearchAsyncUsesValidatedIsbnQueryAndDoesNotInventYearPrecision()
     {
         Uri? requestedUri = null;
@@ -158,6 +203,11 @@ public sealed class OpenLibraryBookMetadataProviderTests
         using var handler = new StubHttpMessageHandler((request, _) =>
         {
             requestCount++;
+            if (request.RequestUri!.AbsolutePath.EndsWith("editions.json", StringComparison.Ordinal))
+            {
+                return JsonResponse("""{ "entries": [] }""");
+            }
+
             StringAssert.Contains(request.RequestUri!.Query, "q=key%3A%2Fworks%2FOL789W");
             return JsonResponse(
                 """
@@ -182,7 +232,68 @@ public sealed class OpenLibraryBookMetadataProviderTests
         Assert.IsNull(invalid);
         Assert.IsNotNull(valid);
         Assert.AreEqual("A description from the provider.", valid.Description);
-        Assert.AreEqual(1, requestCount);
+        Assert.AreEqual(2, requestCount);
+    }
+
+    [TestMethod]
+    public async Task GetDetailsAsyncPrefersAPreferredLanguageEditionWhenOneExists()
+    {
+        using var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("editions.json", StringComparison.Ordinal))
+            {
+                return JsonResponse(
+                    """
+                    {
+                      "entries": [
+                        {
+                          "key": "/books/OL1FRE",
+                          "languages": [{ "key": "/languages/fre" }],
+                          "publishers": ["France loisir"],
+                          "number_of_pages": 651,
+                          "covers": [111]
+                        },
+                        {
+                          "key": "/books/OL2ENG",
+                          "languages": [{ "key": "/languages/eng" }],
+                          "publishers": ["G. P. Putnam's Sons"],
+                          "number_of_pages": 338,
+                          "covers": [222]
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL448924W",
+                      "title": "Clear and Present Danger",
+                      "author_name": ["Tom Clancy"],
+                      "cover_i": 999,
+                      "publisher": ["France loisir"],
+                      "language": ["fre", "eng"]
+                    }
+                  ]
+                }
+                """);
+        });
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var candidate = await provider.GetDetailsAsync("OL448924W", CancellationToken.None);
+
+        Assert.IsNotNull(candidate);
+        Assert.AreEqual("en", candidate.Language);
+        Assert.AreEqual("G. P. Putnam's Sons", candidate.Publisher);
+        Assert.AreEqual(338, candidate.PageCount);
+        Assert.AreEqual(
+            "https://covers.openlibrary.org/b/id/222-L.jpg?default=false",
+            candidate.CoverUrl);
+        Assert.AreEqual("https://openlibrary.org/books/OL2ENG", candidate.SourceUrl);
     }
 
     [TestMethod]

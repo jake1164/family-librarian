@@ -16,7 +16,12 @@ public sealed class OpenLibraryBookMetadataProvider(
     private const string SearchFields =
         "key,title,author_name,first_publish_date,cover_i,editions," +
         "editions.key,editions.title,editions.isbn,editions.publish_date,editions.format," +
+        "editions.cover_i,editions.publisher,editions.language," +
         "publisher,subject,number_of_pages_median,description,language";
+
+    // No per-user/global language preference exists yet, so this is a fixed
+    // default rather than a setting.
+    private const string PreferredLanguage = "en";
 
     private static readonly string[] ExactDateFormats =
     [
@@ -67,8 +72,71 @@ public sealed class OpenLibraryBookMetadataProvider(
             1,
             cancellationToken);
 
-        return result.Candidates.SingleOrDefault(candidate =>
+        var candidate = result.Candidates.SingleOrDefault(candidate =>
             string.Equals(candidate.ExternalId, externalId, StringComparison.Ordinal));
+
+        return candidate is null
+            ? null
+            : await ApplyPreferredLanguageEditionAsync(candidate, externalId, cancellationToken);
+    }
+
+    // The search endpoint only ever includes one (arbitrary) edition per work,
+    // so it can't tell us whether a preferred-language edition exists. The
+    // detail view can afford the extra round trip to look at every edition
+    // and swap in one that actually matches, including linking out to that
+    // specific edition instead of the ambiguous work page.
+    private async Task<BookCandidate> ApplyPreferredLanguageEditionAsync(
+        BookCandidate candidate,
+        string workId,
+        CancellationToken cancellationToken)
+    {
+        OpenLibraryEditionsListResponse? response;
+        try
+        {
+            response = await httpClient.GetFromJsonAsync<OpenLibraryEditionsListResponse>(
+                $"works/{workId}/editions.json?limit=50",
+                cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            return candidate;
+        }
+
+        var preferredEdition = response?.Entries?.FirstOrDefault(entry =>
+            entry.Languages?.Any(language => string.Equals(
+                LanguageCodeNormalizer.Normalize(GetLanguageCode(language.Key)),
+                PreferredLanguage,
+                StringComparison.OrdinalIgnoreCase)) == true);
+
+        if (preferredEdition is null)
+        {
+            return candidate;
+        }
+
+        return candidate with
+        {
+            CoverUrl = GetCoverUrl(
+                preferredEdition.Covers is { Count: > 0 } covers ? covers[0] : null) ??
+                    candidate.CoverUrl,
+            Publisher = preferredEdition.Publishers?
+                .FirstOrDefault(publisher => !string.IsNullOrWhiteSpace(publisher))?.Trim()
+                    ?? candidate.Publisher,
+            PageCount = preferredEdition.NumberOfPages is > 0
+                ? preferredEdition.NumberOfPages
+                : candidate.PageCount,
+            Language = PreferredLanguage,
+            SourceUrl = string.IsNullOrWhiteSpace(preferredEdition.Key)
+                ? candidate.SourceUrl
+                : $"https://openlibrary.org{preferredEdition.Key}"
+        };
+    }
+
+    private static string? GetLanguageCode(string? languageKey)
+    {
+        const string prefix = "/languages/";
+        return languageKey?.StartsWith(prefix, StringComparison.Ordinal) == true
+            ? languageKey[prefix.Length..]
+            : languageKey;
     }
 
     private async Task<BookCandidateSearchPage> SearchCoreAsync(
@@ -123,6 +191,15 @@ public sealed class OpenLibraryBookMetadataProvider(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
 
+        // The work-level cover/publisher/language fields are aggregated across
+        // every edition OL has ever indexed for this work (every translation,
+        // reprint, and format), so they can each come from a different edition
+        // and disagree with one another (e.g. an English title with a French
+        // publisher). The single edition doc included in the response is one
+        // real, self-consistent edition, so prefer its values where present.
+        var editionDocuments = document.Editions?.Documents;
+        var primaryEdition = editionDocuments is { Count: > 0 } ? editionDocuments[0] : null;
+
         return new BookCandidate(
             Id,
             DisplayName,
@@ -130,11 +207,12 @@ public sealed class OpenLibraryBookMetadataProvider(
             title,
             authors,
             GetDescription(document.Description),
-            GetCoverUrl(document.CoverId),
+            GetCoverUrl(primaryEdition?.CoverId ?? document.CoverId),
             TryParseExactDate(FirstString(document.FirstPublishDates)),
             GetEditions(document, title),
             [],
-            FirstString(document.Publishers),
+            (primaryEdition is null ? null : FirstString(primaryEdition.Publishers)) ??
+                FirstString(document.Publishers),
             document.NumberOfPagesMedian is > 0 ? document.NumberOfPagesMedian : null,
             GetStrings(document.Subjects)
                 .Where(subject => !string.IsNullOrWhiteSpace(subject))
@@ -142,7 +220,9 @@ public sealed class OpenLibraryBookMetadataProvider(
                 .Take(MaximumSubjects)
                 .ToArray(),
             SourceUrl: $"https://openlibrary.org/works/{externalId}",
-            Language: LanguageCodeNormalizer.Normalize(FirstString(document.Languages)));
+            Language: LanguageCodeNormalizer.Normalize(
+                (primaryEdition is null ? null : FirstString(primaryEdition.Languages)) ??
+                    FirstString(document.Languages)));
     }
 
     private static BookEditionCandidate[] GetEditions(
@@ -350,5 +430,44 @@ public sealed class OpenLibraryBookMetadataProvider(
 
         [JsonPropertyName("format")]
         public JsonElement Formats { get; init; }
+
+        [JsonPropertyName("cover_i")]
+        public int? CoverId { get; init; }
+
+        [JsonPropertyName("publisher")]
+        public JsonElement Publishers { get; init; }
+
+        [JsonPropertyName("language")]
+        public JsonElement Languages { get; init; }
+    }
+
+    private sealed class OpenLibraryEditionsListResponse
+    {
+        [JsonPropertyName("entries")]
+        public IReadOnlyList<OpenLibraryEditionListEntry>? Entries { get; init; }
+    }
+
+    private sealed class OpenLibraryEditionListEntry
+    {
+        [JsonPropertyName("key")]
+        public string? Key { get; init; }
+
+        [JsonPropertyName("languages")]
+        public IReadOnlyList<OpenLibraryLanguageRef>? Languages { get; init; }
+
+        [JsonPropertyName("publishers")]
+        public IReadOnlyList<string>? Publishers { get; init; }
+
+        [JsonPropertyName("number_of_pages")]
+        public int? NumberOfPages { get; init; }
+
+        [JsonPropertyName("covers")]
+        public IReadOnlyList<int>? Covers { get; init; }
+    }
+
+    private sealed class OpenLibraryLanguageRef
+    {
+        [JsonPropertyName("key")]
+        public string? Key { get; init; }
     }
 }
