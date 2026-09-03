@@ -70,9 +70,10 @@ one.
 ## OIDC and Authentik
 
 The default development and self-hosted stack uses local Identity only; it does
-not require Authentik or any other identity provider. Generic OIDC is a planned,
-optional integration. Authentik is a documented/tested target, not a runtime
-dependency—the same design supports any standards-compliant OIDC provider.
+not require Authentik or any other identity provider. Generic OIDC is an
+implemented, optional integration. Authentik is a documented/tested target, not
+a runtime dependency—the same design supports any standards-compliant OIDC
+provider.
 
 When OIDC is enabled, it supplements rather than replaces local sign-in so an
 IdP outage or configuration error cannot remove the administrator's **IdP-outage
@@ -94,7 +95,8 @@ Developers do not need their own Authentik installation. Local Identity is the
 normal path; OIDC work may use a shared development client or a disposable IdP.
 The ordinary automated test suite uses controlled test identities and must never
 depend on Authentik or a reachable OIDC service. A separate opt-in OIDC
-integration suite may use a disposable provider.
+integration suite using a disposable provider remains the production-confidence
+test to add.
 
 ## Adding family members
 
@@ -127,9 +129,11 @@ it if a household trips the limit.
 
 There is deliberately no self-registration: for a household, an invitation *is*
 the approval, and open signup would add an unauthenticated account-creation
-endpoint plus a queue of strangers to sift through. Email delivery of invitations
-will arrive with the notification provider; until then the copy-paste link is the
-delivery mechanism, and it remains the fallback afterwards.
+endpoint plus a queue of strangers to sift through. The optional SMTP outbound
+provider can send selected request-status messages once configured, but it does
+not yet send invitations. Until a separately designed invitation-email workflow
+exists, the copy-paste link is the invitation delivery mechanism and remains the
+fallback afterwards.
 
 From the same page you can disable or re-enable an account and grant or remove
 the administrator role. Disabling takes effect immediately, including on any

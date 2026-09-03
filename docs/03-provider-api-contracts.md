@@ -755,16 +755,16 @@ DeliveryReceipt
 Batch
 ```
 
-Initial providers:
+Implemented provider:
 
 ```text
-Email
-ntfy
+SMTP outbound email (optional)
 ```
 
 Possible future providers:
 
 ```text
+ntfy
 Pushover
 Web Push
 Home Assistant
@@ -1166,7 +1166,7 @@ Security:
   Audio validator
 
 Notifications:
-  Email
+  SMTP outbound email (optional)
 
 Delivery:
   CWA (initial ebook library destination)
@@ -1177,7 +1177,7 @@ Delivery:
 ### Strong Candidate for Early Addition
 
 ```text
-Optional generic OIDC (after the local request loop)
+Generic OIDC (implemented, optional)
 ntfy
 Hardcover metadata
 ```

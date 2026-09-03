@@ -35,6 +35,7 @@ file before proposing, changing, or reviewing code.
 - The application runs through Docker Compose for development and self-hosted deployment. Keep the default runtime limited to the application host/API and PostgreSQL unless a planned slice requires more.
 - Build locally through Compose. Release images publish to `ghcr.io/jake1164/family-librarian`; keep image tags immutable and publish through the repository's GitHub Actions credentials.
 - At the end of every relevant source change, run the appropriate build and tests. The project must build with zero warnings and zero errors, and all relevant tests must complete successfully before reporting the work complete. Run migration and Compose health checks whenever the change affects them.
+- Docker-backed `family-librarian-lab` verification runs on `toontown-int-srv2` in `/opt/family-librarian-lab`. Use that host for real Compose integration tests when the local environment lacks Docker; for example, run `./lab run --test-group abs --case ABS-05` from that directory. Do not copy uncommitted files into the shared lab: the selected product branch and the lab checkout must contain the intended committed changes first.
 - The Microsoft Learn documentation step above is required *before* writing framework code, not after. A refactor is not an exemption: choosing a base type, interface, receiver type, or API overload is a framework decision even when no behavior changes. State plainly in the work summary whether the check ran — if it did not, say so rather than implying it did.
 
 ## AI working files
@@ -43,6 +44,14 @@ file before proposing, changing, or reviewing code.
 - Never place these files at the repository root, in `docs/`, or beside the code they describe. `docs/` is curated, human-owned project documentation; `.ai_docs/` is agent scratch space.
 - `.ai_docs/` is gitignored and is not part of the shipped product. Do not reference it from `README.md`, `docs/`, or source comments, and do not treat anything in it as authoritative over `README.md`, `docs/`, or this file.
 - When a document in `.ai_docs/` matures into something the project should keep, propose promoting it into `docs/` explicitly rather than silently moving it.
+
+### Planning and closure discipline
+
+- `.ai_docs/master-delivery-plan.md` is the single authoritative inventory of active, deferred, and blocked work. It is a delivery tracker, not a replacement for the curated product specifications in `docs/`.
+- Before creating a new active AI plan or beginning a new implementation slice, add or update its master-plan entry with an identifier, status, scope/exit criterion, and a link to any detailed plan. A detailed plan without a master entry is not an active commitment.
+- Keep detailed plans narrow: they may explain decisions and acceptance evidence, but must not become independent backlogs. Update the master entry when scope, status, or completion evidence changes.
+- Move a plan to `.ai_docs/done/` only after its stated acceptance criterion is met. Move plans superseded by consolidation to `.ai_docs/archive/`; do not call them done. Retain completed-plan evidence there for later audit.
+- At the end of any implementation slice, reconcile the master plan and affected curated documentation. An unchecked plan item may not be silently abandoned: explicitly mark it active, deferred (with prerequisite), blocked, or out of scope.
 
 ## Scope discipline
 

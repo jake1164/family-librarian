@@ -298,8 +298,10 @@ Browser/PWA device delivery should be prototyped separately before becoming a ha
 
 - Authenticated in-app notifications for ready/failure and administrator
   attention are the initial implementation.
-- Email/invitation delivery and batching are opt-in post-pilot work unless a
-  deployment explicitly makes email a pilot requirement.
+- An optional SMTP outbound provider may send selected request-status messages
+  once configured. Invitation email, user/event routing preferences, retries,
+  and batching are opt-in post-pilot work unless a deployment explicitly makes
+  email a pilot requirement.
 - Pluggable notification providers.
 - Support future actionable push notifications.
 
@@ -1105,7 +1107,6 @@ A V1 release is useful when:
 ## 20. Open Questions
 
 - Public name availability/trademark checks before a broad public release.
-- Initial Blazor choice: hosted Blazor WebAssembly using MudBlazor, with an ASP.NET Core host/API that owns authentication and secrets.
 - Exact metadata provider ranking/merge algorithm.
 - How robustly series metadata can be resolved across providers.
 - Browser/PWA viability for Kindle/Kobo transfer.
@@ -1113,6 +1114,5 @@ A V1 release is useful when:
 - Calibre-Web OPDS matching fidelity, CWA ingest idempotency, and CWA/Family
   Librarian user-account/deep-link mapping.
 - Transient-media retention/cleanup policy and destination-backup verification.
-- Whether acquisition engine lives in the main repository or a sibling repository.
 - Plugin discovery/installation UX.
 - Whether third-party providers are HTTP-only or whether trusted in-process .NET providers are also supported.

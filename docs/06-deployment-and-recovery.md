@@ -230,8 +230,8 @@ or lab setup, but it is not a substitute for this full recovery capability.
 Place a TLS-terminating reverse proxy in front of port 8080 for an internet
 reachable deployment. The application uses cookie authentication, so ensure the
 proxy forwards the canonical scheme and host and does not cache API responses.
-Use the public HTTPS URL consistently in browser bookmarks and, when M6.5 OIDC
-is added, in the registered callback and sign-out URIs.
+Use the public HTTPS URL consistently in browser bookmarks and, when optional
+OIDC is enabled, in the registered callback and sign-out URIs.
 
 Set `ReverseProxy__TrustedNetworks` to the proxy's own address or network in
 CIDR notation. The forwarded-headers middleware only honors `X-Forwarded-For`/
