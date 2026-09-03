@@ -1,3 +1,5 @@
+using FamilyLibrarian.Application.Matching;
+
 namespace FamilyLibrarian.Application.Publishing;
 
 /// <summary>
@@ -6,11 +8,12 @@ namespace FamilyLibrarian.Application.Publishing;
 /// </summary>
 /// <remarks>
 /// "Not found yet" is an expected, common outcome — CWA's ingest is
-/// asynchronous — so this returns <c>null</c> rather than throwing. An
-/// ambiguous result (more than one distinct catalog entry matches) also
-/// returns <c>null</c> rather than guessing: title/author matching alone
-/// cannot tell a title collision from a wrong-book match, so callers must
-/// treat "not found" and "ambiguous" the same way.
+/// asynchronous — so this returns <see cref="BookMatchDecision.NoMatch"/>
+/// rather than throwing. An ambiguous result (more than one distinct catalog
+/// entry matches) comes back as <see cref="BookMatchDecision.Ambiguous"/>
+/// with the conflicting candidates attached — see
+/// <c>docs/family-librarian-book-matching-design-findings.md</c> for why
+/// title/author matching alone must not guess between them.
 /// </remarks>
 public interface ICwaCatalogClient
 {
@@ -18,7 +21,7 @@ public interface ICwaCatalogClient
     /// Known ISBN-13s for the Work being matched, if any. Tried first, as an
     /// OPDS search query, before falling back to title/author matching.
     /// </param>
-    Task<string?> FindBookIdAsync(
+    Task<BookMatchResult> FindBookIdAsync(
         string title,
         string? author,
         IReadOnlyCollection<string> isbn13Candidates,

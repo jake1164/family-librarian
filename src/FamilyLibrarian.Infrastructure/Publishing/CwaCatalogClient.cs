@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 
 namespace FamilyLibrarian.Infrastructure.Publishing;
@@ -22,7 +23,8 @@ namespace FamilyLibrarian.Infrastructure.Publishing;
 public sealed class CwaCatalogClient(
     IHttpClientFactory httpClientFactory,
     ICwaSettingsStore settingsStore,
-    ICredentialProtector protector) : ICwaCatalogClient
+    ICredentialProtector protector,
+    IBookMatchService matchService) : ICwaCatalogClient
 {
     private static readonly Regex BookIdPattern = new(@"/opds/(?:book|download)/(\d+)", RegexOptions.Compiled);
 
@@ -35,7 +37,7 @@ public sealed class CwaCatalogClient(
     /// query simply returns zero or many results and this falls through to
     /// the title/author fallback below, so there is no harm in trying.
     /// </remarks>
-    public async Task<string?> FindBookIdAsync(
+    public async Task<BookMatchResult> FindBookIdAsync(
         string title,
         string? author,
         IReadOnlyCollection<string> isbn13Candidates,
@@ -44,7 +46,7 @@ public sealed class CwaCatalogClient(
         var settings = await settingsStore.FindAsync(cancellationToken);
         if (settings is null || string.IsNullOrWhiteSpace(settings.OpdsBaseUrl))
         {
-            return null;
+            return BookMatchResult.NoMatchResult;
         }
 
         foreach (var isbn in isbn13Candidates.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct())
@@ -55,21 +57,21 @@ public sealed class CwaCatalogClient(
                 continue;
             }
 
-            var isbnMatches = ExtractBookIds(isbnBody);
-            if (isbnMatches.Count == 1)
+            var isbnResult = await matchService.ResolveUniqueAsync(
+                title, author, ExtractCandidates(isbnBody), cancellationToken);
+            if (isbnResult.Decision == BookMatchDecision.Match)
             {
-                return isbnMatches.Single();
+                return isbnResult;
             }
         }
 
         var titleBody = await SendSearchAsync(title, settings, cancellationToken);
         if (titleBody is null)
         {
-            return null;
+            return BookMatchResult.NoMatchResult;
         }
 
-        var titleMatches = ExtractMatchingBookIds(titleBody, title, author);
-        return titleMatches.Count == 1 ? titleMatches.Single() : null;
+        return await matchService.MatchByTitleAuthorAsync(title, author, ExtractCandidates(titleBody), cancellationToken);
     }
 
     private async Task<string?> SendSearchAsync(
@@ -109,12 +111,13 @@ public sealed class CwaCatalogClient(
     private static readonly XNamespace AtomNamespace = "http://www.w3.org/2005/Atom";
 
     /// <summary>
-    /// Every distinct Calibre book id found across every entry in the feed,
-    /// unfiltered — used for an ISBN search, where the query string itself is
-    /// already the filter. A parse failure yields no ids rather than an
-    /// exception, matching this client's "not found is normal" posture.
+    /// Every entry in the feed, normalized to a <see cref="CandidateBook"/>.
+    /// Filtering (unwanted variants, title/author matching, uniqueness) is
+    /// delegated to <see cref="IBookMatchService"/> rather than done here — a
+    /// parse failure yields no candidates rather than an exception, matching
+    /// this client's "not found is normal" posture.
     /// </summary>
-    private static HashSet<string> ExtractBookIds(string atomXml)
+    private static CandidateBook[] ExtractCandidates(string atomXml)
     {
         var document = TryParseAtom(atomXml);
         if (document is null)
@@ -122,98 +125,22 @@ public sealed class CwaCatalogClient(
             return [];
         }
 
-        var ids = new HashSet<string>();
+        var candidates = new HashSet<CandidateBook>();
         foreach (var entry in document.Descendants(AtomNamespace + "entry"))
         {
             var id = FirstAcquisitionLinkBookId(entry);
-            if (id is not null)
-            {
-                ids.Add(id);
-            }
-        }
-
-        return ids;
-    }
-
-    /// <summary>
-    /// Every distinct Calibre book id among entries whose title (and author,
-    /// when known) matches. Deliberately collects every match rather than
-    /// returning the first — see <see cref="FindBookIdAsync"/> — so the
-    /// caller can tell a single confident match from an ambiguous one.
-    /// </summary>
-    private static HashSet<string> ExtractMatchingBookIds(string atomXml, string title, string? author)
-    {
-        var document = TryParseAtom(atomXml);
-        if (document is null)
-        {
-            return [];
-        }
-
-        var ids = new HashSet<string>();
-        foreach (var entry in document.Descendants(AtomNamespace + "entry"))
-        {
             var entryTitle = entry.Element(AtomNamespace + "title")?.Value;
-            if (string.IsNullOrWhiteSpace(entryTitle) ||
-                !entryTitle.Contains(title, StringComparison.OrdinalIgnoreCase) ||
-                IsUnwantedVariant(entryTitle, title))
+            if (id is null || string.IsNullOrWhiteSpace(entryTitle))
             {
                 continue;
             }
 
-            if (!string.IsNullOrWhiteSpace(author))
-            {
-                var entryAuthor = entry.Element(AtomNamespace + "author")?.Element(AtomNamespace + "name")?.Value;
-                if (!string.IsNullOrWhiteSpace(entryAuthor) &&
-                    !entryAuthor.Contains(author, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-            }
-
-            var id = FirstAcquisitionLinkBookId(entry);
-            if (id is not null)
-            {
-                ids.Add(id);
-            }
+            var entryAuthor = entry.Element(AtomNamespace + "author")?.Element(AtomNamespace + "name")?.Value;
+            candidates.Add(new CandidateBook(id, entryTitle, entryAuthor));
         }
 
-        return ids;
+        return candidates.ToArray();
     }
-
-    /// <summary>
-    /// Known, cheap textual markers of a different product than the one
-    /// requested, even when the requested title appears in it as a
-    /// substring — e.g. "Summary of Debt of Honor" or "Debt of Honor /
-    /// Executive Orders". Not exhaustive; see
-    /// docs/family-librarian-book-matching-design-findings.md §5/§6/§8 — a
-    /// title-substring match is grounds for further comparison, not
-    /// automatic identity, and a derivative or combined-work title is
-    /// negative evidence even when otherwise unambiguous.
-    /// </summary>
-    private static readonly string[] DerivativeTitleMarkers =
-    [
-        "summary of", "study guide", "companion to", "workbook for", "analysis of",
-        "cliffsnotes", "cliff notes", "sparknotes", "excerpt", "sample chapter",
-        "abridged", "omnibus", "box set", "boxed set",
-    ];
-
-    private static bool IsUnwantedVariant(string entryTitle, string requestedTitle)
-    {
-        if (NormalizeForExactComparison(entryTitle) == NormalizeForExactComparison(requestedTitle))
-        {
-            // An exact title match is accepted regardless of these markers --
-            // e.g. a work whose own real title happens to be "Box Set".
-            return false;
-        }
-
-        var lowered = entryTitle.ToLowerInvariant();
-        return DerivativeTitleMarkers.Any(lowered.Contains) ||
-            lowered.Contains('/') ||
-            Regex.IsMatch(lowered, @"\s&\s");
-    }
-
-    private static string NormalizeForExactComparison(string value) =>
-        string.Join(' ', value.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries));
 
     private static string? FirstAcquisitionLinkBookId(XElement entry)
     {

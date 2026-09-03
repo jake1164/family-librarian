@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
@@ -145,12 +146,14 @@ public sealed class CwaOwnedLibraryProviderTests
 
         public IReadOnlyCollection<string>? LastIsbn13Candidates { get; private set; }
 
-        public Task<string?> FindBookIdAsync(
+        public Task<BookMatchResult> FindBookIdAsync(
             string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken)
         {
             CallCount++;
             LastIsbn13Candidates = isbn13Candidates;
-            return Task.FromResult(NextBookId);
+            return Task.FromResult(NextBookId is null
+                ? BookMatchResult.NoMatchResult
+                : BookMatchResult.Match(new CandidateBook(NextBookId, title, author)));
         }
     }
 
