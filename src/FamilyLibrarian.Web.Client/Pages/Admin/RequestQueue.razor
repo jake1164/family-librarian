@@ -56,8 +56,8 @@
 
     @if (attention is { } sourceAttention && sourceAttention.ProviderIssues.Count > 0)
     {
-        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">
-            An automatic source needs attention. Review <MudLink Href="settings/sources">Sources</MudLink> for the safe diagnostic and next step.
+        <MudAlert Severity="@SourceAttentionSeverity(sourceAttention)" Variant="Variant.Outlined">
+            @SourceAttentionMessage(sourceAttention) Review <MudLink Href="settings/sources">Sources</MudLink> for the safe diagnostic and next step.
         </MudAlert>
     }
 
@@ -173,6 +173,26 @@
     private AdminRequestAttentionResponse? attention;
     private IReadOnlyList<ProviderStatusResponse> directAcquisitionProviders = [];
     private bool isRechecking;
+
+    private static Severity SourceAttentionSeverity(AdminRequestAttentionResponse summary) =>
+        summary.ProviderIssues.Any(issue => string.Equals(issue.IssueKind, "Operational", StringComparison.Ordinal))
+            ? Severity.Error
+            : Severity.Warning;
+
+    private static string SourceAttentionMessage(AdminRequestAttentionResponse summary)
+    {
+        var hasConfigurationIssue = summary.ProviderIssues.Any(issue =>
+            string.Equals(issue.IssueKind, "Configuration", StringComparison.Ordinal));
+        var hasOperationalIssue = summary.ProviderIssues.Any(issue =>
+            string.Equals(issue.IssueKind, "Operational", StringComparison.Ordinal));
+
+        return (hasConfigurationIssue, hasOperationalIssue) switch
+        {
+            (true, true) => "Automatic sources are blocked by configuration and have operational failures.",
+            (true, false) => "An automatic source is blocked by configuration.",
+            _ => "An automatic source has an operational failure."
+        };
+    }
 
     protected override async Task OnInitializedAsync()
     {

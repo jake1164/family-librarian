@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 
 namespace FamilyLibrarian.Infrastructure.Publishing;
@@ -24,22 +25,23 @@ namespace FamilyLibrarian.Infrastructure.Publishing;
 public sealed class AudiobookshelfApiClient(
     IHttpClientFactory httpClientFactory,
     IAudiobookshelfSettingsStore settingsStore,
-    ICredentialProtector protector) : IAudiobookshelfApiClient
+    ICredentialProtector protector,
+    IBookMatchService matchService) : IAudiobookshelfApiClient
 {
-    public async Task<string?> FindExistingItemIdAsync(
+    public async Task<BookMatchResult> FindExistingItemIdAsync(
         string title, string? author, CancellationToken cancellationToken)
     {
         var settings = await settingsStore.FindAsync(cancellationToken);
         if (settings is null || string.IsNullOrWhiteSpace(settings.BaseUrl) ||
             string.IsNullOrWhiteSpace(settings.LibraryId) || !settings.HasApiToken)
         {
-            return null;
+            return BookMatchResult.NoMatchResult;
         }
 
         var token = await ResolveTokenAsync(settings.ProtectedApiToken!, settings.ApiTokenFormatVersion);
         if (token is null)
         {
-            return null;
+            return BookMatchResult.NoMatchResult;
         }
 
         using var client = CreateClient(token);
@@ -49,11 +51,11 @@ public sealed class AudiobookshelfApiClient(
         using var response = await client.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            return null;
+            return BookMatchResult.NoMatchResult;
         }
 
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        return FindMatchingItemId(body, title, author);
+        return await matchService.MatchByTitleAuthorAsync(title, author, ExtractCandidates(body), cancellationToken);
     }
 
     public Task<AudiobookshelfUploadResult> UploadAsync(
@@ -138,7 +140,15 @@ public sealed class AudiobookshelfApiClient(
         return client;
     }
 
-    private static string? FindMatchingItemId(string listResponseJson, string title, string? author)
+    /// <summary>
+    /// Every library item, normalized to a <see cref="CandidateBook"/>.
+    /// Filtering (title/author matching, uniqueness) is delegated to
+    /// <see cref="IBookMatchService"/> rather than done here — deliberately
+    /// collects every item rather than stopping at the first title/author
+    /// match, so an ambiguous library (two items matching this title) is
+    /// reported as such instead of the first one silently winning.
+    /// </summary>
+    private static List<CandidateBook> ExtractCandidates(string listResponseJson)
     {
         JsonNode? root;
         try
@@ -147,43 +157,31 @@ public sealed class AudiobookshelfApiClient(
         }
         catch (System.Text.Json.JsonException)
         {
-            return null;
+            return [];
         }
 
         var items = root?["results"]?.AsArray() ?? root?["items"]?.AsArray();
         if (items is null)
         {
-            return null;
+            return [];
         }
 
+        var candidates = new List<CandidateBook>();
         foreach (var item in items)
         {
             var metadata = item?["media"]?["metadata"];
             var itemTitle = metadata?["title"]?.GetValue<string>();
-            if (string.IsNullOrWhiteSpace(itemTitle) ||
-                !itemTitle.Contains(title, StringComparison.OrdinalIgnoreCase))
+            var id = item?["id"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(itemTitle) || string.IsNullOrWhiteSpace(id))
             {
                 continue;
             }
 
-            if (!string.IsNullOrWhiteSpace(author))
-            {
-                var itemAuthor = metadata?["authorName"]?.GetValue<string>();
-                if (!string.IsNullOrWhiteSpace(itemAuthor) &&
-                    !itemAuthor.Contains(author, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-            }
-
-            var id = item?["id"]?.GetValue<string>();
-            if (!string.IsNullOrWhiteSpace(id))
-            {
-                return id;
-            }
+            var itemAuthor = metadata?["authorName"]?.GetValue<string>();
+            candidates.Add(new CandidateBook(id, itemTitle, itemAuthor));
         }
 
-        return null;
+        return candidates;
     }
 
     private static string? ExtractItemId(string uploadResponseJson)

@@ -28,6 +28,55 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
+    public void GroupExactIsbnMatchesRanksExactTitleMatchesAheadOfBroadProviderMatches()
+    {
+        var results = BookCandidateGrouper.GroupExactIsbnMatches(
+            [
+                CreateCandidate("Dim sum of all fears", "dim-sum") with { Editions = [] },
+                CreateCandidate("Kol ha-peḥadim kulam", "translated") with { Editions = [] },
+                CreateCandidate("Sea of Islands", "sea") with { Editions = [] },
+                CreateCandidate("The Sum of All Fears", "sum-of-all-fears") with { Editions = [] }
+            ],
+            "sum of all fears");
+
+        Assert.HasCount(4, results);
+        Assert.AreEqual("The Sum of All Fears", results[0].Title);
+    }
+
+    [TestMethod]
+    public void GroupExactIsbnMatchesRanksPreferredLanguageAheadOfOtherLanguagesOnTiedMatchKind()
+    {
+        // Titles are chosen so that alphabetical order alone (the tiebreak below
+        // the language rank) would put the Spanish edition first; only the
+        // language tiebreak should push it behind the English and unknown-language
+        // candidates.
+        var spanish = CreateCandidate("Amenaza inminente", "spanish-edition") with
+        {
+            Editions = [],
+            Language = "es"
+        };
+        var english = CreateCandidate("Clear and Present Danger", "english-edition") with
+        {
+            Editions = [],
+            Language = "en"
+        };
+        var unknownLanguage = CreateCandidate("Bystander", "unknown-language") with
+        {
+            Editions = [],
+            Language = null
+        };
+
+        var results = BookCandidateGrouper.GroupExactIsbnMatches(
+            [spanish, english, unknownLanguage],
+            "tom clancy");
+
+        Assert.HasCount(3, results);
+        Assert.AreEqual("unknown-language", results[0].ExternalId);
+        Assert.AreEqual("english-edition", results[1].ExternalId);
+        Assert.AreEqual("spanish-edition", results[2].ExternalId);
+    }
+
+    [TestMethod]
     public async Task ResolveAsyncCreatesCanonicalWorkAndProvenance()
     {
         var repository = new InMemoryCatalogRepository();
@@ -108,16 +157,18 @@ public sealed class CatalogWorkResolverTests
         Assert.AreEqual(existing.Id, repository.ExternalReferences.Single().EntityId);
     }
 
-    private static BookCandidate CreateCandidate() => new(
+    private static BookCandidate CreateCandidate(
+        string title = "Project Hail Mary",
+        string externalId = "work-1") => new(
         "stub",
         "Stub catalog",
-        "work-1",
-        "Project Hail Mary",
+        externalId,
+        title,
         ["Andy Weir"],
         "A science-fiction novel.",
         null,
         new DateOnly(2021, 5, 4),
-        [new BookEditionCandidate("Project Hail Mary", "9780593135204", "Ebook", new DateOnly(2021, 5, 4))],
+        [new BookEditionCandidate(title, "9780593135204", "Ebook", new DateOnly(2021, 5, 4))],
         [new BookSeriesCandidate("Project Hail Mary Universe", "2.5", true)]);
 
     private sealed class FixedClock : IClock
@@ -135,10 +186,10 @@ public sealed class CatalogWorkResolverTests
 
         public string DisplayName => "Stub catalog";
 
-        public Task<IReadOnlyList<BookCandidate>> SearchAsync(
+        public Task<BookCandidateSearchPage> SearchAsync(
             BookSearchQuery query,
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<BookCandidate>>([candidate]);
+            Task.FromResult(new BookCandidateSearchPage([candidate], false));
 
         public Task<BookCandidate?> GetDetailsAsync(string externalId, CancellationToken cancellationToken)
         {

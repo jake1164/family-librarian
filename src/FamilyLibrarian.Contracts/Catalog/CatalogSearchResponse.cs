@@ -2,7 +2,9 @@ namespace FamilyLibrarian.Contracts.Catalog;
 
 public sealed record CatalogSearchResponse(
     IReadOnlyList<CatalogBookCandidateResponse> Results,
-    IReadOnlyList<CatalogProviderSearchStatusResponse> Providers);
+    IReadOnlyList<CatalogProviderSearchStatusResponse> Providers,
+    int Page = 1,
+    bool HasMore = false);
 
 public sealed record CatalogProviderSearchStatusResponse(
     string ProviderId,
@@ -19,7 +21,12 @@ public sealed record CatalogBookCandidateResponse(
     string? CoverUrl,
     DateOnly? PublicationDate,
     IReadOnlyList<CatalogEditionResponse> Editions,
-    IReadOnlyList<CatalogSeriesResponse> Series);
+    IReadOnlyList<CatalogSeriesResponse> Series,
+    string? Publisher,
+    int? PageCount,
+    IReadOnlyList<string> Subjects,
+    string? SourceUrl,
+    string MatchKind = "Other");
 
 public sealed record CatalogEditionResponse(
     string Title,

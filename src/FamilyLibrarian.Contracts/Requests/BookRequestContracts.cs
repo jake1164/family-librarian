@@ -70,7 +70,8 @@ public sealed record AdminProviderIssueResponse(
     string ProviderId,
     string DisplayName,
     string Summary,
-    DateTimeOffset OccurredAtUtc);
+    DateTimeOffset OccurredAtUtc,
+    string IssueKind);
 
 public sealed record AdminBookRequestResponse(
     BookRequestResponse Request,

@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
@@ -130,11 +131,13 @@ public sealed class AudiobookshelfOwnedLibraryProviderTests
 
         public int CallCount { get; private set; }
 
-        public Task<string?> FindExistingItemIdAsync(
+        public Task<BookMatchResult> FindExistingItemIdAsync(
             string title, string? author, CancellationToken cancellationToken)
         {
             CallCount++;
-            return Task.FromResult(ExistingItemId);
+            return Task.FromResult(ExistingItemId is null
+                ? BookMatchResult.NoMatchResult
+                : BookMatchResult.Match(new CandidateBook(ExistingItemId, title, author)));
         }
 
         public Task<AudiobookshelfUploadResult> UploadAsync(

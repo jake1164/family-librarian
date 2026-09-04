@@ -41,7 +41,7 @@ public sealed class MetadataProviderConnectionTester(
             var results = await provider.SearchAsync(ProbeQuery, cancellationToken);
             return new MetadataProviderTestOutcome(
                 true,
-                $"Connected. The test search returned {results.Count} result(s).");
+                $"Connected. The test search returned {results.Candidates.Count} result(s).");
         }
         catch (InvalidOperationException)
         {

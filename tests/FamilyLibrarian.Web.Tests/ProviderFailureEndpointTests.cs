@@ -82,10 +82,10 @@ public sealed class ProviderFailureEndpointTests
 
         public string DisplayName => "Family Librarian sample catalog";
 
-        public Task<IReadOnlyList<BookCandidate>> SearchAsync(
+        public Task<BookCandidateSearchPage> SearchAsync(
             BookSearchQuery query,
             CancellationToken cancellationToken) =>
-            Task.FromException<IReadOnlyList<BookCandidate>>(
+            Task.FromException<BookCandidateSearchPage>(
                 new HttpRequestException("The upstream service is unavailable."));
 
         public Task<BookCandidate?> GetDetailsAsync(

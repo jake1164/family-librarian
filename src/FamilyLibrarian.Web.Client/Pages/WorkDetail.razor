@@ -3,7 +3,6 @@
 @implements IDisposable
 @inject CatalogApiClient Catalog
 @inject RequestsApiClient Requests
-@inject FeedbackApiClient Feedback
 
 <PageTitle>@(work?.Title ?? "Book") · Family Librarian</PageTitle>
 
@@ -209,48 +208,10 @@
             </MudStack>
         </MudPaper>
 
-        <MudPaper Class="pa-4" Outlined="true">
-            <MudStack Spacing="3">
-                <MudText Typo="Typo.h6">Your reading</MudText>
-
-                @if (isLoadingFeedback)
-                {
-                    <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
-                }
-                else
-                {
-                    <MudDatePicker @bind-Date="completedOnDate"
-                                    Label="Date finished"
-                                    Editable="true"
-                                    Disabled="@isSavingFeedback" />
-                    <MudRating @bind-SelectedValue="rating" MaxValue="5" Disabled="@isSavingFeedback" />
-
-                    @if (!string.IsNullOrWhiteSpace(feedbackError))
-                    {
-                        <MudAlert Severity="Severity.Error">@feedbackError</MudAlert>
-                    }
-
-                    <MudStack Row="true" Spacing="2">
-                        <MudButton Variant="Variant.Filled"
-                                   Color="Color.Primary"
-                                   OnClick="SaveFeedbackAsync"
-                                   Disabled="@(isSavingFeedback || completedOnDate is null || rating is 0)">
-                            @(isSavingFeedback ? "Saving…" : feedback is null ? "Log as finished" : "Update")
-                        </MudButton>
-
-                        @if (feedback is not null)
-                        {
-                            <MudButton Variant="Variant.Text"
-                                       Color="Color.Error"
-                                       OnClick="RemoveFeedbackAsync"
-                                       Disabled="@isSavingFeedback">
-                                Remove
-                            </MudButton>
-                        }
-                    </MudStack>
-                }
-            </MudStack>
-        </MudPaper>
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+            Finished this book? Log it and rate it from
+            <MudLink Href="reading">My reading</MudLink>.
+        </MudAlert>
     }
 </MudStack>
 
@@ -274,13 +235,6 @@
     private BookRequestResponse? createdRequest;
     private CancellationTokenSource? requestStatusRefreshCancellation;
     private CancellationTokenSource? fulfillmentLoadCancellation;
-
-    private WorkFeedbackResponse? feedback;
-    private bool isLoadingFeedback = true;
-    private DateTime? completedOnDate;
-    private int rating;
-    private bool isSavingFeedback;
-    private string? feedbackError;
 
     private bool HasFormatSelected => wantsEbook || wantsAudiobook;
 
@@ -315,7 +269,6 @@
             isLoading = false;
         }
 
-        await LoadFeedbackAsync();
         if (work is not null)
         {
             StartFulfillmentOptionsLoad();
@@ -383,100 +336,6 @@
         "Available" => Color.Success,
         _ => Color.Info
     };
-
-    private async Task LoadFeedbackAsync()
-    {
-        isLoadingFeedback = true;
-        feedbackError = null;
-
-        try
-        {
-            feedback = await Feedback.FindAsync(WorkId);
-            completedOnDate = feedback?.CompletedOn.ToDateTime(TimeOnly.MinValue);
-            rating = feedback?.Rating ?? 0;
-        }
-        catch (HttpRequestException)
-        {
-            feedback = null;
-            feedbackError = "Your reading history for this book could not be loaded.";
-        }
-        finally
-        {
-            isLoadingFeedback = false;
-        }
-    }
-
-    private async Task SaveFeedbackAsync()
-    {
-        if (completedOnDate is null || rating is < 1 or > 5)
-        {
-            feedbackError = "Choose a date finished and a rating.";
-            return;
-        }
-
-        isSavingFeedback = true;
-        feedbackError = null;
-
-        try
-        {
-            var outcome = await Feedback.SetAsync(
-                WorkId,
-                DateOnly.FromDateTime(completedOnDate.Value),
-                rating,
-                feedback?.Version);
-
-            if (outcome.Succeeded)
-            {
-                feedback = outcome.Feedback;
-            }
-            else
-            {
-                feedbackError = outcome.Error;
-            }
-        }
-        catch (HttpRequestException)
-        {
-            feedbackError = "That could not be saved. Please try again.";
-        }
-        finally
-        {
-            isSavingFeedback = false;
-        }
-    }
-
-    private async Task RemoveFeedbackAsync()
-    {
-        if (feedback is null)
-        {
-            return;
-        }
-
-        isSavingFeedback = true;
-        feedbackError = null;
-
-        try
-        {
-            var outcome = await Feedback.RemoveAsync(WorkId, feedback.Version);
-            if (outcome.Succeeded)
-            {
-                feedback = null;
-                completedOnDate = null;
-                rating = 0;
-            }
-            else
-            {
-                feedbackError = outcome.Error;
-            }
-        }
-        catch (HttpRequestException)
-        {
-            feedbackError = "That could not be removed. Please try again.";
-        }
-        finally
-        {
-            isSavingFeedback = false;
-        }
-    }
 
     private Task ConfirmDuplicateAsync()
     {

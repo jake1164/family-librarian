@@ -2,6 +2,28 @@ html, body {
     font-family: system-ui, sans-serif;
 }
 
+:root {
+    --family-librarian-status-footer-height: 48px;
+}
+
+/* The status app bar is fixed at the bottom of the viewport. Reserve its full
+   height plus a comfortable action gap so the final control on any page can be
+   scrolled completely into view, including on devices with a home indicator. */
+.family-librarian-main-content {
+    padding-bottom: calc(
+        var(--family-librarian-status-footer-height) + 2rem + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+/* This persistent FAB uses the layout's fragment target, so it works without
+   JavaScript and stays clear of the fixed status footer and device safe area. */
+.family-librarian-go-to-top {
+    bottom: calc(
+        var(--family-librarian-status-footer-height) + 1rem + env(safe-area-inset-bottom, 0px));
+    position: fixed;
+    right: max(1rem, env(safe-area-inset-right, 0px));
+    z-index: var(--mud-zindex-appbar, 1100);
+}
+
 #blazor-error-ui {
     background: #fff3cd;
     bottom: 0;
@@ -19,4 +41,36 @@ html, body {
     position: absolute;
     right: 0.75rem;
     top: 0.5rem;
+}
+
+.search-result-cover {
+    border-radius: 4px;
+    flex: 0 0 auto;
+    height: 144px;
+    object-fit: cover;
+    width: 96px;
+}
+
+.book-detail-cover {
+    border-radius: 4px;
+    flex: 0 0 auto;
+    height: 240px;
+    object-fit: cover;
+    width: 160px;
+}
+
+.search-result-description {
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    display: -webkit-box;
+    overflow: hidden;
+}
+
+.provider-source-link {
+    color: inherit;
+    text-decoration: none;
+}
+
+.provider-source-link:hover {
+    text-decoration: underline;
 }

@@ -1,7 +1,8 @@
 @page "/search/{ProviderId}/{ExternalId}"
 @attribute [Authorize]
 @inject CatalogApiClient Catalog
-@inject NavigationManager Navigation
+@inject CatalogSearchState SearchState
+@inject RequestsApiClient Requests
 
 <PageTitle>@(book?.Title ?? "Book") · Family Librarian</PageTitle>
 
@@ -22,32 +23,76 @@
     }
     else
     {
+        @if (isRefreshing)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+        }
+
         <MudPaper Class="pa-4" Elevation="1">
-            <MudStack Spacing="2">
-                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
-                    <MudText Typo="Typo.overline">Catalog record</MudText>
-                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
-                        @book.ProviderName
-                    </MudChip>
-                </MudStack>
+            <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Start">
+                @if (!string.IsNullOrWhiteSpace(book.CoverUrl) && !coverFailed)
+                {
+                    <img src="@book.CoverUrl"
+                         alt=""
+                         width="160"
+                         height="240"
+                         class="book-detail-cover"
+                         style="width: 160px; height: 240px; object-fit: cover; border-radius: 4px; flex: 0 0 auto;"
+                         @onerror="() => coverFailed = true" />
+                }
+                else
+                {
+                    <MudPaper Outlined="true" Class="book-detail-cover d-flex align-center justify-center">
+                        <MudIcon Icon="@Icons.Material.Filled.MenuBook" Size="Size.Large" Color="Color.Default" />
+                    </MudPaper>
+                }
+                <MudStack Spacing="2" Class="flex-grow-1" Style="min-width: 0;">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                        <MudText Typo="Typo.overline">Catalog record</MudText>
+                        <ProviderChip ProviderName="@book.ProviderName" SourceUrl="@book.SourceUrl" />
+                    </MudStack>
 
-                <div>
-                    <MudText Typo="Typo.h3">@book.Title</MudText>
-                    <MudText Typo="Typo.h6">@string.Join(", ", book.Authors)</MudText>
-                </div>
+                    <div>
+                        <MudText Typo="Typo.h3">@book.Title</MudText>
+                        <MudText Typo="Typo.h6">@string.Join(", ", book.Authors)</MudText>
+                    </div>
 
-                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
-                    @if (book.PublicationDate is { } publicationDate)
+                    <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                        @if (book.PublicationDate is { } publicationDate)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                First reported: @publicationDate.ToString("MMMM d, yyyy")
+                            </MudChip>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(book.Publisher))
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                @book.Publisher
+                            </MudChip>
+                        }
+                        @if (book.PageCount is { } pageCount)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                @pageCount pages
+                            </MudChip>
+                        }
+                        @if (book.Editions.Count > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                @EditionCountLabel(book.Editions.Count)
+                            </MudChip>
+                        }
+                    </MudStack>
+                    @if (book.Subjects.Count > 0)
                     {
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                            Reported publication: @publicationDate.ToString("yyyy")
-                        </MudChip>
-                    }
-                    @if (book.Editions.Count > 0)
-                    {
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                            @EditionCountLabel(book.Editions.Count)
-                        </MudChip>
+                        <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                            @foreach (var subject in book.Subjects)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Secondary">
+                                    @subject
+                                </MudChip>
+                            }
+                        </MudStack>
                     }
                 </MudStack>
             </MudStack>
@@ -130,26 +175,119 @@
         </MudAlert>
 
         <MudPaper Class="pa-4" Elevation="1">
-            <MudStack Spacing="2">
-                <MudText Typo="Typo.h6">Add to the family catalog</MudText>
+            <MudStack Spacing="3">
+                <MudText Typo="Typo.h6">Ask for this book</MudText>
                 <MudText Typo="Typo.body2">
-                    This saves the selected record. You can then request the format your family wants.
+                    This saves the record to the family catalog and asks for it in one step. When a
+                    trusted free source has one clear match, we fetch it automatically, scan and
+                    verify it, then publish it to the family library.
                 </MudText>
-                <MudStack Row="true">
-                    <MudButton Variant="Variant.Filled"
-                               Color="Color.Primary"
-                               OnClick="ResolveAsync"
-                               Disabled="@isResolving">
-                        @(isResolving ? "Saving…" : "Use this book")
-                    </MudButton>
-                </MudStack>
+
+                @if (createdRequest is not null)
+                {
+                    <MudAlert Severity="@RequestStatusSeverity(createdRequest.Status)">
+                        Your request is in. @createdRequest.StatusDescription
+                    </MudAlert>
+                    <MudStack Row="true" Spacing="2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="requests">
+                            See my requests
+                        </MudButton>
+                        @if (resolvedWork is { } work)
+                        {
+                            <MudButton Variant="Variant.Outlined" Href="@($"works/{work.Id}")">
+                                View catalog page
+                            </MudButton>
+                        }
+                    </MudStack>
+                }
+                else
+                {
+                    <fieldset class="pa-0" style="border: 0;">
+                        <legend class="mud-typography mud-typography-body2">Which format would you like?</legend>
+                        <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@isSubmitting" />
+                        <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@isSubmitting" />
+                    </fieldset>
+
+                    <MudTextField @bind-Value="note"
+                                  Label="Anything we should know? (optional)"
+                                  Variant="Variant.Outlined"
+                                  Lines="2"
+                                  MaxLength="1000"
+                                  Disabled="@isSubmitting" />
+
+                    @if (duplicate is not null)
+                    {
+                        <MudAlert Severity="Severity.Warning">
+                            @duplicate.Message
+                            @if (duplicate.ExistingRequest is not null)
+                            {
+                                <text>
+                                    You asked for
+                                    @string.Join(" and ", duplicate.OverlappingFormats).ToLowerInvariant()
+                                    on @duplicate.ExistingRequest.RequestedAtUtc.ToLocalTime().ToString("d")
+                                    — @duplicate.ExistingRequest.StatusDescription
+                                </text>
+                            }
+                        </MudAlert>
+                    }
+
+                    @if (owned is not null)
+                    {
+                        <MudAlert Severity="Severity.Warning">
+                            @owned.Message
+                            @foreach (var format in owned.OwnedFormats)
+                            {
+                                <MudText Typo="Typo.body2">
+                                    @format.MediaType is already in your library.
+                                    @if (!string.IsNullOrEmpty(format.ExternalActionUri))
+                                    {
+                                        <MudLink Href="@format.ExternalActionUri" Target="_blank" rel="noopener noreferrer">Open it</MudLink>
+                                    }
+                                </MudText>
+                            }
+                        </MudAlert>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(errorMessage))
+                    {
+                        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+                    }
+
+                    <MudStack Row="true" Spacing="2">
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   OnClick="SubmitAsync"
+                                   Disabled="@(isSubmitting || !HasFormatSelected)">
+                            @(isSubmitting ? "Sending…" : "Request this book")
+                        </MudButton>
+
+                        @* Shown only after the host has reported an overlap, so the
+                           confirmation is a deliberate second choice. *@
+                        @if (duplicate is not null)
+                        {
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Warning"
+                                       OnClick="ConfirmDuplicateAsync"
+                                       Disabled="@isSubmitting">
+                                Request it anyway
+                            </MudButton>
+                        }
+
+                        @* Shown only after the host has reported an already-owned
+                           format, so the confirmation is a deliberate second choice. *@
+                        @if (owned is not null)
+                        {
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Warning"
+                                       OnClick="ConfirmOwnedAsync"
+                                       Disabled="@isSubmitting">
+                                Request it anyway
+                            </MudButton>
+                        }
+                    </MudStack>
+                }
             </MudStack>
         </MudPaper>
-
-        @if (!string.IsNullOrWhiteSpace(resolveError))
-        {
-            <MudAlert Severity="Severity.Error">@resolveError</MudAlert>
-        }
     }
 </MudStack>
 
@@ -162,44 +300,155 @@
 
     private CatalogBookCandidateResponse? book;
     private bool isLoading = true;
-    private bool isResolving;
-    private string? resolveError;
+    private bool isRefreshing;
+    private bool coverFailed;
+
+    private bool wantsEbook = true;
+    private bool wantsAudiobook;
+    private string? note;
+    private bool isSubmitting;
+    private string? errorMessage;
+    private bool confirmDuplicate;
+    private bool confirmOwned;
+    private BookRequestDuplicateResponse? duplicate;
+    private BookRequestOwnedResponse? owned;
+    private BookRequestResponse? createdRequest;
+    private CatalogWorkResponse? resolvedWork;
+
+    private bool HasFormatSelected => wantsEbook || wantsAudiobook;
 
     protected override async Task OnParametersSetAsync()
     {
-        isLoading = true;
+        coverFailed = false;
+        wantsEbook = true;
+        wantsAudiobook = false;
+        note = null;
+        errorMessage = null;
+        confirmDuplicate = false;
+        confirmOwned = false;
+        duplicate = null;
+        owned = null;
+        createdRequest = null;
+        resolvedWork = null;
+
+        // Search already fetched this candidate a moment ago: show it immediately
+        // instead of leaving the page blank while we re-fetch full details.
+        var cached = FindCachedCandidate();
+        if (cached is not null)
+        {
+            book = cached;
+            isLoading = false;
+            isRefreshing = true;
+        }
+        else
+        {
+            book = null;
+            isLoading = true;
+            isRefreshing = false;
+        }
+
         try
         {
-            book = await Catalog.GetCandidateAsync(ProviderId, ExternalId);
+            var fresh = await Catalog.GetCandidateAsync(ProviderId, ExternalId);
+            book = fresh;
         }
         catch (HttpRequestException)
         {
-            book = null;
+            // A transient failure keeps showing the cached summary rather than
+            // blanking a page the user already saw content on.
+            if (cached is null)
+            {
+                book = null;
+            }
         }
         finally
         {
             isLoading = false;
+            isRefreshing = false;
         }
     }
 
-    private async Task ResolveAsync()
+    private CatalogBookCandidateResponse? FindCachedCandidate() =>
+        SearchState.Results.FirstOrDefault(result =>
+            string.Equals(result.ProviderId, ProviderId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(result.ExternalId, ExternalId, StringComparison.OrdinalIgnoreCase));
+
+    private async Task SubmitAsync()
     {
-        isResolving = true;
-        resolveError = null;
+        if (!HasFormatSelected)
+        {
+            errorMessage = "Choose ebook, audiobook, or both.";
+            return;
+        }
+
+        isSubmitting = true;
+        errorMessage = null;
+
         try
         {
-            var work = await Catalog.ResolveCandidateAsync(ProviderId, ExternalId);
-            Navigation.NavigateTo($"works/{work.Id}");
+            resolvedWork ??= await Catalog.ResolveCandidateAsync(ProviderId, ExternalId);
+
+            var formats = new List<string>(2);
+            if (wantsEbook)
+            {
+                formats.Add("Ebook");
+            }
+
+            if (wantsAudiobook)
+            {
+                formats.Add("Audiobook");
+            }
+
+            var outcome = await Requests.CreateAsync(resolvedWork.Id, formats, note, confirmDuplicate, confirmOwned);
+            switch (outcome.Status)
+            {
+                case CreateRequestStatus.Created:
+                    createdRequest = outcome.Request;
+                    duplicate = null;
+                    owned = null;
+                    break;
+                case CreateRequestStatus.DuplicateWarning:
+                    duplicate = outcome.Existing;
+                    owned = null;
+                    break;
+                case CreateRequestStatus.OwnedWarning:
+                    owned = outcome.Owned;
+                    duplicate = null;
+                    break;
+                default:
+                    errorMessage = outcome.Error;
+                    break;
+            }
         }
         catch (HttpRequestException)
         {
-            resolveError = "This book could not be saved to the catalog. Please try again.";
+            errorMessage = "This book could not be saved or requested. Please try again.";
         }
         finally
         {
-            isResolving = false;
+            isSubmitting = false;
         }
     }
+
+    private Task ConfirmDuplicateAsync()
+    {
+        confirmDuplicate = true;
+        return SubmitAsync();
+    }
+
+    private Task ConfirmOwnedAsync()
+    {
+        confirmOwned = true;
+        return SubmitAsync();
+    }
+
+    private static Severity RequestStatusSeverity(string status) => status switch
+    {
+        "NeedsReview" => Severity.Warning,
+        "NotAvailable" => Severity.Error,
+        "Available" => Severity.Success,
+        _ => Severity.Info
+    };
 
     private static string EditionCountLabel(int count) =>
         count == 1 ? "1 known edition" : $"{count} known editions";

@@ -1,8 +1,9 @@
 @page "/search"
 @attribute [Authorize]
+@using System.Net
+@using System.Text.RegularExpressions
 @inject CatalogApiClient Catalog
 @inject CatalogSearchState SearchState
-@inject NavigationManager Navigation
 
 <PageTitle>Search · Family Librarian</PageTitle>
 
@@ -22,11 +23,11 @@
                               Variant="Variant.Outlined"
                               Immediate="true"
                               Class="flex-grow-1"
-                              Disabled="@isSearching" />
+                              Disabled="@(isSearching || isLoadingMore)" />
                 <MudButton ButtonType="ButtonType.Submit"
                            Variant="Variant.Filled"
                            Color="Color.Primary"
-                           Disabled="@isSearching">
+                           Disabled="@(isSearching || isLoadingMore)">
                     Search
                 </MudButton>
             </MudStack>
@@ -55,54 +56,91 @@
     }
     else if (results.Count > 0)
     {
+        var bestMatches = results.Where(IsBestMatch).ToArray();
+        var otherMatches = results.Where(result => !IsBestMatch(result)).ToArray();
+        var visibleResults = bestMatches.Length == 0 || showOtherMatches
+            ? results
+            : bestMatches;
+
         <MudText Typo="Typo.h5">Results</MudText>
-        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-            <MudText Typo="Typo.subtitle2">Why do similar results appear separately?</MudText>
-            <MudText Typo="Typo.body2">
-                Family Librarian combines records only when catalog sources report the exact same ISBN.
-                Matching titles and author names alone can describe different editions, illustrated or
-                abridged versions, retellings, translations, or separate catalog records. Open a result
-                to compare its known editions before saving it to the family catalog.
-            </MudText>
-        </MudAlert>
-        @foreach (var result in results)
-        {
-            <MudCard Outlined="true">
-                <MudCardContent>
-                    <MudStack Spacing="1">
-                        <MudText Typo="Typo.h5">@result.Title</MudText>
-                        <MudText Typo="Typo.body1">@string.Join(", ", result.Authors)</MudText>
-                        <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
-                            @if (result.PublicationDate is { } publicationDate)
-                            {
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                                    Reported publication: @publicationDate.ToString("yyyy")
-                                </MudChip>
-                            }
-                            @if (result.Editions.Count > 0)
-                            {
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                                    @EditionCountLabel(result.Editions.Count)
-                                </MudChip>
-                            }
-                        </MudStack>
+        <MudStack Spacing="0">
+            @foreach (var result in visibleResults)
+            {
+                <MudStack Row="true" Spacing="3" Class="pa-3" @key="ResultKey(result)">
+                    @if (!string.IsNullOrWhiteSpace(result.CoverUrl) && !failedCovers.Contains(ResultKey(result)))
+                    {
+                        <img src="@result.CoverUrl"
+                             alt=""
+                             loading="lazy"
+                             width="96"
+                             height="144"
+                             class="search-result-cover"
+                             style="width: 96px; height: 144px; object-fit: cover; border-radius: 4px; flex: 0 0 auto;"
+                             @onerror="() => OnCoverError(result)" />
+                    }
+                    else
+                    {
+                        <MudPaper Outlined="true"
+                                  Class="search-result-cover d-flex align-center justify-center"
+                                  Style="width: 96px; height: 144px; flex: 0 0 auto;">
+                            <MudIcon Icon="@Icons.Material.Filled.MenuBook" Color="Color.Default" />
+                        </MudPaper>
+                    }
+                    <MudStack Spacing="1" Class="flex-grow-1" Style="min-width: 0;">
+                        <MudLink Typo="Typo.h6" Class="search-result-title" Href="@DetailsHref(result)">@result.Title</MudLink>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">@string.Join(", ", result.Authors)</MudText>
                         @if (result.Series.FirstOrDefault(series => series.IsPrimary) is { } series)
                         {
-                            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
                                 @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · Book {series.PositionLabel}")
                             </MudText>
                         }
-                        <MudText Typo="Typo.body2">Source: @result.ProviderName</MudText>
+                        @if (!string.IsNullOrWhiteSpace(result.Description))
+                        {
+                            <MudText Typo="Typo.body2"
+                                     Class="search-result-description"
+                                     Style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">
+                                @PlainSnippet(result.Description)
+                            </MudText>
+                        }
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-1" Wrap="Wrap.Wrap">
+                            <ProviderChip ProviderName="@result.ProviderName" SourceUrl="@result.SourceUrl" />
+                            @if (SecondaryDetails(result) is { Length: > 0 } secondaryDetails)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@secondaryDetails</MudText>
+                            }
+                            @if (result.Editions.Count > 1)
+                            {
+                                <MudButton Variant="Variant.Outlined"
+                                           Size="Size.Small"
+                                           Href="@DetailsHref(result)">
+                                    @result.Editions.Count more editions
+                                </MudButton>
+                            }
+                        </MudStack>
                     </MudStack>
-                </MudCardContent>
-                <MudCardActions>
-                    <MudButton Variant="Variant.Text"
-                               Color="Color.Primary"
-                               OnClick="() => OpenDetails(result)">
-                        View details
-                    </MudButton>
-                </MudCardActions>
-            </MudCard>
+                </MudStack>
+                <MudDivider />
+            }
+        </MudStack>
+
+        @if (bestMatches.Length > 0 && otherMatches.Length > 0 && !showOtherMatches)
+        {
+            <MudButton Variant="Variant.Outlined"
+                       Color="Color.Secondary"
+                       OnClick="ShowOtherMatches">
+                Show @otherMatches.Length other @(otherMatches.Length == 1 ? "match" : "matches")
+            </MudButton>
+        }
+
+        @if (hasMore)
+        {
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       Disabled="@isLoadingMore"
+                       OnClick="LoadMoreAsync">
+                @(isLoadingMore ? "Loading more…" : "Load more results")
+            </MudButton>
         }
     }
 </MudStack>
@@ -112,6 +150,10 @@
     private IReadOnlyList<CatalogBookCandidateResponse> results = [];
     private bool hasSearched;
     private bool isSearching;
+    private bool isLoadingMore;
+    private bool showOtherMatches;
+    private int currentPage = 1;
+    private bool hasMore;
     private string? errorMessage;
     private IReadOnlyList<string> unavailableProviders = [];
 
@@ -121,6 +163,8 @@
         results = SearchState.Results;
         unavailableProviders = SearchState.UnavailableProviders;
         hasSearched = SearchState.HasSearched;
+        currentPage = SearchState.CurrentPage;
+        hasMore = SearchState.HasMore;
     }
 
     private async Task SearchAsync()
@@ -136,15 +180,20 @@
         hasSearched = true;
         errorMessage = null;
         unavailableProviders = [];
+        showOtherMatches = false;
+        currentPage = 1;
+        hasMore = false;
 
         try
         {
-            var response = await Catalog.SearchAsync(query);
+            var response = await Catalog.SearchAsync(query, currentPage);
             results = response.Results;
             unavailableProviders = response.Providers
                 .Where(provider => !provider.Succeeded)
                 .Select(provider => provider.ProviderName)
                 .ToArray();
+            currentPage = response.Page;
+            hasMore = response.HasMore;
         }
         catch (HttpRequestException)
         {
@@ -161,11 +210,105 @@
         SearchState.Results = results;
         SearchState.UnavailableProviders = unavailableProviders;
         SearchState.HasSearched = hasSearched;
+        SearchState.CurrentPage = currentPage;
+        SearchState.HasMore = hasMore;
     }
 
-    private void OpenDetails(CatalogBookCandidateResponse result) =>
-        Navigation.NavigateTo($"search/{Uri.EscapeDataString(result.ProviderId)}/{Uri.EscapeDataString(result.ExternalId)}");
+    private async Task LoadMoreAsync()
+    {
+        isLoadingMore = true;
+        errorMessage = null;
+        showOtherMatches = true;
 
-    private static string EditionCountLabel(int count) =>
-        count == 1 ? "1 known edition" : $"{count} known editions";
+        try
+        {
+            var response = await Catalog.SearchAsync(searchText.Trim(), currentPage + 1);
+            results = results
+                .Concat(response.Results)
+                .DistinctBy(ResultKey)
+                .ToArray();
+            unavailableProviders = unavailableProviders
+                .Concat(response.Providers
+                    .Where(provider => !provider.Succeeded)
+                    .Select(provider => provider.ProviderName))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            currentPage = response.Page;
+            hasMore = response.HasMore;
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "More catalog results are unavailable. Please try again.";
+        }
+        finally
+        {
+            isLoadingMore = false;
+        }
+
+        SearchState.Results = results;
+        SearchState.UnavailableProviders = unavailableProviders;
+        SearchState.CurrentPage = currentPage;
+        SearchState.HasMore = hasMore;
+    }
+
+    private readonly HashSet<string> failedCovers = [];
+
+    private static string ResultKey(CatalogBookCandidateResponse result) =>
+        $"{result.ProviderId}:{result.ExternalId}";
+
+    private static bool IsBestMatch(CatalogBookCandidateResponse result) =>
+        result.MatchKind is "Exact" or "Close";
+
+    private void ShowOtherMatches() => showOtherMatches = true;
+
+    private static string DetailsHref(CatalogBookCandidateResponse result) =>
+        $"search/{Uri.EscapeDataString(result.ProviderId)}/{Uri.EscapeDataString(result.ExternalId)}";
+
+    private void OnCoverError(CatalogBookCandidateResponse result) =>
+        failedCovers.Add(ResultKey(result));
+
+    private static string SecondaryDetails(CatalogBookCandidateResponse result)
+    {
+        var parts = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(result.Publisher))
+        {
+            parts.Add(result.Publisher);
+        }
+
+        if (result.PublicationDate is { } publicationDate)
+        {
+            parts.Add(publicationDate.ToString("yyyy"));
+        }
+
+        return string.Join(" · ", parts);
+    }
+
+    private const int MaxSnippetSentences = 2;
+    private const int MaxSnippetLength = 320;
+
+    private static readonly Regex HtmlTagPattern = new("<[^>]+>", RegexOptions.Compiled);
+    private static readonly Regex WhitespacePattern = new(@"\s+", RegexOptions.Compiled);
+    private static readonly Regex SentencePattern = new(@"[^.!?]+[.!?]+", RegexOptions.Compiled);
+
+    private static string PlainSnippet(string description)
+    {
+        var decoded = WebUtility.HtmlDecode(description);
+        var plainText = WhitespacePattern
+            .Replace(HtmlTagPattern.Replace(decoded, " "), " ")
+            .Trim();
+
+        var allSentences = SentencePattern.Matches(plainText)
+            .Select(match => match.Value.Trim())
+            .Where(sentence => sentence.Length > 0)
+            .ToArray();
+        var sentences = allSentences.Take(MaxSnippetSentences).ToArray();
+        var snippet = sentences.Length > 0 ? string.Join(" ", sentences) : plainText;
+
+        if (snippet.Length > MaxSnippetLength)
+        {
+            return string.Concat(snippet.AsSpan(0, MaxSnippetLength).TrimEnd(), "…");
+        }
+
+        return allSentences.Length > sentences.Length ? $"{snippet} …" : snippet;
+    }
 }

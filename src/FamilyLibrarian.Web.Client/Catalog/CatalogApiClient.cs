@@ -8,10 +8,11 @@ public sealed class CatalogApiClient(HttpClient httpClient, AntiforgeryTokenProv
 {
     public async Task<CatalogSearchResponse> SearchAsync(
         string searchText,
+        int page = 1,
         CancellationToken cancellationToken = default)
     {
         var response = await httpClient.GetFromJsonAsync<CatalogSearchResponse>(
-            $"api/v1/catalog/search?q={Uri.EscapeDataString(searchText)}",
+            $"api/v1/catalog/search?q={Uri.EscapeDataString(searchText)}&page={page}",
             cancellationToken);
 
         return response ?? new CatalogSearchResponse([], []);

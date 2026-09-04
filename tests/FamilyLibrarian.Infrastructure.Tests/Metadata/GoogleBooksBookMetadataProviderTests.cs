@@ -29,6 +29,10 @@ public sealed class GoogleBooksBookMetadataProviderTests
                         "authors": ["Andy Weir", "Andy Weir"],
                         "description": "  A description from the provider.  ",
                         "publishedDate": "2021-05-04",
+                        "publisher": " Ballantine Books ",
+                        "pageCount": 496,
+                        "language": "en",
+                        "categories": ["Fiction / Science Fiction / General", "Fiction / Science Fiction / General"],
                         "industryIdentifiers": [
                           { "type": "ISBN_10", "identifier": "0-593-13520-2" },
                           { "type": "ISBN_13", "identifier": "9780593135204" }
@@ -49,8 +53,9 @@ public sealed class GoogleBooksBookMetadataProviderTests
             new BookSearchQuery("Project Hail Mary"),
             CancellationToken.None);
 
-        Assert.HasCount(1, results);
-        var candidate = results[0];
+        Assert.HasCount(1, results.Candidates);
+        Assert.IsFalse(results.HasMore);
+        var candidate = results.Candidates[0];
         Assert.AreEqual("googlebooks", candidate.ProviderId);
         Assert.AreEqual("Google Books", candidate.ProviderName);
         Assert.AreEqual("google-volume-123", candidate.ExternalId);
@@ -63,6 +68,11 @@ public sealed class GoogleBooksBookMetadataProviderTests
         Assert.HasCount(1, candidate.Editions);
         Assert.AreEqual("9780593135204", candidate.Editions[0].Isbn13);
         Assert.AreEqual("Unknown format", candidate.Editions[0].Format);
+        Assert.AreEqual("Ballantine Books", candidate.Publisher);
+        Assert.AreEqual(496, candidate.PageCount);
+        Assert.HasCount(1, candidate.Subjects);
+        Assert.AreEqual("Fiction / Science Fiction / General", candidate.Subjects[0]);
+        Assert.AreEqual("en", candidate.Language);
         Assert.IsNotNull(requestedUri);
         StringAssert.Contains(requestedUri.Query, "q=Project%20Hail%20Mary");
         StringAssert.Contains(requestedUri.Query, "key=test-api-key");
@@ -100,11 +110,44 @@ public sealed class GoogleBooksBookMetadataProviderTests
             new BookSearchQuery("978-0-547-92822-7"),
             CancellationToken.None);
 
-        Assert.HasCount(1, results);
-        Assert.IsNull(results[0].PublicationDate);
-        Assert.AreEqual("9780547928227", results[0].Editions[0].Isbn13);
+        Assert.HasCount(1, results.Candidates);
+        Assert.IsNull(results.Candidates[0].PublicationDate);
+        Assert.AreEqual("9780547928227", results.Candidates[0].Editions[0].Isbn13);
         Assert.IsNotNull(requestedUri);
         StringAssert.Contains(requestedUri.Query, "q=isbn%3A9780547928227");
+    }
+
+    [TestMethod]
+    public async Task SearchAsyncRequestsTheSelectedPageAndReportsMoreResults()
+    {
+        Uri? requestedUri = null;
+        using var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            requestedUri = request.RequestUri;
+            return JsonResponse(
+                """
+                {
+                  "totalItems": 21,
+                  "items": [
+                    {
+                      "id": "clancy-11",
+                      "volumeInfo": { "title": "Red Storm Rising" }
+                    }
+                  ]
+                }
+                """);
+        });
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var results = await provider.SearchAsync(
+            new BookSearchQuery("Tom Clancy", Page: 2),
+            CancellationToken.None);
+
+        Assert.HasCount(1, results.Candidates);
+        Assert.IsTrue(results.HasMore);
+        Assert.IsNotNull(requestedUri);
+        StringAssert.Contains(requestedUri.Query, "startIndex=10");
     }
 
     [TestMethod]

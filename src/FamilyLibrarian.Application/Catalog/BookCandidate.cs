@@ -10,7 +10,15 @@ public sealed record BookCandidate(
     string? CoverUrl,
     DateOnly? PublicationDate,
     IReadOnlyList<BookEditionCandidate> Editions,
-    IReadOnlyList<BookSeriesCandidate> Series);
+    IReadOnlyList<BookSeriesCandidate> Series,
+    string? Publisher = null,
+    int? PageCount = null,
+    IReadOnlyList<string>? Subjects = null,
+    string? SourceUrl = null,
+    string? Language = null)
+{
+    public IReadOnlyList<string> Subjects { get; init; } = Subjects ?? [];
+}
 
 public sealed record BookEditionCandidate(
     string Title,

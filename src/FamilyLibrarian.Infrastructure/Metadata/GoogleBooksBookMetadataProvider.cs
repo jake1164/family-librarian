@@ -18,11 +18,11 @@ public sealed class GoogleBooksBookMetadataProvider(
 
     public string DisplayName => "Google Books";
 
-    public async Task<IReadOnlyList<BookCandidate>> SearchAsync(
+    public async Task<BookCandidateSearchPage> SearchAsync(
         BookSearchQuery query,
         CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(query.Text);
+        query.Validate();
 
         var providerQuery = IsbnNormalizer.TryNormalizeQuery(query.Text, out var isbn)
             ? $"isbn:{isbn}"
@@ -30,17 +30,25 @@ public sealed class GoogleBooksBookMetadataProvider(
         var requestUri =
             $"volumes?q={Uri.EscapeDataString(providerQuery)}" +
             $"&maxResults={_options.MaxResults.ToString(CultureInfo.InvariantCulture)}" +
+            $"&startIndex={((query.Page - 1) * _options.MaxResults).ToString(CultureInfo.InvariantCulture)}" +
             "&printType=books&projection=full";
 
         var response = await httpClient.GetFromJsonAsync<GoogleBooksVolumesResponse>(
             requestUri,
             cancellationToken);
 
-        return response?.Items?
+        var items = response?.Items ?? [];
+        var candidates = items
             .Select(ToCandidate)
             .Where(candidate => candidate is not null)
             .Cast<BookCandidate>()
-            .ToArray() ?? [];
+            .ToArray();
+        var offset = (query.Page - 1) * _options.MaxResults;
+        var hasMore = response?.TotalItems is { } totalItems
+            ? totalItems > offset + items.Count
+            : items.Count == _options.MaxResults;
+
+        return new BookCandidateSearchPage(candidates, hasMore);
     }
 
     public async Task<BookCandidate?> GetDetailsAsync(
@@ -75,6 +83,11 @@ public sealed class GoogleBooksBookMetadataProvider(
             .ToArray() ?? [];
         var publicationDate = TryParseExactDate(volume.VolumeInfo?.PublishedDate);
         var isbn13 = GetIsbn13(volume.VolumeInfo?.IndustryIdentifiers);
+        var subjects = volume.VolumeInfo?.Categories?
+            .Where(category => !string.IsNullOrWhiteSpace(category))
+            .Select(category => category.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
 
         return new BookCandidate(
             Id,
@@ -86,7 +99,12 @@ public sealed class GoogleBooksBookMetadataProvider(
             GetCoverUrl(volume.VolumeInfo?.ImageLinks),
             publicationDate,
             [new BookEditionCandidate(title, isbn13, "Unknown format", publicationDate)],
-            []);
+            [],
+            volume.VolumeInfo?.Publisher?.Trim() is { Length: > 0 } publisher ? publisher : null,
+            volume.VolumeInfo?.PageCount is > 0 ? volume.VolumeInfo.PageCount : null,
+            subjects,
+            SourceUrl: $"https://books.google.com/books?id={Uri.EscapeDataString(externalId!)}",
+            Language: LanguageCodeNormalizer.Normalize(volume.VolumeInfo?.Language));
     }
 
     private static string? GetTitle(GoogleBooksVolumeInfo? volumeInfo)
@@ -173,6 +191,9 @@ public sealed class GoogleBooksBookMetadataProvider(
 
     private sealed class GoogleBooksVolumesResponse
     {
+        [JsonPropertyName("totalItems")]
+        public int? TotalItems { get; init; }
+
         [JsonPropertyName("items")]
         public IReadOnlyList<GoogleBooksVolume>? Items { get; init; }
     }
@@ -203,11 +224,23 @@ public sealed class GoogleBooksBookMetadataProvider(
         [JsonPropertyName("publishedDate")]
         public string? PublishedDate { get; init; }
 
+        [JsonPropertyName("publisher")]
+        public string? Publisher { get; init; }
+
+        [JsonPropertyName("pageCount")]
+        public int? PageCount { get; init; }
+
+        [JsonPropertyName("categories")]
+        public IReadOnlyList<string>? Categories { get; init; }
+
         [JsonPropertyName("industryIdentifiers")]
         public IReadOnlyList<GoogleBooksIndustryIdentifier>? IndustryIdentifiers { get; init; }
 
         [JsonPropertyName("imageLinks")]
         public GoogleBooksImageLinks? ImageLinks { get; init; }
+
+        [JsonPropertyName("language")]
+        public string? Language { get; init; }
     }
 
     private sealed class GoogleBooksIndustryIdentifier
