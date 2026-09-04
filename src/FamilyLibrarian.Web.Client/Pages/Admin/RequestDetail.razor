@@ -148,24 +148,34 @@
                 </MudText>
                 @foreach (var format in request.Request.Formats)
                 {
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
-                        <MudText Typo="Typo.body2" Style="min-width: 100px;">@format.MediaType</MudText>
-                        <InputFile OnChange="@(args => ImportFileAsync(format.FormatId, args))" disabled="@isBusy" />
-                        @if (DirectAcquisitionOption(format.MediaType) is { } option)
-                        {
-                            <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@isBusy"
-                                       OnClick="@(() => AcquireDirectAsync(format.FormatId, option))">
-                                Get free copy from @option.ProviderId
-                            </MudButton>
-                            @if (Recommendation(format.MediaType) is { } recommendation &&
-                                 recommendation.ProviderId == option.ProviderId &&
-                                 recommendation.ProviderResultId == option.ProviderResultId)
+                    @if (format.Status == "Available")
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.body2" Style="min-width: 100px;">@format.MediaType</MudText>
+                            <MudText Typo="Typo.body2">Already delivered.</MudText>
+                        </MudStack>
+                    }
+                    else
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.body2" Style="min-width: 100px;">@format.MediaType</MudText>
+                            <InputFile OnChange="@(args => ImportFileAsync(format.FormatId, args))" disabled="@isBusy" />
+                            @if (DirectAcquisitionOption(format.MediaType) is { } option)
                             {
-                                <MudChip T="string" Size="Size.Small" Color="Color.Primary">Recommended</MudChip>
-                                <MudText Typo="Typo.caption">@recommendation.Reason</MudText>
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@isBusy"
+                                           OnClick="@(() => AcquireDirectAsync(format.FormatId, option))">
+                                    Get free copy from @option.ProviderId
+                                </MudButton>
+                                @if (Recommendation(format.MediaType) is { } recommendation &&
+                                     recommendation.ProviderId == option.ProviderId &&
+                                     recommendation.ProviderResultId == option.ProviderResultId)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">Recommended</MudChip>
+                                    <MudText Typo="Typo.caption">@recommendation.Reason</MudText>
+                                }
                             }
-                        }
-                    </MudStack>
+                        </MudStack>
+                    }
                 }
             </MudStack>
         </MudPaper>
