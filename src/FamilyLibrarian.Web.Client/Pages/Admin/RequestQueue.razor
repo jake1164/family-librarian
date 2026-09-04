@@ -150,13 +150,13 @@
 @code {
     private static readonly (string? Status, string Label)[] Filters =
     [
+        (null, "All requests"),
         ("PendingAcquisition", "Waiting"),
-        ("NeedsReview", "Needs review"),
-        (null, "All requests")
+        ("NeedsReview", "Needs review")
     ];
 
     private IReadOnlyList<AdminBookRequestResponse> requests = [];
-    private string? selectedStatus = "PendingAcquisition";
+    private string? selectedStatus;
     private bool isLoading = true;
     private bool isUploading;
     private string? errorMessage;
@@ -244,7 +244,11 @@
         errorMessage = null;
         try
         {
-            requests = await Requests.GetQueueAsync(selectedStatus);
+            var loaded = await Requests.GetQueueAsync(selectedStatus);
+            requests = loaded
+                .OrderBy(AttentionRank)
+                .ThenBy(item => item.Request.RequestedAtUtc)
+                .ToArray();
             try
             {
                 attention = await Requests.GetAttentionAsync();
@@ -265,6 +269,30 @@
             isLoading = false;
         }
     }
+
+    /// <summary>
+    /// Lowest rank surfaces first: requests or formats colored red (failed /
+    /// not available) outrank amber (needs review / awaiting approval),
+    /// which outrank in-progress blue, which outrank resolved green/grey.
+    /// Mirrors the chip color convention in <see cref="MediaTypeVisuals"/> so
+    /// "needs action" in the queue always means the same thing it means on
+    /// the chip.
+    /// </summary>
+    private static int AttentionRank(AdminBookRequestResponse item)
+    {
+        var colors = item.Request.Formats
+            .Select(format => MediaTypeVisuals.StatusColor(format.Status, format.ProgressCode))
+            .Append(MediaTypeVisuals.StatusColor(item.Request.Status));
+        return colors.Min(ColorRank);
+    }
+
+    private static int ColorRank(Color color) => color switch
+    {
+        Color.Error => 0,
+        Color.Warning => 1,
+        Color.Info => 2,
+        _ => 3
+    };
 
     private string FilterLabel((string? Status, string Label) filter) =>
         filter.Status == "NeedsReview" && attention?.NeedsReviewCount is > 0
