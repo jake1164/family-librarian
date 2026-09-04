@@ -37,7 +37,7 @@
                     @foreach (var entry in entries)
                     {
                         <MudStack Row="true" Spacing="2" Class="pa-3" @key="((object?)entry.Id ?? entry.Title)">
-                            <MudIcon Icon="@SeverityIcon(entry.Severity)" Color="@SeverityColor(entry.Severity)" Class="mt-1" />
+                            <MudIcon Icon="@CategoryIcon(entry)" Color="@SeverityColor(entry.Severity)" Class="mt-1" />
                             <MudStack Spacing="0" Class="flex-grow-1">
                                 <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
                                     <MudText Typo="Typo.body2" Style="font-weight: 600;">@entry.Title</MudText>
@@ -50,6 +50,10 @@
                                 @if (!string.IsNullOrWhiteSpace(entry.Detail))
                                 {
                                     <MudText Typo="Typo.body2">@entry.Detail</MudText>
+                                }
+                                @if (entry.Href is { } href)
+                                {
+                                    <MudLink Href="@href" Typo="Typo.body2">Go fix it</MudLink>
                                 }
                             </MudStack>
                             @if (entry.Id is { } id)
@@ -118,12 +122,14 @@
         var merged = notifications
             .Select(notification => new TrayEntry(
                 notification.Id,
+                notification.Category,
                 notification.Severity,
                 notification.Title,
                 notification.Detail,
                 notification.RepeatCount,
                 notification.LastOccurredAtUtc,
-                notification.IsRead))
+                notification.IsRead,
+                Href: LinkFor(notification.Category, notification.SubjectType, notification.SubjectId)))
             .ToList();
 
         if (IsAdmin)
@@ -133,6 +139,7 @@
                 var attention = await AdminRequests.GetAttentionAsync();
                 merged.AddRange(attention.ProviderIssues.Select(issue => new TrayEntry(
                     Id: null,
+                    Category: ProviderIssueCategory,
                     Severity: issue.IssueKind == "Configuration" ? "Warning" : "Error",
                     Title: issue.IssueKind == "Configuration"
                         ? $"Provider '{issue.DisplayName}' configuration needs attention"
@@ -140,7 +147,8 @@
                     Detail: issue.Summary,
                     RepeatCount: 1,
                     Timestamp: issue.OccurredAtUtc,
-                    IsRead: false)));
+                    IsRead: false,
+                    Href: "settings/sources")));
             }
             catch (HttpRequestException)
             {
@@ -187,6 +195,24 @@
         entries.RemoveAll(entry => entry.Id is not null);
     }
 
+    // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.RequestNeedsReview.
+    // The client only references Contracts, not Domain, so the value is duplicated here.
+    private const string RequestNeedsReviewCategory = "request.needs_review";
+    private const string ProviderIssueCategory = "provider.issue";
+
+    private static string? LinkFor(string category, string? subjectType, string? subjectId) => (category, subjectType, subjectId) switch
+    {
+        (RequestNeedsReviewCategory, "book_request", { } id) => $"admin/requests/{id}",
+        _ => null
+    };
+
+    private static string CategoryIcon(TrayEntry entry) => entry.Category switch
+    {
+        RequestNeedsReviewCategory => Icons.Material.Filled.MenuBook,
+        ProviderIssueCategory => Icons.Material.Filled.Source,
+        _ => SeverityIcon(entry.Severity)
+    };
+
     private static string SeverityIcon(string severity) => severity switch
     {
         "Error" => Icons.Material.Filled.Error,
@@ -230,10 +256,12 @@
 
     private sealed record TrayEntry(
         Guid? Id,
+        string Category,
         string Severity,
         string Title,
         string? Detail,
         int RepeatCount,
         DateTimeOffset Timestamp,
-        bool IsRead);
+        bool IsRead,
+        string? Href);
 }

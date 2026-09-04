@@ -4,7 +4,6 @@
 @using FamilyLibrarian.Web.Client.Acquisition
 @using FamilyLibrarian.Web.Client.Integrations
 @inject AdminRequestsApiClient Requests
-@inject MediaAssetsApiClient MediaAssets
 @inject MetadataIntegrationsApiClient MetadataIntegrations
 @inject ISnackbar Snackbar
 
@@ -23,82 +22,22 @@
         <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
     }
 
-    @if (attention is { } summary && summary.NeedsReviewCount > 0)
-    {
-        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
-            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
-                <MudText Typo="Typo.body2">
-                    @summary.NeedsReviewCount request@(summary.NeedsReviewCount == 1 ? string.Empty : "s") need librarian review.
-                </MudText>
-                <MudButton Variant="Variant.Text" Color="Color.Warning" Disabled="@isLoading"
-                           OnClick='@(() => SelectStatusAsync("NeedsReview"))'>
-                    Show needs review
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+        <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+            @foreach (var filter in Filters)
+            {
+                <MudButton Variant="@(selectedStatus == filter.Status ? Variant.Filled : Variant.Outlined)"
+                           Color="Color.Primary"
+                           Disabled="@isLoading"
+                           OnClick="() => SelectStatusAsync(filter.Status)">
+                    @FilterLabel(filter)
                 </MudButton>
-                <MudMenu Label="Recheck" Variant="Variant.Text" Color="Color.Warning"
-                         StartIcon="@Icons.Material.Filled.Refresh" Disabled="@isRechecking">
-                    <MudMenuItem OnClick="@(() => RecheckAsync(null))">
-                        All providers
-                    </MudMenuItem>
-                    @foreach (var provider in directAcquisitionProviders)
-                    {
-                        <MudMenuItem OnClick="@(() => RecheckAsync(provider.ProviderId))">
-                            @provider.DisplayName only
-                        </MudMenuItem>
-                    }
-                </MudMenu>
-            </MudStack>
-            <MudText Typo="Typo.caption">
-                Moves needs-review requests back to the queue so the next automatic pass treats them
-                as freshly submitted — no need to remove and re-add them.
-            </MudText>
-        </MudAlert>
-    }
-
-    @if (attention is { } sourceAttention && sourceAttention.ProviderIssues.Count > 0)
-    {
-        <MudAlert Severity="@SourceAttentionSeverity(sourceAttention)" Variant="Variant.Outlined">
-            @SourceAttentionMessage(sourceAttention) Review <MudLink Href="settings/sources">Sources</MudLink> for the safe diagnostic and next step.
-        </MudAlert>
-    }
-
-    <MudPaper Outlined="true" Class="pa-4">
-        <MudStack Spacing="2">
-            <MudText Typo="Typo.h6">Batch upload</MudText>
-            <MudText Typo="Typo.body2">
-                Choose several files at once. Each is matched to one waiting request by title and format,
-                then quarantined and scanned automatically. A file with no unambiguous match is left out
-                so it cannot fulfill the wrong request.
-            </MudText>
-            <InputFile OnChange="ImportBatchAsync" multiple disabled="@isUploading" aria-label="Choose files to upload" />
-            @if (isUploading)
-            {
-                <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
-            }
-            @if (batchResults.Count > 0)
-            {
-                <MudList T="string" Dense="true">
-                    @foreach (var result in batchResults)
-                    {
-                        <MudListItem T="string" Icon="@(result.Succeeded ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.ErrorOutline)"
-                                     IconColor="@(result.Succeeded ? Color.Success : Color.Warning)">
-                            @result.FileName — @result.Message
-                        </MudListItem>
-                    }
-                </MudList>
             }
         </MudStack>
-    </MudPaper>
-
-    <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
-        @foreach (var filter in Filters)
-        {
-            <MudButton Variant="@(selectedStatus == filter.Status ? Variant.Filled : Variant.Outlined)"
-                       Color="Color.Primary"
-                       Disabled="@isLoading"
-                       OnClick="() => SelectStatusAsync(filter.Status)">
-                @FilterLabel(filter)
-            </MudButton>
-        }
+        <MudButton Variant="Variant.Text" Color="Color.Primary" Href="admin/batch-upload"
+                   StartIcon="@Icons.Material.Filled.UploadFile">
+            Batch upload
+        </MudButton>
     </MudStack>
 
     @if (isLoading)
@@ -134,6 +73,30 @@
                             Asked @item.Request.RequestedAtUtc.ToLocalTime().ToString("g")
                             (@Age(item.Request.RequestedAtUtc))
                         </MudText>
+                        @if (item.Request.Status == "NeedsReview")
+                        {
+                            <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined">
+                                <MudText Typo="Typo.body2">@item.Request.StatusDescription</MudText>
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-1" Wrap="Wrap.Wrap">
+                                    <MudMenu Label="Recheck" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                                             StartIcon="@Icons.Material.Filled.Refresh" Disabled="@isRechecking">
+                                        <MudMenuItem OnClick="@(() => RecheckAsync(null))">
+                                            All providers
+                                        </MudMenuItem>
+                                        @foreach (var provider in directAcquisitionProviders)
+                                        {
+                                            <MudMenuItem OnClick="@(() => RecheckAsync(provider.ProviderId))">
+                                                @provider.DisplayName only
+                                            </MudMenuItem>
+                                        }
+                                    </MudMenu>
+                                    <MudText Typo="Typo.caption">
+                                        Requeues every request needing review — not just this one — for another
+                                        automatic pass.
+                                    </MudText>
+                                </MudStack>
+                            </MudAlert>
+                        }
                     </MudStack>
                 </MudCardContent>
                 <MudCardActions>
@@ -158,32 +121,10 @@
     private IReadOnlyList<AdminBookRequestResponse> requests = [];
     private string? selectedStatus;
     private bool isLoading = true;
-    private bool isUploading;
     private string? errorMessage;
-    private IReadOnlyList<BatchUploadResult> batchResults = [];
     private AdminRequestAttentionResponse? attention;
     private IReadOnlyList<ProviderStatusResponse> directAcquisitionProviders = [];
     private bool isRechecking;
-
-    private static Severity SourceAttentionSeverity(AdminRequestAttentionResponse summary) =>
-        summary.ProviderIssues.Any(issue => string.Equals(issue.IssueKind, "Operational", StringComparison.Ordinal))
-            ? Severity.Error
-            : Severity.Warning;
-
-    private static string SourceAttentionMessage(AdminRequestAttentionResponse summary)
-    {
-        var hasConfigurationIssue = summary.ProviderIssues.Any(issue =>
-            string.Equals(issue.IssueKind, "Configuration", StringComparison.Ordinal));
-        var hasOperationalIssue = summary.ProviderIssues.Any(issue =>
-            string.Equals(issue.IssueKind, "Operational", StringComparison.Ordinal));
-
-        return (hasConfigurationIssue, hasOperationalIssue) switch
-        {
-            (true, true) => "Automatic sources are blocked by configuration and have operational failures.",
-            (true, false) => "An automatic source is blocked by configuration.",
-            _ => "An automatic source has an operational failure."
-        };
-    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -298,121 +239,6 @@
         filter.Status == "NeedsReview" && attention?.NeedsReviewCount is > 0
             ? $"{filter.Label} ({attention.NeedsReviewCount})"
             : filter.Label;
-
-    private async Task ImportBatchAsync(InputFileChangeEventArgs args)
-    {
-        isUploading = true;
-        errorMessage = null;
-        var results = new List<BatchUploadResult>();
-
-        try
-        {
-            // Resolve against the whole waiting queue, not just whichever filter
-            // happens to be selected on screen.
-            var waiting = await Requests.GetQueueAsync("PendingAcquisition");
-            foreach (var file in args.GetMultipleFiles(50))
-            {
-                var match = FindBatchMatch(file.Name, waiting);
-                if (match is null)
-                {
-                    results.Add(new BatchUploadResult(
-                        file.Name,
-                        false,
-                        "No unambiguous waiting request matched this filename. Use the individual uploader to choose its request."));
-                    continue;
-                }
-
-                var outcome = await MediaAssets.ImportAsync(match.RequestId, match.FormatId, file);
-                results.Add(new BatchUploadResult(
-                    file.Name,
-                    outcome.Succeeded,
-                    outcome.Succeeded
-                        ? $"Matched to {match.Title}; security and delivery processing started automatically."
-                        : outcome.Error ?? "The file could not be imported."));
-            }
-
-            batchResults = results;
-            if (results.Any(result => result.Succeeded))
-            {
-                Snackbar.Add("Batch upload complete. Matched files are ready for security approval.", Severity.Success);
-            }
-
-            await LoadAsync();
-        }
-        catch (HttpRequestException)
-        {
-            batchResults = results;
-            errorMessage = "The batch could not be uploaded. Check the completed results and try again.";
-        }
-        finally
-        {
-            isUploading = false;
-        }
-    }
-
-    private static BatchMatch? FindBatchMatch(
-        string fileName,
-        IReadOnlyList<AdminBookRequestResponse> waiting)
-    {
-        var mediaType = MediaTypeFor(fileName);
-        if (mediaType is null)
-        {
-            return null;
-        }
-
-        var normalizedName = Normalize(Path.GetFileNameWithoutExtension(fileName));
-        var candidates = waiting
-            .SelectMany(request => request.Request.Formats
-                .Where(format => format.MediaType == mediaType)
-                .Select(format => new BatchMatch(
-                    request.Request.Id,
-                    format.FormatId,
-                    request.Request.WorkTitle,
-                    MatchScore(normalizedName, request.Request.WorkTitle, request.Request.Authors))))
-            .Where(candidate => candidate.Score > 0)
-            .OrderByDescending(candidate => candidate.Score)
-            .ToArray();
-
-        if (candidates.Length == 0 ||
-            (candidates.Length > 1 && candidates[0].Score == candidates[1].Score))
-        {
-            return null;
-        }
-
-        return candidates[0];
-    }
-
-    private static int MatchScore(string normalizedName, string title, IReadOnlyList<string> authors)
-    {
-        var normalizedTitle = Normalize(title);
-        if (normalizedTitle.Length < 4 || !normalizedName.Contains(normalizedTitle, StringComparison.Ordinal))
-        {
-            return 0;
-        }
-
-        var authorBonus = authors
-            .Select(Normalize)
-            .Any(author => author.Length >= 4 && normalizedName.Contains(author, StringComparison.Ordinal))
-            ? 10_000
-            : 0;
-        return authorBonus + normalizedTitle.Length;
-    }
-
-    private static string? MediaTypeFor(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
-    {
-        ".epub" or ".pdf" or ".mobi" or ".azw" or ".azw3" or ".fb2" or ".txt" or ".html" or ".rtf" or ".odt" or ".djvu" or ".prc" or ".doc" or ".docx" => "Ebook",
-        ".mp3" or ".m4a" or ".m4b" => "Audiobook",
-        _ => null
-    };
-
-    private static string Normalize(string value) => new(value
-        .Where(char.IsLetterOrDigit)
-        .Select(char.ToLowerInvariant)
-        .ToArray());
-
-    private sealed record BatchMatch(Guid RequestId, Guid FormatId, string Title, int Score);
-
-    private sealed record BatchUploadResult(string FileName, bool Succeeded, string Message);
 
     private static string Age(DateTimeOffset requestedAtUtc)
     {
