@@ -17,9 +17,9 @@ using Microsoft.AspNetCore.RateLimiting;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
-builder.Services.AddHostedService<CwaVerificationHostedService>();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
+    builder.Services.AddHostedService<CwaVerificationHostedService>();
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
     builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();
