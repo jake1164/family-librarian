@@ -16,6 +16,21 @@ public interface IBookMatcher
     BookMatchResult ResolveUnique(IReadOnlyList<CandidateBook> candidates);
 
     /// <summary>
+    /// Determines whether observed metadata can identify the expected title.
+    /// The comparison normalizes Unicode, punctuation, and article placement,
+    /// accepts a candidate title with an additional subtitle, and rejects known
+    /// derivative or combined-work variants.
+    /// </summary>
+    bool TitleMatches(string expectedTitle, string candidateTitle);
+
+    /// <summary>
+    /// Determines whether observed author metadata supports an expected author.
+    /// Missing metadata is unknown rather than contradictory; callers that
+    /// require author evidence must require an observed value separately.
+    /// </summary>
+    bool AuthorMatches(string? expectedAuthor, string? candidateAuthor);
+
+    /// <summary>
     /// For title/author search results: normalizes, filters unwanted
     /// variants (summaries, study guides, omnibuses, ...), applies the
     /// same-title/conflicting-author rule, then requires exactly one

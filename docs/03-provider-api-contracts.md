@@ -258,15 +258,19 @@ a substring match does. Whether CWA's search actually indexes ISBN is
 unconfirmed (CWA does not expose a richer machine-readable ownership API);
 if it doesn't, the ISBN query simply returns zero or many results and this
 falls through to the title/author fallback, so there is no correctness risk
-in trying it regardless. The title/author fallback string-matches the entry
-title (substring, case-insensitive) and, if known, the author, but now
-collects every matching entry rather than the first: a single distinct book
-ID is accepted, while more than one distinct ID is treated as ambiguous and
-returns "not found" rather than guessing. It also rejects an otherwise-
-matching entry whose title carries a known derivative/combined-work marker
-(e.g. "Summary of Debt of Honor", "Debt of Honor / Executive Orders") — see
-`docs/family-librarian-book-matching-design-findings.md` §5/§6/§8. This
-guard is a fixed, non-exhaustive keyword list, not the fuller
+in trying it regardless. The title/author fallback uses the shared
+deterministic matcher: it normalizes Unicode, punctuation, and leading/trailing
+article placement, accepts an observed title with an additional subtitle, and
+matches author tokens independent of display order. This permits a CWA catalog
+title such as `Moby-Dick; or, The Whale` to correlate with the requested
+`Moby Dick` without changing the work identity rule. It still collects every
+matching entry rather than the first: a single distinct book ID is accepted,
+while more than one distinct ID is treated as ambiguous and returns "not found"
+rather than guessing. It also rejects an otherwise-matching entry whose title
+carries a known derivative/combined-work marker (e.g. "Summary of Debt of
+Honor", "Debt of Honor / Executive Orders") — see
+`docs/family-librarian-book-matching-design-findings.md` §5/§6/§8. This guard
+is a fixed, non-exhaustive keyword list, not the fuller
 `ExpectedBookProfile`/`CandidateMatchResult` evidence model that document
 describes for the separate acquisition-provider matching pipeline — that
 remains future work if CWA correlation needs it. Still weaker than full

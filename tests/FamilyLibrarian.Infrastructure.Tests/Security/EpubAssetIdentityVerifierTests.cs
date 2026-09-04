@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
@@ -13,7 +14,7 @@ public sealed class EpubAssetIdentityVerifierTests
     [TestMethod]
     public async Task MatchingPackageMetadataIsAccepted()
     {
-        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Restore Me", "Tahereh Mafi"));
+        var verifier = CreateVerifier("Restore Me", "Tahereh Mafi");
 
         var result = await verifier.VerifyAsync(
             CreateAsset(),
@@ -27,7 +28,7 @@ public sealed class EpubAssetIdentityVerifierTests
     [TestMethod]
     public async Task CatalogOrderedCreatorMetadataIsAccepted()
     {
-        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Restore Me", "Tahereh Mafi"));
+        var verifier = CreateVerifier("Restore Me", "Tahereh Mafi");
 
         var result = await verifier.VerifyAsync(
             CreateAsset(),
@@ -40,7 +41,7 @@ public sealed class EpubAssetIdentityVerifierTests
     [TestMethod]
     public async Task ATitleDifferingOnlyByALeadingArticleIsAccepted()
     {
-        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Green Mummy", "Fergus Hume"));
+        var verifier = CreateVerifier("Green Mummy", "Fergus Hume");
 
         var result = await verifier.VerifyAsync(
             CreateAsset(),
@@ -53,7 +54,7 @@ public sealed class EpubAssetIdentityVerifierTests
     [TestMethod]
     public async Task ATitleWithAnOldFashionedSubtitleTheCatalogOmitsIsAccepted()
     {
-        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Little Women", "Louisa May Alcott"));
+        var verifier = CreateVerifier("Little Women", "Louisa May Alcott");
 
         var result = await verifier.VerifyAsync(
             CreateAsset(),
@@ -66,7 +67,7 @@ public sealed class EpubAssetIdentityVerifierTests
     [TestMethod]
     public async Task ACreatorWithAParentheticalFullNameStillMatches()
     {
-        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Peter Pan", "J. M. Barrie"));
+        var verifier = CreateVerifier("Peter Pan", "J. M. Barrie");
 
         var result = await verifier.VerifyAsync(
             CreateAsset(),
@@ -79,7 +80,7 @@ public sealed class EpubAssetIdentityVerifierTests
     [TestMethod]
     public async Task DifferentPackageMetadataIsHeldUnmatched()
     {
-        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Restore Me", "Tahereh Mafi"));
+        var verifier = CreateVerifier("Restore Me", "Tahereh Mafi");
 
         var result = await verifier.VerifyAsync(
             CreateAsset(),
@@ -90,9 +91,22 @@ public sealed class EpubAssetIdentityVerifierTests
     }
 
     [TestMethod]
+    public async Task ARewrittenDerivativePackageTitleIsHeldUnmatched()
+    {
+        var verifier = CreateVerifier("Debt of Honor", "Tom Clancy");
+
+        var result = await verifier.VerifyAsync(
+            CreateAsset(),
+            BuildEpub("Debt-of-Honor: Study-Guide", "Tom Clancy"),
+            CancellationToken.None);
+
+        Assert.IsFalse(result.IsMatch);
+    }
+
+    [TestMethod]
     public async Task MissingCreatorIsHeldUnmatched()
     {
-        var verifier = new EpubAssetIdentityVerifier(new StubWorkLookup("Restore Me", "Tahereh Mafi"));
+        var verifier = CreateVerifier("Restore Me", "Tahereh Mafi");
 
         var result = await verifier.VerifyAsync(
             CreateAsset(),
@@ -115,6 +129,9 @@ public sealed class EpubAssetIdentityVerifierTests
         Guid.NewGuid(),
         sourceAcquisitionCandidateId: null,
         DateTimeOffset.UtcNow);
+
+    private static EpubAssetIdentityVerifier CreateVerifier(string title, string author) =>
+        new(new StubWorkLookup(title, author), new DeterministicBookMatcher());
 
     private static MemoryStream BuildEpub(string title, string? creator)
     {

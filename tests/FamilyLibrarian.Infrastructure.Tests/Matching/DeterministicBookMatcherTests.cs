@@ -47,6 +47,17 @@ public sealed class DeterministicBookMatcherTests
     }
 
     [TestMethod]
+    public void ATitleRewrittenWithPunctuationAndASubtitleIsMatched()
+    {
+        var candidate = new CandidateBook("2", "Moby-Dick; or, The Whale", "Melville, Herman");
+
+        var result = matcher.MatchByTitleAuthor("Moby Dick", "Herman Melville", [candidate]);
+
+        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
+        Assert.AreEqual("2", result.MatchedId);
+    }
+
+    [TestMethod]
     public void ACandidateWithNoAuthorInformationIsNotExcludedByARequestedAuthor()
     {
         var candidate = new CandidateBook("1", "Debt of Honor", null);
@@ -93,6 +104,16 @@ public sealed class DeterministicBookMatcherTests
     public void ACombinedEditionIsNotTreatedAsAMatchEvenThoughItContainsTheTitle()
     {
         var candidate = new CandidateBook("1", "Debt of Honor / Executive Orders", "Tom Clancy");
+
+        var result = matcher.MatchByTitleAuthor("Debt of Honor", "Tom Clancy", [candidate]);
+
+        Assert.AreEqual(BookMatchDecision.NoMatch, result.Decision);
+    }
+
+    [TestMethod]
+    public void ARewrittenDerivativeTitleIsNotTreatedAsAMatch()
+    {
+        var candidate = new CandidateBook("1", "Debt-of-Honor: Study-Guide", "Tom Clancy");
 
         var result = matcher.MatchByTitleAuthor("Debt of Honor", "Tom Clancy", [candidate]);
 

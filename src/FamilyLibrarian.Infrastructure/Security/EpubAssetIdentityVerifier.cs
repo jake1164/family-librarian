@@ -1,7 +1,7 @@
 using System.IO.Compression;
-using System.Text;
 using System.Xml;
 using System.Xml.Linq;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
@@ -19,7 +19,7 @@ namespace FamilyLibrarian.Infrastructure.Security;
 /// <see cref="EpubValidator"/>, because an identity verifier handles the same
 /// untrusted input and must remain safe if its invocation order changes.
 /// </remarks>
-public sealed class EpubAssetIdentityVerifier(IWorkLookup works) : IAssetIdentityVerifier
+public sealed class EpubAssetIdentityVerifier(IWorkLookup works, IBookMatcher bookMatcher) : IAssetIdentityVerifier
 {
     private const long MaxMetadataEntryBytes = 1024 * 1024;
     private const int MaxEntryCount = 10_000;
@@ -68,8 +68,8 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works) : IAssetIdentit
             }
 
             var (titles, creators) = await ReadPackageMetadataAsync(package, cancellationToken);
-            var titleMatches = titles.Any(title => Matches(expected.Title, title));
-            var authorMatches = creators.Any(creator => AuthorMatches(expected.PrimaryAuthor, creator));
+            var titleMatches = titles.Any(title => bookMatcher.TitleMatches(expected.Title, title));
+            var authorMatches = creators.Any(creator => bookMatcher.AuthorMatches(expected.PrimaryAuthor, creator));
 
             return titleMatches && authorMatches
                 ? AssetIdentityVerificationResult.Match(Id)
@@ -131,97 +131,4 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works) : IAssetIdentit
         path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries)
             .Any(segment => segment is "." or "..");
 
-    // Catalog titles and EPUB package metadata disagree on where a leading
-    // article goes — e.g. a catalog title of
-    // "Green Mummy" against an EPUB whose <dc:title> is "The Green Mummy".
-    // Without stripping this, a genuinely correct download is held as a
-    // false-negative "Unmatched" identity mismatch.
-    private static readonly string[] LeadingArticles = ["The ", "A ", "An "];
-    private static readonly string[] TrailingArticles = [", The", ", A", ", An"];
-
-    // The same StartsWith comparison used at discovery time, for the same
-    // reason: Gutenberg's older
-    // catalog entries often carry a period-piece subtitle the family
-    // catalog doesn't — e.g. an EPUB titled "Little Women; Or, Meg, Jo,
-    // Beth, and Amy" against a catalog title of just "Little Women". A
-    // download discovery already accepted as a legitimate prefix match must
-    // not then be held as an identity mismatch by a stricter exact
-    // comparison here.
-    private static bool Matches(string expected, string actual)
-    {
-        var normalizedExpected = Normalize(NormalizeTitleVariants(expected));
-        var normalizedActual = Normalize(NormalizeTitleVariants(actual));
-        return !string.IsNullOrEmpty(normalizedExpected) &&
-            normalizedActual.StartsWith(normalizedExpected, StringComparison.Ordinal);
-    }
-
-    private static string NormalizeTitleVariants(string value)
-    {
-        var trimmed = value.Replace("&", " and ", StringComparison.Ordinal).Trim();
-
-        foreach (var article in TrailingArticles)
-        {
-            if (trimmed.EndsWith(article, StringComparison.OrdinalIgnoreCase))
-            {
-                trimmed = trimmed[..^article.Length].TrimEnd();
-                break;
-            }
-        }
-
-        foreach (var article in LeadingArticles)
-        {
-            if (trimmed.StartsWith(article, StringComparison.OrdinalIgnoreCase))
-            {
-                return trimmed[article.Length..];
-            }
-        }
-
-        return trimmed;
-    }
-
-    // EPUB creators commonly use catalog order ("Mafi, Tahereh") while the
-    // family catalog uses display order ("Tahereh Mafi"), and can carry a
-    // fuller name than the catalog does (e.g. catalog "J. M. Barrie" vs an
-    // EPUB crediting "Barrie, J. M. (James Matthew)"). Requiring every
-    // catalog token to appear in the EPUB's token set accepts that without
-    // giving up the strict title comparison or accepting an unrelated name.
-    private static bool AuthorMatches(string expected, string actual)
-    {
-        var expectedTokens = AuthorTokens(expected);
-        var actualTokens = AuthorTokens(actual);
-        return expectedTokens.Length > 0 && expectedTokens.All(actualTokens.Contains);
-    }
-
-    private static string[] AuthorTokens(string value)
-    {
-        var tokens = new List<string>();
-        var token = new StringBuilder();
-
-        foreach (var character in value.Normalize(NormalizationForm.FormKC))
-        {
-            if (char.IsLetterOrDigit(character))
-            {
-                token.Append(char.ToLowerInvariant(character));
-            }
-            else if (token.Length > 0)
-            {
-                tokens.Add(token.ToString());
-                token.Clear();
-            }
-        }
-
-        if (token.Length > 0)
-        {
-            tokens.Add(token.ToString());
-        }
-
-        tokens.Sort(StringComparer.Ordinal);
-        return tokens.ToArray();
-    }
-
-    private static string Normalize(string value) => new(value
-        .Normalize(NormalizationForm.FormKC)
-        .Where(char.IsLetterOrDigit)
-        .Select(char.ToLowerInvariant)
-        .ToArray());
 }

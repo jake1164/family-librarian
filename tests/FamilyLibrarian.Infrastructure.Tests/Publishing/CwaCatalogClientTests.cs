@@ -44,6 +44,19 @@ public sealed class CwaCatalogClientTests
     }
 
     [TestMethod]
+    public async Task ACwaCatalogTitleWithPunctuationAndASubtitleReturnsItsBookId()
+    {
+        var context = ConfiguredContext();
+        context.Handler.Responses["Moby Dick"] =
+            Feed(("Moby-Dick; or, The Whale", "Melville, Herman", "2"));
+
+        var result = await context.Client.FindBookIdAsync("Moby Dick", "Herman Melville", [], CancellationToken.None);
+
+        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
+        Assert.AreEqual("2", result.MatchedId);
+    }
+
+    [TestMethod]
     public async Task MultipleDistinctTitleMatchesAreAmbiguous()
     {
         var context = ConfiguredContext();
