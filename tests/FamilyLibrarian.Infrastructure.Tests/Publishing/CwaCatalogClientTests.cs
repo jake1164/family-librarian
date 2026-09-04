@@ -18,6 +18,7 @@ namespace FamilyLibrarian.Infrastructure.Tests.Publishing;
 public sealed class CwaCatalogClientTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+    private static readonly string[] MobyFallbackSearchQueries = ["Moby Dick", "Moby"];
 
     [TestMethod]
     public async Task NoOpdsConfiguredReturnsNoMatch()
@@ -54,6 +55,24 @@ public sealed class CwaCatalogClientTests
 
         Assert.AreEqual(BookMatchDecision.Match, result.Decision);
         Assert.AreEqual("2", result.MatchedId);
+    }
+
+    [TestMethod]
+    public async Task ALiteralCwaSearchMissFallsBackToAPunctuationIndependentTitleToken()
+    {
+        var context = ConfiguredContext();
+        // CWA uses a literal SQL substring search: "Moby Dick" does not find
+        // its "Moby-Dick; or, The Whale" title, but "Moby" does.
+        context.Handler.Responses["Moby"] =
+            Feed(("Moby-Dick; or, The Whale", "Herman Melville", "2"));
+
+        var result = await context.Client.FindBookIdAsync("Moby Dick", "Herman Melville", [], CancellationToken.None);
+
+        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
+        Assert.AreEqual("2", result.MatchedId);
+        CollectionAssert.AreEqual(
+            MobyFallbackSearchQueries,
+            context.Handler.RequestedUris.Select(uri => Uri.UnescapeDataString(uri.Segments[^1])).ToArray());
     }
 
     [TestMethod]

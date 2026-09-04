@@ -263,7 +263,12 @@ deterministic matcher: it normalizes Unicode, punctuation, and leading/trailing
 article placement, accepts an observed title with an additional subtitle, and
 matches author tokens independent of display order. This permits a CWA catalog
 title such as `Moby-Dick; or, The Whale` to correlate with the requested
-`Moby Dick` without changing the work identity rule. It still collects every
+`Moby Dick` without changing the work identity rule. CWA's installed OPDS
+search currently uses literal substring matching, so a punctuation-rewritten
+catalog title can produce an empty result before the matcher sees it. The client
+therefore retries up to four punctuation-independent title tokens only after
+the exact title query has no match; those broad queries discover candidates,
+but never decide identity. It still collects every
 matching entry rather than the first: a single distinct book ID is accepted,
 while more than one distinct ID is treated as ambiguous and returns "not found"
 rather than guessing. It also rejects an otherwise-matching entry whose title
