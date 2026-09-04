@@ -11,6 +11,7 @@ This repository contains the current design documents for **Family Librarian**, 
 3. [Provider & API Contract Design](docs/03-provider-api-contracts.md)
 4. [Project Name Decision (archived shortlist)](docs/05-project-name-options.md)
 5. [Deployment, Backup, and Recovery](docs/06-deployment-and-recovery.md)
+6. [UI Conventions](docs/07-ui-conventions.md)
 
 These documents are intended to be living specifications and should be updated as technical spikes and implementation decisions resolve open questions.
 

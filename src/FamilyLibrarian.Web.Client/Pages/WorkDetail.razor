@@ -96,12 +96,17 @@
                     <MudAlert Severity="@RequestStatusSeverity(createdRequest.Status)">
                         Your request is in. @createdRequest.StatusDescription
                     </MudAlert>
-                    @foreach (var format in createdRequest.Formats.Where(format =>
-                        !string.IsNullOrWhiteSpace(format.ProgressDescription)))
+                    @if (createdRequest.Formats.Any(format => !string.IsNullOrWhiteSpace(format.ProgressDescription)))
                     {
-                        <MudText Typo="Typo.body2" Color="@ProgressColor(format.ProgressCode)">
-                            @format.MediaType: @format.ProgressDescription
-                        </MudText>
+                        <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                            @foreach (var format in createdRequest.Formats.Where(format =>
+                                !string.IsNullOrWhiteSpace(format.ProgressDescription)))
+                            {
+                                <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
+                                                   ProgressCode="@format.ProgressCode"
+                                                   ProgressDescription="@format.ProgressDescription" />
+                            }
+                        </MudStack>
                     }
                     <MudText Typo="Typo.caption">
                         This update refreshes automatically while you are on this page.
@@ -327,14 +332,6 @@
         "NotAvailable" => Severity.Error,
         "Available" => Severity.Success,
         _ => Severity.Info
-    };
-
-    private static Color ProgressColor(string? progressCode) => progressCode switch
-    {
-        "SecurityCheckFailed" or "PublishingNeedsAttention" => Color.Error,
-        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" => Color.Warning,
-        "Available" => Color.Success,
-        _ => Color.Info
     };
 
     private Task ConfirmDuplicateAsync()

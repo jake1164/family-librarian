@@ -77,25 +77,18 @@
                         <MudLink Href="@($"works/{request.WorkId}")">@request.WorkTitle</MudLink>
                     </MudText>
                     <MudText Typo="Typo.body2">@string.Join(", ", request.Authors)</MudText>
-                    <MudStack Row="true" Spacing="1">
+                    <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
                         @foreach (var format in request.Formats)
                         {
-                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                                @format.MediaType
-                            </MudChip>
+                            <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
+                                               ProgressCode="@format.ProgressCode"
+                                               ProgressDescription="@format.ProgressDescription" />
                         }
                     </MudStack>
-                    @foreach (var format in request.Formats.Where(format =>
-                        !string.IsNullOrWhiteSpace(format.ProgressDescription)))
-                    {
-                        <MudText Typo="Typo.body2" Color="@ProgressColor(format.ProgressCode)">
-                            @format.MediaType: @format.ProgressDescription
-                        </MudText>
-                    }
                     @if (request.Status != "PendingAcquisition" ||
                         !request.Formats.Any(format => !string.IsNullOrWhiteSpace(format.ProgressDescription)))
                     {
-                        <MudText Typo="Typo.body2" Color="@StatusColor(request)">
+                        <MudText Typo="Typo.body2" Color="@MediaTypeVisuals.StatusColor(request.Status)">
                             @request.StatusDescription
                         </MudText>
                     }
@@ -135,23 +128,6 @@
         "Cancelled" => "Cancel this request",
         "PendingAcquisition" => "Ask again",
         _ => transition
-    };
-
-    private static Color StatusColor(BookRequestResponse request) => request.Status switch
-    {
-        "PendingAcquisition" => Color.Info,
-        "NeedsReview" => Color.Warning,
-        "NotAvailable" => Color.Error,
-        "Available" => Color.Success,
-        _ => Color.Default
-    };
-
-    private static Color ProgressColor(string? progressCode) => progressCode switch
-    {
-        "SecurityCheckFailed" or "PublishingNeedsAttention" => Color.Error,
-        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" => Color.Warning,
-        "Available" => Color.Success,
-        _ => Color.Info
     };
 
     private async Task LoadAsync()

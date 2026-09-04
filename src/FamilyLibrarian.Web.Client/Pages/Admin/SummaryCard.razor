@@ -1,12 +1,29 @@
-<MudPaper Outlined="true" Class="pa-3 h-100">
-    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-        <MudIcon Icon="@Icon" Color="@Color" Size="Size.Large" aria-hidden="true" />
-        <div>
-            <MudText Typo="Typo.caption">@Label</MudText>
-            <MudText Typo="Typo.h4" Color="@Color">@Value</MudText>
-        </div>
-    </MudStack>
-</MudPaper>
+@if (!string.IsNullOrWhiteSpace(Href))
+{
+    <MudLink Href="@Href" Style="text-decoration:none;color:inherit;display:block;" Class="h-100">
+        <MudPaper Outlined="true" Class="pa-3 h-100 summary-card-link">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudIcon Icon="@Icon" Color="@Color" Size="Size.Large" aria-hidden="true" />
+                <div>
+                    <MudText Typo="Typo.caption">@Label</MudText>
+                    <MudText Typo="Typo.h4" Color="@Color">@Value</MudText>
+                </div>
+            </MudStack>
+        </MudPaper>
+    </MudLink>
+}
+else
+{
+    <MudPaper Outlined="true" Class="pa-3 h-100">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icon" Color="@Color" Size="Size.Large" aria-hidden="true" />
+            <div>
+                <MudText Typo="Typo.caption">@Label</MudText>
+                <MudText Typo="Typo.h4" Color="@Color">@Value</MudText>
+            </div>
+        </MudStack>
+    </MudPaper>
+}
 
 @code {
     [Parameter, EditorRequired]
@@ -20,4 +37,8 @@
 
     [Parameter]
     public Color Color { get; set; } = Color.Default;
+
+    /// <summary>Optional same-page anchor (e.g. "#tasks-requests") the card navigates to when clicked.</summary>
+    [Parameter]
+    public string? Href { get; set; }
 }

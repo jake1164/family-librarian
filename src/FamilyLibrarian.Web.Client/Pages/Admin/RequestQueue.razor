@@ -122,23 +122,14 @@
                             Requested by @item.RequesterDisplayName (@item.RequesterEmail)
                         </MudText>
                         <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
-                            <MudChip T="string" Size="Size.Small" Color="@StatusColor(item.Request.Status)">
-                                @StatusLabel(item.Request.Status)
-                            </MudChip>
+                            <RequestStatusChip Status="@item.Request.Status" />
                             @foreach (var format in item.Request.Formats)
                             {
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                                    @format.MediaType
-                                </MudChip>
+                                <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
+                                                   ProgressCode="@format.ProgressCode"
+                                                   ProgressDescription="@format.ProgressDescription" />
                             }
                         </MudStack>
-                        @foreach (var format in item.Request.Formats.Where(format =>
-                            !string.IsNullOrWhiteSpace(format.ProgressDescription)))
-                        {
-                            <MudText Typo="Typo.body2" Color="@ProgressColor(format.ProgressCode)">
-                                @format.MediaType: @format.ProgressDescription
-                            </MudText>
-                        }
                         <MudText Typo="Typo.caption">
                             Asked @item.Request.RequestedAtUtc.ToLocalTime().ToString("g")
                             (@Age(item.Request.RequestedAtUtc))
@@ -394,31 +385,6 @@
     private sealed record BatchMatch(Guid RequestId, Guid FormatId, string Title, int Score);
 
     private sealed record BatchUploadResult(string FileName, bool Succeeded, string Message);
-
-    private static Color StatusColor(string status) => status switch
-    {
-        "PendingAcquisition" => Color.Info,
-        "NeedsReview" => Color.Warning,
-        "NotAvailable" => Color.Error,
-        _ => Color.Default
-    };
-
-    private static Color ProgressColor(string? progressCode) => progressCode switch
-    {
-        "SecurityCheckFailed" or "PublishingNeedsAttention" => Color.Error,
-        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" => Color.Warning,
-        "Available" => Color.Success,
-        _ => Color.Info
-    };
-
-    private static string StatusLabel(string status) => status switch
-    {
-        "PendingAcquisition" => "Waiting",
-        "NeedsReview" => "Needs review",
-        "NotAvailable" => "Not available",
-        "Cancelled" => "Cancelled",
-        _ => status
-    };
 
     private static string Age(DateTimeOffset requestedAtUtc)
     {

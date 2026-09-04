@@ -9,6 +9,7 @@ file before proposing, changing, or reviewing code.
 - Before changing .NET, C#, ASP.NET Core, Blazor, EF Core, Identity, or Docker behavior, consult the current official documentation on Microsoft Learn (`learn.microsoft.com`) and apply the documented security and framework best practices.
 - Build the browser application as Blazor WebAssembly. Keep the ASP.NET Core host/API responsible for PostgreSQL, Identity, OIDC, authorization, metadata-provider credentials, and all other secrets. Client-side authorization is presentation only; every protected operation must be authorized by the host API.
 - Use MudBlazor for application UI components. Preserve accessibility, responsive behavior, and semantic HTML rather than relying on visual components alone.
+- Before adding or editing a status/media-type chip (or any small recurring UI element), read `docs/07-ui-conventions.md`. Its rule: chip color always means status, media type is conveyed by icon, and the mapping lives once in `FamilyLibrarian.Web.Client/Theme/MediaTypeVisuals.cs` behind the `FormatStatusChip`/`RequestStatusChip`/`MediaTypeChip` components — never re-derive a status-to-color switch inline in a page.
 
 ## Documentation and dependencies
 

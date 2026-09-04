@@ -1,0 +1,19 @@
+@* A whole request's status (not tied to one format, so no media-type icon).
+   See docs/07-ui-conventions.md. *@
+
+<MudChip T="string" Size="@Size" Color="@MediaTypeVisuals.StatusColor(Status)">
+    @(Label ?? MediaTypeVisuals.StatusLabel(Status))
+</MudChip>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Status { get; set; } = null!;
+
+    /// <summary>Override the short status label, e.g. with the family-facing
+    /// StatusDescription sentence where a full sentence reads naturally.</summary>
+    [Parameter]
+    public string? Label { get; set; }
+
+    [Parameter]
+    public Size Size { get; set; } = Size.Small;
+}

@@ -1,0 +1,27 @@
+@* One request format (Ebook or Audiobook) and its status. Color always means
+   status; the media type is conveyed by icon instead so the two never
+   conflict. See docs/07-ui-conventions.md. *@
+
+<MudTooltip Text="@MediaType">
+    <MudChip T="string" Size="@Size" Color="@MediaTypeVisuals.StatusColor(Status, ProgressCode)"
+             Icon="@MediaTypeVisuals.Icon(MediaType)">
+        @(ProgressDescription ?? MediaTypeVisuals.StatusLabel(Status))
+    </MudChip>
+</MudTooltip>
+
+@code {
+    [Parameter, EditorRequired]
+    public string MediaType { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public string Status { get; set; } = null!;
+
+    [Parameter]
+    public string? ProgressCode { get; set; }
+
+    [Parameter]
+    public string? ProgressDescription { get; set; }
+
+    [Parameter]
+    public Size Size { get; set; } = Size.Small;
+}

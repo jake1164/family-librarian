@@ -45,15 +45,16 @@
         <MudPaper Outlined="true" Class="pa-4">
             <MudStack Spacing="2">
                 <MudText Typo="Typo.h6">Request</MudText>
-                <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
-                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                    <RequestStatusChip Status="@request.Request.Status" />
                     @foreach (var format in request.Request.Formats)
                     {
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                            @format.MediaType — @format.Status
-                        </MudChip>
+                        <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
+                                           ProgressCode="@format.ProgressCode"
+                                           ProgressDescription="@format.ProgressDescription" />
                     }
                 </MudStack>
+                <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
                 <MudText Typo="Typo.caption">Asked @request.Request.RequestedAtUtc.ToLocalTime().ToString("f")</MudText>
                 @if (!string.IsNullOrWhiteSpace(request.Request.Note))
                 {

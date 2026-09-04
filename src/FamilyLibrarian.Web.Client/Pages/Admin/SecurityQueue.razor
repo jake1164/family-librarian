@@ -41,7 +41,7 @@ else
                     <MudLink Href="@($"admin/requests/{asset.RequestId}")">
                         <MudText Typo="Typo.h6">@asset.WorkTitle</MudText>
                     </MudLink>
-                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@asset.MediaType</MudChip>
+                    <MediaTypeChip MediaType="@asset.MediaType" />
                     <MudSpacer />
                     <MudChip T="string" Size="Size.Small" Color="StorageStateColor(asset.StorageState)">
                         @asset.StorageState
