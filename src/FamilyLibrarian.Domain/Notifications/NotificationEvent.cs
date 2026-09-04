@@ -78,10 +78,11 @@ public sealed class NotificationEvent
 
     public DateTimeOffset LastOccurredAtUtc { get; private set; }
 
-    public void Recur(DateTimeOffset occurredAtUtc, string? detail)
+    public void Recur(DateTimeOffset occurredAtUtc, string title, string? detail)
     {
         RepeatCount++;
         LastOccurredAtUtc = occurredAtUtc;
+        Title = RequireText(title, nameof(title), MaxTitleLength);
         if (detail is not null)
         {
             Detail = CleanOptionalText(detail, MaxDetailLength, nameof(detail));

@@ -165,7 +165,7 @@
         </MudContainer>
     </MudMainContent>
 
-    <MudFab Href="#family-librarian-page-top"
+    <MudFab OnClick="@(() => JS.InvokeVoidAsync("familyLibrarian.scrollToElement", "family-librarian-page-top"))"
             StartIcon="@Icons.Material.Filled.KeyboardArrowUp"
             Color="Color.Primary"
             Size="Size.Medium"

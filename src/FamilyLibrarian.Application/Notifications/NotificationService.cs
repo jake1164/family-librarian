@@ -155,7 +155,7 @@ public sealed class NotificationService(
         }
         else
         {
-            existing.Recur(now, detail);
+            existing.Recur(now, title, detail);
             var receipts = await repository.ListReceiptsAsync(existing.Id, cancellationToken);
             if (receipts.Count > 0)
             {
