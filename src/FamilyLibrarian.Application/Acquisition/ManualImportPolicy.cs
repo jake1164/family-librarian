@@ -17,7 +17,7 @@ public sealed class ManualImportPolicy
 
     public const long DefaultMaxUploadSizeBytes = 500L * 1024 * 1024;
 
-    public const int DefaultMaxAudiobookBundleTracks = 100;
+    public const int DefaultMaxAudiobookBundleTracks = 250;
 
     public long MaxUploadSizeBytes { get; set; } = DefaultMaxUploadSizeBytes;
 

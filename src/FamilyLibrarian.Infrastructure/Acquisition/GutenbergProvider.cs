@@ -99,7 +99,12 @@ public sealed class GutenbergProvider(
 
         if (reference.SourcePaths.Length > importPolicy.MaxAudiobookBundleTracks)
         {
-            throw new InvalidOperationException("The Gutenberg audiobook exceeds the configured track limit.");
+            throw new InvalidOperationException(
+                $"This Gutenberg audiobook has {reference.SourcePaths.Length} tracks, over the configured " +
+                $"track limit of {importPolicy.MaxAudiobookBundleTracks}. Raise " +
+                $"{ManualImportPolicy.SectionName}:{nameof(ManualImportPolicy.MaxAudiobookBundleTracks)} " +
+                "in configuration and restart the app to allow automatic acquisition, or upload the audiobook " +
+                "file manually from this request's Files section.");
         }
 
         IReadOnlyList<DirectAcquisitionFile> files = reference.SourcePaths.Select((path, index) => new DirectAcquisitionFile(
