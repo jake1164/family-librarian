@@ -19,6 +19,7 @@ public sealed class CwaCatalogClientTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
     private static readonly string[] MobyFallbackSearchQueries = ["Moby Dick", "Moby"];
+    private static readonly string[] MobyRecentBooksFallbackRequests = ["Moby Dick", "Moby", "Dick", "recent-books"];
 
     [TestMethod]
     public async Task NoOpdsConfiguredReturnsNoMatch()
@@ -73,6 +74,33 @@ public sealed class CwaCatalogClientTests
         CollectionAssert.AreEqual(
             MobyFallbackSearchQueries,
             context.Handler.RequestedUris.Select(uri => Uri.UnescapeDataString(uri.Segments[^1])).ToArray());
+    }
+
+    [TestMethod]
+    public async Task ATitleSearchMissFallsBackToTheRecentCwaBooksFeed()
+    {
+        var context = ConfiguredContext();
+        context.Handler.Responses[RoutingHandler.RecentBooksFeedKey] =
+            Feed(("Moby-Dick; or, The Whale", "Herman Melville", "2"));
+
+        var result = await context.Client.FindBookIdAsync("Moby Dick", "Herman Melville", [], CancellationToken.None);
+
+        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
+        Assert.AreEqual("2", result.MatchedId);
+        CollectionAssert.AreEqual(
+            MobyRecentBooksFallbackRequests,
+            context.Handler.RequestedUris.Select(RoutingHandler.RequestKey).ToArray());
+    }
+
+    [TestMethod]
+    public async Task AnUnavailableRecentCwaBooksFeedDoesNotTurnASearchMissIntoAFailure()
+    {
+        var context = ConfiguredContext();
+        context.Handler.StatusCodes[RoutingHandler.RecentBooksFeedKey] = HttpStatusCode.NotFound;
+
+        var result = await context.Client.FindBookIdAsync("Moby Dick", "Herman Melville", [], CancellationToken.None);
+
+        Assert.AreEqual(BookMatchDecision.NoMatch, result.Decision);
     }
 
     [TestMethod]
@@ -239,18 +267,27 @@ public sealed class CwaCatalogClientTests
     /// </summary>
     private sealed class RoutingHandler : HttpMessageHandler
     {
+        public const string RecentBooksFeedKey = "recent-books";
+
         public Dictionary<string, string> Responses { get; } = [];
 
+        public Dictionary<string, HttpStatusCode> StatusCodes { get; } = [];
+
         public List<Uri> RequestedUris { get; } = [];
+
+        public static string RequestKey(Uri uri) => uri.AbsolutePath.EndsWith("/opds/new", StringComparison.Ordinal)
+            ? RecentBooksFeedKey
+            : Uri.UnescapeDataString(uri.Segments[^1]);
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestedUris.Add(request.RequestUri!);
 
-            var query = Uri.UnescapeDataString(request.RequestUri!.Segments[^1]);
-            var body = Responses.GetValueOrDefault(query, Feed());
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+            var key = RequestKey(request.RequestUri!);
+            var body = Responses.GetValueOrDefault(key, Feed());
+            var statusCode = StatusCodes.GetValueOrDefault(key, HttpStatusCode.OK);
+            return Task.FromResult(new HttpResponseMessage(statusCode) { Content = new StringContent(body) });
         }
     }
 }

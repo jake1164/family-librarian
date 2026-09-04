@@ -268,7 +268,10 @@ search currently uses literal substring matching, so a punctuation-rewritten
 catalog title can produce an empty result before the matcher sees it. The client
 therefore retries up to four punctuation-independent title tokens only after
 the exact title query has no match; those broad queries discover candidates,
-but never decide identity. It still collects every
+but never decide identity. If those searches have no match, it also reads CWA's
+authenticated, timestamp-descending `/opds/new` feed once and applies the same
+matcher to its entries; an unavailable Recent Books feed is treated as no match.
+It still collects every
 matching entry rather than the first: a single distinct book ID is accepted,
 while more than one distinct ID is treated as ambiguous and returns "not found"
 rather than guessing. It also rejects an otherwise-matching entry whose title
