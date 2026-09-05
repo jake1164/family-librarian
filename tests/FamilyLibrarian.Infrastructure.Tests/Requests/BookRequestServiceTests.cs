@@ -64,7 +64,7 @@ public sealed class BookRequestServiceTests
     }
 
     [TestMethod]
-    public async Task AnOverlappingFormatWarnsInsteadOfCreatingASecondRequest()
+    public async Task AnOverlappingFormatExtendsTheSharedRequest()
     {
         var repository = new InMemoryRequestRepository();
         repository.Seed(new BookRequest(Reader, Work, [RequestMediaType.Ebook], null, Now));
@@ -78,15 +78,14 @@ public sealed class BookRequestServiceTests
             confirmOwned: false,
             CancellationToken.None);
 
-        Assert.AreEqual(CreateBookRequestOutcome.DuplicateWarning, result.Outcome);
-        CollectionAssert.AreEqual(
-            new[] { RequestMediaType.Ebook },
-            result.OverlappingFormats.ToArray());
+        Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
+        Assert.AreEqual(2, repository.Requests.Single().Formats.Count);
+        Assert.AreEqual(1, repository.Requests.Single().Participants.Count);
         Assert.AreEqual(1, repository.Requests.Count);
     }
 
     [TestMethod]
-    public async Task ANonOverlappingFormatIsNotADuplicate()
+    public async Task ANewFormatExtendsTheSharedRequest()
     {
         var repository = new InMemoryRequestRepository();
         repository.Seed(new BookRequest(Reader, Work, [RequestMediaType.Ebook], null, Now));
@@ -101,11 +100,12 @@ public sealed class BookRequestServiceTests
             CancellationToken.None);
 
         Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
-        Assert.AreEqual(2, repository.Requests.Count);
+        Assert.AreEqual(1, repository.Requests.Count);
+        Assert.AreEqual(2, repository.Requests.Single().Formats.Count);
     }
 
     [TestMethod]
-    public async Task AConfirmedRepeatRequestIsAllowedThrough()
+    public async Task AnOverrideWithoutVersionDetailsIsRejected()
     {
         var repository = new InMemoryRequestRepository();
         repository.Seed(new BookRequest(Reader, Work, [RequestMediaType.Ebook], null, Now));
@@ -119,8 +119,8 @@ public sealed class BookRequestServiceTests
             confirmOwned: false,
             CancellationToken.None);
 
-        Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
-        Assert.AreEqual(2, repository.Requests.Count);
+        Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(1, repository.Requests.Count);
     }
 
     [TestMethod]
@@ -144,7 +144,7 @@ public sealed class BookRequestServiceTests
     }
 
     [TestMethod]
-    public async Task AnotherUsersOutstandingRequestIsNotADuplicate()
+    public async Task AnotherUserJoinsTheSharedRequest()
     {
         var repository = new InMemoryRequestRepository();
         repository.Seed(new BookRequest(OtherReader, Work, [RequestMediaType.Ebook], null, Now));
@@ -246,7 +246,7 @@ public sealed class BookRequestServiceTests
 
         Assert.AreEqual(BookRequestCommandOutcome.Success, result.Outcome);
         Assert.AreEqual(RequestStatus.Cancelled, request.Status);
-        Assert.AreEqual("Changed my mind.", request.StatusHistory.Last().Reason);
+        Assert.AreEqual("All requesters withdrew their interest.", request.StatusHistory.Last().Reason);
     }
 
     [TestMethod]
@@ -376,7 +376,7 @@ public sealed class BookRequestServiceTests
     }
 
     [TestMethod]
-    public async Task AConfirmedOwnedRequestIsAllowedThrough()
+    public async Task AnOwnedOverrideWithoutVersionDetailsIsRejected()
     {
         var repository = new InMemoryRequestRepository();
         var fulfillment = new StubFulfillmentOptionsService().Owned(RequestMediaType.Ebook, "cwa");
@@ -390,8 +390,8 @@ public sealed class BookRequestServiceTests
             confirmOwned: true,
             CancellationToken.None);
 
-        Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
-        Assert.AreEqual(1, repository.Requests.Count);
+        Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, repository.Requests.Count);
     }
 
     [TestMethod]
@@ -413,7 +413,7 @@ public sealed class BookRequestServiceTests
     }
 
     [TestMethod]
-    public async Task OwnershipIsCheckedBeforeEnteringTheCreateRequestScope()
+    public async Task OwnershipIsCheckedWithinTheWorkScope()
     {
         var repository = new InMemoryRequestRepository();
         var fulfillment = new StubFulfillmentOptionsService().Owned(RequestMediaType.Ebook, "cwa");
@@ -427,12 +427,12 @@ public sealed class BookRequestServiceTests
             confirmOwned: false,
             CancellationToken.None);
 
-        // No lock was ever taken for a warning that never touches storage.
-        Assert.AreEqual(0, repository.ScopeCount);
+        // Resolve shared intent and ownership under the same Work scope.
+        Assert.AreEqual(1, repository.ScopeCount);
     }
 
     [TestMethod]
-    public async Task WhenBothOwnedAndDuplicateApplyOwnershipIsReportedFirst()
+    public async Task ExistingInterestIsJoinedWithoutStartingAnotherAcquisition()
     {
         var repository = new InMemoryRequestRepository();
         repository.Seed(new BookRequest(Reader, Work, [RequestMediaType.Ebook], null, Now));
@@ -447,13 +447,13 @@ public sealed class BookRequestServiceTests
             confirmOwned: false,
             CancellationToken.None);
 
-        Assert.AreEqual(CreateBookRequestOutcome.OwnedWarning, result.Outcome);
-        // The duplicate check lives inside the lock and never ran this round.
-        Assert.AreEqual(0, repository.ScopeCount);
+        Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
+        Assert.AreEqual(1, repository.Requests.Count);
+        Assert.AreEqual(1, repository.ScopeCount);
     }
 
     [TestMethod]
-    public async Task ConfirmingOwnershipThenStillSurfacesAnUnconfirmedDuplicate()
+    public async Task OwnershipConfirmationAloneCannotCreateAnException()
     {
         var repository = new InMemoryRequestRepository();
         repository.Seed(new BookRequest(Reader, Work, [RequestMediaType.Ebook], null, Now));
@@ -468,11 +468,11 @@ public sealed class BookRequestServiceTests
             confirmOwned: true,
             CancellationToken.None);
 
-        Assert.AreEqual(CreateBookRequestOutcome.DuplicateWarning, result.Outcome);
+        Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
     }
 
     [TestMethod]
-    public async Task ConfirmingBothOwnershipAndDuplicateCreatesTheRequest()
+    public async Task AnExplicitLanguageExceptionEntersManualReview()
     {
         var repository = new InMemoryRequestRepository();
         repository.Seed(new BookRequest(Reader, Work, [RequestMediaType.Ebook], null, Now));
@@ -485,14 +485,16 @@ public sealed class BookRequestServiceTests
             null,
             confirmDuplicate: true,
             confirmOwned: true,
-            CancellationToken.None);
+            CancellationToken.None, "Language", "Spanish translation");
 
         Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
         Assert.AreEqual(2, repository.Requests.Count);
+        Assert.AreEqual(RequestStatus.NeedsReview, repository.Requests.Last().Status);
+        Assert.IsTrue(repository.Requests.Last().RequiresManualFulfillment);
     }
 
     [TestMethod]
-    public void OnlyCancelAndReopenAreOfferedToARequester()
+    public void OnlyWithdrawalAndSafeRejoinAreOfferedToARequester()
     {
         CollectionAssert.AreEqual(
             new[] { RequestStatus.Cancelled },
@@ -658,8 +660,7 @@ public sealed class BookRequestServiceTests
             Guid workId,
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<BookRequest>>(Requests
-                .Where(request => request.UserId == userId &&
-                    request.WorkId == workId &&
+                .Where(request => request.WorkId == workId &&
                     request.IsActive)
                 .ToArray());
 
@@ -668,13 +669,13 @@ public sealed class BookRequestServiceTests
             Guid userId,
             CancellationToken cancellationToken) =>
             Task.FromResult(Requests.SingleOrDefault(request =>
-                request.Id == requestId && request.UserId == userId));
+                request.Id == requestId && request.Participants.Any(participant => participant.UserId == userId)));
 
         public Task<IReadOnlyList<BookRequestView>> ListForUserAsync(
             Guid userId,
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<BookRequestView>>(Requests
-                .Where(request => request.UserId == userId)
+                .Where(request => request.Participants.Any(participant => participant.UserId == userId))
                 .Select(ToView)
                 .ToArray());
 
@@ -683,7 +684,7 @@ public sealed class BookRequestServiceTests
             Guid userId,
             CancellationToken cancellationToken) =>
             Task.FromResult(Requests
-                .Where(request => request.Id == requestId && request.UserId == userId)
+                .Where(request => request.Id == requestId && request.Participants.Any(participant => participant.UserId == userId))
                 .Select(ToView)
                 .SingleOrDefault());
 

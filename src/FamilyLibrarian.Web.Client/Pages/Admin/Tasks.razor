@@ -1,6 +1,6 @@
 @page "/admin/tasks"
 @attribute [Authorize(Roles = "Admin")]
-@implements IDisposable
+@inherits LiveComponentBase
 @using FamilyLibrarian.Contracts.Operations
 @using FamilyLibrarian.Contracts.Acquisition
 @using FamilyLibrarian.Contracts.Publishing
@@ -17,11 +17,6 @@
                 One operational view of requests, source activity, file safety, and publishing.
             </MudText>
         </div>
-        <MudSpacer />
-        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
-                   OnClick="LoadAsync" Disabled="@isLoading">
-            Refresh
-        </MudButton>
     </MudStack>
 
     @if (!string.IsNullOrWhiteSpace(errorMessage))
@@ -34,34 +29,30 @@
     }
     else
     {
-        <MudText Typo="Typo.caption" Color="Color.Secondary">
-            Updated @snapshot.GeneratedAtUtc.ToLocalTime().ToString("g"). This page refreshes while open.
-        </MudText>
-
         <MudGrid Spacing="2">
             <MudItem xs="12" sm="6" md="4">
                 <SummaryCard Icon="@Icons.Material.Filled.PendingActions" Label="Active requests"
-                             Value="@snapshot.Summary.ActiveRequests" Color="Color.Primary" />
+                             Value="@snapshot.Summary.ActiveRequests" Color="Color.Primary" TargetElementId="tasks-requests" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4">
                 <SummaryCard Icon="@Icons.Material.Filled.Visibility" Label="Needs review"
-                             Value="@snapshot.Summary.NeedsReview" Color="Color.Warning" />
+                             Value="@snapshot.Summary.NeedsReview" Color="Color.Warning" TargetElementId="tasks-requests" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4">
                 <SummaryCard Icon="@Icons.Material.Filled.Shield" Label="Security attention"
-                             Value="@snapshot.Summary.SecurityAttention" Color="Color.Warning" />
+                             Value="@snapshot.Summary.SecurityAttention" Color="Color.Warning" TargetElementId="tasks-security" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4">
                 <SummaryCard Icon="@Icons.Material.Filled.CloudDownload" Label="Source attention"
-                             Value="@snapshot.Summary.SourceAttention" Color="Color.Error" />
+                             Value="@snapshot.Summary.SourceAttention" Color="Color.Error" TargetElementId="tasks-source" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4">
                 <SummaryCard Icon="@Icons.Material.Filled.Publish" Label="Publishing attention"
-                             Value="@snapshot.Summary.PublishingAttention" Color="Color.Warning" />
+                             Value="@snapshot.Summary.PublishingAttention" Color="Color.Warning" TargetElementId="tasks-publishing" />
             </MudItem>
         </MudGrid>
 
-        <MudPaper Outlined="true" Class="pa-4">
+        <MudPaper Outlined="true" Class="pa-4" id="tasks-requests">
             <MudText Typo="Typo.h5">Requests</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
                 Every family request and its latest format-level progress.
@@ -78,14 +69,14 @@
                         <MudListItem T="string">
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
                                 <MudLink Href="@($"admin/requests/{request.Request.Id}")">@request.Request.WorkTitle</MudLink>
-                                <MudChip T="string" Size="Size.Small" Color="@RequestStatusColor(request.Request.Status)">
-                                    @request.Request.StatusDescription
-                                </MudChip>
+                                <MudLink Href="@($"admin/requests/{request.Request.Id}")" Underline="Underline.None">
+                                    <RequestStatusChip Status="@request.Request.Status" />
+                                </MudLink>
                                 @foreach (var format in request.Request.Formats)
                                 {
-                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                                        @format.MediaType: @(format.ProgressDescription ?? format.Status)
-                                    </MudChip>
+                                    <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
+                                                       ProgressCode="@format.ProgressCode"
+                                                       ProgressDescription="@format.ProgressDescription" />
                                 }
                             </MudStack>
                             <MudText Typo="Typo.caption">
@@ -97,7 +88,7 @@
             }
         </MudPaper>
 
-        <MudPaper Outlined="true" Class="pa-4">
+        <MudPaper Outlined="true" Class="pa-4" id="tasks-source">
             <MudText Typo="Typo.h5">Source and download activity</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
                 The latest 50 provider lookups and acquisition outcomes. A lookup can find no match or be blocked before any file download begins.
@@ -116,7 +107,7 @@
                                 <MudLink Href="@($"admin/requests/{attempt.RequestId}")">@attempt.WorkTitle</MudLink>
                                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.ProviderId</MudChip>
                                 <MudChip T="string" Size="Size.Small" Color="@AttemptColor(attempt.Outcome)">@attempt.Outcome</MudChip>
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.MediaType</MudChip>
+                                <MediaTypeChip MediaType="@attempt.MediaType" />
                             </MudStack>
                             <MudText Typo="Typo.body2">@attempt.Summary</MudText>
                             <MudText Typo="Typo.caption">
@@ -132,55 +123,27 @@
             }
         </MudPaper>
 
-        <MudPaper Outlined="true" Class="pa-4">
+        <MudPaper Outlined="true" Class="pa-4" id="tasks-security">
             <MudText Typo="Typo.h5">File intake and security</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
-                The latest 50 uploads or acquired files, including ClamAV and format-validation results when a scan has run.
+                Review recent file activity, scan details, and any required actions on the Security scans page.
             </MudText>
-            @if (snapshot.SecurityActivity.Count == 0)
+            @if (snapshot.Summary.SecurityAttention == 0)
             {
-                <MudAlert Severity="Severity.Info" Dense="true">No file activity has been recorded yet.</MudAlert>
+                <MudAlert Severity="Severity.Success" Dense="true">No files need security attention.</MudAlert>
             }
             else
             {
-                <MudList T="string" Dense="true">
-                    @foreach (var asset in snapshot.SecurityActivity)
-                    {
-                        <MudListItem T="string">
-                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
-                                <MudLink Href="@($"admin/requests/{asset.RequestId}")">@asset.WorkTitle</MudLink>
-                                <MudChip T="string" Size="Size.Small" Color="@StorageColor(asset.StorageState)">@asset.StorageState</MudChip>
-                                @if (asset.LatestEvaluation is not null)
-                                {
-                                    <MudChip T="string" Size="Size.Small" Color="@EvaluationColor(asset.LatestEvaluation.Status)">
-                                        Scan: @asset.LatestEvaluation.Status
-                                    </MudChip>
-                                }
-                            </MudStack>
-                            <MudText Typo="Typo.body2">@asset.OriginalFilename · @asset.MediaType · @FormatSize(asset.SizeBytes)</MudText>
-                            @if (asset.LatestEvaluation is { } evaluation)
-                            {
-                                @foreach (var scan in evaluation.ScanResults)
-                                {
-                                    <MudText Typo="Typo.caption">
-                                        @scan.ScannerId: @scan.Status@(string.IsNullOrWhiteSpace(scan.ThreatName) ? string.Empty : $" — {scan.ThreatName}")
-                                    </MudText>
-                                }
-                                @foreach (var validation in evaluation.ValidationResults)
-                                {
-                                    <MudText Typo="Typo.caption">
-                                        @validation.ValidatorId: @(validation.IsValid ? "valid" : "invalid")@(string.IsNullOrWhiteSpace(validation.Message) ? string.Empty : $" — {validation.Message}")
-                                    </MudText>
-                                }
-                            }
-                            <MudText Typo="Typo.caption">Updated @asset.UpdatedAtUtc.ToLocalTime().ToString("g")</MudText>
-                        </MudListItem>
-                    }
-                </MudList>
+                <MudAlert Severity="Severity.Warning" Dense="true">
+                    @snapshot.Summary.SecurityAttention file@(snapshot.Summary.SecurityAttention == 1 ? string.Empty : "s") need security attention.
+                </MudAlert>
             }
+            <MudButton Href="admin/security" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Shield" Class="mt-3">
+                View security scans
+            </MudButton>
         </MudPaper>
 
-        <MudPaper Outlined="true" Class="pa-4">
+        <MudPaper Outlined="true" Class="pa-4" id="tasks-publishing">
             <MudText Typo="Typo.h5">Publishing</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
                 Recent handoffs to CWA for ebooks and Audiobookshelf for audiobooks.
@@ -223,19 +186,15 @@
 @code {
     private AdminTasksResponse? snapshot;
     private string? errorMessage;
-    private bool isLoading = true;
-    private CancellationTokenSource? refreshCancellation;
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadAsync();
-        refreshCancellation = new CancellationTokenSource();
-        _ = RefreshPeriodicallyAsync(refreshCancellation.Token);
+        Observe(LiveUpdateTopics.All, LoadAsync);
+        await RefreshLiveAsync();
     }
 
     private async Task LoadAsync()
     {
-        isLoading = true;
         errorMessage = null;
         try
         {
@@ -249,67 +208,15 @@
         {
             errorMessage = "The task dashboard could not be loaded. Please try again.";
         }
-        finally
-        {
-            isLoading = false;
-        }
     }
 
-    private async Task RefreshPeriodicallyAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                await InvokeAsync(async () =>
-                {
-                    await LoadAsync();
-                    StateHasChanged();
-                });
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Navigation away from this page stops refresh work.
-        }
-    }
 
-    public void Dispose()
-    {
-        refreshCancellation?.Cancel();
-        refreshCancellation?.Dispose();
-    }
-
-    private static Color RequestStatusColor(string status) => status switch
-    {
-        "Available" => Color.Success,
-        "NeedsReview" => Color.Warning,
-        "NotAvailable" or "Cancelled" => Color.Default,
-        _ => Color.Primary
-    };
 
     private static Color AttemptColor(string outcome) => outcome switch
     {
         "Acquired" => Color.Success,
         "Failed" or "Blocked" => Color.Error,
         "CandidatesFound" => Color.Info,
-        _ => Color.Default
-    };
-
-    private static Color StorageColor(string state) => state switch
-    {
-        "Trusted" => Color.Success,
-        "Rejected" or "Destroyed" => Color.Error,
-        "Unmatched" => Color.Warning,
-        _ => Color.Default
-    };
-
-    private static Color EvaluationColor(string status) => status switch
-    {
-        "Passed" => Color.Success,
-        "Failed" => Color.Error,
-        "ReviewRequired" => Color.Warning,
         _ => Color.Default
     };
 
@@ -326,18 +233,4 @@
             ? $"{filename} · started {createdAtUtc.ToLocalTime():g}"
             : $"{filename} · {failureReason}";
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024)
-        {
-            return $"{bytes} B";
-        }
-
-        if (bytes < 1024 * 1024)
-        {
-            return $"{bytes / 1024d:F1} KB";
-        }
-
-        return $"{bytes / 1024d / 1024d:F1} MB";
-    }
 }

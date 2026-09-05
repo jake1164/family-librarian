@@ -1,12 +1,33 @@
-<MudPaper Outlined="true" Class="pa-3 h-100">
-    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-        <MudIcon Icon="@Icon" Color="@Color" Size="Size.Large" aria-hidden="true" />
-        <div>
-            <MudText Typo="Typo.caption">@Label</MudText>
-            <MudText Typo="Typo.h4" Color="@Color">@Value</MudText>
-        </div>
-    </MudStack>
-</MudPaper>
+@inject IJSRuntime JS
+
+@if (!string.IsNullOrWhiteSpace(TargetElementId))
+{
+    <MudPaper Outlined="true" Class="pa-3 h-100 summary-card-link"
+              @onclick="@(() => JS.InvokeVoidAsync("familyLibrarian.scrollToElement", TargetElementId))"
+              @onkeydown="@(async e => { if (e.Key is "Enter" or " ") { await JS.InvokeVoidAsync("familyLibrarian.scrollToElement", TargetElementId); } })"
+              tabindex="0" role="button" aria-label="@($"Jump to {Label}")"
+              Style="cursor:pointer;">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icon" Color="@Color" Size="Size.Large" aria-hidden="true" />
+            <div>
+                <MudText Typo="Typo.caption">@Label</MudText>
+                <MudText Typo="Typo.h4" Color="@Color">@Value</MudText>
+            </div>
+        </MudStack>
+    </MudPaper>
+}
+else
+{
+    <MudPaper Outlined="true" Class="pa-3 h-100">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icon" Color="@Color" Size="Size.Large" aria-hidden="true" />
+            <div>
+                <MudText Typo="Typo.caption">@Label</MudText>
+                <MudText Typo="Typo.h4" Color="@Color">@Value</MudText>
+            </div>
+        </MudStack>
+    </MudPaper>
+}
 
 @code {
     [Parameter, EditorRequired]
@@ -20,4 +41,13 @@
 
     [Parameter]
     public Color Color { get; set; } = Color.Default;
+
+    /// <summary>
+    /// Id of the element on this same page to scroll to when clicked. A plain
+    /// href="#id" would get intercepted by Blazor's router and resolved
+    /// against the app's base URI (navigating to "/" instead of scrolling
+    /// within the current page), so this scrolls via JS interop instead.
+    /// </summary>
+    [Parameter]
+    public string? TargetElementId { get; set; }
 }

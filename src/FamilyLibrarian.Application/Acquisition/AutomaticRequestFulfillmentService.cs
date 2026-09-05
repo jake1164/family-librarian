@@ -59,6 +59,7 @@ public sealed class AutomaticRequestFulfillmentService(
 
         foreach (var request in pending)
         {
+            if (request.RequiresManualFulfillment) continue;
             foreach (var format in request.Formats.Where(format => format.Status == RequestFormatStatus.Requested))
             {
                 if (await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken))
@@ -73,6 +74,15 @@ public sealed class AutomaticRequestFulfillmentService(
                         format.Id, provider.Id, cancellationToken);
                     if (HasRecentAttempt(latestAttempt, request))
                     {
+                        continue;
+                    }
+
+                    if (!await provider.IsReadyAsync(cancellationToken))
+                    {
+                        // Not broken, just not ready yet (e.g. a local catalogue
+                        // mid-import) -- skip silently rather than recording a
+                        // "no match" that would start this provider's retry
+                        // cooldown on a lookup that was never really asked.
                         continue;
                     }
 
@@ -203,9 +213,9 @@ public sealed class AutomaticRequestFulfillmentService(
         }
 
         request.TransitionTo(RequestStatus.NeedsReview, actorUserId: null, reason, clock.UtcNow);
-        // No title lookup is wired into this service; showing the work ID here
-        // rather than adding a new repository call for it.
-        await notifications.RecordRequestNeedsReviewAsync(request.Id, request.WorkId.ToString(), reason, cancellationToken);
+        var view = await requests.FindAdminViewAsync(request.Id, cancellationToken);
+        var workTitle = view?.Request.WorkTitle ?? request.WorkId.ToString();
+        await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
     }
 
     private static string DescribeProviderFailure(Exception exception) => exception switch

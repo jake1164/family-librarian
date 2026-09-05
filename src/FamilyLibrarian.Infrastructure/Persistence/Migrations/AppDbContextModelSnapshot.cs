@@ -956,7 +956,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("FamilyLibrarian.Domain.Communications.OutboundCommunication", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
@@ -1015,7 +1014,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("FamilyLibrarian.Domain.Communications.OutboundCommunicationDelivery", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
@@ -1996,6 +1994,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(1000)")
                         .HasColumnName("requester_note");
 
+                    b.Property<bool>("RequiresManualFulfillment")
+                        .HasColumnType("boolean")
+                        .HasColumnName("requires_manual_fulfillment");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -2020,13 +2022,25 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("xid")
                         .HasColumnName("xmin");
 
+                    b.Property<string>("VersionDetails")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("version_details");
+
+                    b.Property<string>("VersionKind")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("version_kind");
+
                     b.Property<Guid>("WorkId")
                         .HasColumnType("uuid")
                         .HasColumnName("work_id");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("WorkId");
+                    b.HasIndex("WorkId")
+                        .IsUnique()
+                        .HasFilter("status IN ('PendingAcquisition', 'NeedsReview') AND NOT requires_manual_fulfillment");
 
                     b.HasIndex("Status", "UpdatedAtUtc");
 
@@ -2077,6 +2091,44 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("request_formats", "requests");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestParticipant", b =>
+                {
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<DateTimeOffset>("JoinedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("joined_at_utc");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("note");
+
+                    b.Property<bool>("WantsAudiobook")
+                        .HasColumnType("boolean")
+                        .HasColumnName("wants_audiobook");
+
+                    b.Property<bool>("WantsEbook")
+                        .HasColumnType("boolean")
+                        .HasColumnName("wants_ebook");
+
+                    b.Property<DateTimeOffset?>("WithdrawnAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("withdrawn_at_utc");
+
+                    b.HasKey("RequestId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("request_participants", "requests");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestStatusHistory", b =>
@@ -2997,6 +3049,21 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("Request");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestParticipant", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
+                        .WithMany("Participants")
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestStatusHistory", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", "Request")
@@ -3160,6 +3227,8 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.BookRequest", b =>
                 {
                     b.Navigation("Formats");
+
+                    b.Navigation("Participants");
 
                     b.Navigation("StatusHistory");
                 });

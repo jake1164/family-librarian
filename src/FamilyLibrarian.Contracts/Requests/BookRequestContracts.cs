@@ -1,21 +1,23 @@
 namespace FamilyLibrarian.Contracts.Requests;
 
 /// <summary>
-/// Creates a request for a canonical Work in one or both media types.
+/// Creates or joins a shared request for a canonical Work in one or both media types.
 /// </summary>
 /// <param name="Formats">"Ebook", "Audiobook", or both.</param>
 /// <param name="ConfirmDuplicate">
-/// Set after the caller has seen a duplicate warning and still wants the request.
+/// Legacy confirmation flag. An exception also requires VersionKind and VersionDetails.
 /// </param>
 /// <param name="ConfirmOwned">
-/// Set after the caller has seen an already-owned warning and still wants the request.
+/// Legacy ownership confirmation flag. It cannot bypass required version details.
 /// </param>
 public sealed record CreateBookRequestRequest(
     Guid WorkId,
     IReadOnlyList<string> Formats,
     string? Note,
     bool ConfirmDuplicate,
-    bool ConfirmOwned);
+    bool ConfirmOwned,
+    string? VersionKind = null,
+    string? VersionDetails = null);
 
 public sealed record ChangeBookRequestStatusRequest(
     string Status,
@@ -41,7 +43,11 @@ public sealed record BookRequestResponse(
     DateTimeOffset RequestedAtUtc,
     DateTimeOffset StatusChangedAtUtc,
     IReadOnlyList<string> AvailableTransitions,
-    uint Version);
+    uint Version,
+    int RequesterCount = 1,
+    bool RequiresManualFulfillment = false,
+    string? VersionKind = null,
+    string? VersionDetails = null);
 
 public sealed record BookRequestFormatResponse(
     Guid FormatId,
@@ -77,7 +83,10 @@ public sealed record AdminBookRequestResponse(
     BookRequestResponse Request,
     string RequesterDisplayName,
     string RequesterEmail,
-    IReadOnlyList<BookRequestStatusHistoryResponse> StatusHistory);
+    IReadOnlyList<BookRequestStatusHistoryResponse> StatusHistory,
+    IReadOnlyList<RequestParticipantResponse>? Participants = null);
+
+public sealed record RequestParticipantResponse(string DisplayName, string Email, string? Note, bool Withdrawn);
 
 public sealed record BookRequestStatusHistoryResponse(
     string? FromStatus,

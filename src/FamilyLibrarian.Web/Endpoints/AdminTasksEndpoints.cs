@@ -37,6 +37,12 @@ internal static class AdminTasksEndpoints
         var requestList = await requests.ListForAdminAsync(status: null, cancellationToken);
         var attemptList = await providerAttempts.ListRecentAsync(RecentActivityLimit, cancellationToken);
         var securityList = await mediaAssets.ListRecentAsync(RecentActivityLimit, cancellationToken);
+        // The dashboard's activity feed only ever shows the latest N rows, but the
+        // "needs attention" count must reflect every pending asset, not just the
+        // ones recent enough to still be in that window — otherwise an older item
+        // stuck in review can silently vanish from the tile while still sitting in
+        // the actual Security Queue.
+        var activeSecurityList = await mediaAssets.ListAsync(cancellationToken);
         var publishingSnapshot = await publishing.ListAsync(cancellationToken);
 
         var requestResponses = requestList
@@ -93,7 +99,11 @@ internal static class AdminTasksEndpoints
         var summary = new AdminTaskSummaryResponse(
             requestResponses.Count(item => item.Request.Request.IsActive),
             requestResponses.Count(item => item.Request.Request.Status == FamilyLibrarian.Domain.Requests.RequestStatus.NeedsReview),
-            securityResponses.Count(asset => asset.StorageState is "Quarantine" or "Processing" or "Unmatched" or "Rejected"),
+            activeSecurityList.Count(entry => entry.Asset.StorageState is
+                FamilyLibrarian.Domain.Acquisition.MediaAssetStorageState.Quarantine or
+                FamilyLibrarian.Domain.Acquisition.MediaAssetStorageState.Processing or
+                FamilyLibrarian.Domain.Acquisition.MediaAssetStorageState.Unmatched or
+                FamilyLibrarian.Domain.Acquisition.MediaAssetStorageState.Rejected),
             providerResponses.Count(attempt => attempt.Outcome is "Failed" or "Blocked"),
             importResponses.Count(import => import.Status != "Available") +
             deliveryResponses.Count(delivery => delivery.Status != "Delivered"));

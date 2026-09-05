@@ -1,0 +1,18 @@
+@* A media type with no status attached (e.g. a provider lookup or a stored
+   file, before/without a per-format progress state). Neutral/outlined so it
+   never competes with an adjacent status chip's color. See
+   docs/07-ui-conventions.md. *@
+
+<MudTooltip Text="@MediaType">
+    <MudChip T="string" Size="@Size" Variant="Variant.Outlined" Icon="@MediaTypeVisuals.Icon(MediaType)">
+        @MediaType
+    </MudChip>
+</MudTooltip>
+
+@code {
+    [Parameter, EditorRequired]
+    public string MediaType { get; set; } = null!;
+
+    [Parameter]
+    public Size Size { get; set; } = Size.Small;
+}

@@ -8,7 +8,7 @@ public interface IRequestRepository
     Task<bool> WorkExistsAsync(Guid workId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// The caller's outstanding requests for one Work, used by duplicate detection.
+    /// All household outstanding requests for one Work, used by shared-request resolution.
     /// </summary>
     Task<IReadOnlyList<BookRequest>> GetActiveRequestsForWorkAsync(
         Guid userId,
@@ -86,15 +86,11 @@ public interface IRequestRepository
 
     /// <summary>
     /// Runs <paramref name="operation"/> in a transaction that holds a lock scoped
-    /// to this (user, Work) pair.
+    /// to this Work across all users.
     /// </summary>
     /// <remarks>
-    /// Duplicate detection is a read followed by a write, so two simultaneous
-    /// submissions would otherwise both find nothing and both insert. The formats
-    /// live in a child table, so a single unique index cannot express the rule;
-    /// the lock is the deliberate first implementation named in the plan, and a
-    /// partial/exclusion constraint can replace it once the repeat-request policy
-    /// is settled.
+    /// Serializes create, join, and withdrawal for all requesters of the same Work.
+    /// A unique partial index also prevents two active ordinary aggregates.
     /// </remarks>
     Task<TResult> InCreateRequestScopeAsync<TResult>(
         Guid userId,

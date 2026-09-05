@@ -262,7 +262,7 @@ public sealed class AdminRequestQueueEndpointTests
         response.EnsureSuccessStatusCode();
         var work = await response.Content.ReadFromJsonAsync<CatalogWorkResponse>();
         Assert.IsNotNull(work);
-        return work.Id;
+        return await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id);
     }
 
     private static async Task<BookRequestResponse> CreateRequestAsync(HttpClient client, Guid workId)

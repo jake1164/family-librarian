@@ -27,6 +27,7 @@ public sealed class CwaCatalogClient(
     IBookMatchService matchService) : ICwaCatalogClient
 {
     private static readonly Regex BookIdPattern = new(@"/opds/(?:book|download)/(\d+)", RegexOptions.Compiled);
+    private static readonly Regex TitleSearchTokenPattern = new(@"[\p{L}\p{N}]+", RegexOptions.Compiled);
 
     /// <remarks>
     /// Identifier-first: an ISBN candidate is tried as a search query before
@@ -65,22 +66,89 @@ public sealed class CwaCatalogClient(
             }
         }
 
-        var titleBody = await SendSearchAsync(title, settings, cancellationToken);
-        if (titleBody is null)
+        foreach (var titleQuery in TitleSearchQueries(title))
         {
-            return BookMatchResult.NoMatchResult;
+            var titleBody = await SendSearchAsync(titleQuery, settings, cancellationToken);
+            if (titleBody is null)
+            {
+                // A failed OPDS request is not evidence that another spelling
+                // will work. Preserve the existing best-effort no-match
+                // behavior instead of amplifying a temporary outage.
+                return BookMatchResult.NoMatchResult;
+            }
+
+            var titleResult = await matchService.MatchByTitleAuthorAsync(
+                title, author, ExtractCandidates(titleBody), cancellationToken);
+            if (titleResult.Decision != BookMatchDecision.NoMatch)
+            {
+                return titleResult;
+            }
         }
 
-        return await matchService.MatchByTitleAuthorAsync(title, author, ExtractCandidates(titleBody), cancellationToken);
+        // CWA's title index may use punctuation that the canonical request
+        // lacks. Its newest-books feed is ordered by Calibre timestamp, so it
+        // is a bounded, read-only recovery path for a handoff that CWA has
+        // already ingested but its title search did not return.
+        var recentBody = await SendRecentBooksAsync(settings, cancellationToken);
+        return recentBody is null
+            ? BookMatchResult.NoMatchResult
+            : await matchService.MatchByTitleAuthorAsync(title, author, ExtractCandidates(recentBody), cancellationToken);
+    }
+
+    /// <summary>
+    /// CWA currently applies a literal substring search to its title index.
+    /// A request such as <c>Moby Dick</c> therefore cannot find CWA's
+    /// <c>Moby-Dick; or, The Whale</c> entry until a punctuation-independent
+    /// token query is tried. These queries only discover candidates; the
+    /// shared matcher still decides whether precisely one is the requested
+    /// work. Four fallback tokens bound the added load for unusually long
+    /// titles while retaining the original exact query first. If all title
+    /// searches miss, <c>/opds/new</c> is checked once; a disabled Recent Books
+    /// feed simply produces no match.
+    /// </summary>
+    private static IEnumerable<string> TitleSearchQueries(string title)
+    {
+        yield return title;
+
+        var queries = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { title };
+        var fallbackCount = 0;
+        foreach (Match token in TitleSearchTokenPattern.Matches(title))
+        {
+            var query = token.Value;
+            if (query.Length < 3 || !queries.Add(query))
+            {
+                continue;
+            }
+
+            yield return query;
+            fallbackCount++;
+            if (fallbackCount == 4)
+            {
+                yield break;
+            }
+        }
     }
 
     private async Task<string?> SendSearchAsync(
         string query, Domain.Publishing.CwaSettings settings, CancellationToken cancellationToken)
     {
+        var requestUri = $"{settings.OpdsBaseUrl!.TrimEnd('/')}/opds/search/{Uri.EscapeDataString(query)}";
+        return await SendGetAsync(requestUri, settings, cancellationToken);
+    }
+
+    private async Task<string?> SendRecentBooksAsync(
+        Domain.Publishing.CwaSettings settings, CancellationToken cancellationToken)
+    {
+        var requestUri = $"{settings.OpdsBaseUrl!.TrimEnd('/')}/opds/new";
+        return await SendGetAsync(requestUri, settings, cancellationToken);
+    }
+
+    private async Task<string?> SendGetAsync(
+        string requestUri, Domain.Publishing.CwaSettings settings, CancellationToken cancellationToken)
+    {
         var client = httpClientFactory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(15);
 
-        var requestUri = $"{settings.OpdsBaseUrl!.TrimEnd('/')}/opds/search/{Uri.EscapeDataString(query)}";
         using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
         ApplyBasicAuth(request, settings.OpdsUsername, ResolveOpdsPassword(settings));
 

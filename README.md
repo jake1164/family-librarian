@@ -11,6 +11,7 @@ This repository contains the current design documents for **Family Librarian**, 
 3. [Provider & API Contract Design](docs/03-provider-api-contracts.md)
 4. [Project Name Decision (archived shortlist)](docs/05-project-name-options.md)
 5. [Deployment, Backup, and Recovery](docs/06-deployment-and-recovery.md)
+6. [UI Conventions](docs/07-ui-conventions.md)
 
 These documents are intended to be living specifications and should be updated as technical spikes and implementation decisions resolve open questions.
 
@@ -145,9 +146,20 @@ only runs while no administrator exists, so that would leave no way back in.
 
 Search the catalog, open a book, save it to the family catalog, then request it as
 an ebook, an audiobook, or both, and follow it under **My requests** — where you
-can also cancel a request or ask again. Asking again starts a fresh acquisition
-cycle while retaining prior provider activity as history. Requests are private
-to the account that made them. For ebooks, the built-in public-domain Project Gutenberg source is enabled by
+can withdraw your interest or ask again. Ordinary requests for the same book
+share one request and one acquisition per format. Each participant sees their
+own formats and private note; librarians can see all participants. Withdrawing
+leaves the shared request open for everyone else. Asking again joins an existing
+shared request, or reopens the previous request when no current one exists.
+
+For a different language, edition, narrator, accessibility requirement, or an
+unsuitable existing copy, choose the version difference and describe what is
+needed. These requests go to librarian review and remain excluded from automatic
+acquisition and bulk rechecks. Version details guide human selection; they do
+not add automatic edition/language matching. Historical overlapping requests
+found during upgrade retain their IDs/files/history and are held for review.
+
+For ebooks, the built-in public-domain Project Gutenberg source is enabled by
 default after its local RDF catalogue has finished its first sync: when it finds one high-confidence title-and-author match, Family
 Librarian automatically downloads it, applies the security and identity checks,
 and sends a clean verified copy to CWA. **My requests** and the book page refresh
@@ -169,13 +181,27 @@ Administrators also get:
   catalogue imported into PostgreSQL; actual ebook downloads use configured mirrors.
   Source failures remain visible to administrators but
   do not prevent Work or request pages from loading;
-- **Security queue**, for quarantined, rejected, unmatched, and removed-file
-  security records. Confirmed malware bytes are deleted automatically; clean,
-  matching EPUB imports proceed automatically;
+- **Security scans**, for the latest 25, 50 (default), or 100 imported/acquired
+  files, including completed scans and deleted-file records. The shared
+  SignalR connection delivers admin-only scan updates as they happen; the page shows start,
+  completion, and individual check timestamps and reloads after reconnecting.
+  Retry, identity review, and deletion actions remain available where appropriate.
+  Confirmed malware bytes are deleted automatically; clean, matching EPUB imports
+  proceed automatically;
 - **Publishing settings**, for configuring CWA and Audiobookshelf; and
 - **Publishing activity**, for reviewing each handoff after an approved file was
   sent to either destination, with a **Recheck** action for anything not yet
   confirmed.
+
+The browser maintains one authenticated SignalR connection per tab. My requests,
+book request status, admin Queue/Tasks/request details, Security scans, Publishing
+activity, source catalog progress, the notification tray, and navigation indicators
+subscribe to it instead of polling. The shared connection indicator shows when
+updates are unavailable and offers **Refresh**. Initial connection failures retry
+with capped backoff; reconnection reloads the open views to recover missed updates.
+Data and actions still use the existing authorized HTTP APIs. Private request
+updates go only to request participants and current admins; personal notifications remain
+private, and source/security/publishing diagnostics remain admin-only.
 
 Each admin request detail page includes an append-only provider-activity
 timeline, including no-match, found-candidate, blocked, failed, and acquired
@@ -273,6 +299,11 @@ Run the full suite with:
 dotnet test --solution FamilyLibrarian.slnx
 ```
 
+Web integration tests share a disposable PostgreSQL container with a separate
+database per class. Their connection strings disable pooling so closed
+connections do not retain server slots across classes. Production connections
+retain their normal pooling configuration.
+
 ### Opt-in browser E2E
 
 The request-to-queue browser test runs against a separately started, **clean**
@@ -301,3 +332,19 @@ dotnet test --project tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.
 `FamilyLibrarian.Domain.Tests` begins by enforcing the domain dependency boundary.
 Add focused unit tests beside the layer they exercise; use disposable PostgreSQL
 integration tests for persistence behavior rather than EF Core's in-memory provider.
+
+### Shared live-update browser regression
+
+With a compatible Playwright Chromium installed, run the isolated regression:
+
+```bash
+FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS=1 dotnet test \
+  --project tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj \
+  --filter 'FullyQualifiedName~LiveUpdatesBrowserTests'
+```
+
+It starts a disposable PostgreSQL database and a local Kestrel test host, verifies
+one WebSocket across client-side navigation, then disconnects the browser and
+checks that reconnect restores a missed notification. It does not use lab or
+production credentials. `FAMILY_LIBRARIAN_E2E_CHROMIUM_EXECUTABLE` optionally points
+to an existing compatible Chromium executable instead of Playwright's default.

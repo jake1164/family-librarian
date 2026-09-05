@@ -1,8 +1,11 @@
 using System.Net.Http.Json;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Domain;
+using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Infrastructure.Identity;
+using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -69,6 +72,22 @@ internal sealed class WebTestFixture : IAsyncDisposable
     internal IServiceProvider Services => _factory.Services;
 
     internal string ConnectionString => _connectionString;
+
+    /// <summary>Give an independent workflow test its own Work instead of bypassing request deduplication.</summary>
+    internal async Task<Guid> CopyWorkForTestAsync(Guid templateId)
+    {
+        await using var scope = Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var template = await database.Works.Include(work => work.Authors).ThenInclude(author => author.Author)
+            .SingleAsync(work => work.Id == templateId);
+        var copy = new Work(template.CanonicalTitle, template.Description, template.CoverUrl,
+            template.FirstPublicationDate, template.PublicationStatus, DateTimeOffset.UtcNow);
+        foreach (var author in template.Authors)
+            copy.AddAuthor(author.Author, author.Ordinal);
+        database.Works.Add(copy);
+        await database.SaveChangesAsync();
+        return copy.Id;
+    }
 
     /// <summary>
     /// A client with no session, following no redirects so a 401 stays visible.

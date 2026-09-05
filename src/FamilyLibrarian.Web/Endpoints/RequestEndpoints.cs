@@ -51,7 +51,9 @@ internal static class RequestEndpoints
             request.Note,
             request.ConfirmDuplicate,
             request.ConfirmOwned,
-            cancellationToken);
+            cancellationToken,
+            request.VersionKind,
+            request.VersionDetails);
 
         return result.Outcome switch
         {
@@ -178,9 +180,14 @@ internal static class RequestEndpoints
         request.RequestedAtUtc,
         request.StatusChangedAtUtc,
         (availableTransitions ?? BookRequestService.RequesterTransitionsFrom(request.Status))
+            .Where(status => !request.RequiresManualFulfillment || status != RequestStatus.PendingAcquisition)
             .Select(status => status.ToString())
             .ToArray(),
-        request.Version);
+        request.Version,
+        request.RequesterCount,
+        request.RequiresManualFulfillment,
+        request.VersionKind,
+        request.VersionDetails);
 
     // Plain language for a family, not the enum name. The status itself travels
     // separately so the client never has to parse this sentence.

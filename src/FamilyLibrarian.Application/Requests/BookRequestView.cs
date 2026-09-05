@@ -22,7 +22,11 @@ public sealed record BookRequestView(
     string? AdminNote,
     DateTimeOffset RequestedAtUtc,
     DateTimeOffset StatusChangedAtUtc,
-    uint Version)
+    uint Version,
+    int RequesterCount = 1,
+    bool RequiresManualFulfillment = false,
+    string? VersionKind = null,
+    string? VersionDetails = null)
 {
     public bool IsActive => RequestStatusTransitions.IsActive(Status);
 }
@@ -42,7 +46,10 @@ public sealed record AdminBookRequestView(
     BookRequestView Request,
     string RequesterDisplayName,
     string RequesterEmail,
-    IReadOnlyList<RequestStatusHistoryView> StatusHistory);
+    IReadOnlyList<RequestStatusHistoryView> StatusHistory,
+    IReadOnlyList<RequestParticipantView>? Participants = null);
+
+public sealed record RequestParticipantView(string DisplayName, string Email, string? Note, bool Withdrawn);
 
 public sealed record RequestStatusHistoryView(
     RequestStatus? FromStatus,

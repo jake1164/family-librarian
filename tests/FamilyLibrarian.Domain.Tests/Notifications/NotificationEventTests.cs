@@ -52,12 +52,22 @@ public sealed class NotificationEventTests
         var notification = CreateAdminBroadcast();
         var recurredAt = OccurredAt.AddHours(1);
 
-        notification.Recur(recurredAt, detail: "Second failure");
+        notification.Recur(recurredAt, "Title", detail: "Second failure");
 
         Assert.AreEqual(2, notification.RepeatCount);
         Assert.AreEqual(OccurredAt, notification.OccurredAtUtc);
         Assert.AreEqual(recurredAt, notification.LastOccurredAtUtc);
         Assert.AreEqual("Second failure", notification.Detail);
+    }
+
+    [TestMethod]
+    public void RecurUpdatesTheTitle()
+    {
+        var notification = CreateAdminBroadcast();
+
+        notification.Recur(OccurredAt.AddHours(1), "Updated title", detail: null);
+
+        Assert.AreEqual("Updated title", notification.Title);
     }
 
     [TestMethod]
@@ -74,7 +84,7 @@ public sealed class NotificationEventTests
             subjectId: null,
             OccurredAt);
 
-        notification.Recur(OccurredAt.AddHours(1), detail: null);
+        notification.Recur(OccurredAt.AddHours(1), "Title", detail: null);
 
         Assert.AreEqual("First failure", notification.Detail);
     }

@@ -17,9 +17,9 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         Guid workId,
         CancellationToken cancellationToken) =>
         await database.BookRequests
+            .Include(request => request.Participants)
             .Include(request => request.Formats)
-            .Where(request => request.UserId == userId &&
-                request.WorkId == workId &&
+            .Where(request => request.WorkId == workId &&
                 (request.Status == RequestStatus.PendingAcquisition ||
                     request.Status == RequestStatus.NeedsReview))
             .OrderByDescending(request => request.RequestedAtUtc)
@@ -30,17 +30,18 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         Guid userId,
         CancellationToken cancellationToken) =>
         database.BookRequests
+            .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
             .SingleOrDefaultAsync(
-                request => request.Id == requestId && request.UserId == userId,
+                request => request.Id == requestId && request.Participants.Any(participant => participant.UserId == userId),
                 cancellationToken);
 
     public async Task<IReadOnlyList<BookRequestView>> ListForUserAsync(
         Guid userId,
         CancellationToken cancellationToken)
     {
-        var requests = await ProjectViews(database.BookRequests.Where(request => request.UserId == userId))
+        var requests = await ProjectViews(database.BookRequests.Where(request => request.Participants.Any(participant => participant.UserId == userId)), userId)
             .ToArrayAsync(cancellationToken);
         return await AddRequesterProgressAsync(requests, cancellationToken);
     }
@@ -51,7 +52,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         CancellationToken cancellationToken)
     {
         var request = await ProjectViews(database.BookRequests
-                .Where(request => request.Id == requestId && request.UserId == userId))
+                .Where(request => request.Id == requestId && request.Participants.Any(participant => participant.UserId == userId)), userId)
             .SingleOrDefaultAsync(cancellationToken);
         if (request is null)
         {
@@ -84,6 +85,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         Guid requestId,
         CancellationToken cancellationToken) =>
         database.BookRequests
+            .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
             .SingleOrDefaultAsync(request => request.Id == requestId, cancellationToken);
@@ -95,9 +97,10 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
 
         return await database.BookRequests
+            .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
-            .Where(request => request.Status == RequestStatus.PendingAcquisition)
+            .Where(request => request.Status == RequestStatus.PendingAcquisition && !request.RequiresManualFulfillment)
             .OrderBy(request => request.RequestedAtUtc)
             .Take(maximumCount)
             .ToArrayAsync(cancellationToken);
@@ -114,6 +117,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         Guid requestFormatId,
         CancellationToken cancellationToken) =>
         database.BookRequests
+            .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
             .SingleOrDefaultAsync(
@@ -140,6 +144,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         CancellationToken cancellationToken)
     {
         var query = database.BookRequests
+            .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
             .Where(request => request.Status == status);
@@ -174,29 +179,29 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         // throw, so join the existing scope instead.
         if (database.Database.CurrentTransaction is not null)
         {
-            await AcquireLockAsync(userId, workId, cancellationToken);
+            await AcquireLockAsync(workId, cancellationToken);
             return await operation(cancellationToken);
         }
 
         await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
-        await AcquireLockAsync(userId, workId, cancellationToken);
+        await AcquireLockAsync(workId, cancellationToken);
         var result = await operation(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return result;
     }
 
     /// <summary>
-    /// Takes a transaction-scoped advisory lock keyed on (user, Work).
+    /// Takes a transaction-scoped advisory lock keyed on Work across all requesters.
     /// </summary>
     /// <remarks>
     /// <c>pg_advisory_xact_lock</c> releases on commit or rollback, so a failed
-    /// create cannot strand the lock. The two 32-bit keys are hashes of the two
-    /// GUIDs: a collision only makes two unrelated pairs serialize with each
+    /// create cannot strand the lock. The keys are a namespace and a Work hash:
+    /// a collision only makes two unrelated works serialize with each
     /// other, which costs a little concurrency and breaks nothing.
     /// </remarks>
-    private async Task AcquireLockAsync(Guid userId, Guid workId, CancellationToken cancellationToken) =>
+    private async Task AcquireLockAsync(Guid workId, CancellationToken cancellationToken) =>
         _ = await database.Database.ExecuteSqlAsync(
-            $"SELECT pg_advisory_xact_lock({userId.GetHashCode()}, {workId.GetHashCode()})",
+            $"SELECT pg_advisory_xact_lock({831704}, {workId.GetHashCode()})",
             cancellationToken);
 
     /// <summary>
@@ -358,7 +363,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
     /// the database keeps My Requests from paging through everything later.
     /// </para>
     /// </remarks>
-    private IQueryable<BookRequestView> ProjectViews(IQueryable<BookRequest> requests) =>
+    private IQueryable<BookRequestView> ProjectViews(IQueryable<BookRequest> requests, Guid userId) =>
         from request in requests
         join work in database.Works on request.WorkId equals work.Id
         orderby request.StatusChangedAtUtc descending
@@ -371,16 +376,28 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                 .Select(author => author.Author.CanonicalName)
                 .ToList(),
             work.CoverUrl,
-            request.Status,
+            request.Participants.Any(participant => participant.UserId == userId && participant.WithdrawnAtUtc != null)
+                ? RequestStatus.Cancelled
+                : request.Formats.Where(format => request.Participants.Any(participant => participant.UserId == userId &&
+                    ((format.MediaType == RequestMediaType.Ebook && participant.WantsEbook) ||
+                     (format.MediaType == RequestMediaType.Audiobook && participant.WantsAudiobook))))
+                    .All(format => format.Status == RequestFormatStatus.Available) ? RequestStatus.Available : request.Status,
             request.Formats
+                .Where(format => request.Participants.Any(participant => participant.UserId == userId &&
+                    ((format.MediaType == RequestMediaType.Ebook && participant.WantsEbook) ||
+                     (format.MediaType == RequestMediaType.Audiobook && participant.WantsAudiobook))))
                 .OrderBy(format => format.MediaType)
                 .Select(format => new RequestFormatView(format.Id, format.MediaType, format.Status))
                 .ToList(),
-            request.RequesterNote,
+            request.Participants.Where(participant => participant.UserId == userId).Select(participant => participant.Note).FirstOrDefault(),
             request.AdminNote,
             request.RequestedAtUtc,
             request.StatusChangedAtUtc,
-            request.Version);
+            request.Version,
+            request.Participants.Count(participant => participant.WithdrawnAtUtc == null),
+            request.RequiresManualFulfillment,
+            request.VersionKind,
+            request.VersionDetails);
 
     /// <summary>
     /// The queue projection explicitly joins the Identity user. This association
@@ -411,7 +428,11 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                 request.AdminNote,
                 request.RequestedAtUtc,
                 request.StatusChangedAtUtc,
-                request.Version),
+                request.Version,
+                request.Participants.Count(participant => participant.WithdrawnAtUtc == null),
+                request.RequiresManualFulfillment,
+                request.VersionKind,
+                request.VersionDetails),
             user.DisplayName,
             user.Email!,
             request.StatusHistory
@@ -421,7 +442,12 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                     history.ToStatus,
                     history.Reason,
                     history.OccurredAtUtc))
-                .ToList());
+                .ToList(),
+            request.Participants.Select(participant => new RequestParticipantView(
+                database.Users.Where(member => member.Id == participant.UserId).Select(member => member.DisplayName).First(),
+                database.Users.Where(member => member.Id == participant.UserId).Select(member => member.Email!).First(),
+                participant.Note,
+                participant.WithdrawnAtUtc != null)).ToList());
 
     private sealed record MediaAssetProgressRow(
         Guid AssetId,

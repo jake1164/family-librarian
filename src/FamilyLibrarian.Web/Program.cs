@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
+using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web.Acquisition;
@@ -11,15 +12,30 @@ using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
 using FamilyLibrarian.Web.Gutenberg;
 using FamilyLibrarian.Web.Publishing;
+using FamilyLibrarian.Web.Readiness;
+using FamilyLibrarian.Web.Realtime;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<LiveConnections>();
+builder.Services.AddSingleton<LiveUpdatesPublisher>();
+builder.Services.ConfigureDbContext<AppDbContext>((services, options) =>
+{
+    var buffer = new LiveUpdateBuffer();
+    var publisher = services.GetRequiredService<LiveUpdatesPublisher>();
+    options.AddInterceptors(new LiveUpdatesSaveInterceptor(buffer, publisher),
+        new LiveUpdatesTransactionInterceptor(buffer, publisher));
+});
+builder.Services.AddScoped<SystemReadinessService>();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<CwaVerificationHostedService>();
+    builder.Services.AddHostedService<AudiobookshelfVerificationHostedService>();
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
     builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();
@@ -205,6 +221,7 @@ app.MapNotificationEndpoints();
 app.MapSmtpSettingsEndpoints();
 app.MapFeedbackEndpoints();
 app.MapSecurityQueueEndpoints();
+app.MapLiveUpdatesEndpoints();
 app.MapInvitationEndpoints();
 app.MapAccountEndpoints();
 app.MapMetadataIntegrationEndpoints();
@@ -212,6 +229,7 @@ app.MapCwaSettingsEndpoints();
 app.MapAudiobookshelfSettingsEndpoints();
 app.MapPublishingQueueEndpoints();
 app.MapPolicyEndpoints();
+app.MapSystemReadinessEndpoints();
 app.MapOidcSettingsEndpoints();
 app.MapExternalProviderEndpoints();
 app.MapPrivateEgressGatewayEndpoints();

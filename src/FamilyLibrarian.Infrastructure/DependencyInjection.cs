@@ -423,10 +423,11 @@ public static class DependencyInjection
         services.AddScoped<IDeliveryRepository, DeliveryRepository>();
         services.AddScoped<IWorkLookup, WorkLookup>();
 
-        // Shared destination-matching core: one deterministic matcher used by
-        // both CWA and Audiobookshelf to decide "is this candidate the
-        // requested book." Swapping IAmbiguityResolver for a real
-        // implementation later upgrades both destinations at once.
+        // Shared identity-matching core: CWA, Audiobookshelf, Gutenberg
+        // discovery, and EPUB package validation use one deterministic policy
+        // to decide "is this candidate the requested book." Swapping
+        // IAmbiguityResolver for a real implementation later upgrades both
+        // destinations at once.
         services.AddSingleton<IBookMatcher, DeterministicBookMatcher>();
         services.AddSingleton<IAmbiguityResolver, NoOpAmbiguityResolver>();
         services.AddSingleton<IBookMatchService, BookMatchService>();

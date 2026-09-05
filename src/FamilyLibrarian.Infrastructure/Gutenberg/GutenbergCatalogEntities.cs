@@ -85,7 +85,7 @@ internal sealed class GutenbergCatalogFormatEntity
     public DateTimeOffset? ModifiedAtUtc { get; set; }
 }
 
-internal sealed class GutenbergCatalogSyncStateEntity
+public sealed class GutenbergCatalogSyncStateEntity
 {
     public const string SingletonId = "gutenberg";
 

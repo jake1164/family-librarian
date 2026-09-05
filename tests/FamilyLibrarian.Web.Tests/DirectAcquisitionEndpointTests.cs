@@ -69,6 +69,14 @@ public sealed class DirectAcquisitionEndpointTests
 
         var job = await database.AcquisitionJobs.SingleAsync(j => j.Id == result.AcquisitionJobId);
         Assert.AreEqual("gutendex", job.ProviderId);
+
+        // A manual "get free copy" click is a provider lookup too — it must
+        // land in the same ledger as an automatic one, or the request
+        // detail's "Provider activity" goes stale after a manual retry.
+        Assert.AreEqual(1, await database.ProviderAttempts.CountAsync(attempt =>
+            attempt.RequestFormatId == formatId &&
+            attempt.ProviderId == "gutendex" &&
+            attempt.Outcome == ProviderAttemptOutcome.Acquired));
     }
 
     [TestMethod]
@@ -84,6 +92,35 @@ public sealed class DirectAcquisitionEndpointTests
             content: null);
 
         Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(1, await database.ProviderAttempts.CountAsync(attempt =>
+            attempt.RequestFormatId == formatId &&
+            attempt.ProviderId == "gutendex" &&
+            attempt.Outcome == ProviderAttemptOutcome.Failed));
+    }
+
+    [TestMethod]
+    public async Task AManualFetchThatExceedsTheTrackLimitReturnsACleanErrorInsteadOfCrashing()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: true, throwsOnFetch: true));
+        using var admin = await CreateTokenClientAsync(factory);
+        var (requestId, formatId) = await CreateEbookRequestAsync(admin);
+
+        var response = await admin.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/direct-acquisitions/gutendex/1234",
+            content: null);
+
+        Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(1, await database.ProviderAttempts.CountAsync(attempt =>
+            attempt.RequestFormatId == formatId &&
+            attempt.ProviderId == "gutendex" &&
+            attempt.Outcome == ProviderAttemptOutcome.Failed));
     }
 
     [TestMethod]
@@ -165,6 +202,32 @@ public sealed class DirectAcquisitionEndpointTests
             asset => asset.AssociatedRequestFormatId == formatId));
         Assert.AreEqual(1, await database.ProviderAttempts.CountAsync(
             attempt => attempt.RequestFormatId == formatId && attempt.Outcome == ProviderAttemptOutcome.NoMatch));
+    }
+
+    [TestMethod]
+    public async Task ANotYetReadyProviderIsSkippedWithoutRecordingAnAttempt()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: true, isReady: false));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await database.BookRequests.SingleAsync(request => request.Id == requestId);
+
+        // A provider that isn't ready yet (e.g. a local catalogue mid-import)
+        // must be skipped exactly like a source that has nothing yet -- no
+        // ProviderAttempt recorded (which would otherwise start this
+        // provider's retry cooldown on a lookup that was never really made),
+        // and the request stays queued for the next automatic pass.
+        Assert.AreEqual(RequestStatus.PendingAcquisition, request.Status);
+        Assert.AreEqual(0, await database.ProviderAttempts.CountAsync(
+            attempt => attempt.RequestFormatId == formatId));
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == formatId));
     }
 
     [TestMethod]
@@ -282,7 +345,7 @@ public sealed class DirectAcquisitionEndpointTests
 
         var created = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(work.Id, ["Ebook"], null, true, false));
+            new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
@@ -292,10 +355,14 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     /// <summary>Always reports one DirectAcquisition match (or none), and fetches a fake EPUB.</summary>
-    private sealed class FakeProvider(bool matches, string providerId = "gutendex", string providerResultId = "1234")
+    private sealed class FakeProvider(
+        bool matches, string providerId = "gutendex", string providerResultId = "1234", bool throwsOnFetch = false,
+        bool isReady = true)
         : IAutomaticDirectAcquisitionProvider
     {
         public string Id => providerId;
+
+        public Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(isReady);
 
         public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
             Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)
@@ -330,12 +397,20 @@ public sealed class DirectAcquisitionEndpointTests
         }
 
         public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
-            FulfillmentOption fulfillmentOption, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<DirectAcquisitionFile>>(
+            FulfillmentOption fulfillmentOption, CancellationToken cancellationToken)
+        {
+            if (throwsOnFetch)
+            {
+                throw new InvalidOperationException(
+                    "The Gutenberg audiobook exceeds the configured track limit.");
+            }
+
+            return Task.FromResult<IReadOnlyList<DirectAcquisitionFile>>(
             [
                 new DirectAcquisitionFile(
                     new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
                     "the-hobbit.epub")
             ]);
+        }
     }
 }

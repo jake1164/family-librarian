@@ -168,6 +168,26 @@ public sealed class AudiobookshelfPublishingServiceTests
     }
 
     [TestMethod]
+    public async Task AutomaticRecheckVerifiesEveryAwaitingDeliveryWithoutSendingItAgain()
+    {
+        var context = ConfiguredContext();
+        var asset = context.CreateAsset();
+        context.ApiClient.ExistingItemId = null;
+        context.ApiClient.UploadResult = new AudiobookshelfUploadResult(true, null, null);
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+        var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(DeliveryStatus.Verifying, delivery!.Status);
+
+        context.ApiClient.ExistingItemId = "li_found-on-automatic-recheck";
+        var checkedCount = await context.Service.RecheckAwaitingVerificationAsync(CancellationToken.None);
+
+        var reloaded = await context.Repository.FindAsync(delivery.Id, CancellationToken.None);
+        Assert.AreEqual(1, checkedCount);
+        Assert.AreEqual(DeliveryStatus.Delivered, reloaded!.Status);
+        Assert.AreEqual(1, context.ApiClient.UploadCount);
+    }
+
+    [TestMethod]
     public async Task ASuccessfulBundleUploadArchivesEveryTrackAndDeletesEachTrustedFile()
     {
         var context = ConfiguredContext();
@@ -353,6 +373,11 @@ public sealed class AudiobookshelfPublishingServiceTests
 
         public Task<IReadOnlyList<DeliveryView>> ListRecentAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<IReadOnlyList<Guid>> ListAwaitingVerificationIdsAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Guid>>(
+                _byId.Values.Where(delivery => delivery.Status == DeliveryStatus.Verifying)
+                    .Select(delivery => delivery.Id).ToArray());
 
         public void Add(Delivery delivery) => _byId[delivery.Id] = delivery;
 

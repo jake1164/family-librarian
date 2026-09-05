@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Requests;
@@ -20,11 +21,16 @@ public sealed class GutenbergProvider(
     IWorkLookup workLookup,
     IGutenbergFileResolver fileResolver,
     HttpClient httpClient,
-    ManualImportPolicy importPolicy) : IAutomaticDirectAcquisitionProvider
+    ManualImportPolicy importPolicy,
+    IBookMatcher bookMatcher) : IAutomaticDirectAcquisitionProvider
 {
     private const string AudioBundleFormat = "audio-bundle";
 
     public string Id => ProviderRegistry.GutenbergProviderId;
+
+    /// <summary>Not ready while the local RDF catalogue is still (re)importing — see <see cref="IDirectAcquisitionProvider.IsReadyAsync"/>.</summary>
+    public async Task<bool> IsReadyAsync(CancellationToken cancellationToken) =>
+        (await catalog.GetStatusAsync(cancellationToken)).IsReady;
 
     public async Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
         Guid workId,
@@ -57,10 +63,10 @@ public sealed class GutenbergProvider(
 
         foreach (var candidate in candidates)
         {
-            if (!TitleMatches(work.Title, candidate.Title) ||
+            if (!bookMatcher.TitleMatches(work.Title, candidate.Title) ||
                 (!string.IsNullOrWhiteSpace(work.PrimaryAuthor) && !candidate.People
                     .Where(person => person.Role == GutenbergPersonRole.Author)
-                    .Any(person => AuthorMatches(work.PrimaryAuthor, person.Name))))
+                    .Any(person => bookMatcher.AuthorMatches(work.PrimaryAuthor, person.Name))))
             {
                 continue;
             }
@@ -97,7 +103,12 @@ public sealed class GutenbergProvider(
 
         if (reference.SourcePaths.Length > importPolicy.MaxAudiobookBundleTracks)
         {
-            throw new InvalidOperationException("The Gutenberg audiobook exceeds the configured track limit.");
+            throw new InvalidOperationException(
+                $"This Gutenberg audiobook has {reference.SourcePaths.Length} tracks, over the configured " +
+                $"track limit of {importPolicy.MaxAudiobookBundleTracks}. Raise " +
+                $"{ManualImportPolicy.SectionName}:{nameof(ManualImportPolicy.MaxAudiobookBundleTracks)} " +
+                "in configuration and restart the app to allow automatic acquisition, or upload the audiobook " +
+                "file manually from this request's Files section.");
         }
 
         IReadOnlyList<DirectAcquisitionFile> files = reference.SourcePaths.Select((path, index) => new DirectAcquisitionFile(
@@ -238,11 +249,4 @@ public sealed class GutenbergProvider(
         public override async ValueTask DisposeAsync() { if (inner is not null) await inner.DisposeAsync(); await base.DisposeAsync(); }
     }
 
-    private static bool TitleMatches(string expected, string actual) => NormalizeTitle(actual).StartsWith(NormalizeTitle(expected), StringComparison.Ordinal);
-    private static bool AuthorMatches(string expected, string actual) => AuthorTokens(expected).All(AuthorTokens(actual).Contains);
-    private static string NormalizeTitle(string value) => new(value.Normalize().Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
-    private static string[] AuthorTokens(string value) => value.Normalize().Split(default(char[]), StringSplitOptions.RemoveEmptyEntries)
-        .SelectMany(part => part.Split([',', '.', ';', ':', '-', '_'], StringSplitOptions.RemoveEmptyEntries))
-        .Select(part => new string(part.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray()))
-        .Where(part => !string.IsNullOrEmpty(part)).ToArray();
 }

@@ -47,6 +47,12 @@ public sealed class DeliveryRepository(AppDbContext database) : IDeliveryReposit
         return await query.ToArrayAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Guid>> ListAwaitingVerificationIdsAsync(CancellationToken cancellationToken) =>
+        await database.Deliveries
+            .Where(delivery => delivery.Status == DeliveryStatus.Verifying)
+            .Select(delivery => delivery.Id)
+            .ToArrayAsync(cancellationToken);
+
     public void Add(Delivery delivery) => database.Deliveries.Add(delivery);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);

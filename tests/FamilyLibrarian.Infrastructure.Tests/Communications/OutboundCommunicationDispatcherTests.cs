@@ -54,6 +54,27 @@ public sealed class OutboundCommunicationDispatcherTests
     }
 
     [TestMethod]
+    public async Task EachCommunicationIsCommittedBeforeTheNextOneIsSent()
+    {
+        // A send is not transactional with our database: if the process were
+        // interrupted between a send and a batched final commit, an
+        // already-delivered communication would still look unprocessed and
+        // get resent on the next pass. Committing after each one closes that
+        // window, so this pins one SaveChanges call per communication rather
+        // than one for the whole batch.
+        var store = new FakeOutboundCommunicationStore();
+        store.Enqueue(NewCommunication());
+        store.Enqueue(NewCommunication());
+        var provider = new FakeOutboundCommunicationProvider("smtp", enabled: true, SendResult.Success());
+        var dispatcher = Create(store, provider);
+
+        var processed = await dispatcher.DispatchPendingAsync(CancellationToken.None);
+
+        Assert.AreEqual(2, processed);
+        Assert.AreEqual(2, store.SaveChangesCallCount);
+    }
+
+    [TestMethod]
     public async Task AProviderThatThrowsRecordsAFailedDeliveryAndDoesNotBlockTheRestOfTheBatch()
     {
         var store = new FakeOutboundCommunicationStore();
@@ -85,6 +106,8 @@ public sealed class OutboundCommunicationDispatcherTests
     {
         public List<OutboundCommunication> All { get; } = [];
 
+        public int SaveChangesCallCount { get; private set; }
+
         public void Enqueue(OutboundCommunication communication) => All.Add(communication);
 
         public Task EnqueueAsync(OutboundCommunication communication, CancellationToken cancellationToken)
@@ -98,7 +121,11 @@ public sealed class OutboundCommunicationDispatcherTests
             Task.FromResult<IReadOnlyList<OutboundCommunication>>(
                 All.Where(communication => communication.ProcessedAtUtc is null).Take(maxCount).ToList());
 
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task SaveChangesAsync(CancellationToken cancellationToken)
+        {
+            SaveChangesCallCount++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeOutboundCommunicationProvider(string providerId, bool enabled, SendResult result)

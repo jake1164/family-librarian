@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Family Librarian</title>
     <base href="/" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="stylesheet" href="_content/MudBlazor/MudBlazor.min.css" />
     <link rel="stylesheet" href="css/app.css" />
 </head>
@@ -25,6 +26,13 @@
             link.download = filename;
             link.click();
             URL.revokeObjectURL(link.href);
+        };
+        // A plain href="#id" gets intercepted by Blazor's router and resolved
+        // against the app's base URI, navigating to "/" instead of scrolling
+        // within the current page. Scrolling via JS interop sidesteps the
+        // router entirely.
+        window.familyLibrarian.scrollToElement = (elementId) => {
+            document.getElementById(elementId)?.scrollIntoView({ behavior: "smooth", block: "start" });
         };
     </script>
 </body>

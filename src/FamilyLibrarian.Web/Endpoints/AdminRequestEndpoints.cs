@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Providers;
@@ -5,6 +6,7 @@ using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Requests;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
@@ -288,10 +290,30 @@ internal static class AdminRequestEndpoints
         string providerId,
         string providerResultId,
         DirectAcquisitionSecurityService acquisitions,
+        IProviderAttemptRepository providerAttempts,
+        IClock clock,
         CancellationToken cancellationToken)
     {
         var result = await acquisitions.AcquireAndEvaluateAsync(
             requestId, formatId, providerId, providerResultId, cancellationToken);
+
+        // A librarian's manual "get free copy" click is still a provider
+        // lookup; record it in the same ledger the automatic poller uses so
+        // "Provider activity" and the Tasks dashboard's "Source and download
+        // activity" don't go stale the moment an admin works around an
+        // automatic failure by retrying manually — see ProviderAttempt.
+        providerAttempts.Add(new ProviderAttempt(
+            requestId,
+            formatId,
+            providerId,
+            result.Outcome == ManualImportOutcome.Success ? ProviderAttemptOutcome.Acquired : ProviderAttemptOutcome.Failed,
+            result.Outcome == ManualImportOutcome.Success
+                ? "A copy was manually fetched by a librarian and sent through the security pipeline."
+                : result.Error ?? "The manual fetch could not be completed.",
+            clock.UtcNow,
+            nextEligibleCheckAtUtc: null));
+        await providerAttempts.SaveChangesAsync(cancellationToken);
+
         return ToManualImportResult(result);
     }
 
@@ -337,7 +359,8 @@ internal static class AdminRequestEndpoints
     private static AdminBookRequestResponse ToAdminRequestResponse(AdminBookRequestView request) => new(
         RequestEndpoints.ToRequestResponse(
             request.Request,
-            BookRequestService.AdminTransitionsFrom(request.Request.Status)),
+            BookRequestService.AdminTransitionsFrom(request.Request.Status)
+                .Where(status => !request.Request.RequiresManualFulfillment || status != RequestStatus.PendingAcquisition).ToArray()),
         request.RequesterDisplayName,
         request.RequesterEmail,
         request.StatusHistory
@@ -346,5 +369,7 @@ internal static class AdminRequestEndpoints
                 history.ToStatus.ToString(),
                 history.Reason,
                 history.OccurredAtUtc))
-            .ToArray());
+            .ToArray(),
+        request.Participants?.Select(participant => new RequestParticipantResponse(
+            participant.DisplayName, participant.Email, participant.Note, participant.Withdrawn)).ToArray());
 }

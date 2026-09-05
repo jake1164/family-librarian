@@ -58,9 +58,16 @@ public sealed class OutboundCommunicationDispatcher(
             }
 
             communication.MarkProcessed(clock.UtcNow);
+
+            // Commit right after this communication is marked processed, not
+            // once for the whole batch: a provider send is not transactional
+            // with our database, so if the process is interrupted (a restart,
+            // a crash) between a successful send and the commit, a batched
+            // commit would leave the row looking unprocessed and the next
+            // dispatch pass would resend mail that already went out.
+            await store.SaveChangesAsync(cancellationToken);
         }
 
-        await store.SaveChangesAsync(cancellationToken);
         return pending.Count;
     }
 }

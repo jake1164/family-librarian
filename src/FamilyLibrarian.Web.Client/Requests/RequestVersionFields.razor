@@ -1,0 +1,21 @@
+<MudSelect T="string" Label="Which version do you need?" Value="@Kind" ValueChanged="@KindChanged">
+    <MudSelectItem T="string" Value="@(string.Empty)">Any suitable copy (share the family request)</MudSelectItem>
+    <MudSelectItem T="string" Value="@("Language")">Different language or translation</MudSelectItem>
+    <MudSelectItem T="string" Value="@("Edition")">Specific edition</MudSelectItem>
+    <MudSelectItem T="string" Value="@("Narration")">Specific narrator or recording</MudSelectItem>
+    <MudSelectItem T="string" Value="@("Accessibility")">Accessibility requirement</MudSelectItem>
+    <MudSelectItem T="string" Value="@("Replacement")">Replace an unsuitable copy</MudSelectItem>
+</MudSelect>
+@if (!string.IsNullOrWhiteSpace(Kind))
+{
+    <MudTextField T="string" Label="Describe the version needed" Value="@Details" ValueChanged="@DetailsChanged"
+                  Required="true" MaxLength="1000" Lines="3"
+                  HelperText="Name the language, translator, edition/ISBN, narrator, or what must change. A librarian will review this before acquisition." />
+}
+
+@code {
+    [Parameter] public string? Kind { get; set; }
+    [Parameter] public EventCallback<string> KindChanged { get; set; }
+    [Parameter] public string? Details { get; set; }
+    [Parameter] public EventCallback<string> DetailsChanged { get; set; }
+}

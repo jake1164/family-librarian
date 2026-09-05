@@ -1,6 +1,6 @@
 @page "/admin/requests/{RequestId:guid}"
 @attribute [Authorize(Roles = "Admin")]
-@implements IDisposable
+@inherits LiveComponentBase
 @using FamilyLibrarian.Web.Client.Acquisition
 @using FamilyLibrarian.Web.Client.Catalog
 @using FamilyLibrarian.Contracts.Acquisition
@@ -38,23 +38,39 @@
             <MudText Typo="Typo.h3">@request.Request.WorkTitle</MudText>
             <MudText Typo="Typo.body1">@string.Join(", ", request.Request.Authors)</MudText>
             <MudText Typo="Typo.body2">
-                Requested by @request.RequesterDisplayName (@request.RequesterEmail)
+                Started by @request.RequesterDisplayName (@request.RequesterEmail)
             </MudText>
         </div>
 
+        @if (request.Participants is not null)
+        {
+            @foreach (var participant in request.Participants)
+            {
+                <MudText Typo="Typo.body2">@participant.DisplayName (@participant.Email) @(participant.Withdrawn ? "— withdrawn" : "") — @participant.Note</MudText>
+            }
+        }
         <MudPaper Outlined="true" Class="pa-4">
             <MudStack Spacing="2">
                 <MudText Typo="Typo.h6">Request</MudText>
-                <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
-                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                    <RequestStatusChip Status="@request.Request.Status" />
                     @foreach (var format in request.Request.Formats)
                     {
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
-                            @format.MediaType — @format.Status
-                        </MudChip>
+                        <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
+                                           ProgressCode="@format.ProgressCode"
+                                           ProgressDescription="@format.ProgressDescription" />
                     }
                 </MudStack>
+                <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
                 <MudText Typo="Typo.caption">Asked @request.Request.RequestedAtUtc.ToLocalTime().ToString("f")</MudText>
+                <MudText Typo="Typo.body2">@request.Request.RequesterCount active requester(s) share this fulfillment.</MudText>
+                @if (request.Request.RequiresManualFulfillment)
+                {
+                    <MudAlert Severity="Severity.Warning">
+                        @request.Request.VersionKind: @request.Request.VersionDetails
+                        This request is excluded from automatic acquisition and bulk rechecks. Review the requested difference before selecting a copy.
+                    </MudAlert>
+                }
                 @if (!string.IsNullOrWhiteSpace(request.Request.Note))
                 {
                     <MudText Typo="Typo.body2"><em>Requester note:</em> @request.Request.Note</MudText>
@@ -142,29 +158,46 @@
                 <MudText Typo="Typo.body2">
                     Manually supply a file for a requested format. It is scanned and
                     format-checked automatically, then stays in security review — visit the
-                    <MudLink Href="admin/security">Security Queue</MudLink>
+                    <MudLink Href="admin/security">Security scans</MudLink>
                     to approve it before it can be delivered.
                 </MudText>
                 @foreach (var format in request.Request.Formats)
                 {
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
-                        <MudText Typo="Typo.body2" Style="min-width: 100px;">@format.MediaType</MudText>
-                        <InputFile OnChange="@(args => ImportFileAsync(format.FormatId, args))" disabled="@isBusy" />
-                        @if (DirectAcquisitionOption(format.MediaType) is { } option)
-                        {
-                            <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@isBusy"
-                                       OnClick="@(() => AcquireDirectAsync(format.FormatId, option))">
-                                Get free copy from @option.ProviderId
-                            </MudButton>
-                            @if (Recommendation(format.MediaType) is { } recommendation &&
-                                 recommendation.ProviderId == option.ProviderId &&
-                                 recommendation.ProviderResultId == option.ProviderResultId)
+                    @if (format.Status == "Available")
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.body2" Style="min-width: 100px;">@format.MediaType</MudText>
+                            <MudText Typo="Typo.body2">Already delivered.</MudText>
+                        </MudStack>
+                    }
+                    else if (OwnedOption(format.MediaType) is { } owned)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.body2" Style="min-width: 100px;">@format.MediaType</MudText>
+                            <MudText Typo="Typo.body2">Already in the family library (via @owned.ProviderId). No fetch needed.</MudText>
+                        </MudStack>
+                    }
+                    else
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.body2" Style="min-width: 100px;">@format.MediaType</MudText>
+                            <InputFile OnChange="@(args => ImportFileAsync(format.FormatId, args))" disabled="@isBusy" />
+                            @if (DirectAcquisitionOption(format.MediaType) is { } option)
                             {
-                                <MudChip T="string" Size="Size.Small" Color="Color.Primary">Recommended</MudChip>
-                                <MudText Typo="Typo.caption">@recommendation.Reason</MudText>
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@isBusy"
+                                           OnClick="@(() => AcquireDirectAsync(format.FormatId, option))">
+                                    Get free copy from @option.ProviderId
+                                </MudButton>
+                                @if (Recommendation(format.MediaType) is { } recommendation &&
+                                     recommendation.ProviderId == option.ProviderId &&
+                                     recommendation.ProviderResultId == option.ProviderResultId)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">Recommended</MudChip>
+                                    <MudText Typo="Typo.caption">@recommendation.Reason</MudText>
+                                }
                             }
-                        }
-                    </MudStack>
+                        </MudStack>
+                    }
                 }
             </MudStack>
         </MudPaper>
@@ -207,21 +240,31 @@
     private string? providerActivityError;
     private CancellationTokenSource? fulfillmentLoadCancellation;
 
+    protected override void OnInitialized() =>
+        Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.Security | LiveUpdateTopics.Publishing,
+            () => LoadAsync(preserveDraft: true));
+
     protected override Task OnParametersSetAsync() => LoadAsync();
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool preserveDraft = false)
     {
         StopFulfillmentOptionsLoad();
-        isLoading = true;
+        isLoading = !preserveDraft;
         errorMessage = null;
         providerActivityError = null;
-        fulfillment = null;
-        providerAttempts = [];
-        request = null;
+        if (!preserveDraft)
+        {
+            fulfillment = null;
+            providerAttempts = [];
+            request = null;
+        }
+        var loadingRequestId = RequestId;
         try
         {
-            request = await Requests.GetAsync(RequestId);
-            adminNote = request?.Request.AdminNote;
+            var refreshed = await Requests.GetAsync(loadingRequestId);
+            if (loadingRequestId != RequestId) return;
+            request = refreshed;
+            if (!preserveDraft) adminNote = request?.Request.AdminNote;
         }
         catch (HttpRequestException)
         {
@@ -239,7 +282,9 @@
 
         try
         {
-            providerAttempts = await Requests.GetProviderAttemptsAsync(RequestId);
+            var attempts = await Requests.GetProviderAttemptsAsync(loadingRequestId);
+            if (loadingRequestId != RequestId) return;
+            providerAttempts = attempts;
         }
         catch (HttpRequestException)
         {
@@ -290,6 +335,18 @@
         };
 
         return options?.FirstOrDefault(option => option.OptionKind == "DirectAcquisition");
+    }
+
+    private FulfillmentOptionResponse? OwnedOption(string mediaType)
+    {
+        var options = mediaType switch
+        {
+            "Ebook" => fulfillment?.Ebook,
+            "Audiobook" => fulfillment?.Audiobook,
+            _ => null
+        };
+
+        return options?.FirstOrDefault(option => option.OptionKind == "Owned");
     }
 
     private RecommendationResponse? Recommendation(string mediaType) => mediaType switch
@@ -453,5 +510,9 @@
         fulfillmentLoadCancellation = null;
     }
 
-    public void Dispose() => StopFulfillmentOptionsLoad();
+    public override void Dispose()
+    {
+        base.Dispose();
+        StopFulfillmentOptionsLoad();
+    }
 }

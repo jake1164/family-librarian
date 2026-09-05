@@ -778,6 +778,39 @@ identities, not an initial marketplace or automatic container-management system.
 
 ---
 
+### Shared browser updates
+
+Each authenticated WebAssembly tab owns one shared SignalR connection at
+`/api/v1/live`. Pages and layout components subscribe through the scoped client
+service; they do not create connections or run independent data polling loops.
+The service coalesces overlapping refresh requests for each subscriber, retries
+initial failures and dropped connections with capped backoff, and refreshes all
+active subscriptions after reconnect. A common connection indicator and Refresh
+action apply across the application. Navigating away disposes that page's
+subscription without closing the tab's connection; sign-out stops the connection.
+
+SignalR messages carry only topic flags for requests, scans, publishing,
+notifications, sources and system readiness. Existing HTTP APIs provide snapshots
+and perform actions, retaining their authorization, input validation and
+anti-forgery rules. The server resolves request owners and current active users,
+roles and security stamps before sending. Private notifications target their
+recipient; admin topics target current admins. Disabled or revoked sessions are
+closed. Clients cannot select another user's audience or subscribe themselves to
+privileged server groups.
+
+EF save and transaction interceptors capture affected records. Implicit saves
+notify after SaveChanges succeeds; explicit transactions buffer notifications
+until commit and discard them on rollback. Publishers read committed state in a
+fresh scope and isolate notification failures from business writes. Source-catalog
+progress and persisted readiness settings use this same path. Server acquisition,
+verification and catalog workers retain their operational schedules; SignalR
+changes browser refresh delivery, not those workflows.
+
+These are best-effort invalidations, not a durable event log: reconnect and manual
+Refresh recover missed notifications from the APIs. The architecture targets the
+existing single-host modular monolith; multiple application replicas would require
+a shared SignalR backplane and a corresponding connection/revocation design.
+
 ## 13. Security Architecture
 
 All acquired media begins untrusted.

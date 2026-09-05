@@ -101,6 +101,24 @@ public sealed class BookRequestTests
     }
 
     [TestMethod]
+    public void ReturningAPartlyDeliveredRequestToTheQueueDoesNotReopenAnAlreadyAvailableFormat()
+    {
+        var request = Create(RequestMediaType.Ebook, RequestMediaType.Audiobook);
+        var ebookId = request.Formats.Single(format => format.MediaType == RequestMediaType.Ebook).Id;
+        request.MarkFormatAvailable(ebookId, CreatedAt.AddHours(1));
+        request.TransitionTo(RequestStatus.NeedsReview, UserId, null, CreatedAt.AddHours(2));
+
+        request.TransitionTo(RequestStatus.PendingAcquisition, UserId, null, CreatedAt.AddHours(3));
+
+        Assert.AreEqual(
+            RequestFormatStatus.Available,
+            request.Formats.Single(format => format.MediaType == RequestMediaType.Ebook).Status);
+        Assert.AreEqual(
+            RequestFormatStatus.Requested,
+            request.Formats.Single(format => format.MediaType == RequestMediaType.Audiobook).Status);
+    }
+
+    [TestMethod]
     public void MakingTheOnlyRequestedFormatAvailableCompletesTheRequestAndRecordsHistory()
     {
         var request = Create(RequestMediaType.Ebook);
