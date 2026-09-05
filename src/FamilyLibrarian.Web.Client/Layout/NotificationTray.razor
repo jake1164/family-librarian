@@ -7,7 +7,7 @@
          OpenChanged="OnOpenChangedAsync">
     <ActivatorContent>
         <MudBadge Content="@UnreadCount"
-                  Color="Color.Error"
+                  Color="@UnreadBadgeColor"
                   Overlap="true"
                   Visible="@(UnreadCount > 0)">
             <MudIconButton Icon="@Icons.Material.Filled.Notifications"
@@ -80,6 +80,13 @@
     private CancellationTokenSource? refreshCancellation;
 
     private int UnreadCount => entries.Count(entry => !entry.IsRead);
+
+    // Green for good news (e.g. "available"), red the moment any unread entry
+    // is a real issue (Warning/Error) -- an issue among otherwise-good news
+    // must still win, not average out to green.
+    private Color UnreadBadgeColor => entries.Any(entry => !entry.IsRead && entry.Severity is "Warning" or "Error")
+        ? Color.Error
+        : Color.Success;
 
     protected override async Task OnInitializedAsync()
     {
