@@ -1,3 +1,4 @@
+@inherits LiveComponentBase
 @page "/admin/requests"
 @attribute [Authorize(Roles = "Admin")]
 @using FamilyLibrarian.Contracts.Providers
@@ -128,7 +129,8 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadAsync();
+        Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.Sources, LoadAsync);
+        await RefreshLiveAsync();
         await LoadDirectAcquisitionProvidersAsync();
     }
 

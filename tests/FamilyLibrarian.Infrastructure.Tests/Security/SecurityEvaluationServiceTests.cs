@@ -39,10 +39,9 @@ public sealed class SecurityEvaluationServiceTests
         Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
         Assert.AreEqual(MediaAssetStorageState.Processing, context.StagingStore.ZoneOf(asset.StoredFilename));
 
-        // One save for the Processing transition, persisted before scanning
-        // starts; one more for the completed evaluation. Two, not one, is the
-        // whole point of the fix — see the class remarks.
-        Assert.AreEqual(2, context.Repository.SaveCount);
+        // Persist the pending evaluation before scanning, each scan result,
+        // then the final policy outcome.
+        Assert.AreEqual(3, context.Repository.SaveCount);
     }
 
     [TestMethod]
@@ -61,8 +60,10 @@ public sealed class SecurityEvaluationServiceTests
         // Persisted Processing, then persisted the recovery back to Quarantine.
         Assert.AreEqual(2, context.Repository.SaveCount);
 
-        // A botched pass leaves no partial evaluation record behind.
-        Assert.HasCount(0, context.Repository.AddedEvaluations);
+        // Retain evidence that an attempt started, without claiming it passed.
+        var interrupted = context.Repository.AddedEvaluations.Single();
+        Assert.AreEqual(SecurityEvaluationStatus.Pending, interrupted.Status);
+        Assert.IsNull(interrupted.CompletedAtUtc);
 
         var auditEntry = context.Audit.Entries.Single();
         Assert.AreEqual(AuditActions.AssetEvaluationFailed, auditEntry.Action);
@@ -111,7 +112,7 @@ public sealed class SecurityEvaluationServiceTests
         Assert.AreEqual(SecurityEvaluationStatus.Failed, result.Status);
         Assert.AreEqual(MediaAssetStorageState.Destroyed, asset.StorageState);
         Assert.IsFalse(context.StagingStore.Contains(asset.StoredFilename));
-        Assert.AreEqual(3, context.Repository.SaveCount);
+        Assert.AreEqual(4, context.Repository.SaveCount);
         CollectionAssert.AreEquivalent(
             new[] { AuditActions.AssetEvaluated, AuditActions.AssetMalwareDestroyed },
             context.Audit.Entries.Select(entry => entry.Action).ToArray());

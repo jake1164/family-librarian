@@ -17,11 +17,30 @@ internal static class SecurityQueueEndpoints
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
         adminMediaAssets.MapGet("/", ListMediaAssetsAsync);
+        adminMediaAssets.MapGet("/recent", ListRecentMediaAssetsAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/evaluate", EvaluateMediaAssetAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/retry-identity", RetryIdentityAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/approve", ApproveMediaAssetAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/reject", RejectMediaAssetAsync);
         adminMediaAssets.MapDelete("/{assetId:guid}", DiscardMediaAssetAsync);
+    }
+
+    private static async Task<IResult> ListRecentMediaAssetsAsync(
+        int? limit,
+        MediaAssetQueueService queue,
+        CancellationToken cancellationToken)
+    {
+        var maximumCount = limit ?? 50;
+        if (maximumCount is < 1 or > 100)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["limit"] = ["Choose between 1 and 100 files."]
+            });
+        }
+
+        var entries = await queue.ListRecentAsync(maximumCount, cancellationToken);
+        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(ToMediaAssetAdminResponse).ToArray()));
     }
 
     private static async Task<IResult> ListMediaAssetsAsync(

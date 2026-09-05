@@ -59,7 +59,7 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
             from asset in database.MediaAssets
             join format in database.RequestFormats on asset.AssociatedRequestFormatId equals format.Id
             join work in database.Works on asset.WorkId equals work.Id
-            orderby asset.UpdatedAtUtc descending
+            orderby asset.UpdatedAtUtc descending, asset.Id descending
             select new MediaAssetAdminView(
                 asset.Id,
                 format.RequestId,

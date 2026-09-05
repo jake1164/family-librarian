@@ -1,6 +1,6 @@
 @page "/works/{WorkId:guid}"
 @attribute [Authorize]
-@implements IDisposable
+@inherits LiveComponentBase
 @inject CatalogApiClient Catalog
 @inject RequestsApiClient Requests
 
@@ -238,7 +238,6 @@
     private BookRequestDuplicateResponse? duplicate;
     private BookRequestOwnedResponse? owned;
     private BookRequestResponse? createdRequest;
-    private CancellationTokenSource? requestStatusRefreshCancellation;
     private CancellationTokenSource? fulfillmentLoadCancellation;
 
     private bool HasFormatSelected => wantsEbook || wantsAudiobook;
@@ -250,7 +249,6 @@
 
     protected override async Task OnParametersSetAsync()
     {
-        StopRequestStatusRefresh();
         StopFulfillmentOptionsLoad();
         isLoading = true;
         fulfillment = null;
@@ -377,7 +375,6 @@
                     createdRequest = outcome.Request;
                     duplicate = null;
                     owned = null;
-                    StartRequestStatusRefresh();
                     break;
                 case CreateRequestStatus.DuplicateWarning:
                     duplicate = outcome.Existing;
@@ -402,52 +399,20 @@
         }
     }
 
-    private void StartRequestStatusRefresh()
-    {
-        StopRequestStatusRefresh();
-        requestStatusRefreshCancellation = new CancellationTokenSource();
-        _ = RefreshRequestStatusPeriodicallyAsync(requestStatusRefreshCancellation.Token);
-    }
+    protected override void OnInitialized() =>
+        Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.System, RefreshRequestStatusAsync);
 
-    private async Task RefreshRequestStatusPeriodicallyAsync(CancellationToken cancellationToken)
+    private async Task RefreshRequestStatusAsync()
     {
-        try
+        var requestId = createdRequest?.Id;
+        var currentWorkId = WorkId;
+        if (requestId is not null)
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                await InvokeAsync(async () =>
-                {
-                    var currentRequest = createdRequest;
-                    if (currentRequest is null)
-                    {
-                        return;
-                    }
-
-                    var requests = await Requests.GetMineAsync(cancellationToken);
-                    createdRequest = requests.Active
-                        .Concat(requests.History)
-                        .FirstOrDefault(request => request.Id == currentRequest.Id);
-                    StateHasChanged();
-                });
-            }
+            var requests = await Requests.GetMineAsync();
+            if (currentWorkId == WorkId && createdRequest?.Id == requestId)
+                createdRequest = requests.Active.Concat(requests.History).FirstOrDefault(request => request.Id == requestId);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Navigation away or a new request cycle stops this lightweight poll.
-        }
-        catch (HttpRequestException)
-        {
-            // The original request status remains visible; My Requests still offers
-            // an explicit, retryable view if a transient refresh fails.
-        }
-    }
-
-    private void StopRequestStatusRefresh()
-    {
-        requestStatusRefreshCancellation?.Cancel();
-        requestStatusRefreshCancellation?.Dispose();
-        requestStatusRefreshCancellation = null;
+        if (work is not null && !isSubmitting) StartFulfillmentOptionsLoad();
     }
 
     private void StopFulfillmentOptionsLoad()
@@ -457,9 +422,9 @@
         fulfillmentLoadCancellation = null;
     }
 
-    public void Dispose()
+    public override void Dispose()
     {
-        StopRequestStatusRefresh();
+        base.Dispose();
         StopFulfillmentOptionsLoad();
     }
 }

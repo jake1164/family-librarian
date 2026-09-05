@@ -1,6 +1,6 @@
 @page "/requests"
 @attribute [Authorize]
-@implements IDisposable
+@inherits LiveComponentBase
 @inject RequestsApiClient Requests
 
 <PageTitle>My requests · Family Librarian</PageTitle>
@@ -61,12 +61,11 @@
     private string? errorMessage;
     private Guid busyRequestId;
 
-    private readonly CancellationTokenSource refreshCancellation = new();
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadAsync();
-        _ = RefreshPeriodicallyAsync();
+        Observe(LiveUpdateTopics.Requests, LoadAsync);
+        await RefreshLiveAsync();
     }
 
     private RenderFragment RequestCard(BookRequestResponse request) =>
@@ -185,29 +184,5 @@
         }
     }
 
-    private async Task RefreshPeriodicallyAsync()
-    {
-        try
-        {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
-            while (await timer.WaitForNextTickAsync(refreshCancellation.Token))
-            {
-                await InvokeAsync(async () =>
-                {
-                    await LoadAsync();
-                    StateHasChanged();
-                });
-            }
-        }
-        catch (OperationCanceledException) when (refreshCancellation.IsCancellationRequested)
-        {
-            // Navigation away from My Requests cancels its lightweight polling.
-        }
-    }
 
-    public void Dispose()
-    {
-        refreshCancellation.Cancel();
-        refreshCancellation.Dispose();
-    }
 }

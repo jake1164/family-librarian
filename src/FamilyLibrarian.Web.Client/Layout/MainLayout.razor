@@ -5,6 +5,7 @@
 @inject SystemReadinessApiClient SystemReadiness
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@inject LiveUpdatesService Updates
 @using FamilyLibrarian.Web.Client.Operations
 @using FamilyLibrarian.Web.Client.Theme
 
@@ -42,7 +43,7 @@
 
         @* Config/setup pages an admin visits rarely stay tucked in this
            dropdown rather than taking up rows in the nav rail; the
-           everyday admin destinations (Tasks/Queue/Security queue/Accounts/
+           everyday admin destinations (Tasks/Queue/Security scans/Accounts/
            Publishing activity) live in the drawer instead. Hiding this is
            UX only — every page carries [Authorize] and every endpoint
            behind it independently authorizes the caller. *@
@@ -147,7 +148,7 @@
                     <MudDivider Class="my-2" />
                     <MudNavLink Href="admin/tasks" Icon="@Icons.Material.Filled.TaskAlt">Tasks</MudNavLink>
                     <MudNavLink Href="admin/requests" Icon="@Icons.Material.Filled.Inbox">Queue</MudNavLink>
-                    <MudNavLink Href="admin/security" Icon="@Icons.Material.Filled.Shield">Security queue</MudNavLink>
+                    <MudNavLink Href="admin/security" Icon="@Icons.Material.Filled.Shield">Security scans</MudNavLink>
                     <MudNavLink Href="admin/accounts" Icon="@Icons.Material.Filled.People">Accounts</MudNavLink>
                     <MudNavLink Href="admin/publishing" Icon="@Icons.Material.Filled.Assessment">Publishing activity</MudNavLink>
                     <MudNavLink Href="admin/batch-upload" Icon="@Icons.Material.Filled.UploadFile">Batch upload</MudNavLink>
@@ -162,6 +163,7 @@
        the page under the bar. The custom class reserves room for the fixed
        status footer; the container handles the sides and the top gap. *@
     <MudMainContent Class="family-librarian-main-content">
+        <LiveConnectionStatus />
         <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
             @Body
         </MudContainer>
@@ -223,9 +225,8 @@
     private bool isDarkMode;
     private ThemeMode themeMode = ThemeMode.System;
     private AdminRequestAttentionResponse? adminAttention;
-    private CancellationTokenSource? attentionRefreshCancellation;
+    private LiveSubscription? liveSubscription;
     private bool? systemHealthy;
-    private CancellationTokenSource? readinessRefreshCancellation;
 
     private int ProviderIssueCount => adminAttention?.ProviderIssues.Count ?? 0;
 
@@ -256,24 +257,25 @@
             isDarkMode = themeMode == ThemeMode.Dark;
         }
 
-        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        isAdmin = state.User.IsInRole("Admin");
-
-        if (state.User.Identity?.IsAuthenticated == true)
-        {
-            await RefreshSystemReadinessAsync(CancellationToken.None);
-            readinessRefreshCancellation = new CancellationTokenSource();
-            _ = RefreshSystemReadinessPeriodicallyAsync(readinessRefreshCancellation.Token);
-        }
-
-        if (!isAdmin)
-        {
-            return;
-        }
-
-        await RefreshAdminAttentionAsync(CancellationToken.None);
-        attentionRefreshCancellation = new CancellationTokenSource();
-        _ = RefreshAdminAttentionPeriodicallyAsync(attentionRefreshCancellation.Token);
+        liveSubscription = Updates.Subscribe(
+            LiveUpdateTopics.Requests | LiveUpdateTopics.Sources | LiveUpdateTopics.System | LiveUpdateTopics.Publishing,
+            token => InvokeAsync(async () =>
+            {
+                if (token.IsCancellationRequested) return;
+                var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+                isAdmin = state.User.IsInRole("Admin");
+                if (state.User.Identity?.IsAuthenticated == true)
+                    await RefreshSystemReadinessAsync(token);
+                else
+                    systemHealthy = null;
+                if (isAdmin)
+                    await RefreshAdminAttentionAsync(token);
+                else
+                    adminAttention = null;
+                if (!token.IsCancellationRequested) StateHasChanged();
+            }));
+        Updates.Start();
+        await liveSubscription.RefreshAsync();
     }
 
     private async Task RefreshSystemReadinessAsync(CancellationToken cancellationToken)
@@ -287,26 +289,6 @@
         {
             // Best-effort: a transient failure just leaves the footer chip
             // unset rather than hiding the rest of the app.
-        }
-    }
-
-    private async Task RefreshSystemReadinessPeriodicallyAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                await InvokeAsync(async () =>
-                {
-                    await RefreshSystemReadinessAsync(cancellationToken);
-                    StateHasChanged();
-                });
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Application disposal or sign-out stopped the refresh loop.
         }
     }
 
@@ -340,40 +322,12 @@
         }
     }
 
-    private async Task RefreshAdminAttentionPeriodicallyAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                await InvokeAsync(async () =>
-                {
-                    await RefreshAdminAttentionAsync(cancellationToken);
-                    StateHasChanged();
-                });
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Application disposal or sign-out stopped the refresh loop.
-        }
-    }
-
     private async Task SignOutAsync()
     {
-        attentionRefreshCancellation?.Cancel();
-        readinessRefreshCancellation?.Cancel();
         await AuthenticationStateProvider.SignOutAsync();
         // forceLoad so nothing cached in the WebAssembly app outlives the session.
         Navigation.NavigateTo("/", forceLoad: true);
     }
 
-    public void Dispose()
-    {
-        attentionRefreshCancellation?.Cancel();
-        attentionRefreshCancellation?.Dispose();
-        readinessRefreshCancellation?.Cancel();
-        readinessRefreshCancellation?.Dispose();
-    }
+    public void Dispose() => liveSubscription?.Dispose();
 }

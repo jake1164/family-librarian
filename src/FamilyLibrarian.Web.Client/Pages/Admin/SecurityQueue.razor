@@ -1,71 +1,93 @@
 @page "/admin/security"
 @attribute [Authorize(Roles = "Admin")]
+@inherits LiveComponentBase
 @using FamilyLibrarian.Contracts.Acquisition
 @using FamilyLibrarian.Web.Client.Acquisition
 @using Microsoft.AspNetCore.Authorization
 @inject MediaAssetsApiClient MediaAssets
 @inject ISnackbar Snackbar
 
-<PageTitle>Security queue · Family Librarian</PageTitle>
+<PageTitle>Security scans · Family Librarian</PageTitle>
 
 @* The role attribute is UX only. Every endpoint behind this page independently
    requires the Admin policy and an anti-forgery token. *@
-<MudText Typo="Typo.h4" GutterBottom="true">Security queue</MudText>
+<MudText Typo="Typo.h4" GutterBottom="true">Security scans</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
-    Every manually imported file is scanned and format-checked automatically. A clean, valid result is
-    automatically approved and sent to its library destination. Quarantined files can be retried or deleted;
-    rejected non-malicious files are retained until deleted. Confirmed malware is deleted automatically and its
-    audit record remains available without leaving a dead item in this queue. Unmatched files cannot be approved
-    or published until a retry verifies their identity.
+    Recent imported and acquired files, including completed scans and deleted files.
+    Clean, matching files proceed automatically. Files needing review retain their actions below.
+    Confirmed malware is deleted automatically; its scan record remains visible.
 </MudText>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" Wrap="Wrap.Wrap" Class="mb-4">
+    <MudSelect T="int" Label="Recent files" Value="maximumCount" ValueChanged="ChangeLimitAsync"
+               Disabled="loading" Style="max-width: 180px">
+        <MudSelectItem T="int" Value="25">25 files</MudSelectItem>
+        <MudSelectItem T="int" Value="50">50 files</MudSelectItem>
+        <MudSelectItem T="int" Value="100">100 files</MudSelectItem>
+    </MudSelect>
+    <MudButton Variant="Variant.Outlined" OnClick="RefreshAsync" Disabled="loading">Refresh</MudButton>
+</MudStack>
+<MudText Typo="Typo.caption" Class="mb-3">Latest @maximumCount files by file activity, newest first. Times are local.</MudText>
 
 @if (loadFailed)
 {
-    <MudAlert Severity="Severity.Error">We could not load the security queue.</MudAlert>
+    <MudAlert Severity="Severity.Error">Could not refresh security scans. Any displayed records may be out of date.</MudAlert>
+}
+@if (assets is null && !loadFailed)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading security scans" />
 }
 else if (assets is null)
 {
-    <MudProgressCircular Indeterminate="true" aria-label="Loading the security queue" />
+    <MudText>Refresh to try again.</MudText>
 }
 else if (assets.Count == 0)
 {
-    <MudAlert Severity="Severity.Info">Nothing is waiting for review right now.</MudAlert>
+    <MudAlert Severity="Severity.Info">No files have been received yet.</MudAlert>
 }
 else
 {
     <MudStack Spacing="4">
         @foreach (var asset in assets)
         {
-            <MudPaper Class="pa-4" Elevation="1">
+            <MudPaper @key="asset.AssetId" Class="pa-4" Elevation="1">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
                     <MudLink Href="@($"admin/requests/{asset.RequestId}")">
                         <MudText Typo="Typo.h6">@asset.WorkTitle</MudText>
                     </MudLink>
                     <MediaTypeChip MediaType="@asset.MediaType" />
                     <MudSpacer />
-                    <MudChip T="string" Size="Size.Small" Color="StorageStateColor(asset.StorageState)">
-                        @asset.StorageState
-                    </MudChip>
-                    @if (asset.LatestEvaluation is not null)
-                    {
-                        <MudChip T="string" Size="Size.Small" Color="EvaluationColor(asset.LatestEvaluation.Status)">
-                            @asset.LatestEvaluation.Status
-                        </MudChip>
-                    }
+                    <RequestStatusChip Status="@asset.StorageState" />
+                    <RequestStatusChip Status="@ScanStatus(asset)" />
                 </MudStack>
 
                 <MudText Typo="Typo.body2" Class="mt-2">
-                    @asset.OriginalFilename (@FormatSize(asset.SizeBytes)) — staged
+                    @asset.OriginalFilename (@FormatSize(asset.SizeBytes)) — received
                     @asset.CreatedAtUtc.ToLocalTime().ToString("g")
                 </MudText>
 
                 @if (asset.LatestEvaluation is not null)
                 {
+                    <MudText Typo="Typo.body2" Class="mt-2">
+                        Scan started @asset.LatestEvaluation.CreatedAtUtc.ToLocalTime().ToString("G")
+                        @if (asset.LatestEvaluation.CompletedAtUtc is { } completed)
+                        {
+                            <span> · Completed @completed.ToLocalTime().ToString("G")</span>
+                        }
+                        else if (asset.StorageState != "Processing")
+                        {
+                            <span> · Scan did not complete</span>
+                        }
+                        else
+                        {
+                            <span> · In progress</span>
+                        }
+                    </MudText>
                     <MudStack Spacing="0" Class="mt-2">
                         @foreach (var scan in asset.LatestEvaluation.ScanResults)
                         {
                             <MudText Typo="Typo.caption">
-                                Scan (@scan.ScannerId): @scan.Status
+                                Scan (@scan.ScannerId): @scan.Status · @scan.ScannedAtUtc.ToLocalTime().ToString("G")
                                 @if (!string.IsNullOrWhiteSpace(scan.ThreatName))
                                 {
                                     <span> — @scan.ThreatName</span>
@@ -75,7 +97,7 @@ else
                         @foreach (var validation in asset.LatestEvaluation.ValidationResults)
                         {
                             <MudText Typo="Typo.caption">
-                                Format check (@validation.ValidatorId): @(validation.IsValid ? "Valid" : "Invalid")
+                                Format check (@validation.ValidatorId): @(validation.IsValid ? "Valid" : "Invalid") · @validation.ValidatedAtUtc.ToLocalTime().ToString("G")
                                 @if (!string.IsNullOrWhiteSpace(validation.Message))
                                 {
                                     <span> — @validation.Message</span>
@@ -139,22 +161,52 @@ else
     private bool loadFailed;
     private Guid? busyAssetId;
 
-    protected override Task OnInitializedAsync() => LoadAsync();
+    private int maximumCount = 50;
+    private bool loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Observe(LiveUpdateTopics.Security, LoadAsync);
+        await RefreshLiveAsync();
+    }
+
+    private Task RefreshAsync() => LiveUpdates.RefreshAsync();
+
+    private async Task ChangeLimitAsync(int value)
+    {
+        maximumCount = value;
+        await RefreshLiveAsync();
+    }
 
     private async Task LoadAsync()
     {
+        loading = true;
         try
         {
-            assets = await MediaAssets.GetQueueAsync();
+            assets = await MediaAssets.GetRecentAsync(maximumCount);
+            loadFailed = false;
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
             loadFailed = true;
+            if (exception.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                assets = null;
+        }
+        finally
+        {
+            loading = false;
         }
     }
 
-    private static bool CanEvaluate(MediaAssetAdminResponse asset) =>
-        asset.LatestEvaluation is null || asset.StorageState == "Quarantine";
+    private static string ScanStatus(MediaAssetAdminResponse asset) => asset.StorageState switch
+    {
+        "Quarantine" => asset.LatestEvaluation is null ? "AwaitingScan" : "ScanInterrupted",
+        "Processing" when asset.LatestEvaluation is null or { Status: "Pending" } => "Scanning",
+        _ when asset.LatestEvaluation is { Status: "Pending" } => "ScanIncomplete",
+        _ => asset.LatestEvaluation?.Status ?? "NotScanned"
+    };
+
+    private static bool CanEvaluate(MediaAssetAdminResponse asset) => asset.StorageState == "Quarantine";
 
     private static bool CanDecide(MediaAssetAdminResponse asset) =>
         asset.StorageState == "Processing" &&
@@ -202,34 +254,15 @@ else
             return;
         }
 
-        // The queue's membership and every asset's state can change from this one
-        // action (an approval removes it entirely), so reload rather than patch
-        // the list in place.
-        await LoadAsync();
+        // Reload the persisted state after an action as well as on hub events.
+        await RefreshLiveAsync();
     }
-
-    private static Color StorageStateColor(string state) => state switch
-    {
-        "Rejected" => Color.Error,
-        "Destroyed" => Color.Error,
-        "Trusted" => Color.Success,
-        "Unmatched" => Color.Warning,
-        _ => Color.Default
-    };
 
     private static bool CanDiscard(MediaAssetAdminResponse asset) =>
         asset.StorageState is "Quarantine" or "Rejected" or "Unmatched";
 
     private static bool CanRetryIdentity(MediaAssetAdminResponse asset) =>
         asset.StorageState == "Unmatched" && asset.LatestEvaluation?.Status == "Passed";
-
-    private static Color EvaluationColor(string status) => status switch
-    {
-        "Passed" => Color.Success,
-        "Failed" => Color.Error,
-        "ReviewRequired" => Color.Warning,
-        _ => Color.Default
-    };
 
     private static string FormatSize(long bytes)
     {

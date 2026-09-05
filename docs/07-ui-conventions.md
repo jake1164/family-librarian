@@ -28,6 +28,10 @@ The rule:
   headphones for Audiobook. Pair the icon with a `MudTooltip` naming the media
   type so the distinction isn't icon-only for screen readers.
 
+Security scan/storage statuses use the same `MediaTypeVisuals` mapping and
+`RequestStatusChip`: scanning/waiting is blue, interrupted/review-required is
+amber, passed/trusted is green, and failed/deleted is red.
+
 This mapping lives in one place —
 [`Theme/MediaTypeVisuals.cs`](../src/FamilyLibrarian.Web.Client/Theme/MediaTypeVisuals.cs)
 — and nowhere else. Do not re-derive a `status switch` that maps to `Color` in

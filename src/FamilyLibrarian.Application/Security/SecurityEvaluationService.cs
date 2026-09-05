@@ -58,9 +58,9 @@ public sealed class SecurityEvaluationService(
         // the file had nowhere to move from. Saving here first means a later
         // failure has a database state to recover *from* instead of a stale
         // one to collide with.
-        await repository.SaveChangesAsync(cancellationToken);
-
         var evaluation = new SecurityEvaluation(assetId, PolicyVersion, now);
+        repository.AddEvaluation(evaluation);
+        await repository.SaveChangesAsync(cancellationToken);
 
         try
         {
@@ -70,7 +70,8 @@ public sealed class SecurityEvaluationService(
                 if (!health.IsHealthy)
                 {
                     evaluation.RecordScanResult(
-                        scanner.Id, scanner.IsRequired, ScanResultStatus.Unavailable, null, health.Version, now);
+                        scanner.Id, scanner.IsRequired, ScanResultStatus.Unavailable, null, health.Version, clock.UtcNow);
+                    await repository.SaveChangesAsync(cancellationToken);
                     continue;
                 }
 
@@ -78,7 +79,8 @@ public sealed class SecurityEvaluationService(
                     MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
                 var outcome = await scanner.ScanAsync(content, cancellationToken);
                 evaluation.RecordScanResult(
-                    scanner.Id, scanner.IsRequired, outcome.Status, outcome.ThreatName, health.Version, now);
+                    scanner.Id, scanner.IsRequired, outcome.Status, outcome.ThreatName, health.Version, clock.UtcNow);
+                await repository.SaveChangesAsync(cancellationToken);
             }
 
             foreach (var validator in validators)
@@ -86,7 +88,8 @@ public sealed class SecurityEvaluationService(
                 await using var content = await stagingStore.OpenAsync(
                     MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
                 var outcome = await validator.ValidateAsync(asset, content, cancellationToken);
-                evaluation.RecordValidationResult(validator.Id, outcome.IsValid, outcome.Message, now);
+                evaluation.RecordValidationResult(validator.Id, outcome.IsValid, outcome.Message, clock.UtcNow);
+                await repository.SaveChangesAsync(cancellationToken);
             }
         }
         catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException)
@@ -112,19 +115,18 @@ public sealed class SecurityEvaluationService(
             throw;
         }
 
-        evaluation.Evaluate(now);
+        evaluation.Evaluate(clock.UtcNow);
 
         if (evaluation.Status == SecurityEvaluationStatus.Failed)
         {
             await stagingStore.MoveAsync(
                 MediaAssetStorageState.Processing, MediaAssetStorageState.Rejected, asset.StoredFilename, cancellationToken);
-            asset.TransitionStorageState(MediaAssetStorageState.Rejected, now);
+            asset.TransitionStorageState(MediaAssetStorageState.Rejected, clock.UtcNow);
         }
 
         // Passed or ReviewRequired stays in Processing until an explicit
         // approval — see ApprovalService.
 
-        repository.AddEvaluation(evaluation);
         await repository.SaveChangesAsync(cancellationToken);
 
         await audit.WriteAsync(

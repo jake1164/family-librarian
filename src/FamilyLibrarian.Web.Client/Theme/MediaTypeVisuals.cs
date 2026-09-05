@@ -32,7 +32,10 @@ public static class MediaTypeVisuals
     /// </summary>
     public static Color StatusColor(string status, string? progressCode = null) => status switch
     {
-        "Available" => Color.Success,
+        "Available" or "Trusted" or "Archived" or "Passed" => Color.Success,
+        "Quarantine" or "Processing" or "Scanning" or "AwaitingScan" => Color.Info,
+        "Unmatched" or "ReviewRequired" or "ScanInterrupted" or "ScanIncomplete" => Color.Warning,
+        "Rejected" or "Destroyed" or "Failed" => Color.Error,
         "NeedsReview" => Color.Warning,
         "NotAvailable" => Color.Error,
         "Cancelled" => Color.Default,
@@ -53,6 +56,15 @@ public static class MediaTypeVisuals
     /// where a full sentence reads naturally to the person who asked.</summary>
     public static string StatusLabel(string status) => status switch
     {
+        "AwaitingScan" => "Awaiting scan",
+        "NotScanned" => "No scan recorded",
+        "ScanInterrupted" => "Retry required",
+        "ScanIncomplete" => "Scan incomplete",
+        "ReviewRequired" => "Review required",
+        "Passed" => "Scan passed",
+        "Failed" => "Scan failed",
+        "Destroyed" => "File deleted",
+        "Unmatched" => "Identity review required",
         "PendingAcquisition" or "Requested" => "Waiting",
         "NeedsReview" => "Needs review",
         "NotAvailable" => "Not available",

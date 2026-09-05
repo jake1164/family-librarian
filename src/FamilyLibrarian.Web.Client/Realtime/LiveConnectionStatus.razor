@@ -1,0 +1,31 @@
+@implements IDisposable
+@inject LiveUpdatesService Updates
+
+@if (Updates.State != LiveConnectionState.SignedOut)
+{
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="px-3 py-1">
+        <MudText Typo="Typo.caption" role="status" aria-live="polite">
+            @(Updates.State switch
+            {
+                LiveConnectionState.Connected => "Live updates connected",
+                LiveConnectionState.Connecting => "Connecting live updates…",
+                _ => "Reconnecting — displayed data may be out of date"
+            })
+        </MudText>
+        <MudButton Size="Size.Small" OnClick="Updates.RefreshAsync">Refresh</MudButton>
+    </MudStack>
+}
+
+@code {
+    private bool disposed;
+    protected override void OnInitialized() => Updates.StateChanged += OnStateChanged;
+    private void OnStateChanged()
+    {
+        if (!disposed) _ = InvokeAsync(StateHasChanged);
+    }
+    public void Dispose()
+    {
+        disposed = true;
+        Updates.StateChanged -= OnStateChanged;
+    }
+}

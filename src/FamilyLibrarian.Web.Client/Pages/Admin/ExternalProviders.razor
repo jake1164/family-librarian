@@ -1,6 +1,6 @@
 @page "/settings/sources"
 @attribute [Authorize(Roles = "Admin")]
-@implements IDisposable
+@inherits LiveComponentBase
 @using FamilyLibrarian.Contracts.Providers
 @using FamilyLibrarian.Web.Client.Gutenberg
 @using FamilyLibrarian.Web.Client.Integrations
@@ -562,22 +562,25 @@
     private bool gutenbergCatalogStatusUnavailable;
     private bool gutenbergCatalogPurgeConfirmation;
     private bool gutenbergCatalogPurgeInProgress;
-    private readonly CancellationTokenSource gutenbergCatalogStatusPollingCancellation = new();
-    private Task? gutenbergCatalogStatusPollingTask;
     private bool isDisposed;
 
     private bool CanRegister =>
         !string.IsNullOrWhiteSpace(newProviderId) && !string.IsNullOrWhiteSpace(newProviderDisplayName) &&
         !string.IsNullOrWhiteSpace(newProviderBaseUrl);
 
-    protected override Task OnInitializedAsync() =>
-        Task.WhenAll(
+    protected override async Task OnInitializedAsync()
+    {
+        Observe(LiveUpdateTopics.Sources | LiveUpdateTopics.Requests,
+            () => Task.WhenAll(LoadAttentionAsync(), LoadGutenbergCatalogStatusAsync()));
+        await Task.WhenAll(
             LoadGatewayAsync(),
             LoadCatalogsAsync(),
             LoadProvidersAsync(),
             LoadBuiltInSourcesAsync(),
             LoadAttentionAsync(),
             LoadGutenbergCatalogStatusAsync());
+        await RefreshLiveAsync();
+    }
 
     private string? GetApiKeyDraft(Guid id) => apiKeyDrafts.GetValueOrDefault(id);
 
@@ -718,7 +721,6 @@
         {
             gutenbergCatalogStatus = await GutenbergCatalog.GetStatusAsync();
             gutenbergCatalogStatusUnavailable = false;
-            StartGutenbergCatalogStatusPollingIfNeeded();
         }
         catch (HttpRequestException)
         {
@@ -727,67 +729,10 @@
         }
     }
 
-    private void StartGutenbergCatalogStatusPollingIfNeeded()
-    {
-        if (!GutenbergCatalogOperationInProgress ||
-            gutenbergCatalogStatusPollingTask is { IsCompleted: false } ||
-            isDisposed)
-        {
-            return;
-        }
-
-        gutenbergCatalogStatusPollingTask = PollGutenbergCatalogStatusAsync();
-    }
-
-    private async Task PollGutenbergCatalogStatusAsync()
-    {
-        try
-        {
-            while (!gutenbergCatalogStatusPollingCancellation.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), gutenbergCatalogStatusPollingCancellation.Token);
-                var status = await GutenbergCatalog.GetStatusAsync(gutenbergCatalogStatusPollingCancellation.Token);
-                await InvokeAsync(() =>
-                {
-                    if (isDisposed)
-                    {
-                        return;
-                    }
-
-                    gutenbergCatalogStatus = status;
-                    gutenbergCatalogStatusUnavailable = false;
-                    StateHasChanged();
-                });
-
-                if (!IsGutenbergCatalogOperationStatus(status?.Status))
-                {
-                    return;
-                }
-            }
-        }
-        catch (OperationCanceledException) when (gutenbergCatalogStatusPollingCancellation.IsCancellationRequested)
-        {
-            // Page navigation stops this page's display polling; the server-side
-            // purge itself continues and the next visit resumes from its status.
-        }
-        catch (HttpRequestException)
-        {
-            await InvokeAsync(() =>
-            {
-                if (!isDisposed)
-                {
-                    gutenbergCatalogStatusUnavailable = true;
-                    StateHasChanged();
-                }
-            });
-        }
-    }
-
     private async Task RefreshGutenbergCatalogAsync()
     {
         gutenbergCatalogBusy = true;
         gutenbergCatalogRefreshInProgress = true;
-        StartGutenbergCatalogStatusPollingIfNeeded();
         try
         {
             var result = await GutenbergCatalog.RefreshAsync();
@@ -859,11 +804,10 @@
         }
     }
 
-    public void Dispose()
+    public override void Dispose()
     {
         isDisposed = true;
-        gutenbergCatalogStatusPollingCancellation.Cancel();
-        gutenbergCatalogStatusPollingCancellation.Dispose();
+        base.Dispose();
     }
 
     private static bool IsGutenbergCatalogOperationStatus(string? status) => status is

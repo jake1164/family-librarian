@@ -14,6 +14,7 @@ using FamilyLibrarian.Web.Client.Providers;
 using FamilyLibrarian.Web.Client.Publishing;
 using FamilyLibrarian.Web.Client.Requests;
 using FamilyLibrarian.Web.Client.SettingsBackups;
+using FamilyLibrarian.Web.Client.Realtime;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using MudBlazor.Services;
@@ -51,5 +52,7 @@ builder.Services.AddScoped<PolicyApiClient>();
 builder.Services.AddScoped<OidcSettingsApiClient>();
 builder.Services.AddScoped<ExternalProviderApiClient>();
 builder.Services.AddScoped<SettingsBackupApiClient>();
+builder.Services.AddScoped<ILiveUpdatesConnection, LiveUpdatesConnection>();
+builder.Services.AddScoped<LiveUpdatesService>();
 
 await builder.Build().RunAsync();

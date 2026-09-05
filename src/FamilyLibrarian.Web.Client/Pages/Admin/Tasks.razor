@@ -1,6 +1,6 @@
 @page "/admin/tasks"
 @attribute [Authorize(Roles = "Admin")]
-@implements IDisposable
+@inherits LiveComponentBase
 @using FamilyLibrarian.Contracts.Operations
 @using FamilyLibrarian.Contracts.Acquisition
 @using FamilyLibrarian.Contracts.Publishing
@@ -224,13 +224,11 @@
     private AdminTasksResponse? snapshot;
     private string? errorMessage;
     private bool isLoading = true;
-    private CancellationTokenSource? refreshCancellation;
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadAsync();
-        refreshCancellation = new CancellationTokenSource();
-        _ = RefreshPeriodicallyAsync(refreshCancellation.Token);
+        Observe(LiveUpdateTopics.All, LoadAsync);
+        await RefreshLiveAsync();
     }
 
     private async Task LoadAsync()
@@ -255,31 +253,7 @@
         }
     }
 
-    private async Task RefreshPeriodicallyAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                await InvokeAsync(async () =>
-                {
-                    await LoadAsync();
-                    StateHasChanged();
-                });
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Navigation away from this page stops refresh work.
-        }
-    }
 
-    public void Dispose()
-    {
-        refreshCancellation?.Cancel();
-        refreshCancellation?.Dispose();
-    }
 
     private static Color AttemptColor(string outcome) => outcome switch
     {

@@ -1127,6 +1127,23 @@ The acquisition system does not directly deliver files.
 
 ## 7. Security Workflow
 
+The administrator **Security scans** page retains recent file activity after a
+file leaves the actionable queue. It defaults to 50 files, with 25 and 100
+options, ordered by latest file activity. Trusted, archived, and deleted-file
+records remain eligible. Each row shows the latest evaluation, its start and
+completion times, individual scanner/validator timestamps, and safe actions.
+The server persists a pending evaluation before scanning, then each check result
+and the final evaluation. An interrupted attempt remains pending in the audit
+record while a recovered quarantined file is shown as requiring a retry.
+
+The tab-wide authenticated SignalR connection sends admin-only topic notifications
+after security/file state commits. The browser fetches a fresh authorized snapshot on
+notification and reconnection; it displays disconnected/reconnecting state and
+provides Refresh for manual recovery. The shared hub has no client-invokable operations
+and sends no filenames, identifiers, or scan details. Every snapshot and action
+continues to enforce current server-side authorization; mutations retain their
+anti-forgery checks. No periodic data polling is used by this page.
+
 ```text
 Asset enters quarantine
       |

@@ -1,6 +1,6 @@
 @page "/admin/requests/{RequestId:guid}"
 @attribute [Authorize(Roles = "Admin")]
-@implements IDisposable
+@inherits LiveComponentBase
 @using FamilyLibrarian.Web.Client.Acquisition
 @using FamilyLibrarian.Web.Client.Catalog
 @using FamilyLibrarian.Contracts.Acquisition
@@ -143,7 +143,7 @@
                 <MudText Typo="Typo.body2">
                     Manually supply a file for a requested format. It is scanned and
                     format-checked automatically, then stays in security review — visit the
-                    <MudLink Href="admin/security">Security Queue</MudLink>
+                    <MudLink Href="admin/security">Security scans</MudLink>
                     to approve it before it can be delivered.
                 </MudText>
                 @foreach (var format in request.Request.Formats)
@@ -225,21 +225,31 @@
     private string? providerActivityError;
     private CancellationTokenSource? fulfillmentLoadCancellation;
 
+    protected override void OnInitialized() =>
+        Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.Security | LiveUpdateTopics.Publishing,
+            () => LoadAsync(preserveDraft: true));
+
     protected override Task OnParametersSetAsync() => LoadAsync();
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool preserveDraft = false)
     {
         StopFulfillmentOptionsLoad();
-        isLoading = true;
+        isLoading = !preserveDraft;
         errorMessage = null;
         providerActivityError = null;
-        fulfillment = null;
-        providerAttempts = [];
-        request = null;
+        if (!preserveDraft)
+        {
+            fulfillment = null;
+            providerAttempts = [];
+            request = null;
+        }
+        var loadingRequestId = RequestId;
         try
         {
-            request = await Requests.GetAsync(RequestId);
-            adminNote = request?.Request.AdminNote;
+            var refreshed = await Requests.GetAsync(loadingRequestId);
+            if (loadingRequestId != RequestId) return;
+            request = refreshed;
+            if (!preserveDraft) adminNote = request?.Request.AdminNote;
         }
         catch (HttpRequestException)
         {
@@ -257,7 +267,9 @@
 
         try
         {
-            providerAttempts = await Requests.GetProviderAttemptsAsync(RequestId);
+            var attempts = await Requests.GetProviderAttemptsAsync(loadingRequestId);
+            if (loadingRequestId != RequestId) return;
+            providerAttempts = attempts;
         }
         catch (HttpRequestException)
         {
@@ -483,5 +495,9 @@
         fulfillmentLoadCancellation = null;
     }
 
-    public void Dispose() => StopFulfillmentOptionsLoad();
+    public override void Dispose()
+    {
+        base.Dispose();
+        StopFulfillmentOptionsLoad();
+    }
 }

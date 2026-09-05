@@ -17,11 +17,12 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
     /// obviously oversized file into memory before the request is even sent.</summary>
     private const long MaxUploadSizeBytes = 500L * 1024 * 1024;
 
-    public async Task<IReadOnlyList<MediaAssetAdminResponse>> GetQueueAsync(
+    public async Task<IReadOnlyList<MediaAssetAdminResponse>> GetRecentAsync(
+        int limit = 50,
         CancellationToken cancellationToken = default)
     {
         var response = await httpClient.GetFromJsonAsync<MediaAssetAdminListResponse>(
-            "api/v1/admin/media-assets/", cancellationToken);
+            $"api/v1/admin/media-assets/recent?limit={limit}", cancellationToken);
         return response?.Assets ?? [];
     }
 

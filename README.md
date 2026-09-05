@@ -170,13 +170,27 @@ Administrators also get:
   catalogue imported into PostgreSQL; actual ebook downloads use configured mirrors.
   Source failures remain visible to administrators but
   do not prevent Work or request pages from loading;
-- **Security queue**, for quarantined, rejected, unmatched, and removed-file
-  security records. Confirmed malware bytes are deleted automatically; clean,
-  matching EPUB imports proceed automatically;
+- **Security scans**, for the latest 25, 50 (default), or 100 imported/acquired
+  files, including completed scans and deleted-file records. The shared
+  SignalR connection delivers admin-only scan updates as they happen; the page shows start,
+  completion, and individual check timestamps and reloads after reconnecting.
+  Retry, identity review, and deletion actions remain available where appropriate.
+  Confirmed malware bytes are deleted automatically; clean, matching EPUB imports
+  proceed automatically;
 - **Publishing settings**, for configuring CWA and Audiobookshelf; and
 - **Publishing activity**, for reviewing each handoff after an approved file was
   sent to either destination, with a **Recheck** action for anything not yet
   confirmed.
+
+The browser maintains one authenticated SignalR connection per tab. My requests,
+book request status, admin Queue/Tasks/request details, Security scans, Publishing
+activity, source catalog progress, the notification tray, and navigation indicators
+subscribe to it instead of polling. The shared connection indicator shows when
+updates are unavailable and offers **Refresh**. Initial connection failures retry
+with capped backoff; reconnection reloads the open views to recover missed updates.
+Data and actions still use the existing authorized HTTP APIs. Private request
+updates go only to the requester and current admins; personal notifications remain
+private, and source/security/publishing diagnostics remain admin-only.
 
 Each admin request detail page includes an append-only provider-activity
 timeline, including no-match, found-candidate, blocked, failed, and acquired
@@ -302,3 +316,19 @@ dotnet test --project tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.
 `FamilyLibrarian.Domain.Tests` begins by enforcing the domain dependency boundary.
 Add focused unit tests beside the layer they exercise; use disposable PostgreSQL
 integration tests for persistence behavior rather than EF Core's in-memory provider.
+
+### Shared live-update browser regression
+
+With a compatible Playwright Chromium installed, run the isolated regression:
+
+```bash
+FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS=1 dotnet test \
+  --project tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj \
+  --filter 'FullyQualifiedName~LiveUpdatesBrowserTests'
+```
+
+It starts a disposable PostgreSQL database and a local Kestrel test host, verifies
+one WebSocket across client-side navigation, then disconnects the browser and
+checks that reconnect restores a missed notification. It does not use lab or
+production credentials. `FAMILY_LIBRARIAN_E2E_CHROMIUM_EXECUTABLE` optionally points
+to an existing compatible Chromium executable instead of Playwright's default.

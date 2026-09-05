@@ -1,4 +1,4 @@
-@implements IDisposable
+@inherits LiveComponentBase
 @inject FamilyLibrarian.Web.Client.Notifications.NotificationsApiClient Notifications
 @inject FamilyLibrarian.Web.Client.Requests.AdminRequestsApiClient AdminRequests
 
@@ -77,7 +77,6 @@
     public bool IsAdmin { get; set; }
 
     private readonly List<TrayEntry> entries = [];
-    private CancellationTokenSource? refreshCancellation;
 
     private int UnreadCount => entries.Count(entry => !entry.IsRead);
 
@@ -88,40 +87,10 @@
         ? Color.Error
         : Color.Success;
 
-    protected override async Task OnInitializedAsync()
-    {
-        await RefreshAsync();
-        refreshCancellation = new CancellationTokenSource();
-        _ = RefreshPeriodicallyAsync(refreshCancellation.Token);
-    }
+    protected override void OnInitialized() =>
+        Observe(LiveUpdateTopics.Notifications | LiveUpdateTopics.Requests | LiveUpdateTopics.Sources, RefreshAsync);
 
-    protected override async Task OnParametersSetAsync()
-    {
-        // IsAdmin can flip after first render (e.g. authentication state resolves
-        // after this component has already initialized), and the provider-issue
-        // merge below depends on it.
-        await RefreshAsync();
-    }
-
-    private async Task RefreshPeriodicallyAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                await InvokeAsync(async () =>
-                {
-                    await RefreshAsync();
-                    StateHasChanged();
-                });
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Component disposal stopped the refresh loop.
-        }
-    }
+    protected override Task OnParametersSetAsync() => RefreshLiveAsync();
 
     private async Task RefreshAsync()
     {
@@ -253,12 +222,6 @@
         }
 
         return $"{(int)elapsed.TotalDays}d ago";
-    }
-
-    public void Dispose()
-    {
-        refreshCancellation?.Cancel();
-        refreshCancellation?.Dispose();
     }
 
     private sealed record TrayEntry(
