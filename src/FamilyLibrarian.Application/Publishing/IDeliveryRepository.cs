@@ -12,6 +12,8 @@ public interface IDeliveryRepository
 
     Task<IReadOnlyList<DeliveryView>> ListRecentAsync(CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<Guid>> ListAwaitingVerificationIdsAsync(CancellationToken cancellationToken);
+
     void Add(Delivery delivery);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);

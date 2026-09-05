@@ -53,6 +53,23 @@ public sealed class AudiobookshelfPublishingService(
         await ExecutePublishAsync(asset, delivery, cancellationToken);
     }
 
+    /// <summary>
+    /// Rechecks every Audiobookshelf delivery still awaiting catalog
+    /// confirmation. Mirrors <see cref="CwaPublishingService.RecheckAwaitingVerificationAsync"/>
+    /// -- this only performs API reads and, for a bundle, never re-uploads
+    /// content that already succeeded.
+    /// </summary>
+    public async Task<int> RecheckAwaitingVerificationAsync(CancellationToken cancellationToken)
+    {
+        var deliveryIds = await repository.ListAwaitingVerificationIdsAsync(cancellationToken);
+        foreach (var deliveryId in deliveryIds)
+        {
+            await RecheckAsync(deliveryId, cancellationToken);
+        }
+
+        return deliveryIds.Count;
+    }
+
     /// <returns><c>false</c> when no matching delivery exists.</returns>
     public async Task<bool> RecheckAsync(Guid deliveryId, CancellationToken cancellationToken)
     {

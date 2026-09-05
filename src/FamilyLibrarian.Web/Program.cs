@@ -11,7 +11,7 @@ using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
 using FamilyLibrarian.Web.Gutenberg;
 using FamilyLibrarian.Web.Publishing;
-using FamilyLibrarian.Web.System;
+using FamilyLibrarian.Web.Readiness;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 
@@ -22,6 +22,7 @@ builder.Services.AddScoped<SystemReadinessService>();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<CwaVerificationHostedService>();
+    builder.Services.AddHostedService<AudiobookshelfVerificationHostedService>();
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
     builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();

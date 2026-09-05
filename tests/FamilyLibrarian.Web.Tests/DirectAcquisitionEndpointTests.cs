@@ -205,6 +205,32 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     [TestMethod]
+    public async Task ANotYetReadyProviderIsSkippedWithoutRecordingAnAttempt()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: true, isReady: false));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await database.BookRequests.SingleAsync(request => request.Id == requestId);
+
+        // A provider that isn't ready yet (e.g. a local catalogue mid-import)
+        // must be skipped exactly like a source that has nothing yet -- no
+        // ProviderAttempt recorded (which would otherwise start this
+        // provider's retry cooldown on a lookup that was never really made),
+        // and the request stays queued for the next automatic pass.
+        Assert.AreEqual(RequestStatus.PendingAcquisition, request.Status);
+        Assert.AreEqual(0, await database.ProviderAttempts.CountAsync(
+            attempt => attempt.RequestFormatId == formatId));
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == formatId));
+    }
+
+    [TestMethod]
     public async Task DifferentProvidersConfidentlyDisagreeingStillGoesToReview()
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -330,10 +356,13 @@ public sealed class DirectAcquisitionEndpointTests
 
     /// <summary>Always reports one DirectAcquisition match (or none), and fetches a fake EPUB.</summary>
     private sealed class FakeProvider(
-        bool matches, string providerId = "gutendex", string providerResultId = "1234", bool throwsOnFetch = false)
+        bool matches, string providerId = "gutendex", string providerResultId = "1234", bool throwsOnFetch = false,
+        bool isReady = true)
         : IAutomaticDirectAcquisitionProvider
     {
         public string Id => providerId;
+
+        public Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(isReady);
 
         public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
             Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)

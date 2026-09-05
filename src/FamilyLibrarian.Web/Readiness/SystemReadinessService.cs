@@ -3,7 +3,7 @@ using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Infrastructure.Providers;
 
-namespace FamilyLibrarian.Web.System;
+namespace FamilyLibrarian.Web.Readiness;
 
 /// <summary>
 /// Aggregates every enabled source/destination into the one plain signal the
