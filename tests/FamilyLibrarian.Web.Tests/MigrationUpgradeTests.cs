@@ -37,6 +37,15 @@ public sealed class MigrationUpgradeTests
     // applied (the acquisition schema), but the security schema does not exist yet.
     private const string PreSecuritySchemaMigration = "20260815150647_AddAcquisitionStaging";
 
+    // HEAD immediately before the ShareHouseholdRequests migration: named
+    // explicitly rather than derived as "the second-to-newest applied
+    // migration", since that relative lookup silently pointed at the wrong
+    // schema state the moment a migration was added after
+    // ShareHouseholdRequests (it then resolved to ShareHouseholdRequests
+    // itself, already applied, so the partial unique index below was already
+    // in place before the legacy-overlap row was inserted).
+    private const string PreShareHouseholdRequestsMigration = "20260830231952_AddOutboundCommunications";
+
     [TestMethod]
     public async Task SharedRequestUpgradePreservesParticipantsAndHoldsHistoricalOverlaps()
     {
@@ -50,8 +59,7 @@ public sealed class MigrationUpgradeTests
         database.BookRequests.Add(request);
         await database.SaveChangesAsync();
         var formatId = request.Formats.Single().Id;
-        var previous = (await database.Database.GetAppliedMigrationsAsync()).Reverse().Skip(1).First();
-        await database.GetService<IMigrator>().MigrateAsync(previous);
+        await database.GetService<IMigrator>().MigrateAsync(PreShareHouseholdRequestsMigration);
         var repeatId = Guid.NewGuid();
         var repeatFormatId = Guid.NewGuid();
         await database.Database.ExecuteSqlInterpolatedAsync($"""
