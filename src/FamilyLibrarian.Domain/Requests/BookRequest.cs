@@ -140,6 +140,14 @@ public sealed class BookRequest
 
         foreach (var format in _formats)
         {
+            // Returning a request to the acquisition queue must not clobber a
+            // format that has already been delivered — only the formats still
+            // outstanding go back to "Requested".
+            if (formatStatus == RequestFormatStatus.Requested && format.Status == RequestFormatStatus.Available)
+            {
+                continue;
+            }
+
             format.SetStatus(formatStatus, atUtc);
         }
 

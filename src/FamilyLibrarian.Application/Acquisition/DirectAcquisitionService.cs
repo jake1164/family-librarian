@@ -75,6 +75,15 @@ public sealed class DirectAcquisitionService(
             {
                 return ManualImportResult.Invalid($"The file could not be fetched: {exception.Message}");
             }
+            catch (InvalidOperationException exception)
+            {
+                // A bundled provider (e.g. Gutenberg) can reject its own
+                // candidate before any download starts — most commonly an
+                // audiobook bundle over the configured track limit. Report it
+                // the same clean way the automatic poller does instead of
+                // letting it surface as an unhandled failure.
+                return ManualImportResult.Invalid($"The file could not be processed: {exception.Message}");
+            }
 
             if (files.Count == 0)
             {

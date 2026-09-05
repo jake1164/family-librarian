@@ -155,6 +155,13 @@
                             <MudText Typo="Typo.body2">Already delivered.</MudText>
                         </MudStack>
                     }
+                    else if (OwnedOption(format.MediaType) is { } owned)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.body2" Style="min-width: 100px;">@format.MediaType</MudText>
+                            <MudText Typo="Typo.body2">Already in the family library (via @owned.ProviderId). No fetch needed.</MudText>
+                        </MudStack>
+                    }
                     else
                     {
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
@@ -301,6 +308,18 @@
         };
 
         return options?.FirstOrDefault(option => option.OptionKind == "DirectAcquisition");
+    }
+
+    private FulfillmentOptionResponse? OwnedOption(string mediaType)
+    {
+        var options = mediaType switch
+        {
+            "Ebook" => fulfillment?.Ebook,
+            "Audiobook" => fulfillment?.Audiobook,
+            _ => null
+        };
+
+        return options?.FirstOrDefault(option => option.OptionKind == "Owned");
     }
 
     private RecommendationResponse? Recommendation(string mediaType) => mediaType switch
