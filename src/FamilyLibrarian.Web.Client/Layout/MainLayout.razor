@@ -2,8 +2,10 @@
 @implements IDisposable
 @inject ApiAuthenticationStateProvider AuthenticationStateProvider
 @inject AdminRequestsApiClient AdminRequests
+@inject SystemReadinessApiClient SystemReadiness
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@using FamilyLibrarian.Web.Client.Operations
 @using FamilyLibrarian.Web.Client.Theme
 
 <MudThemeProvider @bind-IsDarkMode="isDarkMode"
@@ -173,13 +175,33 @@
             aria-label="Go to top"
             title="Go to top" />
 
-    @* Sticky status footer, ABS/M3Undle-style. Nothing to surface here yet —
-       it's just the shell (app name + version) so future status indicators
-       (queue depth, scan health, etc.) have somewhere to land without another
-       layout pass. *@
+    @* Sticky status footer, ABS/M3Undle-style. The readiness chip is a plain
+       healthy/degraded signal for every signed-in user — no per-source
+       detail, which stays admin-only on the Tasks page. *@
     <MudAppBar Bottom="true" Dense="true" Elevation="1" Class="family-librarian-status-footer">
         <MudText Typo="Typo.caption">Family Librarian</MudText>
         <MudSpacer />
+        @if (systemHealthy is { } healthy)
+        {
+            @if (healthy)
+            {
+                <MudTooltip Text="All sources are working normally">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
+                             Icon="@Icons.Material.Filled.CheckCircle">
+                        System healthy
+                    </MudChip>
+                </MudTooltip>
+            }
+            else
+            {
+                <MudTooltip Text="One or more sources need attention">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                             Icon="@Icons.Material.Filled.WarningAmber">
+                        Degraded
+                    </MudChip>
+                </MudTooltip>
+            }
+        }
     </MudAppBar>
 </MudLayout>
 
@@ -202,6 +224,8 @@
     private ThemeMode themeMode = ThemeMode.System;
     private AdminRequestAttentionResponse? adminAttention;
     private CancellationTokenSource? attentionRefreshCancellation;
+    private bool? systemHealthy;
+    private CancellationTokenSource? readinessRefreshCancellation;
 
     private int ProviderIssueCount => adminAttention?.ProviderIssues.Count ?? 0;
 
@@ -234,6 +258,14 @@
 
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         isAdmin = state.User.IsInRole("Admin");
+
+        if (state.User.Identity?.IsAuthenticated == true)
+        {
+            await RefreshSystemReadinessAsync(CancellationToken.None);
+            readinessRefreshCancellation = new CancellationTokenSource();
+            _ = RefreshSystemReadinessPeriodicallyAsync(readinessRefreshCancellation.Token);
+        }
+
         if (!isAdmin)
         {
             return;
@@ -242,6 +274,40 @@
         await RefreshAdminAttentionAsync(CancellationToken.None);
         attentionRefreshCancellation = new CancellationTokenSource();
         _ = RefreshAdminAttentionPeriodicallyAsync(attentionRefreshCancellation.Token);
+    }
+
+    private async Task RefreshSystemReadinessAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await SystemReadiness.GetAsync(cancellationToken);
+            systemHealthy = response?.Healthy;
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: a transient failure just leaves the footer chip
+            // unset rather than hiding the rest of the app.
+        }
+    }
+
+    private async Task RefreshSystemReadinessPeriodicallyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(async () =>
+                {
+                    await RefreshSystemReadinessAsync(cancellationToken);
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Application disposal or sign-out stopped the refresh loop.
+        }
     }
 
     private async Task SetThemeModeAsync(ThemeMode mode)
@@ -297,6 +363,7 @@
     private async Task SignOutAsync()
     {
         attentionRefreshCancellation?.Cancel();
+        readinessRefreshCancellation?.Cancel();
         await AuthenticationStateProvider.SignOutAsync();
         // forceLoad so nothing cached in the WebAssembly app outlives the session.
         Navigation.NavigateTo("/", forceLoad: true);
@@ -306,5 +373,7 @@
     {
         attentionRefreshCancellation?.Cancel();
         attentionRefreshCancellation?.Dispose();
+        readinessRefreshCancellation?.Cancel();
+        readinessRefreshCancellation?.Dispose();
     }
 }

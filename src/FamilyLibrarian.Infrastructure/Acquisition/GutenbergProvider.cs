@@ -28,6 +28,10 @@ public sealed class GutenbergProvider(
 
     public string Id => ProviderRegistry.GutenbergProviderId;
 
+    /// <summary>Not ready while the local RDF catalogue is still (re)importing — see <see cref="IDirectAcquisitionProvider.IsReadyAsync"/>.</summary>
+    public async Task<bool> IsReadyAsync(CancellationToken cancellationToken) =>
+        (await catalog.GetStatusAsync(cancellationToken)).IsReady;
+
     public async Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
         Guid workId,
         RequestMediaType mediaType,

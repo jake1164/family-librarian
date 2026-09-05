@@ -76,6 +76,15 @@ public sealed class AutomaticRequestFulfillmentService(
                         continue;
                     }
 
+                    if (!await provider.IsReadyAsync(cancellationToken))
+                    {
+                        // Not broken, just not ready yet (e.g. a local catalogue
+                        // mid-import) -- skip silently rather than recording a
+                        // "no match" that would start this provider's retry
+                        // cooldown on a lookup that was never really asked.
+                        continue;
+                    }
+
                     try
                     {
                         var providerOptions = await provider.FindDirectAcquisitionsAsync(

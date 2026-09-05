@@ -80,6 +80,23 @@ public interface IDirectAcquisitionProvider
 {
     string Id { get; }
 
+    /// <summary>
+    /// Whether this provider currently has enough of its own data/connection
+    /// in place to give a meaningful answer. A provider backed by a source
+    /// still being (re)built (e.g. a local catalogue mid-import) is not
+    /// broken, just not ready yet — the default of <see langword="true"/>
+    /// covers every provider with nothing like that to report.
+    /// </summary>
+    /// <remarks>
+    /// This exists so the automatic fulfillment loop can skip a not-yet-ready
+    /// provider without recording a lookup at all: a "no match" taken while a
+    /// source is still filling itself in is not a real answer, and recording
+    /// one would falsely start that provider's retry cooldown for this
+    /// format — the same request would then not be tried again until the
+    /// cooldown expired, even once the source became ready moments later.
+    /// </remarks>
+    Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(true);
+
     Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
         Guid workId,
         RequestMediaType mediaType,

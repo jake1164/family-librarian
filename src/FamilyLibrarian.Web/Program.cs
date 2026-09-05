@@ -11,12 +11,14 @@ using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
 using FamilyLibrarian.Web.Gutenberg;
 using FamilyLibrarian.Web.Publishing;
+using FamilyLibrarian.Web.System;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddScoped<SystemReadinessService>();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<CwaVerificationHostedService>();
@@ -212,6 +214,7 @@ app.MapCwaSettingsEndpoints();
 app.MapAudiobookshelfSettingsEndpoints();
 app.MapPublishingQueueEndpoints();
 app.MapPolicyEndpoints();
+app.MapSystemReadinessEndpoints();
 app.MapOidcSettingsEndpoints();
 app.MapExternalProviderEndpoints();
 app.MapPrivateEgressGatewayEndpoints();

@@ -39,6 +39,7 @@ builder.Services.AddScoped<GutenbergCatalogApiClient>();
 builder.Services.AddScoped<RequestsApiClient>();
 builder.Services.AddScoped<AdminRequestsApiClient>();
 builder.Services.AddScoped<AdminTasksApiClient>();
+builder.Services.AddScoped<SystemReadinessApiClient>();
 builder.Services.AddScoped<NotificationsApiClient>();
 builder.Services.AddScoped<SmtpSettingsApiClient>();
 builder.Services.AddScoped<FeedbackApiClient>();
