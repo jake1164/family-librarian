@@ -299,6 +299,11 @@ Run the full suite with:
 dotnet test --solution FamilyLibrarian.slnx
 ```
 
+Web integration tests share a disposable PostgreSQL container with a separate
+database per class. Their connection strings disable pooling so closed
+connections do not retain server slots across classes. Production connections
+retain their normal pooling configuration.
+
 ### Opt-in browser E2E
 
 The request-to-queue browser test runs against a separately started, **clean**

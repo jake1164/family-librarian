@@ -90,7 +90,12 @@ internal static class PostgresFixture
 
         var databaseName = $"fl_{Guid.NewGuid():N}";
 
-        await using (var admin = new NpgsqlConnection(_container.GetConnectionString()))
+        var adminConnectionString = new NpgsqlConnectionStringBuilder(_container.GetConnectionString())
+        {
+            Pooling = false
+        }.ConnectionString;
+
+        await using (var admin = new NpgsqlConnection(adminConnectionString))
         {
             await admin.OpenAsync();
             await using var create = admin.CreateCommand();
@@ -100,7 +105,11 @@ internal static class PostgresFixture
             await create.ExecuteNonQueryAsync();
         }
 
-        var connectionString = new NpgsqlConnectionStringBuilder(_container.GetConnectionString())
+        // Every database has a different connection string and therefore its own
+        // pool. Context disposal returns connections to those pools, retaining
+        // server slots across classes until idle pruning. These short-lived test
+        // databases need physical connections closed as soon as they are disposed.
+        var connectionString = new NpgsqlConnectionStringBuilder(adminConnectionString)
         {
             Database = databaseName
         }.ConnectionString;
