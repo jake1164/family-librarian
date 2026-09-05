@@ -126,49 +126,21 @@
         <MudPaper Outlined="true" Class="pa-4" id="tasks-security">
             <MudText Typo="Typo.h5">File intake and security</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
-                The latest 50 uploads or acquired files, including ClamAV and format-validation results when a scan has run.
+                Review recent file activity, scan details, and any required actions on the Security scans page.
             </MudText>
-            @if (snapshot.SecurityActivity.Count == 0)
+            @if (snapshot.Summary.SecurityAttention == 0)
             {
-                <MudAlert Severity="Severity.Info" Dense="true">No file activity has been recorded yet.</MudAlert>
+                <MudAlert Severity="Severity.Success" Dense="true">No files need security attention.</MudAlert>
             }
             else
             {
-                <MudList T="string" Dense="true">
-                    @foreach (var asset in snapshot.SecurityActivity)
-                    {
-                        <MudListItem T="string">
-                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
-                                <MudLink Href="@($"admin/requests/{asset.RequestId}")">@asset.WorkTitle</MudLink>
-                                <MudChip T="string" Size="Size.Small" Color="@StorageColor(asset.StorageState)">@asset.StorageState</MudChip>
-                                @if (asset.LatestEvaluation is not null)
-                                {
-                                    <MudChip T="string" Size="Size.Small" Color="@EvaluationColor(asset.LatestEvaluation.Status)">
-                                        Scan: @asset.LatestEvaluation.Status
-                                    </MudChip>
-                                }
-                            </MudStack>
-                            <MudText Typo="Typo.body2">@asset.OriginalFilename · @asset.MediaType · @FormatSize(asset.SizeBytes)</MudText>
-                            @if (asset.LatestEvaluation is { } evaluation)
-                            {
-                                @foreach (var scan in evaluation.ScanResults)
-                                {
-                                    <MudText Typo="Typo.caption">
-                                        @scan.ScannerId: @scan.Status@(string.IsNullOrWhiteSpace(scan.ThreatName) ? string.Empty : $" — {scan.ThreatName}")
-                                    </MudText>
-                                }
-                                @foreach (var validation in evaluation.ValidationResults)
-                                {
-                                    <MudText Typo="Typo.caption">
-                                        @validation.ValidatorId: @(validation.IsValid ? "valid" : "invalid")@(string.IsNullOrWhiteSpace(validation.Message) ? string.Empty : $" — {validation.Message}")
-                                    </MudText>
-                                }
-                            }
-                            <MudText Typo="Typo.caption">Updated @asset.UpdatedAtUtc.ToLocalTime().ToString("g")</MudText>
-                        </MudListItem>
-                    }
-                </MudList>
+                <MudAlert Severity="Severity.Warning" Dense="true">
+                    @snapshot.Summary.SecurityAttention file@(snapshot.Summary.SecurityAttention == 1 ? string.Empty : "s") need security attention.
+                </MudAlert>
             }
+            <MudButton Href="admin/security" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Shield" Class="mt-3">
+                View security scans
+            </MudButton>
         </MudPaper>
 
         <MudPaper Outlined="true" Class="pa-4" id="tasks-publishing">
@@ -248,22 +220,6 @@
         _ => Color.Default
     };
 
-    private static Color StorageColor(string state) => state switch
-    {
-        "Trusted" => Color.Success,
-        "Rejected" or "Destroyed" => Color.Error,
-        "Unmatched" => Color.Warning,
-        _ => Color.Default
-    };
-
-    private static Color EvaluationColor(string status) => status switch
-    {
-        "Passed" => Color.Success,
-        "Failed" => Color.Error,
-        "ReviewRequired" => Color.Warning,
-        _ => Color.Default
-    };
-
     private static Color PublishingColor(string status) => status switch
     {
         "Available" or "Delivered" => Color.Success,
@@ -277,18 +233,4 @@
             ? $"{filename} · started {createdAtUtc.ToLocalTime():g}"
             : $"{filename} · {failureReason}";
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024)
-        {
-            return $"{bytes} B";
-        }
-
-        if (bytes < 1024 * 1024)
-        {
-            return $"{bytes / 1024d:F1} KB";
-        }
-
-        return $"{bytes / 1024d / 1024d:F1} MB";
-    }
 }
