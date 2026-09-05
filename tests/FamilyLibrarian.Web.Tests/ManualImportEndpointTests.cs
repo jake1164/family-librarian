@@ -142,7 +142,7 @@ public sealed class ManualImportEndpointTests
         // detection would otherwise (correctly) reject as a repeat request.
         var created = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(work.Id, ["Ebook"], null, true, false));
+            new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);

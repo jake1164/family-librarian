@@ -9,7 +9,7 @@
     <div>
         <MudText Typo="Typo.h3">My requests</MudText>
         <MudText Typo="Typo.body1">
-            Books you have asked for. Only you can see this list, and it updates automatically
+            Books you have asked for. Matching requests are shared with the family. This list updates automatically
             while this page is open as a request moves through acquisition and delivery.
         </MudText>
     </div>
@@ -94,9 +94,14 @@
                     <MudText Typo="Typo.caption">
                         Asked @request.RequestedAtUtc.ToLocalTime().ToString("d")
                     </MudText>
+                    <MudText Typo="Typo.body2">@request.RequesterCount requester(s). Withdrawing leaves the request open for others.</MudText>
+                    @if (request.RequiresManualFulfillment)
+                    {
+                        <MudText Typo="Typo.body2">@request.VersionKind: @request.VersionDetails — librarian review required.</MudText>
+                    }
                     @if (!string.IsNullOrWhiteSpace(request.Note))
                     {
-                        <MudText Typo="Typo.body2"><em>Your note:</em> @request.Note</MudText>
+                        <MudText Typo="Typo.body2"><em>Your private note:</em> @request.Note</MudText>
                     }
                     @if (!string.IsNullOrWhiteSpace(request.AdminNote))
                     {
@@ -124,7 +129,7 @@
 
     private static string TransitionLabel(string transition) => transition switch
     {
-        "Cancelled" => "Cancel this request",
+        "Cancelled" => "Withdraw my request",
         "PendingAcquisition" => "Ask again",
         _ => transition
     };

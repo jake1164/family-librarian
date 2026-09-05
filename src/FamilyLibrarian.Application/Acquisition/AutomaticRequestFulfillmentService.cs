@@ -59,6 +59,7 @@ public sealed class AutomaticRequestFulfillmentService(
 
         foreach (var request in pending)
         {
+            if (request.RequiresManualFulfillment) continue;
             foreach (var format in request.Formats.Where(format => format.Status == RequestFormatStatus.Requested))
             {
                 if (await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken))

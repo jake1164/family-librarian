@@ -5,6 +5,7 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Requests;
+using FamilyLibrarian.Contracts.Notifications;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,7 +26,6 @@ namespace FamilyLibrarian.Web.Tests;
 public sealed class RequestWorkflowEndpointTests
 {
     private static readonly string[] BothFormats = ["Ebook", "Audiobook"];
-    private static readonly string[] EbookOnly = ["Ebook"];
     private static readonly string[] CancelOnly = ["Cancelled"];
 
     private static WebTestFixture? _fixture;
@@ -83,17 +83,24 @@ public sealed class RequestWorkflowEndpointTests
 
         var second = await CreateRequestAsync(client, workId, ["Ebook"], null);
 
-        Assert.AreEqual(HttpStatusCode.Conflict, second.StatusCode);
-        var conflict = await second.Content.ReadFromJsonAsync<CreateBookRequestConflictResponse>();
-        Assert.IsNotNull(conflict);
-        Assert.AreEqual("Duplicate", conflict.Kind);
-        Assert.IsNotNull(conflict.Duplicate);
-        CollectionAssert.AreEqual(EbookOnly, conflict.Duplicate.OverlappingFormats.ToArray());
-        Assert.IsNotNull(conflict.Duplicate.ExistingRequest);
+        Assert.AreEqual(HttpStatusCode.Created, second.StatusCode);
+        var initial = await first.Content.ReadFromJsonAsync<BookRequestResponse>();
+        var repeated = await second.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(initial);
+        Assert.IsNotNull(repeated);
+        Assert.AreEqual(initial.Id, repeated.Id);
+        Assert.AreEqual(1, repeated.RequesterCount);
 
-        // The warning is not a wall: confirming it creates the repeat request.
-        var confirmed = await CreateRequestAsync(client, workId, ["Ebook"], null, confirmDuplicate: true);
-        Assert.AreEqual(HttpStatusCode.Created, confirmed.StatusCode);
+        var bareOverride = await CreateRequestAsync(client, workId, ["Ebook"], null, confirmDuplicate: true);
+        Assert.AreEqual(HttpStatusCode.BadRequest, bareOverride.StatusCode);
+        var variant = await client.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(workId, ["Ebook"], null, true, false, "Language", "Spanish translation"));
+        Assert.AreEqual(HttpStatusCode.Created, variant.StatusCode);
+        var review = await variant.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(review);
+        Assert.AreNotEqual(initial.Id, review.Id);
+        Assert.AreEqual("NeedsReview", review.Status);
+        Assert.IsTrue(review.RequiresManualFulfillment);
     }
 
     [TestMethod]
@@ -131,13 +138,12 @@ public sealed class RequestWorkflowEndpointTests
         Assert.AreEqual("Ebook", owned.MediaType);
         Assert.AreEqual("cwa", owned.ProviderId);
 
-        // The warning is not a wall: confirming it creates the request anyway.
-        // confirmDuplicate is also set here since this demo work/user pair is
-        // shared with other tests in this class against the same database —
-        // this assertion is only about the ownership confirmation itself.
-        var confirmed = await CreateRequestAsync(
-            client, workId, ["Ebook"], null, confirmDuplicate: true, confirmOwned: true);
+        var confirmed = await client.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(workId, ["Ebook"], null, false, true, "Edition", "Illustrated edition, ISBN 9780000000000"));
         Assert.AreEqual(HttpStatusCode.Created, confirmed.StatusCode);
+        var review = await confirmed.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(review);
+        Assert.AreEqual("NeedsReview", review.Status);
     }
 
     [TestMethod]
@@ -164,7 +170,7 @@ public sealed class RequestWorkflowEndpointTests
     }
 
     [TestMethod]
-    public async Task ARequesterCanCancelAndReopenTheirRequest()
+    public async Task ARequesterCanWithdrawAndSafelyReopenTheirRequest()
     {
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateRequestingClientAsync(fixture);
@@ -186,10 +192,10 @@ public sealed class RequestWorkflowEndpointTests
 
         var reopened = await TransitionAsync(client, request.Id, "PendingAcquisition", null);
         Assert.AreEqual(HttpStatusCode.OK, reopened.StatusCode);
-        var afterReopen = await reopened.Content.ReadFromJsonAsync<BookRequestResponse>();
-        Assert.IsNotNull(afterReopen);
-        Assert.AreEqual("PendingAcquisition", afterReopen.Status);
-        Assert.IsTrue(afterReopen.Formats.All(format => format.Status == "Requested"));
+        var newRequest = await reopened.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(newRequest);
+        Assert.AreEqual(request.Id, newRequest.Id);
+        Assert.AreEqual("PendingAcquisition", newRequest.Status);
     }
 
     [TestMethod]
@@ -198,7 +204,7 @@ public sealed class RequestWorkflowEndpointTests
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateRequestingClientAsync(fixture);
         var workId = await ResolveWorkAsync(client, "the-hobbit");
-        var request = await CreateAndReadRequestAsync(client, workId, ["Ebook"], confirmDuplicate: true);
+        var request = await CreateAndReadRequestAsync(client, workId, ["Ebook"]);
 
         var needsReview = await TransitionAsync(client, request.Id, "NeedsReview", null);
         var notAvailable = await TransitionAsync(client, request.Id, "NotAvailable", null);
@@ -219,8 +225,7 @@ public sealed class RequestWorkflowEndpointTests
         var request = await CreateAndReadRequestAsync(
             owner,
             workId,
-            ["Audiobook"],
-            confirmDuplicate: true);
+            ["Audiobook"]);
 
         // A different account — and an administrator at that, so this also shows
         // the admin queue is not reachable through the requester's own routes.
@@ -254,8 +259,7 @@ public sealed class RequestWorkflowEndpointTests
         var request = await CreateAndReadRequestAsync(
             client,
             workId,
-            ["Ebook"],
-            confirmDuplicate: true);
+            ["Ebook"]);
 
         await using var restarted = fixture.RestartHost();
         using var afterRestart = await restarted.CreateUserClientAsync();
@@ -266,6 +270,85 @@ public sealed class RequestWorkflowEndpointTests
         var found = mine.Active.SingleOrDefault(item => item.Id == request.Id);
         Assert.IsNotNull(found, "The request did not survive the restart.");
         Assert.AreEqual("Project Hail Mary", found.WorkTitle);
+    }
+
+    [TestMethod]
+    public async Task ConcurrentPeopleShareOneRequestAndKeepNotesPrivate()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var reader = await CreateRequestingClientAsync(fixture);
+        using var admin = await fixture.CreateAdminClientAsync();
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName,
+            await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        var workId = await ResolveWorkAsync(reader, "the-hobbit");
+
+        var responses = await Task.WhenAll(
+            CreateRequestAsync(reader, workId, ["Ebook"], "Reader private note"),
+            CreateRequestAsync(admin, workId, ["Ebook"], "Admin private note"));
+        foreach (var response in responses) Assert.AreEqual(HttpStatusCode.Created, response.StatusCode);
+        var first = await responses[0].Content.ReadFromJsonAsync<BookRequestResponse>();
+        var second = await responses[1].Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(first);
+        Assert.IsNotNull(second);
+        Assert.AreEqual(first.Id, second.Id);
+        Assert.AreEqual(first.Formats.Single().FormatId, second.Formats.Single().FormatId);
+        Assert.AreEqual("Reader private note", first.Note);
+        Assert.AreEqual("Admin private note", second.Note);
+
+        var mine = await reader.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(mine);
+        var current = mine.Active.Single(request => request.Id == first.Id);
+        Assert.AreEqual(2, current.RequesterCount);
+        var withdrawn = await TransitionAsync(reader, first.Id, "Cancelled", null);
+        Assert.AreEqual(HttpStatusCode.OK, withdrawn.StatusCode);
+        var readerState = await withdrawn.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(readerState);
+        Assert.AreEqual("Cancelled", readerState.Status);
+        var theirs = await admin.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(theirs);
+        Assert.AreEqual("PendingAcquisition", theirs.Active.Single(request => request.Id == first.Id).Status);
+
+        var rejoined = await CreateAndReadRequestAsync(reader, workId, ["Ebook"]);
+        Assert.AreEqual(first.Id, rejoined.Id);
+        Assert.AreEqual(2, rejoined.RequesterCount);
+        var queue = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{first.Id}");
+        Assert.IsNotNull(queue);
+        Assert.IsNotNull(queue.Participants);
+        Assert.HasCount(2, queue.Participants);
+        var unavailable = await admin.PostAsJsonAsync($"/api/v1/admin/requests/{first.Id}/transitions",
+            new ChangeBookRequestStatusRequest("NotAvailable", "No suitable copy found", queue.Request.Version));
+        Assert.AreEqual(HttpStatusCode.OK, unavailable.StatusCode);
+        foreach (var client in new[] { reader, admin })
+        {
+            var feed = await client.GetFromJsonAsync<NotificationListResponse>("/api/v1/notifications/");
+            Assert.IsNotNull(feed);
+            Assert.IsTrue(feed.Notifications.Any(notification => notification.SubjectId == first.Id.ToString()));
+        }
+    }
+
+    [TestMethod]
+    public async Task AVersionExceptionCannotBeRequeuedByBulkOrIndividualAdminActions()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var reader = await CreateRequestingClientAsync(fixture);
+        using var admin = await fixture.CreateAdminClientAsync();
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName,
+            await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        var workId = await ResolveWorkAsync(reader, "the-hobbit");
+        var response = await reader.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(workId, ["Ebook"], null, false, false, "Language", "Spanish translation"));
+        Assert.AreEqual(HttpStatusCode.Created, response.StatusCode);
+        var version = await response.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(version);
+        var bulk = await admin.PostAsJsonAsync("/api/v1/admin/requests/recheck", new RecheckNeedsReviewRequest(null));
+        Assert.AreEqual(HttpStatusCode.OK, bulk.StatusCode);
+        var review = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{version.Id}");
+        Assert.IsNotNull(review);
+        Assert.AreEqual("NeedsReview", review.Request.Status);
+        Assert.IsFalse(review.Request.AvailableTransitions.Contains("PendingAcquisition"));
+        var requeue = await admin.PostAsJsonAsync($"/api/v1/admin/requests/{version.Id}/transitions",
+            new ChangeBookRequestStatusRequest("PendingAcquisition", "Try again", review.Request.Version));
+        Assert.AreEqual(HttpStatusCode.BadRequest, requeue.StatusCode);
     }
 
     private static async Task<HttpClient> CreateRequestingClientAsync(WebTestFixture fixture)
@@ -289,7 +372,7 @@ public sealed class RequestWorkflowEndpointTests
 
         var work = await response.Content.ReadFromJsonAsync<CatalogWorkResponse>();
         Assert.IsNotNull(work);
-        return work.Id;
+        return await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id);
     }
 
     private static Task<HttpResponseMessage> CreateRequestAsync(

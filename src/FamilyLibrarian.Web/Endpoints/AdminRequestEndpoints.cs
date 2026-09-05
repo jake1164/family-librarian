@@ -359,7 +359,8 @@ internal static class AdminRequestEndpoints
     private static AdminBookRequestResponse ToAdminRequestResponse(AdminBookRequestView request) => new(
         RequestEndpoints.ToRequestResponse(
             request.Request,
-            BookRequestService.AdminTransitionsFrom(request.Request.Status)),
+            BookRequestService.AdminTransitionsFrom(request.Request.Status)
+                .Where(status => !request.Request.RequiresManualFulfillment || status != RequestStatus.PendingAcquisition).ToArray()),
         request.RequesterDisplayName,
         request.RequesterEmail,
         request.StatusHistory
@@ -368,5 +369,7 @@ internal static class AdminRequestEndpoints
                 history.ToStatus.ToString(),
                 history.Reason,
                 history.OccurredAtUtc))
-            .ToArray());
+            .ToArray(),
+        request.Participants?.Select(participant => new RequestParticipantResponse(
+            participant.DisplayName, participant.Email, participant.Note, participant.Withdrawn)).ToArray());
 }

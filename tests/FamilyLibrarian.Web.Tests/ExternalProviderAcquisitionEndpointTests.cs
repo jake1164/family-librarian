@@ -79,7 +79,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         Assert.IsNotNull(work);
 
         var created = await admin.PostAsJsonAsync(
-            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, true, false));
+            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
@@ -137,7 +137,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
         Assert.IsNotNull(work);
         var created = await admin.PostAsJsonAsync(
-            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, true, false));
+            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
         var format = request.Formats.Single(candidate => candidate.MediaType == "Ebook");
@@ -183,7 +183,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
         Assert.IsNotNull(work);
         var created = await admin.PostAsJsonAsync(
-            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, true, false));
+            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
 
@@ -257,7 +257,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         Assert.IsNotNull(work);
 
         var created = await admin.PostAsJsonAsync(
-            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, true, false));
+            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
@@ -323,7 +323,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
         Assert.IsNotNull(work);
         var created = await admin.PostAsJsonAsync(
-            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, true, false));
+            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
         var format = request.Formats.Single(candidate => candidate.MediaType == "Ebook");

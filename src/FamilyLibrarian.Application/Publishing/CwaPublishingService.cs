@@ -283,11 +283,10 @@ public sealed class CwaPublishingService(
             return;
         }
 
-        var becameAvailable = request.MarkFormatAvailable(asset.AssociatedRequestFormatId, clock.UtcNow);
-        if (becameAvailable)
-        {
+        var previouslySatisfied = request.SatisfiedRequesterIds.ToHashSet();
+        request.MarkFormatAvailable(asset.AssociatedRequestFormatId, clock.UtcNow);
+        foreach (var requesterId in request.SatisfiedRequesterIds.Except(previouslySatisfied))
             await notifications.RecordRequestStatusForUserAsync(
-                request.UserId, request.Id, title, RequestStatus.Available, cancellationToken);
-        }
+                requesterId, request.Id, title, RequestStatus.Available, cancellationToken);
     }
 }

@@ -433,12 +433,11 @@ public sealed class AudiobookshelfPublishingService(
             return;
         }
 
-        var becameAvailable = request.MarkFormatAvailable(requestFormatId, clock.UtcNow);
-        if (becameAvailable)
-        {
+        var previouslySatisfied = request.SatisfiedRequesterIds.ToHashSet();
+        request.MarkFormatAvailable(requestFormatId, clock.UtcNow);
+        foreach (var requesterId in request.SatisfiedRequesterIds.Except(previouslySatisfied))
             await notifications.RecordRequestStatusForUserAsync(
-                request.UserId, request.Id, title, RequestStatus.Available, cancellationToken);
-        }
+                requesterId, request.Id, title, RequestStatus.Available, cancellationToken);
     }
 
     private Task AuditPublishedAsync(Guid assetId, CancellationToken cancellationToken) =>

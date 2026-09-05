@@ -63,6 +63,10 @@ internal sealed class LiveChanges
                     changes.RequestIds.Add(request.Id);
                     changes.ForUser(request.UserId, LiveUpdateTopics.Requests);
                     break;
+                case RequestParticipant participant:
+                    changes.RequestIds.Add(participant.RequestId);
+                    changes.ForUser(participant.UserId, LiveUpdateTopics.Requests);
+                    break;
                 case RequestFormat format:
                     changes.RequestIds.Add(format.RequestId);
                     break;

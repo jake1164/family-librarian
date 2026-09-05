@@ -52,7 +52,7 @@ internal sealed partial class LiveUpdatesPublisher(
                     .Where(job => changes.JobIds.Contains(job.Id)).Select(job => job.RequestId).ToArrayAsync(token));
             if (changes.RequestIds.Count > 0)
                 foreach (var owner in await database.BookRequests.Where(request => changes.RequestIds.Contains(request.Id))
-                             .Select(request => request.UserId).Distinct().ToArrayAsync(token))
+                             .SelectMany(request => request.Participants.Select(participant => participant.UserId)).Distinct().ToArrayAsync(token))
                     changes.ForUser(owner, LiveUpdateTopics.Requests);
 
             foreach (var connection in connected)

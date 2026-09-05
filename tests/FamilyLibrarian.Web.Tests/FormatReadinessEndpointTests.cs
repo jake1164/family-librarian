@@ -54,7 +54,7 @@ public sealed class FormatReadinessEndpointTests
 
         var response = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(workId, ["Ebook"], null, true, false));
+            new CreateBookRequestRequest(workId, ["Ebook"], null, false, false));
 
         Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
@@ -74,7 +74,7 @@ public sealed class FormatReadinessEndpointTests
 
         var response = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(workId, ["Audiobook"], null, true, false));
+            new CreateBookRequestRequest(workId, ["Audiobook"], null, false, false));
 
         Assert.AreEqual(HttpStatusCode.Created, response.StatusCode);
     }

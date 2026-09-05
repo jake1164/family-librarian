@@ -146,9 +146,20 @@ only runs while no administrator exists, so that would leave no way back in.
 
 Search the catalog, open a book, save it to the family catalog, then request it as
 an ebook, an audiobook, or both, and follow it under **My requests** — where you
-can also cancel a request or ask again. Asking again starts a fresh acquisition
-cycle while retaining prior provider activity as history. Requests are private
-to the account that made them. For ebooks, the built-in public-domain Project Gutenberg source is enabled by
+can withdraw your interest or ask again. Ordinary requests for the same book
+share one request and one acquisition per format. Each participant sees their
+own formats and private note; librarians can see all participants. Withdrawing
+leaves the shared request open for everyone else. Asking again joins an existing
+shared request, or reopens the previous request when no current one exists.
+
+For a different language, edition, narrator, accessibility requirement, or an
+unsuitable existing copy, choose the version difference and describe what is
+needed. These requests go to librarian review and remain excluded from automatic
+acquisition and bulk rechecks. Version details guide human selection; they do
+not add automatic edition/language matching. Historical overlapping requests
+found during upgrade retain their IDs/files/history and are held for review.
+
+For ebooks, the built-in public-domain Project Gutenberg source is enabled by
 default after its local RDF catalogue has finished its first sync: when it finds one high-confidence title-and-author match, Family
 Librarian automatically downloads it, applies the security and identity checks,
 and sends a clean verified copy to CWA. **My requests** and the book page refresh
@@ -189,7 +200,7 @@ subscribe to it instead of polling. The shared connection indicator shows when
 updates are unavailable and offers **Refresh**. Initial connection failures retry
 with capped backoff; reconnection reloads the open views to recover missed updates.
 Data and actions still use the existing authorized HTTP APIs. Private request
-updates go only to the requester and current admins; personal notifications remain
+updates go only to request participants and current admins; personal notifications remain
 private, and source/security/publishing diagnostics remain admin-only.
 
 Each admin request detail page includes an append-only provider-activity

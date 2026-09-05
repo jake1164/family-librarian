@@ -13,10 +13,9 @@ namespace FamilyLibrarian.Application.Requests;
 /// The request commands and queries behind My Requests and the request action.
 /// </summary>
 /// <remarks>
-/// Ownership is enforced here, not at the endpoint: every method resolves the
-/// caller from <see cref="ICurrentUser"/> and refuses to read or change another
-/// user's request. A request that belongs to someone else is reported as not
-/// found so the API does not confirm that it exists.
+/// Requester access is based on membership. A caller may join a shared request
+/// through its Work, but cannot read private notes or withdraw another person's
+/// interest. Nonmembers receive not-found from requester-specific endpoints.
 /// </remarks>
 public sealed class BookRequestService(
     IRequestRepository repository,
@@ -60,7 +59,9 @@ public sealed class BookRequestService(
         string? note,
         bool confirmDuplicate,
         bool confirmOwned,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? versionKind = null,
+        string? versionDetails = null)
     {
         ArgumentNullException.ThrowIfNull(mediaTypes);
 
@@ -70,7 +71,7 @@ public sealed class BookRequestService(
         }
 
         var requestedFormats = mediaTypes.Distinct().ToArray();
-        if (requestedFormats.Length == 0)
+        if (requestedFormats.Length == 0 || requestedFormats.Any(format => !Enum.IsDefined(format)))
         {
             return CreateBookRequestResult.Invalid("Choose ebook, audiobook, or both.");
         }
@@ -86,41 +87,15 @@ public sealed class BookRequestService(
             return CreateBookRequestResult.WorkNotFound();
         }
 
-        foreach (var mediaType in requestedFormats)
+        var isVersionRequest = !string.IsNullOrWhiteSpace(versionKind);
+        if (isVersionRequest && (versionKind is not ("Language" or "Edition" or "Narration" or "Accessibility" or "Replacement") ||
+            string.IsNullOrWhiteSpace(versionDetails) || versionDetails.Trim().Length > BookRequest.MaxNoteLength))
         {
-            var check = await readiness.CheckAsync(mediaType, cancellationToken);
-            if (!check.IsReady)
-            {
-                return CreateBookRequestResult.Invalid(
-                    $"{mediaType} requests aren't available right now: {check.Reason}");
-            }
+            return CreateBookRequestResult.Invalid("Choose the difference and describe the specific version needed (up to 1,000 characters).");
         }
-
-        // Ownership calls out to whatever owned-library providers are
-        // registered (e.g. a live CWA/Audiobookshelf lookup), so it is
-        // checked here — before the per-(user, workId) creation lock below —
-        // and, like the duplicate check, only warns rather than blocks: it is
-        // reported first when both an owned match and a duplicate exist,
-        // since it is cheaper (no lock) and is the more fundamental "why are
-        // you requesting this at all" signal. Confirming past it and
-        // resubmitting then lets the duplicate check run normally.
-        if (!confirmOwned)
+        if ((confirmDuplicate || confirmOwned) && !isVersionRequest)
         {
-            var owned = new List<OwnedFormatOption>();
-            foreach (var mediaType in requestedFormats)
-            {
-                var options = await fulfillmentOptions.GetOptionsAsync(workId, mediaType, cancellationToken);
-                var ownedOption = options.FirstOrDefault(option => option.OptionKind == OptionKind.Owned);
-                if (ownedOption is not null)
-                {
-                    owned.Add(new OwnedFormatOption(mediaType, ownedOption.ProviderId, ownedOption.ExternalActionUri));
-                }
-            }
-
-            if (owned.Count > 0)
-            {
-                return CreateBookRequestResult.AlreadyOwned(owned);
-            }
+            return CreateBookRequestResult.Invalid("To request another copy, specify a language, edition, narration, accessibility need, or replacement reason for librarian review.");
         }
 
         return await repository.InCreateRequestScopeAsync(
@@ -128,31 +103,51 @@ public sealed class BookRequestService(
             workId,
             async token =>
             {
-                var existing = await repository.GetActiveRequestsForWorkAsync(
-                    userId,
-                    workId,
-                    token);
-
-                // A repeat request can be legitimate, so an overlap is a warning
-                // the user can confirm past, not a rejection.
-                var duplicate = existing.FirstOrDefault(request =>
-                    requestedFormats.Any(request.RequestsFormat));
-
-                if (duplicate is not null && !confirmDuplicate)
+                var existing = await repository.GetActiveRequestsForWorkAsync(userId, workId, token);
+                var shared = existing.FirstOrDefault(request => isVersionRequest
+                    ? request.RequiresManualFulfillment && request.VersionKind == versionKind &&
+                      string.Equals(request.VersionDetails, versionDetails!.Trim(), StringComparison.OrdinalIgnoreCase)
+                    : !request.RequiresManualFulfillment);
+                if (!isVersionRequest)
                 {
-                    var view = await repository.FindViewAsync(duplicate.Id, userId, token);
-                    return CreateBookRequestResult.Duplicate(
-                        view,
-                        requestedFormats
-                            .Where(duplicate.RequestsFormat)
-                            .ToArray());
+                    var owned = new List<OwnedFormatOption>();
+                    foreach (var mediaType in requestedFormats.Where(format => shared is null || !shared.RequestsFormat(format)))
+                    {
+                        var options = await fulfillmentOptions.GetOptionsAsync(workId, mediaType, token);
+                        var match = options.FirstOrDefault(option => option.OptionKind == OptionKind.Owned);
+                        if (match is not null)
+                            owned.Add(new OwnedFormatOption(mediaType, match.ProviderId, match.ExternalActionUri));
+                    }
+                    if (owned.Count > 0) return CreateBookRequestResult.AlreadyOwned(owned);
+                }
+
+                if (!isVersionRequest)
+                {
+                    foreach (var mediaType in requestedFormats.Where(format => shared is null || !shared.RequestsFormat(format)))
+                    {
+                        var check = await readiness.CheckAsync(mediaType, token);
+                        if (!check.IsReady)
+                            return CreateBookRequestResult.Invalid($"{mediaType} requests aren't available right now: {check.Reason}");
+                    }
+                }
+
+                if (shared is not null)
+                {
+                    shared.Join(userId, requestedFormats, note, clock.UtcNow);
+                    await repository.SaveChangesAsync(token);
+                    var joined = await repository.FindViewAsync(shared.Id, userId, token);
+                    return CreateBookRequestResult.Created(joined!);
                 }
 
                 var request = new BookRequest(userId, workId, requestedFormats, note, clock.UtcNow);
+                if (isVersionRequest)
+                    request.RequireVersionReview(versionKind!, versionDetails!, userId, clock.UtcNow);
                 repository.AddRequest(request);
                 await repository.SaveChangesAsync(token);
 
                 var created = await repository.FindViewAsync(request.Id, userId, token);
+                if (isVersionRequest)
+                    await notifications.RecordRequestNeedsReviewAsync(request.Id, created!.WorkTitle, "A specific version was requested.", token);
                 return CreateBookRequestResult.Created(created!);
             },
             cancellationToken);
@@ -172,37 +167,56 @@ public sealed class BookRequestService(
         CancellationToken cancellationToken)
     {
         if (currentUser.UserId is not { } userId)
-        {
             return BookRequestCommandResult.Unauthenticated();
-        }
+        if (to is not (RequestStatus.Cancelled or RequestStatus.PendingAcquisition))
+            return BookRequestCommandResult.Invalid("That change is not available to a requester.");
+        var initial = await repository.FindViewAsync(requestId, userId, cancellationToken);
+        if (initial is null) return BookRequestCommandResult.NotFound();
 
-        if (!Enum.IsDefined(to) || Array.IndexOf(RequesterTransitions, to) < 0)
+        return await repository.InCreateRequestScopeAsync(userId, initial.WorkId, async token =>
         {
-            return BookRequestCommandResult.Invalid("That status change is not available to you.");
-        }
-
-        var request = await repository.FindOwnedRequestAsync(requestId, userId, cancellationToken);
-        if (request is null)
-        {
-            return BookRequestCommandResult.NotFound();
-        }
-
-        if (expectedVersion is not null && request.Version != expectedVersion)
-        {
-            return BookRequestCommandResult.Conflict();
-        }
-
-        if (!RequestStatusTransitions.IsAllowed(request.Status, to))
-        {
-            return BookRequestCommandResult.Invalid(
-                $"A request that is {Describe(request.Status)} cannot be {Describe(to)}.");
-        }
-
-        request.TransitionTo(to, userId, reason, clock.UtcNow);
-        await repository.SaveChangesAsync(cancellationToken);
-
-        var view = await repository.FindViewAsync(requestId, userId, cancellationToken);
-        return BookRequestCommandResult.Success(view!);
+            var request = await repository.FindOwnedRequestAsync(requestId, userId, token);
+            if (request is null) return BookRequestCommandResult.NotFound();
+            if (expectedVersion is not null && request.Version != expectedVersion)
+                return BookRequestCommandResult.Conflict();
+            if (to == RequestStatus.Cancelled)
+            {
+                if (!request.IsActive)
+                    return BookRequestCommandResult.Invalid("This request is already closed.");
+                request.Withdraw(userId, clock.UtcNow);
+            }
+            else
+            {
+                if (request.RequiresManualFulfillment)
+                    return BookRequestCommandResult.Invalid("Submit the specific version from the book page for librarian review.");
+                var participant = request.Participants.Single(member => member.UserId == userId);
+                if (participant.WithdrawnAtUtc is null && request.IsActive)
+                    return BookRequestCommandResult.Invalid("You already participate in this request.");
+                if (!request.IsActive && !RequestStatusTransitions.IsAllowed(request.Status, to))
+                    return BookRequestCommandResult.Invalid("This completed request cannot be reopened.");
+                var active = await repository.GetActiveRequestsForWorkAsync(userId, request.WorkId, token);
+                var shared = active.FirstOrDefault(candidate => !candidate.RequiresManualFulfillment);
+                var formats = new List<RequestMediaType>();
+                if (participant.WantsEbook) formats.Add(RequestMediaType.Ebook);
+                if (participant.WantsAudiobook) formats.Add(RequestMediaType.Audiobook);
+                foreach (var mediaType in formats.Where(format => shared is null || !shared.RequestsFormat(format)))
+                {
+                    var options = await fulfillmentOptions.GetOptionsAsync(request.WorkId, mediaType, token);
+                    if (options.Any(option => option.OptionKind == OptionKind.Owned))
+                        return BookRequestCommandResult.Invalid("This format is already in the library. Use the book page if a different version is needed.");
+                }
+                if (shared is null)
+                {
+                    request.TransitionTo(RequestStatus.PendingAcquisition, userId, reason, clock.UtcNow);
+                    shared = request;
+                }
+                shared.Join(userId, formats, participant.Note, clock.UtcNow);
+                requestId = shared.Id;
+            }
+            await repository.SaveChangesAsync(token);
+            var view = await repository.FindViewAsync(requestId, userId, token);
+            return BookRequestCommandResult.Success(view!);
+        }, cancellationToken);
     }
 
     /// <summary>Lists requests for the administrative queue.</summary>
@@ -238,53 +252,70 @@ public sealed class BookRequestService(
             return BookRequestCommandResult.Invalid("That is not a request status.");
         }
 
-        var request = await repository.FindRequestForAdminAsync(requestId, cancellationToken);
-        if (request is null)
+        var initial = await repository.FindAdminViewAsync(requestId, cancellationToken);
+        if (initial is null) return BookRequestCommandResult.NotFound();
+        return await repository.InCreateRequestScopeAsync(userId, initial.Request.WorkId, async token =>
         {
-            return BookRequestCommandResult.NotFound();
-        }
+            var request = await repository.FindRequestForAdminAsync(requestId, token);
+            if (request is null)
+            {
+                return BookRequestCommandResult.NotFound();
+            }
 
-        if (request.Version != expectedVersion)
-        {
-            return BookRequestCommandResult.Conflict();
-        }
+            if (request.Version != expectedVersion)
+            {
+                return BookRequestCommandResult.Conflict();
+            }
 
-        if (!RequestStatusTransitions.IsAllowed(request.Status, to))
-        {
-            return BookRequestCommandResult.Invalid(
-                $"A request that is {Describe(request.Status)} cannot be {Describe(to)}.");
-        }
+            if (!RequestStatusTransitions.IsAllowed(request.Status, to))
+            {
+                return BookRequestCommandResult.Invalid(
+                    $"A request that is {Describe(request.Status)} cannot be {Describe(to)}.");
+            }
 
-        request.TransitionTo(to, userId, reason, clock.UtcNow);
-        await repository.SaveChangesAsync(cancellationToken);
-        await audit.WriteAsync(
-            AuditActions.BookRequestStatusChanged,
-            AuditSubjectTypes.BookRequest,
-            requestId.ToString(),
-            new { RequestId = requestId, From = request.StatusHistory.Last().FromStatus?.ToString(), To = to.ToString() },
-            cancellationToken);
+            if (request.RequiresManualFulfillment && to == RequestStatus.PendingAcquisition)
+                return BookRequestCommandResult.Invalid("This request needs a specific version. It cannot be returned to automatic acquisition.");
+            if (to == RequestStatus.PendingAcquisition)
+            {
+                var active = await repository.GetActiveRequestsForWorkAsync(userId, request.WorkId, token);
+                if (active.Any(other => other.Id != requestId && !other.RequiresManualFulfillment))
+                    return BookRequestCommandResult.Invalid("An active shared request already exists. Join it from the book page instead.");
+            }
 
-        var view = await repository.FindAdminViewAsync(requestId, cancellationToken);
+            request.TransitionTo(to, userId, reason, clock.UtcNow);
+            await repository.SaveChangesAsync(token);
+            await audit.WriteAsync(
+                AuditActions.BookRequestStatusChanged,
+                AuditSubjectTypes.BookRequest,
+                requestId.ToString(),
+                new { RequestId = requestId, From = request.StatusHistory.Last().FromStatus?.ToString(), To = to.ToString() },
+                token);
 
-        if (to == RequestStatus.NeedsReview)
-        {
-            await notifications.RecordRequestNeedsReviewAsync(requestId, view!.Request.WorkTitle, reason, cancellationToken);
-        }
-        else if (to is RequestStatus.Available or RequestStatus.NotAvailable)
-        {
-            await notifications.RecordRequestStatusForUserAsync(
-                request.UserId, requestId, view!.Request.WorkTitle, to, cancellationToken);
-            await outboundCommunications.EnqueueAsync(
-                request.UserId,
-                OutboundCommunicationTypes.RequestStatusChanged,
-                body: BuildRequestStatusChangedBody(view!.Request.WorkTitle, to),
-                subject: $"Family Librarian — {view!.Request.WorkTitle}",
-                relatedEntityType: "BookRequest",
-                relatedEntityId: requestId,
-                cancellationToken);
-        }
+            var view = await repository.FindAdminViewAsync(requestId, token);
 
-        return BookRequestCommandResult.Success(view!.Request);
+            if (to == RequestStatus.NeedsReview)
+            {
+                await notifications.RecordRequestNeedsReviewAsync(requestId, view!.Request.WorkTitle, reason, token);
+            }
+            else if (to is RequestStatus.Available or RequestStatus.NotAvailable)
+            {
+                foreach (var requesterId in request.ActiveRequesterIds)
+                {
+                    await notifications.RecordRequestStatusForUserAsync(
+                        requesterId, requestId, view!.Request.WorkTitle, to, token);
+                    await outboundCommunications.EnqueueAsync(
+                        requesterId,
+                        OutboundCommunicationTypes.RequestStatusChanged,
+                        body: BuildRequestStatusChangedBody(view!.Request.WorkTitle, to),
+                        subject: $"Family Librarian — {view!.Request.WorkTitle}",
+                        relatedEntityType: "BookRequest",
+                        relatedEntityId: requestId,
+                        token);
+                }
+            }
+
+            return BookRequestCommandResult.Success(view!.Request);
+        }, cancellationToken);
     }
 
     /// <summary>
@@ -322,6 +353,7 @@ public sealed class BookRequestService(
             ? "Manual recheck against all automatic providers."
             : $"Manual recheck against {normalizedProviderId}.";
 
+        candidates = candidates.Where(request => !request.RequiresManualFulfillment).ToArray();
         foreach (var request in candidates)
         {
             request.TransitionTo(RequestStatus.PendingAcquisition, userId, reason, clock.UtcNow);

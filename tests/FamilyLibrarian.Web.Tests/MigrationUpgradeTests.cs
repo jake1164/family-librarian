@@ -1,3 +1,8 @@
+using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Requests;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.DependencyInjection;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
@@ -31,6 +36,49 @@ public sealed class MigrationUpgradeTests
     // HEAD immediately before the M10 AddSecurityPipeline migration: M9 is
     // applied (the acquisition schema), but the security schema does not exist yet.
     private const string PreSecuritySchemaMigration = "20260815150647_AddAcquisitionStaging";
+
+    [TestMethod]
+    public async Task SharedRequestUpgradePreservesParticipantsAndHoldsHistoricalOverlaps()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var work = new Work("Upgrade shared request", null, null, null, PublicationStatus.Published, DateTimeOffset.UtcNow);
+        database.Works.Add(work);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], "Preserve this note", DateTimeOffset.UtcNow);
+        database.BookRequests.Add(request);
+        await database.SaveChangesAsync();
+        var formatId = request.Formats.Single().Id;
+        var previous = (await database.Database.GetAppliedMigrationsAsync()).Reverse().Skip(1).First();
+        await database.GetService<IMigrator>().MigrateAsync(previous);
+        var repeatId = Guid.NewGuid();
+        var repeatFormatId = Guid.NewGuid();
+        await database.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO requests.book_requests
+                (id, user_id, work_id, status, requester_note, requested_at_utc, status_changed_at_utc, created_at_utc, updated_at_utc)
+            SELECT {repeatId}, user_id, work_id, status, requester_note, requested_at_utc + interval '1 second',
+                status_changed_at_utc, created_at_utc, updated_at_utc
+            FROM requests.book_requests WHERE id = {request.Id};
+            INSERT INTO requests.request_formats (id, request_id, media_type, status, created_at_utc, updated_at_utc)
+            SELECT {repeatFormatId}, {repeatId}, media_type, status, created_at_utc, updated_at_utc
+            FROM requests.request_formats WHERE id = {formatId};
+            """);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var upgraded = await database.BookRequests.Include(item => item.Participants).Include(item => item.Formats)
+            .Where(item => item.WorkId == work.Id).OrderBy(item => item.RequestedAtUtc).ToArrayAsync();
+        Assert.HasCount(2, upgraded);
+        Assert.AreEqual(request.Id, upgraded[0].Id);
+        Assert.AreEqual(formatId, upgraded[0].Formats.Single().Id);
+        Assert.AreEqual("Preserve this note", upgraded[0].Participants.Single().Note);
+        Assert.AreEqual(userId, upgraded[1].Participants.Single().UserId);
+        Assert.IsTrue(upgraded.All(item => item.Status == RequestStatus.NeedsReview));
+        Assert.IsFalse(upgraded[0].RequiresManualFulfillment);
+        Assert.IsTrue(upgraded[1].RequiresManualFulfillment);
+        Assert.AreEqual("LegacyOverlap", upgraded[1].VersionKind);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
 
     [TestMethod]
     public async Task ARequestWorkflowDatabaseUpgradesToTheCurrentSchema()

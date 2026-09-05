@@ -338,6 +338,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(request => request.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
             entity.Property(request => request.RequesterNote).HasColumnName("requester_note").HasMaxLength(BookRequest.MaxNoteLength);
             entity.Property(request => request.AdminNote).HasColumnName("admin_note").HasMaxLength(BookRequest.MaxAdminNoteLength);
+            entity.Property(request => request.RequiresManualFulfillment).HasColumnName("requires_manual_fulfillment");
+            entity.Property(request => request.VersionKind).HasColumnName("version_kind").HasMaxLength(32);
+            entity.Property(request => request.VersionDetails).HasColumnName("version_details").HasMaxLength(BookRequest.MaxNoteLength);
+            entity.Ignore(request => request.ActiveRequesterIds);
+            entity.Ignore(request => request.SatisfiedRequesterIds);
             entity.Property(request => request.RequestedAtUtc).HasColumnName("requested_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(request => request.StatusChangedAtUtc).HasColumnName("status_changed_at_utc").HasColumnType("timestamp with time zone");
             ConfigureTimestamps(entity);
@@ -346,6 +351,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             // orders by recency.
             entity.HasIndex(request => new { request.UserId, request.WorkId, request.Status });
             entity.HasIndex(request => new { request.Status, request.UpdatedAtUtc });
+            entity.HasIndex(request => request.WorkId).IsUnique()
+                .HasFilter("status IN ('PendingAcquisition', 'NeedsReview') AND NOT requires_manual_fulfillment");
 
             // Restrict, not Cascade: a completed request and its history outlive
             // catalog corrections and user deactivation.
@@ -372,6 +379,24 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
             entity.Navigation(request => request.Formats).UsePropertyAccessMode(PropertyAccessMode.Field);
             entity.Navigation(request => request.StatusHistory).UsePropertyAccessMode(PropertyAccessMode.Field);
+            entity.HasMany(request => request.Participants).WithOne()
+                .HasForeignKey(participant => participant.RequestId).OnDelete(DeleteBehavior.Cascade);
+            entity.Navigation(request => request.Participants).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        builder.Entity<RequestParticipant>(entity =>
+        {
+            entity.ToTable("request_participants", "requests");
+            entity.HasKey(participant => new { participant.RequestId, participant.UserId });
+            entity.Property(participant => participant.RequestId).HasColumnName("request_id");
+            entity.Property(participant => participant.UserId).HasColumnName("user_id");
+            entity.Property(participant => participant.WantsEbook).HasColumnName("wants_ebook");
+            entity.Property(participant => participant.WantsAudiobook).HasColumnName("wants_audiobook");
+            entity.Property(participant => participant.Note).HasColumnName("note").HasMaxLength(BookRequest.MaxNoteLength);
+            entity.Property(participant => participant.JoinedAtUtc).HasColumnName("joined_at_utc");
+            entity.Property(participant => participant.WithdrawnAtUtc).HasColumnName("withdrawn_at_utc");
+            entity.HasOne<AppUser>().WithMany().HasForeignKey(participant => participant.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<RequestFormat>(entity =>

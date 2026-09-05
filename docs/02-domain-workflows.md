@@ -198,7 +198,7 @@ Other
 
 ### BookRequest
 
-Represents a user's desire to obtain media for a Work.
+Represents shared household intent to obtain media for a Work, with individual requester participation.
 
 ```text
 RequestId
@@ -209,6 +209,36 @@ Status
 Priority
 Notes
 ```
+
+Ordinary active requests are unique per canonical Work. Each requested media
+type has one shared format row, so two people asking for the same format do not
+create separate acquisition work. A Work-scoped transaction serializes creation,
+joining, and withdrawal across users, backed by a unique active-request index.
+`UserId` retains the original creator for historical attribution; membership
+controls requester access.
+
+`RequestParticipant` records the user, requested formats, private note, join time,
+and withdrawal time. A requester can withdraw only their own interest. The whole
+request closes when everyone withdraws. Asking again rejoins current shared work
+or reopens the old ordinary request when no other active request exists. Members
+see their own notes and formats; the admin queue exposes all participants.
+Completion notices go to each active participant once their requested formats
+are available, and live invalidations reach all participants.
+
+An explicit version exception requires `VersionKind` (Language, Edition,
+Narration, Accessibility, or Replacement) and `VersionDetails`. It starts in
+`NeedsReview` with a persistent `RequiresManualFulfillment` restriction. Both
+individual status changes and bulk rechecks must preserve the restriction;
+automatic workers exclude it. Identical explicit descriptions join the same
+active review request; the application does not infer equivalent versions from
+free text. A librarian must assess the difference before selecting a copy.
+These fields do not establish automatic variant-aware library matching.
+
+During upgrade, existing creator membership and private notes are backfilled.
+Historical overlaps are held for review with their original request, format,
+and file references intact. The oldest is the ordinary shared entry; additional
+historical entries carry `LegacyOverlap` and cannot reenter automation. This
+preserves evidence where the original requests did not record version intent.
 
 Requested formats should not be a single enum if multiple formats can be requested.
 

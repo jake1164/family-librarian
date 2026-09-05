@@ -38,10 +38,17 @@
             <MudText Typo="Typo.h3">@request.Request.WorkTitle</MudText>
             <MudText Typo="Typo.body1">@string.Join(", ", request.Request.Authors)</MudText>
             <MudText Typo="Typo.body2">
-                Requested by @request.RequesterDisplayName (@request.RequesterEmail)
+                Started by @request.RequesterDisplayName (@request.RequesterEmail)
             </MudText>
         </div>
 
+        @if (request.Participants is not null)
+        {
+            @foreach (var participant in request.Participants)
+            {
+                <MudText Typo="Typo.body2">@participant.DisplayName (@participant.Email) @(participant.Withdrawn ? "— withdrawn" : "") — @participant.Note</MudText>
+            }
+        }
         <MudPaper Outlined="true" Class="pa-4">
             <MudStack Spacing="2">
                 <MudText Typo="Typo.h6">Request</MudText>
@@ -56,6 +63,14 @@
                 </MudStack>
                 <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
                 <MudText Typo="Typo.caption">Asked @request.Request.RequestedAtUtc.ToLocalTime().ToString("f")</MudText>
+                <MudText Typo="Typo.body2">@request.Request.RequesterCount active requester(s) share this fulfillment.</MudText>
+                @if (request.Request.RequiresManualFulfillment)
+                {
+                    <MudAlert Severity="Severity.Warning">
+                        @request.Request.VersionKind: @request.Request.VersionDetails
+                        This request is excluded from automatic acquisition and bulk rechecks. Review the requested difference before selecting a copy.
+                    </MudAlert>
+                }
                 @if (!string.IsNullOrWhiteSpace(request.Request.Note))
                 {
                     <MudText Typo="Typo.body2"><em>Requester note:</em> @request.Request.Note</MudText>
