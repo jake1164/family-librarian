@@ -25,7 +25,6 @@
         <MudSelectItem T="int" Value="50">50 files</MudSelectItem>
         <MudSelectItem T="int" Value="100">100 files</MudSelectItem>
     </MudSelect>
-    <MudButton Variant="Variant.Outlined" OnClick="RefreshAsync" Disabled="loading">Refresh</MudButton>
 </MudStack>
 <MudText Typo="Typo.caption" Class="mb-3">Latest @maximumCount files by file activity, newest first. Times are local.</MudText>
 
@@ -39,7 +38,7 @@
 }
 else if (assets is null)
 {
-    <MudText>Refresh to try again.</MudText>
+    <MudButton Variant="Variant.Outlined" OnClick="RefreshAsync">Try again</MudButton>
 }
 else if (assets.Count == 0)
 {
@@ -47,14 +46,13 @@ else if (assets.Count == 0)
 }
 else
 {
-    <MudStack Spacing="4">
+    <MudExpansionPanels MultiExpansion="true" Outlined="true" Elevation="0">
         @foreach (var asset in assets)
         {
-            <MudPaper @key="asset.AssetId" Class="pa-4" Elevation="1">
+            <MudExpansionPanel @key="asset.AssetId" Gutters="true">
+                <TitleContent>
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
-                    <MudLink Href="@($"admin/requests/{asset.RequestId}")">
-                        <MudText Typo="Typo.h6">@asset.WorkTitle</MudText>
-                    </MudLink>
+                    <MudText Typo="Typo.h6">@asset.WorkTitle</MudText>
                     <MediaTypeChip MediaType="@asset.MediaType" />
                     <MudSpacer />
                     <RequestStatusChip Status="@asset.StorageState" />
@@ -65,7 +63,11 @@ else
                     @asset.OriginalFilename (@FormatSize(asset.SizeBytes)) — received
                     @asset.CreatedAtUtc.ToLocalTime().ToString("g")
                 </MudText>
+                </TitleContent>
 
+                <ChildContent>
+                <MudStack Spacing="2" Class="pb-2">
+                    <MudLink Href="@($"admin/requests/{asset.RequestId}")">View request</MudLink>
                 @if (asset.LatestEvaluation is not null)
                 {
                     <MudText Typo="Typo.body2" Class="mt-2">
@@ -151,9 +153,11 @@ else
                         </MudButton>
                     }
                 </MudStack>
-            </MudPaper>
+                </MudStack>
+                </ChildContent>
+            </MudExpansionPanel>
         }
-    </MudStack>
+    </MudExpansionPanels>
 }
 
 @code {

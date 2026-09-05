@@ -179,9 +179,8 @@
 
     @* Sticky status footer, ABS/M3Undle-style. The readiness chip is a plain
        healthy/degraded signal for every signed-in user — no per-source
-       detail, which stays admin-only on the Tasks page. *@
+    detail, which stays admin-only on the Tasks page. *@
     <MudAppBar Bottom="true" Dense="true" Elevation="1" Class="family-librarian-status-footer">
-        <MudText Typo="Typo.caption">Family Librarian</MudText>
         <MudSpacer />
         @if (systemHealthy is { } healthy)
         {

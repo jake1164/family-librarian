@@ -17,11 +17,6 @@
                 One operational view of requests, source activity, file safety, and publishing.
             </MudText>
         </div>
-        <MudSpacer />
-        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
-                   OnClick="LoadAsync" Disabled="@isLoading">
-            Refresh
-        </MudButton>
     </MudStack>
 
     @if (!string.IsNullOrWhiteSpace(errorMessage))
@@ -34,10 +29,6 @@
     }
     else
     {
-        <MudText Typo="Typo.caption" Color="Color.Secondary">
-            Updated @snapshot.GeneratedAtUtc.ToLocalTime().ToString("g"). This page refreshes while open.
-        </MudText>
-
         <MudGrid Spacing="2">
             <MudItem xs="12" sm="6" md="4">
                 <SummaryCard Icon="@Icons.Material.Filled.PendingActions" Label="Active requests"
@@ -223,7 +214,6 @@
 @code {
     private AdminTasksResponse? snapshot;
     private string? errorMessage;
-    private bool isLoading = true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -233,7 +223,6 @@
 
     private async Task LoadAsync()
     {
-        isLoading = true;
         errorMessage = null;
         try
         {
@@ -246,10 +235,6 @@
         catch (HttpRequestException)
         {
             errorMessage = "The task dashboard could not be loaded. Please try again.";
-        }
-        finally
-        {
-            isLoading = false;
         }
     }
 
