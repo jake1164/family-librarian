@@ -66,4 +66,14 @@ public sealed class CatalogApiClient(HttpClient httpClient, AntiforgeryTokenProv
 
         return response ?? new WorkFulfillmentOptionsResponse([], []);
     }
+
+    public async Task<ExternalLibraryLinksResponse> GetExternalLibraryLinksAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var response = await httpClient.GetFromJsonAsync<ExternalLibraryLinksResponse>(
+            "api/v1/catalog/external-library-links",
+            cancellationToken);
+
+        return response ?? new ExternalLibraryLinksResponse(null, null);
+    }
 }

@@ -6,6 +6,8 @@
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 @inject LiveUpdatesService Updates
+@inject CatalogApiClient Catalog
+@using FamilyLibrarian.Web.Client.Catalog
 @using FamilyLibrarian.Web.Client.Operations
 @using FamilyLibrarian.Web.Client.Theme
 
@@ -137,6 +139,17 @@
                 <MudNavLink Href="search" Icon="@Icons.Material.Filled.Search">Search</MudNavLink>
                 <MudNavLink Href="requests" Icon="@Icons.Material.Filled.MenuBook">My requests</MudNavLink>
                 <MudNavLink Href="reading" Icon="@Icons.Material.Filled.Star">My reading</MudNavLink>
+                @* Plain "open the library" links to the connected CWA/Audiobookshelf
+                   sites, distinct from the per-book deep links on WorkDetail/BookDetail.
+                   Hidden per-destination when it isn't enabled or has no URL configured. *@
+                @if (externalLibraryLinks?.CwaUrl is { } cwaUrl)
+                {
+                    <MudNavLink Href="@cwaUrl" Target="_blank" Icon="@Icons.Material.Filled.AutoStories">CWA library</MudNavLink>
+                }
+                @if (externalLibraryLinks?.AudiobookshelfUrl is { } audiobookshelfUrl)
+                {
+                    <MudNavLink Href="@audiobookshelfUrl" Target="_blank" Icon="@Icons.Material.Filled.Headphones">Audiobookshelf</MudNavLink>
+                }
                 @* Everyday admin destinations. The config/setup pages that
                    are visited rarely (Metadata providers, Sources,
                    Publishing, Acquisition policy, Authentication) stay in
@@ -226,6 +239,7 @@
     private AdminRequestAttentionResponse? adminAttention;
     private LiveSubscription? liveSubscription;
     private bool? systemHealthy;
+    private ExternalLibraryLinksResponse? externalLibraryLinks;
 
     private int ProviderIssueCount => adminAttention?.ProviderIssues.Count ?? 0;
 
@@ -264,9 +278,15 @@
                 var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
                 isAdmin = state.User.IsInRole("Admin");
                 if (state.User.Identity?.IsAuthenticated == true)
+                {
                     await RefreshSystemReadinessAsync(token);
+                    await RefreshExternalLibraryLinksAsync(token);
+                }
                 else
+                {
                     systemHealthy = null;
+                    externalLibraryLinks = null;
+                }
                 if (isAdmin)
                     await RefreshAdminAttentionAsync(token);
                 else
@@ -288,6 +308,19 @@
         {
             // Best-effort: a transient failure just leaves the footer chip
             // unset rather than hiding the rest of the app.
+        }
+    }
+
+    private async Task RefreshExternalLibraryLinksAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            externalLibraryLinks = await Catalog.GetExternalLibraryLinksAsync(cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: a transient failure just hides the nav links rather
+            // than breaking the rest of the app.
         }
     }
 

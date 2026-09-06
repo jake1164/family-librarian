@@ -2,6 +2,7 @@ using System.Text.Json;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Policy;
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Policy;
@@ -26,6 +27,7 @@ internal static class CatalogEndpoints
         catalog.MapPost("/candidates/{providerId}/{externalId}/resolve", ResolveCatalogCandidateAsync);
         catalog.MapGet("/works/{workId:guid}", GetCatalogWorkAsync);
         catalog.MapGet("/works/{workId:guid}/fulfillment-options", GetWorkFulfillmentOptionsAsync);
+        catalog.MapGet("/external-library-links", GetExternalLibraryLinksAsync);
     }
 
     private static async Task<IResult> SearchCatalogAsync(
@@ -221,6 +223,24 @@ internal static class CatalogEndpoints
             ToRecommendationResponse(ranker.Recommend(audiobook, profileId)),
             ToFormatReadinessResponse(ebookReadiness),
             ToFormatReadinessResponse(audiobookReadiness)));
+    }
+
+    private static async Task<IResult> GetExternalLibraryLinksAsync(
+        ICwaSettingsStore cwaSettingsStore,
+        IAudiobookshelfSettingsStore audiobookshelfSettingsStore,
+        CancellationToken cancellationToken)
+    {
+        var cwa = await cwaSettingsStore.FindAsync(cancellationToken);
+        var audiobookshelf = await audiobookshelfSettingsStore.FindAsync(cancellationToken);
+
+        var cwaUrl = cwa is not null && cwa.IsEnabled && !string.IsNullOrWhiteSpace(cwa.OpdsBaseUrl)
+            ? cwa.OpdsBaseUrl
+            : null;
+        var audiobookshelfUrl = audiobookshelf is not null && audiobookshelf.IsEnabled && !string.IsNullOrWhiteSpace(audiobookshelf.BaseUrl)
+            ? audiobookshelf.BaseUrl
+            : null;
+
+        return Results.Ok(new ExternalLibraryLinksResponse(cwaUrl, audiobookshelfUrl));
     }
 
     private static FormatReadinessResponse ToFormatReadinessResponse(FormatReadiness readiness) =>
