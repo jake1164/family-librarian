@@ -239,7 +239,7 @@ public sealed class AudiobookshelfPublishingServiceTests
     private static TestContext ConfiguredContext()
     {
         var context = new TestContext();
-        context.Settings.SetSettings("https://abs.example", "lib1", "folder1", null, Now);
+        context.Settings.SetSettings("https://abs.example", null, "lib1", "folder1", null, Now);
         context.Settings.SetEnabled(true, null, Now);
         context.SettingsStore.Exists = true;
         return context;

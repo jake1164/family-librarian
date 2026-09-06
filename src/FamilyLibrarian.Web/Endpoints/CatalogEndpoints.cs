@@ -2,6 +2,7 @@ using System.Text.Json;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Policy;
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Policy;
@@ -26,6 +27,7 @@ internal static class CatalogEndpoints
         catalog.MapPost("/candidates/{providerId}/{externalId}/resolve", ResolveCatalogCandidateAsync);
         catalog.MapGet("/works/{workId:guid}", GetCatalogWorkAsync);
         catalog.MapGet("/works/{workId:guid}/fulfillment-options", GetWorkFulfillmentOptionsAsync);
+        catalog.MapGet("/external-library-links", GetExternalLibraryLinksAsync);
     }
 
     private static async Task<IResult> SearchCatalogAsync(
@@ -221,6 +223,30 @@ internal static class CatalogEndpoints
             ToRecommendationResponse(ranker.Recommend(audiobook, profileId)),
             ToFormatReadinessResponse(ebookReadiness),
             ToFormatReadinessResponse(audiobookReadiness)));
+    }
+
+    private static async Task<IResult> GetExternalLibraryLinksAsync(
+        ICwaSettingsStore cwaSettingsStore,
+        IAudiobookshelfSettingsStore audiobookshelfSettingsStore,
+        CancellationToken cancellationToken)
+    {
+        var cwa = await cwaSettingsStore.FindAsync(cancellationToken);
+        var audiobookshelf = await audiobookshelfSettingsStore.FindAsync(cancellationToken);
+
+        // PublicUrl, when set, is what a family member's browser can actually
+        // reach -- OpdsBaseUrl/BaseUrl are only guaranteed reachable by Family
+        // Librarian's own backend (in a containerized deployment they are
+        // routinely a Docker-internal hostname like http://cwa:8083).
+        var cwaLinkUrl = cwa is not null ? cwa.PublicUrl ?? cwa.OpdsBaseUrl : null;
+        var cwaUrl = cwa is not null && cwa.IsEnabled && !string.IsNullOrWhiteSpace(cwaLinkUrl)
+            ? cwaLinkUrl
+            : null;
+        var audiobookshelfLinkUrl = audiobookshelf is not null ? audiobookshelf.PublicUrl ?? audiobookshelf.BaseUrl : null;
+        var audiobookshelfUrl = audiobookshelf is not null && audiobookshelf.IsEnabled && !string.IsNullOrWhiteSpace(audiobookshelfLinkUrl)
+            ? audiobookshelfLinkUrl
+            : null;
+
+        return Results.Ok(new ExternalLibraryLinksResponse(cwaUrl, audiobookshelfUrl));
     }
 
     private static FormatReadinessResponse ToFormatReadinessResponse(FormatReadiness readiness) =>

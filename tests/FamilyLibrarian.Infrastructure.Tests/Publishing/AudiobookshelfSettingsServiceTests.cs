@@ -65,7 +65,7 @@ public sealed class AudiobookshelfSettingsServiceTests
     public async Task RequestReadinessIsRejectedWhenEnabledWithoutALibrary()
     {
         var context = new TestContext();
-        await context.Service.SetSettingsAsync(context.BaseUrl, null, null, CancellationToken.None);
+        await context.Service.SetSettingsAsync(context.BaseUrl, null, null, null, CancellationToken.None);
         await context.Service.SetEnabledAsync(true, CancellationToken.None);
 
         var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
@@ -77,7 +77,7 @@ public sealed class AudiobookshelfSettingsServiceTests
     public async Task RequestReadinessIsRejectedWhenEnabledWithoutAnApiToken()
     {
         var context = new TestContext();
-        await context.Service.SetSettingsAsync(context.BaseUrl, context.LibraryId, null, CancellationToken.None);
+        await context.Service.SetSettingsAsync(context.BaseUrl, null, context.LibraryId, null, CancellationToken.None);
         await context.Service.SetEnabledAsync(true, CancellationToken.None);
 
         var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
@@ -123,7 +123,7 @@ public sealed class AudiobookshelfSettingsServiceTests
         await context.Service.SetEnabledAsync(true, CancellationToken.None);
 
         await context.Service.SetSettingsAsync(
-            context.BaseUrl, "a-different-library", null, CancellationToken.None);
+            context.BaseUrl, null, "a-different-library", null, CancellationToken.None);
 
         var error = await context.Service.GetRequestReadinessErrorAsync(CancellationToken.None);
 
@@ -161,7 +161,7 @@ public sealed class AudiobookshelfSettingsServiceTests
 
         public async Task SetSettingsAndTokenAsync()
         {
-            await Service.SetSettingsAsync(BaseUrl, LibraryId, null, CancellationToken.None);
+            await Service.SetSettingsAsync(BaseUrl, null, LibraryId, null, CancellationToken.None);
             await Service.SetApiTokenAsync(ApiToken, CancellationToken.None);
         }
     }

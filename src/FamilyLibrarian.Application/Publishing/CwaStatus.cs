@@ -24,6 +24,7 @@ public sealed record CwaStatus(
     string? SftpHostKeyFingerprint,
     DateTimeOffset? SftpHostKeyTrustedAtUtc,
     string? OpdsBaseUrl,
+    string? PublicUrl,
     string? OpdsUsername,
     bool HasOpdsPassword,
     string? OpdsPasswordHint,

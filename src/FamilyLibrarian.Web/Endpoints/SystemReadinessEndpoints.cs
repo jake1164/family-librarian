@@ -12,7 +12,17 @@ internal static class SystemReadinessEndpoints
             .RequireAuthorization();
     }
 
+    // Every signed-in user gets Healthy; DegradedComponents (which source or
+    // publishing destination, and why) stays admin-only, matching
+    // SystemReadinessService's own remarks -- a non-admin caller inspecting
+    // the response body must not learn more than the footer chip already
+    // shows them.
     private static async Task<IResult> GetReadinessAsync(
-        SystemReadinessService readiness, CancellationToken cancellationToken) =>
-        Results.Ok(new SystemReadinessResponse(await readiness.IsHealthyAsync(cancellationToken)));
+        HttpContext httpContext, SystemReadinessService readiness, CancellationToken cancellationToken)
+    {
+        var response = await readiness.GetReadinessAsync(cancellationToken);
+        return Results.Ok(httpContext.User.IsInRole("Admin")
+            ? response
+            : new SystemReadinessResponse(response.Healthy, []));
+    }
 }

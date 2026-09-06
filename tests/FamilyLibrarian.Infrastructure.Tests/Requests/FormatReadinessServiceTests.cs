@@ -114,7 +114,7 @@ public sealed class FormatReadinessServiceTests
         {
             await cwaSettings.SetSettingsAsync(
                 CwaTransportMode.Local, "/ingest", null, null, null, null,
-                CwaSftpAuthenticationMode.PrivateKey, "https://cwa.example.test", "opds-user",
+                CwaSftpAuthenticationMode.PrivateKey, "https://cwa.example.test", null, "opds-user",
                 CancellationToken.None);
             cwaConnectionTester.NextOutcome = new ConnectionTestOutcome(true, "Connected.");
             await cwaSettings.TestConnectionAsync(CwaConnectionTestTarget.All, CancellationToken.None);
@@ -124,7 +124,7 @@ public sealed class FormatReadinessServiceTests
         public async Task MakeAudiobookshelfReadyAsync()
         {
             await audiobookshelfSettings.SetSettingsAsync(
-                "https://audiobookshelf.example.test", "library-1", null, CancellationToken.None);
+                "https://audiobookshelf.example.test", null, "library-1", null, CancellationToken.None);
             await audiobookshelfSettings.SetApiTokenAsync("test-token", CancellationToken.None);
             audiobookshelfConnectionTester.NextOutcome = new ConnectionTestOutcome(true, "Connected.");
             await audiobookshelfSettings.TestConnectionAsync(CancellationToken.None);

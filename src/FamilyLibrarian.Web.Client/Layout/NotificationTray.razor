@@ -1,6 +1,8 @@
 @inherits LiveComponentBase
 @inject FamilyLibrarian.Web.Client.Notifications.NotificationsApiClient Notifications
 @inject FamilyLibrarian.Web.Client.Requests.AdminRequestsApiClient AdminRequests
+@inject FamilyLibrarian.Web.Client.Operations.SystemReadinessApiClient SystemReadiness
+@using FamilyLibrarian.Contracts.Operations
 
 <MudMenu AnchorOrigin="Origin.BottomRight"
          TransformOrigin="Origin.TopRight"
@@ -88,7 +90,7 @@
         : Color.Success;
 
     protected override void OnInitialized() =>
-        Observe(LiveUpdateTopics.Notifications | LiveUpdateTopics.Requests | LiveUpdateTopics.Sources, RefreshAsync);
+        Observe(LiveUpdateTopics.Notifications | LiveUpdateTopics.Requests | LiveUpdateTopics.Sources | LiveUpdateTopics.Publishing, RefreshAsync);
 
     protected override Task OnParametersSetAsync() => RefreshLiveAsync();
 
@@ -130,6 +132,41 @@
             {
                 // A transient failure here must not hide the request/user
                 // notifications that already loaded successfully.
+            }
+
+            // ProviderIssues above only covers registered metadata providers
+            // (Gutendex, etc.); a degraded built-in source (Gutenberg's local
+            // catalogue) or publishing destination (CWA/Audiobookshelf) only
+            // shows up in SystemReadiness, so without this the bell never
+            // flags either even though the Settings menu badge (MainLayout)
+            // and status footer already do. No per-component timestamp exists
+            // on the wire, so these always sort as "just now".
+            try
+            {
+                var readiness = await SystemReadiness.GetAsync();
+                if (readiness is { Healthy: false })
+                {
+                    merged.AddRange(readiness.DegradedComponents.Select(component => new TrayEntry(
+                        Id: null,
+                        Category: component.Category == SystemReadinessCategories.Publishing
+                            ? PublishingIssueCategory
+                            : SourceIssueCategory,
+                        Severity: "Error",
+                        Title: component.Category == SystemReadinessCategories.Publishing
+                            ? $"Publishing to '{component.Name}' is failing"
+                            : $"Source '{component.Name}' needs attention",
+                        Detail: component.Detail,
+                        RepeatCount: 1,
+                        Timestamp: DateTimeOffset.UtcNow,
+                        IsRead: false,
+                        Href: component.Category == SystemReadinessCategories.Publishing
+                            ? "settings/publishing"
+                            : "settings/sources")));
+                }
+            }
+            catch (HttpRequestException)
+            {
+                // Same best-effort handling as the ProviderIssues fetch above.
             }
         }
 
@@ -175,6 +212,8 @@
     // The client only references Contracts, not Domain, so the value is duplicated here.
     private const string RequestNeedsReviewCategory = "request.needs_review";
     private const string ProviderIssueCategory = "provider.issue";
+    private const string SourceIssueCategory = "source.issue";
+    private const string PublishingIssueCategory = "publishing.issue";
 
     private static string? LinkFor(string category, string? subjectType, string? subjectId) => (category, subjectType, subjectId) switch
     {
@@ -186,6 +225,8 @@
     {
         RequestNeedsReviewCategory => Icons.Material.Filled.MenuBook,
         ProviderIssueCategory => Icons.Material.Filled.Source,
+        SourceIssueCategory => Icons.Material.Filled.Source,
+        PublishingIssueCategory => Icons.Material.Filled.CloudUpload,
         _ => SeverityIcon(entry.Severity)
     };
 

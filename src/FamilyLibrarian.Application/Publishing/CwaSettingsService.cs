@@ -73,6 +73,7 @@ public sealed class CwaSettingsService(
         string? sftpIngestPath,
         CwaSftpAuthenticationMode sftpAuthenticationMode,
         string? opdsBaseUrl,
+        string? publicUrl,
         string? opdsUsername,
         CancellationToken cancellationToken)
     {
@@ -98,7 +99,7 @@ public sealed class CwaSettingsService(
         var settings = await store.GetOrCreateAsync(cancellationToken);
         settings.SetSettings(
             transportMode, localIngestPath, sftpHost, sftpPort, sftpUsername, sftpIngestPath,
-            sftpAuthenticationMode, opdsBaseUrl, opdsUsername, currentUser.UserId, clock.UtcNow);
+            sftpAuthenticationMode, opdsBaseUrl, publicUrl, opdsUsername, currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);
 
         await audit.WriteAsync(
@@ -255,6 +256,7 @@ public sealed class CwaSettingsService(
             configuration.SftpAuthenticationMode,
             null,
             null,
+            null,
             currentUser.UserId,
             clock.UtcNow);
 
@@ -298,6 +300,7 @@ public sealed class CwaSettingsService(
             null,
             CwaSftpAuthenticationMode.PrivateKey,
             configuration.OpdsBaseUrl,
+            null,
             configuration.OpdsUsername,
             currentUser.UserId,
             clock.UtcNow);
@@ -373,7 +376,7 @@ public sealed class CwaSettingsService(
     private static CwaStatus ToStatus(CwaSettings? settings) => settings is null
         ? new CwaStatus(false, CwaTransportMode.Local, null, null, null, null, null,
             CwaSftpAuthenticationMode.PrivateKey, false, null, null, false, null, null,
-            false, null, null, null, null, null, null, false, null, null, null, null, null)
+            false, null, null, null, null, null, null, null, false, null, null, null, null, null)
         : new CwaStatus(
             settings.IsEnabled,
             settings.TransportMode,
@@ -395,6 +398,7 @@ public sealed class CwaSettingsService(
             settings.SftpHostKeyFingerprint,
             settings.SftpHostKeyTrustedAtUtc,
             settings.OpdsBaseUrl,
+            settings.PublicUrl,
             settings.OpdsUsername,
             settings.HasOpdsPassword,
             null,

@@ -24,6 +24,16 @@ public sealed class AudiobookshelfSettings
 
     public string? BaseUrl { get; private set; }
 
+    /// <summary>
+    /// The browser-reachable Audiobookshelf URL shown to family members (the
+    /// nav "Audiobookshelf" link and each owned item's deep link) -- <c>null</c>
+    /// falls back to <see cref="BaseUrl"/>. Distinct because <see cref="BaseUrl"/>
+    /// is what Family Librarian's own backend connects to and, in a
+    /// containerized deployment, is routinely a Docker-internal hostname
+    /// (e.g. <c>http://abs:80</c>) a family member's browser cannot resolve.
+    /// </summary>
+    public string? PublicUrl { get; private set; }
+
     public string? LibraryId { get; private set; }
 
     public string? FolderId { get; private set; }
@@ -60,12 +70,14 @@ public sealed class AudiobookshelfSettings
 
     public void SetSettings(
         string? baseUrl,
+        string? publicUrl,
         string? libraryId,
         string? folderId,
         Guid? actorUserId,
         DateTimeOffset updatedAtUtc)
     {
         BaseUrl = Trim(baseUrl);
+        PublicUrl = Trim(publicUrl);
         LibraryId = Trim(libraryId);
         FolderId = Trim(folderId);
         ResetTestResult();
