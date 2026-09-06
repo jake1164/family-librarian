@@ -38,3 +38,12 @@ public sealed record WorkFulfillmentOptionsResponse(
 /// readiness wasn't computed (e.g. an older client), not that it's unready.
 /// </summary>
 public sealed record FormatReadinessResponse(bool IsReady, string? Reason);
+
+/// <summary>
+/// Site-root links for the CWA and Audiobookshelf destinations, for a plain
+/// "open the library" navigation link rather than a per-book deep link. A
+/// null entry means that destination isn't enabled or has no URL configured
+/// — this is safe for any signed-in user, unlike the admin-only settings
+/// responses it's derived from, since it carries only a URL.
+/// </summary>
+public sealed record ExternalLibraryLinksResponse(string? CwaUrl, string? AudiobookshelfUrl);

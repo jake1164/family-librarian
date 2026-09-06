@@ -60,10 +60,10 @@ public sealed class AudiobookshelfSettingsService(
     }
 
     public async Task<AudiobookshelfCommandResult> SetSettingsAsync(
-        string? baseUrl, string? libraryId, string? folderId, CancellationToken cancellationToken)
+        string? baseUrl, string? publicUrl, string? libraryId, string? folderId, CancellationToken cancellationToken)
     {
         var settings = await store.GetOrCreateAsync(cancellationToken);
-        settings.SetSettings(baseUrl, libraryId, folderId, currentUser.UserId, clock.UtcNow);
+        settings.SetSettings(baseUrl, publicUrl, libraryId, folderId, currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);
 
         await audit.WriteAsync(
@@ -170,7 +170,7 @@ public sealed class AudiobookshelfSettingsService(
 
         var persisted = await store.FindAsync(cancellationToken);
         var candidate = new AudiobookshelfSettings(clock.UtcNow);
-        candidate.SetSettings(baseUrl, libraryId, folderId, currentUser.UserId, clock.UtcNow);
+        candidate.SetSettings(baseUrl, null, libraryId, folderId, currentUser.UserId, clock.UtcNow);
 
         var trimmedToken = apiToken?.Trim();
         if (!string.IsNullOrEmpty(trimmedToken))
@@ -230,10 +230,11 @@ public sealed class AudiobookshelfSettingsService(
     }
 
     private static AudiobookshelfStatus ToStatus(AudiobookshelfSettings? settings) => settings is null
-        ? new AudiobookshelfStatus(false, null, null, null, false, null, null, null, null, null)
+        ? new AudiobookshelfStatus(false, null, null, null, null, false, null, null, null, null, null)
         : new AudiobookshelfStatus(
             settings.IsEnabled,
             settings.BaseUrl,
+            settings.PublicUrl,
             settings.LibraryId,
             settings.FolderId,
             settings.HasApiToken,

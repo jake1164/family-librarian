@@ -4,6 +4,7 @@ namespace FamilyLibrarian.Application.Publishing;
 public sealed record AudiobookshelfStatus(
     bool IsEnabled,
     string? BaseUrl,
+    string? PublicUrl,
     string? LibraryId,
     string? FolderId,
     bool HasApiToken,

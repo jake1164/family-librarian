@@ -179,13 +179,13 @@ public sealed class CwaSettingsServiceTests
         public Task<CwaCommandResult> SetLocalIngestOnlyAsync(string localIngestPath = "/ingest") =>
             Service.SetSettingsAsync(
                 CwaTransportMode.Local, localIngestPath, null, null, null, null,
-                CwaSftpAuthenticationMode.PrivateKey, null, null, CancellationToken.None);
+                CwaSftpAuthenticationMode.PrivateKey, null, null, null, CancellationToken.None);
 
         public Task<CwaCommandResult> SetLocalIngestAndOpdsAsync(
             string localIngestPath = "/ingest", string opdsBaseUrl = "https://cwa.example.test") =>
             Service.SetSettingsAsync(
                 CwaTransportMode.Local, localIngestPath, null, null, null, null,
-                CwaSftpAuthenticationMode.PrivateKey, opdsBaseUrl, "opds-user", CancellationToken.None);
+                CwaSftpAuthenticationMode.PrivateKey, opdsBaseUrl, null, "opds-user", CancellationToken.None);
     }
 
     private sealed class FakeCwaSettingsStore : ICwaSettingsStore

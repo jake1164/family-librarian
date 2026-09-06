@@ -822,6 +822,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.SftpHostKeyFingerprint).HasColumnName("sftp_host_key_fingerprint").HasMaxLength(128);
             entity.Property(settings => settings.SftpHostKeyTrustedAtUtc).HasColumnName("sftp_host_key_trusted_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.OpdsBaseUrl).HasColumnName("opds_base_url").HasMaxLength(512);
+            entity.Property(settings => settings.PublicUrl).HasColumnName("public_url").HasMaxLength(512);
             entity.Property(settings => settings.OpdsUsername).HasColumnName("opds_username").HasMaxLength(256);
             entity.Property(settings => settings.ProtectedOpdsPassword).HasColumnName("protected_opds_password").HasMaxLength(2_048);
             entity.Property(settings => settings.OpdsPasswordFormatVersion).HasColumnName("opds_password_format_version");
@@ -843,6 +844,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
             entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
             entity.Property(settings => settings.BaseUrl).HasColumnName("base_url").HasMaxLength(512);
+            entity.Property(settings => settings.PublicUrl).HasColumnName("public_url").HasMaxLength(512);
             entity.Property(settings => settings.LibraryId).HasColumnName("library_id").HasMaxLength(128);
             entity.Property(settings => settings.FolderId).HasColumnName("folder_id").HasMaxLength(128);
             entity.Property(settings => settings.ProtectedApiToken).HasColumnName("protected_api_token").HasMaxLength(2_048);

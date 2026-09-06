@@ -34,7 +34,8 @@ internal static class AudiobookshelfSettingsEndpoints
         AudiobookshelfSettingsService service,
         CancellationToken cancellationToken) =>
         ToAudiobookshelfResult(
-            await service.SetSettingsAsync(request.BaseUrl, request.LibraryId, request.FolderId, cancellationToken));
+            await service.SetSettingsAsync(
+                request.BaseUrl, request.PublicUrl, request.LibraryId, request.FolderId, cancellationToken));
 
     private static async Task<IResult> SetAudiobookshelfEnabledAsync(
         SetPublishingEnabledRequest request,
@@ -96,6 +97,7 @@ internal static class AudiobookshelfSettingsEndpoints
     private static AudiobookshelfSettingsResponse ToAudiobookshelfResponse(AudiobookshelfStatus status) => new(
         status.IsEnabled,
         status.BaseUrl,
+        status.PublicUrl,
         status.LibraryId,
         status.FolderId,
         status.HasApiToken,

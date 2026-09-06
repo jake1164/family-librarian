@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Contracts.Operations;
 using FamilyLibrarian.Infrastructure.Providers;
 
 namespace FamilyLibrarian.Web.Readiness;
@@ -16,8 +17,10 @@ namespace FamilyLibrarian.Web.Readiness;
 /// Deliberately conservative: a source that is enabled but has simply never
 /// been tested yet is not counted as degraded, only one enabled and
 /// confirmed failing (or, for Gutenberg, confirmed not yet ready). The
-/// detailed per-source picture belongs to admins on the Tasks page, not the
-/// footer every family member sees.
+/// per-component breakdown in <see cref="DegradedSystemComponentResponse"/>
+/// exists so an admin viewer's footer tooltip can name what needs attention
+/// instead of just "sources" -- the client is responsible for hiding that
+/// detail from non-admin viewers.
 /// </remarks>
 public sealed class SystemReadinessService(
     IProviderRegistry providerRegistry,
@@ -26,8 +29,10 @@ public sealed class SystemReadinessService(
     ICwaSettingsStore cwaSettings,
     IAudiobookshelfSettingsStore audiobookshelfSettings)
 {
-    public async Task<bool> IsHealthyAsync(CancellationToken cancellationToken)
+    public async Task<SystemReadinessResponse> GetReadinessAsync(CancellationToken cancellationToken)
     {
+        var degraded = new List<DegradedSystemComponentResponse>();
+
         var gutenbergDescriptor = providerRegistry.Find(ProviderRegistry.GutenbergProviderId);
         if (gutenbergDescriptor is not null)
         {
@@ -37,7 +42,8 @@ public sealed class SystemReadinessService(
                 var status = await gutenbergCatalog.GetStatusAsync(cancellationToken);
                 if (!status.IsReady)
                 {
-                    return false;
+                    degraded.Add(new DegradedSystemComponentResponse(
+                        SystemReadinessCategories.Source, "Project Gutenberg catalogue", status.FailureMessage));
                 }
             }
         }
@@ -45,15 +51,17 @@ public sealed class SystemReadinessService(
         var cwa = await cwaSettings.FindAsync(cancellationToken);
         if (cwa is { IsEnabled: true, LastTestSucceeded: false })
         {
-            return false;
+            degraded.Add(new DegradedSystemComponentResponse(
+                SystemReadinessCategories.Publishing, "CWA", cwa.LastTestMessage));
         }
 
         var audiobookshelf = await audiobookshelfSettings.FindAsync(cancellationToken);
         if (audiobookshelf is { IsEnabled: true, LastTestSucceeded: false })
         {
-            return false;
+            degraded.Add(new DegradedSystemComponentResponse(
+                SystemReadinessCategories.Publishing, "Audiobookshelf", audiobookshelf.LastTestMessage));
         }
 
-        return true;
+        return new SystemReadinessResponse(degraded.Count == 0, degraded);
     }
 }

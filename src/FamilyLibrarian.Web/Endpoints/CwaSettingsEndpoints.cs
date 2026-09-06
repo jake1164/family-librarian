@@ -55,7 +55,8 @@ internal static class CwaSettingsEndpoints
 
         return ToCwaResult(await service.SetSettingsAsync(
             mode, request.LocalIngestPath, request.SftpHost, request.SftpPort, request.SftpUsername,
-            request.SftpIngestPath, authenticationMode, request.OpdsBaseUrl, request.OpdsUsername, cancellationToken));
+            request.SftpIngestPath, authenticationMode, request.OpdsBaseUrl, request.PublicUrl,
+            request.OpdsUsername, cancellationToken));
     }
 
     private static async Task<IResult> SetCwaEnabledAsync(
@@ -195,6 +196,7 @@ internal static class CwaSettingsEndpoints
         status.SftpHostKeyFingerprint,
         status.SftpHostKeyTrustedAtUtc,
         status.OpdsBaseUrl,
+        status.PublicUrl,
         status.OpdsUsername,
         status.HasOpdsPassword,
         status.OpdsPasswordHint,

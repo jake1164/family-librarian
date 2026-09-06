@@ -34,6 +34,7 @@ public sealed record CwaSettingsResponse(
     string? SftpHostKeyFingerprint,
     DateTimeOffset? SftpHostKeyTrustedAtUtc,
     string? OpdsBaseUrl,
+    string? PublicUrl,
     string? OpdsUsername,
     bool HasOpdsPassword,
     string? OpdsPasswordHint,
@@ -52,6 +53,7 @@ public sealed record SetCwaSettingsRequest(
     string? SftpIngestPath,
     string SftpAuthenticationMode,
     string? OpdsBaseUrl,
+    string? PublicUrl,
     string? OpdsUsername);
 
 /// <summary>
@@ -83,6 +85,7 @@ public sealed record TestCwaOpdsRequest(
 public sealed record AudiobookshelfSettingsResponse(
     bool IsEnabled,
     string? BaseUrl,
+    string? PublicUrl,
     string? LibraryId,
     string? FolderId,
     bool HasApiToken,
@@ -92,7 +95,8 @@ public sealed record AudiobookshelfSettingsResponse(
     bool? LastTestSucceeded,
     string? LastTestMessage);
 
-public sealed record SetAudiobookshelfSettingsRequest(string? BaseUrl, string? LibraryId, string? FolderId);
+public sealed record SetAudiobookshelfSettingsRequest(
+    string? BaseUrl, string? PublicUrl, string? LibraryId, string? FolderId);
 
 /// <summary>
 /// A non-persistent Audiobookshelf connection probe. Values reflect the

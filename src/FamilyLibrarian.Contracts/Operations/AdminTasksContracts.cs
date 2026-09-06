@@ -16,7 +16,8 @@ public sealed record AdminTasksResponse(
     IReadOnlyList<AdminProviderTaskResponse> ProviderAttempts,
     IReadOnlyList<MediaAssetAdminResponse> SecurityActivity,
     IReadOnlyList<LibraryImportResponse> LibraryImports,
-    IReadOnlyList<DeliveryResponse> Deliveries);
+    IReadOnlyList<DeliveryResponse> Deliveries,
+    IReadOnlyList<DegradedSystemComponentResponse> PublishingIssues);
 
 public sealed record AdminTaskSummaryResponse(
     int ActiveRequests,

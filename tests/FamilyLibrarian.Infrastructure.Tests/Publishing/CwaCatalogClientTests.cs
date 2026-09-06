@@ -209,7 +209,7 @@ public sealed class CwaCatalogClientTests
         var context = new TestContext();
         context.Settings.SetSettings(
             CwaTransportMode.Local, "/ingest", null, null, null, null, CwaSftpAuthenticationMode.PrivateKey,
-            "https://cwa.example.test", null, null, Now);
+            "https://cwa.example.test", null, null, null, Now);
         context.SettingsStore.Exists = true;
         return context;
     }

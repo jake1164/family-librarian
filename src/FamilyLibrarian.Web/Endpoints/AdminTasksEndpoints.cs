@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Contracts.Operations;
+using FamilyLibrarian.Web.Readiness;
 
 namespace FamilyLibrarian.Web.Endpoints;
 
@@ -29,6 +30,7 @@ internal static class AdminTasksEndpoints
         IProviderAttemptRepository providerAttempts,
         MediaAssetQueueService mediaAssets,
         PublishingQueueService publishing,
+        SystemReadinessService readiness,
         IClock clock,
         CancellationToken cancellationToken)
     {
@@ -44,6 +46,14 @@ internal static class AdminTasksEndpoints
         // the actual Security Queue.
         var activeSecurityList = await mediaAssets.ListAsync(cancellationToken);
         var publishingSnapshot = await publishing.ListAsync(cancellationToken);
+        // A destination can be fully down (CWA/Audiobookshelf failing its saved
+        // connection test) with zero in-flight imports or deliveries queued
+        // against it -- the per-item counts below would silently read zero in
+        // exactly that case, so the destination-level signal is folded in too.
+        var systemReadiness = await readiness.GetReadinessAsync(cancellationToken);
+        var publishingIssues = systemReadiness.DegradedComponents
+            .Where(component => component.Category == SystemReadinessCategories.Publishing)
+            .ToArray();
 
         var requestResponses = requestList
             .Select(request => new
@@ -106,7 +116,8 @@ internal static class AdminTasksEndpoints
                 FamilyLibrarian.Domain.Acquisition.MediaAssetStorageState.Rejected),
             providerResponses.Count(attempt => attempt.Outcome is "Failed" or "Blocked"),
             importResponses.Count(import => import.Status != "Available") +
-            deliveryResponses.Count(delivery => delivery.Status != "Delivered"));
+            deliveryResponses.Count(delivery => delivery.Status != "Delivered") +
+            publishingIssues.Length);
 
         return Results.Ok(new AdminTasksResponse(
             clock.UtcNow,
@@ -115,6 +126,7 @@ internal static class AdminTasksEndpoints
             providerResponses,
             securityResponses,
             importResponses,
-            deliveryResponses));
+            deliveryResponses,
+            publishingIssues));
     }
 }

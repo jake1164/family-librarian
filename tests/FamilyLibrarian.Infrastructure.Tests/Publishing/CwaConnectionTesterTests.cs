@@ -75,6 +75,7 @@ public sealed class CwaConnectionTesterTests
             "https://cwa.example.test",
             null,
             null,
+            null,
             Now);
         var handler = new OpdsSearchHandler();
         var tester = CreateTester(new TestCredentialProtector(), new TestHttpClientFactory(handler));
@@ -98,6 +99,7 @@ public sealed class CwaConnectionTesterTests
             "cwa",
             "/ingest",
             CwaSftpAuthenticationMode.Password,
+            null,
             null,
             null,
             null,

@@ -77,6 +77,16 @@ public sealed class CwaSettings
 
     public string? OpdsBaseUrl { get; private set; }
 
+    /// <summary>
+    /// The browser-reachable CWA URL shown to family members (the nav "CWA
+    /// library" link and each owned book's deep link) -- <c>null</c> falls
+    /// back to <see cref="OpdsBaseUrl"/>. Distinct because <see cref="OpdsBaseUrl"/>
+    /// is what Family Librarian's own backend connects to and, in a
+    /// containerized deployment, is routinely a Docker-internal hostname
+    /// (e.g. <c>http://cwa:8083</c>) a family member's browser cannot resolve.
+    /// </summary>
+    public string? PublicUrl { get; private set; }
+
     public string? OpdsUsername { get; private set; }
 
     public string? ProtectedOpdsPassword { get; private set; }
@@ -124,6 +134,7 @@ public sealed class CwaSettings
         string? sftpIngestPath,
         CwaSftpAuthenticationMode sftpAuthenticationMode,
         string? opdsBaseUrl,
+        string? publicUrl,
         string? opdsUsername,
         Guid? actorUserId,
         DateTimeOffset updatedAtUtc)
@@ -140,6 +151,7 @@ public sealed class CwaSettings
         SftpIngestPath = Trim(sftpIngestPath);
         SftpAuthenticationMode = sftpAuthenticationMode;
         OpdsBaseUrl = Trim(opdsBaseUrl);
+        PublicUrl = Trim(publicUrl);
         OpdsUsername = Trim(opdsUsername);
         if (sftpEndpointChanged)
         {
