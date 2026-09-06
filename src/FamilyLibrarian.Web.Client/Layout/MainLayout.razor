@@ -7,6 +7,7 @@
 @inject IJSRuntime JS
 @inject LiveUpdatesService Updates
 @inject CatalogApiClient Catalog
+@using FamilyLibrarian.Contracts.Operations
 @using FamilyLibrarian.Web.Client.Catalog
 @using FamilyLibrarian.Web.Client.Operations
 @using FamilyLibrarian.Web.Client.Theme
@@ -50,20 +51,32 @@
            UX only — every page carries [Authorize] and every endpoint
            behind it independently authorizes the caller. *@
         <AuthorizeView Roles="Admin">
-            <MudMenu Icon="@Icons.Material.Filled.Settings"
-                     Color="Color.Inherit"
-                     AriaLabel="Settings menu"
+            <MudMenu AriaLabel="Settings menu"
                      AnchorOrigin="Origin.BottomRight"
                      TransformOrigin="Origin.TopRight">
-                <MudMenuItem Href="settings/metadata-providers" Icon="@Icons.Material.Filled.AutoStories">Metadata providers</MudMenuItem>
-                <MudMenuItem Href="settings/sources" Icon="@Icons.Material.Filled.Source">
-                    Sources@(ProviderIssueCount == 0 ? string.Empty : $" · {ProviderIssueCount} issue{(ProviderIssueCount == 1 ? string.Empty : "s")}")
-                </MudMenuItem>
-                <MudMenuItem Href="settings/publishing" Icon="@Icons.Material.Filled.CloudUpload">Publishing</MudMenuItem>
-                <MudMenuItem Href="settings/communications" Icon="@Icons.Material.Filled.Email">Communications</MudMenuItem>
-                <MudMenuItem Href="settings/acquisition-policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudMenuItem>
-                <MudMenuItem Href="settings/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudMenuItem>
-                <MudMenuItem Href="settings/backup" Icon="@Icons.Material.Filled.Backup">Settings backup</MudMenuItem>
+                <ActivatorContent Context="settingsMenuActivator">
+                    @* Dot badge is deliberately scoped to Sources/Publishing: those are
+                       the only settings sub-pages with a connection/configuration
+                       health signal today, so it never flags a category (Metadata
+                       providers, Communications, etc.) that has nothing to check. *@
+                    <MudBadge Dot="true" Color="Color.Error" Overlap="true" Visible="@HasSettingsIssues">
+                        <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit"
+                                       aria-label="Settings menu" OnClick="settingsMenuActivator.ToggleAsync" />
+                    </MudBadge>
+                </ActivatorContent>
+                <ChildContent>
+                    <MudMenuItem Href="settings/metadata-providers" Icon="@Icons.Material.Filled.AutoStories">Metadata providers</MudMenuItem>
+                    <MudMenuItem Href="settings/sources" Icon="@Icons.Material.Filled.Source">
+                        Sources@(ProviderIssueCount == 0 ? string.Empty : $" · {ProviderIssueCount} issue{(ProviderIssueCount == 1 ? string.Empty : "s")}")
+                    </MudMenuItem>
+                    <MudMenuItem Href="settings/publishing" Icon="@Icons.Material.Filled.CloudUpload">
+                        Publishing@(PublishingIssueCount == 0 ? string.Empty : $" · {PublishingIssueCount} issue{(PublishingIssueCount == 1 ? string.Empty : "s")}")
+                    </MudMenuItem>
+                    <MudMenuItem Href="settings/communications" Icon="@Icons.Material.Filled.Email">Communications</MudMenuItem>
+                    <MudMenuItem Href="settings/acquisition-policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudMenuItem>
+                    <MudMenuItem Href="settings/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudMenuItem>
+                    <MudMenuItem Href="settings/backup" Icon="@Icons.Material.Filled.Backup">Settings backup</MudMenuItem>
+                </ChildContent>
             </MudMenu>
         </AuthorizeView>
 
@@ -195,11 +208,11 @@
     detail, which stays admin-only on the Tasks page. *@
     <MudAppBar Bottom="true" Dense="true" Elevation="1" Class="family-librarian-status-footer">
         <MudSpacer />
-        @if (systemHealthy is { } healthy)
+        @if (systemReadiness is { } readiness)
         {
-            @if (healthy)
+            @if (readiness.Healthy)
             {
-                <MudTooltip Text="All sources are working normally">
+                <MudTooltip Text="Everything is working normally">
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
                              Icon="@Icons.Material.Filled.CheckCircle">
                         System healthy
@@ -208,7 +221,7 @@
             }
             else
             {
-                <MudTooltip Text="One or more sources need attention">
+                <MudTooltip Text="@DegradedTooltip">
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
                              Icon="@Icons.Material.Filled.WarningAmber">
                         Degraded
@@ -238,10 +251,37 @@
     private ThemeMode themeMode = ThemeMode.System;
     private AdminRequestAttentionResponse? adminAttention;
     private LiveSubscription? liveSubscription;
-    private bool? systemHealthy;
+    private SystemReadinessResponse? systemReadiness;
     private ExternalLibraryLinksResponse? externalLibraryLinks;
 
     private int ProviderIssueCount => adminAttention?.ProviderIssues.Count ?? 0;
+
+    private int PublishingIssueCount => systemReadiness?.DegradedComponents
+        .Count(component => component.Category == SystemReadinessCategories.Publishing) ?? 0;
+
+    private bool HasSettingsIssues => ProviderIssueCount > 0 || PublishingIssueCount > 0;
+
+    // Only reached once systemReadiness.Healthy is false, so DegradedComponents
+    // is non-empty for an admin caller (the endpoint sends an empty list to
+    // everyone else, in which case this falls back to the pre-existing generic
+    // wording -- "sources" softened to "services" since a degraded reading can
+    // now come from a publishing destination just as easily as a source).
+    private string DegradedTooltip
+    {
+        get
+        {
+            var components = systemReadiness?.DegradedComponents;
+            if (components is not { Count: > 0 })
+            {
+                return "One or more services need attention";
+            }
+
+            var names = components.Select(component => component.Category == SystemReadinessCategories.Publishing
+                ? $"{component.Name} (publishing)"
+                : component.Name);
+            return $"Needs attention: {string.Join(", ", names)}";
+        }
+    }
 
     private string ThemeMenuIcon => themeMode switch
     {
@@ -284,7 +324,7 @@
                 }
                 else
                 {
-                    systemHealthy = null;
+                    systemReadiness = null;
                     externalLibraryLinks = null;
                 }
                 if (isAdmin)
@@ -301,8 +341,7 @@
     {
         try
         {
-            var response = await SystemReadiness.GetAsync(cancellationToken);
-            systemHealthy = response?.Healthy;
+            systemReadiness = await SystemReadiness.GetAsync(cancellationToken);
         }
         catch (HttpRequestException)
         {

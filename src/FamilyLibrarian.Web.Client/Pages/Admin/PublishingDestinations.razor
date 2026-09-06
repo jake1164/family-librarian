@@ -1,5 +1,6 @@
 @page "/settings/publishing"
 @attribute [Authorize(Roles = "Admin")]
+@inherits LiveComponentBase
 @using FamilyLibrarian.Contracts.Publishing
 @using FamilyLibrarian.Web.Client.Publishing
 @using Microsoft.AspNetCore.Authorization
@@ -43,6 +44,10 @@ else
                 <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
                     Needs setup
                 </MudChip>
+            }
+            else if (cwa.IsEnabled)
+            {
+                <MudChip T="string" Size="Size.Small" Color="@CwaHealthColor">@CwaHealthLabel</MudChip>
             }
 
             <MudSpacer />
@@ -248,6 +253,10 @@ else
                     Needs setup
                 </MudChip>
             }
+            else if (audiobookshelf.IsEnabled)
+            {
+                <MudChip T="string" Size="Size.Small" Color="@AudiobookshelfHealthColor">@AudiobookshelfHealthLabel</MudChip>
+            }
             <MudSpacer />
             <MudSwitch T="bool" @key="@("abs:" + audiobookshelfSwitchGeneration)" Value="audiobookshelf.IsEnabled" ValueChanged="@(enabled => SetAudiobookshelfEnabledAsync(enabled))" Color="Color.Primary" Disabled="@audiobookshelfBusy" Label="@(audiobookshelf.IsEnabled ? "Enabled" : "Disabled")" />
         </MudStack>
@@ -347,7 +356,142 @@ else
     private List<AudiobookshelfLibraryOption>? audiobookshelfLibraryOptions;
     private string? audiobookshelfDiscoveryError;
 
-    protected override Task OnInitializedAsync() => Task.WhenAll(LoadCwaAsync(), LoadAudiobookshelfAsync());
+    private bool cwaHealthChecking;
+    private bool audiobookshelfHealthChecking;
+
+    private string CwaHealthLabel => cwaHealthChecking
+        ? "Checking…"
+        : cwa?.LastTestedAtUtc is null
+            ? "Not tested yet"
+            : cwa.LastTestSucceeded == true ? "Healthy" : "Degraded";
+
+    private Color CwaHealthColor => cwaHealthChecking
+        ? Color.Info
+        : cwa?.LastTestedAtUtc is null
+            ? Color.Default
+            : cwa.LastTestSucceeded == true ? Color.Success : Color.Error;
+
+    private string AudiobookshelfHealthLabel => audiobookshelfHealthChecking
+        ? "Checking…"
+        : audiobookshelf?.LastTestedAtUtc is null
+            ? "Not tested yet"
+            : audiobookshelf.LastTestSucceeded == true ? "Healthy" : "Degraded";
+
+    private Color AudiobookshelfHealthColor => audiobookshelfHealthChecking
+        ? Color.Info
+        : audiobookshelf?.LastTestedAtUtc is null
+            ? Color.Default
+            : audiobookshelf.LastTestSucceeded == true ? Color.Success : Color.Error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The periodic background health check (PublishingDestinationHealthHostedService)
+        // saves through the same interceptor every other admin mutation does, so
+        // its result reaches this page as a live "Publishing" update like any
+        // other admin's change would -- no separate polling loop needed here.
+        Observe(LiveUpdateTopics.Publishing, () => Task.WhenAll(LoadCwaAsync(), LoadAudiobookshelfAsync()));
+        await Task.WhenAll(LoadCwaAsync(), LoadAudiobookshelfAsync());
+        await RefreshLiveAsync();
+
+        // Runs after the initial load completes so the page renders immediately
+        // with whatever was last recorded, then upgrades to a fresh result --
+        // the background service only reaches an enabled-but-idle destination
+        // every 15 minutes, which is too stale for an admin looking at this
+        // page right now to trust at a glance.
+        _ = RefreshHealthOnConnectAsync();
+    }
+
+    private async Task RefreshHealthOnConnectAsync()
+    {
+        var checks = new List<Task>();
+        if (cwa is { IsEnabled: true })
+        {
+            checks.Add(RefreshCwaHealthAsync());
+        }
+
+        if (audiobookshelf is { IsEnabled: true })
+        {
+            checks.Add(RefreshAudiobookshelfHealthAsync());
+        }
+
+        if (checks.Count > 0)
+        {
+            await Task.WhenAll(checks);
+        }
+    }
+
+    private async Task RefreshCwaHealthAsync()
+    {
+        if (isDisposed)
+        {
+            return;
+        }
+
+        cwaHealthChecking = true;
+        StateHasChanged();
+        try
+        {
+            await CwaApi.TestConnectionAsync();
+            if (!isDisposed)
+            {
+                cwa = await CwaApi.GetAsync();
+                ApplyCwaFields(cwa);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: leave the last-known status chip displayed.
+        }
+        finally
+        {
+            if (!isDisposed)
+            {
+                cwaHealthChecking = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task RefreshAudiobookshelfHealthAsync()
+    {
+        if (isDisposed)
+        {
+            return;
+        }
+
+        audiobookshelfHealthChecking = true;
+        StateHasChanged();
+        try
+        {
+            await AudiobookshelfApi.TestConnectionAsync();
+            if (!isDisposed)
+            {
+                audiobookshelf = await AudiobookshelfApi.GetAsync();
+                ApplyAudiobookshelfFields(audiobookshelf);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: leave the last-known status chip displayed.
+        }
+        finally
+        {
+            if (!isDisposed)
+            {
+                audiobookshelfHealthChecking = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private bool isDisposed;
+
+    public override void Dispose()
+    {
+        isDisposed = true;
+        base.Dispose();
+    }
+
     private async Task LoadCwaAsync() { try { cwa = await CwaApi.GetAsync(); ApplyCwaFields(cwa); } catch (HttpRequestException) { cwaLoadFailed = true; } }
     private void ApplyCwaFields(CwaSettingsResponse? settings) { if (settings is null) return; cwaTransportMode = settings.TransportMode; cwaLocalIngestPath = settings.LocalIngestPath; cwaSftpHost = settings.SftpHost; cwaSftpPort = settings.SftpPort; cwaSftpUsername = settings.SftpUsername; cwaSftpIngestPath = settings.SftpIngestPath; cwaSftpAuthenticationMode = settings.SftpAuthenticationMode; if (!string.IsNullOrWhiteSpace(settings.SftpHostKeyFingerprint)) cwaPendingSftpHostKeyFingerprint = null; cwaOpdsBaseUrl = settings.OpdsBaseUrl; cwaOpdsUsername = settings.OpdsUsername; }
     private string CwaIngestTestButtonLabel => cwaTransportMode == "Sftp" ? "Test SFTP" : "Test local path";

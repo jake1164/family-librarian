@@ -39,6 +39,25 @@ public sealed class AudiobookshelfSettingsApiClient(HttpClient httpClient, Antif
             : null;
     }
 
+    /// <summary>
+    /// Tests and records against the currently *saved* configuration, with no
+    /// draft form values to send -- the server-side handler behind this route
+    /// tests the persisted settings regardless of what <see cref="TestAsync"/>
+    /// sends it, so this overload just skips sending a body. Used for a silent
+    /// background refresh (page load, periodic health check) where there is no
+    /// form to read from.
+    /// </summary>
+    public async Task<PublishingConnectionTestResponse?> TestConnectionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/test");
+        await antiforgery.AttachAsync(httpRequest, cancellationToken);
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<PublishingConnectionTestResponse>(cancellationToken)
+            : null;
+    }
+
     public async Task<AudiobookshelfLibraryDiscoveryResponse?> DiscoverLibrariesAsync(
         DiscoverAudiobookshelfLibrariesRequest request, CancellationToken cancellationToken = default)
     {

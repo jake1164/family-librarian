@@ -148,6 +148,17 @@
             <MudText Typo="Typo.body2" Class="mb-3">
                 Recent handoffs to CWA for ebooks and Audiobookshelf for audiobooks.
             </MudText>
+            @foreach (var issue in snapshot.PublishingIssues)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Class="mb-2">
+                    <MudText Typo="Typo.subtitle2">@issue.Name needs attention</MudText>
+                    @if (!string.IsNullOrWhiteSpace(issue.Detail))
+                    {
+                        <MudText Typo="Typo.body2">@issue.Detail</MudText>
+                    }
+                    <MudLink Href="settings/publishing" Underline="Underline.Always">Review publishing settings</MudLink>
+                </MudAlert>
+            }
             @if (snapshot.LibraryImports.Count == 0 && snapshot.Deliveries.Count == 0)
             {
                 <MudAlert Severity="Severity.Info" Dense="true">No publishing activity has been recorded yet.</MudAlert>
