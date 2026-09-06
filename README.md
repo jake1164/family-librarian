@@ -120,8 +120,8 @@ address that already has an outstanding invitation does the same thing.
 Two optional settings, both validated at startup:
 
 ```bash
-Invitations__LifetimeDays=7                 # 1-90
-Invitations__RedemptionAttemptsPerMinute=10 # 1-10000
+FL_INVITATION_LIFETIME_DAYS=7          # 1-90
+FL_INVITATION_RATE_LIMIT_PER_MINUTE=10 # 1-10000
 ```
 
 The second one rate-limits the redemption endpoint, which is anonymous by

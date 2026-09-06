@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: family_librarian
       POSTGRES_USER: family_librarian
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${FL_DB_PASSWORD:?Set FL_DB_PASSWORD in .env}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U family_librarian -d family_librarian"]
       interval: 5s
@@ -23,7 +23,7 @@ services:
     image: family-librarian:dev
     command: ["--migrate"]
     environment:
-      ConnectionStrings__FamilyLibrarian: Host=postgres;Port=5432;Database=family_librarian;Username=family_librarian;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      ConnectionStrings__FamilyLibrarian: Host=postgres;Port=5432;Database=family_librarian;Username=family_librarian;Password=${FL_DB_PASSWORD:?Set FL_DB_PASSWORD in .env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,11 +84,13 @@ services:
       - "8080:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__FamilyLibrarian: Host=postgres;Port=5432;Database=family_librarian;Username=family_librarian;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      MetadataProviders__OpenLibrary__ContactEmail: ${OPENLIBRARY_CONTACT_EMAIL:-}
-      MetadataProviders__OpenLibrary__RequestsPerSecond: ${OPENLIBRARY_REQUESTS_PER_SECOND:-1}
-      MetadataProviders__GoogleBooks__Enabled: ${MetadataProviders__GoogleBooks__Enabled:-false}
-      MetadataProviders__GoogleBooks__ApiKey: ${MetadataProviders__GoogleBooks__ApiKey:-}
+      ConnectionStrings__FamilyLibrarian: Host=postgres;Port=5432;Database=family_librarian;Username=family_librarian;Password=${FL_DB_PASSWORD:?Set FL_DB_PASSWORD in .env}
+      MetadataProviders__OpenLibrary__ContactEmail: ${FL_OPENLIBRARY_CONTACT_EMAIL:-}
+      MetadataProviders__OpenLibrary__RequestsPerSecond: ${FL_OPENLIBRARY_REQUESTS_PER_SECOND:-1}
+      # Google Books is configured entirely from Admin > Metadata providers
+      # once signed in (enable + API key, encrypted in PostgreSQL) — no env
+      # var needed here. See .env.example if a locked-down deployment needs
+      # a read-only deployment-managed key instead.
       # Creates the first administrator, and only when no admin exists yet.
       # Without these the app still starts and seeds the User/Admin roles, but no
       # account exists to sign in with, so the Admin pages stay unreachable.
@@ -96,8 +98,8 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # Invite-link lifetime and the anonymous redemption rate limit. Both are
       # optional; the application defaults apply when they are unset.
-      Invitations__LifetimeDays: ${Invitations__LifetimeDays:-7}
-      Invitations__RedemptionAttemptsPerMinute: ${Invitations__RedemptionAttemptsPerMinute:-10}
+      Invitations__LifetimeDays: ${FL_INVITATION_LIFETIME_DAYS:-7}
+      Invitations__RedemptionAttemptsPerMinute: ${FL_INVITATION_RATE_LIMIT_PER_MINUTE:-10}
       # Quarantine/processing/rejected/trusted storage zones. ClamAv__Host
       # points at the internal Compose service, never published to the host.
       Storage__RootPath: /data/family-librarian
