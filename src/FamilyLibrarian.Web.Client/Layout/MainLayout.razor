@@ -67,7 +67,7 @@
                 <ChildContent>
                     <MudMenuItem Href="settings/metadata-providers" Icon="@Icons.Material.Filled.AutoStories">Metadata providers</MudMenuItem>
                     <MudMenuItem Href="settings/sources" Icon="@Icons.Material.Filled.Source">
-                        Sources@(ProviderIssueCount == 0 ? string.Empty : $" · {ProviderIssueCount} issue{(ProviderIssueCount == 1 ? string.Empty : "s")}")
+                        Sources@(SourcesIssueCount == 0 ? string.Empty : $" · {SourcesIssueCount} issue{(SourcesIssueCount == 1 ? string.Empty : "s")}")
                     </MudMenuItem>
                     <MudMenuItem Href="settings/publishing" Icon="@Icons.Material.Filled.CloudUpload">
                         Publishing@(PublishingIssueCount == 0 ? string.Empty : $" · {PublishingIssueCount} issue{(PublishingIssueCount == 1 ? string.Empty : "s")}")
@@ -256,10 +256,19 @@
 
     private int ProviderIssueCount => adminAttention?.ProviderIssues.Count ?? 0;
 
+    // Built-in sources (currently just the Gutenberg catalogue) report health
+    // through SystemReadiness rather than the registered-provider ProviderIssues
+    // pipeline, so the Sources badge has to combine both to catch either kind
+    // of failure.
+    private int SourceIssueCount => systemReadiness?.DegradedComponents
+        .Count(component => component.Category == SystemReadinessCategories.Source) ?? 0;
+
+    private int SourcesIssueCount => ProviderIssueCount + SourceIssueCount;
+
     private int PublishingIssueCount => systemReadiness?.DegradedComponents
         .Count(component => component.Category == SystemReadinessCategories.Publishing) ?? 0;
 
-    private bool HasSettingsIssues => ProviderIssueCount > 0 || PublishingIssueCount > 0;
+    private bool HasSettingsIssues => SourcesIssueCount > 0 || PublishingIssueCount > 0;
 
     // Only reached once systemReadiness.Healthy is false, so DegradedComponents
     // is non-empty for an admin caller (the endpoint sends an empty list to
@@ -276,9 +285,13 @@
                 return "One or more services need attention";
             }
 
-            var names = components.Select(component => component.Category == SystemReadinessCategories.Publishing
-                ? $"{component.Name} (publishing)"
-                : component.Name);
+            var names = components.Select(component =>
+            {
+                var label = component.Category == SystemReadinessCategories.Publishing
+                    ? $"{component.Name} (publishing)"
+                    : component.Name;
+                return string.IsNullOrWhiteSpace(component.Detail) ? label : $"{label} — {component.Detail}";
+            });
             return $"Needs attention: {string.Join(", ", names)}";
         }
     }
