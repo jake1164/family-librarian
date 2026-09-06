@@ -376,7 +376,8 @@ public sealed class SettingsBackupService(
         var settings = new CwaSettings(clock.UtcNow);
         settings.SetSettings(ParseEnum<CwaTransportMode>(source.TransportMode), source.LocalIngestPath, source.SftpHost,
             source.SftpPort, source.SftpUsername, source.SftpIngestPath,
-            ParseEnum<CwaSftpAuthenticationMode>(source.SftpAuthenticationMode), source.OpdsBaseUrl, source.OpdsUsername, null, clock.UtcNow);
+            ParseEnum<CwaSftpAuthenticationMode>(source.SftpAuthenticationMode), source.OpdsBaseUrl, source.PublicUrl,
+            source.OpdsUsername, null, clock.UtcNow);
         ApplySecret(source.SftpPrivateKey, settings.SetSftpPrivateKey, null, clock.UtcNow);
         ApplySecret(source.SftpPassphrase, settings.SetSftpPassphrase, null, clock.UtcNow);
         ApplySecret(source.SftpPassword, settings.SetSftpPassword, null, clock.UtcNow);
@@ -389,7 +390,7 @@ public sealed class SettingsBackupService(
     private AudiobookshelfSettings CreateAudiobookshelf(AudiobookshelfSettingsDocument source)
     {
         var settings = new AudiobookshelfSettings(clock.UtcNow);
-        settings.SetSettings(source.BaseUrl, source.LibraryId, source.FolderId, null, clock.UtcNow);
+        settings.SetSettings(source.BaseUrl, source.PublicUrl, source.LibraryId, source.FolderId, null, clock.UtcNow);
         ApplySecret(source.ApiToken, settings.SetApiToken, null, clock.UtcNow);
         settings.SetEnabled(source.IsEnabled, null, clock.UtcNow);
         return settings;
@@ -536,11 +537,11 @@ public sealed class SettingsBackupService(
         ToSecret(settings.ProtectedSftpPrivateKey, settings.SftpPrivateKeyFormatVersion, settings.SftpPrivateKeyHint),
         ToSecret(settings.ProtectedSftpPassphrase, settings.SftpPassphraseFormatVersion, settings.SftpPassphraseHint),
         ToSecret(settings.ProtectedSftpPassword, settings.SftpPasswordFormatVersion, settings.SftpPasswordHint),
-        settings.SftpHostKeyFingerprint, settings.OpdsBaseUrl, settings.OpdsUsername,
+        settings.SftpHostKeyFingerprint, settings.OpdsBaseUrl, settings.PublicUrl, settings.OpdsUsername,
         ToSecret(settings.ProtectedOpdsPassword, settings.OpdsPasswordFormatVersion, settings.OpdsPasswordHint));
 
     private static AudiobookshelfSettingsDocument? ToAudiobookshelfDocument(AudiobookshelfSettings? settings) => settings is null ? null : new(
-        settings.IsEnabled, settings.BaseUrl, settings.LibraryId, settings.FolderId,
+        settings.IsEnabled, settings.BaseUrl, settings.PublicUrl, settings.LibraryId, settings.FolderId,
         ToSecret(settings.ProtectedApiToken, settings.ApiTokenFormatVersion, settings.ApiTokenHint));
 
     private static SmtpSettingsDocument? ToSmtpDocument(SmtpSettings? settings) => settings is null ? null : new(
@@ -646,12 +647,14 @@ internal sealed record CwaSettingsDocument(
     SecretDocument? SftpPassword,
     string? SftpHostKeyFingerprint,
     string? OpdsBaseUrl,
+    string? PublicUrl,
     string? OpdsUsername,
     SecretDocument? OpdsPassword);
 
 internal sealed record AudiobookshelfSettingsDocument(
     bool IsEnabled,
     string? BaseUrl,
+    string? PublicUrl,
     string? LibraryId,
     string? FolderId,
     SecretDocument? ApiToken);

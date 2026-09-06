@@ -141,7 +141,7 @@ public sealed class PublishingQueueEndpointTests
             "/api/v1/admin/publishing/cwa/",
             new SetCwaSettingsRequest(
                 "Local", "/data/cwa-ingest-test", null, null, null, null, "PrivateKey",
-                "https://cwa.example.test", null));
+                "https://cwa.example.test", null, null));
         response.EnsureSuccessStatusCode();
 
         // Enabling requires a passing connection test for the saved configuration
@@ -159,7 +159,7 @@ public sealed class PublishingQueueEndpointTests
     {
         var response = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/audiobookshelf/",
-            new SetAudiobookshelfSettingsRequest("https://abs.example.test", "lib-1", "folder-1"));
+            new SetAudiobookshelfSettingsRequest("https://abs.example.test", null, "lib-1", "folder-1"));
         response.EnsureSuccessStatusCode();
 
         var enabled = await client.PutAsJsonAsync(

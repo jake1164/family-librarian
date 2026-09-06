@@ -65,12 +65,43 @@ public sealed class ExternalLibraryLinksEndpointTests
         Assert.IsNull(response.AudiobookshelfUrl);
     }
 
-    private static async Task ConfigureAndEnableCwaAsync(HttpClient client)
+    /// <summary>
+    /// The connection URL (what Family Librarian's own backend uses to reach
+    /// CWA) is routinely a Docker-internal hostname a family member's browser
+    /// cannot resolve. Public URL exists precisely so the nav link a family
+    /// member clicks does not have to be that address.
+    /// </summary>
+    [TestMethod]
+    public async Task ARegularUserSeesThePublicUrlInsteadOfTheConnectionUrlWhenConfigured()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(fixture.ConnectionString);
+        using var userClient = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsync(userClient, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
+
+        using var adminClient = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsync(adminClient, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(adminClient);
+        adminClient.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        await ConfigureAndEnableCwaAsync(adminClient, publicUrl: "https://library.example.net");
+
+        var response = await userClient.GetFromJsonAsync<ExternalLibraryLinksResponse>(
+            "/api/v1/catalog/external-library-links");
+
+        Assert.IsNotNull(response);
+        Assert.AreEqual("https://library.example.net", response.CwaUrl);
+    }
+
+    private static Task ConfigureAndEnableCwaAsync(HttpClient client) =>
+        ConfigureAndEnableCwaAsync(client, publicUrl: null);
+
+    private static async Task ConfigureAndEnableCwaAsync(HttpClient client, string? publicUrl)
     {
         var settings = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/",
             new SetCwaSettingsRequest(
-                "Local", "/data/cwa-ingest-test", null, null, null, null, "PrivateKey", "https://cwa.example.test", null));
+                "Local", "/data/cwa-ingest-test", null, null, null, null, "PrivateKey",
+                "https://cwa.example.test", publicUrl, null));
         settings.EnsureSuccessStatusCode();
 
         var test = await client.PostAsJsonAsync("/api/v1/admin/publishing/cwa/test", new { });

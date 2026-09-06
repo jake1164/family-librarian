@@ -16,7 +16,7 @@ public sealed class AudiobookshelfApiClientTests
     {
         var handler = new RecordingHandler();
         var settings = new AudiobookshelfSettings(DateTimeOffset.UtcNow);
-        settings.SetSettings("http://abs.example", "library-id", "folder-id", null, DateTimeOffset.UtcNow);
+        settings.SetSettings("http://abs.example", null, "library-id", "folder-id", null, DateTimeOffset.UtcNow);
         settings.SetApiToken("protected-token", 1, null, null, DateTimeOffset.UtcNow);
         var client = new AudiobookshelfApiClient(
             new TestHttpClientFactory(handler),
@@ -98,7 +98,7 @@ public sealed class AudiobookshelfApiClientTests
         var body = $"{{\"results\": [{string.Join(",", items)}]}}";
         var handler = new FixedBodyHandler(body);
         var settings = new AudiobookshelfSettings(DateTimeOffset.UtcNow);
-        settings.SetSettings("http://abs.example", "library-id", "folder-id", null, DateTimeOffset.UtcNow);
+        settings.SetSettings("http://abs.example", null, "library-id", "folder-id", null, DateTimeOffset.UtcNow);
         settings.SetApiToken("protected-token", 1, null, null, DateTimeOffset.UtcNow);
         return new AudiobookshelfApiClient(
             new TestHttpClientFactory(handler), new SettingsStore(settings), new PassThroughProtector(), NewMatchService());

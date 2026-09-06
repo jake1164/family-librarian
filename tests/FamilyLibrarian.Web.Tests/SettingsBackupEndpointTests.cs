@@ -50,7 +50,7 @@ public sealed class SettingsBackupEndpointTests
 
         var settings = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/",
-            new SetCwaSettingsRequest("Local", "/data/cwa-ingest", null, null, null, null, "PrivateKey", null, null));
+            new SetCwaSettingsRequest("Local", "/data/cwa-ingest", null, null, null, null, "PrivateKey", null, null, null));
         Assert.AreEqual(HttpStatusCode.OK, settings.StatusCode);
 
         var secret = await client.PutAsJsonAsync(

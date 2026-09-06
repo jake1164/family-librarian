@@ -233,11 +233,17 @@ internal static class CatalogEndpoints
         var cwa = await cwaSettingsStore.FindAsync(cancellationToken);
         var audiobookshelf = await audiobookshelfSettingsStore.FindAsync(cancellationToken);
 
-        var cwaUrl = cwa is not null && cwa.IsEnabled && !string.IsNullOrWhiteSpace(cwa.OpdsBaseUrl)
-            ? cwa.OpdsBaseUrl
+        // PublicUrl, when set, is what a family member's browser can actually
+        // reach -- OpdsBaseUrl/BaseUrl are only guaranteed reachable by Family
+        // Librarian's own backend (in a containerized deployment they are
+        // routinely a Docker-internal hostname like http://cwa:8083).
+        var cwaLinkUrl = cwa is not null ? cwa.PublicUrl ?? cwa.OpdsBaseUrl : null;
+        var cwaUrl = cwa is not null && cwa.IsEnabled && !string.IsNullOrWhiteSpace(cwaLinkUrl)
+            ? cwaLinkUrl
             : null;
-        var audiobookshelfUrl = audiobookshelf is not null && audiobookshelf.IsEnabled && !string.IsNullOrWhiteSpace(audiobookshelf.BaseUrl)
-            ? audiobookshelf.BaseUrl
+        var audiobookshelfLinkUrl = audiobookshelf is not null ? audiobookshelf.PublicUrl ?? audiobookshelf.BaseUrl : null;
+        var audiobookshelfUrl = audiobookshelf is not null && audiobookshelf.IsEnabled && !string.IsNullOrWhiteSpace(audiobookshelfLinkUrl)
+            ? audiobookshelfLinkUrl
             : null;
 
         return Results.Ok(new ExternalLibraryLinksResponse(cwaUrl, audiobookshelfUrl));
