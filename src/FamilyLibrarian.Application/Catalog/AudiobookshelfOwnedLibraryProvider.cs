@@ -37,7 +37,32 @@ public sealed class AudiobookshelfOwnedLibraryProvider(
             return [];
         }
 
-        var result = await apiClient.FindExistingItemIdAsync(work.Title, work.PrimaryAuthor, cancellationToken);
+        var identity = new BookIdentity(work.Title, work.PrimaryAuthor, work.Isbn13s);
+        var options = await MatchAsync(identity, settings, cancellationToken);
+        return options.Select(option => option with { WorkId = workId }).ToArray();
+    }
+
+    public async Task<IReadOnlyList<FulfillmentOption>> FindOwnedMatchesAsync(
+        BookIdentity identity, RequestMediaType mediaType, CancellationToken cancellationToken)
+    {
+        if (mediaType != RequestMediaType.Audiobook)
+        {
+            return [];
+        }
+
+        var settings = await settingsStore.FindAsync(cancellationToken);
+        if (settings is null || !settings.IsEnabled || string.IsNullOrWhiteSpace(settings.BaseUrl))
+        {
+            return [];
+        }
+
+        return await MatchAsync(identity, settings, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<FulfillmentOption>> MatchAsync(
+        BookIdentity identity, Domain.Publishing.AudiobookshelfSettings settings, CancellationToken cancellationToken)
+    {
+        var result = await apiClient.FindExistingItemIdAsync(identity.Title, identity.Author, cancellationToken);
         if (result.Decision != BookMatchDecision.Match)
         {
             return [];
@@ -50,7 +75,7 @@ public sealed class AudiobookshelfOwnedLibraryProvider(
             new FulfillmentOption(
                 ProviderId: Id,
                 ProviderResultId: itemId,
-                WorkId: workId,
+                WorkId: Guid.Empty,
                 EditionId: null,
                 MediaType: RequestMediaType.Audiobook,
                 OptionKind: OptionKind.Owned,
@@ -63,7 +88,7 @@ public sealed class AudiobookshelfOwnedLibraryProvider(
                 Currency: null,
                 LicenseOrUsageStatus: null,
                 DrmStatus: null,
-                ExternalActionUri: BuildDeepLink(settings.PublicUrl ?? settings.BaseUrl, itemId),
+                ExternalActionUri: BuildDeepLink(settings.PublicUrl ?? settings.BaseUrl!, itemId),
                 ProviderData: null)
         ];
     }

@@ -14,6 +14,7 @@ using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Acquisition;
+using FamilyLibrarian.Infrastructure.Catalog;
 using FamilyLibrarian.Infrastructure.Communications;
 using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Infrastructure.Identity;
@@ -468,6 +469,13 @@ public static class DependencyInjection
         // for "does the household already have this" instead.
         services.AddScoped<IOwnedLibraryProvider, CwaOwnedLibraryProvider>();
         services.AddScoped<IOwnedLibraryProvider, AudiobookshelfOwnedLibraryProvider>();
+
+        // Search-result availability badges: the same owned-library/direct
+        // -acquisition providers above, plus external providers, checked
+        // directly from a raw catalog candidate's title/author/ISBNs instead
+        // of a persisted Work.
+        services.AddScoped<ExternalCandidateAvailabilityChecker>();
+        services.AddScoped<ICandidateAvailabilityService, CandidateAvailabilityService>();
 
         // Acquisition policy engine (M11): ranks whatever FulfillmentOptions the
         // providers above already returned. Both the profile list and the

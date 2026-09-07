@@ -94,6 +94,77 @@ public sealed class CwaOwnedLibraryProviderTests
         CollectionAssert.AreEquivalent(isbns, context.CatalogClient.LastIsbn13Candidates!.ToArray());
     }
 
+    [TestMethod]
+    public async Task AnIdentityAudiobookRequestReturnsEmptyWithoutCallingAnything()
+    {
+        var context = ConfiguredContext();
+
+        var options = await context.Provider.FindOwnedMatchesAsync(
+            new BookIdentity("The Hobbit", "J. R. R. Tolkien", []), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
+        Assert.AreEqual(0, context.CatalogClient.CallCount);
+    }
+
+    [TestMethod]
+    public async Task AnIdentityNotConfiguredReturnsEmpty()
+    {
+        var context = new TestContext();
+
+        var options = await context.Provider.FindOwnedMatchesAsync(
+            new BookIdentity("The Hobbit", "J. R. R. Tolkien", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
+    }
+
+    [TestMethod]
+    public async Task AnIdentityNoCatalogMatchReturnsEmpty()
+    {
+        var context = ConfiguredContext();
+        context.CatalogClient.NextBookId = null;
+
+        var options = await context.Provider.FindOwnedMatchesAsync(
+            new BookIdentity("The Hobbit", "J. R. R. Tolkien", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
+    }
+
+    /// <summary>
+    /// The identity-based overload has no persisted Work to derive a real id
+    /// from -- this is the regression guard that the raw-candidate path
+    /// stamps <see cref="Guid.Empty"/> rather than leaking whatever Guid
+    /// might otherwise have been in scope.
+    /// </summary>
+    [TestMethod]
+    public async Task AnIdentityMatchReturnsOneOwnedOptionWithNoWorkId()
+    {
+        var context = ConfiguredContext();
+        context.CatalogClient.NextBookId = "42";
+
+        var options = await context.Provider.FindOwnedMatchesAsync(
+            new BookIdentity("Clear and Present Danger", "Tom Clancy", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        var option = options[0];
+        Assert.AreEqual("cwa", option.ProviderId);
+        Assert.AreEqual("42", option.ProviderResultId);
+        Assert.AreEqual(Guid.Empty, option.WorkId);
+        Assert.AreEqual(OptionKind.Owned, option.OptionKind);
+    }
+
+    [TestMethod]
+    public async Task TheGuidBasedPathStillStampsTheRealWorkIdAfterTheIdentityRefactor()
+    {
+        var context = ConfiguredContext();
+        context.CatalogClient.NextBookId = "42";
+        var workId = Guid.NewGuid();
+
+        var options = await context.Provider.FindOwnedMatchesAsync(workId, RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual(workId, options[0].WorkId);
+    }
+
     private static TestContext ConfiguredContext()
     {
         var context = new TestContext();

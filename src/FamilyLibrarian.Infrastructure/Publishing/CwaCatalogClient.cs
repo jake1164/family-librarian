@@ -5,6 +5,7 @@ using System.Xml.Linq;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
+using Microsoft.Extensions.Logging;
 
 namespace FamilyLibrarian.Infrastructure.Publishing;
 
@@ -20,11 +21,12 @@ namespace FamilyLibrarian.Infrastructure.Publishing;
 /// <c>MetadataCredentialSource</c> for the same "resolve fresh, don't cache"
 /// rationale applied to a provider credential).
 /// </remarks>
-public sealed class CwaCatalogClient(
+public sealed partial class CwaCatalogClient(
     IHttpClientFactory httpClientFactory,
     ICwaSettingsStore settingsStore,
     ICredentialProtector protector,
-    IBookMatchService matchService) : ICwaCatalogClient
+    IBookMatchService matchService,
+    ILogger<CwaCatalogClient> logger) : ICwaCatalogClient
 {
     private static readonly Regex BookIdPattern = new(@"/opds/(?:book|download)/(\d+)", RegexOptions.Compiled);
     private static readonly Regex TitleSearchTokenPattern = new(@"[\p{L}\p{N}]+", RegexOptions.Compiled);
@@ -47,6 +49,7 @@ public sealed class CwaCatalogClient(
         var settings = await settingsStore.FindAsync(cancellationToken);
         if (settings is null || string.IsNullOrWhiteSpace(settings.OpdsBaseUrl))
         {
+            LogOpdsNotConfigured(title, author);
             return BookMatchResult.NoMatchResult;
         }
 
@@ -58,10 +61,12 @@ public sealed class CwaCatalogClient(
                 continue;
             }
 
+            var isbnCandidates = ExtractCandidates(isbnBody);
             var isbnResult = await matchService.ResolveUniqueAsync(
-                title, author, ExtractCandidates(isbnBody), cancellationToken);
+                title, author, isbnCandidates, cancellationToken);
             if (isbnResult.Decision == BookMatchDecision.Match)
             {
+                LogIsbnMatch(title, author, isbnResult.MatchedId, isbn);
                 return isbnResult;
             }
         }
@@ -71,14 +76,18 @@ public sealed class CwaCatalogClient(
             var titleBody = await SendSearchAsync(titleQuery, settings, cancellationToken);
             if (titleBody is null)
             {
-                // A failed OPDS request is not evidence that another spelling
-                // will work. Preserve the existing best-effort no-match
-                // behavior instead of amplifying a temporary outage.
-                return BookMatchResult.NoMatchResult;
+                // A failed request for this one spelling (e.g. a transient
+                // 5xx or a query CWA's search happens to choke on) is not
+                // evidence that the remaining fallback queries would fail
+                // too -- keep trying them rather than treating a single bad
+                // response as proof the book is missing.
+                continue;
             }
 
+            var titleCandidates = ExtractCandidates(titleBody);
             var titleResult = await matchService.MatchByTitleAuthorAsync(
-                title, author, ExtractCandidates(titleBody), cancellationToken);
+                title, author, titleCandidates, cancellationToken);
+            LogTitleQueryResolved(titleQuery, title, author, titleResult.Decision);
             if (titleResult.Decision != BookMatchDecision.NoMatch)
             {
                 return titleResult;
@@ -90,10 +99,37 @@ public sealed class CwaCatalogClient(
         // is a bounded, read-only recovery path for a handoff that CWA has
         // already ingested but its title search did not return.
         var recentBody = await SendRecentBooksAsync(settings, cancellationToken);
-        return recentBody is null
-            ? BookMatchResult.NoMatchResult
-            : await matchService.MatchByTitleAuthorAsync(title, author, ExtractCandidates(recentBody), cancellationToken);
+        if (recentBody is null)
+        {
+            LogRecentBooksFeedUnavailable(title, author);
+            return BookMatchResult.NoMatchResult;
+        }
+
+        var recentCandidates = ExtractCandidates(recentBody);
+        var recentResult = await matchService.MatchByTitleAuthorAsync(title, author, recentCandidates, cancellationToken);
+        LogFinalDecision(title, author, recentResult.Decision);
+        return recentResult;
     }
+
+    [LoggerMessage(EventId = 1101, Level = LogLevel.Information,
+        Message = "cwa.catalog.lookup.opds_not_configured: title='{Title}' author='{Author}'")]
+    private partial void LogOpdsNotConfigured(string title, string? author);
+
+    [LoggerMessage(EventId = 1102, Level = LogLevel.Information,
+        Message = "cwa.catalog.lookup.isbn_match: title='{Title}' author='{Author}' bookId={BookId} isbn='{Isbn}'")]
+    private partial void LogIsbnMatch(string title, string? author, string? bookId, string isbn);
+
+    [LoggerMessage(EventId = 1103, Level = LogLevel.Information,
+        Message = "cwa.catalog.lookup.title_query_resolved: query='{Query}' title='{Title}' author='{Author}' decision={Decision}")]
+    private partial void LogTitleQueryResolved(string query, string title, string? author, BookMatchDecision decision);
+
+    [LoggerMessage(EventId = 1104, Level = LogLevel.Information,
+        Message = "cwa.catalog.lookup.recent_books_feed_unavailable: title='{Title}' author='{Author}'")]
+    private partial void LogRecentBooksFeedUnavailable(string title, string? author);
+
+    [LoggerMessage(EventId = 1105, Level = LogLevel.Information,
+        Message = "cwa.catalog.lookup.final_decision: title='{Title}' author='{Author}' decision={Decision}")]
+    private partial void LogFinalDecision(string title, string? author, BookMatchDecision decision);
 
     /// <summary>
     /// CWA currently applies a literal substring search to its title index.

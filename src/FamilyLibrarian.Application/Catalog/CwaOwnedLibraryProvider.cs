@@ -42,7 +42,33 @@ public sealed class CwaOwnedLibraryProvider(
             return [];
         }
 
-        var result = await catalogClient.FindBookIdAsync(work.Title, work.PrimaryAuthor, work.Isbn13s, cancellationToken);
+        var identity = new BookIdentity(work.Title, work.PrimaryAuthor, work.Isbn13s);
+        var options = await MatchAsync(identity, settings, cancellationToken);
+        return options.Select(option => option with { WorkId = workId }).ToArray();
+    }
+
+    public async Task<IReadOnlyList<FulfillmentOption>> FindOwnedMatchesAsync(
+        BookIdentity identity, RequestMediaType mediaType, CancellationToken cancellationToken)
+    {
+        if (mediaType != RequestMediaType.Ebook)
+        {
+            return [];
+        }
+
+        var settings = await settingsStore.FindAsync(cancellationToken);
+        if (settings is null || !settings.IsEnabled || string.IsNullOrWhiteSpace(settings.OpdsBaseUrl))
+        {
+            return [];
+        }
+
+        return await MatchAsync(identity, settings, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<FulfillmentOption>> MatchAsync(
+        BookIdentity identity, Domain.Publishing.CwaSettings settings, CancellationToken cancellationToken)
+    {
+        var result = await catalogClient.FindBookIdAsync(
+            identity.Title, identity.Author, identity.Isbn13Candidates, cancellationToken);
         if (result.Decision != BookMatchDecision.Match)
         {
             return [];
@@ -55,7 +81,7 @@ public sealed class CwaOwnedLibraryProvider(
             new FulfillmentOption(
                 ProviderId: Id,
                 ProviderResultId: bookId,
-                WorkId: workId,
+                WorkId: Guid.Empty,
                 EditionId: null,
                 MediaType: RequestMediaType.Ebook,
                 OptionKind: OptionKind.Owned,
@@ -68,7 +94,7 @@ public sealed class CwaOwnedLibraryProvider(
                 Currency: null,
                 LicenseOrUsageStatus: null,
                 DrmStatus: null,
-                ExternalActionUri: BuildDeepLink(settings.PublicUrl ?? settings.OpdsBaseUrl, bookId),
+                ExternalActionUri: BuildDeepLink(settings.PublicUrl ?? settings.OpdsBaseUrl!, bookId),
                 ProviderData: null)
         ];
     }

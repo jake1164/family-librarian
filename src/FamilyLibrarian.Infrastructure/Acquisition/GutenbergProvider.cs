@@ -37,6 +37,35 @@ public sealed class GutenbergProvider(
         RequestMediaType mediaType,
         CancellationToken cancellationToken)
     {
+        var work = await workLookup.FindAsync(workId, cancellationToken);
+        if (work is null || string.IsNullOrWhiteSpace(work.Title))
+        {
+            return [];
+        }
+
+        var identity = new BookIdentity(work.Title, work.PrimaryAuthor, work.Isbn13s);
+        var options = await FindDirectAcquisitionsCoreAsync(identity, mediaType, cancellationToken);
+        return options.Select(option => option with { WorkId = workId }).ToArray();
+    }
+
+    public async Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
+        BookIdentity identity,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(identity.Title))
+        {
+            return [];
+        }
+
+        return await FindDirectAcquisitionsCoreAsync(identity, mediaType, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsCoreAsync(
+        BookIdentity identity,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken)
+    {
         if (mediaType is not (RequestMediaType.Ebook or RequestMediaType.Audiobook))
         {
             return [];
@@ -49,31 +78,25 @@ public sealed class GutenbergProvider(
             return [];
         }
 
-        var work = await workLookup.FindAsync(workId, cancellationToken);
-        if (work is null || string.IsNullOrWhiteSpace(work.Title))
-        {
-            return [];
-        }
-
         var candidates = await catalog.SearchAsync(new GutenbergCatalogSearchQuery(
-            work.Title,
+            identity.Title,
             mediaType,
             RequireEpub: mediaType == RequestMediaType.Ebook,
             Take: 30), cancellationToken);
 
         foreach (var candidate in candidates)
         {
-            if (!bookMatcher.TitleMatches(work.Title, candidate.Title) ||
-                (!string.IsNullOrWhiteSpace(work.PrimaryAuthor) && !candidate.People
+            if (!bookMatcher.TitleMatches(identity.Title, candidate.Title) ||
+                (!string.IsNullOrWhiteSpace(identity.Author) && !candidate.People
                     .Where(person => person.Role == GutenbergPersonRole.Author)
-                    .Any(person => bookMatcher.AuthorMatches(work.PrimaryAuthor, person.Name))))
+                    .Any(person => bookMatcher.AuthorMatches(identity.Author, person.Name))))
             {
                 continue;
             }
 
             var option = mediaType == RequestMediaType.Ebook
-                ? BuildEbookOption(candidate, workId)
-                : BuildAudiobookOption(candidate, workId);
+                ? BuildEbookOption(candidate)
+                : BuildAudiobookOption(candidate);
             if (option is not null)
             {
                 return [option];
@@ -117,7 +140,7 @@ public sealed class GutenbergProvider(
         return files;
     }
 
-    private FulfillmentOption? BuildEbookOption(GutenbergCatalogBook book, Guid workId)
+    private FulfillmentOption? BuildEbookOption(GutenbergCatalogBook book)
     {
         var format = book.Formats.OrderBy(format => format.Kind switch
             {
@@ -128,28 +151,27 @@ public sealed class GutenbergProvider(
             })
             .FirstOrDefault(format => format.Kind is GutenbergFormatKind.Epub3Images or
                 GutenbergFormatKind.EpubImages or GutenbergFormatKind.EpubNoImages);
-        return format is null ? null : CreateOption(book, workId, RequestMediaType.Ebook, "epub", [format.SourcePath], format.Kind);
+        return format is null ? null : CreateOption(book, RequestMediaType.Ebook, "epub", [format.SourcePath], format.Kind);
     }
 
-    private FulfillmentOption? BuildAudiobookOption(GutenbergCatalogBook book, Guid workId)
+    private FulfillmentOption? BuildAudiobookOption(GutenbergCatalogBook book)
     {
         var tracks = book.Formats.Where(format => format.Kind == GutenbergFormatKind.AudioMp3)
             .OrderBy(format => format.SourcePath, StringComparer.Ordinal).ToArray();
         return tracks.Length == 0 ? null : CreateOption(
-            book, workId, RequestMediaType.Audiobook, AudioBundleFormat,
+            book, RequestMediaType.Audiobook, AudioBundleFormat,
             tracks.Select(track => track.SourcePath).ToArray(), GutenbergFormatKind.AudioMp3);
     }
 
     private FulfillmentOption CreateOption(
         GutenbergCatalogBook book,
-        Guid workId,
         RequestMediaType mediaType,
         string format,
         string[] sourcePaths,
         GutenbergFormatKind formatKind) => new(
         Id,
         book.GutenbergId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        workId,
+        WorkId: Guid.Empty,
         EditionId: null,
         mediaType,
         OptionKind.DirectAcquisition,

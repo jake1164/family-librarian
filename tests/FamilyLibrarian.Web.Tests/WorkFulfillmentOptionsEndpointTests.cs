@@ -210,6 +210,13 @@ public sealed class WorkFulfillmentOptionsEndpointTests
             Task.FromException<IReadOnlyList<FulfillmentOption>>(
                 new TaskCanceledException("The provider lookup timed out."));
 
+        public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
+            BookIdentity identity,
+            RequestMediaType mediaType,
+            CancellationToken cancellationToken) =>
+            Task.FromException<IReadOnlyList<FulfillmentOption>>(
+                new TaskCanceledException("The provider lookup timed out."));
+
         public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
             FulfillmentOption fulfillmentOption,
             CancellationToken cancellationToken) =>

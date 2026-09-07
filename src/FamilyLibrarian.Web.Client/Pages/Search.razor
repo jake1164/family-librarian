@@ -1,5 +1,6 @@
 @page "/search"
 @attribute [Authorize]
+@implements IDisposable
 @using System.Net
 @using System.Text.RegularExpressions
 @inject CatalogApiClient Catalog
@@ -105,6 +106,7 @@
                         }
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-1" Wrap="Wrap.Wrap">
                             <ProviderChip ProviderName="@result.ProviderName" SourceUrl="@result.SourceUrl" />
+                            <AvailabilityBadges Availability="@SearchState.AvailabilityByResultKey.GetValueOrDefault(ResultKey(result))" />
                             @if (SecondaryDetails(result) is { Length: > 0 } secondaryDetails)
                             {
                                 <MudText Typo="Typo.caption" Color="Color.Secondary">@secondaryDetails</MudText>
@@ -156,6 +158,13 @@
     private bool hasMore;
     private string? errorMessage;
     private IReadOnlyList<string> unavailableProviders = [];
+
+    // Bounds how many /availability checks run at once -- CWA alone can issue
+    // several HTTP requests per candidate (ISBN + title + fallback tokens),
+    // so firing every visible result off at once risks piling that up across
+    // a whole page of results.
+    private readonly SemaphoreSlim availabilityGate = new(4, 4);
+    private CancellationTokenSource? availabilityCancellation;
 
     protected override void OnInitialized()
     {
@@ -212,6 +221,8 @@
         SearchState.HasSearched = hasSearched;
         SearchState.CurrentPage = currentPage;
         SearchState.HasMore = hasMore;
+
+        StartAvailabilityLoad(results);
     }
 
     private async Task LoadMoreAsync()
@@ -249,12 +260,86 @@
         SearchState.UnavailableProviders = unavailableProviders;
         SearchState.CurrentPage = currentPage;
         SearchState.HasMore = hasMore;
+
+        // Reuses the in-flight batch's cancellation token rather than starting
+        // a new one -- earlier results' checks should keep running, only a
+        // fresh search (a different book list entirely) should cancel them.
+        StartAvailabilityLoad(results, cancelPreviousBatch: false);
     }
 
     private readonly HashSet<string> failedCovers = [];
 
     private static string ResultKey(CatalogBookCandidateResponse result) =>
         $"{result.ProviderId}:{result.ExternalId}";
+
+    /// <summary>
+    /// Checks every not-yet-cached result against CWA/Gutenberg/Audiobookshelf
+    /// /external providers, in the background, filling in badges as each
+    /// resolves rather than blocking on the whole batch. Mirrors
+    /// WorkDetail.razor's cancellable background-load pattern, adapted to a
+    /// bounded-concurrency loop over a list instead of one item.
+    /// </summary>
+    private void StartAvailabilityLoad(IReadOnlyList<CatalogBookCandidateResponse> resultsToCheck, bool cancelPreviousBatch = true)
+    {
+        if (cancelPreviousBatch)
+        {
+            availabilityCancellation?.Cancel();
+            availabilityCancellation?.Dispose();
+            availabilityCancellation = new CancellationTokenSource();
+        }
+
+        availabilityCancellation ??= new CancellationTokenSource();
+        var token = availabilityCancellation.Token;
+        var uncached = resultsToCheck.Where(result => !SearchState.AvailabilityByResultKey.ContainsKey(ResultKey(result))).ToArray();
+        _ = Task.WhenAll(uncached.Select(result => LoadAvailabilityAsync(result, token)));
+    }
+
+    private async Task LoadAvailabilityAsync(CatalogBookCandidateResponse result, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await availabilityGate.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Never acquired the gate, so there is nothing to release below.
+            return;
+        }
+
+        try
+        {
+            var availability = await Catalog.GetAvailabilityAsync(result, cancellationToken);
+            await InvokeAsync(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    SearchState.AvailabilityByResultKey[ResultKey(result)] = availability;
+                    StateHasChanged();
+                }
+            });
+        }
+        catch (HttpRequestException)
+        {
+            // Informational only -- a failed check just means no badge shows
+            // for this result, not a page-level error.
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigation or a fresh search ends this optional lookup without
+            // delaying or failing the page.
+        }
+        finally
+        {
+            availabilityGate.Release();
+        }
+    }
+
+    public void Dispose()
+    {
+        availabilityCancellation?.Cancel();
+        availabilityCancellation?.Dispose();
+        availabilityGate.Dispose();
+    }
 
     private static bool IsBestMatch(CatalogBookCandidateResponse result) =>
         result.MatchKind is "Exact" or "Close";

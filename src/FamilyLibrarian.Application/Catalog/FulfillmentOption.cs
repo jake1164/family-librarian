@@ -1,4 +1,3 @@
-using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Requests;
 
@@ -18,6 +17,8 @@ namespace FamilyLibrarian.Application.Catalog;
 public sealed record FulfillmentOption(
     string ProviderId,
     string ProviderResultId,
+    // Guid.Empty when computed from a raw BookIdentity (a search candidate
+    // with no persisted Work yet) rather than resolved for a real Work.
     Guid WorkId,
     Guid? EditionId,
     RequestMediaType MediaType,
@@ -52,6 +53,13 @@ public enum AcquisitionMethod
     OwnedImport,
     ProviderManaged
 }
+
+/// <summary>
+/// The minimal identity a provider needs to check for a match, independent
+/// of whether the book has been resolved into a persisted Work yet -- lets a
+/// raw catalog search result be checked the same way a Work is.
+/// </summary>
+public sealed record BookIdentity(string Title, string? Author, IReadOnlyCollection<string> Isbn13Candidates);
 
 /// <summary>Advertises store-offer discovery. No concrete implementation ships in M8.</summary>
 public interface IStoreOfferProvider
@@ -103,11 +111,22 @@ public interface IDirectAcquisitionProvider
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Same as <see cref="IDirectAcquisitionProvider.FindDirectAcquisitionsAsync(Guid, RequestMediaType, CancellationToken)"/>,
+    /// but for a raw catalog search candidate that has no persisted Work yet
+    /// -- returned options carry <see cref="FulfillmentOption.WorkId"/> as
+    /// <see cref="Guid.Empty"/>.
+    /// </summary>
+    Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
+        BookIdentity identity,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Fetches the file(s) for a previously returned option — more than one
     /// for a multi-track acquisition (e.g. a chaptered audiobook), which the
     /// caller stages as one bundle rather than independent artifacts.
     /// <paramref name="fulfillmentOption"/> should be freshly re-derived by
-    /// the caller (e.g. via <see cref="FindDirectAcquisitionsAsync"/>), never
+    /// the caller (e.g. via <see cref="FindDirectAcquisitionsAsync(Guid, RequestMediaType, CancellationToken)"/>), never
     /// reconstructed from client-supplied data — <see cref="FulfillmentOption.ProviderData"/>
     /// carries whatever this provider needs (e.g. a resolved download URL),
     /// opaque to every caller but this one.
@@ -139,6 +158,17 @@ public interface IOwnedLibraryProvider
         Guid workId,
         RequestMediaType mediaType,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Same as <see cref="FindOwnedMatchesAsync(Guid, RequestMediaType, CancellationToken)"/>,
+    /// but for a raw catalog search candidate that has no persisted Work yet
+    /// -- returned options carry <see cref="FulfillmentOption.WorkId"/> as
+    /// <see cref="Guid.Empty"/>.
+    /// </summary>
+    Task<IReadOnlyList<FulfillmentOption>> FindOwnedMatchesAsync(
+        BookIdentity identity,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken);
 }
 
 public interface IWorkFulfillmentOptionsService
@@ -159,10 +189,7 @@ public sealed class WorkFulfillmentOptionsService(
     IEnumerable<IStoreOfferProvider> storeOfferProviders,
     IEnumerable<IDirectAcquisitionProvider> directAcquisitionProviders,
     IEnumerable<IOwnedLibraryProvider> ownedLibraryProviders,
-    Providers.IExternalProviderStore externalProviders,
-    Providers.IExternalProviderClient externalProviderClient,
-    Providers.PrivateEgressRouteResolver routeResolver,
-    ICredentialProtector protector,
+    ExternalCandidateAvailabilityChecker externalProviderChecker,
     IWorkLookup workLookup) : IWorkFulfillmentOptionsService
 {
     public async Task<IReadOnlyList<FulfillmentOption>> GetOptionsAsync(
@@ -245,83 +272,22 @@ public sealed class WorkFulfillmentOptionsService(
     }
 
     /// <summary>
-    /// Same unified <see cref="FulfillmentOption"/> shape as every other
-    /// direct-acquisition source (Project Gutenberg included) — an external provider's
-    /// results need no special handling anywhere downstream (UI, recommendation
-    /// policy, acquire endpoint). A provider whose declared egress policy the
-    /// gateway cannot currently satisfy is silently skipped, same "degrade to no
-    /// results" posture every other search failure in this method already has.
+    /// Resolves the Work into a <see cref="BookIdentity"/> and delegates to
+    /// <see cref="ExternalCandidateAvailabilityChecker"/> — the same identity
+    /// -based check a raw catalog search candidate uses — then stamps the
+    /// real <paramref name="workId"/> onto whatever it finds.
     /// </summary>
     private async Task<IReadOnlyList<FulfillmentOption>> FindExternalProviderOptionsAsync(
         Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)
     {
-        var enabled = await externalProviders.ListEnabledAsync(cancellationToken);
-        if (enabled.Count == 0)
-        {
-            return [];
-        }
-
         var work = await workLookup.FindAsync(workId, cancellationToken);
         if (work is null)
         {
             return [];
         }
 
-        var found = new List<FulfillmentOption>();
-        foreach (var provider in enabled)
-        {
-            var resolution = routeResolver.Resolve(provider.EffectiveEgressPolicy);
-            if (!resolution.IsAllowed)
-            {
-                continue;
-            }
-
-            var apiKey = provider.HasApiKey
-                ? protector.Unprotect(
-                    Providers.ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
-                : null;
-
-            IReadOnlyList<Providers.ExternalProviderCandidate> candidates;
-            try
-            {
-                candidates = await externalProviderClient.SearchAsync(
-                    provider.BaseUrl,
-                    apiKey,
-                    new Providers.ExternalProviderSearchRequest(
-                        Guid.NewGuid(), mediaType, work.Title,
-                        work.PrimaryAuthor is null ? [] : [work.PrimaryAuthor], Isbn13: null),
-                    resolution.Route!,
-                    cancellationToken);
-            }
-            catch (HttpRequestException)
-            {
-                continue;
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                continue;
-            }
-
-            found.AddRange(candidates.Select(candidate => new FulfillmentOption(
-                ProviderId: provider.ProviderId,
-                ProviderResultId: candidate.ProviderReference,
-                WorkId: workId,
-                EditionId: null,
-                MediaType: mediaType,
-                OptionKind: OptionKind.DirectAcquisition,
-                AcquisitionMethod: AcquisitionMethod.DirectDownload,
-                Format: candidate.Format,
-                Language: null,
-                Quality: null,
-                Availability: null,
-                Cost: 0m,
-                Currency: null,
-                LicenseOrUsageStatus: null,
-                DrmStatus: null,
-                ExternalActionUri: null,
-                ProviderData: candidate.ProviderReference)));
-        }
-
-        return found;
+        var identity = new BookIdentity(work.Title, work.PrimaryAuthor, work.Isbn13s);
+        var found = await externalProviderChecker.FindAsync(identity, mediaType, cancellationToken);
+        return found.Select(option => option with { WorkId = workId }).ToArray();
     }
 }

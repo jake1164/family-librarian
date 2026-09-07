@@ -1,0 +1,35 @@
+@using FamilyLibrarian.Contracts.Catalog
+@using FamilyLibrarian.Web.Client.Theme
+
+@if (Availability is null)
+{
+    <MudSkeleton Width="90px" Height="24px" SkeletonType="SkeletonType.Rectangle" />
+}
+else if (Badges.Count > 0)
+{
+    <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+        @foreach (var (option, mediaType) in Badges)
+        {
+            <MudTooltip Text="@($"{MediaTypeVisuals.OptionKindLabel(option.OptionKind)} ({option.ProviderId})")">
+                <MudChip T="string" Size="Size.Small" Color="@MediaTypeVisuals.OptionKindColor(option.OptionKind)"
+                         Icon="@MediaTypeVisuals.Icon(mediaType)">
+                    @MediaTypeVisuals.OptionKindLabel(option.OptionKind)
+                </MudChip>
+            </MudTooltip>
+        }
+    </MudStack>
+}
+
+@code {
+    /// <summary>Null means the check hasn't resolved yet -- renders a loading skeleton.</summary>
+    [Parameter]
+    public CandidateAvailabilityResponse? Availability { get; set; }
+
+    private List<(FulfillmentOptionResponse Option, string MediaType)> Badges =>
+        Availability is null
+            ? []
+            : [
+                .. Availability.Ebook.Select(option => (option, "Ebook")),
+                .. Availability.Audiobook.Select(option => (option, "Audiobook"))
+              ];
+}
