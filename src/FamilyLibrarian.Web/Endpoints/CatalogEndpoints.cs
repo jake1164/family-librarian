@@ -27,6 +27,7 @@ internal static class CatalogEndpoints
         catalog.MapPost("/candidates/{providerId}/{externalId}/resolve", ResolveCatalogCandidateAsync);
         catalog.MapGet("/works/{workId:guid}", GetCatalogWorkAsync);
         catalog.MapGet("/works/{workId:guid}/fulfillment-options", GetWorkFulfillmentOptionsAsync);
+        catalog.MapPost("/availability", GetCandidateAvailabilityAsync);
         catalog.MapGet("/external-library-links", GetExternalLibraryLinksAsync);
     }
 
@@ -223,6 +224,36 @@ internal static class CatalogEndpoints
             ToRecommendationResponse(ranker.Recommend(audiobook, profileId)),
             ToFormatReadinessResponse(ebookReadiness),
             ToFormatReadinessResponse(audiobookReadiness)));
+    }
+
+    /// <summary>
+    /// The search-result-badge counterpart to <see cref="GetWorkFulfillmentOptionsAsync"/> --
+    /// checks a raw catalog candidate's title/authors/ISBNs directly, without
+    /// requiring it to be resolved into a persisted Work first.
+    /// </summary>
+    private static async Task<IResult> GetCandidateAvailabilityAsync(
+        CandidateAvailabilityRequest request,
+        ICandidateAvailabilityService availability,
+        CancellationToken cancellationToken)
+    {
+        var title = request.Title?.Trim();
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["title"] = ["A title is required to check availability."]
+            });
+        }
+
+        var identity = new BookIdentity(
+            title,
+            request.Authors.Count > 0 ? request.Authors[0] : null,
+            request.Isbn13s);
+        var result = await availability.GetAvailabilityAsync(identity, cancellationToken);
+
+        return Results.Ok(new CandidateAvailabilityResponse(
+            result.Ebook.Select(ToFulfillmentOptionResponse).ToArray(),
+            result.Audiobook.Select(ToFulfillmentOptionResponse).ToArray()));
     }
 
     private static async Task<IResult> GetExternalLibraryLinksAsync(

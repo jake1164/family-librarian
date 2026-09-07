@@ -80,6 +80,71 @@ public sealed class AudiobookshelfOwnedLibraryProviderTests
         Assert.IsNotNull(option.ExternalActionUri);
     }
 
+    [TestMethod]
+    public async Task AnIdentityEbookRequestReturnsEmptyWithoutCallingAnything()
+    {
+        var context = ConfiguredContext();
+
+        var options = await context.Provider.FindOwnedMatchesAsync(
+            new BookIdentity("The Hobbit", "J. R. R. Tolkien", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
+        Assert.AreEqual(0, context.ApiClient.CallCount);
+    }
+
+    [TestMethod]
+    public async Task AnIdentityNotConfiguredReturnsEmpty()
+    {
+        var context = new TestContext();
+
+        var options = await context.Provider.FindOwnedMatchesAsync(
+            new BookIdentity("The Hobbit", "J. R. R. Tolkien", []), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
+    }
+
+    [TestMethod]
+    public async Task AnIdentityNoMatchingItemReturnsEmpty()
+    {
+        var context = ConfiguredContext();
+        context.ApiClient.ExistingItemId = null;
+
+        var options = await context.Provider.FindOwnedMatchesAsync(
+            new BookIdentity("The Hobbit", "J. R. R. Tolkien", []), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
+    }
+
+    [TestMethod]
+    public async Task AnIdentityMatchReturnsOneOwnedOptionWithNoWorkId()
+    {
+        var context = ConfiguredContext();
+        context.ApiClient.ExistingItemId = "li_abc";
+
+        var options = await context.Provider.FindOwnedMatchesAsync(
+            new BookIdentity("The Hobbit", "J. R. R. Tolkien", []), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        var option = options[0];
+        Assert.AreEqual("audiobookshelf", option.ProviderId);
+        Assert.AreEqual("li_abc", option.ProviderResultId);
+        Assert.AreEqual(Guid.Empty, option.WorkId);
+        Assert.AreEqual(OptionKind.Owned, option.OptionKind);
+    }
+
+    [TestMethod]
+    public async Task TheGuidBasedPathStillStampsTheRealWorkIdAfterTheIdentityRefactor()
+    {
+        var context = ConfiguredContext();
+        context.ApiClient.ExistingItemId = "li_abc";
+        var workId = Guid.NewGuid();
+
+        var options = await context.Provider.FindOwnedMatchesAsync(workId, RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual(workId, options[0].WorkId);
+    }
+
     private static TestContext ConfiguredContext()
     {
         var context = new TestContext();

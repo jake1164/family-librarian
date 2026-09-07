@@ -72,4 +72,29 @@ public static class MediaTypeVisuals
         "Available" => "Available",
         _ => status
     };
+
+    /// <summary>
+    /// A search-result availability badge's color, keyed by
+    /// <c>FulfillmentOptionResponse.OptionKind</c> -- a distinct vocabulary
+    /// from request/format status above (a search candidate hasn't been
+    /// requested yet), kept as its own mapping rather than folded into
+    /// <see cref="StatusColor"/> so the two vocabularies can't be confused.
+    /// </summary>
+    public static Color OptionKindColor(string optionKind) => optionKind switch
+    {
+        "Owned" => Color.Success,
+        "DirectAcquisition" or "Availability" => Color.Info,
+        "StoreOffer" or "ExternalAction" => Color.Default,
+        _ => Color.Default
+    };
+
+    public static string OptionKindLabel(string optionKind) => optionKind switch
+    {
+        "Owned" => "In your library",
+        "DirectAcquisition" => "Free to get",
+        "Availability" => "Available",
+        "StoreOffer" => "For purchase",
+        "ExternalAction" => "Found elsewhere",
+        _ => optionKind
+    };
 }

@@ -40,6 +40,20 @@ of the shared components below) instead. If a new status value is added to
 `RequestStatus`, `RequestFormatStatus`, or a progress code, update
 `MediaTypeVisuals` once and every page picks it up.
 
+## Availability badges are a separate vocabulary from status
+
+A search-result availability badge (`AvailabilityBadges` in
+[`FamilyLibrarian.Web.Client/Catalog/`](../src/FamilyLibrarian.Web.Client/Catalog/))
+shows whether a raw catalog candidate — not yet a request, not yet a Work —
+was found in CWA, on Project Gutenberg, in Audiobookshelf, or via a custom
+provider. Its color is driven by `FulfillmentOptionResponse.OptionKind`
+(`Owned`, `DirectAcquisition`, `Availability`, `StoreOffer`, `ExternalAction`),
+**not** by the request-status vocabulary above — a search candidate has no
+request lifecycle yet. This mapping has its own functions on
+`MediaTypeVisuals`, `OptionKindColor`/`OptionKindLabel`, kept deliberately
+separate from `StatusColor`/`StatusLabel` rather than folded into that
+switch. Media-type icon still comes from the shared `MediaTypeVisuals.Icon`.
+
 ## Use the shared components, not a hand-rolled `MudChip`
 
 Three components in

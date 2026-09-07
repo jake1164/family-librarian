@@ -320,6 +320,10 @@ public sealed class DirectAcquisitionServiceTests
             return Task.FromResult(options);
         }
 
+        public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
+            BookIdentity identity, RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            FindDirectAcquisitionsAsync(Guid.Empty, mediaType, cancellationToken);
+
         public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
             FulfillmentOption fulfillmentOption, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<DirectAcquisitionFile>>(

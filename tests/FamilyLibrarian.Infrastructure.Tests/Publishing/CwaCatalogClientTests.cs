@@ -4,6 +4,7 @@ using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Infrastructure.Publishing;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Publishing;
 
@@ -239,7 +240,8 @@ public sealed class CwaCatalogClientTests
             SettingsStore = new FakeCwaSettingsStore(Settings);
             var matchService = new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver());
             Client = new CwaCatalogClient(
-                new TestHttpClientFactory(Handler), SettingsStore, new TestCredentialProtector(), matchService);
+                new TestHttpClientFactory(Handler), SettingsStore, new TestCredentialProtector(), matchService,
+                NullLogger<CwaCatalogClient>.Instance);
         }
 
         public CwaSettings Settings { get; } = new(Now);

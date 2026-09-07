@@ -12,6 +12,10 @@ internal sealed class AlwaysEmptyDirectAcquisitionProvider : IDirectAcquisitionP
         Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
 
+    public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
+        BookIdentity identity, RequestMediaType mediaType, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
+
     public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
         FulfillmentOption fulfillmentOption, CancellationToken cancellationToken) =>
         throw new InvalidOperationException("No option was ever returned to fetch.");

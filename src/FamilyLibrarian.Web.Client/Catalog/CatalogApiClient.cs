@@ -67,6 +67,36 @@ public sealed class CatalogApiClient(HttpClient httpClient, AntiforgeryTokenProv
         return response ?? new WorkFulfillmentOptionsResponse([], []);
     }
 
+    /// <summary>
+    /// Checks a raw search candidate against CWA/Gutenberg/Audiobookshelf/
+    /// enabled external providers, without resolving it into a Work first.
+    /// </summary>
+    /// <remarks>
+    /// A pure read, but POST — the request body carries the candidate's
+    /// title/authors/ISBNs, which don't fit cleanly as query parameters.
+    /// </remarks>
+    public async Task<CandidateAvailabilityResponse> GetAvailabilityAsync(
+        CatalogBookCandidateResponse candidate,
+        CancellationToken cancellationToken = default)
+    {
+        var isbn13s = candidate.Editions
+            .Select(edition => edition.Isbn13)
+            .Where(isbn13 => !string.IsNullOrWhiteSpace(isbn13))
+            .Distinct()
+            .ToArray();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/catalog/availability")
+        {
+            Content = JsonContent.Create(new CandidateAvailabilityRequest(candidate.Title, candidate.Authors, isbn13s!))
+        };
+        await antiforgery.AttachAsync(request, cancellationToken);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<CandidateAvailabilityResponse>(cancellationToken)
+            ?? new CandidateAvailabilityResponse([], []);
+    }
+
     public async Task<ExternalLibraryLinksResponse> GetExternalLibraryLinksAsync(
         CancellationToken cancellationToken = default)
     {
