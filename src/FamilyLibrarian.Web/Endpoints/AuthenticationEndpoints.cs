@@ -6,7 +6,6 @@ using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Web.Logging;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 
 namespace FamilyLibrarian.Web.Endpoints;
@@ -116,16 +115,22 @@ internal static class AuthenticationEndpoints
         return Results.Ok(new OidcSignInStatusResponse(settings.IsUsable, settings.DisplayName, settings.LocalLoginDisabled));
     }
 
-    private static IResult ChallengeOidcAsync(IOidcRuntimeSettingsCache cache)
+    private static IResult ChallengeOidcAsync(
+        IOidcRuntimeSettingsCache cache, SignInManager<AppUser> signInManager)
     {
         if (!cache.Current.IsUsable)
         {
             return Results.NotFound();
         }
 
-        return Results.Challenge(
-            new AuthenticationProperties { RedirectUri = "/api/auth/oidc/complete" },
-            [OidcOptionsConfigurator.SchemeName]);
+        // A hand-built AuthenticationProperties works for the challenge/callback
+        // round trip itself (the cookie signs in and authenticates fine), but
+        // SignInManager.GetExternalLoginInfoAsync() also requires the ".AuthScheme"
+        // item this helper stamps into Items -- without it, GetExternalLoginInfoAsync
+        // returns null even though Identity.External authenticated successfully.
+        var properties = signInManager.ConfigureExternalAuthenticationProperties(
+            OidcOptionsConfigurator.SchemeName, "/api/auth/oidc/complete");
+        return Results.Challenge(properties, [OidcOptionsConfigurator.SchemeName]);
     }
 
     private static async Task<IResult> CompleteOidcSignInAsync(
@@ -153,7 +158,7 @@ internal static class AuthenticationEndpoints
             DisplayName: FindConfiguredClaimValue(info.Principal, "name") ?? FindConfiguredClaimValue(info.Principal, "email"),
             IsAdminClaimMatched: IsAdminClaimMatched(info.Principal, settings));
 
-        var result = await externalSignIn.SignInAsync(identity, settings.AutoCreateAccounts, cancellationToken);
+        var result = await externalSignIn.SignInAsync(identity, cancellationToken);
 
         // The External-scheme ticket has done its job (linking/provisioning read
         // it); it must not linger as a second, half-authenticated cookie.

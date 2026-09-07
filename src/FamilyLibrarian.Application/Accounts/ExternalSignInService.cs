@@ -22,7 +22,7 @@ public sealed class ExternalSignInService(
     IClock clock)
 {
     public async Task<ExternalSignInResult> SignInAsync(
-        ExternalIdentity identity, bool autoCreateAccounts, CancellationToken cancellationToken)
+        ExternalIdentity identity, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(identity.Issuer) || string.IsNullOrWhiteSpace(identity.Subject))
         {
@@ -82,11 +82,14 @@ public sealed class ExternalSignInService(
             return ExternalSignInResult.SignedIn(invitedUserId);
         }
 
-        var status = autoCreateAccounts ? UserStatus.Active : UserStatus.PendingApproval;
+        // No secondary approval gate: the identity provider is already the
+        // access-control decision (its own application/group assignment is
+        // what let this identity reach us with a valid token at all), so a
+        // first-time OIDC sign-in activates immediately.
         var newUserId = await externalLogins.CreatePasswordlessAsync(
             identity.Email,
             identity.DisplayName ?? identity.Email,
-            status,
+            UserStatus.Active,
             identity.IsAdminClaimMatched,
             identity.Issuer,
             identity.Subject,
@@ -94,12 +97,9 @@ public sealed class ExternalSignInService(
 
         await audit.WriteAsync(
             AuditActions.ExternalAccountCreated, AuditSubjectTypes.Account, newUserId.ToString(),
-            new { UserId = newUserId, Status = status.ToString() }, cancellationToken);
+            new { UserId = newUserId, Status = UserStatus.Active.ToString() }, cancellationToken);
 
-        return status == UserStatus.Active
-            ? ExternalSignInResult.SignedIn(newUserId)
-            : ExternalSignInResult.NotActive(
-                "Your account was created and is awaiting administrator approval.");
+        return ExternalSignInResult.SignedIn(newUserId);
     }
 
     private async Task SyncAdminRoleAsync(Guid userId, bool shouldBeAdmin, CancellationToken cancellationToken)

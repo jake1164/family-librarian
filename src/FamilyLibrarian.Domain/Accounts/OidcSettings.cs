@@ -23,7 +23,6 @@ public sealed class OidcSettings
         Scopes = "openid profile email";
         MatchClaimName = "email";
         AdminClaimName = "groups";
-        AutoCreateAccounts = false;
         LocalLoginDisabled = false;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
@@ -57,12 +56,6 @@ public sealed class OidcSettings
 
     /// <summary>Comma-separated claim values that grant the internal Admin role.</summary>
     public string? AdminClaimValues { get; private set; }
-
-    /// <summary>
-    /// Whether an unrecognized external identity becomes <see cref="UserStatus.Active"/>
-    /// immediately, or <see cref="UserStatus.PendingApproval"/> pending an administrator.
-    /// </summary>
-    public bool AutoCreateAccounts { get; private set; }
 
     /// <summary>
     /// Blocks local sign-in for every account except one flagged
@@ -100,7 +93,6 @@ public sealed class OidcSettings
         string matchClaimName,
         string? adminClaimName,
         string? adminClaimValues,
-        bool autoCreateAccounts,
         Guid? actorUserId,
         DateTimeOffset updatedAtUtc)
     {
@@ -111,7 +103,6 @@ public sealed class OidcSettings
         MatchClaimName = string.IsNullOrWhiteSpace(matchClaimName) ? "email" : matchClaimName.Trim();
         AdminClaimName = Trim(adminClaimName);
         AdminClaimValues = Trim(adminClaimValues);
-        AutoCreateAccounts = autoCreateAccounts;
         ResetTestResult();
         Touch(actorUserId, updatedAtUtc);
     }

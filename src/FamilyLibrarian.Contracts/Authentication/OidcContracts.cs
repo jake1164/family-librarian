@@ -15,7 +15,6 @@ public sealed record OidcSettingsResponse(
     string MatchClaimName,
     string? AdminClaimName,
     string? AdminClaimValues,
-    bool AutoCreateAccounts,
     bool LocalLoginDisabled,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
@@ -28,8 +27,7 @@ public sealed record SetOidcSettingsRequest(
     string Scopes,
     string MatchClaimName,
     string? AdminClaimName,
-    string? AdminClaimValues,
-    bool AutoCreateAccounts);
+    string? AdminClaimValues);
 
 public sealed record SetOidcEnabledRequest(bool Enabled);
 

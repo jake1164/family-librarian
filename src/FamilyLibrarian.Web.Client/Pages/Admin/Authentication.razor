@@ -12,7 +12,10 @@
 <MudText Typo="Typo.body1" Class="mb-6">
     Optional single sign-on through any standards-compliant OIDC identity provider —
     configured entirely here, no environment variables. Local sign-in keeps working
-    alongside it until you choose to disable it below.
+    alongside it until you choose to disable it below. Anyone your identity provider
+    lets reach this application signs in immediately, with no separate approval step
+    here — control access on the identity provider's side (e.g. which users/groups
+    it assigns to this application).
 </MudText>
 
 @if (loadFailed)
@@ -55,9 +58,6 @@ else
                 <MudTextField T="string" Label="Admin claim values" @bind-Value="adminClaimValues" Disabled="@busy"
                               HelperText="Comma-separated. Any match grants the Admin role." Class="flex-grow-1" />
             </MudStack>
-
-            <MudCheckBox T="bool" @bind-Value="autoCreateAccounts" Disabled="@busy"
-                         Label="Auto-create accounts on first sign-in (otherwise new accounts wait for admin approval)" />
         </MudStack>
 
         <MudDivider Class="my-3" />
@@ -149,7 +149,6 @@ else
     private string matchClaimName = "email";
     private string? adminClaimName = "groups";
     private string? adminClaimValues;
-    private bool autoCreateAccounts;
     private string? clientSecretDraft;
 
     protected override Task OnInitializedAsync() => LoadAsync();
@@ -181,14 +180,13 @@ else
         matchClaimName = source.MatchClaimName;
         adminClaimName = source.AdminClaimName;
         adminClaimValues = source.AdminClaimValues;
-        autoCreateAccounts = source.AutoCreateAccounts;
     }
 
     private Task SetEnabledAsync(bool enabled) => RunAsync(() => OidcApi.SetEnabledAsync(enabled));
 
     private Task SaveSettingsAsync() => RunAsync(() => OidcApi.SetSettingsAsync(new SetOidcSettingsRequest(
         displayName ?? "Sign in with SSO", authority, clientId, scopes, matchClaimName,
-        adminClaimName, adminClaimValues, autoCreateAccounts)), applyFields: true);
+        adminClaimName, adminClaimValues)), applyFields: true);
 
     private async Task SaveClientSecretAsync()
     {

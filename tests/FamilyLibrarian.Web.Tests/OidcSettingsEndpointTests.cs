@@ -52,7 +52,7 @@ public sealed class OidcSettingsEndpointTests
             "/api/v1/admin/authentication/oidc/",
             new SetOidcSettingsRequest(
                 "Sign in with Test IdP", "https://issuer.test/", "client-abc",
-                "openid profile email", "email", "groups", "family-admins", false));
+                "openid profile email", "email", "groups", "family-admins"));
         Assert.AreEqual(HttpStatusCode.OK, write.StatusCode);
         var written = await write.Content.ReadFromJsonAsync<OidcSettingsResponse>();
         Assert.IsNotNull(written);
