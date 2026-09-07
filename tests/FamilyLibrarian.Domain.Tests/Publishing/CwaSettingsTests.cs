@@ -31,6 +31,7 @@ public sealed class CwaSettingsTests
             null,
             null,
             null,
+            null,
             Now);
         settings.TrustSftpHostKey("SHA256:initial-fingerprint", null, Now);
 
@@ -42,6 +43,7 @@ public sealed class CwaSettingsTests
             "cwa",
             "/ingest",
             CwaSftpAuthenticationMode.Password,
+            null,
             null,
             null,
             null,
@@ -68,6 +70,7 @@ public sealed class CwaSettingsTests
             null,
             null,
             null,
+            null,
             Now);
         settings.TrustSftpHostKey("SHA256:initial-fingerprint", null, Now);
 
@@ -79,6 +82,7 @@ public sealed class CwaSettingsTests
             "cwa",
             "/ingest",
             CwaSftpAuthenticationMode.Password,
+            null,
             null,
             null,
             null,

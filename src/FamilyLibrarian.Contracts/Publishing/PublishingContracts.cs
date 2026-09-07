@@ -39,10 +39,15 @@ public sealed record CwaSettingsResponse(
     bool HasOpdsPassword,
     string? OpdsPasswordHint,
     DateTimeOffset? OpdsPasswordSetAtUtc,
+    string? EreaderServiceAccountUsername,
+    bool HasEreaderServiceAccountPassword,
+    string? EreaderServiceAccountPasswordHint,
+    DateTimeOffset? EreaderServiceAccountPasswordSetAtUtc,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
     string? LastTestMessage,
-    bool IsIngestConfigured);
+    bool IsIngestConfigured,
+    bool IsEreaderDeliveryConfigured);
 
 public sealed record SetCwaSettingsRequest(
     string TransportMode,
@@ -54,7 +59,8 @@ public sealed record SetCwaSettingsRequest(
     string SftpAuthenticationMode,
     string? OpdsBaseUrl,
     string? PublicUrl,
-    string? OpdsUsername);
+    string? OpdsUsername,
+    string? EreaderServiceAccountUsername);
 
 /// <summary>
 /// A non-persistent SFTP connection probe. Secret values are used only for the

@@ -11,3 +11,5 @@ public sealed record DeliveryTargetResponse(
 public sealed record SetKindleAddressRequest(string Address, uint? ExpectedVersion);
 
 public sealed record SetKindleEnabledRequest(bool Enabled, uint ExpectedVersion);
+
+public sealed record TestKindleDeliveryResponse(bool Succeeded, string Message);

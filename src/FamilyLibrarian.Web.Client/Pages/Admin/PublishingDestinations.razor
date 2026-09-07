@@ -199,6 +199,26 @@ else
         </MudPaper>
 
         <MudPaper Outlined="true" Class="pa-4 mt-4">
+            <MudText Typo="Typo.h6" GutterBottom="true">E-reader delivery service account</MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                A dedicated CWA account Family Librarian signs in as to send an owned book to a
+                family member's Kindle -- separate from the OPDS catalog credential above, and
+                independent of whether CWA ingest/OPDS is enabled. Give it its own account rather
+                than reusing another login; it does not need to be an administrator.
+            </MudText>
+            <MudStack Spacing="3">
+                <MudTextField T="string" Label="Service account username" @bind-Value="cwaEreaderServiceAccountUsername" Disabled="@cwaBusy" />
+                <MudText Typo="Typo.body2">@(cwa.HasEreaderServiceAccountPassword ? "A service account password is stored. This field is intentionally blank: leave it blank to keep it, or enter a value to replace it." : "No service account password is stored.")</MudText>
+                <MudTextField T="string" @bind-Value="cwaEreaderServiceAccountPasswordDraft" Label="Service account password"
+                              InputType="InputType.Password" autocomplete="new-password" Disabled="@cwaBusy" />
+            </MudStack>
+            <MudStack Row="true" Spacing="2" Class="mt-4">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@cwaBusy"
+                           OnClick="SaveCwaEreaderAsync">Save e-reader delivery settings</MudButton>
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4 mt-4">
             <MudText Typo="Typo.h6" GutterBottom="true">Confirm saved configuration</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
                 Enabling CWA requires a passing test of the delivery and OPDS settings you just
@@ -352,7 +372,7 @@ else
     private bool cwaLoadFailed, cwaBusy;
     private int cwaSwitchGeneration;
     private string cwaTransportMode = "Local", cwaSftpAuthenticationMode = "PrivateKey";
-    private string? cwaLocalIngestPath, cwaSftpHost, cwaSftpUsername, cwaSftpIngestPath, cwaSftpPrivateKeyDraft, cwaSftpPassphraseDraft, cwaSftpPasswordDraft, cwaPendingSftpHostKeyFingerprint, cwaApprovedSftpHostKeyFingerprint, cwaOpdsBaseUrl, cwaPublicUrl, cwaOpdsUsername, cwaOpdsPasswordDraft;
+    private string? cwaLocalIngestPath, cwaSftpHost, cwaSftpUsername, cwaSftpIngestPath, cwaSftpPrivateKeyDraft, cwaSftpPassphraseDraft, cwaSftpPasswordDraft, cwaPendingSftpHostKeyFingerprint, cwaApprovedSftpHostKeyFingerprint, cwaOpdsBaseUrl, cwaPublicUrl, cwaOpdsUsername, cwaOpdsPasswordDraft, cwaEreaderServiceAccountUsername, cwaEreaderServiceAccountPasswordDraft;
     private int? cwaSftpPort;
     private PublishingConnectionTestResponse? cwaIngestTestResult, cwaOpdsTestResult, cwaConnectionTestResult;
     private AudiobookshelfSettingsResponse? audiobookshelf;
@@ -500,7 +520,7 @@ else
     }
 
     private async Task LoadCwaAsync() { try { cwa = await CwaApi.GetAsync(); ApplyCwaFields(cwa); } catch (HttpRequestException) { cwaLoadFailed = true; } }
-    private void ApplyCwaFields(CwaSettingsResponse? settings) { if (settings is null) return; cwaTransportMode = settings.TransportMode; cwaLocalIngestPath = settings.LocalIngestPath; cwaSftpHost = settings.SftpHost; cwaSftpPort = settings.SftpPort; cwaSftpUsername = settings.SftpUsername; cwaSftpIngestPath = settings.SftpIngestPath; cwaSftpAuthenticationMode = settings.SftpAuthenticationMode; if (!string.IsNullOrWhiteSpace(settings.SftpHostKeyFingerprint)) cwaPendingSftpHostKeyFingerprint = null; cwaOpdsBaseUrl = settings.OpdsBaseUrl; cwaPublicUrl = settings.PublicUrl; cwaOpdsUsername = settings.OpdsUsername; }
+    private void ApplyCwaFields(CwaSettingsResponse? settings) { if (settings is null) return; cwaTransportMode = settings.TransportMode; cwaLocalIngestPath = settings.LocalIngestPath; cwaSftpHost = settings.SftpHost; cwaSftpPort = settings.SftpPort; cwaSftpUsername = settings.SftpUsername; cwaSftpIngestPath = settings.SftpIngestPath; cwaSftpAuthenticationMode = settings.SftpAuthenticationMode; if (!string.IsNullOrWhiteSpace(settings.SftpHostKeyFingerprint)) cwaPendingSftpHostKeyFingerprint = null; cwaOpdsBaseUrl = settings.OpdsBaseUrl; cwaPublicUrl = settings.PublicUrl; cwaOpdsUsername = settings.OpdsUsername; cwaEreaderServiceAccountUsername = settings.EreaderServiceAccountUsername; }
     private string CwaIngestTestButtonLabel => cwaTransportMode == "Sftp" ? "Test SFTP" : "Test local path";
     private async Task SetCwaEnabledAsync(bool enabled)
     {
@@ -544,7 +564,7 @@ else
         cwaBusy = true;
         try
         {
-            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: true, saveOpdsCredential: false))
+            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: true, saveOpdsCredential: false, saveEreaderCredential: false))
             {
                 Snackbar.Add("Saved the CWA delivery settings.", Severity.Success);
             }
@@ -597,9 +617,26 @@ else
         cwaBusy = true;
         try
         {
-            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: false, saveOpdsCredential: true))
+            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: false, saveOpdsCredential: true, saveEreaderCredential: false))
             {
                 Snackbar.Add("Saved the CWA OPDS settings.", Severity.Success);
+            }
+        }
+        finally
+        {
+            cwaBusy = false;
+            cwaSwitchGeneration++;
+        }
+    }
+
+    private async Task SaveCwaEreaderAsync()
+    {
+        cwaBusy = true;
+        try
+        {
+            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: false, saveOpdsCredential: false, saveEreaderCredential: true))
+            {
+                Snackbar.Add("Saved the e-reader delivery settings.", Severity.Success);
             }
         }
         finally
@@ -659,7 +696,8 @@ else
 
     private async Task<bool> SaveCurrentCwaSettingsAsync(
         bool saveIngestCredential,
-        bool saveOpdsCredential)
+        bool saveOpdsCredential,
+        bool saveEreaderCredential)
     {
         var settingsResult = await CwaApi.SetSettingsAsync(new SetCwaSettingsRequest(
             cwaTransportMode,
@@ -671,7 +709,8 @@ else
             cwaSftpAuthenticationMode,
             cwaOpdsBaseUrl,
             cwaPublicUrl,
-            cwaOpdsUsername));
+            cwaOpdsUsername,
+            cwaEreaderServiceAccountUsername));
         if (!AcceptCwaResult(settingsResult))
         {
             return false;
@@ -730,6 +769,16 @@ else
             }
 
             cwaOpdsPasswordDraft = null;
+        }
+
+        if (saveEreaderCredential && !string.IsNullOrWhiteSpace(cwaEreaderServiceAccountPasswordDraft))
+        {
+            if (!AcceptCwaResult(await CwaApi.SetEreaderServiceAccountPasswordAsync(cwaEreaderServiceAccountPasswordDraft)))
+            {
+                return false;
+            }
+
+            cwaEreaderServiceAccountPasswordDraft = null;
         }
 
         ApplyCwaFields(cwa);

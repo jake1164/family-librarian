@@ -55,15 +55,23 @@ else
         </MudStack>
     </MudPaper>
 
-    <MudAlert Severity="Severity.Info" Class="mt-4">
-        Sending a book to your Kindle isn't wired up yet — this saves where to send it once
-        that's ready.
-    </MudAlert>
+    <MudPaper Class="pa-4 mt-4" Outlined="true">
+        <MudText Typo="Typo.h6" GutterBottom="true">Test Kindle delivery</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Checks that the shared delivery service account can sign in — it does not send a
+            real book (sending on an actual request isn't wired up yet; this only confirms the
+            connection works).
+        </MudText>
+        <MudButton Variant="Variant.Outlined" Disabled="@testBusy" OnClick="TestKindleDeliveryAsync">
+            Test Kindle Delivery
+        </MudButton>
+    </MudPaper>
 }
 
 @code {
     private bool isLoading = true;
     private bool busy;
+    private bool testBusy;
     private bool hasTarget;
     private bool isEnabled;
     private string address = string.Empty;
@@ -149,6 +157,31 @@ else
         finally
         {
             busy = false;
+        }
+    }
+
+    private async Task TestKindleDeliveryAsync()
+    {
+        testBusy = true;
+
+        try
+        {
+            var result = await DeliveryTargets.TestKindleDeliveryAsync();
+            if (result is null)
+            {
+                Snackbar.Add("The Kindle delivery test could not be run.", Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Error);
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add("The Kindle delivery test could not be run.", Severity.Error);
+        }
+        finally
+        {
+            testBusy = false;
         }
     }
 

@@ -20,6 +20,7 @@ internal static class DeliveryTargetEndpoints
         kindle.MapGet("/", GetMyKindleTargetAsync);
         kindle.MapPut("/", SetMyKindleAddressAsync);
         kindle.MapPut("/enabled", SetMyKindleEnabledAsync);
+        kindle.MapPost("/test", TestMyKindleDeliveryAsync);
     }
 
     private static async Task<IResult> GetMyKindleTargetAsync(
@@ -64,6 +65,14 @@ internal static class DeliveryTargetEndpoints
             SetKindleTargetOutcome.Conflict => Results.Conflict(new { message = result.Error }),
             _ => Results.Problem(statusCode: StatusCodes.Status500InternalServerError)
         };
+    }
+
+    private static async Task<IResult> TestMyKindleDeliveryAsync(
+        DeliveryTargetService service,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.TestKindleDeliveryAsync(cancellationToken);
+        return Results.Ok(new TestKindleDeliveryResponse(result.Succeeded, result.Message));
     }
 
     private static DeliveryTargetResponse ToResponse(DeliveryTarget target) => new(

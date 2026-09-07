@@ -837,6 +837,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.OpdsPasswordFormatVersion).HasColumnName("opds_password_format_version");
             entity.Property(settings => settings.OpdsPasswordHint).HasColumnName("opds_password_hint").HasMaxLength(8);
             entity.Property(settings => settings.OpdsPasswordSetAtUtc).HasColumnName("opds_password_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.EreaderServiceAccountUsername).HasColumnName("ereader_service_account_username").HasMaxLength(256);
+            entity.Property(settings => settings.ProtectedEreaderServiceAccountPassword).HasColumnName("protected_ereader_service_account_password").HasMaxLength(2_048);
+            entity.Property(settings => settings.EreaderServiceAccountPasswordFormatVersion).HasColumnName("ereader_service_account_password_format_version");
+            entity.Property(settings => settings.EreaderServiceAccountPasswordHint).HasColumnName("ereader_service_account_password_hint").HasMaxLength(8);
+            entity.Property(settings => settings.EreaderServiceAccountPasswordSetAtUtc).HasColumnName("ereader_service_account_password_set_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
             entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);

@@ -412,7 +412,7 @@ public sealed class RequestWorkflowEndpointTests
         var settings = await client.PutAsJsonAsync(
             "/api/v1/admin/publishing/cwa/",
             new FamilyLibrarian.Contracts.Publishing.SetCwaSettingsRequest(
-                "Local", "/data/cwa-ingest-test", null, null, null, null, "PrivateKey", "https://cwa.example.test", null, null));
+                "Local", "/data/cwa-ingest-test", null, null, null, null, "PrivateKey", "https://cwa.example.test", null, null, null));
         settings.EnsureSuccessStatusCode();
 
         // Enabling requires a passing connection test for the saved configuration

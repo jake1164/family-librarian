@@ -56,6 +56,17 @@ public sealed class DeliveryTargetApiClient(HttpClient httpClient, AntiforgeryTo
             : new SetKindleTargetOutcome(false, null, await ReadErrorAsync(response, cancellationToken));
     }
 
+    public async Task<TestKindleDeliveryResponse?> TestKindleDeliveryAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/me/delivery/kindle/test");
+        await antiforgery.AttachAsync(request, cancellationToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<TestKindleDeliveryResponse>(cancellationToken)
+            : null;
+    }
+
     private async Task<HttpResponseMessage> SendAsync<TPayload>(
         HttpMethod method,
         string path,

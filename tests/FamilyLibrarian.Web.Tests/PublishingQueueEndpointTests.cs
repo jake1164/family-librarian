@@ -141,7 +141,7 @@ public sealed class PublishingQueueEndpointTests
             "/api/v1/admin/publishing/cwa/",
             new SetCwaSettingsRequest(
                 "Local", "/data/cwa-ingest-test", null, null, null, null, "PrivateKey",
-                "https://cwa.example.test", null, null));
+                "https://cwa.example.test", null, null, null));
         response.EnsureSuccessStatusCode();
 
         // Enabling requires a passing connection test for the saved configuration

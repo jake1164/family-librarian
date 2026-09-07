@@ -20,9 +20,12 @@ namespace FamilyLibrarian.Application.Delivery;
 /// </remarks>
 public sealed class DeliveryTargetService(
     IDeliveryTargetRepository repository,
+    IEnumerable<IEbookDeliveryProvider> deliveryProviders,
     ICurrentUser currentUser,
     IClock clock)
 {
+    private const string CwaProviderId = "cwa";
+
     public async Task<DeliveryTarget?> GetMyKindleTargetAsync(CancellationToken cancellationToken) =>
         currentUser.UserId is { } userId
             ? await FindKindleTargetAsync(userId, cancellationToken)
@@ -103,6 +106,30 @@ public sealed class DeliveryTargetService(
         return SetKindleTargetResult.Success(existing);
     }
 
+    /// <summary>
+    /// A login/connectivity check against the shared admin-configured e-reader
+    /// service account -- not a real book send (the destination's send route
+    /// has no dry-run). Available to any signed-in user, not gated on the
+    /// caller having their own Kindle address configured, since it validates
+    /// the shared infrastructure rather than anything user-specific.
+    /// </summary>
+    public async Task<TestKindleDeliveryResult> TestKindleDeliveryAsync(CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is null)
+        {
+            return new TestKindleDeliveryResult(false, "Sign in and try again.");
+        }
+
+        var provider = deliveryProviders.FirstOrDefault(candidate => candidate.Id == CwaProviderId);
+        if (provider is null)
+        {
+            return new TestKindleDeliveryResult(false, "Kindle delivery is not available.");
+        }
+
+        var outcome = await provider.TestAsync(cancellationToken);
+        return new TestKindleDeliveryResult(outcome.Succeeded, outcome.Message);
+    }
+
     private async Task<DeliveryTarget?> FindKindleTargetAsync(Guid userId, CancellationToken cancellationToken)
     {
         var targets = await repository.ListForUserAsync(userId, cancellationToken);
@@ -159,3 +186,5 @@ public enum SetKindleTargetOutcome
     Invalid,
     Unauthenticated
 }
+
+public sealed record TestKindleDeliveryResult(bool Succeeded, string Message);

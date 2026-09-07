@@ -45,6 +45,12 @@ public sealed class CwaSettingsApiClient(HttpClient httpClient, AntiforgeryToken
     public Task<CwaResult> ClearOpdsPasswordAsync(CancellationToken cancellationToken = default) =>
         SendAsync<object>(HttpMethod.Delete, $"{BasePath}/opds-password", null, cancellationToken);
 
+    public Task<CwaResult> SetEreaderServiceAccountPasswordAsync(string value, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Put, $"{BasePath}/ereader-service-account-password", new SetPublishingSecretRequest(value), cancellationToken);
+
+    public Task<CwaResult> ClearEreaderServiceAccountPasswordAsync(CancellationToken cancellationToken = default) =>
+        SendAsync<object>(HttpMethod.Delete, $"{BasePath}/ereader-service-account-password", null, cancellationToken);
+
     /// <summary>
     /// Tests and records against the currently *saved* configuration — this is
     /// what actually lets <c>LastTestSucceeded</c> become true, which enabling

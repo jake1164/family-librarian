@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Delivery;
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Delivery;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Delivery;
@@ -147,8 +148,60 @@ public sealed class DeliveryTargetServiceTests
         Assert.IsTrue(repository.Rows.Single().IsEnabled);
     }
 
-    private static DeliveryTargetService Create(IDeliveryTargetRepository repository, Guid? userId) =>
-        new(repository, new StubCurrentUser(userId), new FixedClock());
+    [TestMethod]
+    public async Task TestingKindleDeliveryWithNoProviderRegisteredFails()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+        var service = Create(repository, Owner, providers: []);
+
+        var result = await service.TestKindleDeliveryAsync(CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+    }
+
+    [TestMethod]
+    public async Task TestingKindleDeliveryDelegatesToTheCwaProviderAndPassesItsOutcomeThrough()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+        var provider = new StubEbookDeliveryProvider("cwa", new ConnectionTestOutcome(true, "Signed in."));
+        var service = Create(repository, Owner, providers: [provider]);
+
+        var result = await service.TestKindleDeliveryAsync(CancellationToken.None);
+
+        Assert.IsTrue(result.Succeeded);
+        Assert.AreEqual("Signed in.", result.Message);
+    }
+
+    [TestMethod]
+    public async Task TestingKindleDeliveryAsAnAnonymousCallerFails()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+        var provider = new StubEbookDeliveryProvider("cwa", new ConnectionTestOutcome(true, "Signed in."));
+        var service = Create(repository, userId: null, providers: [provider]);
+
+        var result = await service.TestKindleDeliveryAsync(CancellationToken.None);
+
+        Assert.IsFalse(result.Succeeded);
+    }
+
+    private static DeliveryTargetService Create(
+        IDeliveryTargetRepository repository, Guid? userId, IEnumerable<IEbookDeliveryProvider>? providers = null) =>
+        new(repository, providers ?? [], new StubCurrentUser(userId), new FixedClock());
+
+    private sealed class StubEbookDeliveryProvider(string id, ConnectionTestOutcome testOutcome) : IEbookDeliveryProvider
+    {
+        public string Id => id;
+
+        public Task<bool> CanDeliverAsync(CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public Task<EbookDeliveryOutcome> DeliverAsync(
+            string providerBookId, string bookFormat, bool convert, string recipientEmail,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(EbookDeliveryOutcome.Delivered("Delivered."));
+
+        public Task<ConnectionTestOutcome> TestAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(testOutcome);
+    }
 
     private sealed class StubCurrentUser(Guid? userId) : ICurrentUser
     {

@@ -18,6 +18,7 @@ public sealed class CwaSettingsService(
     private const string SftpPassphrasePurpose = PublishingSecretPurposes.CwaSftpPassphrase;
     private const string SftpPasswordPurpose = PublishingSecretPurposes.CwaSftpPassword;
     private const string OpdsPasswordPurpose = PublishingSecretPurposes.CwaOpdsPassword;
+    private const string EreaderServiceAccountPasswordPurpose = PublishingSecretPurposes.CwaEreaderServiceAccountPassword;
 
     public async Task<CwaStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
@@ -75,6 +76,7 @@ public sealed class CwaSettingsService(
         string? opdsBaseUrl,
         string? publicUrl,
         string? opdsUsername,
+        string? ereaderServiceAccountUsername,
         CancellationToken cancellationToken)
     {
         if (transportMode == CwaTransportMode.Local && string.IsNullOrWhiteSpace(localIngestPath))
@@ -99,7 +101,8 @@ public sealed class CwaSettingsService(
         var settings = await store.GetOrCreateAsync(cancellationToken);
         settings.SetSettings(
             transportMode, localIngestPath, sftpHost, sftpPort, sftpUsername, sftpIngestPath,
-            sftpAuthenticationMode, opdsBaseUrl, publicUrl, opdsUsername, currentUser.UserId, clock.UtcNow);
+            sftpAuthenticationMode, opdsBaseUrl, publicUrl, opdsUsername, ereaderServiceAccountUsername,
+            currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);
 
         await audit.WriteAsync(
@@ -204,6 +207,22 @@ public sealed class CwaSettingsService(
         return await SaveAndAuditSecretClearedAsync(settings, cancellationToken);
     }
 
+    public Task<CwaCommandResult> SetEreaderServiceAccountPasswordAsync(
+        string password, CancellationToken cancellationToken) =>
+        SetSecretAsync(
+            password,
+            EreaderServiceAccountPasswordPurpose,
+            (settings, protectedValue, formatVersion, hint, actor, at) =>
+                settings.SetEreaderServiceAccountPassword(protectedValue, formatVersion, null, actor, at),
+            cancellationToken);
+
+    public async Task<CwaCommandResult> ClearEreaderServiceAccountPasswordAsync(CancellationToken cancellationToken)
+    {
+        var settings = await store.GetOrCreateAsync(cancellationToken);
+        settings.ClearEreaderServiceAccountPassword(currentUser.UserId, clock.UtcNow);
+        return await SaveAndAuditSecretClearedAsync(settings, cancellationToken);
+    }
+
     public async Task<CwaConnectionTestResult> TestConnectionAsync(
         CwaConnectionTestTarget target,
         CancellationToken cancellationToken)
@@ -257,6 +276,7 @@ public sealed class CwaSettingsService(
             null,
             null,
             null,
+            null,
             currentUser.UserId,
             clock.UtcNow);
 
@@ -302,6 +322,7 @@ public sealed class CwaSettingsService(
             configuration.OpdsBaseUrl,
             null,
             configuration.OpdsUsername,
+            null,
             currentUser.UserId,
             clock.UtcNow);
 
@@ -376,7 +397,8 @@ public sealed class CwaSettingsService(
     private static CwaStatus ToStatus(CwaSettings? settings) => settings is null
         ? new CwaStatus(false, CwaTransportMode.Local, null, null, null, null, null,
             CwaSftpAuthenticationMode.PrivateKey, false, null, null, false, null, null,
-            false, null, null, null, null, null, null, null, false, null, null, null, null, null)
+            false, null, null, null, null, null, null, null, false, null, null,
+            null, false, null, null, null, null, null)
         : new CwaStatus(
             settings.IsEnabled,
             settings.TransportMode,
@@ -403,6 +425,10 @@ public sealed class CwaSettingsService(
             settings.HasOpdsPassword,
             null,
             settings.OpdsPasswordSetAtUtc,
+            settings.EreaderServiceAccountUsername,
+            settings.HasEreaderServiceAccountPassword,
+            null,
+            settings.EreaderServiceAccountPasswordSetAtUtc,
             settings.LastTestedAtUtc,
             settings.LastTestSucceeded,
             settings.LastTestMessage);

@@ -457,6 +457,10 @@ public static class DependencyInjection
         services.AddScoped<ICwaIngestTransportFactory, CwaIngestTransportFactory>();
         services.AddScoped<ICwaCatalogClient, CwaCatalogClient>();
         services.AddScoped<ICwaConnectionTester, CwaConnectionTester>();
+        services.AddHttpClient(CwaEreaderSessionClient.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(20))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
+        services.AddScoped<ICwaEreaderSessionClient, CwaEreaderSessionClient>();
+        services.AddScoped<IEbookDeliveryProvider, CwaEreaderDeliveryProvider>();
         services.AddScoped<IAudiobookshelfApiClient, AudiobookshelfApiClient>();
         services.AddScoped<IAudiobookshelfConnectionTester, AudiobookshelfConnectionTester>();
         services.AddScoped<IAudiobookshelfLibraryDiscoveryClient, AudiobookshelfLibraryDiscoveryClient>();
