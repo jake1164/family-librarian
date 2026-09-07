@@ -71,10 +71,12 @@ public sealed class CwaCatalogClient(
             var titleBody = await SendSearchAsync(titleQuery, settings, cancellationToken);
             if (titleBody is null)
             {
-                // A failed OPDS request is not evidence that another spelling
-                // will work. Preserve the existing best-effort no-match
-                // behavior instead of amplifying a temporary outage.
-                return BookMatchResult.NoMatchResult;
+                // A failed request for this one spelling (e.g. a transient
+                // 5xx or a query CWA's search happens to choke on) is not
+                // evidence that the remaining fallback queries would fail
+                // too -- keep trying them rather than treating a single bad
+                // response as proof the book is missing.
+                continue;
             }
 
             var titleResult = await matchService.MatchByTitleAuthorAsync(

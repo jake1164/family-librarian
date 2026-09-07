@@ -104,6 +104,24 @@ public sealed class CwaCatalogClientTests
     }
 
     [TestMethod]
+    public async Task AFailedLiteralTitleRequestStillFallsBackToTheRemainingTitleQueries()
+    {
+        var context = ConfiguredContext();
+        // The literal query fails outright (e.g. a transient 5xx) rather than
+        // just missing -- the client should still try the punctuation-
+        // independent token fallback instead of giving up immediately.
+        context.Handler.StatusCodes["Clear and Present Danger"] = HttpStatusCode.InternalServerError;
+        context.Handler.Responses["Clear"] =
+            Feed(("Clear and Present Danger", "Tom Clancy", "4"));
+
+        var result = await context.Client.FindBookIdAsync(
+            "Clear and Present Danger", "Tom Clancy", [], CancellationToken.None);
+
+        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
+        Assert.AreEqual("4", result.MatchedId);
+    }
+
+    [TestMethod]
     public async Task MultipleDistinctTitleMatchesAreAmbiguous()
     {
         var context = ConfiguredContext();
