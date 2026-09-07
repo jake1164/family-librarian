@@ -106,7 +106,7 @@ internal sealed class LiveChanges
                     changes.AssetIds.Add(import.AssetId);
                     changes.AdminTopics |= LiveUpdateTopics.Publishing;
                     break;
-                case Delivery delivery:
+                case AudiobookshelfDelivery delivery:
                     if (delivery.AssetId is { } assetId) changes.AssetIds.Add(assetId);
                     if (delivery.BundleId is { } bundleId) changes.BundleIds.Add(bundleId);
                     changes.AdminTopics |= LiveUpdateTopics.Publishing;

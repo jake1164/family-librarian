@@ -132,7 +132,7 @@ public sealed record LibraryImportResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? CompletedAtUtc);
 
-public sealed record DeliveryResponse(
+public sealed record AudiobookshelfDeliveryResponse(
     Guid Id,
     Guid RequestId,
     Guid WorkId,
@@ -146,4 +146,4 @@ public sealed record DeliveryResponse(
 
 public sealed record PublishingQueueResponse(
     IReadOnlyList<LibraryImportResponse> LibraryImports,
-    IReadOnlyList<DeliveryResponse> Deliveries);
+    IReadOnlyList<AudiobookshelfDeliveryResponse> Deliveries);

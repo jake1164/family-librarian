@@ -758,22 +758,27 @@ browser, or email delivery remain optional, separate user-specific operations.
 yet. No Kindle/device delivery code has been written; see
 `docs/01-product-architecture-spec.md` §15.1 for the intended design,
 including delivery-attempt history, retry/fallback, and the
-submitted-vs-confirmed distinction for Send-to-Kindle.
+submitted-vs-confirmed distinction for Send-to-Kindle. Per-user delivery
+*intent* (did this participant ask for Kindle delivery) is a distinct concern
+from the `DeliveryAttempt` record below and should live on `RequestParticipant`
+alongside `WantsEbook`/`WantsAudiobook`, not folded into `DeliveryTarget` or
+`DeliveryAttempt` — see the kindle delivery beta plan's "Shape reconciliation"
+addendum (`.ai_docs/family-librarian-kindle-delivery-beta-plan.md`).
 
 ---
 
 ### DeliveryAttempt (design name — not yet implemented)
 
 Represents one attempt to deliver an Asset to a user's `DeliveryTarget`. This
-is the record referred to as `Delivery` in earlier drafts of this document;
-it is named `DeliveryAttempt` here specifically to avoid colliding with the
-type that already exists in code today: `FamilyLibrarian.Domain.Publishing.Delivery`,
-which represents an unrelated concept — one attempt to publish an approved
-audiobook `MediaAsset` into Audiobookshelf (a `MediaLibraryImport`, not a
-user-specific delivery). Resolving that name collision (rename the existing
-type, or pick a different name for this one) is a required decision before
-this record is implemented; do not introduce a second, differently-shaped
-`Delivery` type without making that choice explicitly.
+is the record referred to as `Delivery` in earlier drafts of this document.
+The naming collision this section originally flagged is resolved (2026-09-07):
+`FamilyLibrarian.Domain.Publishing.Delivery` (one attempt to publish an
+approved audiobook `MediaAsset` into Audiobookshelf — a `MediaLibraryImport`
+concept, not a user-specific delivery) has been renamed to
+`AudiobookshelfDelivery`, so `Delivery`/`DeliveryAttempt` are free for this
+concept when it is implemented. Model it as one row per attempt (mirroring
+`AcquisitionJob`'s private-setter/`TransitionTo` shape), not a single mutable
+row — see the kindle delivery beta plan's "Shape reconciliation" addendum.
 
 ```text
 DeliveryAttemptId

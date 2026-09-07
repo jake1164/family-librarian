@@ -438,7 +438,7 @@ public static class DependencyInjection
         services.AddScoped<ICwaSettingsStore, CwaSettingsStore>();
         services.AddScoped<IAudiobookshelfSettingsStore, AudiobookshelfSettingsStore>();
         services.AddScoped<ILibraryImportRepository, LibraryImportRepository>();
-        services.AddScoped<IDeliveryRepository, DeliveryRepository>();
+        services.AddScoped<IAudiobookshelfDeliveryRepository, AudiobookshelfDeliveryRepository>();
         services.AddScoped<IWorkLookup, WorkLookup>();
 
         // Shared identity-matching core: CWA, Audiobookshelf, Gutenberg

@@ -1871,7 +1871,7 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("cwa_settings", "publishing");
                 });
 
-            modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.Delivery", b =>
+            modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.AudiobookshelfDelivery", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
@@ -3012,7 +3012,7 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.Delivery", b =>
+            modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.AudiobookshelfDelivery", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Acquisition.MediaAsset", null)
                         .WithMany()

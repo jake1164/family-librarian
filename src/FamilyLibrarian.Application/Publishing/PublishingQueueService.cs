@@ -1,7 +1,7 @@
 namespace FamilyLibrarian.Application.Publishing;
 
 /// <summary>Read-only composition of the admin Library Publishing queue: recent CWA imports and Audiobookshelf deliveries.</summary>
-public sealed class PublishingQueueService(ILibraryImportRepository libraryImports, IDeliveryRepository deliveries)
+public sealed class PublishingQueueService(ILibraryImportRepository libraryImports, IAudiobookshelfDeliveryRepository deliveries)
 {
     public async Task<PublishingQueueSnapshot> ListAsync(CancellationToken cancellationToken)
     {
@@ -13,4 +13,4 @@ public sealed class PublishingQueueService(ILibraryImportRepository libraryImpor
 
 public sealed record PublishingQueueSnapshot(
     IReadOnlyList<LibraryImportView> LibraryImports,
-    IReadOnlyList<DeliveryView> Deliveries);
+    IReadOnlyList<AudiobookshelfDeliveryView> Deliveries);

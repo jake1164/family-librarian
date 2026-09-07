@@ -25,7 +25,7 @@ namespace FamilyLibrarian.Application.Publishing;
 /// </remarks>
 public sealed class AudiobookshelfPublishingService(
     IAudiobookshelfSettingsStore settingsStore,
-    IDeliveryRepository repository,
+    IAudiobookshelfDeliveryRepository repository,
     ISecurityEvaluationRepository assets,
     IAssetStagingStore stagingStore,
     IAudiobookshelfApiClient apiClient,
@@ -46,7 +46,7 @@ public sealed class AudiobookshelfPublishingService(
         var delivery = await repository.FindByAssetIdAsync(asset.Id, cancellationToken);
         if (delivery is null)
         {
-            delivery = new Delivery(asset.Id, clock.UtcNow);
+            delivery = new AudiobookshelfDelivery(asset.Id, clock.UtcNow);
             repository.Add(delivery);
         }
 
@@ -97,12 +97,12 @@ public sealed class AudiobookshelfPublishingService(
                 return true;
             }
 
-            if (delivery.Status == DeliveryStatus.Failed)
+            if (delivery.Status == AudiobookshelfDeliveryStatus.Failed)
             {
                 delivery.ResetForRetry();
                 await ExecuteBundlePublishAsync(tracks, delivery, cancellationToken);
             }
-            else if (delivery.Status == DeliveryStatus.Verifying)
+            else if (delivery.Status == AudiobookshelfDeliveryStatus.Verifying)
             {
                 var bundleWork = await workLookup.FindAsync(tracks[0].WorkId, cancellationToken);
                 await TryVerifyAsync(
@@ -121,12 +121,12 @@ public sealed class AudiobookshelfPublishingService(
             return true;
         }
 
-        if (delivery.Status == DeliveryStatus.Failed)
+        if (delivery.Status == AudiobookshelfDeliveryStatus.Failed)
         {
             delivery.ResetForRetry();
             await ExecutePublishAsync(asset, delivery, cancellationToken);
         }
-        else if (delivery.Status == DeliveryStatus.Verifying)
+        else if (delivery.Status == AudiobookshelfDeliveryStatus.Verifying)
         {
             var work = await workLookup.FindAsync(asset.WorkId, cancellationToken);
             await TryVerifyAsync(
@@ -137,7 +137,7 @@ public sealed class AudiobookshelfPublishingService(
         return true;
     }
 
-    private async Task ExecutePublishAsync(MediaAsset asset, Delivery delivery, CancellationToken cancellationToken)
+    private async Task ExecutePublishAsync(MediaAsset asset, AudiobookshelfDelivery delivery, CancellationToken cancellationToken)
     {
         var work = await workLookup.FindAsync(asset.WorkId, cancellationToken);
         var title = work?.Title ?? "Unknown title";
@@ -197,7 +197,7 @@ public sealed class AudiobookshelfPublishingService(
             await repository.SaveChangesAsync(cancellationToken);
             await AuditPublishedAsync(asset.Id, cancellationToken);
 
-            if (delivery.Status == DeliveryStatus.Verifying)
+            if (delivery.Status == AudiobookshelfDeliveryStatus.Verifying)
             {
                 await TryVerifyAsync(delivery, [asset], title, author, cancellationToken);
             }
@@ -238,7 +238,7 @@ public sealed class AudiobookshelfPublishingService(
         var delivery = await repository.FindByBundleIdAsync(bundleId, cancellationToken);
         if (delivery is null)
         {
-            delivery = Delivery.ForBundle(bundleId, clock.UtcNow);
+            delivery = AudiobookshelfDelivery.ForBundle(bundleId, clock.UtcNow);
             repository.Add(delivery);
         }
 
@@ -246,7 +246,7 @@ public sealed class AudiobookshelfPublishingService(
     }
 
     private async Task ExecuteBundlePublishAsync(
-        IReadOnlyList<MediaAsset> tracks, Delivery delivery, CancellationToken cancellationToken)
+        IReadOnlyList<MediaAsset> tracks, AudiobookshelfDelivery delivery, CancellationToken cancellationToken)
     {
         var work = await workLookup.FindAsync(tracks[0].WorkId, cancellationToken);
         var title = work?.Title ?? "Unknown title";
@@ -311,7 +311,7 @@ public sealed class AudiobookshelfPublishingService(
                 await repository.SaveChangesAsync(cancellationToken);
                 await AuditBundlePublishedAsync(bundleId, cancellationToken);
 
-                if (delivery.Status == DeliveryStatus.Verifying)
+                if (delivery.Status == AudiobookshelfDeliveryStatus.Verifying)
                 {
                     await TryVerifyAsync(delivery, orderedTracks, title, author, cancellationToken);
                 }
@@ -359,7 +359,7 @@ public sealed class AudiobookshelfPublishingService(
             : exception.Message;
 
     private async Task TryVerifyAsync(
-        Delivery delivery, IReadOnlyList<MediaAsset> assets, string title, string? author, CancellationToken cancellationToken)
+        AudiobookshelfDelivery delivery, IReadOnlyList<MediaAsset> assets, string title, string? author, CancellationToken cancellationToken)
     {
         try
         {

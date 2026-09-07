@@ -313,7 +313,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                             latestImports.TryGetValue(asset.AssetId, out var libraryImport)
                                 ? libraryImport
                                 : null;
-                        DeliveryStatus? deliveryStatus = asset.BundleId.HasValue
+                        AudiobookshelfDeliveryStatus? deliveryStatus = asset.BundleId.HasValue
                             ? (latestDeliveriesByBundle.TryGetValue(asset.BundleId.Value, out var bundleDelivery)
                                 ? bundleDelivery
                                 : null)
@@ -462,5 +462,5 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
 
     private sealed record LibraryImportProgressRow(Guid AssetId, LibraryImportStatus Status);
 
-    private sealed record DeliveryProgressRow(Guid? AssetId, Guid? BundleId, DeliveryStatus Status);
+    private sealed record DeliveryProgressRow(Guid? AssetId, Guid? BundleId, AudiobookshelfDeliveryStatus Status);
 }

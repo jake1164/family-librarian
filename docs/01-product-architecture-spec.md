@@ -1044,20 +1044,24 @@ and complete a direct transfer later without the user repeating the request.
 Device connectivity must never be coupled to acquisition duration or a live
 browser session.
 
-**Naming conflict to resolve before implementation.** `Domain.Publishing.Delivery`
-already exists and means "one attempt to publish an approved audiobook
-`MediaAsset` to Audiobookshelf" (`DeliveryStatus`: `Uploading`/`Verifying`/
-`Delivered`/`Failed`, one row per asset). That is a `MediaLibraryImport`-style
-concept (moving a file into a shared library), not the user/device-specific
-delivery-attempt concept described above. Reusing the name `Delivery` for the
-new, unrelated user-facing concept would collide with the existing type and
-its `DeliveryResponse`/`DeliveryView`/`IDeliveryRepository` contracts. This
-needs an explicit naming decision when device delivery is designed — for
-example, renaming the existing Audiobookshelf concept (e.g. to
-`MediaLibraryDelivery`) to free up `Delivery`/`DeliveryAttempt` for the
-user-facing concept, or choosing a different name for the new one. This
-document intentionally does not decide that rename now; it is called out so
-it is not made accidentally.
+**Naming conflict — resolved 2026-09-07.** `Domain.Publishing.Delivery` meant
+"one attempt to publish an approved audiobook `MediaAsset` to Audiobookshelf"
+(`DeliveryStatus`: `Uploading`/`Verifying`/`Delivered`/`Failed`, one row per
+asset) — a `MediaLibraryImport`-style concept (moving a file into a shared
+library), not the user/device-specific delivery-attempt concept described
+above. It has been renamed to `AudiobookshelfDelivery` (`DeliveryStatus` ->
+`AudiobookshelfDeliveryStatus`, and its `DeliveryResponse`/`DeliveryView`/
+`IDeliveryRepository` contracts likewise), freeing up `Delivery`/
+`DeliveryTarget`/`DeliveryAttempt` for the user-facing concept described
+above when that work starts. This was a CLR-name-only rename — the backing
+`publishing.deliveries` table, its columns, and its enum member names are
+unchanged, so no EF migration was required. See `.ai_docs/master-delivery-plan.md`
+KINDLE-1 for the evidence, and the kindle delivery beta plan's "Shape
+reconciliation" addendum for how `DeliveryTarget`/`DeliveryAttempt` should
+actually be modeled relative to `RequestParticipant` and `AcquisitionJob`
+when that work starts — the shape below (a single `DeliveryAttempt` per
+mutable status) is superseded by that addendum in favor of one row per
+attempt, mirroring `AcquisitionJob`.
 
 ---
 

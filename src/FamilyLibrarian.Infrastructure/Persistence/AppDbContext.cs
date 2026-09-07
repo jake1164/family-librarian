@@ -79,7 +79,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<LibraryImport> LibraryImports => Set<LibraryImport>();
 
-    public DbSet<Delivery> Deliveries => Set<Delivery>();
+    public DbSet<AudiobookshelfDelivery> Deliveries => Set<AudiobookshelfDelivery>();
 
     public DbSet<AcquisitionPolicySettings> AcquisitionPolicySettings => Set<AcquisitionPolicySettings>();
 
@@ -881,8 +881,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
-        builder.Entity<Delivery>(entity =>
+        builder.Entity<AudiobookshelfDelivery>(entity =>
         {
+            // Table name intentionally left as "deliveries" (unchanged) --
+            // this rename is a CLR type rename only, not a schema change.
             entity.ToTable("deliveries", "publishing");
             entity.HasKey(delivery => delivery.Id);
             entity.Property(delivery => delivery.Id).HasColumnName("id").ValueGeneratedNever();

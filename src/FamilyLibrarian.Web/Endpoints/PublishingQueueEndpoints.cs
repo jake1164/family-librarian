@@ -49,7 +49,7 @@ internal static class PublishingQueueEndpoints
         view.CreatedAtUtc,
         view.CompletedAtUtc);
 
-    internal static DeliveryResponse ToDeliveryResponse(DeliveryView view) => new(
+    internal static AudiobookshelfDeliveryResponse ToDeliveryResponse(AudiobookshelfDeliveryView view) => new(
         view.Id,
         view.RequestId,
         view.WorkId,

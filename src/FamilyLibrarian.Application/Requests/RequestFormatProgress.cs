@@ -24,7 +24,7 @@ public static class RequestFormatProgress
         MediaAssetStorageState? assetState,
         SecurityEvaluationStatus? securityStatus,
         LibraryImportStatus? libraryImportStatus,
-        DeliveryStatus? deliveryStatus) => assetState switch
+        AudiobookshelfDeliveryStatus? deliveryStatus) => assetState switch
     {
         null => null,
         MediaAssetStorageState.Quarantine => Stage(
@@ -66,7 +66,7 @@ public static class RequestFormatProgress
 
     private static RequestFormatProgressView DescribePublishing(
         LibraryImportStatus? libraryImportStatus,
-        DeliveryStatus? deliveryStatus)
+        AudiobookshelfDeliveryStatus? deliveryStatus)
     {
         if (libraryImportStatus is not null)
         {
@@ -92,16 +92,16 @@ public static class RequestFormatProgress
         {
             return deliveryStatus switch
             {
-                DeliveryStatus.Uploading => Stage(
+                AudiobookshelfDeliveryStatus.Uploading => Stage(
                     "Publishing",
                     "Approved — publishing to Audiobookshelf."),
-                DeliveryStatus.Verifying => Stage(
+                AudiobookshelfDeliveryStatus.Verifying => Stage(
                     "AwaitingLibraryVerification",
                     "Uploaded to Audiobookshelf — waiting for it to appear in the library."),
-                DeliveryStatus.Delivered => Stage(
+                AudiobookshelfDeliveryStatus.Delivered => Stage(
                     "Available",
                     "Available in the family library."),
-                DeliveryStatus.Failed => Stage(
+                AudiobookshelfDeliveryStatus.Failed => Stage(
                     "PublishingNeedsAttention",
                     "Publishing needs the librarian's attention."),
                 _ => Stage("AwaitingPublishing", "Approved — waiting to publish.")
