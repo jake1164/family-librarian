@@ -1,0 +1,162 @@
+@page "/settings/ebook-delivery"
+@attribute [Authorize]
+@using FamilyLibrarian.Web.Client.Delivery
+@inject DeliveryTargetApiClient DeliveryTargets
+@inject ISnackbar Snackbar
+
+<PageTitle>Ebook delivery · Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Ebook delivery</MudText>
+<MudText Typo="Typo.body1" Class="mb-6">
+    Add a Kindle email address so an ebook can be sent straight to your device once it's
+    ready, in addition to reading it in the library. Only you can see this address.
+</MudText>
+
+@if (isLoading)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading ebook delivery settings" />
+}
+else
+{
+    <MudPaper Class="pa-4" Outlined="true">
+        @if (hasTarget)
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+                <MudText Typo="Typo.h6">Kindle</MudText>
+                <MudSpacer />
+                <MudSwitch T="bool"
+                           @key="@("kindle-enabled:" + switchGeneration)"
+                           Value="isEnabled"
+                           ValueChanged="@(enabled => SetEnabledAsync(enabled))"
+                           Color="Color.Primary"
+                           Disabled="@busy"
+                           Label="@(isEnabled ? "Enabled" : "Disabled")" />
+            </MudStack>
+            <MudDivider Class="mb-3" />
+        }
+
+        <MudStack Spacing="3">
+            <MudTextField T="string"
+                          @bind-Value="address"
+                          Label="Kindle email address"
+                          Disabled="@busy"
+                          HelperText="Find this under Manage Your Content and Devices -> Devices in your Amazon account." />
+
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+            }
+
+            <div>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAddressAsync">
+                    @(hasTarget ? "Save" : "Add Kindle")
+                </MudButton>
+            </div>
+        </MudStack>
+    </MudPaper>
+
+    <MudAlert Severity="Severity.Info" Class="mt-4">
+        Sending a book to your Kindle isn't wired up yet — this saves where to send it once
+        that's ready.
+    </MudAlert>
+}
+
+@code {
+    private bool isLoading = true;
+    private bool busy;
+    private bool hasTarget;
+    private bool isEnabled;
+    private string address = string.Empty;
+    private uint? version;
+    private string? errorMessage;
+    private int switchGeneration;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var target = await DeliveryTargets.GetMyKindleTargetAsync();
+            ApplyTarget(target);
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "Your ebook delivery settings could not be loaded.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SaveAddressAsync()
+    {
+        busy = true;
+        errorMessage = null;
+
+        try
+        {
+            var outcome = await DeliveryTargets.SetKindleAddressAsync(address, version);
+            if (outcome.Succeeded && outcome.Target is { } target)
+            {
+                ApplyTarget(target);
+                Snackbar.Add("Kindle delivery settings saved.", Severity.Success);
+            }
+            else
+            {
+                errorMessage = outcome.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That could not be saved. Please try again.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SetEnabledAsync(bool enabled)
+    {
+        if (version is not { } expectedVersion)
+        {
+            return;
+        }
+
+        busy = true;
+        errorMessage = null;
+
+        try
+        {
+            var outcome = await DeliveryTargets.SetKindleEnabledAsync(enabled, expectedVersion);
+            if (outcome.Succeeded && outcome.Target is { } target)
+            {
+                ApplyTarget(target);
+            }
+            else
+            {
+                errorMessage = outcome.Error;
+                // The switch already flipped optimistically; this forces it back
+                // to the last known-good value on failure.
+                switchGeneration++;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That could not be saved. Please try again.";
+            switchGeneration++;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void ApplyTarget(FamilyLibrarian.Contracts.Delivery.DeliveryTargetResponse? target)
+    {
+        hasTarget = target is not null;
+        isEnabled = target?.IsEnabled ?? false;
+        address = target?.Address ?? address;
+        version = target?.Version;
+    }
+}

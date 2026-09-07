@@ -195,6 +195,7 @@ public static class DependencyInjection
 
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
         services.AddScoped<UserWorkFeedbackService>();
+        services.AddScoped<DeliveryTargetService>();
 
         services.AddOptions<StorageOptions>()
             .Bind(configuration.GetSection(StorageOptions.SectionName))

@@ -221,6 +221,7 @@ app.MapGutenbergCatalogEndpoints();
 app.MapNotificationEndpoints();
 app.MapSmtpSettingsEndpoints();
 app.MapFeedbackEndpoints();
+app.MapDeliveryTargetEndpoints();
 app.MapSecurityQueueEndpoints();
 app.MapLiveUpdatesEndpoints();
 app.MapInvitationEndpoints();
