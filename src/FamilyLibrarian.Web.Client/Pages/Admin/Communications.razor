@@ -84,7 +84,7 @@ else
         <MudDivider Class="my-4" />
         <MudText Typo="Typo.h6" GutterBottom="true">Send test email</MudText>
         <MudText Typo="Typo.body2" Class="mb-3">
-            This sends a real message using the saved configuration and records only the outcome—not the recipient address.
+            This sends a real message using the values currently in the form above (a blank password field falls back to the stored password) and records only the outcome—not the recipient address.
         </MudText>
         <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
             <MudTextField T="string" Label="Test recipient" @bind-Value="testRecipient" Disabled="@busy" Class="flex-grow-1" />
@@ -138,7 +138,7 @@ else
         {
             var result = await SmtpApi.SetSettingsAsync(new SetSmtpSettingsRequest(
                 host, port, securityMode, username, fromAddress, fromName));
-            ApplyResult(result, "SMTP settings saved.");
+            ApplyResult(result, "SMTP settings saved.", applyFields: true);
         }
         finally
         {
@@ -195,13 +195,9 @@ else
         busy = true;
         try
         {
-            testResult = await SmtpApi.SendTestAsync(testRecipient!)
+            testResult = await SmtpApi.SendTestAsync(new SendSmtpTestRequest(
+                    testRecipient, host, port, securityMode, username, passwordDraft, fromAddress, fromName))
                 ?? new SmtpTestResponse(false, "The SMTP test could not be completed.");
-            if (testResult.Succeeded)
-            {
-                smtp = await SmtpApi.GetAsync();
-                ApplyFields(smtp);
-            }
         }
         finally
         {
@@ -209,7 +205,7 @@ else
         }
     }
 
-    private void ApplyResult(SmtpSettingsResult result, string successMessage)
+    private void ApplyResult(SmtpSettingsResult result, string successMessage, bool applyFields = false)
     {
         if (!result.Succeeded)
         {
@@ -217,8 +213,16 @@ else
             return;
         }
 
+        // Only re-sync the editable fields (host/port/username/fromAddress/fromName)
+        // after an action that actually saved them (SaveSettingsAsync). Other
+        // actions -- toggling Enabled, saving/clearing the password -- must not
+        // clobber unsaved edits sitting in those fields with the persisted values.
         smtp = result.Settings;
-        ApplyFields(smtp);
+        if (applyFields)
+        {
+            ApplyFields(smtp);
+        }
+
         Snackbar.Add(successMessage, Severity.Success);
     }
 

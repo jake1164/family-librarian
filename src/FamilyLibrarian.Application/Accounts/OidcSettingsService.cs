@@ -107,10 +107,16 @@ public sealed class OidcSettingsService(
         return OidcCommandResult.Success(ToStatus(settings));
     }
 
-    public async Task<OidcCommandResult> TestConnectionAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Tests the issuer URL currently in the administrator's form, which may
+    /// differ from what is saved. A blank draft authority falls back to the
+    /// currently saved one. Only the pass/fail outcome is recorded.
+    /// </summary>
+    public async Task<OidcCommandResult> TestConnectionAsync(string? draftAuthority, CancellationToken cancellationToken)
     {
         var settings = await store.GetOrCreateAsync(cancellationToken);
-        var outcome = await discoveryTester.TestAsync(settings.Authority, cancellationToken);
+        var authority = string.IsNullOrWhiteSpace(draftAuthority) ? settings.Authority : draftAuthority.Trim();
+        var outcome = await discoveryTester.TestAsync(authority, cancellationToken);
 
         settings.RecordTestResult(outcome.Succeeded, outcome.Message, currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);

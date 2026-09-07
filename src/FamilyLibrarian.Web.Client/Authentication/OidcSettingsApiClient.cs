@@ -30,9 +30,12 @@ public sealed class OidcSettingsApiClient(HttpClient httpClient, AntiforgeryToke
     public Task<OidcResult> SetLocalLoginDisabledAsync(bool disabled, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Put, $"{BasePath}/local-login-disabled", new SetOidcLocalLoginDisabledRequest(disabled), cancellationToken);
 
-    public async Task<OidcConnectionTestResponse?> TestAsync(CancellationToken cancellationToken = default)
+    public async Task<OidcConnectionTestResponse?> TestAsync(string? authority, CancellationToken cancellationToken = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/test");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/test")
+        {
+            Content = JsonContent.Create(new TestOidcConnectionRequest(authority))
+        };
         await antiforgery.AttachAsync(request, cancellationToken);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode

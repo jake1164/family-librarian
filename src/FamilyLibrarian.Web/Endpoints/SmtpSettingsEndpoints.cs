@@ -52,7 +52,15 @@ internal static class SmtpSettingsEndpoints
     private static async Task<IResult> SendTestAsync(
         SendSmtpTestRequest request, SmtpSettingsService service, CancellationToken cancellationToken)
     {
-        var result = await service.SendTestAsync(request.RecipientAddress, cancellationToken);
+        if (!Enum.TryParse<SmtpSecurityMode>(request.SecurityMode, ignoreCase: true, out var securityMode) ||
+            !Enum.IsDefined(securityMode))
+        {
+            return Invalid("securityMode", "The SMTP security mode is not valid.");
+        }
+
+        var result = await service.SendTestAsync(
+            request.RecipientAddress, request.Host, request.Port, securityMode, request.Username,
+            request.Password, request.FromAddress, request.FromName, cancellationToken);
         return result.Succeeded
             ? Results.Ok(new SmtpTestResponse(result.Outcome!.Succeeded, result.Outcome.Message))
             : Invalid("smtp", result.Error!);

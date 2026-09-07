@@ -188,7 +188,7 @@ else
 
     private Task SaveSettingsAsync() => RunAsync(() => OidcApi.SetSettingsAsync(new SetOidcSettingsRequest(
         displayName ?? "Sign in with SSO", authority, clientId, scopes, matchClaimName,
-        adminClaimName, adminClaimValues, autoCreateAccounts)));
+        adminClaimName, adminClaimValues, autoCreateAccounts)), applyFields: true);
 
     private async Task SaveClientSecretAsync()
     {
@@ -214,7 +214,7 @@ else
         busy = true;
         try
         {
-            var result = await OidcApi.TestAsync();
+            var result = await OidcApi.TestAsync(authority);
             if (result is null)
             {
                 Snackbar.Add("The connection test could not be run.", Severity.Error);
@@ -222,7 +222,16 @@ else
             }
 
             lastTestEndpoints = result.Succeeded ? result : null;
-            await LoadAsync();
+            if (settings is not null)
+            {
+                settings = settings with
+                {
+                    LastTestedAtUtc = DateTimeOffset.UtcNow,
+                    LastTestSucceeded = result.Succeeded,
+                    LastTestMessage = result.Message,
+                };
+            }
+
             Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
         }
         finally
@@ -231,7 +240,7 @@ else
         }
     }
 
-    private async Task<bool> RunAsync(Func<Task<OidcResult>> action)
+    private async Task<bool> RunAsync(Func<Task<OidcResult>> action, bool applyFields = false)
     {
         busy = true;
         try
@@ -243,8 +252,17 @@ else
                 return false;
             }
 
+            // Only re-sync the editable fields (display name, authority, client ID,
+            // scopes, claim mapping) after an action that actually saved them
+            // (SaveSettingsAsync). Other actions -- enabling, saving/clearing the
+            // client secret, disabling local login -- must not clobber unsaved
+            // edits sitting in those fields with the persisted values.
             settings = result.Settings;
-            ApplyFields(settings);
+            if (applyFields)
+            {
+                ApplyFields(settings);
+            }
+
             return true;
         }
         finally

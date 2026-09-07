@@ -51,9 +51,9 @@ internal static class OidcSettingsEndpoints
         ToOidcResult(await service.SetLocalLoginDisabledAsync(request.Disabled, cancellationToken));
 
     private static async Task<IResult> TestOidcConnectionAsync(
-        OidcSettingsService service, CancellationToken cancellationToken)
+        TestOidcConnectionRequest? request, OidcSettingsService service, CancellationToken cancellationToken)
     {
-        var result = await service.TestConnectionAsync(cancellationToken);
+        var result = await service.TestConnectionAsync(request?.Authority, cancellationToken);
         return Results.Ok(new OidcConnectionTestResponse(
             result.Status?.LastTestSucceeded ?? false,
             result.Status?.LastTestMessage ?? "The connection test could not be run.",

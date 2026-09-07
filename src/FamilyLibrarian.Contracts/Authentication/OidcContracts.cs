@@ -37,6 +37,13 @@ public sealed record SetOidcClientSecretRequest(string ClientSecret);
 
 public sealed record SetOidcLocalLoginDisabledRequest(bool Disabled);
 
+/// <summary>
+/// A non-persistent discovery-document probe against the issuer URL currently
+/// in the administrator's form, which may not be saved yet. A blank authority
+/// falls back to whatever is currently saved.
+/// </summary>
+public sealed record TestOidcConnectionRequest(string? Authority);
+
 public sealed record OidcConnectionTestResponse(
     bool Succeeded,
     string Message,

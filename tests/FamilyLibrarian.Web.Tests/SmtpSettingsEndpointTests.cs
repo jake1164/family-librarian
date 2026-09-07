@@ -48,7 +48,10 @@ public sealed class SmtpSettingsEndpointTests
         Assert.IsFalse(passwordBody.Contains(Password, StringComparison.Ordinal));
 
         var test = await client.PostAsJsonAsync(
-            "/api/v1/admin/communications/smtp/test", new SendSmtpTestRequest("admin@example.test"));
+            "/api/v1/admin/communications/smtp/test",
+            new SendSmtpTestRequest(
+                "admin@example.test", "smtp.example.test", 587, "StartTls", "mailer", null,
+                "library@example.test", "Family Librarian"));
         Assert.AreEqual(HttpStatusCode.OK, test.StatusCode);
         var testResponse = await test.Content.ReadFromJsonAsync<SmtpTestResponse>();
         Assert.IsNotNull(testResponse);
