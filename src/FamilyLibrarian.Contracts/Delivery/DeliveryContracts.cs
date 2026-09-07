@@ -6,9 +6,10 @@ public sealed record DeliveryTargetResponse(
     string Name,
     string Address,
     bool IsEnabled,
+    bool SendByDefault,
     uint Version);
 
-public sealed record SetKindleAddressRequest(string Address, uint? ExpectedVersion);
+public sealed record SetKindleAddressRequest(string Address, uint? ExpectedVersion, bool SendByDefault);
 
 public sealed record SetKindleEnabledRequest(bool Enabled, uint ExpectedVersion);
 

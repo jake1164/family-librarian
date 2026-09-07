@@ -22,13 +22,15 @@ public sealed class DeliveryTargetServiceTests
         var repository = new InMemoryDeliveryTargetRepository();
         var service = Create(repository, Owner);
 
-        var result = await service.SetMyKindleAddressAsync("reader@kindle.com", expectedVersion: null, CancellationToken.None);
+        var result = await service.SetMyKindleAddressAsync(
+            "reader@kindle.com", expectedVersion: null, sendByDefault: true, CancellationToken.None);
 
         Assert.AreEqual(SetKindleTargetOutcome.Success, result.Outcome);
         var stored = repository.Rows.Single();
         Assert.AreEqual(Owner, stored.UserId);
         Assert.AreEqual("reader@kindle.com", stored.Address);
         Assert.IsTrue(stored.IsEnabled);
+        Assert.IsTrue(stored.SendByDefault);
     }
 
     [TestMethod]
@@ -36,14 +38,15 @@ public sealed class DeliveryTargetServiceTests
     {
         var repository = new InMemoryDeliveryTargetRepository();
         var service = Create(repository, Owner);
-        var first = await service.SetMyKindleAddressAsync("old@kindle.com", null, CancellationToken.None);
+        var first = await service.SetMyKindleAddressAsync("old@kindle.com", null, true, CancellationToken.None);
 
         var second = await service.SetMyKindleAddressAsync(
-            "new@kindle.com", first.Target!.Version, CancellationToken.None);
+            "new@kindle.com", first.Target!.Version, false, CancellationToken.None);
 
         Assert.AreEqual(SetKindleTargetOutcome.Success, second.Outcome);
         Assert.AreEqual(1, repository.Rows.Count);
         Assert.AreEqual("new@kindle.com", repository.Rows.Single().Address);
+        Assert.IsFalse(repository.Rows.Single().SendByDefault);
     }
 
     [TestMethod]
@@ -52,7 +55,7 @@ public sealed class DeliveryTargetServiceTests
         var repository = new InMemoryDeliveryTargetRepository();
         var service = Create(repository, Owner);
 
-        var result = await service.SetMyKindleAddressAsync("not-an-email", null, CancellationToken.None);
+        var result = await service.SetMyKindleAddressAsync("not-an-email", null, true, CancellationToken.None);
 
         Assert.AreEqual(SetKindleTargetOutcome.Invalid, result.Outcome);
         Assert.AreEqual(0, repository.Rows.Count);
@@ -64,7 +67,7 @@ public sealed class DeliveryTargetServiceTests
         var repository = new InMemoryDeliveryTargetRepository();
         var service = Create(repository, userId: null);
 
-        var result = await service.SetMyKindleAddressAsync("reader@kindle.com", null, CancellationToken.None);
+        var result = await service.SetMyKindleAddressAsync("reader@kindle.com", null, true, CancellationToken.None);
 
         Assert.AreEqual(SetKindleTargetOutcome.Unauthenticated, result.Outcome);
         Assert.AreEqual(0, repository.Rows.Count);
@@ -76,7 +79,8 @@ public sealed class DeliveryTargetServiceTests
         var repository = new InMemoryDeliveryTargetRepository();
         var service = Create(repository, Owner);
 
-        var result = await service.SetMyKindleAddressAsync("reader@kindle.com", expectedVersion: 1, CancellationToken.None);
+        var result = await service.SetMyKindleAddressAsync(
+            "reader@kindle.com", expectedVersion: 1, sendByDefault: true, CancellationToken.None);
 
         Assert.AreEqual(SetKindleTargetOutcome.Conflict, result.Outcome);
         Assert.AreEqual(0, repository.Rows.Count);
@@ -104,7 +108,7 @@ public sealed class DeliveryTargetServiceTests
 
         // No expectedVersion supplied means "create", but a row already exists
         // for CwaKindleEmail under a different user, so nothing should collide.
-        var result = await service.SetMyKindleAddressAsync("me@kindle.com", null, CancellationToken.None);
+        var result = await service.SetMyKindleAddressAsync("me@kindle.com", null, true, CancellationToken.None);
 
         Assert.AreEqual(SetKindleTargetOutcome.Success, result.Outcome);
         Assert.AreEqual(2, repository.Rows.Count);
@@ -127,7 +131,7 @@ public sealed class DeliveryTargetServiceTests
     {
         var repository = new InMemoryDeliveryTargetRepository();
         var service = Create(repository, Owner);
-        var created = await service.SetMyKindleAddressAsync("reader@kindle.com", null, CancellationToken.None);
+        var created = await service.SetMyKindleAddressAsync("reader@kindle.com", null, true, CancellationToken.None);
 
         var disabled = await service.SetMyKindleEnabledAsync(false, created.Target!.Version, CancellationToken.None);
 
@@ -140,7 +144,7 @@ public sealed class DeliveryTargetServiceTests
     {
         var repository = new InMemoryDeliveryTargetRepository();
         var service = Create(repository, Owner);
-        var created = await service.SetMyKindleAddressAsync("reader@kindle.com", null, CancellationToken.None);
+        var created = await service.SetMyKindleAddressAsync("reader@kindle.com", null, true, CancellationToken.None);
 
         var result = await service.SetMyKindleEnabledAsync(false, created.Target!.Version + 1, CancellationToken.None);
 

@@ -41,6 +41,7 @@ public sealed class DeliveryTargetService(
     public async Task<SetKindleTargetResult> SetMyKindleAddressAsync(
         string address,
         uint? expectedVersion,
+        bool sendByDefault,
         CancellationToken cancellationToken)
     {
         if (currentUser.UserId is not { } userId)
@@ -65,6 +66,7 @@ public sealed class DeliveryTargetService(
 
             var created = new DeliveryTarget(
                 userId, DeliveryTargetProvider.CwaKindleEmail, "Kindle", normalized, clock.UtcNow);
+            created.SetSendByDefault(sendByDefault, clock.UtcNow);
             repository.Add(created);
             await repository.SaveChangesAsync(cancellationToken);
             return SetKindleTargetResult.Success(created);
@@ -76,6 +78,7 @@ public sealed class DeliveryTargetService(
         }
 
         existing.UpdateAddress(normalized, clock.UtcNow);
+        existing.SetSendByDefault(sendByDefault, clock.UtcNow);
         await repository.SaveChangesAsync(cancellationToken);
         return SetKindleTargetResult.Success(existing);
     }

@@ -36,7 +36,8 @@ internal static class DeliveryTargetEndpoints
         DeliveryTargetService service,
         CancellationToken cancellationToken)
     {
-        var result = await service.SetMyKindleAddressAsync(request.Address, request.ExpectedVersion, cancellationToken);
+        var result = await service.SetMyKindleAddressAsync(
+            request.Address, request.ExpectedVersion, request.SendByDefault, cancellationToken);
 
         return result.Outcome switch
         {
@@ -81,5 +82,6 @@ internal static class DeliveryTargetEndpoints
         target.Name,
         target.Address,
         target.IsEnabled,
+        target.SendByDefault,
         target.Version);
 }

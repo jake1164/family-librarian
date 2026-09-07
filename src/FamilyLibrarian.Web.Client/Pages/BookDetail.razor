@@ -326,6 +326,7 @@
         try
         {
             kindleTarget = await DeliveryTargets.GetMyKindleTargetAsync();
+            sendToKindle = kindleTarget is { IsEnabled: true, SendByDefault: true };
         }
         catch (HttpRequestException)
         {

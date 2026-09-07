@@ -21,12 +21,13 @@ public sealed class DeliveryTargetApiClient(HttpClient httpClient, AntiforgeryTo
     public async Task<SetKindleTargetOutcome> SetKindleAddressAsync(
         string address,
         uint? expectedVersion,
+        bool sendByDefault,
         CancellationToken cancellationToken = default)
     {
         using var response = await SendAsync(
             HttpMethod.Put,
             "api/v1/me/delivery/kindle",
-            new SetKindleAddressRequest(address, expectedVersion),
+            new SetKindleAddressRequest(address, expectedVersion, sendByDefault),
             cancellationToken);
 
         return response.IsSuccessStatusCode

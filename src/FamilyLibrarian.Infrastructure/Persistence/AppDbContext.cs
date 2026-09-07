@@ -935,6 +935,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(target => target.Name).HasColumnName("name").HasMaxLength(DeliveryTarget.MaxNameLength);
             entity.Property(target => target.Address).HasColumnName("address").HasMaxLength(DeliveryTarget.MaxAddressLength);
             entity.Property(target => target.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(target => target.SendByDefault).HasColumnName("send_by_default").HasDefaultValue(true);
             entity.Property(target => target.IsDefault).HasColumnName("is_default");
             ConfigureTimestamps(entity);
 

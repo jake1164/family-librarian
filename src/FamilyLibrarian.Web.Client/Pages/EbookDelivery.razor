@@ -42,6 +42,14 @@ else
                           Disabled="@busy"
                           HelperText="Find this under Manage Your Content and Devices -> Devices in your Amazon account." />
 
+            <div>
+                <MudCheckBox T="bool"
+                             @bind-Value="sendByDefault"
+                             Label="Send to my Kindle by default when I request an ebook"
+                             Disabled="@busy" />
+                <MudText Typo="Typo.caption">You can always uncheck it for a specific request.</MudText>
+            </div>
+
             @if (!string.IsNullOrWhiteSpace(errorMessage))
             {
                 <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
@@ -74,6 +82,7 @@ else
     private bool testBusy;
     private bool hasTarget;
     private bool isEnabled;
+    private bool sendByDefault = true;
     private string address = string.Empty;
     private uint? version;
     private string? errorMessage;
@@ -103,7 +112,7 @@ else
 
         try
         {
-            var outcome = await DeliveryTargets.SetKindleAddressAsync(address, version);
+            var outcome = await DeliveryTargets.SetKindleAddressAsync(address, version, sendByDefault);
             if (outcome.Succeeded && outcome.Target is { } target)
             {
                 ApplyTarget(target);
@@ -189,6 +198,7 @@ else
     {
         hasTarget = target is not null;
         isEnabled = target?.IsEnabled ?? false;
+        sendByDefault = target?.SendByDefault ?? sendByDefault;
         address = target?.Address ?? address;
         version = target?.Version;
     }

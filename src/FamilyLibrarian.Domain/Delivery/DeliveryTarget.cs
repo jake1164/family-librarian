@@ -43,6 +43,7 @@ public sealed class DeliveryTarget
         SetName(name);
         SetAddress(address);
         IsEnabled = true;
+        SendByDefault = true;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
     }
@@ -58,6 +59,15 @@ public sealed class DeliveryTarget
     public string Address { get; private set; } = null!;
 
     public bool IsEnabled { get; private set; }
+
+    /// <summary>
+    /// Whether a new ebook request should propose sending to this target by
+    /// default. Only ever consulted to seed a request-creation checkbox's
+    /// initial state -- the checkbox itself always wins, and each request
+    /// snapshots its own choice at creation time (see <c>RequestParticipant.DeliveryTargetId</c>);
+    /// changing this preference never alters an existing request.
+    /// </summary>
+    public bool SendByDefault { get; private set; }
 
     /// <summary>Advisory only -- the caller (application service) is responsible for unsetting any other default for this user.</summary>
     public bool IsDefault { get; private set; }
@@ -83,6 +93,12 @@ public sealed class DeliveryTarget
     public void SetEnabled(bool enabled, DateTimeOffset atUtc)
     {
         IsEnabled = enabled;
+        UpdatedAtUtc = atUtc;
+    }
+
+    public void SetSendByDefault(bool sendByDefault, DateTimeOffset atUtc)
+    {
+        SendByDefault = sendByDefault;
         UpdatedAtUtc = atUtc;
     }
 
