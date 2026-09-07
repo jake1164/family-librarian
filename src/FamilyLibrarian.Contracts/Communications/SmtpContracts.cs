@@ -29,14 +29,16 @@ public sealed record SetSmtpPasswordRequest(string Password);
 /// <summary>
 /// A non-persistent SMTP connection probe. Draft field values (including a
 /// freshly typed but unsaved password) are used only for the probe and are
-/// never written unless the administrator subsequently saves them. A blank
-/// draft password falls back to the currently stored password, if any.
+/// never written unless the administrator subsequently saves them. Any
+/// omitted field -- a blank draft password included -- falls back to the
+/// currently saved setting, so a caller that only wants to test the saved
+/// configuration can still pass just <see cref="RecipientAddress"/>.
 /// </summary>
 public sealed record SendSmtpTestRequest(
     string? RecipientAddress,
     string? Host,
     int? Port,
-    string SecurityMode,
+    string? SecurityMode,
     string? Username,
     string? Password,
     string? FromAddress,

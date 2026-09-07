@@ -114,15 +114,17 @@ public sealed class SmtpSettingsService(
     /// <summary>
     /// Tests the delivery values currently in the administrator's form —
     /// including a freshly typed but unsaved password — without changing the
-    /// persisted host/port/username/from-address/from-name. A blank draft
-    /// password falls back to the currently stored password, if any. Only the
+    /// persisted host/port/username/from-address/from-name. Any omitted
+    /// field, the draft password included, falls back to the currently
+    /// saved setting, so a caller that only wants to prove the *saved*
+    /// configuration works can pass just a recipient address. Only the
     /// pass/fail outcome is recorded onto the persisted settings.
     /// </summary>
     public async Task<SmtpTestResult> SendTestAsync(
         string? recipientAddress,
         string? host,
         int? port,
-        SmtpSecurityMode securityMode,
+        SmtpSecurityMode? securityMode,
         string? username,
         string? password,
         string? fromAddress,
@@ -146,7 +148,15 @@ public sealed class SmtpSettingsService(
 
         var persisted = await store.FindAsync(cancellationToken);
         var candidate = new SmtpSettings(clock.UtcNow);
-        candidate.SetSettings(host, port, securityMode, username, fromAddress, fromName, currentUser.UserId, clock.UtcNow);
+        candidate.SetSettings(
+            host ?? persisted?.Host,
+            port ?? persisted?.Port,
+            securityMode ?? persisted?.SecurityMode ?? SmtpSecurityMode.StartTls,
+            username ?? persisted?.Username,
+            fromAddress ?? persisted?.FromAddress,
+            fromName ?? persisted?.FromName,
+            currentUser.UserId,
+            clock.UtcNow);
 
         var trimmedPassword = password?.Trim();
         if (!string.IsNullOrEmpty(trimmedPassword))

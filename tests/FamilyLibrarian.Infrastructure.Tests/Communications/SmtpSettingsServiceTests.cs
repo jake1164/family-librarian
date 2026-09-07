@@ -69,6 +69,20 @@ public sealed class SmtpSettingsServiceTests
     }
 
     [TestMethod]
+    public async Task SendTestAsyncFallsBackToTheSavedSettingsWhenOnlyARecipientIsGiven()
+    {
+        var context = new TestContext();
+        await context.ConfigureAsync();
+
+        var test = await context.Service.SendTestAsync(
+            "admin@example.test", null, null, null, null, null, null, null, CancellationToken.None);
+
+        Assert.IsTrue(test.Succeeded);
+        Assert.IsTrue(test.Outcome!.Succeeded);
+        Assert.AreEqual("admin@example.test", context.Sender.LastRecipientAddress);
+    }
+
+    [TestMethod]
     public async Task InvalidTestRecipientDoesNotCallTheTransport()
     {
         var context = new TestContext();
