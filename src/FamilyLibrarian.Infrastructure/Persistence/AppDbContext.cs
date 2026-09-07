@@ -5,6 +5,7 @@ using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Communications;
+using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Feedback;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Policy;
@@ -81,6 +82,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<AudiobookshelfDelivery> Deliveries => Set<AudiobookshelfDelivery>();
 
+    public DbSet<DeliveryTarget> DeliveryTargets => Set<DeliveryTarget>();
+
     public DbSet<AcquisitionPolicySettings> AcquisitionPolicySettings => Set<AcquisitionPolicySettings>();
 
     public DbSet<OidcSettings> OidcSettings => Set<OidcSettings>();
@@ -138,6 +141,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         ConfigureSecurity(builder);
         ConfigureAudit(builder);
         ConfigurePublishing(builder);
+        ConfigureDelivery(builder);
         ConfigurePolicy(builder);
         ConfigureAuthentication(builder);
         ConfigureGutenbergCatalog(builder);
@@ -396,9 +400,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(participant => participant.WantsEbook).HasColumnName("wants_ebook");
             entity.Property(participant => participant.WantsAudiobook).HasColumnName("wants_audiobook");
             entity.Property(participant => participant.Note).HasColumnName("note").HasMaxLength(BookRequest.MaxNoteLength);
+            entity.Property(participant => participant.DeliveryTargetId).HasColumnName("delivery_target_id");
             entity.Property(participant => participant.JoinedAtUtc).HasColumnName("joined_at_utc");
             entity.Property(participant => participant.WithdrawnAtUtc).HasColumnName("withdrawn_at_utc");
             entity.HasOne<AppUser>().WithMany().HasForeignKey(participant => participant.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            // Restrict: a delivery target referenced by request history must not
+            // disappear out from under it -- disable it instead of deleting it.
+            entity.HasOne<DeliveryTarget>().WithMany()
+                .HasForeignKey(participant => participant.DeliveryTargetId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -904,6 +914,29 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(delivery => delivery.AssetId)
                 .IsRequired(false)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureDelivery(ModelBuilder builder)
+    {
+        builder.Entity<DeliveryTarget>(entity =>
+        {
+            entity.ToTable("delivery_targets", "delivery");
+            entity.HasKey(target => target.Id);
+            entity.Property(target => target.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(target => target.UserId).HasColumnName("user_id");
+            entity.Property(target => target.Provider).HasColumnName("provider").HasConversion<string>().HasMaxLength(32);
+            entity.Property(target => target.Name).HasColumnName("name").HasMaxLength(DeliveryTarget.MaxNameLength);
+            entity.Property(target => target.Address).HasColumnName("address").HasMaxLength(DeliveryTarget.MaxAddressLength);
+            entity.Property(target => target.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(target => target.IsDefault).HasColumnName("is_default");
+            ConfigureTimestamps(entity);
+
+            // A user's own settings page lists their targets.
+            entity.HasIndex(target => target.UserId);
+
+            entity.HasOne<AppUser>().WithMany().HasForeignKey(target => target.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }

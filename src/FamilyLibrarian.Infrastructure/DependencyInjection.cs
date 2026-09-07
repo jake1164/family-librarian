@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
+using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
@@ -16,6 +17,7 @@ using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Acquisition;
 using FamilyLibrarian.Infrastructure.Catalog;
 using FamilyLibrarian.Infrastructure.Communications;
+using FamilyLibrarian.Infrastructure.Delivery;
 using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
@@ -439,6 +441,7 @@ public static class DependencyInjection
         services.AddScoped<IAudiobookshelfSettingsStore, AudiobookshelfSettingsStore>();
         services.AddScoped<ILibraryImportRepository, LibraryImportRepository>();
         services.AddScoped<IAudiobookshelfDeliveryRepository, AudiobookshelfDeliveryRepository>();
+        services.AddScoped<IDeliveryTargetRepository, DeliveryTargetRepository>();
         services.AddScoped<IWorkLookup, WorkLookup>();
 
         // Shared identity-matching core: CWA, Audiobookshelf, Gutenberg

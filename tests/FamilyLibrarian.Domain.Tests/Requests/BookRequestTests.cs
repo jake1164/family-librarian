@@ -156,6 +156,55 @@ public sealed class BookRequestTests
         Assert.IsFalse(request.RequestsFormat(RequestMediaType.Ebook));
     }
 
+    [TestMethod]
+    public void RequestingDeliveryAtCreationRecordsItOnTheOwningParticipant()
+    {
+        var deliveryTargetId = Guid.NewGuid();
+
+        var request = new BookRequest(UserId, WorkId, [RequestMediaType.Ebook], null, CreatedAt, deliveryTargetId);
+
+        var participant = request.Participants.Single();
+        Assert.AreEqual(deliveryTargetId, participant.DeliveryTargetId);
+    }
+
+    [TestMethod]
+    public void DeliveryIsNotRequestedByDefault()
+    {
+        var request = Create(RequestMediaType.Ebook);
+
+        Assert.IsNull(request.Participants.Single().DeliveryTargetId);
+    }
+
+    [TestMethod]
+    public void RequestingDeliveryWithoutTheEbookFormatIsRejected() =>
+        Assert.ThrowsExactly<ArgumentException>(() =>
+            new BookRequest(UserId, WorkId, [RequestMediaType.Audiobook], null, CreatedAt, Guid.NewGuid()));
+
+    [TestMethod]
+    public void JoinCanAddDeliveryIntentForANewParticipant()
+    {
+        var request = Create(RequestMediaType.Ebook);
+        var joiningUserId = Guid.NewGuid();
+        var deliveryTargetId = Guid.NewGuid();
+
+        request.Join(joiningUserId, [RequestMediaType.Ebook], null, CreatedAt.AddHours(1), deliveryTargetId);
+
+        var participant = request.Participants.Single(candidate => candidate.UserId == joiningUserId);
+        Assert.AreEqual(deliveryTargetId, participant.DeliveryTargetId);
+    }
+
+    [TestMethod]
+    public void RejoiningReplacesThePreviouslyRequestedDeliveryTarget()
+    {
+        var request = Create(RequestMediaType.Ebook);
+        var firstTargetId = Guid.NewGuid();
+        request.Join(UserId, [RequestMediaType.Ebook], null, CreatedAt.AddHours(1), firstTargetId);
+
+        request.Join(UserId, [RequestMediaType.Ebook], null, CreatedAt.AddHours(2), deliveryTargetId: null);
+
+        Assert.IsNull(request.Participants.Single().DeliveryTargetId);
+    }
+
     private static BookRequest Create(params RequestMediaType[] mediaTypes) =>
         new(UserId, WorkId, mediaTypes, null, CreatedAt);
 }
