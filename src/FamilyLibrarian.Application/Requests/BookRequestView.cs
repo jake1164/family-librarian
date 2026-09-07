@@ -26,7 +26,8 @@ public sealed record BookRequestView(
     int RequesterCount = 1,
     bool RequiresManualFulfillment = false,
     string? VersionKind = null,
-    string? VersionDetails = null)
+    string? VersionDetails = null,
+    Guid? DeliveryTargetId = null)
 {
     public bool IsActive => RequestStatusTransitions.IsActive(Status);
 }

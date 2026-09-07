@@ -53,7 +53,8 @@ internal static class RequestEndpoints
             request.ConfirmOwned,
             cancellationToken,
             request.VersionKind,
-            request.VersionDetails);
+            request.VersionDetails,
+            request.DeliveryTargetId);
 
         return result.Outcome switch
         {
@@ -187,7 +188,8 @@ internal static class RequestEndpoints
         request.RequesterCount,
         request.RequiresManualFulfillment,
         request.VersionKind,
-        request.VersionDetails);
+        request.VersionDetails,
+        request.DeliveryTargetId);
 
     // Plain language for a family, not the enum name. The status itself travels
     // separately so the client never has to parse this sentence.

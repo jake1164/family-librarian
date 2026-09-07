@@ -1,10 +1,12 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
+using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Communications;
+using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Requests;
 
@@ -494,6 +496,123 @@ public sealed class BookRequestServiceTests
     }
 
     [TestMethod]
+    public async Task CreateAsyncWithAnEnabledDeliveryTargetRecordsItOnTheParticipant()
+    {
+        var repository = new InMemoryRequestRepository();
+        var deliveryTargets = new FakeDeliveryTargetRepository();
+        var target = new DeliveryTarget(Reader, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", Now);
+        deliveryTargets.Seed(target);
+        var service = Create(repository, Reader, deliveryTargets: deliveryTargets);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None,
+            deliveryTargetId: target.Id);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
+        Assert.AreEqual(target.Id, result.Request!.DeliveryTargetId);
+        var participant = repository.Requests.Single().Participants.Single();
+        Assert.AreEqual(target.Id, participant.DeliveryTargetId);
+    }
+
+    [TestMethod]
+    public async Task CreateAsyncRejectsADeliveryTargetWithoutTheEbookFormat()
+    {
+        var repository = new InMemoryRequestRepository();
+        var deliveryTargets = new FakeDeliveryTargetRepository();
+        var target = new DeliveryTarget(Reader, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", Now);
+        deliveryTargets.Seed(target);
+        var service = Create(repository, Reader, deliveryTargets: deliveryTargets);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Audiobook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None,
+            deliveryTargetId: target.Id);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, repository.Requests.Count);
+    }
+
+    [TestMethod]
+    public async Task CreateAsyncRejectsAnotherUsersDeliveryTarget()
+    {
+        var repository = new InMemoryRequestRepository();
+        var deliveryTargets = new FakeDeliveryTargetRepository();
+        var theirs = new DeliveryTarget(OtherReader, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "them@kindle.com", Now);
+        deliveryTargets.Seed(theirs);
+        var service = Create(repository, Reader, deliveryTargets: deliveryTargets);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None,
+            deliveryTargetId: theirs.Id);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, repository.Requests.Count);
+    }
+
+    [TestMethod]
+    public async Task CreateAsyncRejectsADisabledDeliveryTarget()
+    {
+        var repository = new InMemoryRequestRepository();
+        var deliveryTargets = new FakeDeliveryTargetRepository();
+        var target = new DeliveryTarget(Reader, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", Now);
+        target.SetEnabled(false, Now);
+        deliveryTargets.Seed(target);
+        var service = Create(repository, Reader, deliveryTargets: deliveryTargets);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None,
+            deliveryTargetId: target.Id);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, repository.Requests.Count);
+    }
+
+    [TestMethod]
+    public async Task JoiningASharedRequestCanAddDeliveryIntentTooWithoutDisturbingTheOriginalRequester()
+    {
+        var repository = new InMemoryRequestRepository();
+        repository.Seed(new BookRequest(Reader, Work, [RequestMediaType.Ebook], null, Now));
+        var deliveryTargets = new FakeDeliveryTargetRepository();
+        var target = new DeliveryTarget(OtherReader, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "other@kindle.com", Now);
+        deliveryTargets.Seed(target);
+        var service = Create(repository, OtherReader, deliveryTargets: deliveryTargets);
+
+        var result = await service.CreateAsync(
+            Work,
+            [RequestMediaType.Ebook],
+            null,
+            confirmDuplicate: false,
+            confirmOwned: false,
+            CancellationToken.None,
+            deliveryTargetId: target.Id);
+
+        Assert.AreEqual(CreateBookRequestOutcome.Created, result.Outcome);
+        Assert.AreEqual(1, repository.Requests.Count);
+        var shared = repository.Requests.Single();
+        Assert.IsNull(shared.Participants.Single(participant => participant.UserId == Reader).DeliveryTargetId);
+        Assert.AreEqual(target.Id, shared.Participants.Single(participant => participant.UserId == OtherReader).DeliveryTargetId);
+    }
+
+    [TestMethod]
     public void OnlyWithdrawalAndSafeRejoinAreOfferedToARequester()
     {
         CollectionAssert.AreEqual(
@@ -509,7 +628,8 @@ public sealed class BookRequestServiceTests
         IRequestRepository repository,
         Guid? userId,
         IFormatReadinessService? readiness = null,
-        IWorkFulfillmentOptionsService? fulfillment = null) =>
+        IWorkFulfillmentOptionsService? fulfillment = null,
+        IDeliveryTargetRepository? deliveryTargets = null) =>
         new(
             repository,
             new StubCurrentUser(userId),
@@ -518,7 +638,8 @@ public sealed class BookRequestServiceTests
             new NotificationService(new NullNotificationRepository(), new StubCurrentUser(userId), new FixedClock()),
             new OutboundCommunicationService(new NullOutboundCommunicationStore(), new FixedClock()),
             readiness ?? new StubFormatReadinessService(),
-            fulfillment ?? new StubFulfillmentOptionsService());
+            fulfillment ?? new StubFulfillmentOptionsService(),
+            deliveryTargets ?? new FakeDeliveryTargetRepository());
 
     private sealed class StubCurrentUser(Guid? userId) : ICurrentUser
     {
@@ -676,7 +797,7 @@ public sealed class BookRequestServiceTests
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<BookRequestView>>(Requests
                 .Where(request => request.Participants.Any(participant => participant.UserId == userId))
-                .Select(ToView)
+                .Select(request => ToView(request, userId))
                 .ToArray());
 
         public Task<BookRequestView?> FindViewAsync(
@@ -685,7 +806,7 @@ public sealed class BookRequestServiceTests
             CancellationToken cancellationToken) =>
             Task.FromResult(Requests
                 .Where(request => request.Id == requestId && request.Participants.Any(participant => participant.UserId == userId))
-                .Select(ToView)
+                .Select(request => ToView(request, userId))
                 .SingleOrDefault());
 
         public Task<IReadOnlyList<AdminBookRequestView>> ListForAdminAsync(
@@ -718,7 +839,7 @@ public sealed class BookRequestServiceTests
             return operation(cancellationToken);
         }
 
-        private static BookRequestView ToView(BookRequest request) => new(
+        private static BookRequestView ToView(BookRequest request, Guid userId) => new(
             request.Id,
             request.WorkId,
             "A Wrinkle in Time",
@@ -732,6 +853,27 @@ public sealed class BookRequestServiceTests
             request.AdminNote,
             request.RequestedAtUtc,
             request.StatusChangedAtUtc,
-            request.Version);
+            request.Version,
+            DeliveryTargetId: request.Participants
+                .Where(participant => participant.UserId == userId)
+                .Select(participant => participant.DeliveryTargetId)
+                .FirstOrDefault());
+    }
+
+    private sealed class FakeDeliveryTargetRepository : IDeliveryTargetRepository
+    {
+        private readonly List<DeliveryTarget> _targets = [];
+
+        public void Seed(DeliveryTarget target) => _targets.Add(target);
+
+        public Task<DeliveryTarget?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(_targets.SingleOrDefault(target => target.Id == id));
+
+        public Task<IReadOnlyList<DeliveryTarget>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryTarget>>(_targets.Where(target => target.UserId == userId).ToArray());
+
+        public void Add(DeliveryTarget target) => _targets.Add(target);
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

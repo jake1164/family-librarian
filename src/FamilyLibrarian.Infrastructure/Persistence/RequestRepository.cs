@@ -397,7 +397,9 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             request.Participants.Count(participant => participant.WithdrawnAtUtc == null),
             request.RequiresManualFulfillment,
             request.VersionKind,
-            request.VersionDetails);
+            request.VersionDetails,
+            request.Participants.Where(participant => participant.UserId == userId)
+                .Select(participant => participant.DeliveryTargetId).FirstOrDefault());
 
     /// <summary>
     /// The queue projection explicitly joins the Identity user. This association

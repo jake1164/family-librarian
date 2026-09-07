@@ -1,8 +1,11 @@
 @page "/works/{WorkId:guid}"
 @attribute [Authorize]
 @inherits LiveComponentBase
+@using FamilyLibrarian.Contracts.Delivery
+@using FamilyLibrarian.Web.Client.Delivery
 @inject CatalogApiClient Catalog
 @inject RequestsApiClient Requests
+@inject DeliveryTargetApiClient DeliveryTargets
 
 <PageTitle>@(work?.Title ?? "Book") · Family Librarian</PageTitle>
 
@@ -96,6 +99,10 @@
                     <MudAlert Severity="@RequestStatusSeverity(createdRequest.Status)">
                         Your interest is saved. @createdRequest.StatusDescription
                     </MudAlert>
+                    @if (createdRequest.DeliveryTargetId is not null)
+                    {
+                        <MudText Typo="Typo.caption">Sending to your Kindle once it's ready.</MudText>
+                    }
                     @if (createdRequest.Formats.Any(format => !string.IsNullOrWhiteSpace(format.ProgressDescription)))
                     {
                         <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
@@ -122,6 +129,21 @@
                         <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@(isSubmitting || !IsEbookReady)" />
                         <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@(isSubmitting || !IsAudiobookReady)" />
                     </fieldset>
+
+                    @if (wantsEbook)
+                    {
+                        @if (kindleTarget is { IsEnabled: true })
+                        {
+                            <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption">
+                                Kindle delivery is not configured.
+                                <MudLink Href="settings/ebook-delivery">Configure Kindle</MudLink>
+                            </MudText>
+                        }
+                    }
 
                     @if (fulfillment?.EbookReadiness is { IsReady: false } ebookReadiness)
                     {
@@ -210,6 +232,8 @@
 
     private bool wantsEbook = true;
     private bool wantsAudiobook;
+    private DeliveryTargetResponse? kindleTarget;
+    private bool sendToKindle;
     private string? note;
     private bool isSubmitting;
     private string? errorMessage;
@@ -226,6 +250,19 @@
     // an older/failed fetch never blocks a request the server would accept.
     private bool IsEbookReady => !string.IsNullOrWhiteSpace(versionKind) || fulfillment?.EbookReadiness is not { IsReady: false };
     private bool IsAudiobookReady => !string.IsNullOrWhiteSpace(versionKind) || fulfillment?.AudiobookReadiness is not { IsReady: false };
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            kindleTarget = await DeliveryTargets.GetMyKindleTargetAsync();
+        }
+        catch (HttpRequestException)
+        {
+            // Informational only -- a failed lookup just hides the Kindle
+            // checkbox rather than failing the page.
+        }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -336,7 +373,12 @@
                 formats.Add("Audiobook");
             }
 
-            var outcome = await Requests.CreateAsync(WorkId, formats, note, false, false, versionKind: versionKind, versionDetails: versionDetails);
+            var deliveryTargetId = wantsEbook && sendToKindle && kindleTarget is { IsEnabled: true } target
+                ? target.Id
+                : (Guid?)null;
+            var outcome = await Requests.CreateAsync(
+                WorkId, formats, note, false, false, versionKind: versionKind, versionDetails: versionDetails,
+                deliveryTargetId: deliveryTargetId);
             switch (outcome.Status)
             {
                 case CreateRequestStatus.Created:

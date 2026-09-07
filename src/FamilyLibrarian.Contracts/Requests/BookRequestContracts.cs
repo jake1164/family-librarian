@@ -10,6 +10,11 @@ namespace FamilyLibrarian.Contracts.Requests;
 /// <param name="ConfirmOwned">
 /// Legacy ownership confirmation flag. It cannot bypass required version details.
 /// </param>
+/// <param name="DeliveryTargetId">
+/// The caller's own, enabled <c>DeliveryTarget</c> to send the ebook to once
+/// ready (e.g. "send to my Kindle"), or <see langword="null"/> for no delivery.
+/// Requires "Ebook" among <see cref="Formats"/>.
+/// </param>
 public sealed record CreateBookRequestRequest(
     Guid WorkId,
     IReadOnlyList<string> Formats,
@@ -17,7 +22,8 @@ public sealed record CreateBookRequestRequest(
     bool ConfirmDuplicate,
     bool ConfirmOwned,
     string? VersionKind = null,
-    string? VersionDetails = null);
+    string? VersionDetails = null,
+    Guid? DeliveryTargetId = null);
 
 public sealed record ChangeBookRequestStatusRequest(
     string Status,
@@ -47,7 +53,8 @@ public sealed record BookRequestResponse(
     int RequesterCount = 1,
     bool RequiresManualFulfillment = false,
     string? VersionKind = null,
-    string? VersionDetails = null);
+    string? VersionDetails = null,
+    Guid? DeliveryTargetId = null);
 
 public sealed record BookRequestFormatResponse(
     Guid FormatId,
