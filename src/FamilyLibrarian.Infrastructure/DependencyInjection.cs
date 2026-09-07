@@ -119,6 +119,23 @@ public static class DependencyInjection
             options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
         });
 
+        // The External-scheme cookie carries the OIDC handler's sign-in from
+        // /signin-oidc to /api/auth/oidc/complete. With response_mode=form_post
+        // (the OpenIdConnect handler's default), that Set-Cookie is issued as
+        // part of the response to a cross-site POST from the identity
+        // provider's own domain -- the same reason the handler's own
+        // correlation/nonce cookies are SameSite=None. Left at Identity's
+        // default (Lax), the browser silently drops this cookie in that
+        // cross-site-initiated redirect chain: the token exchange and userinfo
+        // call both succeed (confirmed in the IdP's own logs), but
+        // SignInManager.GetExternalLoginInfoAsync() then finds no ticket.
+        services.ConfigureExternalCookie(options =>
+        {
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SameSite = SameSiteMode.None;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        });
+
         // Revalidate the security stamp on every authenticated request, so
         // disabling an account, revoking its Admin role, or resetting its
         // password takes effect immediately rather than whenever the cookie

@@ -162,7 +162,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.MatchClaimName).HasColumnName("match_claim_name").HasMaxLength(128).IsRequired();
             entity.Property(settings => settings.AdminClaimName).HasColumnName("admin_claim_name").HasMaxLength(128);
             entity.Property(settings => settings.AdminClaimValues).HasColumnName("admin_claim_values").HasMaxLength(1_024);
-            entity.Property(settings => settings.AutoCreateAccounts).HasColumnName("auto_create_accounts");
             entity.Property(settings => settings.LocalLoginDisabled).HasColumnName("local_login_disabled");
             entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");

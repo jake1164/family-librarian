@@ -457,6 +457,17 @@ from the configured issuer to Family Librarian roles using an explicit
 allowlist; do not create Authentik-specific roles or grant administrative access
 merely because a provider emitted an unreviewed claim.
 
+A successful OIDC sign-in from an identity the household has never seen before
+activates its account immediately -- there is no secondary administrator
+approval step for OIDC-originated accounts. The identity provider's own
+application/group assignment is the access-control decision (only identities it
+lets reach this application's OIDC client can obtain a token at all); a second
+gate inside Family Librarian would be redundant friction inconsistent with how
+self-hosted OIDC integrations are normally expected to behave. The Admin-role
+allowlist above still applies on every sign-in, so an account activating does
+not by itself grant Admin. (Local, invite-based account creation is unrelated
+and keeps its own pending-approval workflow.)
+
 External claims/groups may map to:
 
 ```text

@@ -21,7 +21,6 @@ public sealed class ExternalSignInServiceTests
 
         var result = await context.Service.SignInAsync(
             new ExternalIdentity(Issuer, "subject-1", "reader@example.test", "Reader", IsAdminClaimMatched: false),
-            autoCreateAccounts: false,
             CancellationToken.None);
 
         Assert.AreEqual(ExternalSignInOutcome.SignedIn, result.Outcome);
@@ -36,7 +35,6 @@ public sealed class ExternalSignInServiceTests
 
         var result = await context.Service.SignInAsync(
             new ExternalIdentity(Issuer, "subject-2", "member@example.test", "Member", IsAdminClaimMatched: true),
-            autoCreateAccounts: false,
             CancellationToken.None);
 
         Assert.AreEqual(ExternalSignInOutcome.SignedIn, result.Outcome);
@@ -56,7 +54,6 @@ public sealed class ExternalSignInServiceTests
 
         var result = await context.Service.SignInAsync(
             new ExternalIdentity(Issuer, "subject-3", "admin@example.test", "Admin", IsAdminClaimMatched: false),
-            autoCreateAccounts: false,
             CancellationToken.None);
 
         Assert.AreEqual(ExternalSignInOutcome.SignedIn, result.Outcome);
@@ -73,7 +70,6 @@ public sealed class ExternalSignInServiceTests
 
         var result = await context.Service.SignInAsync(
             new ExternalIdentity(Issuer, "subject-4", "invited@example.test", "Invited", IsAdminClaimMatched: false),
-            autoCreateAccounts: false,
             CancellationToken.None);
 
         Assert.AreEqual(ExternalSignInOutcome.SignedIn, result.Outcome);
@@ -83,32 +79,17 @@ public sealed class ExternalSignInServiceTests
     }
 
     [TestMethod]
-    public async Task AnUnmatchedIdentityWithAutoCreateTrueSignsInImmediately()
+    public async Task AnUnmatchedIdentityCreatesAndSignsInAnActiveAccountImmediately()
     {
         var context = new TestContext();
 
         var result = await context.Service.SignInAsync(
             new ExternalIdentity(Issuer, "subject-5", "new@example.test", "New Person", IsAdminClaimMatched: false),
-            autoCreateAccounts: true,
             CancellationToken.None);
 
         Assert.AreEqual(ExternalSignInOutcome.SignedIn, result.Outcome);
-    }
-
-    [TestMethod]
-    public async Task AnUnmatchedIdentityWithAutoCreateFalseWaitsForApproval()
-    {
-        var context = new TestContext();
-
-        var result = await context.Service.SignInAsync(
-            new ExternalIdentity(Issuer, "subject-6", "new@example.test", "New Person", IsAdminClaimMatched: false),
-            autoCreateAccounts: false,
-            CancellationToken.None);
-
-        Assert.AreEqual(ExternalSignInOutcome.NotActive, result.Outcome);
-        Assert.IsNull(result.UserId);
         var created = await context.Directory.FindByEmailAsync("new@example.test", CancellationToken.None);
-        Assert.AreEqual(UserStatus.PendingApproval, created!.Status);
+        Assert.AreEqual(UserStatus.Active, created!.Status);
     }
 
     [TestMethod]
@@ -119,7 +100,6 @@ public sealed class ExternalSignInServiceTests
 
         var result = await context.Service.SignInAsync(
             new ExternalIdentity(Issuer, "subject-7", "disabled@example.test", "Disabled", IsAdminClaimMatched: false),
-            autoCreateAccounts: false,
             CancellationToken.None);
 
         Assert.AreEqual(ExternalSignInOutcome.NotActive, result.Outcome);
@@ -132,7 +112,6 @@ public sealed class ExternalSignInServiceTests
 
         var result = await context.Service.SignInAsync(
             new ExternalIdentity(Issuer, string.Empty, "someone@example.test", "Someone", IsAdminClaimMatched: false),
-            autoCreateAccounts: true,
             CancellationToken.None);
 
         Assert.AreEqual(ExternalSignInOutcome.Rejected, result.Outcome);

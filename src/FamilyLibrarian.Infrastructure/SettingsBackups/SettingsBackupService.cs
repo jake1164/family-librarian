@@ -439,7 +439,7 @@ public sealed class SettingsBackupService(
     {
         var settings = new OidcSettings(clock.UtcNow);
         settings.SetSettings(source.DisplayName, source.Authority, source.ClientId, source.Scopes, source.MatchClaimName,
-            source.AdminClaimName, source.AdminClaimValues, source.AutoCreateAccounts, null, clock.UtcNow);
+            source.AdminClaimName, source.AdminClaimValues, null, clock.UtcNow);
         ApplySecret(source.ClientSecret, settings.SetClientSecret, null, clock.UtcNow);
         settings.SetEnabled(source.IsEnabled, null, clock.UtcNow);
         return settings;
@@ -472,7 +472,6 @@ public sealed class SettingsBackupService(
                 oidc.MatchClaimName,
                 oidc.AdminClaimName,
                 oidc.AdminClaimValues,
-                oidc.AutoCreateAccounts,
                 // Local-login lockout is intentionally not portable. A settings
                 // archive must not remove a fresh instance's recovery path.
                 false));
@@ -563,7 +562,7 @@ public sealed class SettingsBackupService(
     private static OidcSettingsDocument? ToOidcDocument(OidcSettings? settings) => settings is null ? null : new(
         settings.IsEnabled, settings.DisplayName, settings.Authority, settings.ClientId,
         ToSecret(settings.ProtectedClientSecret, settings.ClientSecretFormatVersion, settings.ClientSecretHint),
-        settings.Scopes, settings.MatchClaimName, settings.AdminClaimName, settings.AdminClaimValues, settings.AutoCreateAccounts);
+        settings.Scopes, settings.MatchClaimName, settings.AdminClaimName, settings.AdminClaimValues);
 
     private static AcquisitionPolicySettingsDocument? ToPolicyDocument(AcquisitionPolicySettings? settings) =>
         settings is null ? null : new(settings.DefaultProfileId);
@@ -687,7 +686,6 @@ internal sealed record OidcSettingsDocument(
     string Scopes,
     string MatchClaimName,
     string? AdminClaimName,
-    string? AdminClaimValues,
-    bool AutoCreateAccounts);
+    string? AdminClaimValues);
 
 internal sealed record AcquisitionPolicySettingsDocument(string DefaultProfileId);

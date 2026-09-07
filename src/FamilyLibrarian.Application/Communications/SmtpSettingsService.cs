@@ -111,20 +111,66 @@ public sealed class SmtpSettingsService(
         return SmtpCommandResult.Success(ToStatus(settings));
     }
 
-    public async Task<SmtpTestResult> SendTestAsync(string? recipientAddress, CancellationToken cancellationToken)
+    /// <summary>
+    /// Tests the delivery values currently in the administrator's form —
+    /// including a freshly typed but unsaved password — without changing the
+    /// persisted host/port/username/from-address/from-name. A blank draft
+    /// password falls back to the currently stored password, if any. Only the
+    /// pass/fail outcome is recorded onto the persisted settings.
+    /// </summary>
+    public async Task<SmtpTestResult> SendTestAsync(
+        string? recipientAddress,
+        string? host,
+        int? port,
+        SmtpSecurityMode securityMode,
+        string? username,
+        string? password,
+        string? fromAddress,
+        string? fromName,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(recipientAddress) || !MailAddress.TryCreate(recipientAddress.Trim(), out var recipient))
         {
             return SmtpTestResult.Invalid("A valid test recipient email address is required.");
         }
 
-        var settings = await store.GetOrCreateAsync(cancellationToken);
-        if (GetConnectionPrerequisiteError(settings) is { } error)
+        if (port is not null and (< 1 or > 65_535))
+        {
+            return SmtpTestResult.Invalid("The SMTP port must be between 1 and 65535.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(fromAddress) && !MailAddress.TryCreate(fromAddress.Trim(), out _))
+        {
+            return SmtpTestResult.Invalid("The sender email address is not valid.");
+        }
+
+        var persisted = await store.FindAsync(cancellationToken);
+        var candidate = new SmtpSettings(clock.UtcNow);
+        candidate.SetSettings(host, port, securityMode, username, fromAddress, fromName, currentUser.UserId, clock.UtcNow);
+
+        var trimmedPassword = password?.Trim();
+        if (!string.IsNullOrEmpty(trimmedPassword))
+        {
+            candidate.SetPassword(
+                protector.Protect(CommunicationSecretPurposes.SmtpPassword, trimmedPassword),
+                protector.FormatVersion,
+                currentUser.UserId,
+                clock.UtcNow);
+        }
+        else if (persisted?.HasPassword == true)
+        {
+            candidate.SetPassword(
+                persisted.ProtectedPassword!, persisted.PasswordFormatVersion, currentUser.UserId, clock.UtcNow);
+        }
+
+        if (GetConnectionPrerequisiteError(candidate) is { } error)
         {
             return SmtpTestResult.Invalid(error);
         }
 
-        var outcome = await testSender.SendTestAsync(settings, recipient.Address, cancellationToken);
+        var outcome = await testSender.SendTestAsync(candidate, recipient.Address, cancellationToken);
+
+        var settings = await store.GetOrCreateAsync(cancellationToken);
         settings.RecordTestResult(outcome.Succeeded, outcome.Message, currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);
         await audit.WriteAsync(

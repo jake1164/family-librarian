@@ -25,14 +25,15 @@ public sealed class SmtpSettingsApiClient(HttpClient httpClient, AntiforgeryToke
     public Task<SmtpSettingsResult> ClearPasswordAsync(CancellationToken cancellationToken = default) =>
         SendAsync<object>(HttpMethod.Delete, $"{BasePath}/password", null, cancellationToken);
 
-    public async Task<SmtpTestResponse?> SendTestAsync(string recipientAddress, CancellationToken cancellationToken = default)
+    public async Task<SmtpTestResponse?> SendTestAsync(
+        SendSmtpTestRequest request, CancellationToken cancellationToken = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/test")
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{BasePath}/test")
         {
-            Content = JsonContent.Create(new SendSmtpTestRequest(recipientAddress))
+            Content = JsonContent.Create(request)
         };
-        await antiforgery.AttachAsync(request, cancellationToken);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await antiforgery.AttachAsync(httpRequest, cancellationToken);
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
         return response.IsSuccessStatusCode
             ? await response.Content.ReadFromJsonAsync<SmtpTestResponse>(cancellationToken)
             : null;

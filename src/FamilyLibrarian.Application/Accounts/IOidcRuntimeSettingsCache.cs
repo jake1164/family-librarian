@@ -27,7 +27,6 @@ public sealed record OidcRuntimeSettings(
     string MatchClaimName,
     string? AdminClaimName,
     string? AdminClaimValues,
-    bool AutoCreateAccounts,
     bool LocalLoginDisabled)
 {
     public static readonly OidcRuntimeSettings Disabled = new(
@@ -40,7 +39,6 @@ public sealed record OidcRuntimeSettings(
         MatchClaimName: "email",
         AdminClaimName: "groups",
         AdminClaimValues: null,
-        AutoCreateAccounts: false,
         LocalLoginDisabled: false);
 
     /// <summary>Whether the handler has enough to actually attempt a challenge.</summary>

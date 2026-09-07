@@ -15,7 +15,6 @@ public sealed record OidcSettingsResponse(
     string MatchClaimName,
     string? AdminClaimName,
     string? AdminClaimValues,
-    bool AutoCreateAccounts,
     bool LocalLoginDisabled,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
@@ -28,14 +27,20 @@ public sealed record SetOidcSettingsRequest(
     string Scopes,
     string MatchClaimName,
     string? AdminClaimName,
-    string? AdminClaimValues,
-    bool AutoCreateAccounts);
+    string? AdminClaimValues);
 
 public sealed record SetOidcEnabledRequest(bool Enabled);
 
 public sealed record SetOidcClientSecretRequest(string ClientSecret);
 
 public sealed record SetOidcLocalLoginDisabledRequest(bool Disabled);
+
+/// <summary>
+/// A non-persistent discovery-document probe against the issuer URL currently
+/// in the administrator's form, which may not be saved yet. A blank authority
+/// falls back to whatever is currently saved.
+/// </summary>
+public sealed record TestOidcConnectionRequest(string? Authority);
 
 public sealed record OidcConnectionTestResponse(
     bool Succeeded,

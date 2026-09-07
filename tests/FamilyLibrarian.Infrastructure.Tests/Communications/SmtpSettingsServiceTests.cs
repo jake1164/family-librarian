@@ -21,7 +21,9 @@ public sealed class SmtpSettingsServiceTests
         Assert.IsFalse(beforeTest.Succeeded);
         StringAssert.Contains(beforeTest.Error, "successful test email");
 
-        var test = await context.Service.SendTestAsync("admin@example.test", CancellationToken.None);
+        var test = await context.Service.SendTestAsync(
+            "admin@example.test", "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer", null,
+            "library@example.test", "Family Librarian", CancellationToken.None);
         Assert.IsTrue(test.Succeeded);
         Assert.IsTrue(test.Outcome!.Succeeded);
         Assert.AreEqual("admin@example.test", context.Sender.LastRecipientAddress);
@@ -36,7 +38,9 @@ public sealed class SmtpSettingsServiceTests
     {
         var context = new TestContext();
         await context.ConfigureAsync();
-        await context.Service.SendTestAsync("admin@example.test", CancellationToken.None);
+        await context.Service.SendTestAsync(
+            "admin@example.test", "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer", null,
+            "library@example.test", "Family Librarian", CancellationToken.None);
         await context.Service.SetEnabledAsync(true, CancellationToken.None);
 
         await context.Service.SetSettingsAsync(
@@ -56,7 +60,9 @@ public sealed class SmtpSettingsServiceTests
             "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer",
             "library@example.test", null, CancellationToken.None);
 
-        var test = await context.Service.SendTestAsync("admin@example.test", CancellationToken.None);
+        var test = await context.Service.SendTestAsync(
+            "admin@example.test", "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer", null,
+            "library@example.test", null, CancellationToken.None);
 
         Assert.IsFalse(test.Succeeded);
         StringAssert.Contains(test.Error, "username and password");
@@ -68,7 +74,9 @@ public sealed class SmtpSettingsServiceTests
         var context = new TestContext();
         await context.ConfigureAsync();
 
-        var test = await context.Service.SendTestAsync("not-an-email", CancellationToken.None);
+        var test = await context.Service.SendTestAsync(
+            "not-an-email", "smtp.example.test", 587, SmtpSecurityMode.StartTls, "mailer", null,
+            "library@example.test", "Family Librarian", CancellationToken.None);
 
         Assert.IsFalse(test.Succeeded);
         Assert.IsNull(context.Sender.LastRecipientAddress);

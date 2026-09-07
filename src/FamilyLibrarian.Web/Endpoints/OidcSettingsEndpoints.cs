@@ -32,7 +32,7 @@ internal static class OidcSettingsEndpoints
         SetOidcSettingsRequest request, OidcSettingsService service, CancellationToken cancellationToken) =>
         ToOidcResult(await service.SetSettingsAsync(
             request.DisplayName, request.Authority, request.ClientId, request.Scopes, request.MatchClaimName,
-            request.AdminClaimName, request.AdminClaimValues, request.AutoCreateAccounts, cancellationToken));
+            request.AdminClaimName, request.AdminClaimValues, cancellationToken));
 
     private static async Task<IResult> SetOidcEnabledAsync(
         SetOidcEnabledRequest request, OidcSettingsService service, CancellationToken cancellationToken) =>
@@ -51,9 +51,9 @@ internal static class OidcSettingsEndpoints
         ToOidcResult(await service.SetLocalLoginDisabledAsync(request.Disabled, cancellationToken));
 
     private static async Task<IResult> TestOidcConnectionAsync(
-        OidcSettingsService service, CancellationToken cancellationToken)
+        TestOidcConnectionRequest? request, OidcSettingsService service, CancellationToken cancellationToken)
     {
-        var result = await service.TestConnectionAsync(cancellationToken);
+        var result = await service.TestConnectionAsync(request?.Authority, cancellationToken);
         return Results.Ok(new OidcConnectionTestResponse(
             result.Status?.LastTestSucceeded ?? false,
             result.Status?.LastTestMessage ?? "The connection test could not be run.",
@@ -85,7 +85,6 @@ internal static class OidcSettingsEndpoints
         status.MatchClaimName,
         status.AdminClaimName,
         status.AdminClaimValues,
-        status.AutoCreateAccounts,
         status.LocalLoginDisabled,
         status.LastTestedAtUtc,
         status.LastTestSucceeded,
