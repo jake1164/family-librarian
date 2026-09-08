@@ -754,20 +754,23 @@ It may be a linked catalog/source and CWA may be a `LibraryImport` destination;
 it can also provide its own reading, download, or send features. Kindle,
 browser, or email delivery remain optional, separate user-specific operations.
 
-**Implementation status:** neither `DeliveryTarget` nor the record below exists
-yet. No Kindle/device delivery code has been written; see
-`docs/01-product-architecture-spec.md` §15.1 for the intended design,
-including delivery-attempt history, retry/fallback, and the
-submitted-vs-confirmed distinction for Send-to-Kindle. Per-user delivery
-*intent* (did this participant ask for Kindle delivery) is a distinct concern
-from the `DeliveryAttempt` record below and should live on `RequestParticipant`
-alongside `WantsEbook`/`WantsAudiobook`, not folded into `DeliveryTarget` or
+**Implementation status (2026-09-08):** `DeliveryTarget` is implemented
+(`src/FamilyLibrarian.Domain/Delivery/DeliveryTarget.cs`) for the CWA-mediated
+Send-to-Kindle path — see `docs/01-product-architecture-spec.md` §15.1 for how
+its real fields differ from the sketch below, and
+`.ai_docs/master-delivery-plan.md` KINDLE-1 through KINDLE-6 for the
+implementation record, including delivery-attempt history and retry. The
+submitted-vs-confirmed distinction for Send-to-Kindle is not yet built
+(KINDLE-7, still open). Per-user delivery *intent* (did this participant ask
+for Kindle delivery) is a distinct concern from the `DeliveryAttempt` record
+below and lives on `RequestParticipant.DeliveryTargetId`, alongside
+`WantsEbook`/`WantsAudiobook`, not folded into `DeliveryTarget` or
 `DeliveryAttempt` — see the kindle delivery beta plan's "Shape reconciliation"
 addendum (`.ai_docs/family-librarian-kindle-delivery-beta-plan.md`).
 
 ---
 
-### DeliveryAttempt (design name — not yet implemented)
+### DeliveryAttempt (implemented, 2026-09-08 — CWA Send-to-Kindle only)
 
 Represents one attempt to deliver an Asset to a user's `DeliveryTarget`. This
 is the record referred to as `Delivery` in earlier drafts of this document.
@@ -775,10 +778,24 @@ The naming collision this section originally flagged is resolved (2026-09-07):
 `FamilyLibrarian.Domain.Publishing.Delivery` (one attempt to publish an
 approved audiobook `MediaAsset` into Audiobookshelf — a `MediaLibraryImport`
 concept, not a user-specific delivery) has been renamed to
-`AudiobookshelfDelivery`, so `Delivery`/`DeliveryAttempt` are free for this
-concept when it is implemented. Model it as one row per attempt (mirroring
-`AcquisitionJob`'s private-setter/`TransitionTo` shape), not a single mutable
-row — see the kindle delivery beta plan's "Shape reconciliation" addendum.
+`AudiobookshelfDelivery`, so `Delivery`/`DeliveryAttempt` were free for this
+concept. It is modeled as one row per attempt (mirroring `AcquisitionJob`'s
+private-setter/`TransitionTo` shape), not a single mutable row, per the kindle
+delivery beta plan's "Shape reconciliation" addendum — see
+`src/FamilyLibrarian.Domain/Delivery/DeliveryAttempt.cs`.
+
+**The field list and status set below are the original forward design.** The
+actual implementation is narrower — no `Method` field (only CWA-mediated
+`SendToKindle` exists; `DirectDevice`/`BrowserDownload` remain unbuilt, P1-3),
+`RequestId` is nullable rather than required (the existing-book fast path
+creates an attempt with no request at all), and `AssetId` does not appear —
+delivery targets a resolved `ExternalBookId`/`BookFormat` instead. The real
+status set is `Pending -> Submitting -> Submitted/Failed/Cancelled`; none of
+`Preparing`, `Ready`, `AwaitingDevice`, `Delivering`, `SubmittedToAmazon`,
+`Delivered`, or `UserReportedMissing` below exist today. A retry (automatic or
+user-initiated) creates a new row with an incremented attempt number rather
+than reopening a `Failed` one. See `.ai_docs/master-delivery-plan.md`
+KINDLE-5/KINDLE-6 for the implementation record.
 
 ```text
 DeliveryAttemptId

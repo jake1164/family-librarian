@@ -986,16 +986,33 @@ Audiobookshelf should be the first audiobook delivery provider.
 
 Kindle should be the first e-reader target but must not be hardcoded into the domain model.
 
-### 15.1 Kindle/e-reader delivery model (forward design, not yet implemented)
+### 15.1 Kindle/e-reader delivery model
 
-No delivery/device code exists in the repository today: there is no
-`DeliveryTarget`, no `IDeliveryProvider` implementation, no Send-to-Kindle or
-direct-device transfer, and no artifact-retrieval path. `LibraryImport` and
-`Delivery` currently only track publishing an approved `MediaAsset` into CWA
-or Audiobookshelf; neither represents delivering a book to a specific user's
-device. This section records the intended design so that when device delivery
-work starts (`post-v1-roadmap.md`'s Milestone G), it has a documented target
-rather than being designed from scratch against a vague spec.
+**Implementation status (2026-09-08).** The `SendToKindle` path described in
+this section is implemented for CWA-mediated delivery: `DeliveryTarget`,
+`DeliveryAttempt`, and a `CwaEreaderDeliveryProvider` exist and are wired into
+the acquisition/publish flow, plus a manual retry action and admin/requester
+visibility. See `.ai_docs/master-delivery-plan.md` KINDLE-1 through KINDLE-6
+for the implementation record. The actual shape differs from this forward
+design in ways worth knowing before extending it:
+
+- `DeliveryTarget` has no `ProviderType`/`ConfigurationReference` fields —
+  today it only models one provider (`CwaKindleEmail`), so those were not
+  needed yet. Its real fields are `Id`, `UserId`, `Provider`, `Name`,
+  `Address`, `IsEnabled`, `SendByDefault`, `IsDefault`, plus timestamps/`Version`.
+- `DeliveryAttempt` has no `Method` field and none of `AwaitingDevice`,
+  `SubmittedToAmazon`, `Delivered`, or `UserReportedMissing` below — those
+  belong to the still-unimplemented `DirectDevice`/`BrowserDownload` methods
+  and to Amazon delivery confirmation. Its real status set is `Pending` ->
+  `Submitting` -> `Submitted`/`Failed`/`Cancelled`, and `Submitted` carries the
+  same "acknowledged, not confirmed" caveat as `SubmittedToAmazon` below — the
+  domain does not yet ask the user to confirm the book actually arrived,
+  which is KINDLE-7, still open.
+
+`DirectDevice`, `BrowserDownload`, and the device-presence-triggered
+`AwaitingDevice` flow below remain forward design only, tracked as P1-3. This
+section still records that intended design so that when direct-device work
+starts, it has a documented target rather than being designed from scratch.
 
 **Destination vs. method.** A user's e-reader (for example, "Jason's Kindle
 Paperwhite") is a `DeliveryTarget`. Getting a book to it can use more than one
@@ -1035,7 +1052,13 @@ allows a request to accumulate more than one acquisition attempt.
 (today, via `FulfillmentOption`/`CwaOwnedLibraryProvider`), choosing a
 delivery method must be able to skip acquisition, scanning, and CWA ingest
 entirely and go straight to retrieving the canonical artifact and delivering
-it. This requires the artifact-retrieval capability noted as a gap in §12.1.1.
+it. **Implemented for `SendToKindle` (2026-09-08):** `DeliveryAttemptService.SendExistingBookAsync`
+resolves the CWA book id via `IOwnedLibraryProvider` and sends directly,
+creating a `DeliveryAttempt` with no `BookRequest` at all — no separate
+artifact-retrieval step was needed because CWA already holds the file and its
+own send route accepts a book id, not raw bytes. `DirectDevice`/`BrowserDownload`
+still need the broader artifact-retrieval capability noted as a gap in §12.1.1
+(fetching the actual file bytes out to the browser), which remains open.
 
 **Device presence changes offered choices, not acquisition.** If a browser
 detects a connected Kindle while a book is still being acquired, the request
