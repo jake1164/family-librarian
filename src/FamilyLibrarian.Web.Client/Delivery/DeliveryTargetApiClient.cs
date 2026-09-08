@@ -68,6 +68,23 @@ public sealed class DeliveryTargetApiClient(HttpClient httpClient, AntiforgeryTo
             : null;
     }
 
+    public async Task<SendExistingBookResponse?> SendExistingBookAsync(
+        Guid workId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await SendAsync(
+            HttpMethod.Post,
+            "api/v1/me/delivery/kindle/send-existing",
+            new SendExistingBookRequest(workId),
+            cancellationToken);
+
+        // Both a success and a "not owned"/"not configured" 404 carry a body
+        // with the message to show the user -- only 401 (no session) has none.
+        return response.StatusCode == HttpStatusCode.Unauthorized
+            ? null
+            : await response.Content.ReadFromJsonAsync<SendExistingBookResponse>(cancellationToken);
+    }
+
     private async Task<HttpResponseMessage> SendAsync<TPayload>(
         HttpMethod method,
         string path,

@@ -35,6 +35,7 @@ builder.Services.AddScoped<SystemReadinessService>();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<CwaVerificationHostedService>();
+    builder.Services.AddHostedService<DeliveryRetryHostedService>();
     builder.Services.AddHostedService<AudiobookshelfVerificationHostedService>();
     builder.Services.AddHostedService<PublishingDestinationHealthHostedService>();
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();

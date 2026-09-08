@@ -21,6 +21,7 @@ internal static class DeliveryTargetEndpoints
         kindle.MapPut("/", SetMyKindleAddressAsync);
         kindle.MapPut("/enabled", SetMyKindleEnabledAsync);
         kindle.MapPost("/test", TestMyKindleDeliveryAsync);
+        kindle.MapPost("/send-existing", SendExistingBookAsync);
     }
 
     private static async Task<IResult> GetMyKindleTargetAsync(
@@ -74,6 +75,22 @@ internal static class DeliveryTargetEndpoints
     {
         var result = await service.TestKindleDeliveryAsync(cancellationToken);
         return Results.Ok(new TestKindleDeliveryResponse(result.Succeeded, result.Message));
+    }
+
+    private static async Task<IResult> SendExistingBookAsync(
+        SendExistingBookRequest request,
+        DeliveryAttemptService service,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.SendExistingBookAsync(request.WorkId, cancellationToken);
+
+        return result.Outcome switch
+        {
+            SendExistingBookOutcome.Success => Results.Ok(new SendExistingBookResponse(true, null)),
+            SendExistingBookOutcome.Failed => Results.Ok(new SendExistingBookResponse(false, result.Error)),
+            SendExistingBookOutcome.Unauthenticated => Results.Unauthorized(),
+            _ => Results.NotFound(new SendExistingBookResponse(false, result.Error))
+        };
     }
 
     private static DeliveryTargetResponse ToResponse(DeliveryTarget target) => new(

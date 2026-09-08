@@ -10,3 +10,13 @@ public enum DeliveryTargetProvider
 {
     CwaKindleEmail = 1
 }
+
+/// <summary>The lifecycle of one <see cref="DeliveryAttempt"/> row.</summary>
+public enum DeliveryAttemptStatus
+{
+    Pending = 1,
+    Submitting = 2,
+    Submitted = 3,
+    Failed = 4,
+    Cancelled = 5
+}

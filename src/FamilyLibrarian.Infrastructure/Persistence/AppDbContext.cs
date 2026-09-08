@@ -84,6 +84,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<DeliveryTarget> DeliveryTargets => Set<DeliveryTarget>();
 
+    public DbSet<DeliveryAttempt> DeliveryAttempts => Set<DeliveryAttempt>();
+
     public DbSet<AcquisitionPolicySettings> AcquisitionPolicySettings => Set<AcquisitionPolicySettings>();
 
     public DbSet<OidcSettings> OidcSettings => Set<OidcSettings>();
@@ -943,6 +945,50 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasIndex(target => target.UserId);
 
             entity.HasOne<AppUser>().WithMany().HasForeignKey(target => target.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<DeliveryAttempt>(entity =>
+        {
+            entity.ToTable("delivery_attempts", "delivery");
+            entity.HasKey(attempt => attempt.Id);
+            entity.Property(attempt => attempt.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(attempt => attempt.RequestId).HasColumnName("request_id");
+            entity.Property(attempt => attempt.UserId).HasColumnName("user_id");
+            entity.Property(attempt => attempt.DeliveryTargetId).HasColumnName("delivery_target_id");
+            entity.Property(attempt => attempt.Provider).HasColumnName("provider").HasMaxLength(64);
+            entity.Property(attempt => attempt.ExternalBookId).HasColumnName("external_book_id").HasMaxLength(256);
+            entity.Property(attempt => attempt.BookFormat).HasColumnName("book_format").HasMaxLength(32);
+            entity.Property(attempt => attempt.Convert).HasColumnName("convert");
+            entity.Property(attempt => attempt.AttemptNumber).HasColumnName("attempt_number");
+            entity.Property(attempt => attempt.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+            entity.Property(attempt => attempt.StartedAtUtc).HasColumnName("started_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(attempt => attempt.CompletedAtUtc).HasColumnName("completed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(attempt => attempt.FailureReason).HasColumnName("failure_reason").HasMaxLength(2_000);
+            entity.Property(attempt => attempt.IsRetryable).HasColumnName("is_retryable");
+            entity.Property(attempt => attempt.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(attempt => attempt.Version).HasColumnName("xmin").IsRowVersion();
+
+            // Idempotency check before releasing (ReleaseForRequestFormatAsync)
+            // and per-request delivery history lookups.
+            entity.HasIndex(attempt => new { attempt.RequestId, attempt.UserId });
+
+            // The retry sweep's own query.
+            entity.HasIndex(attempt => new { attempt.Status, attempt.IsRetryable, attempt.CompletedAtUtc });
+
+            // Restrict: delivery history outlives request-record changes, the
+            // same rationale as AcquisitionJob's own foreign keys. Nullable and
+            // optional -- the existing-book fast path has no BookRequest at all.
+            entity.HasOne<BookRequest>()
+                .WithMany()
+                .HasForeignKey(attempt => attempt.RequestId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<AppUser>().WithMany().HasForeignKey(attempt => attempt.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<DeliveryTarget>().WithMany().HasForeignKey(attempt => attempt.DeliveryTargetId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }

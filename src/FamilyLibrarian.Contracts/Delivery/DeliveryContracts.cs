@@ -14,3 +14,7 @@ public sealed record SetKindleAddressRequest(string Address, uint? ExpectedVersi
 public sealed record SetKindleEnabledRequest(bool Enabled, uint ExpectedVersion);
 
 public sealed record TestKindleDeliveryResponse(bool Succeeded, string Message);
+
+public sealed record SendExistingBookRequest(Guid WorkId);
+
+public sealed record SendExistingBookResponse(bool Succeeded, string? Message);

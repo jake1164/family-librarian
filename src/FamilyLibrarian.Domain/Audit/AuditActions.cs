@@ -86,6 +86,9 @@ public static class AuditActions
     public const string ProviderCatalogRefreshed = "provider_catalog.refreshed";
 
     public const string SettingsBackupImported = "settings_backup.imported";
+
+    public const string DeliveryAttemptSubmitted = "delivery_attempt.submitted";
+    public const string DeliveryAttemptFailed = "delivery_attempt.failed";
 }
 
 public static class AuditSubjectTypes
@@ -103,4 +106,5 @@ public static class AuditSubjectTypes
     public const string PrivateEgressGateway = "private_egress_gateway";
     public const string ProviderCatalog = "provider_catalog";
     public const string SettingsBackup = "settings_backup";
+    public const string DeliveryAttempt = "delivery_attempt";
 }

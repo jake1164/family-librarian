@@ -265,6 +265,22 @@
                                     {
                                         <MudLink Href="@format.ExternalActionUri" Target="_blank" rel="noopener noreferrer">Open it</MudLink>
                                     }
+                                    @if (format.MediaType == "Ebook" && kindleTarget is { IsEnabled: true } && resolvedWork is not null)
+                                    {
+                                        <MudButton Variant="Variant.Outlined"
+                                                   Size="Size.Small"
+                                                   Class="ml-2"
+                                                   Disabled="@isSendingExisting"
+                                                   OnClick="SendExistingToKindleAsync">
+                                            @(isSendingExisting ? "Sending…" : "Send to Kindle")
+                                        </MudButton>
+                                    }
+                                </MudText>
+                            }
+                            @if (sendExistingMessage is not null)
+                            {
+                                <MudText Typo="Typo.body2" Color="@(sendExistingSucceeded ? Color.Success : Color.Error)">
+                                    @sendExistingMessage
                                 </MudText>
                             }
                         </MudAlert>
@@ -318,6 +334,9 @@
     private BookRequestOwnedResponse? owned;
     private BookRequestResponse? createdRequest;
     private CatalogWorkResponse? resolvedWork;
+    private bool isSendingExisting;
+    private bool sendExistingSucceeded;
+    private string? sendExistingMessage;
 
     private bool HasFormatSelected => wantsEbook || wantsAudiobook;
 
@@ -348,6 +367,7 @@
         owned = null;
         createdRequest = null;
         resolvedWork = null;
+        sendExistingMessage = null;
 
         // Search already fetched this candidate a moment ago: show it immediately
         // instead of leaving the page blank while we re-fetch full details.
@@ -450,6 +470,37 @@
         finally
         {
             isSubmitting = false;
+        }
+    }
+
+    private async Task SendExistingToKindleAsync()
+    {
+        if (resolvedWork is not { } work)
+        {
+            return;
+        }
+
+        isSendingExisting = true;
+        sendExistingMessage = null;
+
+        try
+        {
+            var result = await DeliveryTargets.SendExistingBookAsync(work.Id);
+            sendExistingSucceeded = result?.Succeeded ?? false;
+            sendExistingMessage = result is null
+                ? "Your Kindle send could not be sent. Please try again."
+                : result.Succeeded
+                    ? "Sent to your Kindle."
+                    : result.Message ?? "Your Kindle send could not be sent. Please try again.";
+        }
+        catch (HttpRequestException)
+        {
+            sendExistingSucceeded = false;
+            sendExistingMessage = "Your Kindle send could not be sent. Please try again.";
+        }
+        finally
+        {
+            isSendingExisting = false;
         }
     }
 

@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
@@ -7,6 +8,7 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
@@ -200,6 +202,54 @@ public sealed class CwaPublishingServiceTests
     }
 
     [TestMethod]
+    public async Task ConfirmedCwaImportReleasesADeliveryAttemptForAParticipantWhoAskedForKindle()
+    {
+        var context = context_Configured();
+        context.CatalogClient.NextBookId = "42";
+        var target = new DeliveryTarget(
+            Guid.NewGuid(), DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", Now);
+        context.DeliveryTargets.Add(target);
+        var workId = Guid.NewGuid();
+        var request = new BookRequest(
+            target.UserId, workId, [RequestMediaType.Ebook], requesterNote: null, Now, deliveryTargetId: target.Id);
+        var formatId = request.Formats.Single().Id;
+        context.RequestFulfillment.Requests[formatId] = request;
+        var asset = context.CreateAsset(formatId, workId);
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        var attempt = context.DeliveryAttempts.Rows.Single();
+        Assert.AreEqual(request.Id, attempt.RequestId);
+        Assert.AreEqual(target.UserId, attempt.UserId);
+        Assert.AreEqual(target.Id, attempt.DeliveryTargetId);
+        Assert.AreEqual("42", attempt.ExternalBookId);
+    }
+
+    [TestMethod]
+    public async Task AnAudiobookOnlyAvailabilityNeverReleasesADeliveryAttempt()
+    {
+        var context = context_Configured();
+        context.CatalogClient.NextBookId = "42";
+        var target = new DeliveryTarget(
+            Guid.NewGuid(), DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", Now);
+        context.DeliveryTargets.Add(target);
+        var workId = Guid.NewGuid();
+        // Kindle delivery requires the ebook format, so this request only asks
+        // for it -- the asset below is created as an audiobook regardless
+        // (the format published, not the delivery target, decides eligibility).
+        var request = new BookRequest(
+            target.UserId, workId, [RequestMediaType.Ebook], requesterNote: null, Now, deliveryTargetId: target.Id);
+        request.Join(Guid.NewGuid(), [RequestMediaType.Audiobook], null, Now);
+        var audiobookFormatId = request.Formats.Single(format => format.MediaType == RequestMediaType.Audiobook).Id;
+        context.RequestFulfillment.Requests[audiobookFormatId] = request;
+        var asset = context.CreateAsset(audiobookFormatId, workId);
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        Assert.AreEqual(0, context.DeliveryAttempts.Rows.Count);
+    }
+
+    [TestMethod]
     public async Task AutomaticRecheckVerifiesEveryAwaitingImportWithoutSendingItAgain()
     {
         var context = context_Configured();
@@ -303,11 +353,15 @@ public sealed class CwaPublishingServiceTests
             WorkLookup = new FakeWorkLookup();
             Audit = new RecordingAuditWriter();
             NotificationRepository = new RecordingNotificationRepository();
+            DeliveryAttempts = new InMemoryDeliveryAttemptRepository();
+            DeliveryTargets = new InMemoryDeliveryTargetRepository();
 
             Service = new CwaPublishingService(
                 SettingsStore, Repository, Assets, StagingStore, TransportFactory, CatalogClient, RequestFulfillment, WorkLookup,
                 Audit, new FixedClock(),
-                new NotificationService(NotificationRepository, new StubCurrentUser(), new FixedClock()));
+                new NotificationService(NotificationRepository, new StubCurrentUser(), new FixedClock()),
+                new DeliveryAttemptService(
+                    DeliveryAttempts, DeliveryTargets, [], [], new StubCurrentUser(), Audit, new FixedClock()));
         }
 
         public CwaSettings Settings { get; } = new(Now);
@@ -333,6 +387,10 @@ public sealed class CwaPublishingServiceTests
         public RecordingAuditWriter Audit { get; }
 
         public RecordingNotificationRepository NotificationRepository { get; }
+
+        public InMemoryDeliveryAttemptRepository DeliveryAttempts { get; }
+
+        public InMemoryDeliveryTargetRepository DeliveryTargets { get; }
 
         public CwaPublishingService Service { get; }
 
@@ -517,6 +575,43 @@ public sealed class CwaPublishingServiceTests
 
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
             Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien", Isbn13s));
+    }
+
+    private sealed class InMemoryDeliveryAttemptRepository : IDeliveryAttemptRepository
+    {
+        public List<DeliveryAttempt> Rows { get; } = [];
+
+        public Task<DeliveryAttempt?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(Rows.SingleOrDefault(row => row.Id == id));
+
+        public Task<IReadOnlyList<DeliveryAttempt>> ListForRequestAsync(Guid requestId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryAttempt>>(Rows.Where(row => row.RequestId == requestId).ToArray());
+
+        public Task<IReadOnlyList<DeliveryAttempt>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryAttempt>>(Rows.Where(row => row.UserId == userId).ToArray());
+
+        public Task<IReadOnlyList<DeliveryAttempt>> ListRetryableFailedAsync(
+            DateTimeOffset olderThanUtc, int maxAttemptNumber, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryAttempt>>([]);
+
+        public void Add(DeliveryAttempt attempt) => Rows.Add(attempt);
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class InMemoryDeliveryTargetRepository : IDeliveryTargetRepository
+    {
+        public List<DeliveryTarget> Rows { get; } = [];
+
+        public Task<DeliveryTarget?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(Rows.SingleOrDefault(row => row.Id == id));
+
+        public Task<IReadOnlyList<DeliveryTarget>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryTarget>>(Rows.Where(row => row.UserId == userId).ToArray());
+
+        public void Add(DeliveryTarget target) => Rows.Add(target);
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class RecordingAuditWriter : IAuditWriter

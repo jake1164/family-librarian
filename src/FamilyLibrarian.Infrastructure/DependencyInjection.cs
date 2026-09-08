@@ -196,6 +196,7 @@ public static class DependencyInjection
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
         services.AddScoped<UserWorkFeedbackService>();
         services.AddScoped<DeliveryTargetService>();
+        services.AddScoped<DeliveryAttemptService>();
 
         services.AddOptions<StorageOptions>()
             .Bind(configuration.GetSection(StorageOptions.SectionName))
@@ -443,6 +444,7 @@ public static class DependencyInjection
         services.AddScoped<ILibraryImportRepository, LibraryImportRepository>();
         services.AddScoped<IAudiobookshelfDeliveryRepository, AudiobookshelfDeliveryRepository>();
         services.AddScoped<IDeliveryTargetRepository, DeliveryTargetRepository>();
+        services.AddScoped<IDeliveryAttemptRepository, DeliveryAttemptRepository>();
         services.AddScoped<IWorkLookup, WorkLookup>();
 
         // Shared identity-matching core: CWA, Audiobookshelf, Gutenberg
