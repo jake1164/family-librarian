@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
@@ -212,13 +213,18 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         IReadOnlyList<BookRequestView> requests,
         CancellationToken cancellationToken)
     {
+        // Independent of the format-progress lookups below (a Kindle delivery
+        // attempt can exist -- and this needs to keep showing it -- even once
+        // its request has no outstanding formats left).
+        var kindleDeliveries = await LoadKindleDeliveriesAsync(requests, cancellationToken);
+
         var formatIds = requests
             .SelectMany(request => request.Formats)
             .Select(format => format.Id)
             .ToArray();
         if (formatIds.Length == 0)
         {
-            return requests;
+            return ApplyKindleDeliveries(requests, kindleDeliveries);
         }
 
         // These are separate, bounded projections rather than a large join of
@@ -243,7 +249,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         var assetIds = latestAssets.Values.Select(asset => asset.AssetId).ToArray();
         if (assetIds.Length == 0)
         {
-            return requests;
+            return ApplyKindleDeliveries(requests, kindleDeliveries);
         }
 
         var evaluations = await database.SecurityEvaluations
@@ -294,7 +300,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             .GroupBy(delivery => delivery.BundleId!.Value)
             .ToDictionary(group => group.Key, group => group.First().Status);
 
-        return requests
+        var enriched = requests
             .Select(request => request with
             {
                 Formats = request.Formats
@@ -333,7 +339,58 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                     .ToArray()
             })
             .ToArray();
+
+        return ApplyKindleDeliveries(enriched, kindleDeliveries);
     }
+
+    /// <summary>
+    /// The viewer's own most recent Kindle delivery attempt per request, keyed
+    /// by <c>RequestId</c>. Matched by <c>(RequestId, DeliveryTargetId)</c> --
+    /// <see cref="BookRequestView.DeliveryTargetId"/> is already viewer-scoped
+    /// (set by <see cref="ProjectViews"/>), and a <see cref="DeliveryTarget"/>
+    /// belongs to exactly one user, so this never leaks another participant's
+    /// delivery status on a shared request.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<Guid, RequestKindleDeliveryView>> LoadKindleDeliveriesAsync(
+        IReadOnlyList<BookRequestView> requests, CancellationToken cancellationToken)
+    {
+        var targetByRequest = requests
+            .Where(request => request.DeliveryTargetId.HasValue)
+            .ToDictionary(request => request.Id, request => request.DeliveryTargetId!.Value);
+        if (targetByRequest.Count == 0)
+        {
+            return new Dictionary<Guid, RequestKindleDeliveryView>();
+        }
+
+        var requestIds = targetByRequest.Keys.ToArray();
+        var attempts = await database.DeliveryAttempts
+            .AsNoTracking()
+            .Where(attempt => attempt.RequestId != null && requestIds.Contains(attempt.RequestId!.Value))
+            .OrderByDescending(attempt => attempt.AttemptNumber)
+            .Select(attempt => new KindleDeliveryProgressRow(
+                attempt.RequestId!.Value, attempt.DeliveryTargetId, attempt.Id, attempt.Status,
+                attempt.FailureReason, attempt.AttemptNumber))
+            .ToArrayAsync(cancellationToken);
+
+        return attempts
+            .Where(attempt => targetByRequest[attempt.RequestId] == attempt.DeliveryTargetId)
+            .GroupBy(attempt => attempt.RequestId)
+            .ToDictionary(
+                group => group.Key,
+                group => new RequestKindleDeliveryView(
+                    group.First().AttemptId, group.First().Status, group.First().FailureReason,
+                    group.First().AttemptNumber));
+    }
+
+    private static IReadOnlyList<BookRequestView> ApplyKindleDeliveries(
+        IReadOnlyList<BookRequestView> requests, IReadOnlyDictionary<Guid, RequestKindleDeliveryView> deliveries) =>
+        deliveries.Count == 0
+            ? requests
+            : requests
+                .Select(request => deliveries.TryGetValue(request.Id, out var kindle)
+                    ? request with { KindleDelivery = kindle }
+                    : request)
+                .ToArray();
 
     private async Task<IReadOnlyList<AdminBookRequestView>> AddAdminProgressAsync(
         IReadOnlyList<AdminBookRequestView> requests,
@@ -465,4 +522,8 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
     private sealed record LibraryImportProgressRow(Guid AssetId, LibraryImportStatus Status);
 
     private sealed record DeliveryProgressRow(Guid? AssetId, Guid? BundleId, AudiobookshelfDeliveryStatus Status);
+
+    private sealed record KindleDeliveryProgressRow(
+        Guid RequestId, Guid DeliveryTargetId, Guid AttemptId, DeliveryAttemptStatus Status,
+        string? FailureReason, int AttemptNumber);
 }

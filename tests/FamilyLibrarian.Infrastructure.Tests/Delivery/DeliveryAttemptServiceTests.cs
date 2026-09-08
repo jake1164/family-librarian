@@ -233,6 +233,106 @@ public sealed class DeliveryAttemptServiceTests
         Assert.AreEqual(0, retried);
     }
 
+    [TestMethod]
+    public async Task AUserInitiatedRetryBypassesCooldownAndRetryability()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var failed = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        failed.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        // Non-retryable and completed moments ago -- the automatic sweep would
+        // never touch this row, but an explicit user request still can.
+        failed.TransitionTo(DeliveryAttemptStatus.Failed, Now, "not configured", retryable: false);
+        context.DeliveryAttempts.Add(failed);
+        context.Clock.UtcNow = Now.AddSeconds(5);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+
+        var result = await context.Service.RetryAsync(failed.Id, CancellationToken.None);
+
+        Assert.AreEqual(RetryDeliveryOutcome.Success, result.Outcome);
+        Assert.HasCount(2, context.DeliveryAttempts.Rows);
+        Assert.AreEqual(DeliveryAttemptStatus.Submitted, result.Attempt!.Status);
+        Assert.AreEqual(2, result.Attempt!.AttemptNumber);
+    }
+
+    [TestMethod]
+    public async Task AUserCannotRetryAnotherUsersAttempt()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(Guid.NewGuid());
+        var failed = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        failed.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        failed.TransitionTo(DeliveryAttemptStatus.Failed, Now, "timeout", retryable: true);
+        context.DeliveryAttempts.Add(failed);
+
+        var result = await context.Service.RetryAsync(failed.Id, CancellationToken.None);
+
+        Assert.AreEqual(RetryDeliveryOutcome.NotFound, result.Outcome);
+        Assert.HasCount(1, context.DeliveryAttempts.Rows);
+    }
+
+    [TestMethod]
+    public async Task ANotYetFailedAttemptCannotBeRetried()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var pending = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        context.DeliveryAttempts.Add(pending);
+
+        var result = await context.Service.RetryAsync(pending.Id, CancellationToken.None);
+
+        Assert.AreEqual(RetryDeliveryOutcome.NotFailed, result.Outcome);
+    }
+
+    [TestMethod]
+    public async Task RetryingWhileSignedOutIsUnauthenticated()
+    {
+        var context = new TestContext();
+
+        var result = await context.Service.RetryAsync(Guid.NewGuid(), CancellationToken.None);
+
+        Assert.AreEqual(RetryDeliveryOutcome.Unauthenticated, result.Outcome);
+    }
+
+    [TestMethod]
+    public async Task AdminRetrySucceedsRegardlessOfOwnership()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var failed = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        failed.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        failed.TransitionTo(DeliveryAttemptStatus.Failed, Now, "timeout", retryable: false);
+        context.DeliveryAttempts.Add(failed);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+
+        var succeeded = await context.Service.AdminRetryAsync(failed.Id, CancellationToken.None);
+
+        Assert.IsTrue(succeeded);
+        Assert.HasCount(2, context.DeliveryAttempts.Rows);
+    }
+
+    [TestMethod]
+    public async Task AdminRetryOnANonFailedAttemptDoesNothing()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var pending = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        context.DeliveryAttempts.Add(pending);
+
+        var succeeded = await context.Service.AdminRetryAsync(pending.Id, CancellationToken.None);
+
+        Assert.IsFalse(succeeded);
+        Assert.HasCount(1, context.DeliveryAttempts.Rows);
+    }
+
     private sealed class TestContext
     {
         public TestContext()
@@ -355,6 +455,9 @@ public sealed class DeliveryAttemptServiceTests
 
         public Task<IReadOnlyList<DeliveryAttempt>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<DeliveryAttempt>>(Rows.Where(row => row.UserId == userId).ToArray());
+
+        public Task<IReadOnlyList<DeliveryAttemptView>> ListRecentAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
 
         public Task<IReadOnlyList<DeliveryAttempt>> ListRetryableFailedAsync(
             DateTimeOffset olderThanUtc, int maxAttemptNumber, CancellationToken cancellationToken) =>

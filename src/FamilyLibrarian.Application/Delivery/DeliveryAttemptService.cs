@@ -153,17 +153,70 @@ public sealed class DeliveryAttemptService(
                 continue;
             }
 
-            var retry = new DeliveryAttempt(
-                failed.RequestId, failed.UserId, failed.DeliveryTargetId, failed.Provider,
-                failed.ExternalBookId, failed.BookFormat, failed.Convert, failed.AttemptNumber + 1, clock.UtcNow);
-            repository.Add(retry);
-            await repository.SaveChangesAsync(cancellationToken);
-
-            await SubmitAsync(retry, cancellationToken);
+            await CreateRetryAsync(failed, cancellationToken);
             retried++;
         }
 
         return retried;
+    }
+
+    /// <summary>
+    /// A user-initiated retry of their own failed attempt -- unlike
+    /// <see cref="RetryFailedAsync"/>, this bypasses the automatic sweep's
+    /// <see cref="DeliveryAttempt.IsRetryable"/>/cooldown gating (beta plan
+    /// §19): the user may have just fixed the underlying problem (e.g.
+    /// reconfigured their Kindle address after a <see cref="EbookDeliveryStatus.NotConfigured"/>
+    /// failure), and an explicit request to resend should not wait for a
+    /// cooldown meant for background retries.
+    /// </summary>
+    public async Task<RetryDeliveryResult> RetryAsync(Guid attemptId, CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return RetryDeliveryResult.Unauthenticated();
+        }
+
+        var attempt = await repository.FindAsync(attemptId, cancellationToken);
+        if (attempt is null || attempt.UserId != userId)
+        {
+            return RetryDeliveryResult.NotFound();
+        }
+
+        if (attempt.Status != DeliveryAttemptStatus.Failed)
+        {
+            return RetryDeliveryResult.NotFailed();
+        }
+
+        var retry = await CreateRetryAsync(attempt, cancellationToken);
+        return RetryDeliveryResult.Success(retry);
+    }
+
+    /// <summary>
+    /// The admin queue's retry action. Ownership is not checked here -- the
+    /// endpoint calling this is already <c>RequireAuthorization("Admin")</c>.
+    /// </summary>
+    public async Task<bool> AdminRetryAsync(Guid attemptId, CancellationToken cancellationToken)
+    {
+        var attempt = await repository.FindAsync(attemptId, cancellationToken);
+        if (attempt is null || attempt.Status != DeliveryAttemptStatus.Failed)
+        {
+            return false;
+        }
+
+        await CreateRetryAsync(attempt, cancellationToken);
+        return true;
+    }
+
+    private async Task<DeliveryAttempt> CreateRetryAsync(DeliveryAttempt failed, CancellationToken cancellationToken)
+    {
+        var retry = new DeliveryAttempt(
+            failed.RequestId, failed.UserId, failed.DeliveryTargetId, failed.Provider,
+            failed.ExternalBookId, failed.BookFormat, failed.Convert, failed.AttemptNumber + 1, clock.UtcNow);
+        repository.Add(retry);
+        await repository.SaveChangesAsync(cancellationToken);
+
+        await SubmitAsync(retry, cancellationToken);
+        return retry;
     }
 
     private async Task SubmitAsync(DeliveryAttempt attempt, CancellationToken cancellationToken)
@@ -260,5 +313,24 @@ public enum SendExistingBookOutcome
     Failed,
     NotOwned,
     TargetNotConfigured,
+    Unauthenticated
+}
+
+public sealed record RetryDeliveryResult(RetryDeliveryOutcome Outcome, DeliveryAttempt? Attempt)
+{
+    public static RetryDeliveryResult Success(DeliveryAttempt attempt) => new(RetryDeliveryOutcome.Success, attempt);
+
+    public static RetryDeliveryResult NotFound() => new(RetryDeliveryOutcome.NotFound, null);
+
+    public static RetryDeliveryResult NotFailed() => new(RetryDeliveryOutcome.NotFailed, null);
+
+    public static RetryDeliveryResult Unauthenticated() => new(RetryDeliveryOutcome.Unauthenticated, null);
+}
+
+public enum RetryDeliveryOutcome
+{
+    Success,
+    NotFound,
+    NotFailed,
     Unauthenticated
 }

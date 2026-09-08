@@ -189,7 +189,14 @@ internal static class RequestEndpoints
         request.RequiresManualFulfillment,
         request.VersionKind,
         request.VersionDetails,
-        request.DeliveryTargetId);
+        request.DeliveryTargetId,
+        request.KindleDelivery is { } kindleDelivery
+            ? new KindleDeliveryResponse(
+                kindleDelivery.AttemptId,
+                kindleDelivery.Status.ToString(),
+                kindleDelivery.FailureReason,
+                kindleDelivery.AttemptNumber)
+            : null);
 
     // Plain language for a family, not the enum name. The status itself travels
     // separately so the client never has to parse this sentence.

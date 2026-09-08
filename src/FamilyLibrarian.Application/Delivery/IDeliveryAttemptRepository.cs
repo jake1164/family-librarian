@@ -10,6 +10,9 @@ public interface IDeliveryAttemptRepository
 
     Task<IReadOnlyList<DeliveryAttempt>> ListForUserAsync(Guid userId, CancellationToken cancellationToken);
 
+    /// <summary>The admin Publishing Queue: recent Kindle delivery attempts.</summary>
+    Task<IReadOnlyList<DeliveryAttemptView>> ListRecentAsync(CancellationToken cancellationToken);
+
     /// <summary>
     /// Attempts eligible for the retry sweep: <see cref="DeliveryAttemptStatus.Failed"/>,
     /// <see cref="DeliveryAttempt.IsRetryable"/>, below <paramref name="maxAttemptNumber"/>,

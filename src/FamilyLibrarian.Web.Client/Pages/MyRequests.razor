@@ -1,7 +1,9 @@
 @page "/requests"
 @attribute [Authorize]
 @inherits LiveComponentBase
+@using FamilyLibrarian.Web.Client.Delivery
 @inject RequestsApiClient Requests
+@inject DeliveryTargetApiClient DeliveryTargets
 
 <PageTitle>My requests · Family Librarian</PageTitle>
 
@@ -60,6 +62,7 @@
     private bool isLoading = true;
     private string? errorMessage;
     private Guid busyRequestId;
+    private Guid busyKindleAttemptId;
 
 
     protected override async Task OnInitializedAsync()
@@ -84,6 +87,23 @@
                                                ProgressDescription="@format.ProgressDescription" />
                         }
                     </MudStack>
+                    @if (request.KindleDelivery is { } kindle)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudText Typo="Typo.body2" Color="@KindleDeliveryColor(kindle.Status)">
+                                @KindleDeliveryDescription(kindle)
+                            </MudText>
+                            @if (kindle.Status == "Failed")
+                            {
+                                <MudButton Variant="Variant.Text"
+                                           Size="Size.Small"
+                                           Disabled="@(busyKindleAttemptId == kindle.AttemptId)"
+                                           OnClick="() => RetryKindleDeliveryAsync(kindle.AttemptId)">
+                                    Retry
+                                </MudButton>
+                            }
+                        </MudStack>
+                    }
                     @if (request.Status != "PendingAcquisition" ||
                         !request.Formats.Any(format => !string.IsNullOrWhiteSpace(format.ProgressDescription)))
                     {
@@ -189,5 +209,48 @@
         }
     }
 
+    private async Task RetryKindleDeliveryAsync(Guid attemptId)
+    {
+        busyKindleAttemptId = attemptId;
+        errorMessage = null;
 
+        try
+        {
+            var succeeded = await DeliveryTargets.RetryDeliveryAsync(attemptId);
+            if (succeeded)
+            {
+                await LoadAsync();
+            }
+            else
+            {
+                errorMessage = "That retry could not be sent. Please try again.";
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That retry could not be sent. Please try again.";
+        }
+        finally
+        {
+            busyKindleAttemptId = Guid.Empty;
+        }
+    }
+
+    private static string KindleDeliveryDescription(KindleDeliveryResponse kindle) => kindle.Status switch
+    {
+        "Submitted" => "Kindle: Sent",
+        "Pending" or "Submitting" => "Kindle: Sending…",
+        "Failed" => string.IsNullOrWhiteSpace(kindle.FailureReason)
+            ? "Kindle: Delivery failed"
+            : $"Kindle: Delivery failed — {kindle.FailureReason}",
+        "Cancelled" => "Kindle: Cancelled",
+        _ => $"Kindle: {kindle.Status}"
+    };
+
+    private static Color KindleDeliveryColor(string status) => status switch
+    {
+        "Submitted" => Color.Success,
+        "Failed" => Color.Error,
+        _ => Color.Default
+    };
 }

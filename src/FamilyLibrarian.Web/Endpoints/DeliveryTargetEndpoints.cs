@@ -22,6 +22,7 @@ internal static class DeliveryTargetEndpoints
         kindle.MapPut("/enabled", SetMyKindleEnabledAsync);
         kindle.MapPost("/test", TestMyKindleDeliveryAsync);
         kindle.MapPost("/send-existing", SendExistingBookAsync);
+        kindle.MapPost("/attempts/{id:guid}/retry", RetryDeliveryAsync);
     }
 
     private static async Task<IResult> GetMyKindleTargetAsync(
@@ -90,6 +91,23 @@ internal static class DeliveryTargetEndpoints
             SendExistingBookOutcome.Failed => Results.Ok(new SendExistingBookResponse(false, result.Error)),
             SendExistingBookOutcome.Unauthenticated => Results.Unauthorized(),
             _ => Results.NotFound(new SendExistingBookResponse(false, result.Error))
+        };
+    }
+
+    private static async Task<IResult> RetryDeliveryAsync(
+        Guid id,
+        DeliveryAttemptService service,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.RetryAsync(id, cancellationToken);
+
+        return result.Outcome switch
+        {
+            RetryDeliveryOutcome.Success => Results.Ok(new SendExistingBookResponse(true, null)),
+            RetryDeliveryOutcome.NotFound => Results.NotFound(),
+            RetryDeliveryOutcome.NotFailed => Results.Conflict(
+                new { message = "This delivery isn't in a failed state." }),
+            _ => Results.Unauthorized()
         };
     }
 

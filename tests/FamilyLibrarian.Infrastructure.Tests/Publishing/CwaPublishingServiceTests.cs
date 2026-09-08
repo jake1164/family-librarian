@@ -590,6 +590,9 @@ public sealed class CwaPublishingServiceTests
         public Task<IReadOnlyList<DeliveryAttempt>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<DeliveryAttempt>>(Rows.Where(row => row.UserId == userId).ToArray());
 
+        public Task<IReadOnlyList<DeliveryAttemptView>> ListRecentAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
         public Task<IReadOnlyList<DeliveryAttempt>> ListRetryableFailedAsync(
             DateTimeOffset olderThanUtc, int maxAttemptNumber, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<DeliveryAttempt>>([]);

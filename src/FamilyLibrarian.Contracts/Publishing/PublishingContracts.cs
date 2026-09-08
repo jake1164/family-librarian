@@ -150,6 +150,21 @@ public sealed record AudiobookshelfDeliveryResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? CompletedAtUtc);
 
+public sealed record DeliveryAttemptResponse(
+    Guid Id,
+    Guid? RequestId,
+    Guid? WorkId,
+    string? WorkTitle,
+    string RequesterDisplayName,
+    string RequesterEmail,
+    string ExternalBookId,
+    string Status,
+    int AttemptNumber,
+    string? FailureReason,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? CompletedAtUtc);
+
 public sealed record PublishingQueueResponse(
     IReadOnlyList<LibraryImportResponse> LibraryImports,
-    IReadOnlyList<AudiobookshelfDeliveryResponse> Deliveries);
+    IReadOnlyList<AudiobookshelfDeliveryResponse> Deliveries,
+    IReadOnlyList<DeliveryAttemptResponse> DeliveryAttempts);

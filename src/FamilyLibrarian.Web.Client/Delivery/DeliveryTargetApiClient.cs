@@ -85,6 +85,15 @@ public sealed class DeliveryTargetApiClient(HttpClient httpClient, AntiforgeryTo
             : await response.Content.ReadFromJsonAsync<SendExistingBookResponse>(cancellationToken);
     }
 
+    public async Task<bool> RetryDeliveryAsync(Guid attemptId, CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, $"api/v1/me/delivery/kindle/attempts/{attemptId}/retry");
+        await antiforgery.AttachAsync(request, cancellationToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
     private async Task<HttpResponseMessage> SendAsync<TPayload>(
         HttpMethod method,
         string path,

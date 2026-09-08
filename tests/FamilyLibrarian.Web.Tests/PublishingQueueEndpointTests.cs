@@ -1,14 +1,19 @@
 using System.Net;
 using System.Net.Http.Json;
+using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
+using FamilyLibrarian.Contracts.Delivery;
 using FamilyLibrarian.Contracts.Publishing;
 using FamilyLibrarian.Contracts.Requests;
+using FamilyLibrarian.Domain.Delivery;
+using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -133,6 +138,122 @@ public sealed class PublishingQueueEndpointTests
         Assert.IsNotNull(delivery, "The approved audiobook should have a delivery queue entry.");
         Assert.AreEqual("Delivered", delivery.Status);
         Assert.IsNotNull(delivery.ExternalItemId);
+    }
+
+    [TestMethod]
+    public async Task ARequesterSeesTheirKindleDeliveryStatusOnceTheEbookIsSent()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<ICwaCatalogClient>();
+                services.AddSingleton<ICwaCatalogClient>(new DeterministicCatalogClient(bookIdOnFirstCall: null));
+                services.RemoveAll<IEbookDeliveryProvider>();
+                services.AddSingleton<IEbookDeliveryProvider>(new DeterministicEbookDeliveryProvider());
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+
+        await ConfigureCwaAsync(client);
+
+        var kindleSet = await client.PutAsJsonAsync(
+            "/api/v1/me/delivery/kindle", new SetKindleAddressRequest("reader@kindle.example", null, true));
+        Assert.AreEqual(HttpStatusCode.OK, kindleSet.StatusCode);
+        var target = await kindleSet.Content.ReadFromJsonAsync<DeliveryTargetResponse>();
+        Assert.IsNotNull(target);
+
+        var resolve = await client.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        resolve.EnsureSuccessStatusCode();
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var workId = await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id);
+
+        // The catalog client must still report "not found" here, or request
+        // creation would answer with an OwnedWarning conflict instead of
+        // creating a PendingAcquisition request -- it only starts reporting a
+        // match once manual-import needs to verify the just-published file.
+        var created = await client.PostAsJsonAsync(
+            "/api/v1/requests/",
+            new CreateBookRequestRequest(workId, ["Ebook"], null, false, false, DeliveryTargetId: target.Id));
+        Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+        Assert.AreEqual(target.Id, request.DeliveryTargetId);
+        var formatId = request.Formats.Single().FormatId;
+
+        var catalogClient = (DeterministicCatalogClient)factory.Services.GetRequiredService<ICwaCatalogClient>();
+        catalogClient.NextBookId = "42";
+
+        await ManualImportAndApproveAsync(client, request.Id, formatId);
+
+        var mine = await client.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(mine);
+        var updated = mine.Active.Concat(mine.History).Single(item => item.Id == request.Id);
+        Assert.IsNotNull(updated.KindleDelivery, "The request should show a Kindle delivery status.");
+        Assert.AreEqual("Submitted", updated.KindleDelivery!.Status);
+    }
+
+    [TestMethod]
+    public async Task TheAdminQueueShowsKindleDeliveryAttemptsAndSupportsRetry()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IEbookDeliveryProvider>();
+                services.AddSingleton<IEbookDeliveryProvider>(new DeterministicEbookDeliveryProvider());
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+
+        Guid failedAttemptId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var user = await database.Users.SingleAsync(candidate => candidate.Email == FamilyLibrarianAppFactory.AdminEmail);
+            var deliveryTarget = new DeliveryTarget(
+                user.Id, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.example", DateTimeOffset.UtcNow);
+            database.DeliveryTargets.Add(deliveryTarget);
+
+            // The existing-book fast path -- no BookRequest at all -- exercises
+            // the admin queue's LEFT JOIN to BookRequest/Work.
+            var attempt = new DeliveryAttempt(
+                requestId: null, user.Id, deliveryTarget.Id, "cwa", "book-42", "epub",
+                convert: true, attemptNumber: 1, DateTimeOffset.UtcNow);
+            attempt.TransitionTo(DeliveryAttemptStatus.Submitting, DateTimeOffset.UtcNow);
+            attempt.TransitionTo(DeliveryAttemptStatus.Failed, DateTimeOffset.UtcNow, "timeout", retryable: true);
+            database.DeliveryAttempts.Add(attempt);
+
+            await database.SaveChangesAsync();
+            failedAttemptId = attempt.Id;
+        }
+
+        var queue = await client.GetFromJsonAsync<PublishingQueueResponse>("/api/v1/admin/publishing/queue");
+        Assert.IsNotNull(queue);
+        var entry = queue.DeliveryAttempts.SingleOrDefault(item => item.Id == failedAttemptId);
+        Assert.IsNotNull(entry, "The seeded Kindle attempt should appear in the admin queue.");
+        Assert.IsNull(entry.RequestId);
+        Assert.IsNull(entry.WorkId);
+        Assert.IsNull(entry.WorkTitle);
+        Assert.AreEqual("Failed", entry.Status);
+        Assert.AreEqual("book-42", entry.ExternalBookId);
+
+        var retry = await client.PostAsync($"/api/v1/admin/publishing/delivery-attempts/{failedAttemptId}/retry", content: null);
+        Assert.AreEqual(HttpStatusCode.NoContent, retry.StatusCode);
+
+        var queueAfter = await client.GetFromJsonAsync<PublishingQueueResponse>("/api/v1/admin/publishing/queue");
+        Assert.IsNotNull(queueAfter);
+        var retried = queueAfter.DeliveryAttempts.SingleOrDefault(
+            item => item.AttemptNumber == 2 && item.ExternalBookId == "book-42");
+        Assert.IsNotNull(retried, "A retry should create a new attempt row.");
+        Assert.AreEqual("Submitted", retried.Status);
     }
 
     private static async Task ConfigureCwaAsync(HttpClient client)
@@ -274,5 +395,21 @@ public sealed class PublishingQueueEndpointTests
             Task.FromResult(NextBookId is null
                 ? BookMatchResult.NoMatchResult
                 : BookMatchResult.Match(new CandidateBook(NextBookId, title, author)));
+    }
+
+    /// <summary>Stands in for the real CWA e-reader session -- no live CWA is reachable from this test.</summary>
+    private sealed class DeterministicEbookDeliveryProvider : IEbookDeliveryProvider
+    {
+        public string Id => "cwa";
+
+        public Task<bool> CanDeliverAsync(CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public Task<EbookDeliveryOutcome> DeliverAsync(
+            string providerBookId, string bookFormat, bool convert, string recipientEmail,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(EbookDeliveryOutcome.Delivered("Sent."));
+
+        public Task<ConnectionTestOutcome> TestAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ConnectionTestOutcome(true, "ok"));
     }
 }

@@ -54,7 +54,12 @@ public sealed record BookRequestResponse(
     bool RequiresManualFulfillment = false,
     string? VersionKind = null,
     string? VersionDetails = null,
-    Guid? DeliveryTargetId = null);
+    Guid? DeliveryTargetId = null,
+    KindleDeliveryResponse? KindleDelivery = null);
+
+/// <summary>The viewer's own most recent Kindle delivery attempt for this request.</summary>
+public sealed record KindleDeliveryResponse(
+    Guid AttemptId, string Status, string? FailureReason, int AttemptNumber);
 
 public sealed record BookRequestFormatResponse(
     Guid FormatId,

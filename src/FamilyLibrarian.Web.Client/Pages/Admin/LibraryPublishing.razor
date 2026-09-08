@@ -105,6 +105,52 @@ else
             }
         </MudStack>
     }
+
+    <MudText Typo="Typo.h6" Class="mb-2">Ebooks → Kindle</MudText>
+    @if (queue.DeliveryAttempts.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">No Kindle delivery attempts yet.</MudAlert>
+    }
+    else
+    {
+        <MudStack Spacing="3">
+            @foreach (var attempt in queue.DeliveryAttempts)
+            {
+                <MudPaper Class="pa-4" Elevation="1">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                        @if (attempt.RequestId is { } requestId)
+                        {
+                            <MudLink Href="@($"admin/requests/{requestId}")">
+                                <MudText Typo="Typo.h6">@(attempt.WorkTitle ?? "Untitled")</MudText>
+                            </MudLink>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.h6">Existing library book</MudText>
+                        }
+                        <MudSpacer />
+                        <MudChip T="string" Size="Size.Small" Color="StatusColor(attempt.Status)">@attempt.Status</MudChip>
+                    </MudStack>
+                    <MudText Typo="Typo.body2" Class="mt-1">
+                        Requested by @attempt.RequesterDisplayName (@attempt.RequesterEmail) —
+                        attempt @attempt.AttemptNumber, @attempt.CreatedAtUtc.ToLocalTime().ToString("g")
+                        — CWA book id @attempt.ExternalBookId
+                    </MudText>
+                    @if (!string.IsNullOrWhiteSpace(attempt.FailureReason))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">@attempt.FailureReason</MudText>
+                    }
+                    @if (attempt.Status == "Failed")
+                    {
+                        <MudButton Variant="Variant.Outlined" Class="mt-2" Disabled="@(busyId == attempt.Id)"
+                                   OnClick="@(() => RetryDeliveryAttemptAsync(attempt.Id))">
+                            Retry
+                        </MudButton>
+                    }
+                </MudPaper>
+            }
+        </MudStack>
+    }
 }
 
 @code {
@@ -181,11 +227,36 @@ else
         await LoadAsync();
     }
 
+    private async Task RetryDeliveryAttemptAsync(Guid id)
+    {
+        busyId = id;
+        try
+        {
+            var succeeded = await PublishingApi.RetryDeliveryAttemptAsync(id);
+            if (!succeeded)
+            {
+                Snackbar.Add("That retry could not be sent.", Severity.Error);
+                return;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add("That retry could not be sent. Please try again.", Severity.Error);
+            return;
+        }
+        finally
+        {
+            busyId = null;
+        }
+
+        await LoadAsync();
+    }
+
     private static Color StatusColor(string status) => status switch
     {
-        "Available" or "Delivered" => Color.Success,
+        "Available" or "Delivered" or "Submitted" => Color.Success,
         "Failed" => Color.Error,
-        "AwaitingVerification" or "Verifying" => Color.Warning,
+        "AwaitingVerification" or "Verifying" or "Pending" or "Submitting" => Color.Warning,
         _ => Color.Default
     };
 }
