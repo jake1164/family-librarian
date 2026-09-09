@@ -35,7 +35,8 @@ public sealed class DeliveryAttempt
         bool convert,
         int attemptNumber,
         DateTimeOffset createdAtUtc,
-        string? bookTitle = null)
+        string? bookTitle = null,
+        Guid? deliveryId = null)
     {
         if (userId == Guid.Empty)
         {
@@ -67,7 +68,11 @@ public sealed class DeliveryAttempt
             throw new ArgumentException("The attempt number must be at least 1.", nameof(attemptNumber));
         }
 
+        if (deliveryId == Guid.Empty)
+            throw new ArgumentException("A delivery identity must not be empty.", nameof(deliveryId));
+
         Id = Guid.NewGuid();
+        DeliveryId = deliveryId ?? Id;
         RequestId = requestId;
         UserId = userId;
         DeliveryTargetId = deliveryTargetId;
@@ -83,6 +88,9 @@ public sealed class DeliveryAttempt
     }
 
     public Guid Id { get; private set; } = Guid.NewGuid();
+
+    /// <summary>Stable identity shared by all attempts for one logical delivery.</summary>
+    public Guid DeliveryId { get; private set; }
 
     public Guid? RequestId { get; private set; }
 
@@ -141,12 +149,12 @@ public sealed class DeliveryAttempt
 
         StartedAtUtc ??= atUtc;
         Status = to;
-        FailureReason = to == DeliveryAttemptStatus.Failed
+        FailureReason = to is DeliveryAttemptStatus.Failed or DeliveryAttemptStatus.SubmissionUnknown or DeliveryAttemptStatus.Cancelled
             ? (string.IsNullOrWhiteSpace(failureReason) ? null : failureReason.Trim())
             : null;
         IsRetryable = to == DeliveryAttemptStatus.Failed && retryable;
 
-        if (to is DeliveryAttemptStatus.Submitted or DeliveryAttemptStatus.Failed or DeliveryAttemptStatus.Cancelled)
+        if (to is DeliveryAttemptStatus.Submitted or DeliveryAttemptStatus.Failed or DeliveryAttemptStatus.Cancelled or DeliveryAttemptStatus.SubmissionUnknown)
         {
             CompletedAtUtc = atUtc;
         }

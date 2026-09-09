@@ -45,6 +45,7 @@ public sealed partial class CwaEreaderSessionClient(
         var baseUrl = settings.OpdsBaseUrl!.TrimEnd('/');
         var client = httpClientFactory.CreateClient(HttpClientName);
 
+        var sendDispatched = false;
         try
         {
             var (loginSucceeded, cookies, csrfToken) = await SignInAsync(
@@ -67,11 +68,12 @@ public sealed partial class CwaEreaderSessionClient(
             };
             ApplyCookies(request, cookies);
 
+            sendDispatched = true;
             using var response = await client.SendAsync(request, cancellationToken);
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 LogUnexpectedSendStatus((int)response.StatusCode);
-                return new CwaEreaderSendResult(CwaEreaderSendStatus.TransportFailure, null);
+                return new CwaEreaderSendResult(CwaEreaderSendStatus.SubmissionUnknown, null);
             }
 
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -84,7 +86,8 @@ public sealed partial class CwaEreaderSessionClient(
         catch (Exception exception)
         {
             LogTransportFailure(exception.GetType().Name);
-            return new CwaEreaderSendResult(CwaEreaderSendStatus.TransportFailure, null);
+            return new CwaEreaderSendResult(sendDispatched
+                ? CwaEreaderSendStatus.SubmissionUnknown : CwaEreaderSendStatus.TransportFailure, null);
         }
     }
 
@@ -172,7 +175,7 @@ public sealed partial class CwaEreaderSessionClient(
             using var document = JsonDocument.Parse(body);
             if (document.RootElement.ValueKind != JsonValueKind.Array || document.RootElement.GetArrayLength() == 0)
             {
-                return new CwaEreaderSendResult(CwaEreaderSendStatus.TransportFailure, null);
+                return new CwaEreaderSendResult(CwaEreaderSendStatus.SubmissionUnknown, null);
             }
 
             var first = document.RootElement[0];
@@ -183,12 +186,12 @@ public sealed partial class CwaEreaderSessionClient(
             {
                 "success" => new CwaEreaderSendResult(CwaEreaderSendStatus.Success, message),
                 "danger" => new CwaEreaderSendResult(CwaEreaderSendStatus.SendRejected, message),
-                _ => new CwaEreaderSendResult(CwaEreaderSendStatus.TransportFailure, null),
+                _ => new CwaEreaderSendResult(CwaEreaderSendStatus.SubmissionUnknown, null),
             };
         }
         catch (JsonException)
         {
-            return new CwaEreaderSendResult(CwaEreaderSendStatus.TransportFailure, null);
+            return new CwaEreaderSendResult(CwaEreaderSendStatus.SubmissionUnknown, null);
         }
     }
 

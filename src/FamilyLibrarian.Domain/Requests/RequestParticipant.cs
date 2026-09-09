@@ -35,9 +35,14 @@ public sealed class RequestParticipant
 
     internal void Join(IEnumerable<RequestMediaType> formats, string? note, Guid? deliveryTargetId = null)
     {
+        var includesEbook = false;
         foreach (var format in formats)
         {
-            if (format == RequestMediaType.Ebook) WantsEbook = true;
+            if (format == RequestMediaType.Ebook)
+            {
+                WantsEbook = true;
+                includesEbook = true;
+            }
             else if (format == RequestMediaType.Audiobook) WantsAudiobook = true;
             else throw new ArgumentException("Unknown requested format.", nameof(formats));
         }
@@ -48,7 +53,7 @@ public sealed class RequestParticipant
         if (note?.Trim().Length > BookRequest.MaxNoteLength)
             throw new ArgumentException("The requester note is too long.", nameof(note));
         if (!string.IsNullOrWhiteSpace(note)) Note = note.Trim();
-        DeliveryTargetId = deliveryTargetId;
+        if (includesEbook) DeliveryTargetId = deliveryTargetId;
         WithdrawnAtUtc = null;
     }
 

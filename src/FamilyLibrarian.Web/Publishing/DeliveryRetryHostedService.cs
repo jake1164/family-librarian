@@ -3,11 +3,9 @@ using FamilyLibrarian.Application.Delivery;
 namespace FamilyLibrarian.Web.Publishing;
 
 /// <summary>
-/// Retries transient-failed Kindle delivery attempts. A narrow sweep over
-/// Failed/retryable <c>DeliveryAttempt</c> rows only -- readiness itself is
-/// event-driven from <c>CwaPublishingService</c>, not polled here. Same shape
-/// as <see cref="CwaVerificationHostedService"/>, on a coarser interval since
-/// delivery retry cooldowns are measured in minutes, not seconds.
+/// Recovers unreleased intent from verified library state and resumes Pending
+/// attempts. Interrupted submissions require explicit review; only safely
+/// retryable failures are retried automatically. No external readiness polling.
 /// </summary>
 public sealed partial class DeliveryRetryHostedService(
     IServiceScopeFactory scopeFactory,
@@ -23,6 +21,7 @@ public sealed partial class DeliveryRetryHostedService(
             {
                 await using var scope = scopeFactory.CreateAsyncScope();
                 var deliveryAttempts = scope.ServiceProvider.GetRequiredService<DeliveryAttemptService>();
+                await deliveryAttempts.RecoverAsync(stoppingToken);
                 var retriedCount = await deliveryAttempts.RetryFailedAsync(stoppingToken);
                 if (retriedCount > 0)
                 {

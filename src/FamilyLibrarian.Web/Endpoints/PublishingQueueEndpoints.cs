@@ -41,8 +41,9 @@ internal static class PublishingQueueEndpoints
         await service.RecheckAsync(id, cancellationToken) ? Results.NoContent() : Results.NotFound();
 
     private static async Task<IResult> RetryDeliveryAttemptAsync(
-        Guid id, DeliveryAttemptService service, CancellationToken cancellationToken) =>
-        await service.AdminRetryAsync(id, cancellationToken) ? Results.NoContent() : Results.NotFound();
+        Guid id, DeliveryAttemptService service, CancellationToken cancellationToken,
+        bool confirmPossibleDuplicate = false) =>
+        await service.AdminRetryAsync(id, cancellationToken, confirmPossibleDuplicate) ? Results.NoContent() : Results.NotFound();
 
     internal static LibraryImportResponse ToLibraryImportResponse(LibraryImportView view) => new(
         view.Id,

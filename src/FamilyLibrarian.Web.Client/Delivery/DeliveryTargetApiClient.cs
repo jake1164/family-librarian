@@ -85,8 +85,9 @@ public sealed class DeliveryTargetApiClient(HttpClient httpClient, AntiforgeryTo
             : await response.Content.ReadFromJsonAsync<SendExistingBookResponse>(cancellationToken);
     }
 
-    public async Task<bool> RetryDeliveryAsync(Guid attemptId, CancellationToken cancellationToken = default) =>
-        await PostAttemptActionAsync(attemptId, "retry", cancellationToken);
+    public async Task<bool> RetryDeliveryAsync(Guid attemptId, bool confirmPossibleDuplicate = false,
+        CancellationToken cancellationToken = default) =>
+        await PostAttemptActionAsync(attemptId, confirmPossibleDuplicate ? "retry?confirmPossibleDuplicate=true" : "retry", cancellationToken);
 
     /// <summary>KINDLE-7: the user confirms a submitted delivery arrived on their Kindle.</summary>
     public async Task<bool> ConfirmDeliveryReceivedAsync(

@@ -201,7 +201,7 @@
                                     <MudText>Existing library book</MudText>
                                 }
                                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Kindle</MudChip>
-                                <MudChip T="string" Size="Size.Small" Color="@PublishingColor(kindle.Status)">@kindle.Status</MudChip>
+                                <MudChip T="string" Size="Size.Small" Color="@MediaTypeVisuals.KindleColor(kindle.Status)">@MediaTypeVisuals.StatusLabel(kindle.Status)</MudChip>
                             </MudStack>
                             <MudText Typo="Typo.caption">@KindleDescription(kindle)</MudText>
                         </MudListItem>

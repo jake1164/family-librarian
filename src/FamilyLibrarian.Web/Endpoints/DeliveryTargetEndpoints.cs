@@ -99,13 +99,16 @@ internal static class DeliveryTargetEndpoints
     private static async Task<IResult> RetryDeliveryAsync(
         Guid id,
         DeliveryAttemptService service,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool confirmPossibleDuplicate = false)
     {
-        var result = await service.RetryAsync(id, cancellationToken);
+        var result = await service.RetryAsync(id, cancellationToken, confirmPossibleDuplicate);
 
         return result.Outcome switch
         {
             RetryDeliveryOutcome.Success => Results.Ok(new SendExistingBookResponse(true, null)),
+            RetryDeliveryOutcome.DuplicateConfirmationRequired => Results.Conflict(
+                new { message = "This send may already have been accepted. Confirm that you want to resend despite the possible duplicate." }),
             RetryDeliveryOutcome.NotFound => Results.NotFound(),
             RetryDeliveryOutcome.NotFailed => Results.Conflict(
                 new { message = "This delivery isn't in a failed state." }),

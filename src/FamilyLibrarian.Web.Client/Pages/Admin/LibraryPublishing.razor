@@ -129,7 +129,7 @@ else
                             <MudText Typo="Typo.h6">Existing library book</MudText>
                         }
                         <MudSpacer />
-                        <MudChip T="string" Size="Size.Small" Color="StatusColor(attempt.Status)">@attempt.Status</MudChip>
+                        <MudChip T="string" Size="Size.Small" Color="MediaTypeVisuals.KindleColor(attempt.Status)">@MediaTypeVisuals.StatusLabel(attempt.Status)</MudChip>
                     </MudStack>
                     <MudText Typo="Typo.body2" Class="mt-1">
                         Requested by @attempt.RequesterDisplayName (@attempt.RequesterEmail) —
@@ -140,11 +140,11 @@ else
                     {
                         <MudText Typo="Typo.caption" Color="Color.Error">@attempt.FailureReason</MudText>
                     }
-                    @if (attempt.Status == "Failed")
+                    @if (attempt.Status is "Failed" or "SubmissionUnknown")
                     {
                         <MudButton Variant="Variant.Outlined" Class="mt-2" Disabled="@(busyId == attempt.Id)"
-                                   OnClick="@(() => RetryDeliveryAttemptAsync(attempt.Id))">
-                            Retry
+                                   OnClick="@(() => RetryDeliveryAttemptAsync(attempt.Id, attempt.Status == "SubmissionUnknown"))">
+                            @(attempt.Status == "SubmissionUnknown" ? "Resend (may create a duplicate)" : "Retry")
                         </MudButton>
                     }
                 </MudPaper>
@@ -227,12 +227,12 @@ else
         await LoadAsync();
     }
 
-    private async Task RetryDeliveryAttemptAsync(Guid id)
+    private async Task RetryDeliveryAttemptAsync(Guid id, bool confirmPossibleDuplicate)
     {
         busyId = id;
         try
         {
-            var succeeded = await PublishingApi.RetryDeliveryAttemptAsync(id);
+            var succeeded = await PublishingApi.RetryDeliveryAttemptAsync(id, confirmPossibleDuplicate: confirmPossibleDuplicate);
             if (!succeeded)
             {
                 Snackbar.Add("That retry could not be sent.", Severity.Error);

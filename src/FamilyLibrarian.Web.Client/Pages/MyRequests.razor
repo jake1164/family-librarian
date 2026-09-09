@@ -109,14 +109,14 @@
                                     No
                                 </MudButton>
                             }
-                            @if (kindle.Status == "Failed" ||
+                            @if (kindle.Status is "Failed" or "SubmissionUnknown" ||
                                 (kindle.Status == "Submitted" && kindle.ConfirmationStatus == "ReportedMissing"))
                             {
                                 <MudButton Variant="Variant.Text"
                                            Size="Size.Small"
                                            Disabled="@(busyKindleAttemptId == kindle.AttemptId)"
-                                           OnClick="() => RetryKindleDeliveryAsync(kindle.AttemptId)">
-                                    Retry
+                                           OnClick='() => RetryKindleDeliveryAsync(kindle.AttemptId, kindle.Status == "SubmissionUnknown")'>
+                                    @(kindle.Status == "SubmissionUnknown" ? "Resend (may create a duplicate)" : "Retry")
                                 </MudButton>
                             }
                         </MudStack>
@@ -226,14 +226,14 @@
         }
     }
 
-    private async Task RetryKindleDeliveryAsync(Guid attemptId)
+    private async Task RetryKindleDeliveryAsync(Guid attemptId, bool confirmPossibleDuplicate)
     {
         busyKindleAttemptId = attemptId;
         errorMessage = null;
 
         try
         {
-            var succeeded = await DeliveryTargets.RetryDeliveryAsync(attemptId);
+            var succeeded = await DeliveryTargets.RetryDeliveryAsync(attemptId, confirmPossibleDuplicate: confirmPossibleDuplicate);
             if (succeeded)
             {
                 await LoadAsync();
@@ -294,19 +294,11 @@
         "Failed" => string.IsNullOrWhiteSpace(kindle.FailureReason)
             ? "Kindle: Delivery failed"
             : $"Kindle: Delivery failed — {kindle.FailureReason}",
+        "SubmissionUnknown" => "Kindle: Send outcome unknown. Check your Kindle before resending; another send may create a duplicate.",
         "Cancelled" => "Kindle: Cancelled",
         _ => $"Kindle: {kindle.Status}"
     };
 
-    private static Color KindleDeliveryColor(KindleDeliveryResponse kindle) => kindle.Status switch
-    {
-        "Submitted" => kindle.ConfirmationStatus switch
-        {
-            "Confirmed" => Color.Success,
-            "ReportedMissing" => Color.Error,
-            _ => Color.Default
-        },
-        "Failed" => Color.Error,
-        _ => Color.Default
-    };
+    private static Color KindleDeliveryColor(KindleDeliveryResponse kindle) =>
+        MediaTypeVisuals.KindleColor(kindle.Status, kindle.ConfirmationStatus);
 }

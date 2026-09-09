@@ -112,6 +112,28 @@ all EF Core migrations, do not downgrade a production database casually: a
 rollback executes migration `Down` operations and may lose data. See
 [Microsoft's migration deployment guidance](https://learn.microsoft.com/ef/core/managing-schemas/migrations/applying).
 
+### Kindle delivery upgrade and interrupted sends
+
+`HardenKindleDelivery` preserves existing delivery rows and IDs, assigns a
+stable delivery identity, and normalizes attempt numbers before enforcing
+unique initial request/user deliveries and unique attempt numbers. Legacy
+standalone history is grouped per user, target, provider and external book;
+new standalone sends have independent delivery identities.
+
+Earlier retryable failures could represent accepted sends whose acknowledgement
+was lost. The migration changes those rows to `SubmissionUnknown` and stops
+automatic resends. After upgrading, review the **Ebooks → Kindle** queue in
+Admin → Library publishing. For an unknown submission, check whether the book
+arrived before choosing **Resend (may create a duplicate)**. Known configuration
+failures retain the ordinary Retry action after the configuration is corrected.
+
+The worker runs at startup and every five minutes. It releases saved eligible
+intent for already verified ebooks and resumes Pending attempts. Superseded
+legacy Pending rows are cancelled instead of dispatched. Submitting
+attempts older than five minutes become unknown and require review; restarting
+the host never automatically repeats those uncertain sends. A missing receipt
+confirmation notification alone is not evidence that delivery failed.
+
 ## Back up PostgreSQL
 
 Use the versioned full-backup tooling in `scripts/backups/` for every normal

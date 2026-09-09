@@ -48,6 +48,8 @@ public sealed class CwaEreaderDeliveryProvider(
         return result.Status switch
         {
             CwaEreaderSendStatus.Success => EbookDeliveryOutcome.Delivered("The book was sent successfully."),
+            CwaEreaderSendStatus.SubmissionUnknown => EbookDeliveryOutcome.Unknown(
+                "The library may have accepted this send. Check your Kindle before resending; another send may create a duplicate."),
             CwaEreaderSendStatus.LoginFailed => EbookDeliveryOutcome.NotConfigured(
                 "The e-reader delivery service account could not sign in. " +
                 "Ask an administrator to check its saved username and password."),
