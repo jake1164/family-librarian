@@ -3,9 +3,7 @@
         <Found Context="routeData">
             <AuthorizeRouteView RouteData="@routeData" DefaultLayout="@typeof(Layout.MainLayout)">
                 <NotAuthorized>
-                    <LayoutView Layout="@typeof(Layout.MainLayout)">
-                        <MudAlert Severity="Severity.Warning">Please sign in to continue.</MudAlert>
-                    </LayoutView>
+                    <RedirectToLogin />
                 </NotAuthorized>
             </AuthorizeRouteView>
         </Found>

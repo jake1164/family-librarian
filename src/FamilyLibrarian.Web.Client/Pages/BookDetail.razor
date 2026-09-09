@@ -1,5 +1,6 @@
 @page "/search/{ProviderId}/{ExternalId}"
 @attribute [Authorize]
+@implements IDisposable
 @using FamilyLibrarian.Contracts.Delivery
 @using FamilyLibrarian.Web.Client.Delivery
 @inject CatalogApiClient Catalog
@@ -53,6 +54,7 @@
                     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
                         <MudText Typo="Typo.overline">Catalog record</MudText>
                         <ProviderChip ProviderName="@book.ProviderName" SourceUrl="@book.SourceUrl" />
+                        <AvailabilityBadges Availability="@availability" />
                     </MudStack>
 
                     <div>
@@ -321,6 +323,8 @@
     private bool isLoading = true;
     private bool isRefreshing;
     private bool coverFailed;
+    private CandidateAvailabilityResponse? availability;
+    private CancellationTokenSource? availabilityLoadCancellation;
 
     private bool wantsEbook = true;
     private bool wantsAudiobook;
@@ -357,6 +361,7 @@
 
     protected override async Task OnParametersSetAsync()
     {
+        StopAvailabilityLoad();
         coverFailed = false;
         wantsEbook = true;
         wantsAudiobook = false;
@@ -369,6 +374,7 @@
         createdRequest = null;
         resolvedWork = null;
         sendExistingMessage = null;
+        availability = null;
 
         // Search already fetched this candidate a moment ago: show it immediately
         // instead of leaving the page blank while we re-fetch full details.
@@ -405,7 +411,53 @@
             isLoading = false;
             isRefreshing = false;
         }
+
+        if (book is not null)
+        {
+            StartAvailabilityLoad(book);
+        }
     }
+
+    private void StartAvailabilityLoad(CatalogBookCandidateResponse candidate)
+    {
+        availabilityLoadCancellation = new CancellationTokenSource();
+        _ = LoadAvailabilityAsync(candidate, availabilityLoadCancellation.Token);
+    }
+
+    private async Task LoadAvailabilityAsync(CatalogBookCandidateResponse candidate, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var loaded = await Catalog.GetAvailabilityAsync(candidate, cancellationToken);
+            await InvokeAsync(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    availability = loaded;
+                    StateHasChanged();
+                }
+            });
+        }
+        catch (HttpRequestException)
+        {
+            // Informational only -- a failed check just means no badge shows
+            // for this record, not a page-level error.
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigation or a fresh candidate ends this optional lookup without
+            // delaying or failing the page.
+        }
+    }
+
+    private void StopAvailabilityLoad()
+    {
+        availabilityLoadCancellation?.Cancel();
+        availabilityLoadCancellation?.Dispose();
+        availabilityLoadCancellation = null;
+    }
+
+    public void Dispose() => StopAvailabilityLoad();
 
     private CatalogBookCandidateResponse? FindCachedCandidate() =>
         SearchState.Results.FirstOrDefault(result =>

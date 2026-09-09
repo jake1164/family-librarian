@@ -58,12 +58,14 @@
     private string? infoMessage;
     private OidcSignInStatusResponse? oidcStatus;
     private bool showLocalForm;
+    private string? returnUrl;
 
     protected override async Task OnInitializedAsync()
     {
         var query = ParseQuery(Navigation.ToAbsoluteUri(Navigation.Uri).Query);
         errorMessage = query.TryGetValue("oidcError", out var error) ? "Sign-in failed: " + error : null;
         infoMessage = query.TryGetValue("oidcInfo", out var info) ? info : null;
+        returnUrl = query.TryGetValue("returnUrl", out var url) && IsLocalUrl(url) ? url : null;
 
         try
         {
@@ -88,6 +90,12 @@
         return result;
     }
 
+    // returnUrl comes from the query string as a base-relative path (see
+    // RedirectToLogin), so anything that looks like it could redirect off-site
+    // — an absolute URL or a protocol-relative "//host" — is dropped.
+    private static bool IsLocalUrl(string url) =>
+        !string.IsNullOrWhiteSpace(url) && !url.StartsWith("//") && !url.Contains("://", StringComparison.Ordinal);
+
     private async Task SignInAsync()
     {
         isSubmitting = true;
@@ -97,7 +105,7 @@
         {
             if (await AuthenticationStateProvider.SignInAsync(request))
             {
-                Navigation.NavigateTo("/", forceLoad: true);
+                Navigation.NavigateTo(returnUrl ?? "/", forceLoad: true);
                 return;
             }
 
