@@ -612,6 +612,9 @@ public sealed class CwaPublishingServiceTests
         public Task<IReadOnlyList<DeliveryTarget>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<DeliveryTarget>>(Rows.Where(row => row.UserId == userId).ToArray());
 
+        public Task<IReadOnlyList<DeliveryTarget>> ListAllAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryTarget>>(Rows.ToArray());
+
         public void Add(DeliveryTarget target) => Rows.Add(target);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;

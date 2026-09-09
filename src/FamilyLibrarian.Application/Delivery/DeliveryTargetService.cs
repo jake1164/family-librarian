@@ -1,4 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Delivery;
 
 namespace FamilyLibrarian.Application.Delivery;
@@ -10,6 +12,11 @@ namespace FamilyLibrarian.Application.Delivery;
 /// Ownership is enforced here, not at the endpoint, mirroring <c>UserWorkFeedbackService</c>:
 /// every method resolves the caller from <see cref="ICurrentUser"/>, and a row
 /// that belongs to someone else is never reachable through this service at all.
+/// The <c>Admin*</c> methods are the deliberate exception -- they take an
+/// explicit <c>userId</c> instead of consulting <see cref="ICurrentUser"/>, the
+/// same pattern as <c>DeliveryAttemptService.AdminRetryAsync</c>; the endpoints
+/// calling them are already <c>RequireAuthorization("Admin")</c>, so ownership
+/// is deliberately not re-checked here.
 /// <para>
 /// Beta scope keeps this to exactly one <see cref="DeliveryTargetProvider.CwaKindleEmail"/>
 /// target per user. <see cref="DeliveryTarget"/> itself is not limited to one
@@ -22,6 +29,7 @@ public sealed class DeliveryTargetService(
     IDeliveryTargetRepository repository,
     IEnumerable<IEbookDeliveryProvider> deliveryProviders,
     ICurrentUser currentUser,
+    IAuditWriter audit,
     IClock clock)
 {
     private const string CwaProviderId = "cwa";
@@ -132,6 +140,101 @@ public sealed class DeliveryTargetService(
         var outcome = await provider.TestAsync(cancellationToken);
         return new TestKindleDeliveryResult(outcome.Succeeded, outcome.Message);
     }
+
+    /// <summary>
+    /// The admin accounts page's Kindle column: every user's <see cref="DeliveryTargetProvider.CwaKindleEmail"/>
+    /// target, keyed by <see cref="DeliveryTarget.UserId"/> (at most one per user, per the beta scope note above).
+    /// </summary>
+    public async Task<IReadOnlyDictionary<Guid, DeliveryTarget>> AdminListKindleTargetsAsync(
+        CancellationToken cancellationToken)
+    {
+        var all = await repository.ListAllAsync(cancellationToken);
+        return all
+            .Where(target => target.Provider == DeliveryTargetProvider.CwaKindleEmail)
+            .ToDictionary(target => target.UserId);
+    }
+
+    /// <summary>
+    /// The admin accounts page's "set/change Kindle email" action. Mirrors
+    /// <see cref="SetMyKindleAddressAsync"/>'s create-vs-correct/concurrency
+    /// behavior, but never touches <see cref="DeliveryTarget.SendByDefault"/> --
+    /// that is the account owner's own request-time preference, not something
+    /// an administrator setting the address on their behalf should decide.
+    /// </summary>
+    public async Task<SetKindleTargetResult> AdminSetKindleAddressAsync(
+        Guid userId,
+        string address,
+        uint? expectedVersion,
+        CancellationToken cancellationToken)
+    {
+        if (!TryNormalizeEmail(address, out var normalized, out var error))
+        {
+            return SetKindleTargetResult.Invalid(error);
+        }
+
+        var existing = await FindKindleTargetAsync(userId, cancellationToken);
+        if (existing is null)
+        {
+            if (expectedVersion is not null)
+            {
+                return SetKindleTargetResult.Conflict();
+            }
+
+            var created = new DeliveryTarget(
+                userId, DeliveryTargetProvider.CwaKindleEmail, "Kindle", normalized, clock.UtcNow);
+            repository.Add(created);
+            await repository.SaveChangesAsync(cancellationToken);
+            await WriteAdminAuditAsync(AuditActions.DeliveryTargetAdminAddressChanged, created, cancellationToken);
+            return SetKindleTargetResult.Success(created);
+        }
+
+        if (existing.Version != expectedVersion)
+        {
+            return SetKindleTargetResult.Conflict();
+        }
+
+        existing.UpdateAddress(normalized, clock.UtcNow);
+        await repository.SaveChangesAsync(cancellationToken);
+        await WriteAdminAuditAsync(AuditActions.DeliveryTargetAdminAddressChanged, existing, cancellationToken);
+        return SetKindleTargetResult.Success(existing);
+    }
+
+    /// <summary>The admin accounts page's enable/disable toggle. Mirrors <see cref="SetMyKindleEnabledAsync"/>.</summary>
+    public async Task<SetKindleTargetResult> AdminSetKindleEnabledAsync(
+        Guid userId,
+        bool enabled,
+        uint expectedVersion,
+        CancellationToken cancellationToken)
+    {
+        var existing = await FindKindleTargetAsync(userId, cancellationToken);
+        if (existing is null)
+        {
+            return SetKindleTargetResult.NotFound();
+        }
+
+        if (existing.Version != expectedVersion)
+        {
+            return SetKindleTargetResult.Conflict();
+        }
+
+        existing.SetEnabled(enabled, clock.UtcNow);
+        await repository.SaveChangesAsync(cancellationToken);
+        await WriteAdminAuditAsync(AuditActions.DeliveryTargetAdminEnabledChanged, existing, cancellationToken);
+        return SetKindleTargetResult.Success(existing);
+    }
+
+    /// <summary>
+    /// Never includes the address itself, mirroring <c>DeliveryAttemptService</c>'s
+    /// audit entries -- the audit log records that an administrator changed a
+    /// household member's delivery settings, not what the new address was.
+    /// </summary>
+    private Task WriteAdminAuditAsync(string action, DeliveryTarget target, CancellationToken cancellationToken) =>
+        audit.WriteAsync(
+            action,
+            AuditSubjectTypes.DeliveryTarget,
+            target.Id.ToString(),
+            new { target.Id, target.UserId, target.IsEnabled },
+            cancellationToken);
 
     private async Task<DeliveryTarget?> FindKindleTargetAsync(Guid userId, CancellationToken cancellationToken)
     {

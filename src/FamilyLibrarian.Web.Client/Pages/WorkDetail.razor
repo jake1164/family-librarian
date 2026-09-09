@@ -141,24 +141,25 @@
                 {
                     <fieldset class="pa-0" style="border: 0;">
                         <legend class="mud-typography mud-typography-body2">Which format would you like?</legend>
-                        <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@(isSubmitting || !IsEbookReady)" />
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
+                            <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@(isSubmitting || !IsEbookReady)" />
+                            @if (wantsEbook)
+                            {
+                                @if (kindleTarget is { IsEnabled: true })
+                                {
+                                    <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption">
+                                        Kindle delivery is not configured.
+                                        <MudLink Href="settings/ebook-delivery">Configure Kindle</MudLink>
+                                    </MudText>
+                                }
+                            }
+                        </MudStack>
                         <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@(isSubmitting || !IsAudiobookReady)" />
                     </fieldset>
-
-                    @if (wantsEbook)
-                    {
-                        @if (kindleTarget is { IsEnabled: true })
-                        {
-                            <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
-                        }
-                        else
-                        {
-                            <MudText Typo="Typo.caption">
-                                Kindle delivery is not configured.
-                                <MudLink Href="settings/ebook-delivery">Configure Kindle</MudLink>
-                            </MudText>
-                        }
-                    }
 
                     @if (fulfillment?.EbookReadiness is { IsReady: false } ebookReadiness)
                     {

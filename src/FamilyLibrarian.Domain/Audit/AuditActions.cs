@@ -89,6 +89,9 @@ public static class AuditActions
 
     public const string DeliveryAttemptSubmitted = "delivery_attempt.submitted";
     public const string DeliveryAttemptFailed = "delivery_attempt.failed";
+
+    public const string DeliveryTargetAdminAddressChanged = "delivery_target.admin_address_changed";
+    public const string DeliveryTargetAdminEnabledChanged = "delivery_target.admin_enabled_changed";
 }
 
 public static class AuditSubjectTypes
@@ -107,4 +110,5 @@ public static class AuditSubjectTypes
     public const string ProviderCatalog = "provider_catalog";
     public const string SettingsBackup = "settings_backup";
     public const string DeliveryAttempt = "delivery_attempt";
+    public const string DeliveryTarget = "delivery_target";
 }

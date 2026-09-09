@@ -105,6 +105,9 @@ internal static class AdminTasksEndpoints
         var deliveryResponses = publishingSnapshot.Deliveries
             .Select(PublishingQueueEndpoints.ToDeliveryResponse)
             .ToArray();
+        var kindleDeliveryResponses = publishingSnapshot.DeliveryAttempts
+            .Select(PublishingQueueEndpoints.ToDeliveryAttemptResponse)
+            .ToArray();
 
         var summary = new AdminTaskSummaryResponse(
             requestResponses.Count(item => item.Request.Request.IsActive),
@@ -117,6 +120,7 @@ internal static class AdminTasksEndpoints
             providerResponses.Count(attempt => attempt.Outcome is "Failed" or "Blocked"),
             importResponses.Count(import => import.Status != "Available") +
             deliveryResponses.Count(delivery => delivery.Status != "Delivered") +
+            kindleDeliveryResponses.Count(attempt => attempt.Status == "Failed") +
             publishingIssues.Length);
 
         return Results.Ok(new AdminTasksResponse(
@@ -127,6 +131,7 @@ internal static class AdminTasksEndpoints
             securityResponses,
             importResponses,
             deliveryResponses,
+            kindleDeliveryResponses,
             publishingIssues));
     }
 }

@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Delivery;
+using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Delivery;
 
@@ -188,9 +189,82 @@ public sealed class DeliveryTargetServiceTests
         Assert.IsFalse(result.Succeeded);
     }
 
+    [TestMethod]
+    public async Task AdminCanSetTheAddressForAUserWhoHasNoneYet()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+        var service = Create(repository, Owner);
+
+        var result = await service.AdminSetKindleAddressAsync(
+            OtherUser, "them@kindle.com", expectedVersion: null, CancellationToken.None);
+
+        Assert.AreEqual(SetKindleTargetOutcome.Success, result.Outcome);
+        var stored = repository.Rows.Single();
+        Assert.AreEqual(OtherUser, stored.UserId);
+        Assert.AreEqual("them@kindle.com", stored.Address);
+        Assert.IsTrue(stored.SendByDefault, "Admin address creation still defaults SendByDefault, matching self-service creation.");
+    }
+
+    [TestMethod]
+    public async Task AdminCorrectingAnAddressDoesNotDisturbSendByDefault()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+        var service = Create(repository, Owner);
+        var mine = await service.SetMyKindleAddressAsync("old@kindle.com", null, sendByDefault: false, CancellationToken.None);
+
+        var result = await service.AdminSetKindleAddressAsync(
+            Owner, "new@kindle.com", mine.Target!.Version, CancellationToken.None);
+
+        Assert.AreEqual(SetKindleTargetOutcome.Success, result.Outcome);
+        Assert.AreEqual("new@kindle.com", repository.Rows.Single().Address);
+        Assert.IsFalse(repository.Rows.Single().SendByDefault, "Admin edits must not silently flip the owner's own delivery preference.");
+    }
+
+    [TestMethod]
+    public async Task AdminSettingAStaleVersionIsAConflict()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+        var service = Create(repository, Owner);
+        var mine = await service.SetMyKindleAddressAsync("old@kindle.com", null, true, CancellationToken.None);
+
+        var result = await service.AdminSetKindleAddressAsync(
+            Owner, "new@kindle.com", mine.Target!.Version + 1, CancellationToken.None);
+
+        Assert.AreEqual(SetKindleTargetOutcome.Conflict, result.Outcome);
+        Assert.AreEqual("old@kindle.com", repository.Rows.Single().Address);
+    }
+
+    [TestMethod]
+    public async Task AdminCanDisableAUsersTarget()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+        var service = Create(repository, Owner);
+        var mine = await service.SetMyKindleAddressAsync("reader@kindle.com", null, true, CancellationToken.None);
+
+        var result = await service.AdminSetKindleEnabledAsync(Owner, false, mine.Target!.Version, CancellationToken.None);
+
+        Assert.AreEqual(SetKindleTargetOutcome.Success, result.Outcome);
+        Assert.IsFalse(result.Target!.IsEnabled);
+    }
+
+    [TestMethod]
+    public async Task AdminListingKindleTargetsReturnsEveryUsersTargetKeyedByUserId()
+    {
+        var repository = new InMemoryDeliveryTargetRepository();
+        repository.Seed(new DeliveryTarget(Owner, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "mine@kindle.com", Now));
+        repository.Seed(new DeliveryTarget(OtherUser, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "theirs@kindle.com", Now));
+        var service = Create(repository, Owner);
+
+        var all = await service.AdminListKindleTargetsAsync(CancellationToken.None);
+
+        Assert.AreEqual(2, all.Count);
+        Assert.AreEqual("mine@kindle.com", all[Owner].Address);
+        Assert.AreEqual("theirs@kindle.com", all[OtherUser].Address);
+    }
+
     private static DeliveryTargetService Create(
         IDeliveryTargetRepository repository, Guid? userId, IEnumerable<IEbookDeliveryProvider>? providers = null) =>
-        new(repository, providers ?? [], new StubCurrentUser(userId), new FixedClock());
+        new(repository, providers ?? [], new StubCurrentUser(userId), new NoOpAuditWriter(), new FixedClock());
 
     private sealed class StubEbookDeliveryProvider(string id, ConnectionTestOutcome testOutcome) : IEbookDeliveryProvider
     {
@@ -232,8 +306,18 @@ public sealed class DeliveryTargetServiceTests
             Task.FromResult<IReadOnlyList<DeliveryTarget>>(
                 Rows.Where(row => row.UserId == userId).ToArray());
 
+        public Task<IReadOnlyList<DeliveryTarget>> ListAllAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryTarget>>(Rows.ToArray());
+
         public void Add(DeliveryTarget target) => Rows.Add(target);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class NoOpAuditWriter : IAuditWriter
+    {
+        public Task WriteAsync(
+            string action, string subjectType, string? subjectId, object? detail, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 }

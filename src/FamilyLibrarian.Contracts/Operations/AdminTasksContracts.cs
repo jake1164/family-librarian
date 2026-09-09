@@ -17,6 +17,7 @@ public sealed record AdminTasksResponse(
     IReadOnlyList<MediaAssetAdminResponse> SecurityActivity,
     IReadOnlyList<LibraryImportResponse> LibraryImports,
     IReadOnlyList<AudiobookshelfDeliveryResponse> Deliveries,
+    IReadOnlyList<DeliveryAttemptResponse> KindleDeliveries,
     IReadOnlyList<DegradedSystemComponentResponse> PublishingIssues);
 
 public sealed record AdminTaskSummaryResponse(

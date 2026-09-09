@@ -13,6 +13,12 @@ public sealed record SetKindleAddressRequest(string Address, uint? ExpectedVersi
 
 public sealed record SetKindleEnabledRequest(bool Enabled, uint ExpectedVersion);
 
+/// <summary>The admin accounts page's "set/change Kindle email" action. Deliberately no <c>SendByDefault</c> -- that request-time preference stays the account owner's own decision.</summary>
+public sealed record AdminSetKindleAddressRequest(string Address, uint? ExpectedVersion);
+
+/// <summary>The admin accounts page's Kindle column: whether it's configured, and whether it's enabled.</summary>
+public sealed record KindleDeliverySummaryResponse(string Address, bool IsEnabled, uint Version);
+
 public sealed record TestKindleDeliveryResponse(bool Succeeded, string Message);
 
 public sealed record SendExistingBookRequest(Guid WorkId);

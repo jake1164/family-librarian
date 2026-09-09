@@ -872,6 +872,9 @@ public sealed class BookRequestServiceTests
         public Task<IReadOnlyList<DeliveryTarget>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<DeliveryTarget>>(_targets.Where(target => target.UserId == userId).ToArray());
 
+        public Task<IReadOnlyList<DeliveryTarget>> ListAllAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryTarget>>(_targets.ToArray());
+
         public void Add(DeliveryTarget target) => _targets.Add(target);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;

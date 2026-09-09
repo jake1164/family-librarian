@@ -16,6 +16,11 @@ public sealed class DeliveryTargetRepository(AppDbContext database) : IDeliveryT
             .OrderBy(target => target.CreatedAtUtc)
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<DeliveryTarget>> ListAllAsync(CancellationToken cancellationToken) =>
+        await database.DeliveryTargets
+            .OrderBy(target => target.UserId)
+            .ToArrayAsync(cancellationToken);
+
     public void Add(DeliveryTarget target) => database.DeliveryTargets.Add(target);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);

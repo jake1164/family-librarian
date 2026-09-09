@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FamilyLibrarian.Contracts.Accounts;
+using FamilyLibrarian.Contracts.Delivery;
 using FamilyLibrarian.Web.Client.Authentication;
 
 namespace FamilyLibrarian.Web.Client.Accounts;
@@ -118,6 +119,46 @@ public sealed class AccountsApiClient(HttpClient httpClient, AntiforgeryTokenPro
             new ResetAccountPasswordRequest(password),
             cancellationToken);
 
+    public async Task<AdminKindleTargetOutcome> SetAccountKindleAddressAsync(
+        Guid userId,
+        string address,
+        uint? expectedVersion,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await SendAsync(
+            HttpMethod.Put,
+            $"api/v1/admin/accounts/{userId}/delivery/kindle",
+            new AdminSetKindleAddressRequest(address, expectedVersion),
+            cancellationToken);
+
+        return response.IsSuccessStatusCode
+            ? new AdminKindleTargetOutcome(
+                true,
+                await response.Content.ReadFromJsonAsync<KindleDeliverySummaryResponse>(cancellationToken),
+                null)
+            : new AdminKindleTargetOutcome(false, null, await ReadErrorAsync(response, cancellationToken));
+    }
+
+    public async Task<AdminKindleTargetOutcome> SetAccountKindleEnabledAsync(
+        Guid userId,
+        bool enabled,
+        uint expectedVersion,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await SendAsync(
+            HttpMethod.Put,
+            $"api/v1/admin/accounts/{userId}/delivery/kindle/enabled",
+            new SetKindleEnabledRequest(enabled, expectedVersion),
+            cancellationToken);
+
+        return response.IsSuccessStatusCode
+            ? new AdminKindleTargetOutcome(
+                true,
+                await response.Content.ReadFromJsonAsync<KindleDeliverySummaryResponse>(cancellationToken),
+                null)
+            : new AdminKindleTargetOutcome(false, null, await ReadErrorAsync(response, cancellationToken));
+    }
+
     /// <summary>Reads the invitation behind a token. Anonymous — no token header.</summary>
     public async Task<InvitationPreviewResponse?> PreviewInvitationAsync(
         string token,
@@ -220,6 +261,8 @@ public sealed class AccountsApiClient(HttpClient httpClient, AntiforgeryTokenPro
 }
 
 public sealed record AccountActionOutcome(bool Succeeded, string? Error);
+
+public sealed record AdminKindleTargetOutcome(bool Succeeded, KindleDeliverySummaryResponse? Target, string? Error);
 
 public sealed record CreateInvitationOutcome(
     bool Succeeded,
