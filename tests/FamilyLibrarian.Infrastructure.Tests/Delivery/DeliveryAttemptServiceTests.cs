@@ -39,6 +39,28 @@ public sealed class DeliveryAttemptServiceTests
         Assert.IsFalse(attempt.Convert);
     }
 
+    /// <summary>
+    /// MediaAsset.Format carries Path.GetExtension's leading dot (e.g.
+    /// ".epub"). CWA's /send_selected route matches book_format against
+    /// Calibre's stored format token, which is always bare (e.g. "EPUB") --
+    /// an unstripped dot never matches, and CWA reports that mismatch as a
+    /// generic "could not be read" file error. Confirmed against a real
+    /// send on toontown-int-srv2, 2026-09-09.
+    /// </summary>
+    [TestMethod]
+    public async Task ReleaseStripsLeadingDotFromBookFormat()
+    {
+        var context = new TestContext();
+        var wantsDelivery = context.SeedEnabledTarget();
+        var request = new BookRequest(
+            wantsDelivery.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: wantsDelivery.Id);
+
+        await context.Service.ReleaseForRequestFormatAsync(request, "42", ".epub", Now, CancellationToken.None);
+
+        var attempt = context.DeliveryAttempts.Rows.Single();
+        Assert.AreEqual("epub", attempt.BookFormat);
+    }
+
     [TestMethod]
     public async Task ReleasingTwiceForTheSameRequestIsANoOp()
     {

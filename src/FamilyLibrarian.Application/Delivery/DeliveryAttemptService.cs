@@ -44,6 +44,14 @@ public sealed class DeliveryAttemptService(
         var existing = await repository.ListForRequestAsync(request.Id, cancellationToken);
         var alreadyReleasedUserIds = existing.Select(attempt => attempt.UserId).ToHashSet();
 
+        // MediaAsset.Format carries a leading dot (Path.GetExtension's shape,
+        // e.g. ".epub") for its own extension-policy purposes, but CWA's
+        // /send_selected route matches this against Calibre's stored format
+        // token, which is always bare and uppercase (e.g. "EPUB") -- an
+        // unstripped dot never matches, and CWA reports that as a generic
+        // "could not be read" file error rather than a format mismatch.
+        var normalizedBookFormat = bookFormat.TrimStart('.');
+
         foreach (var participant in request.Participants)
         {
             if (participant.WithdrawnAtUtc is not null ||
@@ -64,7 +72,7 @@ public sealed class DeliveryAttemptService(
 
             var attempt = new DeliveryAttempt(
                 request.Id, participant.UserId, target.Id, ResolveProviderId(target.Provider),
-                externalBookId, bookFormat, convert: false, attemptNumber: 1, atUtc);
+                externalBookId, normalizedBookFormat, convert: false, attemptNumber: 1, atUtc);
             repository.Add(attempt);
             await repository.SaveChangesAsync(cancellationToken);
 
