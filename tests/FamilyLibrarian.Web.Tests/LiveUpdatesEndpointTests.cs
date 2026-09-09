@@ -5,6 +5,8 @@ using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Realtime;
 using FamilyLibrarian.Domain.Accounts;
+using FamilyLibrarian.Domain.Delivery;
+using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Publishing;
@@ -79,6 +81,52 @@ public sealed class LiveUpdatesEndpointTests
         Assert.AreEqual(LiveUpdateTopics.Publishing | LiveUpdateTopics.Requests, received[0]);
         Assert.AreEqual(LiveUpdateTopics.Requests, received[1]);
         Assert.AreEqual(LiveUpdateTopics.None, received[2]);
+    }
+
+    [TestMethod]
+    public async Task KindleSubmissionFailureAndReceiptUpdatesDoNotLeakToSharedRequestParticipants()
+    {
+        await using var factory = new FamilyLibrarianAppFactory(WebTestFixture.Require(fixture).ConnectionString);
+        await using var admin = await Viewer.ConnectAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        await using var owner = await Viewer.ConnectAsync(factory, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
+        await using var participant = await Viewer.ConnectAsync(factory, await CreateUserAsync(factory), WebTestFixture.UserPassword);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var work = new Work("Private Kindle receipt", null, null, null, PublicationStatus.Published, now);
+        var request = new BookRequest(owner.UserId, work.Id, [RequestMediaType.Ebook], null, now);
+        request.Join(participant.UserId, [RequestMediaType.Ebook], null, now);
+        var target = new DeliveryTarget(owner.UserId, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "owner@kindle.com", now);
+        database.Works.Add(work);
+        database.BookRequests.Add(request);
+        database.DeliveryTargets.Add(target);
+        await database.SaveChangesAsync();
+        await BarrierAsync(factory, admin, owner, participant);
+        var failed = new DeliveryAttempt(request.Id, owner.UserId, target.Id, "cwa", "42", "epub", false, 1, now);
+        failed.TransitionTo(DeliveryAttemptStatus.Submitting, now);
+        failed.TransitionTo(DeliveryAttemptStatus.Failed, now, "offline", retryable: true);
+        database.DeliveryAttempts.Add(failed);
+        await database.SaveChangesAsync();
+        AssertKindleAudience(await BarrierAsync(factory, admin, owner, participant));
+        var sent = new DeliveryAttempt(request.Id, owner.UserId, target.Id, "cwa", "42", "epub", false, 2, now, deliveryId: failed.DeliveryId);
+        sent.TransitionTo(DeliveryAttemptStatus.Submitting, now);
+        sent.TransitionTo(DeliveryAttemptStatus.Submitted, now);
+        database.DeliveryAttempts.Add(sent);
+        await database.SaveChangesAsync();
+        AssertKindleAudience(await BarrierAsync(factory, admin, owner, participant));
+        sent.ReportMissing(now);
+        await database.SaveChangesAsync();
+        AssertKindleAudience(await BarrierAsync(factory, admin, owner, participant));
+        sent.ConfirmReceived(now);
+        await database.SaveChangesAsync();
+        AssertKindleAudience(await BarrierAsync(factory, admin, owner, participant));
+    }
+
+    private static void AssertKindleAudience(LiveUpdateTopics[] topics)
+    {
+        Assert.AreEqual(LiveUpdateTopics.Publishing | LiveUpdateTopics.Requests, topics[0]);
+        Assert.AreEqual(LiveUpdateTopics.Deliveries | LiveUpdateTopics.Requests, topics[1]);
+        Assert.AreEqual(LiveUpdateTopics.None, topics[2]);
     }
 
     [TestMethod]

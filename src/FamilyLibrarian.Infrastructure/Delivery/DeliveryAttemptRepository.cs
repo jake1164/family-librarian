@@ -44,7 +44,7 @@ public sealed class DeliveryAttemptRepository(AppDbContext database) : IDelivery
                 attempt.Id,
                 attempt.RequestId,
                 request == null ? (Guid?)null : request.WorkId,
-                work == null ? null : work.CanonicalTitle,
+                attempt.BookTitle ?? (work == null ? null : work.CanonicalTitle),
                 user.DisplayName,
                 user.Email!,
                 attempt.ExternalBookId,
@@ -52,7 +52,13 @@ public sealed class DeliveryAttemptRepository(AppDbContext database) : IDelivery
                 attempt.AttemptNumber,
                 attempt.FailureReason,
                 attempt.CreatedAtUtc,
-                attempt.CompletedAtUtc);
+                attempt.CompletedAtUtc,
+                attempt.DeliveryId,
+                attempt.ConfirmationStatus,
+                attempt.ConfirmedAtUtc,
+                !database.DeliveryAttempts.Any(later => later.DeliveryId == attempt.DeliveryId &&
+                    later.AttemptNumber > attempt.AttemptNumber),
+                attempt.IsRetryable);
 
         return await query.ToArrayAsync(cancellationToken);
     }

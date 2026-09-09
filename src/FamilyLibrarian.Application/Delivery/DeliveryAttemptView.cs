@@ -6,7 +6,7 @@ namespace FamilyLibrarian.Application.Delivery;
 /// The admin Publishing Queue's read model for one Kindle delivery attempt.
 /// </summary>
 /// <remarks>
-/// <see cref="RequestId"/>/<see cref="WorkId"/>/<see cref="WorkTitle"/> are
+/// <see cref="RequestId"/>/<see cref="WorkId"/> are
 /// null for the existing-book fast path, which has no <c>BookRequest</c> at
 /// all. Requester identity is joined here specifically because this is an
 /// administrator-only view (mirroring <c>AdminBookRequestView</c>) -- the
@@ -25,4 +25,16 @@ public sealed record DeliveryAttemptView(
     int AttemptNumber,
     string? FailureReason,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset? CompletedAtUtc);
+    DateTimeOffset? CompletedAtUtc,
+    Guid DeliveryId,
+    DeliveryConfirmationStatus ConfirmationStatus,
+    DateTimeOffset? ConfirmedAtUtc,
+    bool IsLatest,
+    bool IsRetryable)
+{
+    public bool CanRetry => IsLatest && DeliveryRetryPolicy.CanRetry(Status, ConfirmationStatus);
+    public DateTimeOffset? NextAutomaticRetryAtUtc => DeliveryRetryPolicy.NextAutomaticRetryAt(
+        Status, IsRetryable, AttemptNumber, CompletedAtUtc, IsLatest);
+    public bool AutomaticRetriesExhausted => IsLatest && Status == DeliveryAttemptStatus.Failed &&
+        IsRetryable && AttemptNumber >= DeliveryRetryPolicy.MaxAttempts;
+}

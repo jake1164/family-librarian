@@ -162,7 +162,14 @@ public sealed record DeliveryAttemptResponse(
     int AttemptNumber,
     string? FailureReason,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset? CompletedAtUtc);
+    DateTimeOffset? CompletedAtUtc,
+    Guid DeliveryId,
+    string ConfirmationStatus,
+    DateTimeOffset? ConfirmedAtUtc,
+    bool IsLatest,
+    bool CanRetry,
+    DateTimeOffset? NextAutomaticRetryAtUtc,
+    bool AutomaticRetriesExhausted);
 
 public sealed record PublishingQueueResponse(
     IReadOnlyList<LibraryImportResponse> LibraryImports,

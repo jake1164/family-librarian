@@ -377,9 +377,9 @@ public sealed class SettingsBackupService(
         settings.SetSettings(ParseEnum<CwaTransportMode>(source.TransportMode), source.LocalIngestPath, source.SftpHost,
             source.SftpPort, source.SftpUsername, source.SftpIngestPath,
             ParseEnum<CwaSftpAuthenticationMode>(source.SftpAuthenticationMode), source.OpdsBaseUrl, source.PublicUrl,
-            // The e-reader delivery service account is not yet covered by settings
-            // backup/restore -- same known gap as other providers' newest secrets
-            // until explicitly enrolled (see test_smtp.py's docstring in the lab suite).
+            // Settings-only archives exclude this account. The archive UI and
+            // docs/06-deployment-and-recovery.md describe re-entering it after
+            // import; full database backups preserve the account and key ring.
             source.OpdsUsername, null, null, clock.UtcNow);
         ApplySecret(source.SftpPrivateKey, settings.SetSftpPrivateKey, null, clock.UtcNow);
         ApplySecret(source.SftpPassphrase, settings.SetSftpPassphrase, null, clock.UtcNow);

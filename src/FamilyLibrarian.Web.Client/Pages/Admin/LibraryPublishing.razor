@@ -1,3 +1,4 @@
+@using FamilyLibrarian.Web.Client.Delivery
 @page "/admin/publishing"
 @inherits LiveComponentBase
 @attribute [Authorize(Roles = "Admin")]
@@ -116,7 +117,7 @@ else
         <MudStack Spacing="3">
             @foreach (var attempt in queue.DeliveryAttempts)
             {
-                <MudPaper Class="pa-4" Elevation="1">
+                <MudPaper Class="pa-4" Elevation="1" data-attempt-id="@attempt.Id">
                     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
                         @if (attempt.RequestId is { } requestId)
                         {
@@ -126,10 +127,10 @@ else
                         }
                         else
                         {
-                            <MudText Typo="Typo.h6">Existing library book</MudText>
+                            <MudText Typo="Typo.h6">@(attempt.WorkTitle ?? "Existing library book")</MudText>
                         }
                         <MudSpacer />
-                        <MudChip T="string" Size="Size.Small" Color="MediaTypeVisuals.KindleColor(attempt.Status)">@MediaTypeVisuals.StatusLabel(attempt.Status)</MudChip>
+                        <KindleStatusChip Status="@attempt.Status" ConfirmationStatus="@attempt.ConfirmationStatus" />
                     </MudStack>
                     <MudText Typo="Typo.body2" Class="mt-1">
                         Requested by @attempt.RequesterDisplayName (@attempt.RequesterEmail) —
@@ -140,7 +141,23 @@ else
                     {
                         <MudText Typo="Typo.caption" Color="Color.Error">@attempt.FailureReason</MudText>
                     }
-                    @if (attempt.Status is "Failed" or "SubmissionUnknown")
+                    @if (attempt.ConfirmedAtUtc is { } answered)
+                    {
+                        <MudText Typo="Typo.caption">Receipt answer updated @answered.ToLocalTime().ToString("g")</MudText>
+                    }
+                    @if (!attempt.IsLatest)
+                    {
+                        <MudText Typo="Typo.caption">Superseded — a newer attempt exists.</MudText>
+                    }
+                    @if (attempt.NextAutomaticRetryAtUtc is { } retryAt)
+                    {
+                        <MudText Typo="Typo.caption">Automatic retry eligible after @retryAt.ToLocalTime().ToString("g"); next eligible worker sweep, subject to recipient checks.</MudText>
+                    }
+                    @if (attempt.AutomaticRetriesExhausted)
+                    {
+                        <MudText Typo="Typo.caption">Automatic retries exhausted.</MudText>
+                    }
+                    @if (attempt.CanRetry)
                     {
                         <MudButton Variant="Variant.Outlined" Class="mt-2" Disabled="@(busyId == attempt.Id)"
                                    OnClick="@(() => RetryDeliveryAttemptAsync(attempt.Id, attempt.Status == "SubmissionUnknown"))">

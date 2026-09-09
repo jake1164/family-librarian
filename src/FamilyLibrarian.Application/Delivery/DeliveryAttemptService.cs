@@ -25,13 +25,13 @@ public sealed class DeliveryAttemptService(
     NotificationService notifications)
 {
     /// <summary>Beta retry policy (beta plan §20) -- a fixed step schedule, not exponential backoff.</summary>
-    private const int MaxAttempts = 3;
+    private const int MaxAttempts = DeliveryRetryPolicy.MaxAttempts;
     private static readonly TimeSpan SubmissionTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan InterruptedAfter = TimeSpan.FromMinutes(5);
     private const string UnknownSubmissionMessage =
         "The send was interrupted and may already have been accepted. Check your Kindle before resending; another send may create a duplicate.";
 
-    private static readonly TimeSpan[] RetryCooldowns = [TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(10)];
+
 
     /// <summary>
     /// Releases a Pending delivery attempt for every active participant who
@@ -158,14 +158,14 @@ public sealed class DeliveryAttemptService(
     /// <returns>The number of attempts retried.</returns>
     public async Task<int> RetryFailedAsync(CancellationToken cancellationToken)
     {
-        var oldestEligibleCompletion = clock.UtcNow - RetryCooldowns[0];
+        var oldestEligibleCompletion = clock.UtcNow - DeliveryRetryPolicy.Cooldown(1);
         var candidates = await repository.ListRetryableFailedAsync(
             oldestEligibleCompletion, MaxAttempts, cancellationToken);
 
         var retried = 0;
         foreach (var failed in candidates)
         {
-            var cooldown = RetryCooldowns[Math.Min(failed.AttemptNumber - 1, RetryCooldowns.Length - 1)];
+            var cooldown = DeliveryRetryPolicy.Cooldown(failed.AttemptNumber);
             if (failed.CompletedAtUtc is not { } completedAtUtc || clock.UtcNow - completedAtUtc < cooldown)
             {
                 continue;
@@ -212,10 +212,7 @@ public sealed class DeliveryAttemptService(
             return RetryDeliveryResult.DuplicateConfirmationRequired();
         }
 
-        var eligible = attempt.Status == DeliveryAttemptStatus.Failed ||
-            attempt.Status == DeliveryAttemptStatus.SubmissionUnknown ||
-            (attempt.Status == DeliveryAttemptStatus.Submitted &&
-                attempt.ConfirmationStatus == DeliveryConfirmationStatus.ReportedMissing);
+        var eligible = DeliveryRetryPolicy.CanRetry(attempt.Status, attempt.ConfirmationStatus);
         if (!eligible)
         {
             return RetryDeliveryResult.NotFailed();
@@ -233,8 +230,8 @@ public sealed class DeliveryAttemptService(
         bool confirmPossibleDuplicate = false)
     {
         var attempt = await repository.FindAsync(attemptId, cancellationToken);
-        if (attempt is null || (attempt.Status != DeliveryAttemptStatus.Failed &&
-            !(attempt.Status == DeliveryAttemptStatus.SubmissionUnknown && confirmPossibleDuplicate)))
+        if (attempt is null || !DeliveryRetryPolicy.CanRetry(attempt.Status, attempt.ConfirmationStatus) ||
+            (attempt.Status == DeliveryAttemptStatus.SubmissionUnknown && !confirmPossibleDuplicate))
         {
             return false;
         }
@@ -288,6 +285,24 @@ public sealed class DeliveryAttemptService(
             new { attempt.Id, attempt.RequestId, attempt.UserId }, cancellationToken);
 
         return ConfirmDeliveryResult.Success(attempt);
+    }
+
+    public async Task<IReadOnlyList<PersonalDeliveryAttemptView>?> ListMineAsync(CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId) return null;
+        var attempts = await repository.ListForUserAsync(userId, cancellationToken);
+        var latest = attempts.GroupBy(attempt => attempt.DeliveryId)
+            .ToDictionary(group => group.Key, group => group.MaxBy(attempt => attempt.AttemptNumber)!.Id);
+        return attempts.Select(attempt => PersonalDeliveryAttemptView.From(attempt, latest[attempt.DeliveryId])).ToArray();
+    }
+
+    public async Task<PersonalDeliveryAttemptView?> GetMineAsync(Guid id, CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId) return null;
+        var attempt = await repository.FindAsync(id, cancellationToken);
+        if (attempt is null || attempt.UserId != userId) return null;
+        var latest = await repository.FindLatestAsync(attempt.DeliveryId, cancellationToken);
+        return PersonalDeliveryAttemptView.From(attempt, latest?.Id ?? attempt.Id);
     }
 
     /// <summary>Recover durable work using verified library state, never by repeating an uncertain send.</summary>

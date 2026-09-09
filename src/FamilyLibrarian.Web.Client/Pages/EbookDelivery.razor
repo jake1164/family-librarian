@@ -65,14 +65,15 @@ else
     </MudPaper>
 
     <MudPaper Class="pa-4 mt-4" Outlined="true">
-        <MudText Typo="Typo.h6" GutterBottom="true">Test Kindle delivery</MudText>
+        <MudLink Href="deliveries">View my Kindle deliveries and confirm receipt</MudLink>
+        <MudText Typo="Typo.h6" GutterBottom="true">Test service sign-in</MudText>
         <MudText Typo="Typo.body2" Class="mb-3">
             Checks that the shared delivery service account can sign in — it does not send a
-            real book (sending on an actual request isn't wired up yet; this only confirms the
-            connection works).
+            book or verify send permissions, SMTP configuration, or Kindle receipt.
+            To send a book, choose Kindle delivery on a request or use Send to Kindle on an existing library book.
         </MudText>
         <MudButton Variant="Variant.Outlined" Disabled="@testBusy" OnClick="TestKindleDeliveryAsync">
-            Test Kindle Delivery
+            Test service sign-in
         </MudButton>
     </MudPaper>
 }

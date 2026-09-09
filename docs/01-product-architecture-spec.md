@@ -1085,13 +1085,12 @@ above. It has been renamed to `AudiobookshelfDelivery` (`DeliveryStatus` ->
 `DeliveryTarget`/`DeliveryAttempt` for the user-facing concept described
 above when that work starts. This was a CLR-name-only rename — the backing
 `publishing.deliveries` table, its columns, and its enum member names are
-unchanged, so no EF migration was required. See `.ai_docs/master-delivery-plan.md`
-KINDLE-1 for the evidence, and the kindle delivery beta plan's "Shape
-reconciliation" addendum for how `DeliveryTarget`/`DeliveryAttempt` should
-actually be modeled relative to `RequestParticipant` and `AcquisitionJob`
-when that work starts — the shape below (a single `DeliveryAttempt` per
-mutable status) is superseded by that addendum in favor of one row per
-attempt, mirroring `AcquisitionJob`.
+unchanged, so that rename needed no EF migration. The implemented delivery
+model above uses one row per attempt, a stable delivery identity across retries,
+and participant-specific intent. Each user has an independent delivery history
+with receipt/retry actions, including requestless existing-book sends; the admin
+support view adds recipient identity and retry policy information. Committed
+attempt changes invalidate only the recipient's views and the admin workspace.
 
 ---
 

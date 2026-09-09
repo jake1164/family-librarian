@@ -822,6 +822,19 @@ create a duplicate)** after checking receipt; the retry API requires
 `confirmPossibleDuplicate=true`. A failed completion write leaves durable work
 for recovery instead of silently repeating a possibly accepted send.
 
+Owners can list all their attempts or open one by ID through the authorized
+personal delivery API, irrespective of whether `RequestId` exists. History
+exposes the latest attempt ID, retry eligibility, earliest automatic retry time
+and exhaustion. Receipt notifications link directly to the attempt. The admin
+support projection adds recipient identity, stored title, receipt state/time and
+supersession; admins may explicitly retry Submitted + ReportedMissing, while
+Submitted + Confirmed is not retryable. Request withdrawal or disabled targets
+still prevent dispatch through the shared eligibility check.
+
+Delivery writes emit recipient-only Deliveries/Requests invalidation and admin
+Publishing/Requests invalidation after commit. They do not use shared-request
+participant fan-out. Live views reload on reconnect using their authorized APIs.
+
 **KINDLE-7 (2026-09-09):** `Delivered`/`UserReportedMissing` above were never
 built as further `DeliveryAttemptStatus` values. Instead, a `Submitted` row
 carries a separate `DeliveryConfirmationStatus`

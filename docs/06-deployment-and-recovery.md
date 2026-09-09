@@ -112,6 +112,83 @@ all EF Core migrations, do not downgrade a production database casually: a
 rollback executes migration `Down` operations and may lose data. See
 [Microsoft's migration deployment guidance](https://learn.microsoft.com/ef/core/managing-schemas/migrations/applying).
 
+## Targeted Kindle delivery
+
+Family Librarian uses CWA to send a specific library book to the opted-in
+recipient. CWA library availability, submission to CWA, and arrival on a
+Kindle are separate facts. CWA's SMTP settings send books; Family Librarian's
+Communications SMTP settings serve a different purpose.
+
+### Administrator setup
+
+1. Configure CWA's mail server under its administrator email settings, including
+   the provider's required encryption and authentication. Check CWA's email test
+   and task/log output. Keep CWA **Auto-Send disabled for every relevant user**:
+   its automatic distribution on import would bypass Family Librarian's per-user
+   intent and attempt history. See the upstream [CWA email and Auto-Send
+   guide](https://github.com/crocodilestick/Calibre-Web-Automated/wiki/Auto-Send-System).
+2. Create a dedicated CWA login for Family Librarian. It does not need admin
+   privileges. Grant **Allow Downloads**, access to the intended books, and
+   **Allow additional eReader email addresses** so the request's recipient can
+   differ from the service account's own saved address. These checks are
+   enforced by CWA's [targeted-send route](https://github.com/crocodilestick/Calibre-Web-Automated/blob/main/cps/web.py).
+   Labels vary by installed CWA release; verify those permissions after an upgrade.
+3. In Family Librarian **Publishing settings**, expand CWA and configure its
+   base URL in the OPDS section, then save the dedicated **E-reader delivery
+   service account** username/password. Catalog OPDS credentials are separate.
+   CWA ingest configuration is also separate from sending an existing book.
+   The e-reader account requires a reachable form-login endpoint; an interactive
+   SSO-only login is not sufficient for this integration.
+4. Use **Ebook delivery → Test service sign-in** to verify saved credentials.
+   This does not verify send permissions, mail delivery, or on-device arrival.
+   Make the first actual send with one intended recipient and one suitable book,
+   then confirm it on the device before broad use.
+
+### Recipient setup and use
+
+Find the device's Send-to-Kindle address in Amazon's Content and Devices /
+Personal Document Settings. Add the **CWA outgoing sender address** to Amazon's
+approved personal-document senders. Save the Kindle address in Family Librarian
+**Ebook delivery**, enable it, and choose the default request preference. Amazon
+lists EPUB among supported document formats; an unsupported or protected book
+may still fail. Follow [Amazon's sending instructions](https://digprjsurvey.amazon.co.uk/csad/help/node/G5WYD9SAF7PGXRNA)
+and [error guidance](https://digprjsurvey.amazon.co.uk/csad/help/node/T48rsVm3gY7KeGkKUk).
+
+Choose Kindle delivery when requesting an ebook, or use **Send to Kindle** on
+an existing library book. Open **My Kindle deliveries** to inspect all attempts,
+including sends without an acquisition request. Answer **Received** or **Not
+received** after a submitted send. Reporting missing does not itself resend.
+A notification opens that specific delivery; superseded attempts link to the
+latest one. Repeated retry commands on an old attempt cannot create another send.
+
+### Troubleshooting and support
+
+| Displayed state | Meaning and next step |
+| --- | --- |
+| Waiting to send / Sending | Durable work exists. The worker recovers pending work at startup and every five minutes. |
+| Delivery failed | Read the reason. Login/configuration problems require correction; safely retryable failures show their earliest retry time or exhaustion. Recipient eligibility is rechecked before dispatch. |
+| Sent — receipt unconfirmed | CWA acknowledged the submission. Check CWA's mail task/logs, Amazon rejection/verification messages, the approved sender and recipient address, and the device's connectivity/sync. This is not proof of arrival. |
+| Sent, but not received | The recipient reported missing. The latest attempt offers Retry to the owner and administrator after investigating the cause. |
+| Received | The recipient confirmed arrival; no retry is offered. |
+| Send outcome unknown | Submission may have succeeded. Check receipt and CWA activity before selecting **Resend (may create a duplicate)**. This state never automatically retries. |
+| Cancelled / Superseded | No send will be resumed from that row. Inspect the latest attempt and current target/account/participation settings. |
+
+In **Publishing activity → Ebooks → Kindle**, administrators see the stored book
+title (or library reference for older untitled rows), recipient identity, attempt
+number, submission and receipt states, receipt time, supersession and automatic
+retry timing/exhaustion. Only the latest eligible attempt offers Retry. Open
+pages refresh on committed delivery changes and reconnect; one participant's
+receipt does not broadcast to other participants of the shared request.
+
+Live health checks update publishing status without replacing unsaved form
+values. Save explicitly to apply a draft; reload the page to load configuration
+changes made by another administrator.
+
+Existing-copy matching is not a suitability guarantee. The current path does
+not establish edition, language, DRM or conversion suitability. Resolve those
+requirements before reusing a questionable copy; sending or receiving a test
+book does not establish that every matched copy is suitable.
+
 ### Kindle delivery upgrade and interrupted sends
 
 `HardenKindleDelivery` preserves existing delivery rows and IDs, assigns a
@@ -283,8 +360,12 @@ todo, not routine output, once real provider credentials are in use.
 
 An administrator can create an encrypted settings-only archive from **Settings
 backup** in the application. It contains current integration, provider, OIDC,
-private-egress, and acquisition-policy configuration, including the existing
-Data Protection ciphertext for credentials. It does not contain accounts,
+private-egress, and acquisition-policy configuration, including Data Protection
+ciphertext for the supported credentials. **Excluded:** CWA e-reader service-account
+username/password, personal Kindle targets and all delivery/receipt history.
+After import, re-enter the service credentials in Publishing settings and have
+users set up their Kindle addresses again. The service sign-in test only checks
+login; verify an intended book send separately. It does not contain accounts,
 catalogue data, requests, audit history, notifications, jobs, files, or the
 Data Protection key ring. It is not a replacement for the PostgreSQL backup
 and restore procedure above.

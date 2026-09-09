@@ -222,7 +222,7 @@
         // No per-attempt deep link exists on My Requests -- the confirm/report
         // buttons live inline on the request card, so this just gets the user
         // to the right page.
-        (KindleDeliveryConfirmationRequestedCategory, "delivery_attempt", { }) => "requests",
+        (KindleDeliveryConfirmationRequestedCategory, "delivery_attempt", { } id) => $"deliveries/{id}",
         _ => null
     };
 

@@ -15,6 +15,22 @@ namespace FamilyLibrarian.Web.Client.Theme;
 /// </summary>
 public static class MediaTypeVisuals
 {
+    public static string KindleLabel(string status, string? confirmationStatus = null) => status switch
+    {
+        "Submitted" => confirmationStatus switch
+        {
+            "Confirmed" => "Received",
+            "ReportedMissing" => "Sent, but not received",
+            _ => "Sent — receipt unconfirmed"
+        },
+        "Pending" => "Waiting to send",
+        "Submitting" => "Sending",
+        "Failed" => "Delivery failed",
+        "SubmissionUnknown" => "Send outcome unknown",
+        "Cancelled" => "Cancelled",
+        _ => status
+    };
+
     public static Color KindleColor(string status, string? confirmationStatus = null) => status switch
     {
         "Submitted" => confirmationStatus switch

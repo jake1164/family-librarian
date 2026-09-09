@@ -1,0 +1,11 @@
+<MudTooltip Text="Kindle ebook delivery">
+    <MudChip T="string" Size="Size.Small" Icon="@MediaTypeVisuals.Icon("Ebook")"
+             Color="@MediaTypeVisuals.KindleColor(Status, ConfirmationStatus)">
+        @MediaTypeVisuals.KindleLabel(Status, ConfirmationStatus)
+    </MudChip>
+</MudTooltip>
+
+@code {
+    [Parameter, EditorRequired] public string Status { get; set; } = string.Empty;
+    [Parameter] public string? ConfirmationStatus { get; set; }
+}

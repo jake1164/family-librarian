@@ -40,7 +40,8 @@ of the shared components below) instead. If a new status value is added to
 `RequestStatus`, `RequestFormatStatus`, or a progress code, update
 `MediaTypeVisuals` once and every page picks it up.
 
-Kindle chips use `MediaTypeVisuals.KindleColor`: Pending/Submitting and
+Kindle chips use `Delivery/KindleStatusChip.razor`, backed by
+`MediaTypeVisuals.KindleLabel` and `MediaTypeVisuals.KindleColor`: Pending/Submitting and
 Submitted without receipt confirmation are blue; confirmed receipt is green;
 failed or reported missing is red; `SubmissionUnknown` is amber; cancelled is
 neutral. Unknown submissions show **Resend (may create a duplicate)** so the

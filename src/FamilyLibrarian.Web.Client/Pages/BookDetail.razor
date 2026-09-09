@@ -280,6 +280,10 @@
                                     }
                                 </MudText>
                             }
+                            @if (sentAttemptId is { } attemptId)
+                            {
+                                <MudLink Href="@($"deliveries/{attemptId}")">View delivery and confirm receipt</MudLink>
+                            }
                             @if (sendExistingMessage is not null)
                             {
                                 <MudText Typo="Typo.body2" Color="@(sendExistingSucceeded ? Color.Success : Color.Error)">
@@ -339,6 +343,7 @@
     private BookRequestOwnedResponse? owned;
     private BookRequestResponse? createdRequest;
     private CatalogWorkResponse? resolvedWork;
+    private Guid? sentAttemptId;
     private bool isSendingExisting;
     private bool sendExistingSucceeded;
     private string? sendExistingMessage;
@@ -374,6 +379,7 @@
         createdRequest = null;
         resolvedWork = null;
         sendExistingMessage = null;
+        sentAttemptId = null;
         availability = null;
 
         // Search already fetched this candidate a moment ago: show it immediately
@@ -535,15 +541,17 @@
 
         isSendingExisting = true;
         sendExistingMessage = null;
+        sentAttemptId = null;
 
         try
         {
             var result = await DeliveryTargets.SendExistingBookAsync(work.Id);
+            sentAttemptId = result?.AttemptId;
             sendExistingSucceeded = result?.Succeeded ?? false;
             sendExistingMessage = result is null
                 ? "Your Kindle send could not be sent. Please try again."
                 : result.Succeeded
-                    ? "Sent to your Kindle."
+                    ? "The library accepted the send. Confirm arrival in My Kindle deliveries."
                     : result.Message ?? "Your Kindle send could not be sent. Please try again.";
         }
         catch (HttpRequestException)

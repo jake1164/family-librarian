@@ -121,6 +121,10 @@
                             }
                         </MudStack>
                     }
+                    @if (request.KindleDelivery is { } delivery)
+                    {
+                        <MudLink Href="@($"deliveries/{delivery.AttemptId}")">Delivery details and history</MudLink>
+                    }
                     @if (request.Status != "PendingAcquisition" ||
                         !request.Formats.Any(format => !string.IsNullOrWhiteSpace(format.ProgressDescription)))
                     {
@@ -282,22 +286,10 @@
         }
     }
 
-    private static string KindleDeliveryDescription(KindleDeliveryResponse kindle) => kindle.Status switch
-    {
-        "Submitted" => kindle.ConfirmationStatus switch
-        {
-            "Confirmed" => "Kindle: Received",
-            "ReportedMissing" => "Kindle: Sent, but not received",
-            _ => "Kindle: Sent — did it arrive?"
-        },
-        "Pending" or "Submitting" => "Kindle: Sending…",
-        "Failed" => string.IsNullOrWhiteSpace(kindle.FailureReason)
-            ? "Kindle: Delivery failed"
-            : $"Kindle: Delivery failed — {kindle.FailureReason}",
-        "SubmissionUnknown" => "Kindle: Send outcome unknown. Check your Kindle before resending; another send may create a duplicate.",
-        "Cancelled" => "Kindle: Cancelled",
-        _ => $"Kindle: {kindle.Status}"
-    };
+    private static string KindleDeliveryDescription(KindleDeliveryResponse kindle) =>
+        $"Kindle: {MediaTypeVisuals.KindleLabel(kindle.Status, kindle.ConfirmationStatus)}" +
+        (kindle.Status == "Submitted" && kindle.ConfirmationStatus == "Unconfirmed" ? ". Did it arrive?" : string.Empty) +
+        (string.IsNullOrWhiteSpace(kindle.FailureReason) ? string.Empty : $" — {kindle.FailureReason}");
 
     private static Color KindleDeliveryColor(KindleDeliveryResponse kindle) =>
         MediaTypeVisuals.KindleColor(kindle.Status, kindle.ConfirmationStatus);

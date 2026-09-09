@@ -1,3 +1,4 @@
+@using FamilyLibrarian.Web.Client.Delivery
 @page "/admin/tasks"
 @attribute [Authorize(Roles = "Admin")]
 @inherits LiveComponentBase
@@ -198,10 +199,10 @@
                                 }
                                 else
                                 {
-                                    <MudText>Existing library book</MudText>
+                                    <MudText>@(kindle.WorkTitle ?? "Existing library book")</MudText>
                                 }
                                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Kindle</MudChip>
-                                <MudChip T="string" Size="Size.Small" Color="@MediaTypeVisuals.KindleColor(kindle.Status)">@MediaTypeVisuals.StatusLabel(kindle.Status)</MudChip>
+                                <KindleStatusChip Status="@kindle.Status" ConfirmationStatus="@kindle.ConfirmationStatus" />
                             </MudStack>
                             <MudText Typo="Typo.caption">@KindleDescription(kindle)</MudText>
                         </MudListItem>
