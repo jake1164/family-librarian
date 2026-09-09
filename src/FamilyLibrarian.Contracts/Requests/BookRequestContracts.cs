@@ -58,8 +58,16 @@ public sealed record BookRequestResponse(
     KindleDeliveryResponse? KindleDelivery = null);
 
 /// <summary>The viewer's own most recent Kindle delivery attempt for this request.</summary>
+/// <param name="ConfirmationStatus">
+/// "Unconfirmed", "Confirmed", or "ReportedMissing" -- only meaningful when
+/// <paramref name="Status"/> is "Submitted" (KINDLE-7).
+/// </param>
 public sealed record KindleDeliveryResponse(
-    Guid AttemptId, string Status, string? FailureReason, int AttemptNumber);
+    Guid AttemptId,
+    string Status,
+    string? FailureReason,
+    int AttemptNumber,
+    string ConfirmationStatus = "Unconfirmed");
 
 public sealed record BookRequestFormatResponse(
     Guid FormatId,

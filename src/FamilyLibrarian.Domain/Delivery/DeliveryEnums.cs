@@ -20,3 +20,18 @@ public enum DeliveryAttemptStatus
     Failed = 4,
     Cancelled = 5
 }
+
+/// <summary>
+/// Whether the user has confirmed a <see cref="DeliveryAttemptStatus.Submitted"/>
+/// attempt actually arrived on their Kindle (KINDLE-7). Distinct from
+/// <see cref="DeliveryAttemptStatus"/>: CWA accepting the send only proves
+/// submission, never on-device receipt, so this tracks a separate,
+/// user-reported fact layered on top of a terminal <c>Submitted</c> row
+/// rather than a further status transition.
+/// </summary>
+public enum DeliveryConfirmationStatus
+{
+    Unconfirmed = 1,
+    Confirmed = 2,
+    ReportedMissing = 3
+}

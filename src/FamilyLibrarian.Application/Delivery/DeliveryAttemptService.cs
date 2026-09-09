@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Requests;
@@ -21,7 +22,9 @@ public sealed class DeliveryAttemptService(
     IEnumerable<IOwnedLibraryProvider> ownedLibraryProviders,
     ICurrentUser currentUser,
     IAuditWriter audit,
-    IClock clock)
+    IClock clock,
+    ICatalogRepository catalogRepository,
+    NotificationService notifications)
 {
     /// <summary>Beta retry policy (beta plan §20) -- a fixed step schedule, not exponential backoff.</summary>
     private const int MaxAttempts = 3;
@@ -39,7 +42,8 @@ public sealed class DeliveryAttemptService(
         string externalBookId,
         string bookFormat,
         DateTimeOffset atUtc,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? workTitle = null)
     {
         var existing = await repository.ListForRequestAsync(request.Id, cancellationToken);
         var alreadyReleasedUserIds = existing.Select(attempt => attempt.UserId).ToHashSet();
@@ -72,7 +76,7 @@ public sealed class DeliveryAttemptService(
 
             var attempt = new DeliveryAttempt(
                 request.Id, participant.UserId, target.Id, ResolveProviderId(target.Provider),
-                externalBookId, normalizedBookFormat, convert: false, attemptNumber: 1, atUtc);
+                externalBookId, normalizedBookFormat, convert: false, attemptNumber: 1, atUtc, workTitle);
             repository.Add(attempt);
             await repository.SaveChangesAsync(cancellationToken);
 
@@ -118,13 +122,15 @@ public sealed class DeliveryAttemptService(
             return SendExistingBookResult.NotOwned();
         }
 
+        var work = await catalogRepository.GetWorkAsync(workId, cancellationToken);
+
         // The original upload format isn't tracked anywhere reachable from an
         // existing-library lookup, so this path always asks CWA to convert to
         // epub on the fly -- a deliberate beta simplification, unlike the
         // release path above, which knows the real uploaded format.
         var attempt = new DeliveryAttempt(
             requestId: null, userId, target.Id, ResolveProviderId(target.Provider),
-            externalBookId, bookFormat: "epub", convert: true, attemptNumber: 1, clock.UtcNow);
+            externalBookId, bookFormat: "epub", convert: true, attemptNumber: 1, clock.UtcNow, work?.CanonicalTitle);
         repository.Add(attempt);
         await repository.SaveChangesAsync(cancellationToken);
 
@@ -176,6 +182,12 @@ public sealed class DeliveryAttemptService(
     /// reconfigured their Kindle address after a <see cref="EbookDeliveryStatus.NotConfigured"/>
     /// failure), and an explicit request to resend should not wait for a
     /// cooldown meant for background retries.
+    /// <para>
+    /// Also allowed for a <see cref="DeliveryAttemptStatus.Submitted"/> attempt
+    /// the user has <see cref="DeliveryAttempt.ReportMissing"/> -- KINDLE-7:
+    /// CWA accepted the send, so the row itself never moved to <c>Failed</c>,
+    /// but "it never arrived" is exactly the same "send it again" intent.
+    /// </para>
     /// </summary>
     public async Task<RetryDeliveryResult> RetryAsync(Guid attemptId, CancellationToken cancellationToken)
     {
@@ -190,7 +202,10 @@ public sealed class DeliveryAttemptService(
             return RetryDeliveryResult.NotFound();
         }
 
-        if (attempt.Status != DeliveryAttemptStatus.Failed)
+        var eligible = attempt.Status == DeliveryAttemptStatus.Failed ||
+            (attempt.Status == DeliveryAttemptStatus.Submitted &&
+                attempt.ConfirmationStatus == DeliveryConfirmationStatus.ReportedMissing);
+        if (!eligible)
         {
             return RetryDeliveryResult.NotFailed();
         }
@@ -215,11 +230,59 @@ public sealed class DeliveryAttemptService(
         return true;
     }
 
+    /// <summary>
+    /// KINDLE-7: the user confirms a <see cref="DeliveryAttemptStatus.Submitted"/>
+    /// attempt actually arrived on their Kindle.
+    /// </summary>
+    public Task<ConfirmDeliveryResult> ConfirmReceivedAsync(Guid attemptId, CancellationToken cancellationToken) =>
+        RecordConfirmationAsync(
+            attemptId, AuditActions.DeliveryAttemptConfirmed, attempt => attempt.ConfirmReceived(clock.UtcNow),
+            cancellationToken);
+
+    /// <summary>
+    /// KINDLE-7: the user reports that a <see cref="DeliveryAttemptStatus.Submitted"/>
+    /// attempt never arrived. Does not itself retry -- see the widened
+    /// eligibility on <see cref="RetryAsync"/>.
+    /// </summary>
+    public Task<ConfirmDeliveryResult> ReportMissingAsync(Guid attemptId, CancellationToken cancellationToken) =>
+        RecordConfirmationAsync(
+            attemptId, AuditActions.DeliveryAttemptReportedMissing, attempt => attempt.ReportMissing(clock.UtcNow),
+            cancellationToken);
+
+    private async Task<ConfirmDeliveryResult> RecordConfirmationAsync(
+        Guid attemptId, string auditAction, Action<DeliveryAttempt> apply, CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return ConfirmDeliveryResult.Unauthenticated();
+        }
+
+        var attempt = await repository.FindAsync(attemptId, cancellationToken);
+        if (attempt is null || attempt.UserId != userId)
+        {
+            return ConfirmDeliveryResult.NotFound();
+        }
+
+        if (attempt.Status != DeliveryAttemptStatus.Submitted)
+        {
+            return ConfirmDeliveryResult.NotSubmitted();
+        }
+
+        apply(attempt);
+        await repository.SaveChangesAsync(cancellationToken);
+        await audit.WriteAsync(
+            auditAction, AuditSubjectTypes.DeliveryAttempt, attempt.Id.ToString(),
+            new { attempt.Id, attempt.RequestId, attempt.UserId }, cancellationToken);
+
+        return ConfirmDeliveryResult.Success(attempt);
+    }
+
     private async Task<DeliveryAttempt> CreateRetryAsync(DeliveryAttempt failed, CancellationToken cancellationToken)
     {
         var retry = new DeliveryAttempt(
             failed.RequestId, failed.UserId, failed.DeliveryTargetId, failed.Provider,
-            failed.ExternalBookId, failed.BookFormat, failed.Convert, failed.AttemptNumber + 1, clock.UtcNow);
+            failed.ExternalBookId, failed.BookFormat, failed.Convert, failed.AttemptNumber + 1, clock.UtcNow,
+            failed.BookTitle);
         repository.Add(retry);
         await repository.SaveChangesAsync(cancellationToken);
 
@@ -272,6 +335,24 @@ public sealed class DeliveryAttemptService(
 
         await repository.SaveChangesAsync(cancellationToken);
         await WriteAuditAsync(attempt, outcome.Succeeded, cancellationToken);
+
+        if (attempt.Status == DeliveryAttemptStatus.Submitted)
+        {
+            // Best-effort, same posture as CwaPublishingService's own delivery
+            // release -- a notification-write failure must never make an
+            // otherwise-successful Kindle send look like it failed.
+            try
+            {
+                await notifications.RecordKindleDeliverySubmittedAsync(
+                    attempt.UserId, attempt.Id, attempt.BookTitle, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                await audit.WriteAsync(
+                    AuditActions.DeliveryAttemptSubmitted, AuditSubjectTypes.DeliveryAttempt, attempt.Id.ToString(),
+                    new { attempt.Id, NotificationFailed = true, exception.Message }, cancellationToken);
+            }
+        }
     }
 
     private Task WriteAuditAsync(DeliveryAttempt attempt, bool succeeded, CancellationToken cancellationToken) =>
@@ -340,5 +421,26 @@ public enum RetryDeliveryOutcome
     Success,
     NotFound,
     NotFailed,
+    Unauthenticated
+}
+
+/// <summary>KINDLE-7: the result of <c>ConfirmReceivedAsync</c>/<c>ReportMissingAsync</c>.</summary>
+public sealed record ConfirmDeliveryResult(ConfirmDeliveryOutcome Outcome, DeliveryAttempt? Attempt)
+{
+    public static ConfirmDeliveryResult Success(DeliveryAttempt attempt) =>
+        new(ConfirmDeliveryOutcome.Success, attempt);
+
+    public static ConfirmDeliveryResult NotFound() => new(ConfirmDeliveryOutcome.NotFound, null);
+
+    public static ConfirmDeliveryResult NotSubmitted() => new(ConfirmDeliveryOutcome.NotSubmitted, null);
+
+    public static ConfirmDeliveryResult Unauthenticated() => new(ConfirmDeliveryOutcome.Unauthenticated, null);
+}
+
+public enum ConfirmDeliveryOutcome
+{
+    Success,
+    NotFound,
+    NotSubmitted,
     Unauthenticated
 }

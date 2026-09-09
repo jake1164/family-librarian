@@ -75,6 +75,64 @@ public sealed class DeliveryAttemptTests
                 convert: false, attemptNumber: 0, Now));
     }
 
-    private static DeliveryAttempt CreateAttempt() =>
-        new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "cwa", "42", "epub", convert: false, attemptNumber: 1, Now);
+    [TestMethod]
+    public void ANewAttemptStartsUnconfirmedWithTheGivenTitle()
+    {
+        var attempt = CreateAttempt(bookTitle: "Debt of Honor");
+
+        Assert.AreEqual(DeliveryConfirmationStatus.Unconfirmed, attempt.ConfirmationStatus);
+        Assert.IsNull(attempt.ConfirmedAtUtc);
+        Assert.AreEqual("Debt of Honor", attempt.BookTitle);
+    }
+
+    [TestMethod]
+    public void ConfirmReceivedOnASubmittedAttemptRecordsConfirmation()
+    {
+        var attempt = CreateAttempt();
+        attempt.TransitionTo(DeliveryAttemptStatus.Submitting, Now.AddSeconds(1));
+        attempt.TransitionTo(DeliveryAttemptStatus.Submitted, Now.AddSeconds(2));
+
+        attempt.ConfirmReceived(Now.AddSeconds(3));
+
+        Assert.AreEqual(DeliveryConfirmationStatus.Confirmed, attempt.ConfirmationStatus);
+        Assert.AreEqual(Now.AddSeconds(3), attempt.ConfirmedAtUtc);
+        // Confirming never reopens the submission status itself.
+        Assert.AreEqual(DeliveryAttemptStatus.Submitted, attempt.Status);
+    }
+
+    [TestMethod]
+    public void ReportMissingOnASubmittedAttemptRecordsItWithoutReopeningStatus()
+    {
+        var attempt = CreateAttempt();
+        attempt.TransitionTo(DeliveryAttemptStatus.Submitting, Now.AddSeconds(1));
+        attempt.TransitionTo(DeliveryAttemptStatus.Submitted, Now.AddSeconds(2));
+
+        attempt.ReportMissing(Now.AddSeconds(3));
+
+        Assert.AreEqual(DeliveryConfirmationStatus.ReportedMissing, attempt.ConfirmationStatus);
+        Assert.AreEqual(Now.AddSeconds(3), attempt.ConfirmedAtUtc);
+        Assert.AreEqual(DeliveryAttemptStatus.Submitted, attempt.Status);
+    }
+
+    [TestMethod]
+    public void ConfirmReceivedBeforeSubmissionThrows()
+    {
+        var attempt = CreateAttempt();
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => attempt.ConfirmReceived(Now.AddSeconds(1)));
+    }
+
+    [TestMethod]
+    public void ReportMissingOnAFailedAttemptThrows()
+    {
+        var attempt = CreateAttempt();
+        attempt.TransitionTo(DeliveryAttemptStatus.Submitting, Now.AddSeconds(1));
+        attempt.TransitionTo(DeliveryAttemptStatus.Failed, Now.AddSeconds(2), "timeout");
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => attempt.ReportMissing(Now.AddSeconds(3)));
+    }
+
+    private static DeliveryAttempt CreateAttempt(string? bookTitle = null) =>
+        new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "cwa", "42", "epub", convert: false, attemptNumber: 1,
+            Now, bookTitle);
 }

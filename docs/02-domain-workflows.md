@@ -754,14 +754,17 @@ It may be a linked catalog/source and CWA may be a `LibraryImport` destination;
 it can also provide its own reading, download, or send features. Kindle,
 browser, or email delivery remain optional, separate user-specific operations.
 
-**Implementation status (2026-09-08):** `DeliveryTarget` is implemented
+**Implementation status (2026-09-09):** `DeliveryTarget` is implemented
 (`src/FamilyLibrarian.Domain/Delivery/DeliveryTarget.cs`) for the CWA-mediated
 Send-to-Kindle path — see `docs/01-product-architecture-spec.md` §15.1 for how
 its real fields differ from the sketch below, and
-`.ai_docs/master-delivery-plan.md` KINDLE-1 through KINDLE-6 for the
-implementation record, including delivery-attempt history and retry. The
-submitted-vs-confirmed distinction for Send-to-Kindle is not yet built
-(KINDLE-7, still open). Per-user delivery *intent* (did this participant ask
+`.ai_docs/master-delivery-plan.md` KINDLE-1 through KINDLE-7 for the
+implementation record, including delivery-attempt history, retry, and the
+submitted-vs-confirmed distinction (KINDLE-7, complete): a
+`DeliveryConfirmationStatus` (Unconfirmed/Confirmed/ReportedMissing) tracked
+on the `DeliveryAttempt` row itself once `Submitted`, not a further status
+transition — see the `DeliveryAttempt` section below. Per-user delivery
+*intent* (did this participant ask
 for Kindle delivery) is a distinct concern from the `DeliveryAttempt` record
 below and lives on `RequestParticipant.DeliveryTargetId`, alongside
 `WantsEbook`/`WantsAudiobook`, not folded into `DeliveryTarget` or
@@ -791,11 +794,27 @@ actual implementation is narrower — no `Method` field (only CWA-mediated
 creates an attempt with no request at all), and `AssetId` does not appear —
 delivery targets a resolved `ExternalBookId`/`BookFormat` instead. The real
 status set is `Pending -> Submitting -> Submitted/Failed/Cancelled`; none of
-`Preparing`, `Ready`, `AwaitingDevice`, `Delivering`, `SubmittedToAmazon`,
-`Delivered`, or `UserReportedMissing` below exist today. A retry (automatic or
-user-initiated) creates a new row with an incremented attempt number rather
-than reopening a `Failed` one. See `.ai_docs/master-delivery-plan.md`
-KINDLE-5/KINDLE-6 for the implementation record.
+`Preparing`, `Ready`, `AwaitingDevice`, `Delivering`, or `SubmittedToAmazon`
+below exist today. A retry (automatic or user-initiated) creates a new row
+with an incremented attempt number rather than reopening a `Failed` one. See
+`.ai_docs/master-delivery-plan.md` KINDLE-5/KINDLE-6 for the implementation
+record.
+
+**KINDLE-7 (2026-09-09):** `Delivered`/`UserReportedMissing` above were never
+built as further `DeliveryAttemptStatus` values. Instead, a `Submitted` row
+carries a separate `DeliveryConfirmationStatus`
+(`Unconfirmed`/`Confirmed`/`ReportedMissing`) and `ConfirmedAtUtc`, set by
+`DeliveryAttempt.ConfirmReceived`/`ReportMissing` — CWA genuinely accepted the
+send, so `Submitted` stays the accurate status; the user's on-device answer
+is a fact layered on top of it, not a status transition. Reporting an attempt
+missing does not itself retry it: a retry (automatic sweep or user-initiated)
+still creates a new row, and `RetryAsync`'s eligibility was widened to accept
+a `Submitted`+`ReportedMissing` row alongside an ordinary `Failed` one.
+Reaching `Submitted` also raises a
+`NotificationCategories.KindleDeliveryConfirmationRequested` notification
+asking the user to confirm receipt — the notification beta plan §31 stopped
+short of. See `.ai_docs/master-delivery-plan.md` KINDLE-7 for the
+implementation record.
 
 ```text
 DeliveryAttemptId

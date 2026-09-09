@@ -34,7 +34,8 @@ public sealed class DeliveryAttempt
         string bookFormat,
         bool convert,
         int attemptNumber,
-        DateTimeOffset createdAtUtc)
+        DateTimeOffset createdAtUtc,
+        string? bookTitle = null)
     {
         if (userId == Guid.Empty)
         {
@@ -77,6 +78,8 @@ public sealed class DeliveryAttempt
         AttemptNumber = attemptNumber;
         Status = DeliveryAttemptStatusTransitions.InitialStatus;
         CreatedAtUtc = createdAtUtc;
+        BookTitle = string.IsNullOrWhiteSpace(bookTitle) ? null : bookTitle.Trim();
+        ConfirmationStatus = DeliveryConfirmationStatus.Unconfirmed;
     }
 
     public Guid Id { get; private set; } = Guid.NewGuid();
@@ -110,6 +113,19 @@ public sealed class DeliveryAttempt
 
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
+    /// <summary>
+    /// Denormalized purely for display (notifications, admin visibility) --
+    /// captured once at creation and carried forward unchanged by a retry
+    /// row, not re-resolved from the Work each time. Null when the caller had
+    /// no title cheaply at hand.
+    /// </summary>
+    public string? BookTitle { get; private set; }
+
+    /// <summary>KINDLE-7: only meaningful once <see cref="Status"/> is <see cref="DeliveryAttemptStatus.Submitted"/>.</summary>
+    public DeliveryConfirmationStatus ConfirmationStatus { get; private set; }
+
+    public DateTimeOffset? ConfirmedAtUtc { get; private set; }
+
     public uint Version { get; private set; }
 
     /// <exception cref="InvalidDeliveryAttemptTransitionException">
@@ -134,5 +150,47 @@ public sealed class DeliveryAttempt
         {
             CompletedAtUtc = atUtc;
         }
+    }
+
+    /// <summary>
+    /// The user confirms this submitted delivery actually arrived on their
+    /// Kindle. Re-confirming, or switching from a prior <see cref="ReportMissing"/>,
+    /// is allowed -- this tracks the user's current answer, not a one-shot event.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// <see cref="Status"/> is not <see cref="DeliveryAttemptStatus.Submitted"/>.
+    /// </exception>
+    public void ConfirmReceived(DateTimeOffset atUtc)
+    {
+        if (Status != DeliveryAttemptStatus.Submitted)
+        {
+            throw new InvalidOperationException(
+                "Only a submitted delivery attempt can be confirmed received.");
+        }
+
+        ConfirmationStatus = DeliveryConfirmationStatus.Confirmed;
+        ConfirmedAtUtc = atUtc;
+    }
+
+    /// <summary>
+    /// The user reports that a submitted delivery never arrived. This does not
+    /// reopen <see cref="Status"/> -- CWA genuinely accepted the send, so
+    /// <see cref="DeliveryAttemptStatus.Submitted"/> remains accurate; a retry
+    /// creates a new row instead, the same "failed attempt, then a fresh one"
+    /// pattern as a submission failure.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// <see cref="Status"/> is not <see cref="DeliveryAttemptStatus.Submitted"/>.
+    /// </exception>
+    public void ReportMissing(DateTimeOffset atUtc)
+    {
+        if (Status != DeliveryAttemptStatus.Submitted)
+        {
+            throw new InvalidOperationException(
+                "Only a submitted delivery attempt can be reported missing.");
+        }
+
+        ConfirmationStatus = DeliveryConfirmationStatus.ReportedMissing;
+        ConfirmedAtUtc = atUtc;
     }
 }

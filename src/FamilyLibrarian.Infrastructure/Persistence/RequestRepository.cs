@@ -369,7 +369,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             .OrderByDescending(attempt => attempt.AttemptNumber)
             .Select(attempt => new KindleDeliveryProgressRow(
                 attempt.RequestId!.Value, attempt.DeliveryTargetId, attempt.Id, attempt.Status,
-                attempt.FailureReason, attempt.AttemptNumber))
+                attempt.FailureReason, attempt.AttemptNumber, attempt.ConfirmationStatus))
             .ToArrayAsync(cancellationToken);
 
         return attempts
@@ -379,7 +379,7 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                 group => group.Key,
                 group => new RequestKindleDeliveryView(
                     group.First().AttemptId, group.First().Status, group.First().FailureReason,
-                    group.First().AttemptNumber));
+                    group.First().AttemptNumber, group.First().ConfirmationStatus));
     }
 
     private static IReadOnlyList<BookRequestView> ApplyKindleDeliveries(
@@ -525,5 +525,5 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
 
     private sealed record KindleDeliveryProgressRow(
         Guid RequestId, Guid DeliveryTargetId, Guid AttemptId, DeliveryAttemptStatus Status,
-        string? FailureReason, int AttemptNumber);
+        string? FailureReason, int AttemptNumber, DeliveryConfirmationStatus ConfirmationStatus);
 }

@@ -85,10 +85,24 @@ public sealed class DeliveryTargetApiClient(HttpClient httpClient, AntiforgeryTo
             : await response.Content.ReadFromJsonAsync<SendExistingBookResponse>(cancellationToken);
     }
 
-    public async Task<bool> RetryDeliveryAsync(Guid attemptId, CancellationToken cancellationToken = default)
+    public async Task<bool> RetryDeliveryAsync(Guid attemptId, CancellationToken cancellationToken = default) =>
+        await PostAttemptActionAsync(attemptId, "retry", cancellationToken);
+
+    /// <summary>KINDLE-7: the user confirms a submitted delivery arrived on their Kindle.</summary>
+    public async Task<bool> ConfirmDeliveryReceivedAsync(
+        Guid attemptId, CancellationToken cancellationToken = default) =>
+        await PostAttemptActionAsync(attemptId, "confirm-received", cancellationToken);
+
+    /// <summary>KINDLE-7: the user reports a submitted delivery never arrived.</summary>
+    public async Task<bool> ReportDeliveryMissingAsync(
+        Guid attemptId, CancellationToken cancellationToken = default) =>
+        await PostAttemptActionAsync(attemptId, "report-missing", cancellationToken);
+
+    private async Task<bool> PostAttemptActionAsync(
+        Guid attemptId, string action, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(
-            HttpMethod.Post, $"api/v1/me/delivery/kindle/attempts/{attemptId}/retry");
+            HttpMethod.Post, $"api/v1/me/delivery/kindle/attempts/{attemptId}/{action}");
         await antiforgery.AttachAsync(request, cancellationToken);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode;

@@ -46,7 +46,11 @@ public sealed record RequestFormatView(
 /// library/publishing progress, not user-device delivery. See beta plan §33.
 /// </summary>
 public sealed record RequestKindleDeliveryView(
-    Guid AttemptId, DeliveryAttemptStatus Status, string? FailureReason, int AttemptNumber);
+    Guid AttemptId,
+    DeliveryAttemptStatus Status,
+    string? FailureReason,
+    int AttemptNumber,
+    DeliveryConfirmationStatus ConfirmationStatus = DeliveryConfirmationStatus.Unconfirmed);
 
 /// <summary>
 /// The administrator-only request read model. Requester identity and the status

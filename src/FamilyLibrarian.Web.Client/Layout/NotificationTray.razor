@@ -214,10 +214,15 @@
     private const string ProviderIssueCategory = "provider.issue";
     private const string SourceIssueCategory = "source.issue";
     private const string PublishingIssueCategory = "publishing.issue";
+    private const string KindleDeliveryConfirmationRequestedCategory = "delivery.kindle_confirmation_requested";
 
     private static string? LinkFor(string category, string? subjectType, string? subjectId) => (category, subjectType, subjectId) switch
     {
         (RequestNeedsReviewCategory, "book_request", { } id) => $"admin/requests/{id}",
+        // No per-attempt deep link exists on My Requests -- the confirm/report
+        // buttons live inline on the request card, so this just gets the user
+        // to the right page.
+        (KindleDeliveryConfirmationRequestedCategory, "delivery_attempt", { }) => "requests",
         _ => null
     };
 

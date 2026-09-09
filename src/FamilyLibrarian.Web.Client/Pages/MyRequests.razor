@@ -90,10 +90,27 @@
                     @if (request.KindleDelivery is { } kindle)
                     {
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-                            <MudText Typo="Typo.body2" Color="@KindleDeliveryColor(kindle.Status)">
+                            <MudText Typo="Typo.body2" Color="@KindleDeliveryColor(kindle)">
                                 @KindleDeliveryDescription(kindle)
                             </MudText>
-                            @if (kindle.Status == "Failed")
+                            @if (kindle.Status == "Submitted" && kindle.ConfirmationStatus == "Unconfirmed")
+                            {
+                                <MudButton Variant="Variant.Text"
+                                           Size="Size.Small"
+                                           Color="Color.Success"
+                                           Disabled="@(busyKindleAttemptId == kindle.AttemptId)"
+                                           OnClick="() => ConfirmKindleDeliveryAsync(kindle.AttemptId, received: true)">
+                                    Yes
+                                </MudButton>
+                                <MudButton Variant="Variant.Text"
+                                           Size="Size.Small"
+                                           Disabled="@(busyKindleAttemptId == kindle.AttemptId)"
+                                           OnClick="() => ConfirmKindleDeliveryAsync(kindle.AttemptId, received: false)">
+                                    No
+                                </MudButton>
+                            }
+                            @if (kindle.Status == "Failed" ||
+                                (kindle.Status == "Submitted" && kindle.ConfirmationStatus == "ReportedMissing"))
                             {
                                 <MudButton Variant="Variant.Text"
                                            Size="Size.Small"
@@ -236,9 +253,43 @@
         }
     }
 
+    private async Task ConfirmKindleDeliveryAsync(Guid attemptId, bool received)
+    {
+        busyKindleAttemptId = attemptId;
+        errorMessage = null;
+
+        try
+        {
+            var succeeded = received
+                ? await DeliveryTargets.ConfirmDeliveryReceivedAsync(attemptId)
+                : await DeliveryTargets.ReportDeliveryMissingAsync(attemptId);
+            if (succeeded)
+            {
+                await LoadAsync();
+            }
+            else
+            {
+                errorMessage = "That could not be saved. Please try again.";
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That could not be saved. Please try again.";
+        }
+        finally
+        {
+            busyKindleAttemptId = Guid.Empty;
+        }
+    }
+
     private static string KindleDeliveryDescription(KindleDeliveryResponse kindle) => kindle.Status switch
     {
-        "Submitted" => "Kindle: Sent",
+        "Submitted" => kindle.ConfirmationStatus switch
+        {
+            "Confirmed" => "Kindle: Received",
+            "ReportedMissing" => "Kindle: Sent, but not received",
+            _ => "Kindle: Sent — did it arrive?"
+        },
         "Pending" or "Submitting" => "Kindle: Sending…",
         "Failed" => string.IsNullOrWhiteSpace(kindle.FailureReason)
             ? "Kindle: Delivery failed"
@@ -247,9 +298,14 @@
         _ => $"Kindle: {kindle.Status}"
     };
 
-    private static Color KindleDeliveryColor(string status) => status switch
+    private static Color KindleDeliveryColor(KindleDeliveryResponse kindle) => kindle.Status switch
     {
-        "Submitted" => Color.Success,
+        "Submitted" => kindle.ConfirmationStatus switch
+        {
+            "Confirmed" => Color.Success,
+            "ReportedMissing" => Color.Error,
+            _ => Color.Default
+        },
         "Failed" => Color.Error,
         _ => Color.Default
     };

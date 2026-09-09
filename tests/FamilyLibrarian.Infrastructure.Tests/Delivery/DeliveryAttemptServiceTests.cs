@@ -2,8 +2,11 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Delivery;
+using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Delivery;
@@ -355,6 +358,133 @@ public sealed class DeliveryAttemptServiceTests
         Assert.HasCount(1, context.DeliveryAttempts.Rows);
     }
 
+    [TestMethod]
+    public async Task ASuccessfulSubmissionRecordsAConfirmationRequestNotification()
+    {
+        var context = new TestContext();
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+        var target = context.SeedEnabledTarget();
+        var request = new BookRequest(
+            target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: target.Id);
+
+        await context.Service.ReleaseForRequestFormatAsync(
+            request, "42", "epub", Now, CancellationToken.None, workTitle: "Debt of Honor");
+
+        var attempt = context.DeliveryAttempts.Rows.Single();
+        var notification = context.NotificationRepository.Added.Single();
+        Assert.AreEqual(NotificationCategories.KindleDeliveryConfirmationRequested, notification.Category);
+        Assert.AreEqual(target.UserId, notification.RecipientUserId);
+        Assert.AreEqual(attempt.Id.ToString(), notification.SubjectId);
+        Assert.Contains("Debt of Honor", notification.Title);
+    }
+
+    [TestMethod]
+    public async Task AFailedSubmissionDoesNotRecordAConfirmationRequestNotification()
+    {
+        var context = new TestContext();
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Rejected("not configured");
+        var target = context.SeedEnabledTarget();
+        var request = new BookRequest(
+            target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: target.Id);
+
+        await context.Service.ReleaseForRequestFormatAsync(request, "42", "epub", Now, CancellationToken.None);
+
+        Assert.IsEmpty(context.NotificationRepository.Added);
+    }
+
+    [TestMethod]
+    public async Task SendingAnExistingOwnedBookCapturesItsTitleFromTheCatalog()
+    {
+        var context = new TestContext();
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var workId = Guid.NewGuid();
+        context.OwnedLibrary.Owned[workId] = "book-7";
+        context.CatalogRepository.Seed(workId, TestContext.SeedWork("Red Storm Rising"));
+
+        var result = await context.Service.SendExistingBookAsync(workId, CancellationToken.None);
+
+        Assert.AreEqual(SendExistingBookOutcome.Success, result.Outcome);
+        Assert.AreEqual("Red Storm Rising", result.Attempt!.BookTitle);
+    }
+
+    [TestMethod]
+    public async Task ConfirmingReceiptOnASubmittedAttemptSucceeds()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var submitted = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        submitted.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        submitted.TransitionTo(DeliveryAttemptStatus.Submitted, Now);
+        context.DeliveryAttempts.Add(submitted);
+
+        var result = await context.Service.ConfirmReceivedAsync(submitted.Id, CancellationToken.None);
+
+        Assert.AreEqual(ConfirmDeliveryOutcome.Success, result.Outcome);
+        Assert.AreEqual(DeliveryConfirmationStatus.Confirmed, submitted.ConfirmationStatus);
+    }
+
+    [TestMethod]
+    public async Task ReportingAPendingAttemptMissingIsRejected()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var pending = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        context.DeliveryAttempts.Add(pending);
+
+        var result = await context.Service.ReportMissingAsync(pending.Id, CancellationToken.None);
+
+        Assert.AreEqual(ConfirmDeliveryOutcome.NotSubmitted, result.Outcome);
+    }
+
+    [TestMethod]
+    public async Task AUserCannotConfirmAnotherUsersAttempt()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(Guid.NewGuid());
+        var submitted = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        submitted.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        submitted.TransitionTo(DeliveryAttemptStatus.Submitted, Now);
+        context.DeliveryAttempts.Add(submitted);
+
+        var result = await context.Service.ConfirmReceivedAsync(submitted.Id, CancellationToken.None);
+
+        Assert.AreEqual(ConfirmDeliveryOutcome.NotFound, result.Outcome);
+    }
+
+    /// <summary>
+    /// KINDLE-7: a submitted-but-unreceived attempt is not itself "Failed", so
+    /// a retry must widen past the Failed-only gate that governs an ordinary
+    /// send failure.
+    /// </summary>
+    [TestMethod]
+    public async Task RetryingAfterReportedMissingSendsANewAttempt()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var submitted = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        submitted.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        submitted.TransitionTo(DeliveryAttemptStatus.Submitted, Now);
+        submitted.ReportMissing(Now);
+        context.DeliveryAttempts.Add(submitted);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+
+        var result = await context.Service.RetryAsync(submitted.Id, CancellationToken.None);
+
+        Assert.AreEqual(RetryDeliveryOutcome.Success, result.Outcome);
+        Assert.HasCount(2, context.DeliveryAttempts.Rows);
+        Assert.AreEqual(2, result.Attempt!.AttemptNumber);
+    }
+
     private sealed class TestContext
     {
         public TestContext()
@@ -363,8 +493,12 @@ public sealed class DeliveryAttemptServiceTests
             CurrentUser = new StubCurrentUser();
             Provider = new StubEbookDeliveryProvider();
             OwnedLibrary = new StubOwnedLibraryProvider();
+            CatalogRepository = new StubCatalogRepository();
+            NotificationRepository = new RecordingNotificationRepository();
+            Notifications = new NotificationService(NotificationRepository, CurrentUser, Clock);
             Service = new DeliveryAttemptService(
-                DeliveryAttempts, DeliveryTargets, [Provider], [OwnedLibrary], CurrentUser, new NoOpAuditWriter(), Clock);
+                DeliveryAttempts, DeliveryTargets, [Provider], [OwnedLibrary], CurrentUser, new NoOpAuditWriter(),
+                Clock, CatalogRepository, Notifications);
         }
 
         public InMemoryDeliveryAttemptRepository DeliveryAttempts { get; } = new();
@@ -374,6 +508,12 @@ public sealed class DeliveryAttemptServiceTests
         public StubEbookDeliveryProvider Provider { get; }
 
         public StubOwnedLibraryProvider OwnedLibrary { get; }
+
+        public StubCatalogRepository CatalogRepository { get; }
+
+        public RecordingNotificationRepository NotificationRepository { get; }
+
+        public NotificationService Notifications { get; }
 
         public StubCurrentUser CurrentUser { get; }
 
@@ -388,6 +528,9 @@ public sealed class DeliveryAttemptServiceTests
             DeliveryTargets.Add(target);
             return target;
         }
+
+        public static Work SeedWork(string title) =>
+            new(title, description: null, coverUrl: null, firstPublicationDate: null, PublicationStatus.Published, Now);
     }
 
     private sealed class StubEbookDeliveryProvider : IEbookDeliveryProvider
@@ -509,6 +652,89 @@ public sealed class DeliveryAttemptServiceTests
             Task.FromResult<IReadOnlyList<DeliveryTarget>>(Rows.ToArray());
 
         public void Add(DeliveryTarget target) => Rows.Add(target);
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class StubCatalogRepository : ICatalogRepository
+    {
+        private readonly Dictionary<Guid, Work> _works = [];
+
+        public void Seed(Guid workId, Work work) => _works[workId] = work;
+
+        public Task<Work?> FindWorkByExternalReferenceAsync(
+            string providerId, string externalId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<Work?> FindWorkByIsbn13Async(
+            IReadOnlyCollection<string> isbn13s, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<Work?> GetWorkAsync(Guid workId, CancellationToken cancellationToken) =>
+            Task.FromResult(_works.GetValueOrDefault(workId));
+
+        public Task<IReadOnlyList<Domain.Catalog.ExternalReference>> GetWorkSourcesAsync(
+            Guid workId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<Author?> FindAuthorByNormalizedNameAsync(
+            string normalizedName, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<Series?> FindSeriesByNormalizedNameAsync(
+            string normalizedName, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public void AddWork(Work work) => _works[work.Id] = work;
+
+        public void AddAuthor(Author author) => throw new NotSupportedException("Not exercised by these tests.");
+
+        public void AddSeries(Series series) => throw new NotSupportedException("Not exercised by these tests.");
+
+        public void AddExternalReference(Domain.Catalog.ExternalReference externalReference) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class RecordingNotificationRepository : INotificationRepository
+    {
+        public List<NotificationEvent> Added { get; } = [];
+
+        public Task<NotificationEvent?> FindLatestAsync(
+            NotificationAudience audience,
+            Guid? recipientUserId,
+            string category,
+            string? subjectType,
+            string? subjectId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(Added.SingleOrDefault(evt =>
+                evt.Audience == audience && evt.RecipientUserId == recipientUserId &&
+                evt.Category == category && evt.SubjectType == subjectType && evt.SubjectId == subjectId));
+
+        public Task AddAsync(NotificationEvent notification, CancellationToken cancellationToken)
+        {
+            Added.Add(notification);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<NotificationReceipt>> ListReceiptsAsync(
+            Guid notificationEventId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<NotificationReceipt>>([]);
+
+        public Task RemoveReceiptsAsync(IReadOnlyList<NotificationReceipt> receipts, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<IReadOnlyList<(NotificationEvent Event, NotificationReceipt? Receipt)>> ListForViewerAsync(
+            Guid userId, bool isAdmin, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<(NotificationEvent Event, NotificationReceipt? Receipt)>>([]);
+
+        public Task<NotificationReceipt?> FindReceiptAsync(
+            Guid notificationEventId, Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<NotificationReceipt?>(null);
+
+        public Task AddReceiptAsync(NotificationReceipt receipt, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }

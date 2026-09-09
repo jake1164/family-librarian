@@ -23,6 +23,8 @@ internal static class DeliveryTargetEndpoints
         kindle.MapPost("/test", TestMyKindleDeliveryAsync);
         kindle.MapPost("/send-existing", SendExistingBookAsync);
         kindle.MapPost("/attempts/{id:guid}/retry", RetryDeliveryAsync);
+        kindle.MapPost("/attempts/{id:guid}/confirm-received", ConfirmReceivedAsync);
+        kindle.MapPost("/attempts/{id:guid}/report-missing", ReportMissingAsync);
     }
 
     private static async Task<IResult> GetMyKindleTargetAsync(
@@ -110,6 +112,33 @@ internal static class DeliveryTargetEndpoints
             _ => Results.Unauthorized()
         };
     }
+
+    private static async Task<IResult> ConfirmReceivedAsync(
+        Guid id,
+        DeliveryAttemptService service,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.ConfirmReceivedAsync(id, cancellationToken);
+        return ToConfirmationResult(result);
+    }
+
+    private static async Task<IResult> ReportMissingAsync(
+        Guid id,
+        DeliveryAttemptService service,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.ReportMissingAsync(id, cancellationToken);
+        return ToConfirmationResult(result);
+    }
+
+    private static IResult ToConfirmationResult(ConfirmDeliveryResult result) => result.Outcome switch
+    {
+        ConfirmDeliveryOutcome.Success => Results.Ok(new SendExistingBookResponse(true, null)),
+        ConfirmDeliveryOutcome.NotFound => Results.NotFound(),
+        ConfirmDeliveryOutcome.NotSubmitted => Results.Conflict(
+            new { message = "This delivery hasn't been sent yet." }),
+        _ => Results.Unauthorized()
+    };
 
     private static DeliveryTargetResponse ToResponse(DeliveryTarget target) => new(
         target.Id,

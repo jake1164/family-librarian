@@ -967,6 +967,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(attempt => attempt.FailureReason).HasColumnName("failure_reason").HasMaxLength(2_000);
             entity.Property(attempt => attempt.IsRetryable).HasColumnName("is_retryable");
             entity.Property(attempt => attempt.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(attempt => attempt.BookTitle).HasColumnName("book_title").HasMaxLength(512);
+            entity.Property(attempt => attempt.ConfirmationStatus).HasColumnName("confirmation_status").HasConversion<string>().HasMaxLength(32);
+            entity.Property(attempt => attempt.ConfirmedAtUtc).HasColumnName("confirmed_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(attempt => attempt.Version).HasColumnName("xmin").IsRowVersion();
 
             // Idempotency check before releasing (ReleaseForRequestFormatAsync)

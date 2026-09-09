@@ -89,6 +89,8 @@ public static class AuditActions
 
     public const string DeliveryAttemptSubmitted = "delivery_attempt.submitted";
     public const string DeliveryAttemptFailed = "delivery_attempt.failed";
+    public const string DeliveryAttemptConfirmed = "delivery_attempt.confirmed";
+    public const string DeliveryAttemptReportedMissing = "delivery_attempt.reported_missing";
 
     public const string DeliveryTargetAdminAddressChanged = "delivery_target.admin_address_changed";
     public const string DeliveryTargetAdminEnabledChanged = "delivery_target.admin_enabled_changed";

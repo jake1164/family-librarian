@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
@@ -8,6 +9,7 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Publishing;
@@ -361,7 +363,9 @@ public sealed class CwaPublishingServiceTests
                 Audit, new FixedClock(),
                 new NotificationService(NotificationRepository, new StubCurrentUser(), new FixedClock()),
                 new DeliveryAttemptService(
-                    DeliveryAttempts, DeliveryTargets, [], [], new StubCurrentUser(), Audit, new FixedClock()));
+                    DeliveryAttempts, DeliveryTargets, [], [], new StubCurrentUser(), Audit, new FixedClock(),
+                    new NullCatalogRepository(),
+                    new NotificationService(NotificationRepository, new StubCurrentUser(), new FixedClock())));
         }
 
         public CwaSettings Settings { get; } = new(Now);
@@ -645,6 +649,50 @@ public sealed class CwaPublishingServiceTests
     }
 
     /// <summary>Records what would have been written, without a real store behind it.</summary>
+    private sealed class NullCatalogRepository : ICatalogRepository
+    {
+        public Task<Work?> FindWorkByExternalReferenceAsync(
+            string providerId, string externalId, CancellationToken cancellationToken) =>
+            Task.FromResult<Work?>(null);
+
+        public Task<Work?> FindWorkByIsbn13Async(
+            IReadOnlyCollection<string> isbn13s, CancellationToken cancellationToken) =>
+            Task.FromResult<Work?>(null);
+
+        public Task<Work?> GetWorkAsync(Guid workId, CancellationToken cancellationToken) =>
+            Task.FromResult<Work?>(null);
+
+        public Task<IReadOnlyList<ExternalReference>> GetWorkSourcesAsync(
+            Guid workId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ExternalReference>>([]);
+
+        public Task<Author?> FindAuthorByNormalizedNameAsync(
+            string normalizedName, CancellationToken cancellationToken) =>
+            Task.FromResult<Author?>(null);
+
+        public Task<Series?> FindSeriesByNormalizedNameAsync(
+            string normalizedName, CancellationToken cancellationToken) =>
+            Task.FromResult<Series?>(null);
+
+        public void AddWork(Work work)
+        {
+        }
+
+        public void AddAuthor(Author author)
+        {
+        }
+
+        public void AddSeries(Series series)
+        {
+        }
+
+        public void AddExternalReference(ExternalReference externalReference)
+        {
+        }
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
     private sealed class RecordingNotificationRepository : INotificationRepository
     {
         public List<NotificationEvent> Added { get; } = [];

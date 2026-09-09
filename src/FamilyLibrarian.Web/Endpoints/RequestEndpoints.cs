@@ -195,7 +195,8 @@ internal static class RequestEndpoints
                 kindleDelivery.AttemptId,
                 kindleDelivery.Status.ToString(),
                 kindleDelivery.FailureReason,
-                kindleDelivery.AttemptNumber)
+                kindleDelivery.AttemptNumber,
+                kindleDelivery.ConfirmationStatus.ToString())
             : null);
 
     // Plain language for a family, not the enum name. The status itself travels

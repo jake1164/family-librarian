@@ -294,7 +294,7 @@ public sealed class CwaPublishingService(
         var availableFormat = request.Formats.SingleOrDefault(candidate => candidate.Id == asset.AssociatedRequestFormatId);
         if (availableFormat?.MediaType == RequestMediaType.Ebook && import.ExternalBookId is { } externalBookId)
         {
-            await TryReleaseDeliveryAsync(request, externalBookId, asset.Format, cancellationToken);
+            await TryReleaseDeliveryAsync(request, externalBookId, asset.Format, title, cancellationToken);
         }
     }
 
@@ -305,12 +305,12 @@ public sealed class CwaPublishingService(
     /// failure must never take down an otherwise successful publish/verify pass.
     /// </summary>
     private async Task TryReleaseDeliveryAsync(
-        BookRequest request, string externalBookId, string bookFormat, CancellationToken cancellationToken)
+        BookRequest request, string externalBookId, string bookFormat, string title, CancellationToken cancellationToken)
     {
         try
         {
             await deliveryAttempts.ReleaseForRequestFormatAsync(
-                request, externalBookId, bookFormat, clock.UtcNow, cancellationToken);
+                request, externalBookId, bookFormat, clock.UtcNow, cancellationToken, title);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

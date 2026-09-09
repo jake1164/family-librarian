@@ -54,6 +54,27 @@ public sealed class NotificationService(
             cancellationToken);
     }
 
+    /// <summary>
+    /// KINDLE-7: asks the requesting user to confirm a submitted Kindle send
+    /// actually arrived on-device. Raised once per <c>DeliveryAttempt</c> --
+    /// a retry after <c>ReportMissing</c> creates a new attempt row, so this
+    /// naturally fires again for it rather than needing a separate re-ask path.
+    /// </summary>
+    public Task RecordKindleDeliverySubmittedAsync(
+        Guid userId, Guid attemptId, string? bookTitle, CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.SingleUser,
+            userId,
+            NotificationCategories.KindleDeliveryConfirmationRequested,
+            NotificationSeverity.Info,
+            title: bookTitle is { } title
+                ? $"Did \"{title}\" arrive on your Kindle?"
+                : "Did your book arrive on your Kindle?",
+            detail: "It was sent to your Kindle. Let us know if it doesn't show up so it can be retried.",
+            subjectType: NotificationSubjectTypes.DeliveryAttempt,
+            subjectId: attemptId.ToString(),
+            cancellationToken);
+
     public async Task<IReadOnlyList<NotificationView>> ListForViewerAsync(
         bool isAdmin, CancellationToken cancellationToken)
     {
