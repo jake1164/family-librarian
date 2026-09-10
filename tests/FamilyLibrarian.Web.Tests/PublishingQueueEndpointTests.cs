@@ -310,6 +310,186 @@ public sealed class PublishingQueueEndpointTests
         Assert.AreEqual("Submitted", updated.KindleDelivery!.Status);
     }
 
+    /// <summary>
+    /// Beta plan §26 "Two Users / Both Delivery": sharing one request must not
+    /// duplicate acquisition/ingest, and each opted-in participant must get
+    /// their own delivery to their own target -- never the other's.
+    /// </summary>
+    [TestMethod]
+    public async Task TwoParticipantsWhoBothOptInEachGetOneIndependentKindleDeliveryFromOneAcquisition()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<ICwaCatalogClient>();
+                services.AddSingleton<ICwaCatalogClient>(new DeterministicCatalogClient(bookIdOnFirstCall: null));
+                services.RemoveAll<IEbookDeliveryProvider>();
+                services.AddSingleton<IEbookDeliveryProvider>(new DeterministicEbookDeliveryProvider());
+            });
+        // The admin account and the fixture's fixed regular user are the only
+        // two distinct real identities the harness provides -- sufficient here
+        // since what matters is that they are different UserIds, not roles.
+        using var userA = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(userA);
+        userA.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(userA));
+        using var userB = await fixture.CreateUserClientAsync();
+        userB.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(userB));
+
+        await ConfigureCwaAsync(userA);
+        var targetA = await SetKindleTargetAsync(userA, "reader-a@kindle.example");
+        var targetB = await SetKindleTargetAsync(userB, "reader-b@kindle.example");
+
+        var resolve = await userA.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        resolve.EnsureSuccessStatusCode();
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var workId = await fixture.CopyWorkForTestAsync(work.Id);
+
+        var createdA = await userA.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(workId, ["Ebook"], null, false, false, DeliveryTargetId: targetA.Id));
+        Assert.AreEqual(HttpStatusCode.Created, createdA.StatusCode);
+        var requestA = await createdA.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(requestA);
+
+        var createdB = await userB.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(workId, ["Ebook"], null, false, false, DeliveryTargetId: targetB.Id));
+        Assert.AreEqual(HttpStatusCode.Created, createdB.StatusCode);
+        var requestB = await createdB.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(requestB);
+
+        // Both requests must resolve to the same shared aggregate, or the rest
+        // of this test would trivially pass by acquiring the book twice.
+        Assert.AreEqual(requestA.Id, requestB.Id);
+
+        var catalogClient = (DeterministicCatalogClient)factory.Services.GetRequiredService<ICwaCatalogClient>();
+        catalogClient.NextBookId = "shared-42";
+        var formatId = requestA.Formats.Single().FormatId;
+        await ManualImportAndApproveAsync(userA, requestA.Id, formatId);
+
+        var queue = await userA.GetFromJsonAsync<PublishingQueueResponse>("/api/v1/admin/publishing/queue");
+        Assert.IsNotNull(queue);
+        Assert.HasCount(1, queue.LibraryImports.Where(import => import.RequestId == requestA.Id),
+            "Sharing one request must acquire and ingest the book exactly once.");
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var attempts = await database.DeliveryAttempts.Where(attempt => attempt.RequestId == requestA.Id).ToArrayAsync();
+        Assert.HasCount(2, attempts, "Each opted-in participant should get exactly one delivery attempt.");
+
+        var userAId = (await database.Users.SingleAsync(user => user.Email == FamilyLibrarianAppFactory.AdminEmail)).Id;
+        var userBId = (await database.Users.SingleAsync(user => user.Email == WebTestFixture.UserEmail)).Id;
+        var attemptA = attempts.Single(attempt => attempt.UserId == userAId);
+        var attemptB = attempts.Single(attempt => attempt.UserId == userBId);
+        Assert.AreEqual(DeliveryAttemptStatus.Submitted, attemptA.Status);
+        Assert.AreEqual(DeliveryAttemptStatus.Submitted, attemptB.Status);
+        Assert.AreEqual(targetA.Id, attemptA.DeliveryTargetId);
+        Assert.AreEqual(targetB.Id, attemptB.DeliveryTargetId);
+    }
+
+    /// <summary>
+    /// Beta plan §26 "Two Users / One Delivery": the participant who never
+    /// opted in must receive zero Kindle sends, not a copy of the other
+    /// participant's.
+    /// </summary>
+    [TestMethod]
+    public async Task OnlyTheParticipantWhoOptedInReceivesAKindleDeliveryFromASharedRequest()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<ICwaCatalogClient>();
+                services.AddSingleton<ICwaCatalogClient>(new DeterministicCatalogClient(bookIdOnFirstCall: null));
+                services.RemoveAll<IEbookDeliveryProvider>();
+                services.AddSingleton<IEbookDeliveryProvider>(new DeterministicEbookDeliveryProvider());
+            });
+        using var userA = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(userA);
+        userA.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(userA));
+        using var userB = await fixture.CreateUserClientAsync();
+        userB.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(userB));
+
+        await ConfigureCwaAsync(userA);
+        var targetA = await SetKindleTargetAsync(userA, "reader-a@kindle.example");
+
+        var resolve = await userA.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        resolve.EnsureSuccessStatusCode();
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var workId = await fixture.CopyWorkForTestAsync(work.Id);
+
+        var createdA = await userA.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(workId, ["Ebook"], null, false, false, DeliveryTargetId: targetA.Id));
+        Assert.AreEqual(HttpStatusCode.Created, createdA.StatusCode);
+        var requestA = await createdA.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(requestA);
+
+        // User B joins the same request wanting the ebook, but never
+        // configures or supplies a Kindle target.
+        var createdB = await userB.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(workId, ["Ebook"], null, false, false));
+        Assert.AreEqual(HttpStatusCode.Created, createdB.StatusCode);
+        var requestB = await createdB.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(requestB);
+        Assert.AreEqual(requestA.Id, requestB.Id);
+
+        var catalogClient = (DeterministicCatalogClient)factory.Services.GetRequiredService<ICwaCatalogClient>();
+        catalogClient.NextBookId = "shared-43";
+        var formatId = requestA.Formats.Single().FormatId;
+        await ManualImportAndApproveAsync(userA, requestA.Id, formatId);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var attempts = await database.DeliveryAttempts.Where(attempt => attempt.RequestId == requestA.Id).ToArrayAsync();
+        Assert.HasCount(1, attempts, "The participant who never opted in must not receive a Kindle send.");
+
+        var userAId = (await database.Users.SingleAsync(user => user.Email == FamilyLibrarianAppFactory.AdminEmail)).Id;
+        Assert.AreEqual(userAId, attempts.Single().UserId);
+        Assert.AreEqual(targetA.Id, attempts.Single().DeliveryTargetId);
+    }
+
+    /// <summary>
+    /// Idempotent create-or-correct: the shared class-level fixture persists
+    /// data across tests in this class, so a fixed identity (e.g. the admin
+    /// account, reused as "User A" across these tests) may already have a
+    /// target from an earlier test -- a bare create would then 409.
+    /// </summary>
+    private static async Task<DeliveryTargetResponse> SetKindleTargetAsync(HttpClient client, string address)
+    {
+        var existing = await client.GetAsync("/api/v1/me/delivery/kindle");
+        uint? expectedVersion = null;
+        if (existing.StatusCode == HttpStatusCode.OK)
+        {
+            var current = await existing.Content.ReadFromJsonAsync<DeliveryTargetResponse>();
+            Assert.IsNotNull(current);
+            if (current.Address == address && current.IsEnabled)
+            {
+                return current;
+            }
+            expectedVersion = current.Version;
+        }
+
+        var response = await client.PutAsJsonAsync(
+            "/api/v1/me/delivery/kindle", new SetKindleAddressRequest(address, expectedVersion, true));
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        var target = await response.Content.ReadFromJsonAsync<DeliveryTargetResponse>();
+        Assert.IsNotNull(target);
+
+        if (!target.IsEnabled)
+        {
+            var enabled = await client.PutAsJsonAsync(
+                "/api/v1/me/delivery/kindle/enabled", new SetKindleEnabledRequest(true, target.Version));
+            Assert.AreEqual(HttpStatusCode.OK, enabled.StatusCode);
+            target = await enabled.Content.ReadFromJsonAsync<DeliveryTargetResponse>();
+            Assert.IsNotNull(target);
+        }
+
+        return target;
+    }
+
     [TestMethod]
     public async Task TheAdminQueueShowsKindleDeliveryAttemptsAndSupportsRetry()
     {
