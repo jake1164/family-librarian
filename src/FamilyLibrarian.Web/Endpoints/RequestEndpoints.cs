@@ -174,7 +174,8 @@ internal static class RequestEndpoints
                 format.MediaType.ToString(),
                 format.Status.ToString(),
                 format.Progress?.Code,
-                format.Progress?.Description))
+                format.Progress?.Description,
+                format.ExternalActionUri?.ToString()))
             .ToArray(),
         request.RequesterNote,
         request.AdminNote,

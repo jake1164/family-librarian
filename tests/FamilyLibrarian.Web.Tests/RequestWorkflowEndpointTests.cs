@@ -6,8 +6,13 @@ using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Contracts.Notifications;
+using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Publishing;
+using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -27,6 +32,7 @@ public sealed class RequestWorkflowEndpointTests
 {
     private static readonly string[] BothFormats = ["Ebook", "Audiobook"];
     private static readonly string[] CancelOnly = ["Cancelled"];
+    private static readonly DateTimeOffset Now = new(2026, 9, 10, 12, 0, 0, TimeSpan.Zero);
 
     private static WebTestFixture? _fixture;
 
@@ -349,6 +355,208 @@ public sealed class RequestWorkflowEndpointTests
         var requeue = await admin.PostAsJsonAsync($"/api/v1/admin/requests/{version.Id}/transitions",
             new ChangeBookRequestStatusRequest("PendingAcquisition", "Try again", review.Request.Version));
         Assert.AreEqual(HttpStatusCode.BadRequest, requeue.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task ADeliveredEbookFormatChipLinksToItsCwaBookPage()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateRequestingClientAsync(fixture);
+        using var admin = await fixture.CreateAdminClientAsync();
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName,
+            await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await ConfigureCwaAsync(admin);
+        var workId = await ResolveWorkAsync(client, "the-hobbit");
+        var request = await CreateAndReadRequestAsync(client, workId, ["Ebook"]);
+        var formatId = request.Formats.Single(format => format.MediaType == "Ebook").FormatId;
+
+        await SeedEbookDeliveredAsync(fixture, request.Id, formatId, workId, "42", Now);
+
+        var mine = await client.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(mine);
+        var found = mine.Active.Concat(mine.History).Single(item => item.Id == request.Id);
+        var ebook = found.Formats.Single(format => format.MediaType == "Ebook");
+        Assert.AreEqual("https://cwa.example.test/book/42", ebook.ExternalActionUri);
+    }
+
+    [TestMethod]
+    public async Task ADeliveredAudiobookFormatChipLinksToItsAudiobookshelfItemPage()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateRequestingClientAsync(fixture);
+        using var admin = await fixture.CreateAdminClientAsync();
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName,
+            await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await ConfigureAudiobookshelfAsync(admin);
+        var workId = await ResolveWorkAsync(client, "the-hobbit");
+        var request = await CreateAndReadRequestAsync(client, workId, ["Audiobook"]);
+        var formatId = request.Formats.Single(format => format.MediaType == "Audiobook").FormatId;
+
+        await SeedAudiobookDeliveredAsync(fixture, request.Id, formatId, workId, "li_123", Now, bundled: false);
+
+        var mine = await client.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(mine);
+        var found = mine.Active.Concat(mine.History).Single(item => item.Id == request.Id);
+        var audiobook = found.Formats.Single(format => format.MediaType == "Audiobook");
+        Assert.AreEqual("https://audio.example.test/item/li_123", audiobook.ExternalActionUri);
+    }
+
+    [TestMethod]
+    public async Task AChapteredAudiobookBundleStillResolvesItsDeliveredLink()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateRequestingClientAsync(fixture);
+        using var admin = await fixture.CreateAdminClientAsync();
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName,
+            await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await ConfigureAudiobookshelfAsync(admin);
+        var workId = await ResolveWorkAsync(client, "the-hobbit");
+        var request = await CreateAndReadRequestAsync(client, workId, ["Audiobook"]);
+        var formatId = request.Formats.Single(format => format.MediaType == "Audiobook").FormatId;
+
+        await SeedAudiobookDeliveredAsync(fixture, request.Id, formatId, workId, "li_bundle", Now, bundled: true);
+
+        var mine = await client.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(mine);
+        var found = mine.Active.Concat(mine.History).Single(item => item.Id == request.Id);
+        var audiobook = found.Formats.Single(format => format.MediaType == "Audiobook");
+        Assert.AreEqual("https://audio.example.test/item/li_bundle", audiobook.ExternalActionUri);
+    }
+
+    [TestMethod]
+    public async Task ANonTerminalImportNeverExposesALink()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateRequestingClientAsync(fixture);
+        using var admin = await fixture.CreateAdminClientAsync();
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName,
+            await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await ConfigureCwaAsync(admin);
+        var workId = await ResolveWorkAsync(client, "the-hobbit");
+        var request = await CreateAndReadRequestAsync(client, workId, ["Ebook"]);
+        var formatId = request.Formats.Single(format => format.MediaType == "Ebook").FormatId;
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var asset = new MediaAsset(workId, null, RequestMediaType.Ebook, ".epub", "book.epub",
+                "book.epub", 100, new string('a', 64), "application/epub+zip", formatId, null, Now);
+            var import = new LibraryImport(asset.Id, Now);
+            import.MarkAwaitingVerification("book-target.epub");
+            database.MediaAssets.Add(asset);
+            database.LibraryImports.Add(import);
+            await database.SaveChangesAsync();
+        }
+
+        var mine = await client.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(mine);
+        var found = mine.Active.Concat(mine.History).Single(item => item.Id == request.Id);
+        var ebook = found.Formats.Single(format => format.MediaType == "Ebook");
+        Assert.IsNull(ebook.ExternalActionUri);
+    }
+
+    [TestMethod]
+    public async Task AnAvailableFormatWithNoPublishedAssetHasNoLink()
+    {
+        // Covers a format marked Available outside this publishing pipeline
+        // (e.g. an owned-import confirmation) -- there is no MediaAsset row
+        // to resolve a link from, so this must degrade quietly, not throw.
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateRequestingClientAsync(fixture);
+        using var admin = await fixture.CreateAdminClientAsync();
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName,
+            await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await ConfigureCwaAsync(admin);
+        var workId = await ResolveWorkAsync(client, "the-hobbit");
+        var request = await CreateAndReadRequestAsync(client, workId, ["Ebook"]);
+        var formatId = request.Formats.Single(format => format.MediaType == "Ebook").FormatId;
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var owner = await database.BookRequests
+                .Include(row => row.Participants)
+                .Include(row => row.Formats)
+                .SingleAsync(row => row.Id == request.Id);
+            owner.MarkFormatAvailable(formatId, Now);
+            await database.SaveChangesAsync();
+        }
+
+        var mine = await client.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(mine);
+        var found = mine.Active.Concat(mine.History).Single(item => item.Id == request.Id);
+        var ebook = found.Formats.Single(format => format.MediaType == "Ebook");
+        Assert.IsNull(ebook.ExternalActionUri);
+    }
+
+    private static async Task SeedEbookDeliveredAsync(
+        WebTestFixture fixture, Guid requestId, Guid formatId, Guid workId, string externalBookId, DateTimeOffset atUtc)
+    {
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var owner = await database.BookRequests
+            .Include(row => row.Participants)
+            .Include(row => row.Formats)
+            .SingleAsync(row => row.Id == requestId);
+        var asset = new MediaAsset(workId, null, RequestMediaType.Ebook, ".epub", "book.epub",
+            "book.epub", 100, new string('a', 64), "application/epub+zip", formatId, null, atUtc);
+        var import = new LibraryImport(asset.Id, atUtc);
+        import.MarkAvailable(externalBookId, atUtc);
+        owner.MarkFormatAvailable(formatId, atUtc);
+        database.MediaAssets.Add(asset);
+        database.LibraryImports.Add(import);
+        await database.SaveChangesAsync();
+    }
+
+    private static async Task SeedAudiobookDeliveredAsync(
+        WebTestFixture fixture, Guid requestId, Guid formatId, Guid workId, string externalItemId,
+        DateTimeOffset atUtc, bool bundled)
+    {
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var owner = await database.BookRequests
+            .Include(row => row.Participants)
+            .Include(row => row.Formats)
+            .SingleAsync(row => row.Id == requestId);
+
+        if (bundled)
+        {
+            var bundleId = Guid.NewGuid();
+            var first = new MediaAsset(workId, null, RequestMediaType.Audiobook, ".m4b", "part1.m4b",
+                "part1.m4b", 100, new string('a', 64), "audio/mp4", formatId, null, atUtc, bundleId, 1, 2);
+            var second = new MediaAsset(workId, null, RequestMediaType.Audiobook, ".m4b", "part2.m4b",
+                "part2.m4b", 100, new string('b', 64), "audio/mp4", formatId, null, atUtc, bundleId, 2, 2);
+            var delivery = AudiobookshelfDelivery.ForBundle(bundleId, atUtc);
+            delivery.MarkDelivered(externalItemId, atUtc);
+            database.MediaAssets.AddRange(first, second);
+            database.Deliveries.Add(delivery);
+        }
+        else
+        {
+            var asset = new MediaAsset(workId, null, RequestMediaType.Audiobook, ".m4b", "book.m4b",
+                "book.m4b", 100, new string('a', 64), "audio/mp4", formatId, null, atUtc);
+            var delivery = new AudiobookshelfDelivery(asset.Id, atUtc);
+            delivery.MarkDelivered(externalItemId, atUtc);
+            database.MediaAssets.Add(asset);
+            database.Deliveries.Add(delivery);
+        }
+
+        owner.MarkFormatAvailable(formatId, atUtc);
+        await database.SaveChangesAsync();
+    }
+
+    private static async Task ConfigureAudiobookshelfAsync(HttpClient client)
+    {
+        var settings = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/audiobookshelf/",
+            new FamilyLibrarian.Contracts.Publishing.SetAudiobookshelfSettingsRequest(
+                "https://audio.example.test", null, "lib-1", "folder-1"));
+        settings.EnsureSuccessStatusCode();
+
+        var enabled = await client.PutAsJsonAsync(
+            "/api/v1/admin/publishing/audiobookshelf/enabled",
+            new FamilyLibrarian.Contracts.Publishing.SetPublishingEnabledRequest(true));
+        enabled.EnsureSuccessStatusCode();
     }
 
     private static async Task<HttpClient> CreateRequestingClientAsync(WebTestFixture fixture)

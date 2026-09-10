@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Delivery;
@@ -8,7 +9,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FamilyLibrarian.Infrastructure.Persistence;
 
-public sealed class RequestRepository(AppDbContext database) : IRequestRepository, IBookRequestFulfillmentStore
+public sealed class RequestRepository(
+    AppDbContext database,
+    ICwaSettingsStore cwaSettingsStore,
+    IAudiobookshelfSettingsStore audiobookshelfSettingsStore) : IRequestRepository, IBookRequestFulfillmentStore
 {
     public Task<bool> WorkExistsAsync(Guid workId, CancellationToken cancellationToken) =>
         database.Works.AnyAsync(work => work.Id == workId && !work.IsRetired, cancellationToken);
@@ -268,11 +272,11 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
             .AsNoTracking()
             .Where(import => assetIds.Contains(import.AssetId))
             .OrderByDescending(import => import.CreatedAtUtc)
-            .Select(import => new LibraryImportProgressRow(import.AssetId, import.Status))
+            .Select(import => new LibraryImportProgressRow(import.AssetId, import.Status, import.ExternalBookId))
             .ToArrayAsync(cancellationToken);
         var latestImports = imports
             .GroupBy(import => import.AssetId)
-            .ToDictionary(group => group.Key, group => group.First().Status);
+            .ToDictionary(group => group.Key, group => group.First());
 
         // A bundle's Delivery (e.g. a chaptered audiobook) is keyed by
         // BundleId rather than any single track's AssetId, so its lookup
@@ -289,16 +293,30 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                 (delivery.AssetId != null && assetIds.Contains(delivery.AssetId.Value)) ||
                 (delivery.BundleId != null && bundleIds.Contains(delivery.BundleId.Value)))
             .OrderByDescending(delivery => delivery.CreatedAtUtc)
-            .Select(delivery => new DeliveryProgressRow(delivery.AssetId, delivery.BundleId, delivery.Status))
+            .Select(delivery => new DeliveryProgressRow(
+                delivery.AssetId, delivery.BundleId, delivery.Status, delivery.ExternalItemId))
             .ToArrayAsync(cancellationToken);
         var latestDeliveriesByAsset = deliveries
             .Where(delivery => delivery.AssetId.HasValue)
             .GroupBy(delivery => delivery.AssetId!.Value)
-            .ToDictionary(group => group.Key, group => group.First().Status);
+            .ToDictionary(group => group.Key, group => group.First());
         var latestDeliveriesByBundle = deliveries
             .Where(delivery => delivery.BundleId.HasValue)
             .GroupBy(delivery => delivery.BundleId!.Value)
-            .ToDictionary(group => group.Key, group => group.First().Status);
+            .ToDictionary(group => group.Key, group => group.First());
+
+        // Deep links are only ever built once, off the settings row (not per
+        // format) -- and only queried at all when something in this batch
+        // actually reached the terminal state that carries a usable external
+        // id (an empty/all-pending batch never touches these stores).
+        var cwaSettings = latestImports.Values.Any(import =>
+                import.Status == LibraryImportStatus.Available && import.ExternalBookId is not null)
+            ? await cwaSettingsStore.FindAsync(cancellationToken)
+            : null;
+        var audiobookshelfSettings = latestDeliveriesByAsset.Values.Concat(latestDeliveriesByBundle.Values).Any(
+                delivery => delivery.Status == AudiobookshelfDeliveryStatus.Delivered && delivery.ExternalItemId is not null)
+            ? await audiobookshelfSettingsStore.FindAsync(cancellationToken)
+            : null;
 
         var enriched = requests
             .Select(request => request with
@@ -315,25 +333,39 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
                             latestEvaluations.TryGetValue(asset.AssetId, out var evaluation)
                                 ? evaluation
                                 : null;
-                        LibraryImportStatus? libraryImportStatus =
-                            latestImports.TryGetValue(asset.AssetId, out var libraryImport)
-                                ? libraryImport
+                        LibraryImportProgressRow? libraryImport =
+                            latestImports.TryGetValue(asset.AssetId, out var libraryImportRow)
+                                ? libraryImportRow
                                 : null;
-                        AudiobookshelfDeliveryStatus? deliveryStatus = asset.BundleId.HasValue
+                        DeliveryProgressRow? delivery = asset.BundleId.HasValue
                             ? (latestDeliveriesByBundle.TryGetValue(asset.BundleId.Value, out var bundleDelivery)
                                 ? bundleDelivery
                                 : null)
-                            : (latestDeliveriesByAsset.TryGetValue(asset.AssetId, out var delivery)
-                                ? delivery
+                            : (latestDeliveriesByAsset.TryGetValue(asset.AssetId, out var assetDelivery)
+                                ? assetDelivery
                                 : null);
+
+                        // Read the external id only once the underlying row
+                        // has reached its terminal Available/Delivered state --
+                        // a retry (see LibraryImport.ResetForRetry) resets
+                        // Status but leaves a prior ExternalBookId in place,
+                        // so this gate is what stops a mid-retry format from
+                        // linking to a superseded import.
+                        var externalActionUri = libraryImport is { Status: LibraryImportStatus.Available }
+                            ? ExternalLibraryLinks.BuildCwaBookLink(cwaSettings, libraryImport.ExternalBookId)
+                            : delivery is { Status: AudiobookshelfDeliveryStatus.Delivered }
+                                ? ExternalLibraryLinks.BuildAudiobookshelfItemLink(
+                                    audiobookshelfSettings, delivery.ExternalItemId)
+                                : null;
 
                         return format with
                         {
                             Progress = RequestFormatProgress.Describe(
                                 asset.StorageState,
                                 securityStatus,
-                                libraryImportStatus,
-                                deliveryStatus)
+                                libraryImport?.Status,
+                                delivery?.Status),
+                            ExternalActionUri = externalActionUri
                         };
                     })
                     .ToArray()
@@ -519,9 +551,10 @@ public sealed class RequestRepository(AppDbContext database) : IRequestRepositor
         Guid AssetId,
         SecurityEvaluationStatus Status);
 
-    private sealed record LibraryImportProgressRow(Guid AssetId, LibraryImportStatus Status);
+    private sealed record LibraryImportProgressRow(Guid AssetId, LibraryImportStatus Status, string? ExternalBookId);
 
-    private sealed record DeliveryProgressRow(Guid? AssetId, Guid? BundleId, AudiobookshelfDeliveryStatus Status);
+    private sealed record DeliveryProgressRow(
+        Guid? AssetId, Guid? BundleId, AudiobookshelfDeliveryStatus Status, string? ExternalItemId);
 
     private sealed record KindleDeliveryProgressRow(
         Guid RequestId, Guid DeliveryTargetId, Guid AttemptId, DeliveryAttemptStatus Status,

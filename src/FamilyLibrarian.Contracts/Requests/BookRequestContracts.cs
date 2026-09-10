@@ -74,7 +74,8 @@ public sealed record BookRequestFormatResponse(
     string MediaType,
     string Status,
     string? ProgressCode = null,
-    string? ProgressDescription = null);
+    string? ProgressDescription = null,
+    string? ExternalActionUri = null);
 
 public sealed record BookRequestListResponse(
     IReadOnlyList<BookRequestResponse> Active,

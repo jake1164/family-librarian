@@ -94,15 +94,8 @@ public sealed class CwaOwnedLibraryProvider(
                 Currency: null,
                 LicenseOrUsageStatus: null,
                 DrmStatus: null,
-                ExternalActionUri: BuildDeepLink(settings.PublicUrl ?? settings.OpdsBaseUrl!, bookId),
+                ExternalActionUri: ExternalLibraryLinks.BuildCwaBookLink(settings, bookId),
                 ProviderData: null)
         ];
     }
-
-    // settings.PublicUrl, when set, is what a family member's browser can
-    // actually reach -- settings.OpdsBaseUrl is only guaranteed reachable by
-    // Family Librarian's own backend (in a containerized deployment it is
-    // routinely a Docker-internal hostname like http://cwa:8083).
-    private static Uri? BuildDeepLink(string opdsBaseUrl, string bookId) =>
-        Uri.TryCreate($"{opdsBaseUrl.TrimEnd('/')}/book/{bookId}", UriKind.Absolute, out var uri) ? uri : null;
 }

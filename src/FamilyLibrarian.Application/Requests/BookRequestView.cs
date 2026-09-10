@@ -38,7 +38,8 @@ public sealed record RequestFormatView(
     Guid Id,
     RequestMediaType MediaType,
     RequestFormatStatus Status,
-    RequestFormatProgressView? Progress = null);
+    RequestFormatProgressView? Progress = null,
+    Uri? ExternalActionUri = null);
 
 /// <summary>
 /// The viewer's own most recent Kindle delivery attempt for this request --

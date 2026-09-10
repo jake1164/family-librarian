@@ -70,7 +70,7 @@ cover every case:
 
 | Component | Use for | Shows |
 | --- | --- | --- |
-| `FormatStatusChip` | One request format (Ebook/Audiobook + its status) | icon (media type) + chip colored by status + tooltip |
+| `FormatStatusChip` | One request format (Ebook/Audiobook + its status) | icon (media type) + chip colored by status + tooltip; clickable once `ExternalActionUri` is set |
 | `RequestStatusChip` | A whole request's status (no single media type) | chip colored by status, short label by default |
 | `MediaTypeChip` | A media type with no status attached (e.g. a provider lookup) | neutral/outlined chip + icon + tooltip |
 
@@ -80,7 +80,8 @@ cover every case:
 {
     <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
                        ProgressCode="@format.ProgressCode"
-                       ProgressDescription="@format.ProgressDescription" />
+                       ProgressDescription="@format.ProgressDescription"
+                       ExternalActionUri="@format.ExternalActionUri" />
 }
 
 @* The request's overall status *@

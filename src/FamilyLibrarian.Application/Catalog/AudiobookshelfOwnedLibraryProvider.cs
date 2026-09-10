@@ -88,15 +88,8 @@ public sealed class AudiobookshelfOwnedLibraryProvider(
                 Currency: null,
                 LicenseOrUsageStatus: null,
                 DrmStatus: null,
-                ExternalActionUri: BuildDeepLink(settings.PublicUrl ?? settings.BaseUrl!, itemId),
+                ExternalActionUri: ExternalLibraryLinks.BuildAudiobookshelfItemLink(settings, itemId),
                 ProviderData: null)
         ];
     }
-
-    // settings.PublicUrl, when set, is what a family member's browser can
-    // actually reach -- settings.BaseUrl is only guaranteed reachable by
-    // Family Librarian's own backend (in a containerized deployment it is
-    // routinely a Docker-internal hostname like http://abs:80).
-    private static Uri? BuildDeepLink(string baseUrl, string itemId) =>
-        Uri.TryCreate($"{baseUrl.TrimEnd('/')}/item/{itemId}", UriKind.Absolute, out var uri) ? uri : null;
 }
