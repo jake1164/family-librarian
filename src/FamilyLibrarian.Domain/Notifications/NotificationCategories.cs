@@ -13,6 +13,14 @@ public static class NotificationCategories
     /// added to the library.
     /// </summary>
     public const string KindleDeliveryConfirmationRequested = "delivery.kindle_confirmation_requested";
+
+    /// <summary>
+    /// Admin-facing counterpart to <see cref="KindleDeliveryConfirmationRequested"/>:
+    /// raised when a delivery attempt has no automatic path forward left (a
+    /// terminal failure, an ambiguous submission, or a user's report-missing)
+    /// and needs a human to act from the /admin/publishing queue.
+    /// </summary>
+    public const string DeliveryNeedsAttention = "delivery.needs_attention";
 }
 
 public static class NotificationSubjectTypes

@@ -263,10 +263,28 @@ public sealed class DeliveryAttemptService(
     /// attempt never arrived. Does not itself retry -- see the widened
     /// eligibility on <see cref="RetryAsync"/>.
     /// </summary>
-    public Task<ConfirmDeliveryResult> ReportMissingAsync(Guid attemptId, CancellationToken cancellationToken) =>
-        RecordConfirmationAsync(
+    public async Task<ConfirmDeliveryResult> ReportMissingAsync(Guid attemptId, CancellationToken cancellationToken)
+    {
+        var result = await RecordConfirmationAsync(
             attemptId, AuditActions.DeliveryAttemptReportedMissing, attempt => attempt.ReportMissing(clock.UtcNow),
             cancellationToken);
+
+        if (result.Outcome == ConfirmDeliveryOutcome.Success && result.Attempt is { } attempt)
+        {
+            try
+            {
+                await notifications.RecordDeliveryNeedsAttentionAsync(
+                    attempt.DeliveryId, attempt.BookTitle,
+                    "The recipient reported this Kindle delivery never arrived.", cancellationToken);
+            }
+            catch (Exception)
+            {
+                // A notification failure cannot change the already durable confirmation.
+            }
+        }
+
+        return result;
+    }
 
     private async Task<ConfirmDeliveryResult> RecordConfirmationAsync(
         Guid attemptId, string auditAction, Action<DeliveryAttempt> apply, CancellationToken cancellationToken)
@@ -438,6 +456,24 @@ public sealed class DeliveryAttemptService(
             {
                 await notifications.RecordKindleDeliverySubmittedAsync(
                     attempt.UserId, attempt.Id, attempt.BookTitle, completion.Token);
+            }
+            catch (Exception)
+            {
+                // A notification failure cannot change the already durable send outcome.
+            }
+        }
+        else if (attempt.Status == DeliveryAttemptStatus.SubmissionUnknown ||
+            (attempt.Status == DeliveryAttemptStatus.Failed && DeliveryRetryPolicy.NextAutomaticRetryAt(
+                attempt.Status, attempt.IsRetryable, attempt.AttemptNumber, attempt.CompletedAtUtc, latest: true) is null))
+        {
+            // No automatic retry sweep will ever pick this up again -- a human
+            // needs to see it. A merely-retryable Failed with attempts left is
+            // left alone here; RetryFailedAsync will handle it without noise.
+            try
+            {
+                await notifications.RecordDeliveryNeedsAttentionAsync(
+                    attempt.DeliveryId, attempt.BookTitle,
+                    attempt.FailureReason ?? "This Kindle delivery needs review.", completion.Token);
             }
             catch (Exception)
             {

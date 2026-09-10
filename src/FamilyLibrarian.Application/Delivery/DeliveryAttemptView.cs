@@ -37,4 +37,15 @@ public sealed record DeliveryAttemptView(
         Status, IsRetryable, AttemptNumber, CompletedAtUtc, IsLatest);
     public bool AutomaticRetriesExhausted => IsLatest && Status == DeliveryAttemptStatus.Failed &&
         IsRetryable && AttemptNumber >= DeliveryRetryPolicy.MaxAttempts;
+
+    /// <summary>
+    /// True when this is the end of its retry chain with no automatic path
+    /// forward -- a terminal failure, an ambiguous submission, or a
+    /// user-reported non-arrival -- so an admin needs to look at it. Mirrors
+    /// the trigger for <c>NotificationService.RecordDeliveryNeedsAttentionAsync</c>.
+    /// </summary>
+    public bool NeedsAttention => IsLatest && (
+        ConfirmationStatus == DeliveryConfirmationStatus.ReportedMissing ||
+        Status == DeliveryAttemptStatus.SubmissionUnknown ||
+        (Status == DeliveryAttemptStatus.Failed && (!IsRetryable || AttemptNumber >= DeliveryRetryPolicy.MaxAttempts)));
 }

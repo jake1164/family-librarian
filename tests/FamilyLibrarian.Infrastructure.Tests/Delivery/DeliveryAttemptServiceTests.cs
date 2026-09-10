@@ -389,7 +389,67 @@ public sealed class DeliveryAttemptServiceTests
 
         await context.Service.ReleaseForRequestFormatAsync(request, "42", "epub", Now, CancellationToken.None);
 
-        Assert.IsEmpty(context.NotificationRepository.Added);
+        Assert.IsEmpty(context.NotificationRepository.Added.Where(
+            notification => notification.Category == NotificationCategories.KindleDeliveryConfirmationRequested));
+    }
+
+    [TestMethod]
+    public async Task ATerminalFailureRecordsAnAdminNeedsAttentionNotification()
+    {
+        var context = new TestContext();
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Rejected("not configured");
+        var target = context.SeedEnabledTarget();
+        var request = new BookRequest(
+            target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: target.Id);
+
+        await context.Service.ReleaseForRequestFormatAsync(
+            request, "42", "epub", Now, CancellationToken.None, workTitle: "Debt of Honor");
+
+        var attempt = context.DeliveryAttempts.Rows.Single();
+        var notification = context.NotificationRepository.Added.Single();
+        Assert.AreEqual(NotificationCategories.DeliveryNeedsAttention, notification.Category);
+        Assert.AreEqual(NotificationAudience.AdminBroadcast, notification.Audience);
+        Assert.AreEqual(attempt.DeliveryId.ToString(), notification.SubjectId);
+        Assert.Contains("Debt of Honor", notification.Title);
+    }
+
+    [TestMethod]
+    public async Task ARetryableFailureWithAttemptsRemainingDoesNotRecordANeedsAttentionNotification()
+    {
+        var context = new TestContext();
+        context.Provider.NextOutcome = EbookDeliveryOutcome.TransportFailure("timed out");
+        var target = context.SeedEnabledTarget();
+        var request = new BookRequest(
+            target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: target.Id);
+
+        await context.Service.ReleaseForRequestFormatAsync(request, "42", "epub", Now, CancellationToken.None);
+
+        Assert.IsEmpty(context.NotificationRepository.Added.Where(
+            notification => notification.Category == NotificationCategories.DeliveryNeedsAttention));
+    }
+
+    [TestMethod]
+    public async Task ReportingADeliveryMissingRecordsAnAdminNeedsAttentionNotification()
+    {
+        var context = new TestContext();
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var request = new BookRequest(
+            target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: target.Id);
+
+        await context.Service.ReleaseForRequestFormatAsync(
+            request, "42", "epub", Now, CancellationToken.None, workTitle: "Debt of Honor");
+        var attempt = context.DeliveryAttempts.Rows.Single();
+        context.NotificationRepository.Added.Clear();
+
+        var result = await context.Service.ReportMissingAsync(attempt.Id, CancellationToken.None);
+
+        Assert.AreEqual(ConfirmDeliveryOutcome.Success, result.Outcome);
+        var notification = context.NotificationRepository.Added.Single();
+        Assert.AreEqual(NotificationCategories.DeliveryNeedsAttention, notification.Category);
+        Assert.AreEqual(NotificationAudience.AdminBroadcast, notification.Audience);
+        Assert.AreEqual(attempt.DeliveryId.ToString(), notification.SubjectId);
     }
 
     [TestMethod]

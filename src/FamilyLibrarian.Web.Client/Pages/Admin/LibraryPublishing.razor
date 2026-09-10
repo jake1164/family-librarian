@@ -107,17 +107,34 @@ else
         </MudStack>
     }
 
-    <MudText Typo="Typo.h6" Class="mb-2">Ebooks → Kindle</MudText>
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2" Wrap="Wrap.Wrap">
+        <MudText Typo="Typo.h6">Ebooks → Kindle</MudText>
+        @if (AttentionCount > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Error">@AttentionCount needing attention</MudChip>
+        }
+        @if (queue.DeliveryAttempts.Count > 0)
+        {
+            <MudSpacer />
+            <MudSwitch T="bool" Value="showOnlyAttention" ValueChanged="@((bool v) => showOnlyAttention = v)"
+                       Color="Color.Error" Label="Needs attention only" Class="mt-0" />
+        }
+    </MudStack>
     @if (queue.DeliveryAttempts.Count == 0)
     {
         <MudAlert Severity="Severity.Info">No Kindle delivery attempts yet.</MudAlert>
     }
+    else if (showOnlyAttention && AttentionCount == 0)
+    {
+        <MudAlert Severity="Severity.Success">Nothing needs attention right now.</MudAlert>
+    }
     else
     {
         <MudStack Spacing="3">
-            @foreach (var attempt in queue.DeliveryAttempts)
+            @foreach (var attempt in VisibleAttempts)
             {
-                <MudPaper Class="pa-4" Elevation="1" data-attempt-id="@attempt.Id">
+                <MudPaper Class="pa-4" Elevation="1" data-attempt-id="@attempt.Id"
+                          Style="@(attempt.NeedsAttention ? "border-left: 4px solid var(--mud-palette-error);" : null)">
                     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
                         @if (attempt.RequestId is { } requestId)
                         {
@@ -130,6 +147,10 @@ else
                             <MudText Typo="Typo.h6">@(attempt.WorkTitle ?? "Existing library book")</MudText>
                         }
                         <MudSpacer />
+                        @if (attempt.NeedsAttention)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Error">Needs attention</MudChip>
+                        }
                         <KindleStatusChip Status="@attempt.Status" ConfirmationStatus="@attempt.ConfirmationStatus" />
                     </MudStack>
                     <MudText Typo="Typo.body2" Class="mt-1">
@@ -174,6 +195,15 @@ else
     private PublishingQueueResponse? queue;
     private bool loadFailed;
     private Guid? busyId;
+    private bool showOnlyAttention;
+
+    private int AttentionCount => queue?.DeliveryAttempts.Count(a => a.NeedsAttention) ?? 0;
+
+    private IEnumerable<DeliveryAttemptResponse> VisibleAttempts =>
+        (queue?.DeliveryAttempts ?? [])
+            .Where(a => !showOnlyAttention || a.NeedsAttention)
+            .OrderByDescending(a => a.NeedsAttention)
+            .ThenByDescending(a => a.CreatedAtUtc);
 
     protected override async Task OnInitializedAsync()
     {

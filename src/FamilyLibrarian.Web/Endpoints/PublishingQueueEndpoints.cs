@@ -88,5 +88,6 @@ internal static class PublishingQueueEndpoints
         view.IsLatest,
         view.CanRetry,
         view.NextAutomaticRetryAtUtc,
-        view.AutomaticRetriesExhausted);
+        view.AutomaticRetriesExhausted,
+        view.NeedsAttention);
 }

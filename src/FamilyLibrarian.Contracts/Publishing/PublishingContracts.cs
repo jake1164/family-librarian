@@ -169,7 +169,8 @@ public sealed record DeliveryAttemptResponse(
     bool IsLatest,
     bool CanRetry,
     DateTimeOffset? NextAutomaticRetryAtUtc,
-    bool AutomaticRetriesExhausted);
+    bool AutomaticRetriesExhausted,
+    bool NeedsAttention);
 
 public sealed record PublishingQueueResponse(
     IReadOnlyList<LibraryImportResponse> LibraryImports,

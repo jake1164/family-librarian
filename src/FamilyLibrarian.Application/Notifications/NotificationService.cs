@@ -75,6 +75,30 @@ public sealed class NotificationService(
             subjectId: attemptId.ToString(),
             cancellationToken);
 
+    /// <summary>
+    /// Admin-facing counterpart to <see cref="RecordKindleDeliverySubmittedAsync"/>:
+    /// raised when a delivery attempt has no automatic path forward left -- a
+    /// terminal failure, an ambiguous submission, or a user's report-missing --
+    /// and needs a human to act from the /admin/publishing queue. Keyed on
+    /// the attempt's stable <c>DeliveryId</c> rather than the attempt row
+    /// itself so a retry recurs the same notification instead of piling up a
+    /// fresh one per attempt.
+    /// </summary>
+    public Task RecordDeliveryNeedsAttentionAsync(
+        Guid deliveryId, string? bookTitle, string reason, CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.AdminBroadcast,
+            recipientUserId: null,
+            NotificationCategories.DeliveryNeedsAttention,
+            NotificationSeverity.Warning,
+            title: bookTitle is { } title
+                ? $"Kindle delivery of \"{title}\" needs attention"
+                : "A Kindle delivery needs attention",
+            detail: reason,
+            subjectType: NotificationSubjectTypes.DeliveryAttempt,
+            subjectId: deliveryId.ToString(),
+            cancellationToken);
+
     public async Task<IReadOnlyList<NotificationView>> ListForViewerAsync(
         bool isAdmin, CancellationToken cancellationToken)
     {
