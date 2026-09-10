@@ -53,7 +53,7 @@
                 {
                     <MudText>Automatic retries exhausted. Check the cause before retrying.</MudText>
                 }
-                @if (attempt.Id == attempt.LatestAttemptId && attempt.Status == "Submitted")
+                @if (attempt.Id == attempt.LatestAttemptId && attempt.Status == "Submitted" && attempt.ConfirmationStatus == "Unconfirmed")
                 {
                     <MudText>Did it arrive on your Kindle?</MudText>
                     <MudStack Row="true">
