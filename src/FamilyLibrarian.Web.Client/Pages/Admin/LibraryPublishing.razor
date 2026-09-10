@@ -166,10 +166,6 @@ else
                     {
                         <MudText Typo="Typo.caption">Receipt answer updated @answered.ToLocalTime().ToString("g")</MudText>
                     }
-                    @if (!attempt.IsLatest)
-                    {
-                        <MudText Typo="Typo.caption">Superseded — a newer attempt exists.</MudText>
-                    }
                     @if (attempt.NextAutomaticRetryAtUtc is { } retryAt)
                     {
                         <MudText Typo="Typo.caption">Automatic retry eligible after @retryAt.ToLocalTime().ToString("g"); next eligible worker sweep, subject to recipient checks.</MudText>
@@ -201,7 +197,7 @@ else
 
     private IEnumerable<DeliveryAttemptResponse> VisibleAttempts =>
         (queue?.DeliveryAttempts ?? [])
-            .Where(a => !showOnlyAttention || a.NeedsAttention)
+            .Where(a => a.IsLatest && (!showOnlyAttention || a.NeedsAttention))
             .OrderByDescending(a => a.NeedsAttention)
             .ThenByDescending(a => a.CreatedAtUtc);
 

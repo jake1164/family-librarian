@@ -190,7 +190,7 @@
                             <MudText Typo="Typo.caption">@PublishingDescription(delivery.OriginalFilename, delivery.FailureReason, delivery.CreatedAtUtc)</MudText>
                         </MudListItem>
                     }
-                    @foreach (var kindle in snapshot.KindleDeliveries)
+                    @foreach (var kindle in snapshot.KindleDeliveries.Where(k => k.IsLatest))
                     {
                         <MudListItem T="string">
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
