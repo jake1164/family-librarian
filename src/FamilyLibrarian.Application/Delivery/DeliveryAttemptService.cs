@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Delivery;
@@ -99,7 +100,14 @@ public sealed class DeliveryAttemptService(
     /// <see cref="IOwnedLibraryProvider"/> rather than trusting a
     /// client-supplied id.
     /// </summary>
-    public async Task<SendExistingBookResult> SendExistingBookAsync(Guid workId, CancellationToken cancellationToken)
+    /// <param name="confirmLowConfidenceMatch">
+    /// Required once the owned match is only <see cref="BookMatchBasis.TitleAuthor"/>
+    /// (a reviewable fallback, not a verified identifier -- see
+    /// <see cref="FulfillmentOption.MatchBasis"/>). No <see cref="DeliveryAttempt"/>
+    /// is created, and nothing is sent, until the caller confirms.
+    /// </param>
+    public async Task<SendExistingBookResult> SendExistingBookAsync(
+        Guid workId, CancellationToken cancellationToken, bool confirmLowConfidenceMatch = false)
     {
         if (currentUser.UserId is not { } userId)
         {
@@ -115,6 +123,7 @@ public sealed class DeliveryAttemptService(
         }
 
         string? externalBookId = null;
+        BookMatchBasis? matchBasis = null;
         foreach (var provider in ownedLibraryProviders)
         {
             var matches = await provider.FindOwnedMatchesAsync(workId, RequestMediaType.Ebook, cancellationToken);
@@ -122,6 +131,7 @@ public sealed class DeliveryAttemptService(
             if (owned is not null)
             {
                 externalBookId = owned.ProviderResultId;
+                matchBasis = owned.MatchBasis;
                 break;
             }
         }
@@ -129,6 +139,11 @@ public sealed class DeliveryAttemptService(
         if (externalBookId is null)
         {
             return SendExistingBookResult.NotOwned();
+        }
+
+        if (matchBasis == BookMatchBasis.TitleAuthor && !confirmLowConfidenceMatch)
+        {
+            return SendExistingBookResult.LowConfidenceMatchConfirmationRequired();
         }
 
         var work = await catalogRepository.GetWorkAsync(workId, cancellationToken);
@@ -522,6 +537,11 @@ public sealed record SendExistingBookResult(SendExistingBookOutcome Outcome, Del
 
     public static SendExistingBookResult Unauthenticated() =>
         new(SendExistingBookOutcome.Unauthenticated, null, null);
+
+    public static SendExistingBookResult LowConfidenceMatchConfirmationRequired() =>
+        new(SendExistingBookOutcome.LowConfidenceMatchConfirmationRequired, null,
+            "We found a likely match by title and author, not a verified identifier. " +
+            "Confirm you want to send this copy, or ask for a specific replacement copy instead.");
 }
 
 public enum SendExistingBookOutcome
@@ -530,7 +550,8 @@ public enum SendExistingBookOutcome
     Failed,
     NotOwned,
     TargetNotConfigured,
-    Unauthenticated
+    Unauthenticated,
+    LowConfidenceMatchConfirmationRequired
 }
 
 public sealed record RetryDeliveryResult(RetryDeliveryOutcome Outcome, DeliveryAttempt? Attempt)

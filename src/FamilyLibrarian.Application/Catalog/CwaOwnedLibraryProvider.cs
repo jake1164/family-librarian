@@ -95,7 +95,8 @@ public sealed class CwaOwnedLibraryProvider(
                 LicenseOrUsageStatus: null,
                 DrmStatus: null,
                 ExternalActionUri: ExternalLibraryLinks.BuildCwaBookLink(settings, bookId),
-                ProviderData: null)
+                ProviderData: null,
+                MatchBasis: result.Basis)
         ];
     }
 }

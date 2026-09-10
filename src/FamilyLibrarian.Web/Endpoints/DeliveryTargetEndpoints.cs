@@ -105,13 +105,16 @@ internal static class DeliveryTargetEndpoints
         DeliveryAttemptService service,
         CancellationToken cancellationToken)
     {
-        var result = await service.SendExistingBookAsync(request.WorkId, cancellationToken);
+        var result = await service.SendExistingBookAsync(
+            request.WorkId, cancellationToken, request.ConfirmLowConfidenceMatch);
 
         return result.Outcome switch
         {
             SendExistingBookOutcome.Success => Results.Ok(new SendExistingBookResponse(true, null, result.Attempt!.Id)),
             SendExistingBookOutcome.Failed => Results.Ok(new SendExistingBookResponse(false, result.Error, result.Attempt!.Id)),
             SendExistingBookOutcome.Unauthenticated => Results.Unauthorized(),
+            SendExistingBookOutcome.LowConfidenceMatchConfirmationRequired => Results.Conflict(
+                new SendExistingBookResponse(false, result.Error, RequiresConfirmation: true)),
             _ => Results.NotFound(new SendExistingBookResponse(false, result.Error))
         };
     }

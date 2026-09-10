@@ -16,6 +16,20 @@ public sealed class BookMatchServiceTests
 
         Assert.AreEqual(BookMatchDecision.Match, result.Decision);
         Assert.AreEqual("1", result.MatchedId);
+        Assert.AreEqual(BookMatchBasis.TitleAuthor, result.Basis);
+    }
+
+    [TestMethod]
+    public async Task ResolveUniqueStampsAnIdentifierBasisMatch()
+    {
+        var service = new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver());
+        var candidate = new CandidateBook("1", "Debt of Honor", "Tom Clancy");
+
+        var result = await service.ResolveUniqueAsync(
+            "Debt of Honor", "Tom Clancy", [candidate], CancellationToken.None);
+
+        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
+        Assert.AreEqual(BookMatchBasis.Identifier, result.Basis);
     }
 
     [TestMethod]
@@ -58,6 +72,7 @@ public sealed class BookMatchServiceTests
 
         Assert.AreEqual(BookMatchDecision.Match, result.Decision);
         Assert.AreEqual("2", result.MatchedId);
+        Assert.AreEqual(BookMatchBasis.TitleAuthor, result.Basis);
     }
 
     [TestMethod]
@@ -74,6 +89,7 @@ public sealed class BookMatchServiceTests
 
         Assert.AreEqual(BookMatchDecision.Match, result.Decision);
         Assert.AreEqual("2", result.MatchedId);
+        Assert.AreEqual(BookMatchBasis.Identifier, result.Basis);
     }
 
     private sealed class PicksSecondCandidateResolver : IAmbiguityResolver

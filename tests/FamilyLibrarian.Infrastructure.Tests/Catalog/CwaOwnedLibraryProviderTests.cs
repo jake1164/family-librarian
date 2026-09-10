@@ -79,6 +79,21 @@ public sealed class CwaOwnedLibraryProviderTests
         Assert.AreEqual(OptionKind.Owned, option.OptionKind);
         Assert.AreEqual(AcquisitionMethod.OwnedImport, option.AcquisitionMethod);
         Assert.IsNotNull(option.ExternalActionUri);
+        Assert.AreEqual(BookMatchBasis.Identifier, option.MatchBasis);
+    }
+
+    [TestMethod]
+    public async Task ATitleAuthorFallbackMatchCarriesThatBasisOntoTheOption()
+    {
+        var context = ConfiguredContext();
+        context.CatalogClient.NextBookId = "42";
+        context.CatalogClient.NextBasis = BookMatchBasis.TitleAuthor;
+
+        var options = await context.Provider.FindOwnedMatchesAsync(
+            Guid.NewGuid(), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual(BookMatchBasis.TitleAuthor, options[0].MatchBasis);
     }
 
     [TestMethod]
@@ -213,6 +228,8 @@ public sealed class CwaOwnedLibraryProviderTests
     {
         public string? NextBookId { get; set; }
 
+        public BookMatchBasis NextBasis { get; set; } = BookMatchBasis.Identifier;
+
         public int CallCount { get; private set; }
 
         public IReadOnlyCollection<string>? LastIsbn13Candidates { get; private set; }
@@ -224,7 +241,7 @@ public sealed class CwaOwnedLibraryProviderTests
             LastIsbn13Candidates = isbn13Candidates;
             return Task.FromResult(NextBookId is null
                 ? BookMatchResult.NoMatchResult
-                : BookMatchResult.Match(new CandidateBook(NextBookId, title, author)));
+                : BookMatchResult.Match(new CandidateBook(NextBookId, title, author)) with { Basis = NextBasis });
         }
     }
 

@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Requests;
 
@@ -33,7 +34,15 @@ public sealed record FulfillmentOption(
     string? LicenseOrUsageStatus,
     string? DrmStatus,
     Uri? ExternalActionUri,
-    string? ProviderData);
+    string? ProviderData,
+    // Meaningful only when OptionKind is Owned -- how confidently the owning
+    // provider matched this artifact to the requested Work. Null for every
+    // other OptionKind, and for an Owned option from a provider that doesn't
+    // go through the shared matcher. See BookMatchBasis for why this exists:
+    // a title/author fallback match is a reviewable guess, not a verified
+    // identity, and a consumer that acts on Owned automatically (e.g. the
+    // Kindle existing-book send) must not treat the two the same way.
+    BookMatchBasis? MatchBasis = null);
 
 public enum OptionKind
 {

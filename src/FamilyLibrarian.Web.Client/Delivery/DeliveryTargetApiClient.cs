@@ -81,16 +81,18 @@ public sealed class DeliveryTargetApiClient(HttpClient httpClient, AntiforgeryTo
 
     public async Task<SendExistingBookResponse?> SendExistingBookAsync(
         Guid workId,
+        bool confirmLowConfidenceMatch = false,
         CancellationToken cancellationToken = default)
     {
         using var response = await SendAsync(
             HttpMethod.Post,
             "api/v1/me/delivery/kindle/send-existing",
-            new SendExistingBookRequest(workId),
+            new SendExistingBookRequest(workId, confirmLowConfidenceMatch),
             cancellationToken);
 
-        // Both a success and a "not owned"/"not configured" 404 carry a body
-        // with the message to show the user -- only 401 (no session) has none.
+        // Success, a "not owned"/"not configured" 404, and a "low-confidence
+        // match" 409 all carry a body with the message to show the user --
+        // only 401 (no session) has none.
         return response.StatusCode == HttpStatusCode.Unauthorized
             ? null
             : await response.Content.ReadFromJsonAsync<SendExistingBookResponse>(cancellationToken);

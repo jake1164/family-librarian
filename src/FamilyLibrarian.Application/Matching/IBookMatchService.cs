@@ -25,21 +25,29 @@ public sealed class BookMatchService(IBookMatcher matcher, IAmbiguityResolver am
 {
     public Task<BookMatchResult> ResolveUniqueAsync(
         string title, string? author, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken) =>
-        ResolveAmbiguityAsync(matcher.ResolveUnique(candidates), title, author, cancellationToken);
+        ResolveAmbiguityAsync(
+            matcher.ResolveUnique(candidates), title, author, BookMatchBasis.Identifier, cancellationToken);
 
     public Task<BookMatchResult> MatchByTitleAuthorAsync(
         string title, string? author, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken) =>
-        ResolveAmbiguityAsync(matcher.MatchByTitleAuthor(title, author, candidates), title, author, cancellationToken);
+        ResolveAmbiguityAsync(
+            matcher.MatchByTitleAuthor(title, author, candidates), title, author, BookMatchBasis.TitleAuthor,
+            cancellationToken);
 
     private async Task<BookMatchResult> ResolveAmbiguityAsync(
-        BookMatchResult result, string title, string? author, CancellationToken cancellationToken)
+        BookMatchResult result, string title, string? author, BookMatchBasis basis, CancellationToken cancellationToken)
     {
+        if (result.Decision == BookMatchDecision.Match)
+        {
+            return result with { Basis = basis };
+        }
+
         if (result.Decision != BookMatchDecision.Ambiguous)
         {
             return result;
         }
 
         var resolved = await ambiguityResolver.ResolveAsync(title, author, result.Candidates, cancellationToken);
-        return resolved is null ? result : BookMatchResult.Match(resolved);
+        return resolved is null ? result : BookMatchResult.Match(resolved) with { Basis = basis };
     }
 }

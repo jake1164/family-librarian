@@ -78,6 +78,9 @@ public sealed class AudiobookshelfOwnedLibraryProviderTests
         Assert.AreEqual(OptionKind.Owned, option.OptionKind);
         Assert.AreEqual(AcquisitionMethod.OwnedImport, option.AcquisitionMethod);
         Assert.IsNotNull(option.ExternalActionUri);
+        // Audiobookshelf has no identifier-scoped lookup -- every owned match
+        // it reports is a title/author fallback, never Identifier-basis.
+        Assert.AreEqual(BookMatchBasis.TitleAuthor, option.MatchBasis);
     }
 
     [TestMethod]
@@ -202,7 +205,8 @@ public sealed class AudiobookshelfOwnedLibraryProviderTests
             CallCount++;
             return Task.FromResult(ExistingItemId is null
                 ? BookMatchResult.NoMatchResult
-                : BookMatchResult.Match(new CandidateBook(ExistingItemId, title, author)));
+                : BookMatchResult.Match(new CandidateBook(ExistingItemId, title, author))
+                    with { Basis = BookMatchBasis.TitleAuthor });
         }
 
         public Task<AudiobookshelfUploadResult> UploadAsync(

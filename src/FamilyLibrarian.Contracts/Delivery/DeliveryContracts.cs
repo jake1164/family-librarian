@@ -21,9 +21,16 @@ public sealed record KindleDeliverySummaryResponse(string Address, bool IsEnable
 
 public sealed record TestKindleDeliveryResponse(bool Succeeded, string Message);
 
-public sealed record SendExistingBookRequest(Guid WorkId);
+public sealed record SendExistingBookRequest(Guid WorkId, bool ConfirmLowConfidenceMatch = false);
 
-public sealed record SendExistingBookResponse(bool Succeeded, string? Message, Guid? AttemptId = null);
+/// <summary>
+/// <paramref name="RequiresConfirmation"/> is set when the matched copy was
+/// found by title/author, not a verified identifier -- resend with
+/// <see cref="SendExistingBookRequest.ConfirmLowConfidenceMatch"/> set to
+/// actually send it.
+/// </summary>
+public sealed record SendExistingBookResponse(
+    bool Succeeded, string? Message, Guid? AttemptId = null, bool RequiresConfirmation = false);
 
 public sealed record PersonalDeliveryAttemptResponse(
     Guid Id, Guid DeliveryId, Guid? RequestId, string? BookTitle,

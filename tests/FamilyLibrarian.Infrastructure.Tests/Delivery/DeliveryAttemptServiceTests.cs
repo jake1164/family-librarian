@@ -2,6 +2,7 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Catalog;
@@ -159,6 +160,42 @@ public sealed class DeliveryAttemptServiceTests
         Assert.AreEqual("book-7", attempt.ExternalBookId);
         Assert.AreEqual("epub", attempt.BookFormat);
         Assert.IsFalse(attempt.Convert);
+    }
+
+    [TestMethod]
+    public async Task SendingATitleAuthorFallbackMatchRequiresConfirmationAndCreatesNoAttempt()
+    {
+        var context = new TestContext();
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var workId = Guid.NewGuid();
+        context.OwnedLibrary.Owned[workId] = "book-7";
+        context.OwnedLibrary.MatchBasis = BookMatchBasis.TitleAuthor;
+
+        var result = await context.Service.SendExistingBookAsync(workId, CancellationToken.None);
+
+        Assert.AreEqual(SendExistingBookOutcome.LowConfidenceMatchConfirmationRequired, result.Outcome);
+        Assert.IsEmpty(context.DeliveryAttempts.Rows);
+    }
+
+    [TestMethod]
+    public async Task ConfirmingATitleAuthorFallbackMatchSendsItNormally()
+    {
+        var context = new TestContext();
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var workId = Guid.NewGuid();
+        context.OwnedLibrary.Owned[workId] = "book-7";
+        context.OwnedLibrary.MatchBasis = BookMatchBasis.TitleAuthor;
+
+        var result = await context.Service.SendExistingBookAsync(
+            workId, CancellationToken.None, confirmLowConfidenceMatch: true);
+
+        Assert.AreEqual(SendExistingBookOutcome.Success, result.Outcome);
+        var attempt = context.DeliveryAttempts.Rows.Single();
+        Assert.AreEqual("book-7", attempt.ExternalBookId);
     }
 
     [TestMethod]
@@ -878,6 +915,9 @@ public sealed class DeliveryAttemptServiceTests
 
         public Dictionary<Guid, string> Owned { get; } = [];
 
+        /// <summary>Defaults to the high-confidence tier so existing tests keep sending immediately.</summary>
+        public BookMatchBasis MatchBasis { get; set; } = BookMatchBasis.Identifier;
+
         public Task<IReadOnlyList<FulfillmentOption>> FindOwnedMatchesAsync(
             Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<FulfillmentOption>>(
@@ -904,7 +944,8 @@ public sealed class DeliveryAttemptServiceTests
             LicenseOrUsageStatus: null,
             DrmStatus: null,
             ExternalActionUri: null,
-            ProviderData: null);
+            ProviderData: null,
+            MatchBasis: MatchBasis);
     }
 
     private sealed class StubCurrentUser : ICurrentUser

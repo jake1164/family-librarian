@@ -72,7 +72,7 @@
                             <MudButton Variant="Variant.Outlined"
                                        Size="Size.Small"
                                        Disabled="@isSendingExisting"
-                                       OnClick="SendExistingToKindleAsync">
+                                       OnClick="@(() => SendExistingToKindleAsync())">
                                 @(isSendingExisting ? "Sending…" : "Send to Kindle")
                             </MudButton>
                         }
@@ -98,8 +98,19 @@
                 }
                 @if (sendExistingMessage is not null)
                 {
-                    <MudAlert Severity="@(sendExistingSucceeded ? Severity.Success : Severity.Error)" Class="mt-2" Dense="true">
+                    <MudAlert Severity="@(sendExistingSucceeded ? Severity.Success : sendExistingRequiresConfirmation ? Severity.Warning : Severity.Error)"
+                              Class="mt-2" Dense="true">
                         @sendExistingMessage
+                        @if (sendExistingRequiresConfirmation)
+                        {
+                            <div class="mt-2">
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Warning"
+                                           Disabled="@isSendingExisting"
+                                           OnClick="@(() => SendExistingToKindleAsync(confirmLowConfidenceMatch: true))">
+                                    Send anyway
+                                </MudButton>
+                            </div>
+                        }
                     </MudAlert>
                 }
             </MudPaper>
@@ -259,6 +270,7 @@
     private bool isSendingExisting;
     private bool sendExistingSucceeded;
     private string? sendExistingMessage;
+    private bool sendExistingRequiresConfirmation;
     private string? note;
     private bool isSubmitting;
     private string? errorMessage;
@@ -302,6 +314,7 @@
         versionDetails = null;
         errorMessage = null;
         sendExistingMessage = null;
+        sendExistingRequiresConfirmation = false;
         sentAttemptId = null;
 
         try
@@ -437,17 +450,19 @@
         }
     }
 
-    private async Task SendExistingToKindleAsync()
+    private async Task SendExistingToKindleAsync(bool confirmLowConfidenceMatch = false)
     {
         isSendingExisting = true;
         sendExistingMessage = null;
+        sendExistingRequiresConfirmation = false;
         sentAttemptId = null;
 
         try
         {
-            var result = await DeliveryTargets.SendExistingBookAsync(WorkId);
+            var result = await DeliveryTargets.SendExistingBookAsync(WorkId, confirmLowConfidenceMatch);
             sentAttemptId = result?.AttemptId;
             sendExistingSucceeded = result?.Succeeded ?? false;
+            sendExistingRequiresConfirmation = result?.RequiresConfirmation ?? false;
             sendExistingMessage = result is null
                 ? "Your Kindle send could not be sent. Please try again."
                 : result.Succeeded

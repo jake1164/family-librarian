@@ -89,7 +89,8 @@ public sealed class AudiobookshelfOwnedLibraryProvider(
                 LicenseOrUsageStatus: null,
                 DrmStatus: null,
                 ExternalActionUri: ExternalLibraryLinks.BuildAudiobookshelfItemLink(settings, itemId),
-                ProviderData: null)
+                ProviderData: null,
+                MatchBasis: result.Basis)
         ];
     }
 }
