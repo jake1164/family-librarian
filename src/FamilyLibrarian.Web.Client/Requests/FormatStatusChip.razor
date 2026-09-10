@@ -3,10 +3,22 @@
    conflict. See docs/07-ui-conventions.md. *@
 
 <MudTooltip Text="@MediaType">
-    <MudChip T="string" Size="@Size" Color="@MediaTypeVisuals.StatusColor(Status, ProgressCode)"
-             Icon="@MediaTypeVisuals.Icon(MediaType)">
-        @(ProgressDescription ?? MediaTypeVisuals.StatusLabel(Status))
-    </MudChip>
+    @if (!string.IsNullOrEmpty(ExternalActionUri))
+    {
+        <MudLink Href="@ExternalActionUri" Target="_blank" rel="noopener noreferrer" Underline="Underline.None">
+            <MudChip T="string" Size="@Size" Color="@MediaTypeVisuals.StatusColor(Status, ProgressCode)"
+                     Icon="@MediaTypeVisuals.Icon(MediaType)">
+                @(ProgressDescription ?? MediaTypeVisuals.StatusLabel(Status))
+            </MudChip>
+        </MudLink>
+    }
+    else
+    {
+        <MudChip T="string" Size="@Size" Color="@MediaTypeVisuals.StatusColor(Status, ProgressCode)"
+                 Icon="@MediaTypeVisuals.Icon(MediaType)">
+            @(ProgressDescription ?? MediaTypeVisuals.StatusLabel(Status))
+        </MudChip>
+    }
 </MudTooltip>
 
 @code {
@@ -21,6 +33,9 @@
 
     [Parameter]
     public string? ProgressDescription { get; set; }
+
+    [Parameter]
+    public string? ExternalActionUri { get; set; }
 
     [Parameter]
     public Size Size { get; set; } = Size.Small;

@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
@@ -37,7 +38,8 @@ public sealed class CwaPublishingService(
     IWorkLookup workLookup,
     IAuditWriter audit,
     IClock clock,
-    NotificationService notifications)
+    NotificationService notifications,
+    DeliveryAttemptService deliveryAttempts)
 {
     public async Task PublishAsync(MediaAsset asset, CancellationToken cancellationToken)
     {
@@ -186,7 +188,7 @@ public sealed class CwaPublishingService(
             if (result.Decision == BookMatchDecision.Match)
             {
                 import.MarkAvailable(result.MatchedId!, clock.UtcNow);
-                await MarkRequestFormatAvailableAsync(asset, title, cancellationToken);
+                await MarkRequestFormatAvailableAsync(asset, import, title, cancellationToken);
                 asset.TransitionStorageState(MediaAssetStorageState.Archived, clock.UtcNow);
                 await repository.SaveChangesAsync(cancellationToken);
 
@@ -273,7 +275,7 @@ public sealed class CwaPublishingService(
     }
 
     private async Task MarkRequestFormatAvailableAsync(
-        MediaAsset asset, string title, CancellationToken cancellationToken)
+        MediaAsset asset, LibraryImport import, string title, CancellationToken cancellationToken)
     {
         var request = await requestFulfillment.FindByFormatIdAsync(
             asset.AssociatedRequestFormatId,
@@ -288,5 +290,38 @@ public sealed class CwaPublishingService(
         foreach (var requesterId in request.SatisfiedRequesterIds.Except(previouslySatisfied))
             await notifications.RecordRequestStatusForUserAsync(
                 requesterId, request.Id, title, RequestStatus.Available, cancellationToken);
+
+        var availableFormat = request.Formats.SingleOrDefault(candidate => candidate.Id == asset.AssociatedRequestFormatId);
+        if (availableFormat?.MediaType == RequestMediaType.Ebook && import.ExternalBookId is { } externalBookId)
+        {
+            await TryReleaseDeliveryAsync(request, externalBookId, asset.Format, title, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Releases any pending Kindle deliveries for this request's ebook format --
+    /// see <see cref="DeliveryAttemptService.ReleaseForRequestFormatAsync"/>.
+    /// Best-effort, matching <see cref="TryVerifyAsync"/>: a delivery-release
+    /// failure must never take down an otherwise successful publish/verify pass.
+    /// </summary>
+    private async Task TryReleaseDeliveryAsync(
+        BookRequest request, string externalBookId, string bookFormat, string title, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await deliveryAttempts.ReleaseForRequestFormatAsync(
+                request, externalBookId, bookFormat, clock.UtcNow, cancellationToken, title);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Recovery reconciles the saved Available import with unreleased
+            // recipient intent, including when no attempt was created here.
+            await audit.WriteAsync(
+                AuditActions.DeliveryAttemptFailed,
+                AuditSubjectTypes.BookRequest,
+                request.Id.ToString(),
+                new { request.Id, Reason = exception.Message },
+                cancellationToken);
+        }
     }
 }

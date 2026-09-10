@@ -53,7 +53,8 @@ internal static class RequestEndpoints
             request.ConfirmOwned,
             cancellationToken,
             request.VersionKind,
-            request.VersionDetails);
+            request.VersionDetails,
+            request.DeliveryTargetId);
 
         return result.Outcome switch
         {
@@ -173,7 +174,8 @@ internal static class RequestEndpoints
                 format.MediaType.ToString(),
                 format.Status.ToString(),
                 format.Progress?.Code,
-                format.Progress?.Description))
+                format.Progress?.Description,
+                format.ExternalActionUri?.ToString()))
             .ToArray(),
         request.RequesterNote,
         request.AdminNote,
@@ -187,7 +189,16 @@ internal static class RequestEndpoints
         request.RequesterCount,
         request.RequiresManualFulfillment,
         request.VersionKind,
-        request.VersionDetails);
+        request.VersionDetails,
+        request.DeliveryTargetId,
+        request.KindleDelivery is { } kindleDelivery
+            ? new KindleDeliveryResponse(
+                kindleDelivery.AttemptId,
+                kindleDelivery.Status.ToString(),
+                kindleDelivery.FailureReason,
+                kindleDelivery.AttemptNumber,
+                kindleDelivery.ConfirmationStatus.ToString())
+            : null);
 
     // Plain language for a family, not the enum name. The status itself travels
     // separately so the client never has to parse this sentence.

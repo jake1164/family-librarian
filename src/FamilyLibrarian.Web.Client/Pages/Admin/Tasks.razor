@@ -1,3 +1,4 @@
+@using FamilyLibrarian.Web.Client.Delivery
 @page "/admin/tasks"
 @attribute [Authorize(Roles = "Admin")]
 @inherits LiveComponentBase
@@ -39,7 +40,7 @@
                              Value="@snapshot.Summary.NeedsReview" Color="Color.Warning" TargetElementId="tasks-requests" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4">
-                <SummaryCard Icon="@Icons.Material.Filled.Shield" Label="Security attention"
+                <SummaryCard Icon="@Icons.Material.Filled.Shield" Label="In security pipeline"
                              Value="@snapshot.Summary.SecurityAttention" Color="Color.Warning" TargetElementId="tasks-security" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4">
@@ -76,7 +77,8 @@
                                 {
                                     <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
                                                        ProgressCode="@format.ProgressCode"
-                                                       ProgressDescription="@format.ProgressDescription" />
+                                                       ProgressDescription="@format.ProgressDescription"
+                                                       ExternalActionUri="@format.ExternalActionUri" />
                                 }
                             </MudStack>
                             <MudText Typo="Typo.caption">
@@ -130,12 +132,12 @@
             </MudText>
             @if (snapshot.Summary.SecurityAttention == 0)
             {
-                <MudAlert Severity="Severity.Success" Dense="true">No files need security attention.</MudAlert>
+                <MudAlert Severity="Severity.Success" Dense="true">No files are in the security pipeline.</MudAlert>
             }
             else
             {
                 <MudAlert Severity="Severity.Warning" Dense="true">
-                    @snapshot.Summary.SecurityAttention file@(snapshot.Summary.SecurityAttention == 1 ? string.Empty : "s") need security attention.
+                    @snapshot.Summary.SecurityAttention file@(snapshot.Summary.SecurityAttention == 1 ? string.Empty : "s") @(snapshot.Summary.SecurityAttention == 1 ? "is" : "are") in the security pipeline (awaiting scan, being scanned, or waiting on a decision).
                 </MudAlert>
             }
             <MudButton Href="admin/security" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Shield" Class="mt-3">
@@ -146,7 +148,7 @@
         <MudPaper Outlined="true" Class="pa-4" id="tasks-publishing">
             <MudText Typo="Typo.h5">Publishing</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
-                Recent handoffs to CWA for ebooks and Audiobookshelf for audiobooks.
+                Recent handoffs to CWA for ebooks, Audiobookshelf for audiobooks, and Kindle deliveries.
             </MudText>
             @foreach (var issue in snapshot.PublishingIssues)
             {
@@ -159,7 +161,7 @@
                     <MudLink Href="settings/publishing" Underline="Underline.Always">Review publishing settings</MudLink>
                 </MudAlert>
             }
-            @if (snapshot.LibraryImports.Count == 0 && snapshot.Deliveries.Count == 0)
+            @if (snapshot.LibraryImports.Count == 0 && snapshot.Deliveries.Count == 0 && snapshot.KindleDeliveries.Count == 0)
             {
                 <MudAlert Severity="Severity.Info" Dense="true">No publishing activity has been recorded yet.</MudAlert>
             }
@@ -186,6 +188,24 @@
                                 <MudChip T="string" Size="Size.Small" Color="@PublishingColor(delivery.Status)">@delivery.Status</MudChip>
                             </MudStack>
                             <MudText Typo="Typo.caption">@PublishingDescription(delivery.OriginalFilename, delivery.FailureReason, delivery.CreatedAtUtc)</MudText>
+                        </MudListItem>
+                    }
+                    @foreach (var kindle in snapshot.KindleDeliveries.Where(k => k.IsLatest))
+                    {
+                        <MudListItem T="string">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                                @if (kindle.RequestId is { } kindleRequestId)
+                                {
+                                    <MudLink Href="@($"admin/requests/{kindleRequestId}")">@(kindle.WorkTitle ?? "Untitled")</MudLink>
+                                }
+                                else
+                                {
+                                    <MudText>@(kindle.WorkTitle ?? "Existing library book")</MudText>
+                                }
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Kindle</MudChip>
+                                <KindleStatusChip Status="@kindle.Status" ConfirmationStatus="@kindle.ConfirmationStatus" />
+                            </MudStack>
+                            <MudText Typo="Typo.caption">@KindleDescription(kindle)</MudText>
                         </MudListItem>
                     }
                 </MudList>
@@ -233,9 +253,9 @@
 
     private static Color PublishingColor(string status) => status switch
     {
-        "Available" or "Delivered" => Color.Success,
+        "Available" or "Delivered" or "Submitted" => Color.Success,
         "Failed" => Color.Error,
-        "AwaitingVerification" or "Verifying" => Color.Warning,
+        "AwaitingVerification" or "Verifying" or "Pending" or "Submitting" => Color.Warning,
         _ => Color.Default
     };
 
@@ -243,5 +263,10 @@
         string.IsNullOrWhiteSpace(failureReason)
             ? $"{filename} · started {createdAtUtc.ToLocalTime():g}"
             : $"{filename} · {failureReason}";
+
+    private static string KindleDescription(DeliveryAttemptResponse attempt) =>
+        string.IsNullOrWhiteSpace(attempt.FailureReason)
+            ? $"Requested by {attempt.RequesterDisplayName} · started {attempt.CreatedAtUtc.ToLocalTime():g}"
+            : $"Requested by {attempt.RequesterDisplayName} · {attempt.FailureReason}";
 
 }

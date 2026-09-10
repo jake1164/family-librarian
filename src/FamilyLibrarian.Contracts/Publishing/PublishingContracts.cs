@@ -39,10 +39,15 @@ public sealed record CwaSettingsResponse(
     bool HasOpdsPassword,
     string? OpdsPasswordHint,
     DateTimeOffset? OpdsPasswordSetAtUtc,
+    string? EreaderServiceAccountUsername,
+    bool HasEreaderServiceAccountPassword,
+    string? EreaderServiceAccountPasswordHint,
+    DateTimeOffset? EreaderServiceAccountPasswordSetAtUtc,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
     string? LastTestMessage,
-    bool IsIngestConfigured);
+    bool IsIngestConfigured,
+    bool IsEreaderDeliveryConfigured);
 
 public sealed record SetCwaSettingsRequest(
     string TransportMode,
@@ -54,7 +59,8 @@ public sealed record SetCwaSettingsRequest(
     string SftpAuthenticationMode,
     string? OpdsBaseUrl,
     string? PublicUrl,
-    string? OpdsUsername);
+    string? OpdsUsername,
+    string? EreaderServiceAccountUsername);
 
 /// <summary>
 /// A non-persistent SFTP connection probe. Secret values are used only for the
@@ -132,7 +138,7 @@ public sealed record LibraryImportResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? CompletedAtUtc);
 
-public sealed record DeliveryResponse(
+public sealed record AudiobookshelfDeliveryResponse(
     Guid Id,
     Guid RequestId,
     Guid WorkId,
@@ -144,6 +150,29 @@ public sealed record DeliveryResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? CompletedAtUtc);
 
+public sealed record DeliveryAttemptResponse(
+    Guid Id,
+    Guid? RequestId,
+    Guid? WorkId,
+    string? WorkTitle,
+    string RequesterDisplayName,
+    string RequesterEmail,
+    string ExternalBookId,
+    string Status,
+    int AttemptNumber,
+    string? FailureReason,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    Guid DeliveryId,
+    string ConfirmationStatus,
+    DateTimeOffset? ConfirmedAtUtc,
+    bool IsLatest,
+    bool CanRetry,
+    DateTimeOffset? NextAutomaticRetryAtUtc,
+    bool AutomaticRetriesExhausted,
+    bool NeedsAttention);
+
 public sealed record PublishingQueueResponse(
     IReadOnlyList<LibraryImportResponse> LibraryImports,
-    IReadOnlyList<DeliveryResponse> Deliveries);
+    IReadOnlyList<AudiobookshelfDeliveryResponse> Deliveries,
+    IReadOnlyList<DeliveryAttemptResponse> DeliveryAttempts);

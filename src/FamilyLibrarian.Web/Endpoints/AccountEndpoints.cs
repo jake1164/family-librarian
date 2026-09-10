@@ -1,6 +1,9 @@
 using FamilyLibrarian.Application.Accounts;
+using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Contracts.Accounts;
+using FamilyLibrarian.Contracts.Delivery;
 using FamilyLibrarian.Domain.Accounts;
+using FamilyLibrarian.Domain.Delivery;
 
 namespace FamilyLibrarian.Web.Endpoints;
 
@@ -17,14 +20,57 @@ internal static class AccountEndpoints
         adminAccounts.MapPut("/{userId:guid}/status", SetAccountStatusAsync);
         adminAccounts.MapPut("/{userId:guid}/admin", SetAccountAdminAsync);
         adminAccounts.MapPut("/{userId:guid}/password", ResetAccountPasswordAsync);
+        adminAccounts.MapPut("/{userId:guid}/delivery/kindle", SetAccountKindleAddressAsync);
+        adminAccounts.MapPut("/{userId:guid}/delivery/kindle/enabled", SetAccountKindleEnabledAsync);
     }
 
     private static async Task<IResult> ListAccountsAsync(
         AccountAdminService accountAdmin,
+        DeliveryTargetService deliveryTargets,
         CancellationToken cancellationToken)
     {
         var accounts = await accountAdmin.ListAsync(cancellationToken);
-        return Results.Ok(new FamilyAccountListResponse(accounts.Select(ToAccountResponse).ToArray()));
+        var kindleTargets = await deliveryTargets.AdminListKindleTargetsAsync(cancellationToken);
+        return Results.Ok(new FamilyAccountListResponse(
+            accounts.Select(account => ToAccountResponse(account, kindleTargets)).ToArray()));
+    }
+
+    private static async Task<IResult> SetAccountKindleAddressAsync(
+        Guid userId,
+        AdminSetKindleAddressRequest request,
+        DeliveryTargetService deliveryTargets,
+        CancellationToken cancellationToken)
+    {
+        var result = await deliveryTargets.AdminSetKindleAddressAsync(
+            userId, request.Address, request.ExpectedVersion, cancellationToken);
+
+        return result.Outcome switch
+        {
+            SetKindleTargetOutcome.Success => Results.Ok(ToKindleResponse(result.Target!)),
+            SetKindleTargetOutcome.Conflict => Results.Conflict(new { message = result.Error }),
+            _ => Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["address"] = [result.Error ?? "That address could not be saved."]
+            })
+        };
+    }
+
+    private static async Task<IResult> SetAccountKindleEnabledAsync(
+        Guid userId,
+        SetKindleEnabledRequest request,
+        DeliveryTargetService deliveryTargets,
+        CancellationToken cancellationToken)
+    {
+        var result = await deliveryTargets.AdminSetKindleEnabledAsync(
+            userId, request.Enabled, request.ExpectedVersion, cancellationToken);
+
+        return result.Outcome switch
+        {
+            SetKindleTargetOutcome.Success => Results.Ok(ToKindleResponse(result.Target!)),
+            SetKindleTargetOutcome.NotFound => Results.NotFound(),
+            SetKindleTargetOutcome.Conflict => Results.Conflict(new { message = result.Error }),
+            _ => Results.Problem(statusCode: StatusCodes.Status500InternalServerError)
+        };
     }
 
     private static async Task<IResult> SetAccountStatusAsync(
@@ -65,12 +111,17 @@ internal static class AccountEndpoints
             ["account"] = [result.Error ?? "That change could not be saved."]
         });
 
-    private static FamilyAccountResponse ToAccountResponse(UserAccount account) => new(
+    private static FamilyAccountResponse ToAccountResponse(
+        UserAccount account, IReadOnlyDictionary<Guid, DeliveryTarget> kindleTargets) => new(
         account.Id,
         account.Email,
         account.DisplayName,
         account.Status.ToString(),
         account.IsAdmin,
         account.CreatedAtUtc,
-        account.LastLoginAtUtc);
+        account.LastLoginAtUtc,
+        kindleTargets.TryGetValue(account.Id, out var target) ? ToKindleResponse(target) : null);
+
+    private static KindleDeliverySummaryResponse ToKindleResponse(DeliveryTarget target) => new(
+        target.Address, target.IsEnabled, target.Version);
 }

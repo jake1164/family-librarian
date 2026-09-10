@@ -54,6 +54,51 @@ public sealed class NotificationService(
             cancellationToken);
     }
 
+    /// <summary>
+    /// KINDLE-7: asks the requesting user to confirm a submitted Kindle send
+    /// actually arrived on-device. Raised once per <c>DeliveryAttempt</c> --
+    /// a retry after <c>ReportMissing</c> creates a new attempt row, so this
+    /// naturally fires again for it rather than needing a separate re-ask path.
+    /// </summary>
+    public Task RecordKindleDeliverySubmittedAsync(
+        Guid userId, Guid attemptId, string? bookTitle, CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.SingleUser,
+            userId,
+            NotificationCategories.KindleDeliveryConfirmationRequested,
+            NotificationSeverity.Info,
+            title: bookTitle is { } title
+                ? $"Did \"{title}\" arrive on your Kindle?"
+                : "Did your book arrive on your Kindle?",
+            detail: "It was sent to your Kindle. Let us know if it doesn't show up so it can be retried.",
+            subjectType: NotificationSubjectTypes.DeliveryAttempt,
+            subjectId: attemptId.ToString(),
+            cancellationToken);
+
+    /// <summary>
+    /// Admin-facing counterpart to <see cref="RecordKindleDeliverySubmittedAsync"/>:
+    /// raised when a delivery attempt has no automatic path forward left -- a
+    /// terminal failure, an ambiguous submission, or a user's report-missing --
+    /// and needs a human to act from the /admin/publishing queue. Keyed on
+    /// the attempt's stable <c>DeliveryId</c> rather than the attempt row
+    /// itself so a retry recurs the same notification instead of piling up a
+    /// fresh one per attempt.
+    /// </summary>
+    public Task RecordDeliveryNeedsAttentionAsync(
+        Guid deliveryId, string? bookTitle, string reason, CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.AdminBroadcast,
+            recipientUserId: null,
+            NotificationCategories.DeliveryNeedsAttention,
+            NotificationSeverity.Warning,
+            title: bookTitle is { } title
+                ? $"Kindle delivery of \"{title}\" needs attention"
+                : "A Kindle delivery needs attention",
+            detail: reason,
+            subjectType: NotificationSubjectTypes.DeliveryAttempt,
+            subjectId: deliveryId.ToString(),
+            cancellationToken);
+
     public async Task<IReadOnlyList<NotificationView>> ListForViewerAsync(
         bool isAdmin, CancellationToken cancellationToken)
     {

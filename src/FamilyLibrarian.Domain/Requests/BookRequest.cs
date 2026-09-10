@@ -27,7 +27,8 @@ public sealed class BookRequest
         Guid workId,
         IEnumerable<RequestMediaType> mediaTypes,
         string? requesterNote,
-        DateTimeOffset createdAtUtc)
+        DateTimeOffset createdAtUtc,
+        Guid? deliveryTargetId = null)
     {
         ArgumentNullException.ThrowIfNull(mediaTypes);
 
@@ -62,7 +63,7 @@ public sealed class BookRequest
         StatusChangedAtUtc = createdAtUtc;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
-        _participants.Add(new RequestParticipant(Id, userId, requestedFormats, RequesterNote, createdAtUtc));
+        _participants.Add(new RequestParticipant(Id, userId, requestedFormats, RequesterNote, createdAtUtc, deliveryTargetId));
 
         foreach (var mediaType in requestedFormats)
         {
@@ -133,7 +134,12 @@ public sealed class BookRequest
         TransitionTo(RequestStatus.NeedsReview, actorUserId, "A specific version requires librarian review.", atUtc);
     }
 
-    public void Join(Guid userId, IEnumerable<RequestMediaType> mediaTypes, string? note, DateTimeOffset atUtc)
+    public void Join(
+        Guid userId,
+        IEnumerable<RequestMediaType> mediaTypes,
+        string? note,
+        DateTimeOffset atUtc,
+        Guid? deliveryTargetId = null)
     {
         if (!IsActive)
             throw new InvalidOperationException("Only an active request can be joined.");
@@ -142,8 +148,8 @@ public sealed class BookRequest
         if (formats.Length == 0 || formats.Any(format => !Enum.IsDefined(format)))
             throw new ArgumentException("Choose a requested format.", nameof(mediaTypes));
         var participant = _participants.SingleOrDefault(candidate => candidate.UserId == userId);
-        if (participant is null) _participants.Add(new RequestParticipant(Id, userId, formats, note, atUtc));
-        else participant.Join(formats, note);
+        if (participant is null) _participants.Add(new RequestParticipant(Id, userId, formats, note, atUtc, deliveryTargetId));
+        else participant.Join(formats, note, deliveryTargetId);
         foreach (var format in formats.Where(format => !RequestsFormat(format)))
             _formats.Add(new RequestFormat(Id, format, atUtc));
         UpdatedAtUtc = atUtc;

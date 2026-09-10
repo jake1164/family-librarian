@@ -1,5 +1,6 @@
 @page "/admin/accounts"
 @attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Delivery
 @inject AccountsApiClient AccountsApi
 @inject IJSRuntime JS
 @inject ISnackbar Snackbar
@@ -94,6 +95,35 @@
                                 : "Has never signed in")
                         </MudText>
 
+                        <MudDivider Class="my-1" />
+                        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                            <MudText Typo="Typo.body2">Kindle:</MudText>
+                            @if (account.Kindle is { } kindle)
+                            {
+                                <MudChip T="string" Size="Size.Small"
+                                         Color="@(kindle.IsEnabled ? Color.Success : Color.Warning)">
+                                    @(kindle.IsEnabled ? "Enabled" : "Disabled")
+                                </MudChip>
+                                <MudText Typo="Typo.body2" Class="font-monospace">@kindle.Address</MudText>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Default">Not set up</MudChip>
+                            }
+                        </MudStack>
+
+                        @if (kindleEditingAccountId == account.Id)
+                        {
+                            <MudTextField @bind-Value="kindleAddress"
+                                          Label="Kindle email address"
+                                          Variant="Variant.Outlined"
+                                          Disabled="@isBusy" />
+                            @if (!string.IsNullOrWhiteSpace(kindleErrorMessage))
+                            {
+                                <MudAlert Severity="Severity.Error" Dense="true">@kindleErrorMessage</MudAlert>
+                            }
+                        }
+
                         @if (resettingAccountId == account.Id)
                         {
                             <MudDivider Class="my-2" />
@@ -156,6 +186,32 @@
                             Reset password
                         </MudButton>
                     }
+
+                    @if (kindleEditingAccountId == account.Id)
+                    {
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" Disabled="@isBusy"
+                                   OnClick="() => ConfirmSetKindleAddressAsync(account)">
+                            Save Kindle email
+                        </MudButton>
+                        <MudButton Variant="Variant.Text" Disabled="@isBusy"
+                                   OnClick="CancelKindleEdit">
+                            Cancel
+                        </MudButton>
+                    }
+                    else
+                    {
+                        <MudButton Variant="Variant.Text" Disabled="@isBusy"
+                                   OnClick="() => StartKindleEdit(account)">
+                            @(account.Kindle is null ? "Set Kindle email" : "Change Kindle email")
+                        </MudButton>
+                        @if (account.Kindle is { } editableKindle)
+                        {
+                            <MudButton Variant="Variant.Text" Disabled="@isBusy"
+                                       OnClick="() => SetAccountKindleEnabledAsync(account, editableKindle, !editableKindle.IsEnabled)">
+                                @(editableKindle.IsEnabled ? "Disable Kindle" : "Enable Kindle")
+                            </MudButton>
+                        }
+                    }
                 </MudCardActions>
             </MudCard>
         }
@@ -209,6 +265,9 @@
     private string resetPassword = string.Empty;
     private string resetConfirmPassword = string.Empty;
     private string? resetErrorMessage;
+    private Guid? kindleEditingAccountId;
+    private string kindleAddress = string.Empty;
+    private string? kindleErrorMessage;
 
     private IReadOnlyList<InvitationResponse> Pending =>
         invitations.Where(invitation => invitation.IsOutstanding).ToArray();
@@ -361,6 +420,55 @@
             resetConfirmPassword = string.Empty;
         }
     }
+
+    private void StartKindleEdit(FamilyAccountResponse account)
+    {
+        kindleEditingAccountId = account.Id;
+        kindleAddress = account.Kindle?.Address ?? string.Empty;
+        kindleErrorMessage = null;
+    }
+
+    private void CancelKindleEdit()
+    {
+        kindleEditingAccountId = null;
+        kindleAddress = string.Empty;
+        kindleErrorMessage = null;
+    }
+
+    private async Task ConfirmSetKindleAddressAsync(FamilyAccountResponse account)
+    {
+        kindleErrorMessage = null;
+        isBusy = true;
+
+        try
+        {
+            var outcome = await AccountsApi.SetAccountKindleAddressAsync(
+                account.Id, kindleAddress, account.Kindle?.Version);
+            if (outcome.Succeeded)
+            {
+                kindleEditingAccountId = null;
+                Snackbar.Add($"Kindle email saved for {account.Email}.", Severity.Success);
+                await LoadAsync();
+            }
+            else
+            {
+                kindleErrorMessage = outcome.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            kindleErrorMessage = "That could not be saved. Please try again.";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private Task SetAccountKindleEnabledAsync(
+        FamilyAccountResponse account, KindleDeliverySummaryResponse kindle, bool enabled) =>
+        RunAsync(async () =>
+            (await AccountsApi.SetAccountKindleEnabledAsync(account.Id, enabled, kindle.Version)).Error);
 
     private Task RevokeAsync(InvitationResponse invitation) =>
         RunAsync(async () => (await AccountsApi.RevokeInvitationAsync(invitation.Id)).Error);

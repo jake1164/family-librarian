@@ -5,6 +5,7 @@ using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Communications;
+using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Feedback;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Policy;
@@ -79,7 +80,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<LibraryImport> LibraryImports => Set<LibraryImport>();
 
-    public DbSet<Delivery> Deliveries => Set<Delivery>();
+    public DbSet<AudiobookshelfDelivery> Deliveries => Set<AudiobookshelfDelivery>();
+
+    public DbSet<DeliveryTarget> DeliveryTargets => Set<DeliveryTarget>();
+
+    public DbSet<DeliveryAttempt> DeliveryAttempts => Set<DeliveryAttempt>();
 
     public DbSet<AcquisitionPolicySettings> AcquisitionPolicySettings => Set<AcquisitionPolicySettings>();
 
@@ -138,6 +143,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         ConfigureSecurity(builder);
         ConfigureAudit(builder);
         ConfigurePublishing(builder);
+        ConfigureDelivery(builder);
         ConfigurePolicy(builder);
         ConfigureAuthentication(builder);
         ConfigureGutenbergCatalog(builder);
@@ -396,9 +402,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(participant => participant.WantsEbook).HasColumnName("wants_ebook");
             entity.Property(participant => participant.WantsAudiobook).HasColumnName("wants_audiobook");
             entity.Property(participant => participant.Note).HasColumnName("note").HasMaxLength(BookRequest.MaxNoteLength);
+            entity.Property(participant => participant.DeliveryTargetId).HasColumnName("delivery_target_id");
             entity.Property(participant => participant.JoinedAtUtc).HasColumnName("joined_at_utc");
             entity.Property(participant => participant.WithdrawnAtUtc).HasColumnName("withdrawn_at_utc");
             entity.HasOne<AppUser>().WithMany().HasForeignKey(participant => participant.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            // Restrict: a delivery target referenced by request history must not
+            // disappear out from under it -- disable it instead of deleting it.
+            entity.HasOne<DeliveryTarget>().WithMany()
+                .HasForeignKey(participant => participant.DeliveryTargetId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -827,6 +839,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.OpdsPasswordFormatVersion).HasColumnName("opds_password_format_version");
             entity.Property(settings => settings.OpdsPasswordHint).HasColumnName("opds_password_hint").HasMaxLength(8);
             entity.Property(settings => settings.OpdsPasswordSetAtUtc).HasColumnName("opds_password_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.EreaderServiceAccountUsername).HasColumnName("ereader_service_account_username").HasMaxLength(256);
+            entity.Property(settings => settings.ProtectedEreaderServiceAccountPassword).HasColumnName("protected_ereader_service_account_password").HasMaxLength(2_048);
+            entity.Property(settings => settings.EreaderServiceAccountPasswordFormatVersion).HasColumnName("ereader_service_account_password_format_version");
+            entity.Property(settings => settings.EreaderServiceAccountPasswordHint).HasColumnName("ereader_service_account_password_hint").HasMaxLength(8);
+            entity.Property(settings => settings.EreaderServiceAccountPasswordSetAtUtc).HasColumnName("ereader_service_account_password_set_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
             entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
@@ -881,8 +898,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
-        builder.Entity<Delivery>(entity =>
+        builder.Entity<AudiobookshelfDelivery>(entity =>
         {
+            // Table name intentionally left as "deliveries" (unchanged) --
+            // this rename is a CLR type rename only, not a schema change.
             entity.ToTable("deliveries", "publishing");
             entity.HasKey(delivery => delivery.Id);
             entity.Property(delivery => delivery.Id).HasColumnName("id").ValueGeneratedNever();
@@ -902,6 +921,83 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(delivery => delivery.AssetId)
                 .IsRequired(false)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureDelivery(ModelBuilder builder)
+    {
+        builder.Entity<DeliveryTarget>(entity =>
+        {
+            entity.ToTable("delivery_targets", "delivery");
+            entity.HasKey(target => target.Id);
+            entity.Property(target => target.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(target => target.UserId).HasColumnName("user_id");
+            entity.Property(target => target.Provider).HasColumnName("provider").HasConversion<string>().HasMaxLength(32);
+            entity.Property(target => target.Name).HasColumnName("name").HasMaxLength(DeliveryTarget.MaxNameLength);
+            entity.Property(target => target.Address).HasColumnName("address").HasMaxLength(DeliveryTarget.MaxAddressLength);
+            entity.Property(target => target.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(target => target.SendByDefault).HasColumnName("send_by_default").HasDefaultValue(true);
+            entity.Property(target => target.IsDefault).HasColumnName("is_default");
+            ConfigureTimestamps(entity);
+
+            // A user's own settings page lists their targets.
+            entity.HasIndex(target => target.UserId);
+
+            entity.HasOne<AppUser>().WithMany().HasForeignKey(target => target.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<DeliveryAttempt>(entity =>
+        {
+            entity.ToTable("delivery_attempts", "delivery");
+            entity.HasKey(attempt => attempt.Id);
+            entity.Property(attempt => attempt.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(attempt => attempt.DeliveryId).HasColumnName("delivery_id");
+            entity.Property(attempt => attempt.RequestId).HasColumnName("request_id");
+            entity.Property(attempt => attempt.UserId).HasColumnName("user_id");
+            entity.Property(attempt => attempt.DeliveryTargetId).HasColumnName("delivery_target_id");
+            entity.Property(attempt => attempt.Provider).HasColumnName("provider").HasMaxLength(64);
+            entity.Property(attempt => attempt.ExternalBookId).HasColumnName("external_book_id").HasMaxLength(256);
+            entity.Property(attempt => attempt.BookFormat).HasColumnName("book_format").HasMaxLength(32);
+            entity.Property(attempt => attempt.Convert).HasColumnName("convert");
+            entity.Property(attempt => attempt.AttemptNumber).HasColumnName("attempt_number");
+            entity.Property(attempt => attempt.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+            entity.Property(attempt => attempt.StartedAtUtc).HasColumnName("started_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(attempt => attempt.CompletedAtUtc).HasColumnName("completed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(attempt => attempt.FailureReason).HasColumnName("failure_reason").HasMaxLength(2_000);
+            entity.Property(attempt => attempt.IsRetryable).HasColumnName("is_retryable");
+            entity.Property(attempt => attempt.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(attempt => attempt.BookTitle).HasColumnName("book_title").HasMaxLength(512);
+            entity.Property(attempt => attempt.ConfirmationStatus).HasColumnName("confirmation_status").HasConversion<string>().HasMaxLength(32);
+            entity.Property(attempt => attempt.ConfirmedAtUtc).HasColumnName("confirmed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(attempt => attempt.Version).HasColumnName("xmin").IsRowVersion();
+
+            // Idempotency check before releasing (ReleaseForRequestFormatAsync)
+            // and per-request delivery history lookups.
+            entity.HasIndex(attempt => new { attempt.RequestId, attempt.UserId });
+            entity.HasIndex(attempt => new { attempt.DeliveryId, attempt.AttemptNumber })
+                .IsUnique().HasDatabaseName("ux_delivery_chain_attempt");
+            entity.HasIndex(attempt => new { attempt.RequestId, attempt.UserId }, "InitialRequestDelivery")
+                .IsUnique().HasDatabaseName("ux_delivery_request_user")
+                .HasFilter("request_id IS NOT NULL AND attempt_number = 1");
+
+            // The retry sweep's own query.
+            entity.HasIndex(attempt => new { attempt.Status, attempt.IsRetryable, attempt.CompletedAtUtc });
+
+            // Restrict: delivery history outlives request-record changes, the
+            // same rationale as AcquisitionJob's own foreign keys. Nullable and
+            // optional -- the existing-book fast path has no BookRequest at all.
+            entity.HasOne<BookRequest>()
+                .WithMany()
+                .HasForeignKey(attempt => attempt.RequestId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<AppUser>().WithMany().HasForeignKey(attempt => attempt.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<DeliveryTarget>().WithMany().HasForeignKey(attempt => attempt.DeliveryTargetId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }

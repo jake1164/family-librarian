@@ -377,7 +377,10 @@ public sealed class SettingsBackupService(
         settings.SetSettings(ParseEnum<CwaTransportMode>(source.TransportMode), source.LocalIngestPath, source.SftpHost,
             source.SftpPort, source.SftpUsername, source.SftpIngestPath,
             ParseEnum<CwaSftpAuthenticationMode>(source.SftpAuthenticationMode), source.OpdsBaseUrl, source.PublicUrl,
-            source.OpdsUsername, null, clock.UtcNow);
+            // Settings-only archives exclude this account. The archive UI and
+            // docs/06-deployment-and-recovery.md describe re-entering it after
+            // import; full database backups preserve the account and key ring.
+            source.OpdsUsername, null, null, clock.UtcNow);
         ApplySecret(source.SftpPrivateKey, settings.SetSftpPrivateKey, null, clock.UtcNow);
         ApplySecret(source.SftpPassphrase, settings.SetSftpPassphrase, null, clock.UtcNow);
         ApplySecret(source.SftpPassword, settings.SetSftpPassword, null, clock.UtcNow);

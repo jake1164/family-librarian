@@ -1,5 +1,13 @@
+using FamilyLibrarian.Contracts.Delivery;
+
 namespace FamilyLibrarian.Contracts.Accounts;
 
+/// <param name="Kindle">
+/// <see langword="null"/> when this account has never configured a Kindle
+/// address. Shown to administrators on the family accounts page so they can
+/// tell at a glance whether Kindle delivery is set up and enabled for each
+/// household member, and set or correct it on their behalf.
+/// </param>
 public sealed record FamilyAccountResponse(
     Guid Id,
     string Email,
@@ -7,7 +15,8 @@ public sealed record FamilyAccountResponse(
     string Status,
     bool IsAdmin,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset? LastLoginAtUtc);
+    DateTimeOffset? LastLoginAtUtc,
+    KindleDeliverySummaryResponse? Kindle);
 
 public sealed record FamilyAccountListResponse(IReadOnlyList<FamilyAccountResponse> Accounts);
 

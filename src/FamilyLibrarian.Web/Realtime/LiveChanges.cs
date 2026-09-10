@@ -1,5 +1,6 @@
 using FamilyLibrarian.Contracts.Realtime;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
@@ -106,7 +107,13 @@ internal sealed class LiveChanges
                     changes.AssetIds.Add(import.AssetId);
                     changes.AdminTopics |= LiveUpdateTopics.Publishing;
                     break;
-                case Delivery delivery:
+                case DeliveryAttempt kindle:
+                    // Do not fan this out through RequestIds: receipt state is
+                    // private to this recipient, including on shared requests.
+                    changes.ForUser(kindle.UserId, LiveUpdateTopics.Deliveries | LiveUpdateTopics.Requests);
+                    changes.AdminTopics |= LiveUpdateTopics.Publishing | LiveUpdateTopics.Requests;
+                    break;
+                case AudiobookshelfDelivery delivery:
                     if (delivery.AssetId is { } assetId) changes.AssetIds.Add(assetId);
                     if (delivery.BundleId is { } bundleId) changes.BundleIds.Add(bundleId);
                     changes.AdminTopics |= LiveUpdateTopics.Publishing;

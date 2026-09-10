@@ -13,7 +13,8 @@
 <MudText Typo="Typo.h4" GutterBottom="true">Publishing settings</MudText>
 <MudText Typo="Typo.body1" Class="mb-4">
     Configure where approved files are published. Publishing activity is shown
-    separately in the administrator workspace.
+    separately in the administrator workspace. Live health updates preserve unsaved form values.
+    Save to apply your edits; reload this page to load configuration changes made by another administrator.
 </MudText>
 
 @if (cwaLoadFailed)
@@ -80,17 +81,17 @@ else
             </MudSelect>
             @if (cwaTransportMode == "Local")
             {
-                <MudTextField T="string" Label="Local ingest directory" @bind-Value="cwaLocalIngestPath"
+                <MudTextField Immediate="true" T="string" Label="Local ingest directory" @bind-Value="cwaLocalIngestPath"
                               Disabled="@cwaBusy" Class="mt-3" />
             }
             else
             {
                 <MudStack Spacing="3" Class="mt-3">
-                    <MudTextField T="string" Label="SFTP host" @bind-Value="cwaSftpHost" Disabled="@cwaBusy" />
+                    <MudTextField Immediate="true" T="string" Label="SFTP host" @bind-Value="cwaSftpHost" Disabled="@cwaBusy" />
                     <MudNumericField T="int?" Label="SFTP port (default 22)" @bind-Value="cwaSftpPort" Disabled="@cwaBusy" />
-                    <MudTextField T="string" Label="SFTP username" @bind-Value="cwaSftpUsername"
+                    <MudTextField Immediate="true" T="string" Label="SFTP username" @bind-Value="cwaSftpUsername"
                                   name="cwa-sftp-username" autocomplete="off" Disabled="@cwaBusy" />
-                    <MudTextField T="string" Label="Remote ingest directory" @bind-Value="cwaSftpIngestPath"
+                    <MudTextField Immediate="true" T="string" Label="Remote ingest directory" @bind-Value="cwaSftpIngestPath"
                                   name="cwa-sftp-ingest-directory" autocomplete="off" Disabled="@cwaBusy" />
                     <MudSelect T="string" Label="Authentication" @bind-Value="cwaSftpAuthenticationMode" Disabled="@cwaBusy">
                         <MudSelectItem Value="@("Password")">Password</MudSelectItem>
@@ -100,7 +101,7 @@ else
                     {
                         <MudText Typo="Typo.body2">@(cwa.HasSftpPassword ? "A password is stored. This field is intentionally blank: leave it blank to keep the stored password, enter a value to replace it, or use Remove stored password." : "Enter the SFTP password. It will be stored when you save or test delivery.")</MudText>
                         <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-                            <MudTextField T="string" @bind-Value="cwaSftpPasswordDraft" Label="SFTP password"
+                            <MudTextField Immediate="true" T="string" @bind-Value="cwaSftpPasswordDraft" Label="SFTP password"
                                           InputType="InputType.Password" autocomplete="new-password"
                                           Disabled="@cwaBusy" Class="flex-grow-1" />
                             @if (cwa.HasSftpPassword)
@@ -112,10 +113,10 @@ else
                     else
                     {
                         <MudText Typo="Typo.body2">@(cwa.HasSftpPrivateKey ? $"A private key ending in {cwa.SftpPrivateKeyHint} is stored. Enter a value only to replace it." : "Enter a private key. It will be stored when you save or test delivery.")</MudText>
-                        <MudTextField T="string" @bind-Value="cwaSftpPrivateKeyDraft" Label="Private key (PEM or OpenSSH)"
+                        <MudTextField Immediate="true" T="string" @bind-Value="cwaSftpPrivateKeyDraft" Label="Private key (PEM or OpenSSH)"
                                       Lines="4" Disabled="@cwaBusy" />
                         <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-                            <MudTextField T="string" @bind-Value="cwaSftpPassphraseDraft" Label="Key passphrase (optional)"
+                            <MudTextField Immediate="true" T="string" @bind-Value="cwaSftpPassphraseDraft" Label="Key passphrase (optional)"
                                           InputType="InputType.Password" autocomplete="new-password"
                                           Disabled="@cwaBusy" Class="flex-grow-1" />
                             @if (cwa.HasSftpPassphrase)
@@ -170,17 +171,17 @@ else
                 without saving them.
             </MudText>
             <MudStack Spacing="3">
-                <MudTextField T="string" Label="CWA site root URL" @bind-Value="cwaOpdsBaseUrl"
+                <MudTextField Immediate="true" T="string" Label="CWA site root URL" @bind-Value="cwaOpdsBaseUrl"
                               Placeholder="https://books.example.com"
                               HelperText="Enter the CWA site root; do not add /opds."
                               Disabled="@cwaBusy" />
-                <MudTextField T="string" Label="Public URL (optional)" @bind-Value="cwaPublicUrl"
+                <MudTextField Immediate="true" T="string" Label="Public URL (optional)" @bind-Value="cwaPublicUrl"
                               Placeholder="https://books.example.com"
                               HelperText="Only needed when family members reach CWA at a different address than the one above -- e.g. the site root URL is a Docker-internal hostname Family Librarian's backend uses, but browsers need the LAN/public address instead. Leave blank to reuse the site root URL for the 'CWA library' link and book deep links."
                               Disabled="@cwaBusy" />
-                <MudTextField T="string" Label="OPDS username" @bind-Value="cwaOpdsUsername" Disabled="@cwaBusy" />
+                <MudTextField Immediate="true" T="string" Label="OPDS username" @bind-Value="cwaOpdsUsername" Disabled="@cwaBusy" />
                 <MudText Typo="Typo.body2">@(cwa.HasOpdsPassword ? "An OPDS password is stored. This field is intentionally blank: leave it blank to keep it, or enter a value to replace it." : "No OPDS password is stored.")</MudText>
-                <MudTextField T="string" @bind-Value="cwaOpdsPasswordDraft" Label="OPDS password"
+                <MudTextField Immediate="true" T="string" @bind-Value="cwaOpdsPasswordDraft" Label="OPDS password"
                               InputType="InputType.Password" autocomplete="new-password" Disabled="@cwaBusy" />
             </MudStack>
             <MudStack Row="true" Spacing="2" Class="mt-4">
@@ -196,6 +197,29 @@ else
                     @cwaOpdsTestResult.Message
                 </MudAlert>
             }
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4 mt-4">
+            <MudText Typo="Typo.h6" GutterBottom="true">E-reader delivery service account</MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                A dedicated CWA account Family Librarian signs in as to send an owned book to a
+                family member's Kindle -- separate from the OPDS catalog credential above, and
+                independent of whether CWA ingest/OPDS is enabled. Give it its own account rather
+                than reusing another login; it does not need to be an administrator.
+                In CWA, allow downloads and additional eReader email addresses for this account,
+                configure its outgoing mail server, and keep Auto-Send off. Each recipient must
+                approve CWA's sender address in Amazon's personal document settings.
+            </MudText>
+            <MudStack Spacing="3">
+                <MudTextField Immediate="true" T="string" Label="Service account username" @bind-Value="cwaEreaderServiceAccountUsername" Disabled="@cwaBusy" />
+                <MudText Typo="Typo.body2">@(cwa.HasEreaderServiceAccountPassword ? "A service account password is stored. This field is intentionally blank: leave it blank to keep it, or enter a value to replace it." : "No service account password is stored.")</MudText>
+                <MudTextField Immediate="true" T="string" @bind-Value="cwaEreaderServiceAccountPasswordDraft" Label="Service account password"
+                              InputType="InputType.Password" autocomplete="new-password" Disabled="@cwaBusy" />
+            </MudStack>
+            <MudStack Row="true" Spacing="2" Class="mt-4">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@cwaBusy"
+                           OnClick="SaveCwaEreaderAsync">Save e-reader delivery settings</MudButton>
+            </MudStack>
         </MudPaper>
 
         <MudPaper Outlined="true" Class="pa-4 mt-4">
@@ -279,15 +303,15 @@ else
             field below blank) to look up libraries and folders, so enter both before using it.
         </MudText>
         <MudStack Spacing="3">
-            <MudTextField T="string" Label="Base URL" @bind-Value="audiobookshelfBaseUrl" Disabled="@audiobookshelfBusy" />
-            <MudTextField T="string" Label="Public URL (optional)" @bind-Value="audiobookshelfPublicUrl"
+            <MudTextField Immediate="true" T="string" Label="Base URL" @bind-Value="audiobookshelfBaseUrl" Disabled="@audiobookshelfBusy" />
+            <MudTextField Immediate="true" T="string" Label="Public URL (optional)" @bind-Value="audiobookshelfPublicUrl"
                           HelperText="Only needed when family members reach Audiobookshelf at a different address than the base URL above -- e.g. the base URL is a Docker-internal hostname Family Librarian's backend uses, but browsers need the LAN/public address instead. Leave blank to reuse the base URL for the 'Audiobookshelf' link and item deep links."
                           Disabled="@audiobookshelfBusy" />
 
             <MudText Typo="Typo.subtitle2">API token</MudText>
             <MudText Typo="Typo.body2">@(audiobookshelf.HasApiToken ? $"A token ending in {audiobookshelf.ApiTokenHint} was saved {audiobookshelf.ApiTokenSetAtUtc?.ToLocalTime().ToString("f")}." : "No token is stored yet.")</MudText>
             <MudStack Row="true" Spacing="2">
-                <MudTextField T="string" @bind-Value="audiobookshelfApiTokenDraft" Label="Replace API token" InputType="InputType.Password" Disabled="@audiobookshelfBusy" Class="flex-grow-1" />
+                <MudTextField Immediate="true" T="string" @bind-Value="audiobookshelfApiTokenDraft" Label="Replace API token" InputType="InputType.Password" Disabled="@audiobookshelfBusy" Class="flex-grow-1" />
                 <MudButton Variant="Variant.Filled" Disabled="@(audiobookshelfBusy || string.IsNullOrWhiteSpace(audiobookshelfApiTokenDraft))" OnClick="SaveAudiobookshelfApiTokenAsync">Save token</MudButton>
                 @if (audiobookshelf.HasApiToken) { <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@audiobookshelfBusy" OnClick="ClearAudiobookshelfApiTokenAsync">Remove</MudButton> }
             </MudStack>
@@ -314,9 +338,9 @@ else
                     </MudSelect>
                 }
             }
-            <MudTextField T="string" Label="Library ID" @bind-Value="audiobookshelfLibraryId" Disabled="@audiobookshelfBusy"
+            <MudTextField Immediate="true" T="string" Label="Library ID" @bind-Value="audiobookshelfLibraryId" Disabled="@audiobookshelfBusy"
                           HelperText="Filled in by Discover libraries above, or enter it directly." />
-            <MudTextField T="string" Label="Folder ID" @bind-Value="audiobookshelfFolderId" Disabled="@audiobookshelfBusy"
+            <MudTextField Immediate="true" T="string" Label="Folder ID" @bind-Value="audiobookshelfFolderId" Disabled="@audiobookshelfBusy"
                           HelperText="Filled in after picking a library above, or enter it directly." />
         </MudStack>
         <MudDivider Class="my-3" />
@@ -352,7 +376,7 @@ else
     private bool cwaLoadFailed, cwaBusy;
     private int cwaSwitchGeneration;
     private string cwaTransportMode = "Local", cwaSftpAuthenticationMode = "PrivateKey";
-    private string? cwaLocalIngestPath, cwaSftpHost, cwaSftpUsername, cwaSftpIngestPath, cwaSftpPrivateKeyDraft, cwaSftpPassphraseDraft, cwaSftpPasswordDraft, cwaPendingSftpHostKeyFingerprint, cwaApprovedSftpHostKeyFingerprint, cwaOpdsBaseUrl, cwaPublicUrl, cwaOpdsUsername, cwaOpdsPasswordDraft;
+    private string? cwaLocalIngestPath, cwaSftpHost, cwaSftpUsername, cwaSftpIngestPath, cwaSftpPrivateKeyDraft, cwaSftpPassphraseDraft, cwaSftpPasswordDraft, cwaPendingSftpHostKeyFingerprint, cwaApprovedSftpHostKeyFingerprint, cwaOpdsBaseUrl, cwaPublicUrl, cwaOpdsUsername, cwaOpdsPasswordDraft, cwaEreaderServiceAccountUsername, cwaEreaderServiceAccountPasswordDraft;
     private int? cwaSftpPort;
     private PublishingConnectionTestResponse? cwaIngestTestResult, cwaOpdsTestResult, cwaConnectionTestResult;
     private AudiobookshelfSettingsResponse? audiobookshelf;
@@ -397,7 +421,7 @@ else
         // its result reaches this page as a live "Publishing" update like any
         // other admin's change would -- no separate polling loop needed here.
         Observe(LiveUpdateTopics.Publishing, () => Task.WhenAll(LoadCwaAsync(), LoadAudiobookshelfAsync()));
-        await Task.WhenAll(LoadCwaAsync(), LoadAudiobookshelfAsync());
+        await Task.WhenAll(LoadCwaAsync(initializeFields: true), LoadAudiobookshelfAsync(initializeFields: true));
         await RefreshLiveAsync();
 
         // Runs after the initial load completes so the page renders immediately
@@ -442,7 +466,6 @@ else
             if (!isDisposed)
             {
                 cwa = await CwaApi.GetAsync();
-                ApplyCwaFields(cwa);
             }
         }
         catch (HttpRequestException)
@@ -474,7 +497,6 @@ else
             if (!isDisposed)
             {
                 audiobookshelf = await AudiobookshelfApi.GetAsync();
-                ApplyAudiobookshelfFields(audiobookshelf);
             }
         }
         catch (HttpRequestException)
@@ -499,8 +521,8 @@ else
         base.Dispose();
     }
 
-    private async Task LoadCwaAsync() { try { cwa = await CwaApi.GetAsync(); ApplyCwaFields(cwa); } catch (HttpRequestException) { cwaLoadFailed = true; } }
-    private void ApplyCwaFields(CwaSettingsResponse? settings) { if (settings is null) return; cwaTransportMode = settings.TransportMode; cwaLocalIngestPath = settings.LocalIngestPath; cwaSftpHost = settings.SftpHost; cwaSftpPort = settings.SftpPort; cwaSftpUsername = settings.SftpUsername; cwaSftpIngestPath = settings.SftpIngestPath; cwaSftpAuthenticationMode = settings.SftpAuthenticationMode; if (!string.IsNullOrWhiteSpace(settings.SftpHostKeyFingerprint)) cwaPendingSftpHostKeyFingerprint = null; cwaOpdsBaseUrl = settings.OpdsBaseUrl; cwaPublicUrl = settings.PublicUrl; cwaOpdsUsername = settings.OpdsUsername; }
+    private async Task LoadCwaAsync(bool initializeFields = false) { try { cwa = await CwaApi.GetAsync(); if (initializeFields) ApplyCwaFields(cwa); cwaLoadFailed = false; } catch (HttpRequestException) { cwaLoadFailed = true; } }
+    private void ApplyCwaFields(CwaSettingsResponse? settings) { if (settings is null) return; cwaTransportMode = settings.TransportMode; cwaLocalIngestPath = settings.LocalIngestPath; cwaSftpHost = settings.SftpHost; cwaSftpPort = settings.SftpPort; cwaSftpUsername = settings.SftpUsername; cwaSftpIngestPath = settings.SftpIngestPath; cwaSftpAuthenticationMode = settings.SftpAuthenticationMode; if (!string.IsNullOrWhiteSpace(settings.SftpHostKeyFingerprint)) cwaPendingSftpHostKeyFingerprint = null; cwaOpdsBaseUrl = settings.OpdsBaseUrl; cwaPublicUrl = settings.PublicUrl; cwaOpdsUsername = settings.OpdsUsername; cwaEreaderServiceAccountUsername = settings.EreaderServiceAccountUsername; }
     private string CwaIngestTestButtonLabel => cwaTransportMode == "Sftp" ? "Test SFTP" : "Test local path";
     private async Task SetCwaEnabledAsync(bool enabled)
     {
@@ -544,7 +566,7 @@ else
         cwaBusy = true;
         try
         {
-            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: true, saveOpdsCredential: false))
+            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: true, saveOpdsCredential: false, saveEreaderCredential: false))
             {
                 Snackbar.Add("Saved the CWA delivery settings.", Severity.Success);
             }
@@ -597,9 +619,26 @@ else
         cwaBusy = true;
         try
         {
-            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: false, saveOpdsCredential: true))
+            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: false, saveOpdsCredential: true, saveEreaderCredential: false))
             {
                 Snackbar.Add("Saved the CWA OPDS settings.", Severity.Success);
+            }
+        }
+        finally
+        {
+            cwaBusy = false;
+            cwaSwitchGeneration++;
+        }
+    }
+
+    private async Task SaveCwaEreaderAsync()
+    {
+        cwaBusy = true;
+        try
+        {
+            if (await SaveCurrentCwaSettingsAsync(saveIngestCredential: false, saveOpdsCredential: false, saveEreaderCredential: true))
+            {
+                Snackbar.Add("Saved the e-reader delivery settings.", Severity.Success);
             }
         }
         finally
@@ -648,7 +687,6 @@ else
             // settings -- reload so LastTestSucceeded (and so whether the
             // Enable switch will actually be accepted) reflects this result.
             cwa = await CwaApi.GetAsync();
-            ApplyCwaFields(cwa);
         }
         finally
         {
@@ -659,7 +697,8 @@ else
 
     private async Task<bool> SaveCurrentCwaSettingsAsync(
         bool saveIngestCredential,
-        bool saveOpdsCredential)
+        bool saveOpdsCredential,
+        bool saveEreaderCredential)
     {
         var settingsResult = await CwaApi.SetSettingsAsync(new SetCwaSettingsRequest(
             cwaTransportMode,
@@ -671,7 +710,8 @@ else
             cwaSftpAuthenticationMode,
             cwaOpdsBaseUrl,
             cwaPublicUrl,
-            cwaOpdsUsername));
+            cwaOpdsUsername,
+            cwaEreaderServiceAccountUsername));
         if (!AcceptCwaResult(settingsResult))
         {
             return false;
@@ -732,7 +772,17 @@ else
             cwaOpdsPasswordDraft = null;
         }
 
-        ApplyCwaFields(cwa);
+        if (saveEreaderCredential && !string.IsNullOrWhiteSpace(cwaEreaderServiceAccountPasswordDraft))
+        {
+            if (!AcceptCwaResult(await CwaApi.SetEreaderServiceAccountPasswordAsync(cwaEreaderServiceAccountPasswordDraft)))
+            {
+                return false;
+            }
+
+            cwaEreaderServiceAccountPasswordDraft = null;
+        }
+
+        ApplyCwaFields(settingsResult.Settings);
         return true;
     }
 
@@ -766,8 +816,8 @@ else
         return true;
     }
 
-    private async Task<bool> RunCwaAsync(Func<Task<CwaResult>> action) { cwaBusy = true; try { var result = await action(); if (!result.Succeeded) { Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error); return false; } cwa = result.Settings; ApplyCwaFields(cwa); return true; } finally { cwaBusy = false; cwaSwitchGeneration++; } }
-    private async Task LoadAudiobookshelfAsync() { try { audiobookshelf = await AudiobookshelfApi.GetAsync(); ApplyAudiobookshelfFields(audiobookshelf); } catch (HttpRequestException) { audiobookshelfLoadFailed = true; } }
+    private async Task<bool> RunCwaAsync(Func<Task<CwaResult>> action) { cwaBusy = true; try { var result = await action(); if (!result.Succeeded) { Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error); return false; } cwa = result.Settings; return true; } finally { cwaBusy = false; cwaSwitchGeneration++; } }
+    private async Task LoadAudiobookshelfAsync(bool initializeFields = false) { try { audiobookshelf = await AudiobookshelfApi.GetAsync(); if (initializeFields) ApplyAudiobookshelfFields(audiobookshelf); audiobookshelfLoadFailed = false; } catch (HttpRequestException) { audiobookshelfLoadFailed = true; } }
     private void ApplyAudiobookshelfFields(AudiobookshelfSettingsResponse? settings) { if (settings is null) return; audiobookshelfBaseUrl = settings.BaseUrl; audiobookshelfPublicUrl = settings.PublicUrl; audiobookshelfLibraryId = settings.LibraryId; audiobookshelfFolderId = settings.FolderId; }
     private Task SetAudiobookshelfEnabledAsync(bool enabled) =>
         RunAudiobookshelfAsync(() => AudiobookshelfApi.SetEnabledAsync(enabled));
@@ -784,7 +834,6 @@ else
             }
 
             audiobookshelf = result.Settings;
-            ApplyAudiobookshelfFields(audiobookshelf);
 
             if (!string.IsNullOrWhiteSpace(audiobookshelfApiTokenDraft))
             {
@@ -796,10 +845,10 @@ else
                 }
 
                 audiobookshelf = tokenResult.Settings;
-                ApplyAudiobookshelfFields(audiobookshelf);
                 audiobookshelfApiTokenDraft = null;
             }
 
+            ApplyAudiobookshelfFields(result.Settings);
             Snackbar.Add("Saved the Audiobookshelf settings.", Severity.Success);
         }
         finally
@@ -870,5 +919,5 @@ else
     private IReadOnlyList<AudiobookshelfFolderOption>? SelectedAudiobookshelfLibraryFolders =>
         audiobookshelfLibraryOptions?.FirstOrDefault(library => library.Id == audiobookshelfLibraryId)?.Folders;
 
-    private async Task<bool> RunAudiobookshelfAsync(Func<Task<AudiobookshelfResult>> action) { audiobookshelfBusy = true; try { var result = await action(); if (!result.Succeeded) { Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error); return false; } audiobookshelf = result.Settings; ApplyAudiobookshelfFields(audiobookshelf); return true; } finally { audiobookshelfBusy = false; audiobookshelfSwitchGeneration++; } }
+    private async Task<bool> RunAudiobookshelfAsync(Func<Task<AudiobookshelfResult>> action) { audiobookshelfBusy = true; try { var result = await action(); if (!result.Succeeded) { Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error); return false; } audiobookshelf = result.Settings; return true; } finally { audiobookshelfBusy = false; audiobookshelfSwitchGeneration++; } }
 }

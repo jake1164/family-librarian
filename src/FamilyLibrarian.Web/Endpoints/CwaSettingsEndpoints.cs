@@ -29,6 +29,8 @@ internal static class CwaSettingsEndpoints
         cwaSettings.MapPut("/sftp-host-key", TrustCwaSftpHostKeyAsync);
         cwaSettings.MapPut("/opds-password", SetCwaOpdsPasswordAsync);
         cwaSettings.MapDelete("/opds-password", ClearCwaOpdsPasswordAsync);
+        cwaSettings.MapPut("/ereader-service-account-password", SetCwaEreaderServiceAccountPasswordAsync);
+        cwaSettings.MapDelete("/ereader-service-account-password", ClearCwaEreaderServiceAccountPasswordAsync);
         cwaSettings.MapPost("/test", TestAllCwaConnectionsAsync);
         cwaSettings.MapPost("/test-ingest", TestCwaIngestConnectionAsync);
         cwaSettings.MapPost("/test-opds", TestCwaOpdsConnectionAsync);
@@ -56,7 +58,7 @@ internal static class CwaSettingsEndpoints
         return ToCwaResult(await service.SetSettingsAsync(
             mode, request.LocalIngestPath, request.SftpHost, request.SftpPort, request.SftpUsername,
             request.SftpIngestPath, authenticationMode, request.OpdsBaseUrl, request.PublicUrl,
-            request.OpdsUsername, cancellationToken));
+            request.OpdsUsername, request.EreaderServiceAccountUsername, cancellationToken));
     }
 
     private static async Task<IResult> SetCwaEnabledAsync(
@@ -98,6 +100,14 @@ internal static class CwaSettingsEndpoints
     private static async Task<IResult> ClearCwaOpdsPasswordAsync(
         CwaSettingsService service, CancellationToken cancellationToken) =>
         ToCwaResult(await service.ClearOpdsPasswordAsync(cancellationToken));
+
+    private static async Task<IResult> SetCwaEreaderServiceAccountPasswordAsync(
+        SetPublishingSecretRequest request, CwaSettingsService service, CancellationToken cancellationToken) =>
+        ToCwaResult(await service.SetEreaderServiceAccountPasswordAsync(request.Value, cancellationToken));
+
+    private static async Task<IResult> ClearCwaEreaderServiceAccountPasswordAsync(
+        CwaSettingsService service, CancellationToken cancellationToken) =>
+        ToCwaResult(await service.ClearEreaderServiceAccountPasswordAsync(cancellationToken));
 
     private static Task<IResult> TestAllCwaConnectionsAsync(
         CwaSettingsService service, CancellationToken cancellationToken) =>
@@ -201,8 +211,13 @@ internal static class CwaSettingsEndpoints
         status.HasOpdsPassword,
         status.OpdsPasswordHint,
         status.OpdsPasswordSetAtUtc,
+        status.EreaderServiceAccountUsername,
+        status.HasEreaderServiceAccountPassword,
+        status.EreaderServiceAccountPasswordHint,
+        status.EreaderServiceAccountPasswordSetAtUtc,
         status.LastTestedAtUtc,
         status.LastTestSucceeded,
         status.LastTestMessage,
-        status.IsIngestConfigured);
+        status.IsIngestConfigured,
+        status.IsEreaderDeliveryConfigured);
 }

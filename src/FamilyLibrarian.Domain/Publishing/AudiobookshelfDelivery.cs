@@ -1,7 +1,7 @@
 namespace FamilyLibrarian.Domain.Publishing;
 
 /// <summary>
-/// One attempt to deliver an approved audiobook <c>MediaAsset</c> to
+/// One attempt to publish an approved audiobook <c>MediaAsset</c> to
 /// Audiobookshelf.
 /// </summary>
 /// <remarks>
@@ -9,13 +9,13 @@ namespace FamilyLibrarian.Domain.Publishing;
 /// record's outcome. Every transition here is coordinator-driven (see
 /// <c>AudiobookshelfPublishingService</c>), never automatic/background.
 /// </remarks>
-public sealed class Delivery
+public sealed class AudiobookshelfDelivery
 {
-    private Delivery()
+    private AudiobookshelfDelivery()
     {
     }
 
-    public Delivery(Guid assetId, DateTimeOffset createdAtUtc)
+    public AudiobookshelfDelivery(Guid assetId, DateTimeOffset createdAtUtc)
     {
         if (assetId == Guid.Empty)
         {
@@ -24,23 +24,23 @@ public sealed class Delivery
 
         Id = Guid.NewGuid();
         AssetId = assetId;
-        Status = DeliveryStatus.Uploading;
+        Status = AudiobookshelfDeliveryStatus.Uploading;
         CreatedAtUtc = createdAtUtc;
     }
 
     /// <summary>One delivery attempt for every track of a multi-file bundle together.</summary>
-    public static Delivery ForBundle(Guid bundleId, DateTimeOffset createdAtUtc)
+    public static AudiobookshelfDelivery ForBundle(Guid bundleId, DateTimeOffset createdAtUtc)
     {
         if (bundleId == Guid.Empty)
         {
             throw new ArgumentException("A bundle ID is required.", nameof(bundleId));
         }
 
-        return new Delivery
+        return new AudiobookshelfDelivery
         {
             Id = Guid.NewGuid(),
             BundleId = bundleId,
-            Status = DeliveryStatus.Uploading,
+            Status = AudiobookshelfDeliveryStatus.Uploading,
             CreatedAtUtc = createdAtUtc
         };
     }
@@ -52,7 +52,7 @@ public sealed class Delivery
     /// <summary>Set instead of <see cref="AssetId"/> for a multi-file bundle delivery.</summary>
     public Guid? BundleId { get; private set; }
 
-    public DeliveryStatus Status { get; private set; }
+    public AudiobookshelfDeliveryStatus Status { get; private set; }
 
     /// <summary>The Audiobookshelf library item id (e.g. <c>li_...</c>), once known.</summary>
     public string? ExternalItemId { get; private set; }
@@ -67,7 +67,7 @@ public sealed class Delivery
 
     public void MarkVerifying()
     {
-        Status = DeliveryStatus.Verifying;
+        Status = AudiobookshelfDeliveryStatus.Verifying;
         FailureReason = null;
     }
 
@@ -78,7 +78,7 @@ public sealed class Delivery
             throw new ArgumentException("An external item ID is required.", nameof(externalItemId));
         }
 
-        Status = DeliveryStatus.Delivered;
+        Status = AudiobookshelfDeliveryStatus.Delivered;
         ExternalItemId = externalItemId.Trim();
         FailureReason = null;
         CompletedAtUtc = atUtc;
@@ -91,7 +91,7 @@ public sealed class Delivery
             throw new ArgumentException("A failure reason is required.", nameof(reason));
         }
 
-        Status = DeliveryStatus.Failed;
+        Status = AudiobookshelfDeliveryStatus.Failed;
         FailureReason = Truncate(reason, 2000);
         CompletedAtUtc = atUtc;
     }
@@ -99,7 +99,7 @@ public sealed class Delivery
     /// <summary>Used by a Recheck that retries the whole upload after a prior failure.</summary>
     public void ResetForRetry()
     {
-        Status = DeliveryStatus.Uploading;
+        Status = AudiobookshelfDeliveryStatus.Uploading;
         FailureReason = null;
         CompletedAtUtc = null;
     }

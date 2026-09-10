@@ -1,3 +1,4 @@
+using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Requests;
@@ -26,7 +27,9 @@ public sealed record BookRequestView(
     int RequesterCount = 1,
     bool RequiresManualFulfillment = false,
     string? VersionKind = null,
-    string? VersionDetails = null)
+    string? VersionDetails = null,
+    Guid? DeliveryTargetId = null,
+    RequestKindleDeliveryView? KindleDelivery = null)
 {
     public bool IsActive => RequestStatusTransitions.IsActive(Status);
 }
@@ -35,7 +38,20 @@ public sealed record RequestFormatView(
     Guid Id,
     RequestMediaType MediaType,
     RequestFormatStatus Status,
-    RequestFormatProgressView? Progress = null);
+    RequestFormatProgressView? Progress = null,
+    Uri? ExternalActionUri = null);
+
+/// <summary>
+/// The viewer's own most recent Kindle delivery attempt for this request --
+/// independent of <see cref="RequestFormatProgressView"/>, which describes
+/// library/publishing progress, not user-device delivery. See beta plan §33.
+/// </summary>
+public sealed record RequestKindleDeliveryView(
+    Guid AttemptId,
+    DeliveryAttemptStatus Status,
+    string? FailureReason,
+    int AttemptNumber,
+    DeliveryConfirmationStatus ConfirmationStatus = DeliveryConfirmationStatus.Unconfirmed);
 
 /// <summary>
 /// The administrator-only request read model. Requester identity and the status

@@ -114,7 +114,7 @@ public sealed class FormatReadinessServiceTests
         {
             await cwaSettings.SetSettingsAsync(
                 CwaTransportMode.Local, "/ingest", null, null, null, null,
-                CwaSftpAuthenticationMode.PrivateKey, "https://cwa.example.test", null, "opds-user",
+                CwaSftpAuthenticationMode.PrivateKey, "https://cwa.example.test", null, "opds-user", null,
                 CancellationToken.None);
             cwaConnectionTester.NextOutcome = new ConnectionTestOutcome(true, "Connected.");
             await cwaSettings.TestConnectionAsync(CwaConnectionTestTarget.All, CancellationToken.None);

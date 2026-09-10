@@ -20,7 +20,7 @@ The rule:
   - grey / default — inactive (Cancelled)
   - blue (`Color.Info`) — waiting / in progress, no attention needed
   - amber (`Color.Warning`) — needs attention (NeedsReview, AwaitingApproval,
-    SecurityReviewRequired, IdentityReviewRequired, ...)
+    SecurityReviewRequired, IdentityReviewRequired, SubmissionUnknown, ...)
   - green (`Color.Success`) — available / done
   - red (`Color.Error`) — failed / not available (SecurityCheckFailed,
     PublishingNeedsAttention, NotAvailable, ...)
@@ -39,6 +39,14 @@ a page's `@code` block; call into `MediaTypeVisuals` (directly, or through one
 of the shared components below) instead. If a new status value is added to
 `RequestStatus`, `RequestFormatStatus`, or a progress code, update
 `MediaTypeVisuals` once and every page picks it up.
+
+Kindle chips use `Delivery/KindleStatusChip.razor`, backed by
+`MediaTypeVisuals.KindleLabel` and `MediaTypeVisuals.KindleColor`: Pending/Submitting and
+Submitted without receipt confirmation are blue; confirmed receipt is green;
+failed or reported missing is red; `SubmissionUnknown` is amber; cancelled is
+neutral. Unknown submissions show **Resend (may create a duplicate)** so the
+explicit action communicates its consequence. Do not label an acknowledged
+submission as confirmed receipt.
 
 ## Availability badges are a separate vocabulary from status
 
@@ -62,7 +70,7 @@ cover every case:
 
 | Component | Use for | Shows |
 | --- | --- | --- |
-| `FormatStatusChip` | One request format (Ebook/Audiobook + its status) | icon (media type) + chip colored by status + tooltip |
+| `FormatStatusChip` | One request format (Ebook/Audiobook + its status) | icon (media type) + chip colored by status + tooltip; clickable once `ExternalActionUri` is set |
 | `RequestStatusChip` | A whole request's status (no single media type) | chip colored by status, short label by default |
 | `MediaTypeChip` | A media type with no status attached (e.g. a provider lookup) | neutral/outlined chip + icon + tooltip |
 
@@ -72,7 +80,8 @@ cover every case:
 {
     <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
                        ProgressCode="@format.ProgressCode"
-                       ProgressDescription="@format.ProgressDescription" />
+                       ProgressDescription="@format.ProgressDescription"
+                       ExternalActionUri="@format.ExternalActionUri" />
 }
 
 @* The request's overall status *@

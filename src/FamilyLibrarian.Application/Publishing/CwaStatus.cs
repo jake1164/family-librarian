@@ -29,6 +29,10 @@ public sealed record CwaStatus(
     bool HasOpdsPassword,
     string? OpdsPasswordHint,
     DateTimeOffset? OpdsPasswordSetAtUtc,
+    string? EreaderServiceAccountUsername,
+    bool HasEreaderServiceAccountPassword,
+    string? EreaderServiceAccountPasswordHint,
+    DateTimeOffset? EreaderServiceAccountPasswordSetAtUtc,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
     string? LastTestMessage)
@@ -48,4 +52,12 @@ public sealed record CwaStatus(
             (SftpAuthenticationMode == CwaSftpAuthenticationMode.Password
                 ? HasSftpPassword
                 : HasSftpPrivateKey);
+
+    /// <summary>
+    /// True once the e-reader delivery service account has enough saved
+    /// configuration to attempt a send -- independent of <see cref="IsIngestConfigured"/>
+    /// and of whether CWA ingest/OPDS is enabled, since this is a separate capability.
+    /// </summary>
+    public bool IsEreaderDeliveryConfigured =>
+        !string.IsNullOrWhiteSpace(EreaderServiceAccountUsername) && HasEreaderServiceAccountPassword;
 }

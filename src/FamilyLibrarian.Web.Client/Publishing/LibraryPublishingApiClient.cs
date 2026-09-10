@@ -11,16 +11,21 @@ public sealed class LibraryPublishingApiClient(HttpClient httpClient, Antiforger
     {
         var response = await httpClient.GetFromJsonAsync<PublishingQueueResponse>(
             "api/v1/admin/publishing/queue", cancellationToken);
-        return response ?? new PublishingQueueResponse([], []);
+        return response ?? new PublishingQueueResponse([], [], []);
     }
 
     public Task<bool> RecheckLibraryImportAsync(Guid id, CancellationToken cancellationToken = default) =>
-        RecheckAsync($"api/v1/admin/publishing/library-imports/{id}/recheck", cancellationToken);
+        PostAsync($"api/v1/admin/publishing/library-imports/{id}/recheck", cancellationToken);
 
     public Task<bool> RecheckDeliveryAsync(Guid id, CancellationToken cancellationToken = default) =>
-        RecheckAsync($"api/v1/admin/publishing/deliveries/{id}/recheck", cancellationToken);
+        PostAsync($"api/v1/admin/publishing/deliveries/{id}/recheck", cancellationToken);
 
-    private async Task<bool> RecheckAsync(string path, CancellationToken cancellationToken)
+    public Task<bool> RetryDeliveryAttemptAsync(Guid id, bool confirmPossibleDuplicate = false,
+        CancellationToken cancellationToken = default) =>
+        PostAsync($"api/v1/admin/publishing/delivery-attempts/{id}/retry?confirmPossibleDuplicate={confirmPossibleDuplicate}", cancellationToken);
+
+    /// <summary>Shared by every fire-and-check-success admin action on this queue (recheck, retry).</summary>
+    private async Task<bool> PostAsync(string path, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path);
         await antiforgery.AttachAsync(request, cancellationToken);

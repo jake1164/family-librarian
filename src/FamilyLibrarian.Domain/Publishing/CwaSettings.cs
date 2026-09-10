@@ -97,6 +97,22 @@ public sealed class CwaSettings
 
     public DateTimeOffset? OpdsPasswordSetAtUtc { get; private set; }
 
+    /// <summary>
+    /// The dedicated CWA account Family Librarian signs in as to invoke CWA's
+    /// own e-reader "send to device" web route on a family member's behalf --
+    /// independent of the OPDS catalog credential above, and independent of
+    /// whether ingest/OPDS are enabled, since it is a separate capability.
+    /// </summary>
+    public string? EreaderServiceAccountUsername { get; private set; }
+
+    public string? ProtectedEreaderServiceAccountPassword { get; private set; }
+
+    public int EreaderServiceAccountPasswordFormatVersion { get; private set; }
+
+    public string? EreaderServiceAccountPasswordHint { get; private set; }
+
+    public DateTimeOffset? EreaderServiceAccountPasswordSetAtUtc { get; private set; }
+
     public DateTimeOffset? LastTestedAtUtc { get; private set; }
 
     public bool? LastTestSucceeded { get; private set; }
@@ -119,6 +135,8 @@ public sealed class CwaSettings
 
     public bool HasOpdsPassword => !string.IsNullOrEmpty(ProtectedOpdsPassword);
 
+    public bool HasEreaderServiceAccountPassword => !string.IsNullOrEmpty(ProtectedEreaderServiceAccountPassword);
+
     public void SetEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
     {
         IsEnabled = isEnabled;
@@ -136,6 +154,7 @@ public sealed class CwaSettings
         string? opdsBaseUrl,
         string? publicUrl,
         string? opdsUsername,
+        string? ereaderServiceAccountUsername,
         Guid? actorUserId,
         DateTimeOffset updatedAtUtc)
     {
@@ -153,6 +172,7 @@ public sealed class CwaSettings
         OpdsBaseUrl = Trim(opdsBaseUrl);
         PublicUrl = Trim(publicUrl);
         OpdsUsername = Trim(opdsUsername);
+        EreaderServiceAccountUsername = Trim(ereaderServiceAccountUsername);
         if (sftpEndpointChanged)
         {
             ClearSftpHostKeyTrust();
@@ -259,6 +279,28 @@ public sealed class CwaSettings
         OpdsPasswordFormatVersion = 0;
         OpdsPasswordHint = null;
         OpdsPasswordSetAtUtc = null;
+        ResetTestResult();
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void SetEreaderServiceAccountPassword(
+        string protectedValue, int formatVersion, string? hint, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        RequireProtectedValue(protectedValue);
+        ProtectedEreaderServiceAccountPassword = protectedValue;
+        EreaderServiceAccountPasswordFormatVersion = formatVersion;
+        EreaderServiceAccountPasswordHint = hint;
+        EreaderServiceAccountPasswordSetAtUtc = updatedAtUtc;
+        ResetTestResult();
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void ClearEreaderServiceAccountPassword(Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        ProtectedEreaderServiceAccountPassword = null;
+        EreaderServiceAccountPasswordFormatVersion = 0;
+        EreaderServiceAccountPasswordHint = null;
+        EreaderServiceAccountPasswordSetAtUtc = null;
         ResetTestResult();
         Touch(actorUserId, updatedAtUtc);
     }

@@ -14,7 +14,7 @@ namespace FamilyLibrarian.Application.Publishing;
 /// asset is trusted either way, and publishing is a separate, retriable
 /// concern. <see cref="CwaPublishingService"/>/<see cref="AudiobookshelfPublishingService"/>
 /// already catch their own expected failure modes and record them on a
-/// <c>LibraryImport</c>/<c>Delivery</c> row; the try/catch here is only the
+/// <c>LibraryImport</c>/<c>AudiobookshelfDelivery</c> row; the try/catch here is only the
 /// final safety net for something unexpected happening before either could
 /// even do that.
 /// </remarks>

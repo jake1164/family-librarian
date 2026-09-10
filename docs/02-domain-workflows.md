@@ -754,26 +754,101 @@ It may be a linked catalog/source and CWA may be a `LibraryImport` destination;
 it can also provide its own reading, download, or send features. Kindle,
 browser, or email delivery remain optional, separate user-specific operations.
 
-**Implementation status:** neither `DeliveryTarget` nor the record below exists
-yet. No Kindle/device delivery code has been written; see
-`docs/01-product-architecture-spec.md` §15.1 for the intended design,
-including delivery-attempt history, retry/fallback, and the
-submitted-vs-confirmed distinction for Send-to-Kindle.
+**Implementation status (2026-09-09):** `DeliveryTarget` is implemented
+(`src/FamilyLibrarian.Domain/Delivery/DeliveryTarget.cs`) for the CWA-mediated
+Send-to-Kindle path — see `docs/01-product-architecture-spec.md` §15.1 for how
+its real fields differ from the sketch below. Delivery-attempt history,
+retry, and receipt confirmation are implemented. A `DeliveryConfirmationStatus`
+(Unconfirmed/Confirmed/ReportedMissing) is tracked on a `Submitted` attempt.
+Per-user delivery intent lives on `RequestParticipant.DeliveryTargetId`,
+alongside `WantsEbook`/`WantsAudiobook`. An audiobook-only join preserves any
+existing ebook delivery choice; an explicit ebook choice can change it.
 
 ---
 
-### DeliveryAttempt (design name — not yet implemented)
+### DeliveryAttempt (implemented, 2026-09-09 — CWA Send-to-Kindle only)
 
 Represents one attempt to deliver an Asset to a user's `DeliveryTarget`. This
-is the record referred to as `Delivery` in earlier drafts of this document;
-it is named `DeliveryAttempt` here specifically to avoid colliding with the
-type that already exists in code today: `FamilyLibrarian.Domain.Publishing.Delivery`,
-which represents an unrelated concept — one attempt to publish an approved
-audiobook `MediaAsset` into Audiobookshelf (a `MediaLibraryImport`, not a
-user-specific delivery). Resolving that name collision (rename the existing
-type, or pick a different name for this one) is a required decision before
-this record is implemented; do not introduce a second, differently-shaped
-`Delivery` type without making that choice explicitly.
+is the record referred to as `Delivery` in earlier drafts of this document.
+The naming collision this section originally flagged is resolved (2026-09-07):
+`FamilyLibrarian.Domain.Publishing.Delivery` (one attempt to publish an
+approved audiobook `MediaAsset` into Audiobookshelf — a `MediaLibraryImport`
+concept, not a user-specific delivery) has been renamed to
+`AudiobookshelfDelivery`, so `Delivery`/`DeliveryAttempt` were free for this
+concept. It is modeled as one row per attempt (mirroring `AcquisitionJob`'s
+private-setter/`TransitionTo` shape), not a single mutable row — see
+`src/FamilyLibrarian.Domain/Delivery/DeliveryAttempt.cs`.
+
+**The field list and status set below are the original forward design.** The
+actual implementation is narrower — no `Method` field (only CWA-mediated
+`SendToKindle` exists; `DirectDevice`/`BrowserDownload` remain unbuilt, P1-3),
+`RequestId` is nullable rather than required (the existing-book fast path
+creates an attempt with no request at all), and `AssetId` does not appear —
+delivery targets a resolved `ExternalBookId`/`BookFormat` instead. The real
+status set is `Pending -> Submitting -> Submitted/Failed/SubmissionUnknown`,
+with `Pending -> Cancelled` when recipient eligibility no longer holds. None
+of `Preparing`, `Ready`, `AwaitingDevice`, `Delivering`, or `SubmittedToAmazon`
+below exist today.
+
+Every logical delivery has a stable `DeliveryId`; retries keep it and create a
+new row with an incremented `AttemptNumber`. Initial request releases are
+unique per request/user, and attempt numbers are unique within a delivery.
+Standalone sends have independent identities, so sending another book cannot
+suppress an earlier book's retry. Concurrent calls reuse the winning successor;
+only the worker that durably claims a Pending row may dispatch it.
+
+Automatic retries select the latest row **before** checking Failed/retryable,
+the three-attempt cap, and 2/10-minute cooldowns. A newer success, permanent
+failure, unknown submission, cancellation or pending attempt suppresses all
+older failures. Explicit retries can bypass the cap and cooldown, but cannot
+create another successor for an already superseded row.
+
+Before dispatch, the server freshly checks that the target is enabled and
+belongs to an active account; request deliveries also require an active ebook
+participant with the same target and a request that is not cancelled. Failing
+this check cancels the attempt. An audiobook-only join leaves Kindle intent
+unchanged.
+
+All recipients' initial attempts are saved before the first external send.
+On startup and every five minutes, the worker reconciles verified Available
+library imports with unreleased eligible request intent (including late joins),
+then resumes Pending attempts. No additional external readiness poll is needed.
+A Submitting row older than five minutes becomes `SubmissionUnknown`. Provider
+calls have a two-minute bound; uncertain outcomes after dispatch also become
+`SubmissionUnknown`, and completion persistence survives browser cancellation.
+Only failures known to precede dispatch are automatically retryable. Unknown
+submissions require the requester or administrator to choose **Resend (may
+create a duplicate)** after checking receipt; the retry API requires
+`confirmPossibleDuplicate=true`. A failed completion write leaves durable work
+for recovery instead of silently repeating a possibly accepted send.
+
+Owners can list all their attempts or open one by ID through the authorized
+personal delivery API, irrespective of whether `RequestId` exists. History
+exposes the latest attempt ID, retry eligibility, earliest automatic retry time
+and exhaustion. Receipt notifications link directly to the attempt. The admin
+support projection adds recipient identity, stored title, receipt state/time and
+supersession; admins may explicitly retry Submitted + ReportedMissing, while
+Submitted + Confirmed is not retryable. Request withdrawal or disabled targets
+still prevent dispatch through the shared eligibility check.
+
+Delivery writes emit recipient-only Deliveries/Requests invalidation and admin
+Publishing/Requests invalidation after commit. They do not use shared-request
+participant fan-out. Live views reload on reconnect using their authorized APIs.
+
+**KINDLE-7 (2026-09-09):** `Delivered`/`UserReportedMissing` above were never
+built as further `DeliveryAttemptStatus` values. Instead, a `Submitted` row
+carries a separate `DeliveryConfirmationStatus`
+(`Unconfirmed`/`Confirmed`/`ReportedMissing`) and `ConfirmedAtUtc`, set by
+`DeliveryAttempt.ConfirmReceived`/`ReportMissing` — CWA genuinely accepted the
+send, so `Submitted` stays the accurate status; the user's on-device answer
+is a fact layered on top of it, not a status transition. Reporting an attempt
+missing does not itself retry it: an explicit retry creates a new row, and
+`RetryAsync`'s eligibility was widened to accept
+a `Submitted`+`ReportedMissing` row alongside an ordinary `Failed` one.
+Reaching `Submitted` also raises a
+`NotificationCategories.KindleDeliveryConfirmationRequested` notification
+asking the user to confirm receipt. Automatic retries never resend a
+Submitted attempt solely because the user reported it missing.
 
 ```text
 DeliveryAttemptId

@@ -42,7 +42,7 @@ public sealed class AudiobookshelfPublishingServiceTests
 
         var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
         Assert.IsNotNull(delivery);
-        Assert.AreEqual(DeliveryStatus.Delivered, delivery.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Delivered, delivery.Status);
         Assert.AreEqual("li_new", delivery.ExternalItemId);
         Assert.AreEqual(1, context.ApiClient.UploadCount);
     }
@@ -58,7 +58,7 @@ public sealed class AudiobookshelfPublishingServiceTests
 
         var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
         Assert.IsNotNull(delivery);
-        Assert.AreEqual(DeliveryStatus.Delivered, delivery.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Delivered, delivery.Status);
         Assert.AreEqual("li_already-there", delivery.ExternalItemId);
         Assert.AreEqual(0, context.ApiClient.UploadCount);
     }
@@ -75,7 +75,7 @@ public sealed class AudiobookshelfPublishingServiceTests
 
         var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
         Assert.IsNotNull(delivery);
-        Assert.AreEqual(DeliveryStatus.Failed, delivery.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Failed, delivery.Status);
         Assert.AreEqual("Upload rejected.", delivery.FailureReason);
     }
 
@@ -88,14 +88,14 @@ public sealed class AudiobookshelfPublishingServiceTests
         context.ApiClient.UploadResult = new AudiobookshelfUploadResult(false, null, "boom");
         await context.Service.PublishAsync(asset, CancellationToken.None);
         var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
-        Assert.AreEqual(DeliveryStatus.Failed, delivery!.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Failed, delivery!.Status);
 
         context.ApiClient.UploadResult = new AudiobookshelfUploadResult(true, "li_retry", null);
         var handled = await context.Service.RecheckAsync(delivery.Id, CancellationToken.None);
 
         Assert.IsTrue(handled);
         var reloaded = await context.Repository.FindAsync(delivery.Id, CancellationToken.None);
-        Assert.AreEqual(DeliveryStatus.Delivered, reloaded!.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Delivered, reloaded!.Status);
         Assert.AreEqual("li_retry", reloaded.ExternalItemId);
     }
 
@@ -141,7 +141,7 @@ public sealed class AudiobookshelfPublishingServiceTests
         await context.Service.PublishAsync(asset, CancellationToken.None);
 
         var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
-        Assert.AreEqual(DeliveryStatus.Delivered, delivery!.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Delivered, delivery!.Status);
         Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState);
         Assert.AreEqual(1, context.Audit.Entries.Count(entry => entry.Action == "asset.archive_cleanup_failed"));
     }
@@ -155,14 +155,14 @@ public sealed class AudiobookshelfPublishingServiceTests
         context.ApiClient.UploadResult = new AudiobookshelfUploadResult(true, null, null);
         await context.Service.PublishAsync(asset, CancellationToken.None);
         var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
-        Assert.AreEqual(DeliveryStatus.Verifying, delivery!.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Verifying, delivery!.Status);
         Assert.AreEqual(MediaAssetStorageState.Trusted, asset.StorageState);
 
         context.ApiClient.ExistingItemId = "li_found-on-recheck";
         await context.Service.RecheckAsync(delivery.Id, CancellationToken.None);
 
         var reloaded = await context.Repository.FindAsync(delivery.Id, CancellationToken.None);
-        Assert.AreEqual(DeliveryStatus.Delivered, reloaded!.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Delivered, reloaded!.Status);
         Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState);
         Assert.AreEqual(1, context.StagingStore.Deleted.Count);
     }
@@ -176,14 +176,14 @@ public sealed class AudiobookshelfPublishingServiceTests
         context.ApiClient.UploadResult = new AudiobookshelfUploadResult(true, null, null);
         await context.Service.PublishAsync(asset, CancellationToken.None);
         var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
-        Assert.AreEqual(DeliveryStatus.Verifying, delivery!.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Verifying, delivery!.Status);
 
         context.ApiClient.ExistingItemId = "li_found-on-automatic-recheck";
         var checkedCount = await context.Service.RecheckAwaitingVerificationAsync(CancellationToken.None);
 
         var reloaded = await context.Repository.FindAsync(delivery.Id, CancellationToken.None);
         Assert.AreEqual(1, checkedCount);
-        Assert.AreEqual(DeliveryStatus.Delivered, reloaded!.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Delivered, reloaded!.Status);
         Assert.AreEqual(1, context.ApiClient.UploadCount);
     }
 
@@ -220,7 +220,7 @@ public sealed class AudiobookshelfPublishingServiceTests
         await context.Service.PublishAsync(asset, CancellationToken.None);
 
         var delivery = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
-        Assert.AreEqual(DeliveryStatus.Delivered, delivery!.Status);
+        Assert.AreEqual(AudiobookshelfDeliveryStatus.Delivered, delivery!.Status);
         Assert.AreEqual("li_new", delivery.ExternalItemId);
         Assert.AreEqual(1, context.ApiClient.UploadCount);
         Assert.AreEqual(1, context.Audit.Entries.Count(entry => entry.Action == "asset.match_ambiguous"));
@@ -250,7 +250,7 @@ public sealed class AudiobookshelfPublishingServiceTests
         public TestContext()
         {
             SettingsStore = new FakeAudiobookshelfSettingsStore(Settings);
-            Repository = new FakeDeliveryRepository();
+            Repository = new FakeAudiobookshelfDeliveryRepository();
             Assets = new FakeAssetLookup();
             StagingStore = new FakeStagingStore();
             ApiClient = new FakeApiClient();
@@ -269,7 +269,7 @@ public sealed class AudiobookshelfPublishingServiceTests
 
         public FakeAudiobookshelfSettingsStore SettingsStore { get; }
 
-        public FakeDeliveryRepository Repository { get; }
+        public FakeAudiobookshelfDeliveryRepository Repository { get; }
 
         public FakeAssetLookup Assets { get; }
 
@@ -358,28 +358,28 @@ public sealed class AudiobookshelfPublishingServiceTests
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    private sealed class FakeDeliveryRepository : IDeliveryRepository
+    private sealed class FakeAudiobookshelfDeliveryRepository : IAudiobookshelfDeliveryRepository
     {
-        private readonly Dictionary<Guid, Delivery> _byId = [];
+        private readonly Dictionary<Guid, AudiobookshelfDelivery> _byId = [];
 
-        public Task<Delivery?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+        public Task<AudiobookshelfDelivery?> FindAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult(_byId.GetValueOrDefault(id));
 
-        public Task<Delivery?> FindByAssetIdAsync(Guid assetId, CancellationToken cancellationToken) =>
+        public Task<AudiobookshelfDelivery?> FindByAssetIdAsync(Guid assetId, CancellationToken cancellationToken) =>
             Task.FromResult(_byId.Values.FirstOrDefault(delivery => delivery.AssetId == assetId));
 
-        public Task<Delivery?> FindByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
+        public Task<AudiobookshelfDelivery?> FindByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
             Task.FromResult(_byId.Values.FirstOrDefault(delivery => delivery.BundleId == bundleId));
 
-        public Task<IReadOnlyList<DeliveryView>> ListRecentAsync(CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<AudiobookshelfDeliveryView>> ListRecentAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<Guid>> ListAwaitingVerificationIdsAsync(CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Guid>>(
-                _byId.Values.Where(delivery => delivery.Status == DeliveryStatus.Verifying)
+                _byId.Values.Where(delivery => delivery.Status == AudiobookshelfDeliveryStatus.Verifying)
                     .Select(delivery => delivery.Id).ToArray());
 
-        public void Add(Delivery delivery) => _byId[delivery.Id] = delivery;
+        public void Add(AudiobookshelfDelivery delivery) => _byId[delivery.Id] = delivery;
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }

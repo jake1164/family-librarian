@@ -5,18 +5,18 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FamilyLibrarian.Infrastructure.Publishing;
 
-public sealed class DeliveryRepository(AppDbContext database) : IDeliveryRepository
+public sealed class AudiobookshelfDeliveryRepository(AppDbContext database) : IAudiobookshelfDeliveryRepository
 {
-    public Task<Delivery?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+    public Task<AudiobookshelfDelivery?> FindAsync(Guid id, CancellationToken cancellationToken) =>
         database.Deliveries.FirstOrDefaultAsync(delivery => delivery.Id == id, cancellationToken);
 
-    public Task<Delivery?> FindByAssetIdAsync(Guid assetId, CancellationToken cancellationToken) =>
+    public Task<AudiobookshelfDelivery?> FindByAssetIdAsync(Guid assetId, CancellationToken cancellationToken) =>
         database.Deliveries.FirstOrDefaultAsync(delivery => delivery.AssetId == assetId, cancellationToken);
 
-    public Task<Delivery?> FindByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
+    public Task<AudiobookshelfDelivery?> FindByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
         database.Deliveries.FirstOrDefaultAsync(delivery => delivery.BundleId == bundleId, cancellationToken);
 
-    public async Task<IReadOnlyList<DeliveryView>> ListRecentAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<AudiobookshelfDeliveryView>> ListRecentAsync(CancellationToken cancellationToken)
     {
         // A bundle delivery (e.g. a chaptered audiobook) has no AssetId of
         // its own; represent it here by its first track, the same
@@ -31,7 +31,7 @@ public sealed class DeliveryRepository(AppDbContext database) : IDeliveryReposit
             join format in database.RequestFormats on asset.AssociatedRequestFormatId equals format.Id
             join work in database.Works on asset.WorkId equals work.Id
             orderby delivery.CreatedAtUtc descending
-            select new DeliveryView(
+            select new AudiobookshelfDeliveryView(
                 delivery.Id,
                 representativeAssetId,
                 format.RequestId,
@@ -49,11 +49,11 @@ public sealed class DeliveryRepository(AppDbContext database) : IDeliveryReposit
 
     public async Task<IReadOnlyList<Guid>> ListAwaitingVerificationIdsAsync(CancellationToken cancellationToken) =>
         await database.Deliveries
-            .Where(delivery => delivery.Status == DeliveryStatus.Verifying)
+            .Where(delivery => delivery.Status == AudiobookshelfDeliveryStatus.Verifying)
             .Select(delivery => delivery.Id)
             .ToArrayAsync(cancellationToken);
 
-    public void Add(Delivery delivery) => database.Deliveries.Add(delivery);
+    public void Add(AudiobookshelfDelivery delivery) => database.Deliveries.Add(delivery);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);
 }

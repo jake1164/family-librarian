@@ -1,0 +1,51 @@
+using FamilyLibrarian.Domain.Delivery;
+
+namespace FamilyLibrarian.Application.Delivery;
+
+/// <summary>
+/// The admin Publishing Queue's read model for one Kindle delivery attempt.
+/// </summary>
+/// <remarks>
+/// <see cref="RequestId"/>/<see cref="WorkId"/> are
+/// null for the existing-book fast path, which has no <c>BookRequest</c> at
+/// all. Requester identity is joined here specifically because this is an
+/// administrator-only view (mirroring <c>AdminBookRequestView</c>) -- the
+/// recipient's Kindle address itself is never included; it lives only on
+/// <c>DeliveryTarget</c>, which this view does not join.
+/// </remarks>
+public sealed record DeliveryAttemptView(
+    Guid Id,
+    Guid? RequestId,
+    Guid? WorkId,
+    string? WorkTitle,
+    string RequesterDisplayName,
+    string RequesterEmail,
+    string ExternalBookId,
+    DeliveryAttemptStatus Status,
+    int AttemptNumber,
+    string? FailureReason,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    Guid DeliveryId,
+    DeliveryConfirmationStatus ConfirmationStatus,
+    DateTimeOffset? ConfirmedAtUtc,
+    bool IsLatest,
+    bool IsRetryable)
+{
+    public bool CanRetry => IsLatest && DeliveryRetryPolicy.CanRetry(Status, ConfirmationStatus);
+    public DateTimeOffset? NextAutomaticRetryAtUtc => DeliveryRetryPolicy.NextAutomaticRetryAt(
+        Status, IsRetryable, AttemptNumber, CompletedAtUtc, IsLatest);
+    public bool AutomaticRetriesExhausted => IsLatest && Status == DeliveryAttemptStatus.Failed &&
+        IsRetryable && AttemptNumber >= DeliveryRetryPolicy.MaxAttempts;
+
+    /// <summary>
+    /// True when this is the end of its retry chain with no automatic path
+    /// forward -- a terminal failure, an ambiguous submission, or a
+    /// user-reported non-arrival -- so an admin needs to look at it. Mirrors
+    /// the trigger for <c>NotificationService.RecordDeliveryNeedsAttentionAsync</c>.
+    /// </summary>
+    public bool NeedsAttention => IsLatest && (
+        ConfirmationStatus == DeliveryConfirmationStatus.ReportedMissing ||
+        Status == DeliveryAttemptStatus.SubmissionUnknown ||
+        (Status == DeliveryAttemptStatus.Failed && (!IsRetryable || AttemptNumber >= DeliveryRetryPolicy.MaxAttempts)));
+}

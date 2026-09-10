@@ -20,12 +20,24 @@ public sealed class ProviderAttemptRepository(AppDbContext database) : IProvider
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
 
-        return await database.ProviderAttempts
+        // The dashboard shows one row per format+provider lookup, not every
+        // outcome in that lookup's history. Over-fetch a wider recent window
+        // so collapsing repeated lookups for the same format+provider still
+        // leaves a full page of distinct rows, then trim to the requested
+        // count. Grouping happens in memory because EF Core cannot translate
+        // a "latest per group" query against Npgsql.
+        var recent = await database.ProviderAttempts
             .AsNoTracking()
             .OrderByDescending(attempt => attempt.AttemptedAtUtc)
             .ThenByDescending(attempt => attempt.Id)
-            .Take(maximumCount)
+            .Take(maximumCount * 3)
             .ToArrayAsync(cancellationToken);
+
+        return recent
+            .GroupBy(attempt => (attempt.RequestFormatId, attempt.ProviderId))
+            .Select(group => group.First())
+            .Take(maximumCount)
+            .ToArray();
     }
 
     public Task<ProviderAttempt?> FindLatestForFormatAsync(

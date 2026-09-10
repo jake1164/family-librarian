@@ -26,12 +26,14 @@ public sealed class RequestsApiClient(HttpClient httpClient, AntiforgeryTokenPro
         bool confirmOwned,
         string? versionKind = null,
         string? versionDetails = null,
+        Guid? deliveryTargetId = null,
         CancellationToken cancellationToken = default)
     {
         using var response = await SendAsync(
             HttpMethod.Post,
             "api/v1/requests/",
-            new CreateBookRequestRequest(workId, formats, note, confirmDuplicate, confirmOwned, versionKind, versionDetails),
+            new CreateBookRequestRequest(
+                workId, formats, note, confirmDuplicate, confirmOwned, versionKind, versionDetails, deliveryTargetId),
             cancellationToken);
 
         if (response.IsSuccessStatusCode)

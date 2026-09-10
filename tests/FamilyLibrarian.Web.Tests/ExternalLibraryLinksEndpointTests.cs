@@ -101,7 +101,7 @@ public sealed class ExternalLibraryLinksEndpointTests
             "/api/v1/admin/publishing/cwa/",
             new SetCwaSettingsRequest(
                 "Local", "/data/cwa-ingest-test", null, null, null, null, "PrivateKey",
-                "https://cwa.example.test", publicUrl, null));
+                "https://cwa.example.test", publicUrl, null, null));
         settings.EnsureSuccessStatusCode();
 
         var test = await client.PostAsJsonAsync("/api/v1/admin/publishing/cwa/test", new { });

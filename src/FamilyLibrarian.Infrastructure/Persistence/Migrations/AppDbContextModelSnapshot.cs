@@ -1134,6 +1134,187 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("smtp_settings", "communications");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Delivery.DeliveryAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AttemptNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_number");
+
+                    b.Property<string>("BookFormat")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("book_format");
+
+                    b.Property<string>("BookTitle")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("book_title");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at_utc");
+
+                    b.Property<string>("ConfirmationStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("confirmation_status");
+
+                    b.Property<DateTimeOffset?>("ConfirmedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("confirmed_at_utc");
+
+                    b.Property<bool>("Convert")
+                        .HasColumnType("boolean")
+                        .HasColumnName("convert");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid>("DeliveryId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("delivery_id");
+
+                    b.Property<Guid>("DeliveryTargetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("delivery_target_id");
+
+                    b.Property<string>("ExternalBookId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("external_book_id");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<bool>("IsRetryable")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_retryable");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("provider");
+
+                    b.Property<Guid?>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<DateTimeOffset?>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at_utc");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeliveryTargetId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("DeliveryId", "AttemptNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ux_delivery_chain_attempt");
+
+                    b.HasIndex("RequestId", "UserId");
+
+                    b.HasIndex("Status", "IsRetryable", "CompletedAtUtc");
+
+                    b.HasIndex(new[] { "RequestId", "UserId" }, "InitialRequestDelivery")
+                        .IsUnique()
+                        .HasDatabaseName("ux_delivery_request_user")
+                        .HasFilter("request_id IS NOT NULL AND attempt_number = 1");
+
+                    b.ToTable("delivery_attempts", "delivery");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Delivery.DeliveryTarget", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Address")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)")
+                        .HasColumnName("address");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_default");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("provider");
+
+                    b.Property<bool>("SendByDefault")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("send_by_default");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("delivery_targets", "delivery");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Feedback.UserWorkFeedback", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1607,6 +1788,59 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("provider_settings", "providers");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.AudiobookshelfDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("AssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("asset_id");
+
+                    b.Property<Guid?>("BundleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bundle_id");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at_utc");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("ExternalItemId")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("external_item_id");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssetId");
+
+                    b.HasIndex("BundleId");
+
+                    b.ToTable("deliveries", "publishing");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.AudiobookshelfSettings", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1701,6 +1935,24 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
 
+                    b.Property<int>("EreaderServiceAccountPasswordFormatVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("ereader_service_account_password_format_version");
+
+                    b.Property<string>("EreaderServiceAccountPasswordHint")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)")
+                        .HasColumnName("ereader_service_account_password_hint");
+
+                    b.Property<DateTimeOffset?>("EreaderServiceAccountPasswordSetAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ereader_service_account_password_set_at_utc");
+
+                    b.Property<string>("EreaderServiceAccountUsername")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("ereader_service_account_username");
+
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("boolean")
                         .HasColumnName("is_enabled");
@@ -1745,6 +1997,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
                         .HasColumnName("opds_username");
+
+                    b.Property<string>("ProtectedEreaderServiceAccountPassword")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("protected_ereader_service_account_password");
 
                     b.Property<string>("ProtectedOpdsPassword")
                         .HasMaxLength(2048)
@@ -1869,59 +2126,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("cwa_settings", "publishing");
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.Delivery", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<Guid?>("AssetId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("asset_id");
-
-                    b.Property<Guid?>("BundleId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("bundle_id");
-
-                    b.Property<DateTimeOffset?>("CompletedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("completed_at_utc");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<string>("ExternalItemId")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
-                        .HasColumnName("external_item_id");
-
-                    b.Property<string>("FailureReason")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)")
-                        .HasColumnName("failure_reason");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("status");
-
-                    b.Property<uint>("Version")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AssetId");
-
-                    b.HasIndex("BundleId");
-
-                    b.ToTable("deliveries", "publishing");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.LibraryImport", b =>
@@ -2109,6 +2313,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("user_id");
 
+                    b.Property<Guid?>("DeliveryTargetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("delivery_target_id");
+
                     b.Property<DateTimeOffset>("JoinedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("joined_at_utc");
@@ -2131,6 +2339,8 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnName("withdrawn_at_utc");
 
                     b.HasKey("RequestId", "UserId");
+
+                    b.HasIndex("DeliveryTargetId");
 
                     b.HasIndex("UserId");
 
@@ -2997,6 +3207,35 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Navigation("Communication");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Delivery.DeliveryAttempt", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Delivery.DeliveryTarget", null)
+                        .WithMany()
+                        .HasForeignKey("DeliveryTargetId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Delivery.DeliveryTarget", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Feedback.UserWorkFeedback", b =>
                 {
                     b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
@@ -3012,7 +3251,7 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.Delivery", b =>
+            modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.AudiobookshelfDelivery", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Acquisition.MediaAsset", null)
                         .WithMany()
@@ -3057,6 +3296,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestParticipant", b =>
                 {
+                    b.HasOne("FamilyLibrarian.Domain.Delivery.DeliveryTarget", null)
+                        .WithMany()
+                        .HasForeignKey("DeliveryTargetId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
                         .WithMany("Participants")
                         .HasForeignKey("RequestId")

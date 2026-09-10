@@ -22,3 +22,13 @@ dotnet_diagnostic.IDE0130.severity = warning
 # add`, so these are exempt. Everything hand-written stays covered above.
 [src/FamilyLibrarian.Infrastructure/Persistence/Migrations/*.cs]
 dotnet_diagnostic.IDE0005.severity = none
+
+# Same rationale as IDE0005 above: EF's migration scaffolder always writes a
+# composite CreateIndex's columns as `new[] { ... }`, which CA1861 flags as a
+# reused-array-literal perf smell. It first surfaced on a freshly scaffolded
+# migration (AddDeliveryAttempts) even though every earlier migration already
+# contains the identical pattern -- Roslyn's incremental analyzer cache had
+# simply never re-flagged the untouched older files. Held to that rule would
+# fail the build on every `dotnet ef migrations add` that touches a composite
+# index, so it is exempt here alongside IDE0005.
+dotnet_diagnostic.CA1861.severity = none

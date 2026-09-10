@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
+using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Domain.Audit;
@@ -25,7 +26,8 @@ public sealed class BookRequestService(
     NotificationService notifications,
     OutboundCommunicationService outboundCommunications,
     IFormatReadinessService readiness,
-    IWorkFulfillmentOptionsService fulfillmentOptions)
+    IWorkFulfillmentOptionsService fulfillmentOptions,
+    IDeliveryTargetRepository deliveryTargets)
 {
     /// <summary>
     /// The status changes a requester may make. Moving a request to
@@ -61,7 +63,8 @@ public sealed class BookRequestService(
         bool confirmOwned,
         CancellationToken cancellationToken,
         string? versionKind = null,
-        string? versionDetails = null)
+        string? versionDetails = null,
+        Guid? deliveryTargetId = null)
     {
         ArgumentNullException.ThrowIfNull(mediaTypes);
 
@@ -80,6 +83,23 @@ public sealed class BookRequestService(
         {
             return CreateBookRequestResult.Invalid(
                 $"A note may not exceed {BookRequest.MaxNoteLength} characters.");
+        }
+
+        if (deliveryTargetId is not null)
+        {
+            if (!requestedFormats.Contains(RequestMediaType.Ebook))
+            {
+                return CreateBookRequestResult.Invalid("Kindle delivery requires the ebook format.");
+            }
+
+            var target = await deliveryTargets.FindAsync(deliveryTargetId.Value, cancellationToken);
+            if (target is null || target.UserId != userId || !target.IsEnabled)
+            {
+                // Reported the same as any other bad input rather than distinguishing
+                // "not yours" from "disabled" -- neither should leak another user's
+                // delivery-target existence.
+                return CreateBookRequestResult.Invalid("That Kindle delivery target is not available.");
+            }
         }
 
         if (!await repository.WorkExistsAsync(workId, cancellationToken))
@@ -133,13 +153,13 @@ public sealed class BookRequestService(
 
                 if (shared is not null)
                 {
-                    shared.Join(userId, requestedFormats, note, clock.UtcNow);
+                    shared.Join(userId, requestedFormats, note, clock.UtcNow, deliveryTargetId);
                     await repository.SaveChangesAsync(token);
                     var joined = await repository.FindViewAsync(shared.Id, userId, token);
                     return CreateBookRequestResult.Created(joined!);
                 }
 
-                var request = new BookRequest(userId, workId, requestedFormats, note, clock.UtcNow);
+                var request = new BookRequest(userId, workId, requestedFormats, note, clock.UtcNow, deliveryTargetId);
                 if (isVersionRequest)
                     request.RequireVersionReview(versionKind!, versionDetails!, userId, clock.UtcNow);
                 repository.AddRequest(request);
@@ -210,7 +230,7 @@ public sealed class BookRequestService(
                     request.TransitionTo(RequestStatus.PendingAcquisition, userId, reason, clock.UtcNow);
                     shared = request;
                 }
-                shared.Join(userId, formats, participant.Note, clock.UtcNow);
+                shared.Join(userId, formats, participant.Note, clock.UtcNow, participant.DeliveryTargetId);
                 requestId = shared.Id;
             }
             await repository.SaveChangesAsync(token);

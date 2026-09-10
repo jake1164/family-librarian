@@ -30,7 +30,7 @@ public enum LibraryImportStatus
     Failed = 4
 }
 
-public enum DeliveryStatus
+public enum AudiobookshelfDeliveryStatus
 {
     Uploading = 1,
     Verifying = 2,

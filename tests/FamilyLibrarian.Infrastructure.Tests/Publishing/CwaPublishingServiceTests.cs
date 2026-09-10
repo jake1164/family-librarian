@@ -1,5 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
@@ -7,6 +9,8 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
@@ -35,7 +39,7 @@ public sealed class CwaPublishingServiceTests
     {
         var context = new TestContext();
         context.Settings.SetSettings(
-            CwaTransportMode.Local, "/ingest", null, null, null, null, CwaSftpAuthenticationMode.PrivateKey, null, null, null, null, Now);
+            CwaTransportMode.Local, "/ingest", null, null, null, null, CwaSftpAuthenticationMode.PrivateKey, null, null, null, null, null, Now);
         context.Settings.SetEnabled(false, null, Now);
         context.SettingsStore.Exists = true;
         var asset = context.CreateAsset();
@@ -200,6 +204,54 @@ public sealed class CwaPublishingServiceTests
     }
 
     [TestMethod]
+    public async Task ConfirmedCwaImportReleasesADeliveryAttemptForAParticipantWhoAskedForKindle()
+    {
+        var context = context_Configured();
+        context.CatalogClient.NextBookId = "42";
+        var target = new DeliveryTarget(
+            Guid.NewGuid(), DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", Now);
+        context.DeliveryTargets.Add(target);
+        var workId = Guid.NewGuid();
+        var request = new BookRequest(
+            target.UserId, workId, [RequestMediaType.Ebook], requesterNote: null, Now, deliveryTargetId: target.Id);
+        var formatId = request.Formats.Single().Id;
+        context.RequestFulfillment.Requests[formatId] = request;
+        var asset = context.CreateAsset(formatId, workId);
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        var attempt = context.DeliveryAttempts.Rows.Single();
+        Assert.AreEqual(request.Id, attempt.RequestId);
+        Assert.AreEqual(target.UserId, attempt.UserId);
+        Assert.AreEqual(target.Id, attempt.DeliveryTargetId);
+        Assert.AreEqual("42", attempt.ExternalBookId);
+    }
+
+    [TestMethod]
+    public async Task AnAudiobookOnlyAvailabilityNeverReleasesADeliveryAttempt()
+    {
+        var context = context_Configured();
+        context.CatalogClient.NextBookId = "42";
+        var target = new DeliveryTarget(
+            Guid.NewGuid(), DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", Now);
+        context.DeliveryTargets.Add(target);
+        var workId = Guid.NewGuid();
+        // Kindle delivery requires the ebook format, so this request only asks
+        // for it -- the asset below is created as an audiobook regardless
+        // (the format published, not the delivery target, decides eligibility).
+        var request = new BookRequest(
+            target.UserId, workId, [RequestMediaType.Ebook], requesterNote: null, Now, deliveryTargetId: target.Id);
+        request.Join(Guid.NewGuid(), [RequestMediaType.Audiobook], null, Now);
+        var audiobookFormatId = request.Formats.Single(format => format.MediaType == RequestMediaType.Audiobook).Id;
+        context.RequestFulfillment.Requests[audiobookFormatId] = request;
+        var asset = context.CreateAsset(audiobookFormatId, workId);
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        Assert.AreEqual(0, context.DeliveryAttempts.Rows.Count);
+    }
+
+    [TestMethod]
     public async Task AutomaticRecheckVerifiesEveryAwaitingImportWithoutSendingItAgain()
     {
         var context = context_Configured();
@@ -283,7 +335,7 @@ public sealed class CwaPublishingServiceTests
     {
         var context = new TestContext();
         context.Settings.SetSettings(
-            CwaTransportMode.Local, "/ingest", null, null, null, null, CwaSftpAuthenticationMode.PrivateKey, null, null, null, null, Now);
+            CwaTransportMode.Local, "/ingest", null, null, null, null, CwaSftpAuthenticationMode.PrivateKey, null, null, null, null, null, Now);
         context.Settings.SetEnabled(true, null, Now);
         context.SettingsStore.Exists = true;
         return context;
@@ -303,11 +355,18 @@ public sealed class CwaPublishingServiceTests
             WorkLookup = new FakeWorkLookup();
             Audit = new RecordingAuditWriter();
             NotificationRepository = new RecordingNotificationRepository();
+            DeliveryAttempts = new InMemoryDeliveryAttemptRepository();
+            DeliveryTargets = new InMemoryDeliveryTargetRepository();
+            DeliveryAttempts.Targets = DeliveryTargets.Rows;
 
             Service = new CwaPublishingService(
                 SettingsStore, Repository, Assets, StagingStore, TransportFactory, CatalogClient, RequestFulfillment, WorkLookup,
                 Audit, new FixedClock(),
-                new NotificationService(NotificationRepository, new StubCurrentUser(), new FixedClock()));
+                new NotificationService(NotificationRepository, new StubCurrentUser(), new FixedClock()),
+                new DeliveryAttemptService(
+                    DeliveryAttempts, DeliveryTargets, [], [], new StubCurrentUser(), Audit, new FixedClock(),
+                    new NullCatalogRepository(),
+                    new NotificationService(NotificationRepository, new StubCurrentUser(), new FixedClock())));
         }
 
         public CwaSettings Settings { get; } = new(Now);
@@ -333,6 +392,10 @@ public sealed class CwaPublishingServiceTests
         public RecordingAuditWriter Audit { get; }
 
         public RecordingNotificationRepository NotificationRepository { get; }
+
+        public InMemoryDeliveryAttemptRepository DeliveryAttempts { get; }
+
+        public InMemoryDeliveryTargetRepository DeliveryTargets { get; }
 
         public CwaPublishingService Service { get; }
 
@@ -519,6 +582,73 @@ public sealed class CwaPublishingServiceTests
             Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien", Isbn13s));
     }
 
+    private sealed class InMemoryDeliveryAttemptRepository : IDeliveryAttemptRepository
+    {
+        public List<DeliveryAttempt> Rows { get; } = [];
+
+        public Task<DeliveryAttempt?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(Rows.SingleOrDefault(row => row.Id == id));
+
+        public Task<IReadOnlyList<DeliveryAttempt>> ListForRequestAsync(Guid requestId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryAttempt>>(Rows.Where(row => row.RequestId == requestId).ToArray());
+
+        public Task<IReadOnlyList<DeliveryAttempt>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryAttempt>>(Rows.Where(row => row.UserId == userId).ToArray());
+
+        public Task<IReadOnlyList<DeliveryAttemptView>> ListRecentAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<IReadOnlyList<DeliveryAttempt>> ListRetryableFailedAsync(
+            DateTimeOffset olderThanUtc, int maxAttemptNumber, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryAttempt>>([]);
+
+        public IReadOnlyList<DeliveryTarget> Targets { get; set; } = [];
+        public Task<DeliveryTarget?> GetEligibleTargetAsync(DeliveryAttempt attempt, CancellationToken cancellationToken) =>
+            Task.FromResult(Targets.SingleOrDefault(target => target.Id == attempt.DeliveryTargetId &&
+                target.UserId == attempt.UserId && target.IsEnabled));
+        public Task<DeliveryAttempt?> FindLatestAsync(Guid deliveryId, CancellationToken cancellationToken) =>
+            Task.FromResult(Rows.Where(row => row.DeliveryId == deliveryId).OrderByDescending(row => row.AttemptNumber).FirstOrDefault());
+        public Task<bool> TryAddAsync(DeliveryAttempt attempt, CancellationToken cancellationToken)
+        {
+            if (Rows.Any(row => row.DeliveryId == attempt.DeliveryId && row.AttemptNumber == attempt.AttemptNumber ||
+                attempt.RequestId != null && row.RequestId == attempt.RequestId && row.UserId == attempt.UserId &&
+                row.AttemptNumber == 1 && attempt.AttemptNumber == 1)) return Task.FromResult(false);
+            Rows.Add(attempt);
+            return Task.FromResult(true);
+        }
+        public Task<bool> TryTransitionAsync(DeliveryAttempt attempt, DeliveryAttemptStatus status, DateTimeOffset atUtc,
+            CancellationToken cancellationToken, string? reason = null, bool retryable = false)
+        {
+            attempt.TransitionTo(status, atUtc, reason, retryable);
+            return Task.FromResult(true);
+        }
+        public Task<IReadOnlyList<DeliveryAttempt>> ListUnfinishedAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryAttempt>>(Rows.Where(row => row.Status is DeliveryAttemptStatus.Pending or DeliveryAttemptStatus.Submitting).ToArray());
+        public Task<IReadOnlyList<ReadyRequestDelivery>> ListUnreleasedAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ReadyRequestDelivery>>([]);
+        public void Add(DeliveryAttempt attempt) => Rows.Add(attempt);
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class InMemoryDeliveryTargetRepository : IDeliveryTargetRepository
+    {
+        public List<DeliveryTarget> Rows { get; } = [];
+
+        public Task<DeliveryTarget?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(Rows.SingleOrDefault(row => row.Id == id));
+
+        public Task<IReadOnlyList<DeliveryTarget>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryTarget>>(Rows.Where(row => row.UserId == userId).ToArray());
+
+        public Task<IReadOnlyList<DeliveryTarget>> ListAllAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryTarget>>(Rows.ToArray());
+
+        public void Add(DeliveryTarget target) => Rows.Add(target);
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
     private sealed class RecordingAuditWriter : IAuditWriter
     {
         public List<(string Action, string SubjectType, string? SubjectId, object? Detail)> Entries { get; } = [];
@@ -544,6 +674,50 @@ public sealed class CwaPublishingServiceTests
     }
 
     /// <summary>Records what would have been written, without a real store behind it.</summary>
+    private sealed class NullCatalogRepository : ICatalogRepository
+    {
+        public Task<Work?> FindWorkByExternalReferenceAsync(
+            string providerId, string externalId, CancellationToken cancellationToken) =>
+            Task.FromResult<Work?>(null);
+
+        public Task<Work?> FindWorkByIsbn13Async(
+            IReadOnlyCollection<string> isbn13s, CancellationToken cancellationToken) =>
+            Task.FromResult<Work?>(null);
+
+        public Task<Work?> GetWorkAsync(Guid workId, CancellationToken cancellationToken) =>
+            Task.FromResult<Work?>(null);
+
+        public Task<IReadOnlyList<ExternalReference>> GetWorkSourcesAsync(
+            Guid workId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ExternalReference>>([]);
+
+        public Task<Author?> FindAuthorByNormalizedNameAsync(
+            string normalizedName, CancellationToken cancellationToken) =>
+            Task.FromResult<Author?>(null);
+
+        public Task<Series?> FindSeriesByNormalizedNameAsync(
+            string normalizedName, CancellationToken cancellationToken) =>
+            Task.FromResult<Series?>(null);
+
+        public void AddWork(Work work)
+        {
+        }
+
+        public void AddAuthor(Author author)
+        {
+        }
+
+        public void AddSeries(Series series)
+        {
+        }
+
+        public void AddExternalReference(ExternalReference externalReference)
+        {
+        }
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
     private sealed class RecordingNotificationRepository : INotificationRepository
     {
         public List<NotificationEvent> Added { get; } = [];
