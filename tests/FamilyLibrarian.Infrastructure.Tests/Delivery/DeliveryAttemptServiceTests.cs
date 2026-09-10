@@ -158,7 +158,7 @@ public sealed class DeliveryAttemptServiceTests
         Assert.IsNull(attempt.RequestId);
         Assert.AreEqual("book-7", attempt.ExternalBookId);
         Assert.AreEqual("epub", attempt.BookFormat);
-        Assert.IsTrue(attempt.Convert);
+        Assert.IsFalse(attempt.Convert);
     }
 
     [TestMethod]

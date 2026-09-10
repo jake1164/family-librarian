@@ -134,12 +134,21 @@ public sealed class DeliveryAttemptService(
         var work = await catalogRepository.GetWorkAsync(workId, cancellationToken);
 
         // The original upload format isn't tracked anywhere reachable from an
-        // existing-library lookup, so this path always asks CWA to convert to
-        // epub on the fly -- a deliberate beta simplification, unlike the
-        // release path above, which knows the real uploaded format.
+        // existing-library lookup, so this path assumes CWA's library-wide
+        // auto-convert target format (epub, CWA's own default) rather than
+        // this book's real stored format -- a deliberate beta simplification,
+        // unlike the release path above, which knows the real uploaded
+        // format. Critically this must be sent with convert=false: CWA's
+        // send_selected does NOT treat convert=1 as "convert to this format"
+        // -- it hardcodes the SOURCE format as mobi (convert=2 hardcodes
+        // azw3) and converts to book_format, so requesting convert=true here
+        // asked CWA to convert a mobi copy that was never uploaded and always
+        // failed with "mobi format not found for book id: ...". convert=false
+        // sends the assumed format directly, the same way the release path
+        // above does.
         var attempt = new DeliveryAttempt(
             requestId: null, userId, target.Id, ResolveProviderId(target.Provider),
-            externalBookId, bookFormat: "epub", convert: true, attemptNumber: 1, clock.UtcNow, work?.CanonicalTitle);
+            externalBookId, bookFormat: "epub", convert: false, attemptNumber: 1, clock.UtcNow, work?.CanonicalTitle);
         await repository.TryAddAsync(attempt, cancellationToken);
 
         await TrySubmitAsync(attempt, cancellationToken);
