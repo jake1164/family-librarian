@@ -101,7 +101,7 @@ public sealed class CwaEreaderSessionClientTests
     }
 
     [TestMethod]
-    public async Task AnUnreachableSendEndpointIsATransportFailure()
+    public async Task AnUnreachableSendEndpointHasAnUnknownOutcome()
     {
         var handler = new ScriptedHandler { ThrowOnSendPost = true };
         var client = CreateClient(handler);
@@ -110,7 +110,7 @@ public sealed class CwaEreaderSessionClientTests
             ConfiguredSettings, "service-account", "correct-password",
             BookId, "EPUB", convert: false, RecipientEmail, CancellationToken.None);
 
-        Assert.AreEqual(CwaEreaderSendStatus.TransportFailure, result.Status);
+        Assert.AreEqual(CwaEreaderSendStatus.SubmissionUnknown, result.Status);
     }
 
     [TestMethod]
@@ -127,7 +127,7 @@ public sealed class CwaEreaderSessionClientTests
     }
 
     [TestMethod]
-    public async Task AMalformedSendResponseBodyIsATransportFailureNotAnException()
+    public async Task AMalformedSendResponseBodyHasAnUnknownOutcome()
     {
         var handler = new ScriptedHandler { SendResponseBody = "not json" };
         var client = CreateClient(handler);
@@ -136,7 +136,19 @@ public sealed class CwaEreaderSessionClientTests
             ConfiguredSettings, "service-account", "correct-password",
             BookId, "EPUB", convert: false, RecipientEmail, CancellationToken.None);
 
-        Assert.AreEqual(CwaEreaderSendStatus.TransportFailure, result.Status);
+        Assert.AreEqual(CwaEreaderSendStatus.SubmissionUnknown, result.Status);
+    }
+
+    [TestMethod]
+    [DataRow("[]")]
+    [DataRow("{}")]
+    [DataRow("[{\"type\":\"unexpected\"}]")]
+    public async Task UnrecognizedSendAcknowledgementsAreNeverAutomaticallyRetryable(string body)
+    {
+        var client = CreateClient(new ScriptedHandler { SendResponseBody = body });
+        var result = await client.SendSelectedAsync(ConfiguredSettings, "service-account", "correct-password",
+            BookId, "EPUB", false, RecipientEmail, CancellationToken.None);
+        Assert.AreEqual(CwaEreaderSendStatus.SubmissionUnknown, result.Status);
     }
 
     [TestMethod]

@@ -314,9 +314,8 @@ public sealed class CwaPublishingService(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // Best-effort: the retry sweep and a later recheck are not what
-            // covers a release-time failure (this isn't a DeliveryAttempt row
-            // yet), so this is a genuine gap -- logged via audit instead.
+            // Recovery reconciles the saved Available import with unreleased
+            // recipient intent, including when no attempt was created here.
             await audit.WriteAsync(
                 AuditActions.DeliveryAttemptFailed,
                 AuditSubjectTypes.BookRequest,

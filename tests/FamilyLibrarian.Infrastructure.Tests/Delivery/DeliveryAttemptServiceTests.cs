@@ -158,7 +158,7 @@ public sealed class DeliveryAttemptServiceTests
         Assert.IsNull(attempt.RequestId);
         Assert.AreEqual("book-7", attempt.ExternalBookId);
         Assert.AreEqual("epub", attempt.BookFormat);
-        Assert.IsTrue(attempt.Convert);
+        Assert.IsFalse(attempt.Convert);
     }
 
     [TestMethod]
@@ -485,57 +485,251 @@ public sealed class DeliveryAttemptServiceTests
         Assert.AreEqual(2, result.Attempt!.AttemptNumber);
     }
 
-    /// <summary>
-    /// F9: an administrator can perform the same "it never arrived" resend a
-    /// user can -- mirroring <see cref="RetryingAfterReportedMissingSendsANewAttempt"/>
-    /// but through the admin-only entry point, which previously only accepted
-    /// <see cref="DeliveryAttemptStatus.Failed"/>.
-    /// </summary>
     [TestMethod]
-    public async Task AdminRetrySucceedsOnASubmittedAttemptReportedMissing()
+    public async Task ReviewSuccessfulRetryMustStopAutomaticSends()
     {
         var context = new TestContext();
         var target = context.SeedEnabledTarget();
-        var submitted = new DeliveryAttempt(
-            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
-        submitted.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
-        submitted.TransitionTo(DeliveryAttemptStatus.Submitted, Now);
-        submitted.ReportMissing(Now);
-        context.DeliveryAttempts.Add(submitted);
-        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
-
-        var succeeded = await context.Service.AdminRetryAsync(submitted.Id, CancellationToken.None);
-
-        Assert.IsTrue(succeeded);
-        Assert.HasCount(2, context.DeliveryAttempts.Rows);
+        var request = new BookRequest(target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: target.Id);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.TransportFailure("timeout");
+        await context.Service.ReleaseForRequestFormatAsync(request, "42", "epub", Now, CancellationToken.None);
+        context.Clock.UtcNow = Now.AddMinutes(3);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent");
+        Assert.AreEqual(1, await context.Service.RetryFailedAsync(CancellationToken.None));
+        context.Clock.UtcNow = Now.AddMinutes(8);
+        Assert.AreEqual(0, await context.Service.RetryFailedAsync(CancellationToken.None), "A successful successor must stop retrying the old failure.");
     }
 
-    /// <summary>
-    /// F2 regression: a target disabled after a Pending row was created (or
-    /// between a failure and its retry) must be re-checked immediately before
-    /// dispatch, not only when the release/existing-book paths first create
-    /// the row.
-    /// </summary>
     [TestMethod]
-    public async Task RetryingWithADisabledTargetFailsWithoutCallingTheProvider()
+    public async Task ReviewThreeFailedAttemptsMustExhaustAutomaticRetries()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var request = new BookRequest(target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: target.Id);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.TransportFailure("timeout");
+        await context.Service.ReleaseForRequestFormatAsync(request, "42", "epub", Now, CancellationToken.None);
+        context.Clock.UtcNow = Now.AddMinutes(3);
+        Assert.AreEqual(1, await context.Service.RetryFailedAsync(CancellationToken.None));
+        context.Clock.UtcNow = Now.AddMinutes(14);
+        Assert.AreEqual(1, await context.Service.RetryFailedAsync(CancellationToken.None));
+        context.Clock.UtcNow = Now.AddMinutes(25);
+        Assert.AreEqual(0, await context.Service.RetryFailedAsync(CancellationToken.None), "The third failure must terminate the retry chain.");
+    }
+
+    [TestMethod]
+    public async Task ReviewDisabledTargetMustNotReceiveRetry()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var request = new BookRequest(target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: target.Id);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.TransportFailure("timeout");
+        await context.Service.ReleaseForRequestFormatAsync(request, "42", "epub", Now, CancellationToken.None);
+        target.SetEnabled(false, Now.AddMinutes(1));
+        context.Clock.UtcNow = Now.AddMinutes(3);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent");
+        await context.Service.RetryFailedAsync(CancellationToken.None);
+        Assert.IsFalse(context.DeliveryAttempts.Rows.Any(row => row.Status == DeliveryAttemptStatus.Submitted), "Disabling the target must prevent later sends.");
+    }
+
+    [TestMethod]
+    public async Task ReviewIndependentExistingBooksMustEachRetry()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        foreach (var bookId in new[] { "42", "43" })
+        {
+            var attempt = new DeliveryAttempt(null, target.UserId, target.Id, "cwa", bookId, "epub", true, 1, Now);
+            attempt.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+            attempt.TransitionTo(DeliveryAttemptStatus.Failed, Now, "timeout", retryable: true);
+            context.DeliveryAttempts.Add(attempt);
+        }
+        context.Clock.UtcNow = Now.AddMinutes(3);
+        Assert.AreEqual(2, await context.Service.RetryFailedAsync(CancellationToken.None), "Separate books must not collapse into the same retry group.");
+    }
+
+    [TestMethod]
+    public async Task ReviewSupersededFailureMustNotAllowAnotherManualRetry()
     {
         var context = new TestContext();
         var target = context.SeedEnabledTarget();
         context.CurrentUser.SetUser(target.UserId);
-        var failed = new DeliveryAttempt(
-            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        var failed = new DeliveryAttempt(Guid.NewGuid(), target.UserId, target.Id, "cwa", "42", "epub", false, 1, Now);
         failed.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
         failed.TransitionTo(DeliveryAttemptStatus.Failed, Now, "timeout", retryable: true);
         context.DeliveryAttempts.Add(failed);
-        target.SetEnabled(false, Now);
-        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+        await context.Service.RetryAsync(failed.Id, CancellationToken.None);
+        await context.Service.RetryAsync(failed.Id, CancellationToken.None);
+        Assert.HasCount(2, context.DeliveryAttempts.Rows, "A repeated retry command for an already superseded attempt must not submit again.");
+    }
 
-        var result = await context.Service.RetryAsync(failed.Id, CancellationToken.None);
+    [TestMethod]
+    public void ReviewAddingAudiobookMustPreservePriorKindleIntent()
+    {
+        var userId = Guid.NewGuid();
+        var targetId = Guid.NewGuid();
+        var request = new BookRequest(userId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: targetId);
+        request.Join(userId, [RequestMediaType.Audiobook], null, Now.AddMinutes(1));
+        Assert.AreEqual(targetId, request.Participants.Single().DeliveryTargetId, "Adding an audiobook is not an instruction to cancel ebook delivery.");
+    }
 
-        Assert.AreEqual(RetryDeliveryOutcome.Success, result.Outcome);
-        Assert.AreEqual(DeliveryAttemptStatus.Failed, result.Attempt!.Status);
-        Assert.AreEqual("The delivery target is disabled.", result.Attempt!.FailureReason);
-        Assert.AreEqual(0, context.Provider.DeliverCallCount);
+    [TestMethod]
+    public async Task RecoveryResumesPendingAndMarksOnlyStaleSubmittingUnknown()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var pending = new DeliveryAttempt(null, target.UserId, target.Id, "cwa", "42", "epub", false, 1, Now);
+        var stale = new DeliveryAttempt(null, target.UserId, target.Id, "cwa", "43", "epub", false, 1, Now);
+        stale.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        var active = new DeliveryAttempt(null, target.UserId, target.Id, "cwa", "44", "epub", false, 1, Now);
+        active.TransitionTo(DeliveryAttemptStatus.Submitting, Now.AddMinutes(9));
+        context.DeliveryAttempts.Rows.AddRange([pending, stale, active]);
+        context.Clock.UtcNow = Now.AddMinutes(10);
+
+        await context.Service.RecoverAsync(CancellationToken.None);
+        await context.Service.RecoverAsync(CancellationToken.None);
+
+        Assert.AreEqual(DeliveryAttemptStatus.Submitted, pending.Status);
+        Assert.AreEqual(DeliveryAttemptStatus.SubmissionUnknown, stale.Status);
+        Assert.AreEqual(DeliveryAttemptStatus.Submitting, active.Status);
+        Assert.AreEqual(1, context.Provider.SendCount);
+    }
+
+    [TestMethod]
+    public async Task RecoveryCancelsLegacyPendingAttemptSupersededByASuccess()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var pending = new DeliveryAttempt(null, target.UserId, target.Id, "cwa", "42", "epub", false, 1, Now);
+        var submitted = new DeliveryAttempt(null, target.UserId, target.Id, "cwa", "42", "epub", false, 2, Now,
+            deliveryId: pending.DeliveryId);
+        submitted.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        submitted.TransitionTo(DeliveryAttemptStatus.Submitted, Now);
+        context.DeliveryAttempts.Rows.AddRange([pending, submitted]);
+
+        await context.Service.RecoverAsync(CancellationToken.None);
+
+        Assert.AreEqual(DeliveryAttemptStatus.Cancelled, pending.Status);
+        Assert.AreEqual(0, context.Provider.SendCount);
+    }
+
+    [TestMethod]
+    public async Task UnknownSubmissionRequiresAnExplicitDuplicateAwareResend()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var attempt = new DeliveryAttempt(null, target.UserId, target.Id, "cwa", "42", "epub", false, 1, Now);
+        attempt.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        attempt.TransitionTo(DeliveryAttemptStatus.SubmissionUnknown, Now);
+        context.DeliveryAttempts.Add(attempt);
+        context.Clock.UtcNow = Now.AddHours(1);
+
+        Assert.AreEqual(0, await context.Service.RetryFailedAsync(CancellationToken.None));
+        Assert.AreEqual(RetryDeliveryOutcome.DuplicateConfirmationRequired,
+            (await context.Service.RetryAsync(attempt.Id, CancellationToken.None)).Outcome);
+        Assert.IsFalse(await context.Service.AdminRetryAsync(attempt.Id, CancellationToken.None));
+        Assert.AreEqual(0, context.Provider.SendCount);
+
+        var result = await context.Service.RetryAsync(attempt.Id, CancellationToken.None, confirmPossibleDuplicate: true);
+        Assert.AreEqual(DeliveryAttemptStatus.Submitted, result.Attempt!.Status);
+        Assert.AreEqual(attempt.DeliveryId, result.Attempt.DeliveryId);
+        Assert.AreEqual(1, context.Provider.SendCount);
+    }
+
+    [TestMethod]
+    public async Task AllRecipientsArePersistedAndOneProviderExceptionDoesNotAbandonOthers()
+    {
+        var context = new TestContext();
+        var first = context.SeedEnabledTarget();
+        var second = context.SeedEnabledTarget();
+        var request = new BookRequest(first.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: first.Id);
+        request.Join(second.UserId, [RequestMediaType.Ebook], null, Now, second.Id);
+        context.Provider.BeforeSend = () => Assert.HasCount(2, context.DeliveryAttempts.Rows);
+        context.Provider.ThrowOnce = true;
+
+        await context.Service.ReleaseForRequestFormatAsync(request, "42", "epub", Now, CancellationToken.None);
+
+        Assert.AreEqual(DeliveryAttemptStatus.SubmissionUnknown, context.DeliveryAttempts.Rows[0].Status);
+        Assert.AreEqual(DeliveryAttemptStatus.Submitted, context.DeliveryAttempts.Rows[1].Status);
+        Assert.AreEqual(2, context.Provider.SendCount);
+    }
+
+    [TestMethod]
+    public async Task BrowserCancellationAfterDispatchPersistsUnknownAndNeverAutomaticallyResends()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var request = new BookRequest(target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, target.Id);
+        using var disconnectedBrowser = new CancellationTokenSource();
+        context.Provider.BeforeSend = disconnectedBrowser.Cancel;
+        context.Provider.PendingResponse = new TaskCompletionSource<EbookDeliveryOutcome>().Task;
+
+        await context.Service.ReleaseForRequestFormatAsync(request, "42", "epub", Now, disconnectedBrowser.Token);
+
+        var attempt = context.DeliveryAttempts.Rows.Single();
+        Assert.AreEqual(DeliveryAttemptStatus.SubmissionUnknown, attempt.Status);
+        Assert.IsFalse(attempt.IsRetryable);
+        context.Clock.UtcNow = Now.AddHours(1);
+        await context.Service.RecoverAsync(CancellationToken.None);
+        Assert.AreEqual(0, await context.Service.RetryFailedAsync(CancellationToken.None));
+        Assert.AreEqual(1, context.Provider.SendCount);
+    }
+
+    [TestMethod]
+    public async Task LostCompletionWriteIsRecoveredWithoutSendingAgain()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var pending = new DeliveryAttempt(null, target.UserId, target.Id, "cwa", "42", "epub", false, 1, Now);
+        context.DeliveryAttempts.Add(pending);
+        context.DeliveryAttempts.FailCompletionOnce = true;
+        await context.Service.RecoverAsync(CancellationToken.None);
+        Assert.AreEqual(DeliveryAttemptStatus.Submitting, pending.Status);
+        context.Clock.UtcNow = Now.AddMinutes(10);
+
+        await context.Service.RecoverAsync(CancellationToken.None);
+        await context.Service.RetryFailedAsync(CancellationToken.None);
+
+        Assert.AreEqual(DeliveryAttemptStatus.SubmissionUnknown, pending.Status);
+        Assert.AreEqual(1, context.Provider.SendCount);
+    }
+
+    [TestMethod]
+    public async Task RecoveryReleasesVerifiedRequestIntentWithNoAttempt()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var request = new BookRequest(target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: target.Id);
+        context.DeliveryAttempts.Ready.Add(new ReadyRequestDelivery(request, "42", ".epub", "Test book"));
+
+        await context.Service.RecoverAsync(CancellationToken.None);
+        await context.Service.RecoverAsync(CancellationToken.None);
+
+        Assert.AreEqual(1, context.Provider.SendCount);
+        Assert.HasCount(1, context.DeliveryAttempts.Rows);
+        Assert.AreEqual(DeliveryAttemptStatus.Submitted, context.DeliveryAttempts.Rows[0].Status);
+    }
+
+    [TestMethod]
+    public async Task NewerFailureCooldownAndPermanentFailureSuppressOlderRetries()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var first = new DeliveryAttempt(null, target.UserId, target.Id, "cwa", "42", "epub", false, 1, Now);
+        first.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        first.TransitionTo(DeliveryAttemptStatus.Failed, Now, "offline", retryable: true);
+        context.DeliveryAttempts.Add(first);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.TransportFailure("offline");
+        context.Clock.UtcNow = Now.AddMinutes(3);
+        await context.Service.RetryFailedAsync(CancellationToken.None);
+        context.Clock.UtcNow = Now.AddMinutes(6);
+        Assert.AreEqual(0, await context.Service.RetryFailedAsync(CancellationToken.None));
+        context.Clock.UtcNow = Now.AddMinutes(14);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Rejected("fix configuration");
+        await context.Service.RetryFailedAsync(CancellationToken.None);
+        context.Clock.UtcNow = Now.AddHours(1);
+        Assert.AreEqual(0, await context.Service.RetryFailedAsync(CancellationToken.None));
+        Assert.AreEqual(2, context.Provider.SendCount);
     }
 
     private sealed class TestContext
@@ -549,6 +743,7 @@ public sealed class DeliveryAttemptServiceTests
             CatalogRepository = new StubCatalogRepository();
             NotificationRepository = new RecordingNotificationRepository();
             Notifications = new NotificationService(NotificationRepository, CurrentUser, Clock);
+            DeliveryAttempts.Targets = DeliveryTargets.Rows;
             Service = new DeliveryAttemptService(
                 DeliveryAttempts, DeliveryTargets, [Provider], [OwnedLibrary], CurrentUser, new NoOpAuditWriter(),
                 Clock, CatalogRepository, Notifications);
@@ -590,9 +785,12 @@ public sealed class DeliveryAttemptServiceTests
     {
         public string Id => "cwa";
 
-        public EbookDeliveryOutcome NextOutcome { get; set; } = EbookDeliveryOutcome.Delivered("Sent.");
+        public int SendCount { get; private set; }
+        public bool ThrowOnce { get; set; }
+        public Action? BeforeSend { get; set; }
+        public Task<EbookDeliveryOutcome>? PendingResponse { get; set; }
 
-        public int DeliverCallCount { get; private set; }
+        public EbookDeliveryOutcome NextOutcome { get; set; } = EbookDeliveryOutcome.Delivered("Sent.");
 
         public Task<bool> CanDeliverAsync(CancellationToken cancellationToken) => Task.FromResult(true);
 
@@ -600,8 +798,14 @@ public sealed class DeliveryAttemptServiceTests
             string providerBookId, string bookFormat, bool convert, string recipientEmail,
             CancellationToken cancellationToken)
         {
-            DeliverCallCount++;
-            return Task.FromResult(NextOutcome);
+            SendCount++;
+            BeforeSend?.Invoke();
+            if (ThrowOnce)
+            {
+                ThrowOnce = false;
+                throw new HttpRequestException("lost response");
+            }
+            return PendingResponse ?? Task.FromResult(NextOutcome);
         }
 
         public Task<ConnectionTestOutcome> TestAsync(CancellationToken cancellationToken) =>
@@ -685,12 +889,45 @@ public sealed class DeliveryAttemptServiceTests
         public Task<IReadOnlyList<DeliveryAttempt>> ListRetryableFailedAsync(
             DateTimeOffset olderThanUtc, int maxAttemptNumber, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<DeliveryAttempt>>(Rows.Where(row =>
+                !Rows.Any(later => later.DeliveryId == row.DeliveryId && later.AttemptNumber > row.AttemptNumber) &&
                 row.Status == DeliveryAttemptStatus.Failed &&
                 row.IsRetryable &&
                 row.AttemptNumber < maxAttemptNumber &&
                 row.CompletedAtUtc is not null &&
                 row.CompletedAtUtc <= olderThanUtc).ToArray());
 
+        public bool FailCompletionOnce { get; set; }
+        public List<ReadyRequestDelivery> Ready { get; } = [];
+        public IReadOnlyList<DeliveryTarget> Targets { get; set; } = [];
+        public Task<DeliveryTarget?> GetEligibleTargetAsync(DeliveryAttempt attempt, CancellationToken cancellationToken) =>
+            Task.FromResult(Targets.SingleOrDefault(target => target.Id == attempt.DeliveryTargetId &&
+                target.UserId == attempt.UserId && target.IsEnabled));
+        public Task<DeliveryAttempt?> FindLatestAsync(Guid deliveryId, CancellationToken cancellationToken) =>
+            Task.FromResult(Rows.Where(row => row.DeliveryId == deliveryId).OrderByDescending(row => row.AttemptNumber).FirstOrDefault());
+        public Task<bool> TryAddAsync(DeliveryAttempt attempt, CancellationToken cancellationToken)
+        {
+            if (Rows.Any(row => row.DeliveryId == attempt.DeliveryId && row.AttemptNumber == attempt.AttemptNumber ||
+                attempt.RequestId != null && row.RequestId == attempt.RequestId && row.UserId == attempt.UserId &&
+                row.AttemptNumber == 1 && attempt.AttemptNumber == 1)) return Task.FromResult(false);
+            Rows.Add(attempt);
+            return Task.FromResult(true);
+        }
+        public Task<bool> TryTransitionAsync(DeliveryAttempt attempt, DeliveryAttemptStatus status, DateTimeOffset atUtc,
+            CancellationToken cancellationToken, string? reason = null, bool retryable = false)
+        {
+            if (status == DeliveryAttemptStatus.Submitted && FailCompletionOnce)
+            {
+                FailCompletionOnce = false;
+                throw new IOException("database unavailable");
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            attempt.TransitionTo(status, atUtc, reason, retryable);
+            return Task.FromResult(true);
+        }
+        public Task<IReadOnlyList<DeliveryAttempt>> ListUnfinishedAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryAttempt>>(Rows.Where(row => row.Status is DeliveryAttemptStatus.Pending or DeliveryAttemptStatus.Submitting).ToArray());
+        public Task<IReadOnlyList<ReadyRequestDelivery>> ListUnreleasedAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ReadyRequestDelivery>>(Ready);
         public void Add(DeliveryAttempt attempt) => Rows.Add(attempt);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;

@@ -20,7 +20,7 @@ The rule:
   - grey / default — inactive (Cancelled)
   - blue (`Color.Info`) — waiting / in progress, no attention needed
   - amber (`Color.Warning`) — needs attention (NeedsReview, AwaitingApproval,
-    SecurityReviewRequired, IdentityReviewRequired, ...)
+    SecurityReviewRequired, IdentityReviewRequired, SubmissionUnknown, ...)
   - green (`Color.Success`) — available / done
   - red (`Color.Error`) — failed / not available (SecurityCheckFailed,
     PublishingNeedsAttention, NotAvailable, ...)
@@ -39,6 +39,14 @@ a page's `@code` block; call into `MediaTypeVisuals` (directly, or through one
 of the shared components below) instead. If a new status value is added to
 `RequestStatus`, `RequestFormatStatus`, or a progress code, update
 `MediaTypeVisuals` once and every page picks it up.
+
+Kindle chips use `Delivery/KindleStatusChip.razor`, backed by
+`MediaTypeVisuals.KindleLabel` and `MediaTypeVisuals.KindleColor`: Pending/Submitting and
+Submitted without receipt confirmation are blue; confirmed receipt is green;
+failed or reported missing is red; `SubmissionUnknown` is amber; cancelled is
+neutral. Unknown submissions show **Resend (may create a duplicate)** so the
+explicit action communicates its consequence. Do not label an acknowledged
+submission as confirmed receipt.
 
 ## Availability badges are a separate vocabulary from status
 

@@ -941,11 +941,24 @@ Deliver(asset, target)
 
 The provider decides the mechanism.
 
-None of `KindleBrowserFilesystem`, `KindleSendTo`, `KoboBrowserFilesystem`,
-`GenericMassStorage`, or `DesktopAgent` exist in the codebase yet — this
-section, and `docs/01-product-architecture-spec.md` §15.1 / `docs/02-domain-workflows.md`
-("DeliveryAttempt"), describe the intended shape for when that work starts
-(`post-v1-roadmap.md` Milestone G / Spike C), not current behavior.
+**Current implementation:** `IEbookDeliveryProvider` and
+`CwaEreaderDeliveryProvider` implement CWA-mediated Send-to-Kindle. The concrete
+browser/filesystem/desktop providers below remain future work. The CWA adapter's
+`Delivered` outcome denotes a submission acknowledgement only; the application
+persists it as `Submitted` and records user-confirmed receipt separately.
+`TransportFailure` is safe to retry only before the send is dispatched. Lost,
+malformed or unrecognized acknowledgements after dispatch return
+`SubmissionUnknown`, which requires an explicit duplicate-aware resend.
+See [domain workflows](02-domain-workflows.md#deliveryattempt-implemented-2026-09-09--cwa-send-to-kindle-only)
+for recovery and attempt history.
+
+The host exposes owner-scoped `GET /api/v1/me/delivery/kindle/attempts` and
+`GET /api/v1/me/delivery/kindle/attempts/{id}` with explicit DTOs; another owner's
+ID returns 404. Send-existing responses include `attemptId` when work was
+created. Retry and receipt changes remain cookie-authenticated, anti-forgery
+protected POST actions. The admin publishing queue exposes receipt and retry
+policy data, while the personal projection omits other users' identity and all
+credentials. Live messages carry invalidation topics only.
 
 A destination such as a Kindle should support more than one `IDeliveryProvider`
 implementation (`KindleSendTo`, then later `KindleBrowserFilesystem`), with a

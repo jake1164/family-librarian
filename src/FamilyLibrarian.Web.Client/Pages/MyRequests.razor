@@ -109,17 +109,21 @@
                                     No
                                 </MudButton>
                             }
-                            @if (kindle.Status == "Failed" ||
+                            @if (kindle.Status is "Failed" or "SubmissionUnknown" ||
                                 (kindle.Status == "Submitted" && kindle.ConfirmationStatus == "ReportedMissing"))
                             {
                                 <MudButton Variant="Variant.Text"
                                            Size="Size.Small"
                                            Disabled="@(busyKindleAttemptId == kindle.AttemptId)"
-                                           OnClick="() => RetryKindleDeliveryAsync(kindle.AttemptId)">
-                                    Retry
+                                           OnClick='() => RetryKindleDeliveryAsync(kindle.AttemptId, kindle.Status == "SubmissionUnknown")'>
+                                    @(kindle.Status == "SubmissionUnknown" ? "Resend (may create a duplicate)" : "Retry")
                                 </MudButton>
                             }
                         </MudStack>
+                    }
+                    @if (request.KindleDelivery is { } delivery)
+                    {
+                        <MudLink Href="@($"deliveries/{delivery.AttemptId}")">Delivery details and history</MudLink>
                     }
                     @if (request.Status != "PendingAcquisition" ||
                         !request.Formats.Any(format => !string.IsNullOrWhiteSpace(format.ProgressDescription)))
@@ -226,14 +230,14 @@
         }
     }
 
-    private async Task RetryKindleDeliveryAsync(Guid attemptId)
+    private async Task RetryKindleDeliveryAsync(Guid attemptId, bool confirmPossibleDuplicate)
     {
         busyKindleAttemptId = attemptId;
         errorMessage = null;
 
         try
         {
-            var succeeded = await DeliveryTargets.RetryDeliveryAsync(attemptId);
+            var succeeded = await DeliveryTargets.RetryDeliveryAsync(attemptId, confirmPossibleDuplicate: confirmPossibleDuplicate);
             if (succeeded)
             {
                 await LoadAsync();
@@ -282,31 +286,11 @@
         }
     }
 
-    private static string KindleDeliveryDescription(KindleDeliveryResponse kindle) => kindle.Status switch
-    {
-        "Submitted" => kindle.ConfirmationStatus switch
-        {
-            "Confirmed" => "Kindle: Received",
-            "ReportedMissing" => "Kindle: Sent, but not received",
-            _ => "Kindle: Sent — did it arrive?"
-        },
-        "Pending" or "Submitting" => "Kindle: Sending…",
-        "Failed" => string.IsNullOrWhiteSpace(kindle.FailureReason)
-            ? "Kindle: Delivery failed"
-            : $"Kindle: Delivery failed — {kindle.FailureReason}",
-        "Cancelled" => "Kindle: Cancelled",
-        _ => $"Kindle: {kindle.Status}"
-    };
+    private static string KindleDeliveryDescription(KindleDeliveryResponse kindle) =>
+        $"Kindle: {MediaTypeVisuals.KindleLabel(kindle.Status, kindle.ConfirmationStatus)}" +
+        (kindle.Status == "Submitted" && kindle.ConfirmationStatus == "Unconfirmed" ? ". Did it arrive?" : string.Empty) +
+        (string.IsNullOrWhiteSpace(kindle.FailureReason) ? string.Empty : $" — {kindle.FailureReason}");
 
-    private static Color KindleDeliveryColor(KindleDeliveryResponse kindle) => kindle.Status switch
-    {
-        "Submitted" => kindle.ConfirmationStatus switch
-        {
-            "Confirmed" => Color.Success,
-            "ReportedMissing" => Color.Error,
-            _ => Color.Default
-        },
-        "Failed" => Color.Error,
-        _ => Color.Default
-    };
+    private static Color KindleDeliveryColor(KindleDeliveryResponse kindle) =>
+        MediaTypeVisuals.KindleColor(kindle.Status, kindle.ConfirmationStatus);
 }

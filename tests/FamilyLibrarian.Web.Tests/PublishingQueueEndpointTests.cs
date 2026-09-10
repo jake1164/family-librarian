@@ -27,6 +27,119 @@ namespace FamilyLibrarian.Web.Tests;
 [TestClass]
 public sealed class PublishingQueueEndpointTests
 {
+    [TestMethod]
+    public async Task PersonalHistoryIsPrivateAndAdminsCanSupportReportedMissingStandaloneBooks()
+    {
+        await using var isolated = await WebTestFixture.CreateAsync();
+        var fixture = WebTestFixture.Require(isolated);
+        await using var factory = new FamilyLibrarianAppFactory(fixture.ConnectionString, services =>
+        {
+            services.RemoveAll<IEbookDeliveryProvider>();
+            services.AddSingleton<IEbookDeliveryProvider>(new DeterministicEbookDeliveryProvider());
+        });
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(admin);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        using var owner = await fixture.CreateUserClientAsync();
+        owner.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(owner));
+        Guid id;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var user = await database.Users.SingleAsync(row => row.Email == WebTestFixture.UserEmail);
+            var target = new DeliveryTarget(user.Id, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", DateTimeOffset.UtcNow);
+            var attempt = new DeliveryAttempt(null, user.Id, target.Id, "cwa", "personal-42", "epub", true, 1,
+                DateTimeOffset.UtcNow, "A standalone library book");
+            attempt.TransitionTo(DeliveryAttemptStatus.Submitting, DateTimeOffset.UtcNow);
+            attempt.TransitionTo(DeliveryAttemptStatus.Submitted, DateTimeOffset.UtcNow);
+            database.DeliveryTargets.Add(target);
+            database.DeliveryAttempts.Add(attempt);
+            await database.SaveChangesAsync();
+            id = attempt.Id;
+        }
+        using var anonymous = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        Assert.AreEqual(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/v1/me/delivery/kindle/attempts")).StatusCode);
+        owner.DefaultRequestHeaders.Remove(AntiforgeryTokenEndpoint.HeaderName);
+        Assert.AreEqual(HttpStatusCode.BadRequest,
+            (await owner.PostAsync($"/api/v1/me/delivery/kindle/attempts/{id}/report-missing", null)).StatusCode);
+        owner.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(owner));
+        var mine = await owner.GetFromJsonAsync<PersonalDeliveryAttemptResponse[]>("/api/v1/me/delivery/kindle/attempts");
+        Assert.IsNotNull(mine);
+        Assert.AreEqual("A standalone library book", mine.Single(item => item.Id == id).BookTitle);
+        Assert.IsNull(mine.Single(item => item.Id == id).RequestId);
+        Assert.AreEqual(HttpStatusCode.NotFound, (await admin.GetAsync($"/api/v1/me/delivery/kindle/attempts/{id}")).StatusCode);
+        var adminsOwnHistory = await admin.GetFromJsonAsync<PersonalDeliveryAttemptResponse[]>("/api/v1/me/delivery/kindle/attempts");
+        Assert.IsFalse(adminsOwnHistory!.Any(item => item.Id == id));
+        Assert.AreEqual(HttpStatusCode.Forbidden, (await owner.GetAsync("/api/v1/admin/publishing/queue")).StatusCode);
+
+        (await owner.PostAsync($"/api/v1/me/delivery/kindle/attempts/{id}/report-missing", null)).EnsureSuccessStatusCode();
+        var queue = await admin.GetFromJsonAsync<PublishingQueueResponse>("/api/v1/admin/publishing/queue");
+        var missing = queue!.DeliveryAttempts.Single(item => item.Id == id);
+        Assert.AreEqual("A standalone library book", missing.WorkTitle);
+        Assert.AreEqual("Submitted", missing.Status);
+        Assert.AreEqual("ReportedMissing", missing.ConfirmationStatus);
+        Assert.IsNotNull(missing.ConfirmedAtUtc);
+        Assert.IsTrue(missing.CanRetry);
+        Assert.IsTrue(missing.IsLatest);
+
+        (await admin.PostAsync($"/api/v1/admin/publishing/delivery-attempts/{id}/retry", null)).EnsureSuccessStatusCode();
+        queue = await admin.GetFromJsonAsync<PublishingQueueResponse>("/api/v1/admin/publishing/queue");
+        var history = queue!.DeliveryAttempts.Where(item => item.DeliveryId == missing.DeliveryId).ToArray();
+        Assert.HasCount(2, history);
+        Assert.IsFalse(history.Single(item => item.Id == id).IsLatest);
+        Assert.IsFalse(history.Single(item => item.Id == id).CanRetry);
+        var latest = history.Single(item => item.IsLatest);
+        Assert.AreEqual("Unconfirmed", latest.ConfirmationStatus);
+        var detail = await owner.GetFromJsonAsync<PersonalDeliveryAttemptResponse>($"/api/v1/me/delivery/kindle/attempts/{id}");
+        Assert.AreEqual(latest.Id, detail!.LatestAttemptId);
+        (await owner.PostAsync($"/api/v1/me/delivery/kindle/attempts/{latest.Id}/confirm-received", null)).EnsureSuccessStatusCode();
+        queue = await admin.GetFromJsonAsync<PublishingQueueResponse>("/api/v1/admin/publishing/queue");
+        Assert.AreEqual("Confirmed", queue!.DeliveryAttempts.Single(item => item.Id == latest.Id).ConfirmationStatus);
+        Assert.IsFalse(queue.DeliveryAttempts.Single(item => item.Id == latest.Id).CanRetry);
+    }
+
+    [TestMethod]
+    public async Task SupportHistoryShowsCooldownAndExhaustionOnlyForTheLatestAttempt()
+    {
+        await using var isolated = await WebTestFixture.CreateAsync();
+        var fixture = WebTestFixture.Require(isolated);
+        using var admin = await fixture.CreateAdminClientAsync();
+        Guid deliveryId;
+        Guid waitingId;
+        var now = DateTimeOffset.UtcNow;
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var user = await database.Users.SingleAsync(row => row.Email == FamilyLibrarianAppFactory.AdminEmail);
+            var target = new DeliveryTarget(user.Id, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", now);
+            database.DeliveryTargets.Add(target);
+            deliveryId = Guid.NewGuid();
+            for (var number = 1; number <= 3; number++)
+            {
+                var attempt = new DeliveryAttempt(null, user.Id, target.Id, "cwa", "exhausted", "epub", false, number, now,
+                    deliveryId: deliveryId);
+                attempt.TransitionTo(DeliveryAttemptStatus.Submitting, now);
+                attempt.TransitionTo(DeliveryAttemptStatus.Failed, now, "offline", retryable: true);
+                database.DeliveryAttempts.Add(attempt);
+            }
+            var waiting = new DeliveryAttempt(null, user.Id, target.Id, "cwa", "cooldown", "epub", false, 1, now);
+            waiting.TransitionTo(DeliveryAttemptStatus.Submitting, now);
+            waiting.TransitionTo(DeliveryAttemptStatus.Failed, now, "offline", retryable: true);
+            database.DeliveryAttempts.Add(waiting);
+            waitingId = waiting.Id;
+            await database.SaveChangesAsync();
+        }
+        var queue = await admin.GetFromJsonAsync<PublishingQueueResponse>("/api/v1/admin/publishing/queue");
+        var rows = queue!.DeliveryAttempts.Where(item => item.DeliveryId == deliveryId).ToArray();
+        Assert.HasCount(3, rows);
+        Assert.IsTrue(rows.Single(item => item.IsLatest).AutomaticRetriesExhausted);
+        Assert.IsTrue(rows.Where(item => !item.IsLatest).All(item => !item.CanRetry && item.NextAutomaticRetryAtUtc is null));
+        Assert.IsNull(rows.Single(item => item.IsLatest).NextAutomaticRetryAtUtc);
+        var next = queue.DeliveryAttempts.Single(item => item.Id == waitingId).NextAutomaticRetryAtUtc;
+        Assert.IsNotNull(next);
+        Assert.IsTrue(Math.Abs((next.Value - now.AddMinutes(2)).TotalMilliseconds) < 1);
+    }
+
     private static WebTestFixture? _fixture;
 
     [ClassInitialize]
@@ -254,6 +367,55 @@ public sealed class PublishingQueueEndpointTests
             item => item.AttemptNumber == 2 && item.ExternalBookId == "book-42");
         Assert.IsNotNull(retried, "A retry should create a new attempt row.");
         Assert.AreEqual("Submitted", retried.Status);
+    }
+
+    [TestMethod]
+    public async Task UnknownSendRequiresAcknowledgementAndConcurrentExplicitResendsCreateOneSuccessor()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(fixture.ConnectionString, services =>
+        {
+            services.RemoveAll<IEbookDeliveryProvider>();
+            services.AddSingleton<IEbookDeliveryProvider>(new DeterministicEbookDeliveryProvider());
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(client));
+        Guid id;
+        Guid deliveryId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var user = await database.Users.SingleAsync(row => row.Email == FamilyLibrarianAppFactory.AdminEmail);
+            var target = new DeliveryTarget(user.Id, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", DateTimeOffset.UtcNow);
+            var attempt = new DeliveryAttempt(null, user.Id, target.Id, "cwa", "42", "epub", false, 1, DateTimeOffset.UtcNow);
+            attempt.TransitionTo(DeliveryAttemptStatus.Submitting, DateTimeOffset.UtcNow);
+            attempt.TransitionTo(DeliveryAttemptStatus.SubmissionUnknown, DateTimeOffset.UtcNow);
+            database.DeliveryTargets.Add(target);
+            database.DeliveryAttempts.Add(attempt);
+            await database.SaveChangesAsync();
+            id = attempt.Id;
+            deliveryId = attempt.DeliveryId;
+        }
+        var noAcknowledgement = await client.PostAsync($"/api/v1/me/delivery/kindle/attempts/{id}/retry", null);
+        Assert.AreEqual(HttpStatusCode.Conflict, noAcknowledgement.StatusCode);
+        var adminNoAcknowledgement = await client.PostAsync($"/api/v1/admin/publishing/delivery-attempts/{id}/retry", null);
+        Assert.AreEqual(HttpStatusCode.NotFound, adminNoAcknowledgement.StatusCode);
+        using var otherUser = await fixture.CreateUserClientAsync();
+        otherUser.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(otherUser));
+        var denied = await otherUser.PostAsync($"/api/v1/me/delivery/kindle/attempts/{id}/retry?confirmPossibleDuplicate=true", null);
+        Assert.AreEqual(HttpStatusCode.NotFound, denied.StatusCode);
+
+        var retries = await Task.WhenAll(
+            client.PostAsync($"/api/v1/me/delivery/kindle/attempts/{id}/retry?confirmPossibleDuplicate=true", null),
+            client.PostAsync($"/api/v1/admin/publishing/delivery-attempts/{id}/retry?confirmPossibleDuplicate=true", null));
+        Assert.IsTrue(retries.All(response => response.IsSuccessStatusCode));
+        foreach (var response in retries) response.Dispose();
+        await using var verify = factory.Services.CreateAsyncScope();
+        var attempts = await verify.ServiceProvider.GetRequiredService<AppDbContext>().DeliveryAttempts
+            .Where(row => row.DeliveryId == deliveryId).ToArrayAsync();
+        Assert.HasCount(2, attempts);
+        Assert.AreEqual(DeliveryAttemptStatus.Submitted, attempts.Single(row => row.AttemptNumber == 2).Status);
     }
 
     private static async Task ConfigureCwaAsync(HttpClient client)

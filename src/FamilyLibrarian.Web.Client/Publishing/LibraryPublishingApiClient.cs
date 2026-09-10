@@ -20,8 +20,9 @@ public sealed class LibraryPublishingApiClient(HttpClient httpClient, Antiforger
     public Task<bool> RecheckDeliveryAsync(Guid id, CancellationToken cancellationToken = default) =>
         PostAsync($"api/v1/admin/publishing/deliveries/{id}/recheck", cancellationToken);
 
-    public Task<bool> RetryDeliveryAttemptAsync(Guid id, CancellationToken cancellationToken = default) =>
-        PostAsync($"api/v1/admin/publishing/delivery-attempts/{id}/retry", cancellationToken);
+    public Task<bool> RetryDeliveryAttemptAsync(Guid id, bool confirmPossibleDuplicate = false,
+        CancellationToken cancellationToken = default) =>
+        PostAsync($"api/v1/admin/publishing/delivery-attempts/{id}/retry?confirmPossibleDuplicate={confirmPossibleDuplicate}", cancellationToken);
 
     /// <summary>Shared by every fire-and-check-success admin action on this queue (recheck, retry).</summary>
     private async Task<bool> PostAsync(string path, CancellationToken cancellationToken)

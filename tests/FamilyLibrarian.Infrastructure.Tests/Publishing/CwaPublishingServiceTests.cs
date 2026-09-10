@@ -357,6 +357,7 @@ public sealed class CwaPublishingServiceTests
             NotificationRepository = new RecordingNotificationRepository();
             DeliveryAttempts = new InMemoryDeliveryAttemptRepository();
             DeliveryTargets = new InMemoryDeliveryTargetRepository();
+            DeliveryAttempts.Targets = DeliveryTargets.Rows;
 
             Service = new CwaPublishingService(
                 SettingsStore, Repository, Assets, StagingStore, TransportFactory, CatalogClient, RequestFulfillment, WorkLookup,
@@ -601,6 +602,30 @@ public sealed class CwaPublishingServiceTests
             DateTimeOffset olderThanUtc, int maxAttemptNumber, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<DeliveryAttempt>>([]);
 
+        public IReadOnlyList<DeliveryTarget> Targets { get; set; } = [];
+        public Task<DeliveryTarget?> GetEligibleTargetAsync(DeliveryAttempt attempt, CancellationToken cancellationToken) =>
+            Task.FromResult(Targets.SingleOrDefault(target => target.Id == attempt.DeliveryTargetId &&
+                target.UserId == attempt.UserId && target.IsEnabled));
+        public Task<DeliveryAttempt?> FindLatestAsync(Guid deliveryId, CancellationToken cancellationToken) =>
+            Task.FromResult(Rows.Where(row => row.DeliveryId == deliveryId).OrderByDescending(row => row.AttemptNumber).FirstOrDefault());
+        public Task<bool> TryAddAsync(DeliveryAttempt attempt, CancellationToken cancellationToken)
+        {
+            if (Rows.Any(row => row.DeliveryId == attempt.DeliveryId && row.AttemptNumber == attempt.AttemptNumber ||
+                attempt.RequestId != null && row.RequestId == attempt.RequestId && row.UserId == attempt.UserId &&
+                row.AttemptNumber == 1 && attempt.AttemptNumber == 1)) return Task.FromResult(false);
+            Rows.Add(attempt);
+            return Task.FromResult(true);
+        }
+        public Task<bool> TryTransitionAsync(DeliveryAttempt attempt, DeliveryAttemptStatus status, DateTimeOffset atUtc,
+            CancellationToken cancellationToken, string? reason = null, bool retryable = false)
+        {
+            attempt.TransitionTo(status, atUtc, reason, retryable);
+            return Task.FromResult(true);
+        }
+        public Task<IReadOnlyList<DeliveryAttempt>> ListUnfinishedAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DeliveryAttempt>>(Rows.Where(row => row.Status is DeliveryAttemptStatus.Pending or DeliveryAttemptStatus.Submitting).ToArray());
+        public Task<IReadOnlyList<ReadyRequestDelivery>> ListUnreleasedAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ReadyRequestDelivery>>([]);
         public void Add(DeliveryAttempt attempt) => Rows.Add(attempt);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;

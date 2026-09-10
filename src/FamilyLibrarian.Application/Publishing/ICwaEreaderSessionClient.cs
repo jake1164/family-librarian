@@ -56,7 +56,10 @@ public enum CwaEreaderSendStatus
     SendRejected,
 
     /// <summary>Network/timeout/unexpected-status/unparseable-response failure.</summary>
-    TransportFailure
+    TransportFailure,
+
+    /// <summary>A send was dispatched but acceptance could not be established.</summary>
+    SubmissionUnknown
 }
 
 /// <summary>

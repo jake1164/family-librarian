@@ -22,10 +22,30 @@ internal static class DeliveryTargetEndpoints
         kindle.MapPut("/enabled", SetMyKindleEnabledAsync);
         kindle.MapPost("/test", TestMyKindleDeliveryAsync);
         kindle.MapPost("/send-existing", SendExistingBookAsync);
+        kindle.MapGet("/attempts", ListMyAttemptsAsync);
+        kindle.MapGet("/attempts/{id:guid}", GetMyAttemptAsync);
         kindle.MapPost("/attempts/{id:guid}/retry", RetryDeliveryAsync);
         kindle.MapPost("/attempts/{id:guid}/confirm-received", ConfirmReceivedAsync);
         kindle.MapPost("/attempts/{id:guid}/report-missing", ReportMissingAsync);
     }
+
+    private static async Task<IResult> ListMyAttemptsAsync(DeliveryAttemptService service, CancellationToken cancellationToken)
+    {
+        var attempts = await service.ListMineAsync(cancellationToken);
+        return attempts is null ? Results.Unauthorized() : Results.Ok(attempts.Select(ToPersonalResponse).ToArray());
+    }
+
+    private static async Task<IResult> GetMyAttemptAsync(Guid id, DeliveryAttemptService service, CancellationToken cancellationToken)
+    {
+        var attempt = await service.GetMineAsync(id, cancellationToken);
+        return attempt is null ? Results.NotFound() : Results.Ok(ToPersonalResponse(attempt));
+    }
+
+    private static PersonalDeliveryAttemptResponse ToPersonalResponse(PersonalDeliveryAttemptView view) => new(
+        view.Id, view.DeliveryId, view.RequestId, view.BookTitle, view.Status.ToString(),
+        view.ConfirmationStatus.ToString(), view.AttemptNumber, view.FailureReason, view.CreatedAtUtc,
+        view.CompletedAtUtc, view.ConfirmedAtUtc, view.LatestAttemptId, view.CanRetry,
+        view.NextAutomaticRetryAtUtc, view.AutomaticRetriesExhausted);
 
     private static async Task<IResult> GetMyKindleTargetAsync(
         DeliveryTargetService service,
@@ -89,8 +109,8 @@ internal static class DeliveryTargetEndpoints
 
         return result.Outcome switch
         {
-            SendExistingBookOutcome.Success => Results.Ok(new SendExistingBookResponse(true, null)),
-            SendExistingBookOutcome.Failed => Results.Ok(new SendExistingBookResponse(false, result.Error)),
+            SendExistingBookOutcome.Success => Results.Ok(new SendExistingBookResponse(true, null, result.Attempt!.Id)),
+            SendExistingBookOutcome.Failed => Results.Ok(new SendExistingBookResponse(false, result.Error, result.Attempt!.Id)),
             SendExistingBookOutcome.Unauthenticated => Results.Unauthorized(),
             _ => Results.NotFound(new SendExistingBookResponse(false, result.Error))
         };
@@ -99,13 +119,16 @@ internal static class DeliveryTargetEndpoints
     private static async Task<IResult> RetryDeliveryAsync(
         Guid id,
         DeliveryAttemptService service,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool confirmPossibleDuplicate = false)
     {
-        var result = await service.RetryAsync(id, cancellationToken);
+        var result = await service.RetryAsync(id, cancellationToken, confirmPossibleDuplicate);
 
         return result.Outcome switch
         {
             RetryDeliveryOutcome.Success => Results.Ok(new SendExistingBookResponse(true, null)),
+            RetryDeliveryOutcome.DuplicateConfirmationRequired => Results.Conflict(
+                new { message = "This send may already have been accepted. Confirm that you want to resend despite the possible duplicate." }),
             RetryDeliveryOutcome.NotFound => Results.NotFound(),
             RetryDeliveryOutcome.NotFailed => Results.Conflict(
                 new { message = "This delivery isn't in a failed state." }),

@@ -23,4 +23,10 @@ public sealed record TestKindleDeliveryResponse(bool Succeeded, string Message);
 
 public sealed record SendExistingBookRequest(Guid WorkId);
 
-public sealed record SendExistingBookResponse(bool Succeeded, string? Message);
+public sealed record SendExistingBookResponse(bool Succeeded, string? Message, Guid? AttemptId = null);
+
+public sealed record PersonalDeliveryAttemptResponse(
+    Guid Id, Guid DeliveryId, Guid? RequestId, string? BookTitle,
+    string Status, string ConfirmationStatus, int AttemptNumber, string? FailureReason,
+    DateTimeOffset CreatedAtUtc, DateTimeOffset? CompletedAtUtc, DateTimeOffset? ConfirmedAtUtc,
+    Guid LatestAttemptId, bool CanRetry, DateTimeOffset? NextAutomaticRetryAtUtc, bool AutomaticRetriesExhausted);

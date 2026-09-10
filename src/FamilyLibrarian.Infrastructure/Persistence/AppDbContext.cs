@@ -953,6 +953,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.ToTable("delivery_attempts", "delivery");
             entity.HasKey(attempt => attempt.Id);
             entity.Property(attempt => attempt.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(attempt => attempt.DeliveryId).HasColumnName("delivery_id");
             entity.Property(attempt => attempt.RequestId).HasColumnName("request_id");
             entity.Property(attempt => attempt.UserId).HasColumnName("user_id");
             entity.Property(attempt => attempt.DeliveryTargetId).HasColumnName("delivery_target_id");
@@ -975,6 +976,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             // Idempotency check before releasing (ReleaseForRequestFormatAsync)
             // and per-request delivery history lookups.
             entity.HasIndex(attempt => new { attempt.RequestId, attempt.UserId });
+            entity.HasIndex(attempt => new { attempt.DeliveryId, attempt.AttemptNumber })
+                .IsUnique().HasDatabaseName("ux_delivery_chain_attempt");
+            entity.HasIndex(attempt => new { attempt.RequestId, attempt.UserId }, "InitialRequestDelivery")
+                .IsUnique().HasDatabaseName("ux_delivery_request_user")
+                .HasFilter("request_id IS NOT NULL AND attempt_number = 1");
 
             // The retry sweep's own query.
             entity.HasIndex(attempt => new { attempt.Status, attempt.IsRetryable, attempt.CompletedAtUtc });

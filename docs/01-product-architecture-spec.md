@@ -988,13 +988,11 @@ Kindle should be the first e-reader target but must not be hardcoded into the do
 
 ### 15.1 Kindle/e-reader delivery model
 
-**Implementation status (2026-09-08).** The `SendToKindle` path described in
+**Implementation status (2026-09-09).** The `SendToKindle` path described in
 this section is implemented for CWA-mediated delivery: `DeliveryTarget`,
 `DeliveryAttempt`, and a `CwaEreaderDeliveryProvider` exist and are wired into
 the acquisition/publish flow, plus a manual retry action and admin/requester
-visibility. See `.ai_docs/master-delivery-plan.md` KINDLE-1 through KINDLE-6
-for the implementation record. The actual shape differs from this forward
-design in ways worth knowing before extending it:
+visibility. The actual shape differs from this forward design:
 
 - `DeliveryTarget` has no `ProviderType`/`ConfigurationReference` fields —
   today it only models one provider (`CwaKindleEmail`), so those were not
@@ -1004,10 +1002,19 @@ design in ways worth knowing before extending it:
   `SubmittedToAmazon`, `Delivered`, or `UserReportedMissing` below — those
   belong to the still-unimplemented `DirectDevice`/`BrowserDownload` methods
   and to Amazon delivery confirmation. Its real status set is `Pending` ->
-  `Submitting` -> `Submitted`/`Failed`/`Cancelled`, and `Submitted` carries the
-  same "acknowledged, not confirmed" caveat as `SubmittedToAmazon` below — the
-  domain does not yet ask the user to confirm the book actually arrived,
-  which is KINDLE-7, still open.
+  `Submitting` -> `Submitted`/`Failed`/`SubmissionUnknown`, with cancellation
+  before dispatch. `Submitted` means CWA acknowledged the send. A separate
+  `DeliveryConfirmationStatus` records the user's answer to the receipt prompt.
+- Each delivery has a stable `DeliveryId` shared by its attempts. Database
+  uniqueness and row-version claims prevent concurrent release/retry calls
+  from sending the same attempt twice. Automatic retries consider only the
+  latest attempt, up to three attempts with 2/10-minute cooldowns.
+- The worker reconciles saved, verified library availability with unreleased
+  recipient intent and resumes pending work. A send interrupted after dispatch
+  becomes `SubmissionUnknown`; it requires an explicit resend acknowledging
+  the possibility of a duplicate. Target, account and participation eligibility
+  are checked again before dispatch. See [domain workflows](02-domain-workflows.md#deliveryattempt-implemented-2026-09-09--cwa-send-to-kindle-only).
+
 
 `DirectDevice`, `BrowserDownload`, and the device-presence-triggered
 `AwaitingDevice` flow below remain forward design only, tracked as P1-3. This
@@ -1078,13 +1085,12 @@ above. It has been renamed to `AudiobookshelfDelivery` (`DeliveryStatus` ->
 `DeliveryTarget`/`DeliveryAttempt` for the user-facing concept described
 above when that work starts. This was a CLR-name-only rename — the backing
 `publishing.deliveries` table, its columns, and its enum member names are
-unchanged, so no EF migration was required. See `.ai_docs/master-delivery-plan.md`
-KINDLE-1 for the evidence, and the kindle delivery beta plan's "Shape
-reconciliation" addendum for how `DeliveryTarget`/`DeliveryAttempt` should
-actually be modeled relative to `RequestParticipant` and `AcquisitionJob`
-when that work starts — the shape below (a single `DeliveryAttempt` per
-mutable status) is superseded by that addendum in favor of one row per
-attempt, mirroring `AcquisitionJob`.
+unchanged, so that rename needed no EF migration. The implemented delivery
+model above uses one row per attempt, a stable delivery identity across retries,
+and participant-specific intent. Each user has an independent delivery history
+with receipt/retry actions, including requestless existing-book sends; the admin
+support view adds recipient identity and retry policy information. Committed
+attempt changes invalidate only the recipient's views and the admin workspace.
 
 ---
 

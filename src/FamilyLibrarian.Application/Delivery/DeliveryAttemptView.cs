@@ -6,15 +6,12 @@ namespace FamilyLibrarian.Application.Delivery;
 /// The admin Publishing Queue's read model for one Kindle delivery attempt.
 /// </summary>
 /// <remarks>
-/// <see cref="RequestId"/>/<see cref="WorkId"/> are null for the existing-book
-/// fast path, which has no <c>BookRequest</c> at all -- <see cref="WorkTitle"/>
-/// still resolves there from the attempt's own denormalized book title (F9:
-/// previously this fell back to a null request/work join and rendered as
-/// "Existing library book" with no title at all). Requester identity is joined
-/// here specifically because this is an administrator-only view (mirroring
-/// <c>AdminBookRequestView</c>) -- the recipient's Kindle address itself is
-/// never included; it lives only on <c>DeliveryTarget</c>, which this view
-/// does not join.
+/// <see cref="RequestId"/>/<see cref="WorkId"/> are
+/// null for the existing-book fast path, which has no <c>BookRequest</c> at
+/// all. Requester identity is joined here specifically because this is an
+/// administrator-only view (mirroring <c>AdminBookRequestView</c>) -- the
+/// recipient's Kindle address itself is never included; it lives only on
+/// <c>DeliveryTarget</c>, which this view does not join.
 /// </remarks>
 public sealed record DeliveryAttemptView(
     Guid Id,
@@ -29,5 +26,15 @@ public sealed record DeliveryAttemptView(
     string? FailureReason,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? CompletedAtUtc,
+    Guid DeliveryId,
     DeliveryConfirmationStatus ConfirmationStatus,
-    DateTimeOffset? ConfirmedAtUtc);
+    DateTimeOffset? ConfirmedAtUtc,
+    bool IsLatest,
+    bool IsRetryable)
+{
+    public bool CanRetry => IsLatest && DeliveryRetryPolicy.CanRetry(Status, ConfirmationStatus);
+    public DateTimeOffset? NextAutomaticRetryAtUtc => DeliveryRetryPolicy.NextAutomaticRetryAt(
+        Status, IsRetryable, AttemptNumber, CompletedAtUtc, IsLatest);
+    public bool AutomaticRetriesExhausted => IsLatest && Status == DeliveryAttemptStatus.Failed &&
+        IsRetryable && AttemptNumber >= DeliveryRetryPolicy.MaxAttempts;
+}

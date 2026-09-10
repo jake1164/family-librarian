@@ -15,6 +15,9 @@
     Export only integration and household configuration. This does not contain accounts,
     invitations, catalogue records, requests, activity, or files. A settings archive can only
     be imported into a fresh, unconfigured instance with the same Data Protection key ring.
+    Kindle service-account username/password, personal Kindle addresses and delivery history are excluded.
+    After import, re-enter the service credentials in Publishing settings and have each user configure their Kindle.
+    Use a full PostgreSQL backup plus the Data Protection key ring to preserve these records.
 </MudAlert>
 
 <MudPaper Class="pa-4 mb-6" Elevation="1">

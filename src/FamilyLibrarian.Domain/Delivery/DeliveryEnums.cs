@@ -18,7 +18,10 @@ public enum DeliveryAttemptStatus
     Submitting = 2,
     Submitted = 3,
     Failed = 4,
-    Cancelled = 5
+    Cancelled = 5,
+
+    /// <summary>The send may have been accepted; automatic resubmission is unsafe.</summary>
+    SubmissionUnknown = 6
 }
 
 /// <summary>

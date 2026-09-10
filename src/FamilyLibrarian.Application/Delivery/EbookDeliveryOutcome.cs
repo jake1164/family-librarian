@@ -2,8 +2,7 @@ namespace FamilyLibrarian.Application.Delivery;
 
 /// <summary>
 /// Distinct from <see cref="Publishing.ConnectionTestOutcome"/> because a real
-/// delivery failure carries a retryability signal a future retry sweep
-/// (KINDLE-5) needs, which a plain pass/fail does not.
+/// delivery outcome distinguishes safe retries from uncertain submissions.
 /// </summary>
 public enum EbookDeliveryStatus
 {
@@ -20,13 +19,18 @@ public enum EbookDeliveryStatus
     /// </summary>
     Rejected,
 
-    /// <summary>A network/timeout/unexpected-response failure -- worth retrying later.</summary>
-    TransportFailure
+    /// <summary>A failure before the send was dispatched; safe to retry later.</summary>
+    TransportFailure,
+
+    /// <summary>The send may have reached the provider. Never retry automatically.</summary>
+    SubmissionUnknown
 }
 
 public sealed record EbookDeliveryOutcome(EbookDeliveryStatus Status, string Message)
 {
     public bool Succeeded => Status == EbookDeliveryStatus.Delivered;
+
+    public static EbookDeliveryOutcome Unknown(string message) => new(EbookDeliveryStatus.SubmissionUnknown, message);
 
     public static EbookDeliveryOutcome Delivered(string message) => new(EbookDeliveryStatus.Delivered, message);
 

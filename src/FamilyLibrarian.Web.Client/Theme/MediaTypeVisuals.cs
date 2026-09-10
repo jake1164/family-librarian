@@ -15,6 +15,36 @@ namespace FamilyLibrarian.Web.Client.Theme;
 /// </summary>
 public static class MediaTypeVisuals
 {
+    public static string KindleLabel(string status, string? confirmationStatus = null) => status switch
+    {
+        "Submitted" => confirmationStatus switch
+        {
+            "Confirmed" => "Received",
+            "ReportedMissing" => "Sent, but not received",
+            _ => "Sent — receipt unconfirmed"
+        },
+        "Pending" => "Waiting to send",
+        "Submitting" => "Sending",
+        "Failed" => "Delivery failed",
+        "SubmissionUnknown" => "Send outcome unknown",
+        "Cancelled" => "Cancelled",
+        _ => status
+    };
+
+    public static Color KindleColor(string status, string? confirmationStatus = null) => status switch
+    {
+        "Submitted" => confirmationStatus switch
+        {
+            "Confirmed" => Color.Success,
+            "ReportedMissing" => Color.Error,
+            _ => Color.Info
+        },
+        "SubmissionUnknown" => Color.Warning,
+        "Pending" or "Submitting" => Color.Info,
+        "Failed" => Color.Error,
+        _ => Color.Default
+    };
+
     public static string Icon(string mediaType) => mediaType switch
     {
         "Ebook" => Icons.Material.Filled.MenuBook,
@@ -56,6 +86,7 @@ public static class MediaTypeVisuals
     /// where a full sentence reads naturally to the person who asked.</summary>
     public static string StatusLabel(string status) => status switch
     {
+        "SubmissionUnknown" => "Send outcome unknown",
         "AwaitingScan" => "Awaiting scan",
         "NotScanned" => "No scan recorded",
         "ScanInterrupted" => "Retry required",

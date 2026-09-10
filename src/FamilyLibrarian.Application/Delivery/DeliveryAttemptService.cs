@@ -10,10 +10,8 @@ namespace FamilyLibrarian.Application.Delivery;
 
 /// <summary>
 /// Creates and submits <see cref="DeliveryAttempt"/> rows -- the only place
-/// that does either. Three entry points share <see cref="SubmitAsync"/>: the
-/// automatic release triggered from <c>CwaPublishingService</c> when a
-/// requested ebook becomes available, the existing-book "Send to Kindle" fast
-/// path, and the background retry sweep.
+/// that does either. Request release, existing-book sends, explicit retries
+/// and background recovery share <see cref="SubmitAsync"/>.
 /// </summary>
 public sealed class DeliveryAttemptService(
     IDeliveryAttemptRepository repository,
@@ -27,9 +25,13 @@ public sealed class DeliveryAttemptService(
     NotificationService notifications)
 {
     /// <summary>Beta retry policy (beta plan §20) -- a fixed step schedule, not exponential backoff.</summary>
-    private const int MaxAttempts = 3;
+    private const int MaxAttempts = DeliveryRetryPolicy.MaxAttempts;
+    private static readonly TimeSpan SubmissionTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan InterruptedAfter = TimeSpan.FromMinutes(5);
+    private const string UnknownSubmissionMessage =
+        "The send was interrupted and may already have been accepted. Check your Kindle before resending; another send may create a duplicate.";
 
-    private static readonly TimeSpan[] RetryCooldowns = [TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(10)];
+
 
     /// <summary>
     /// Releases a Pending delivery attempt for every active participant who
@@ -56,6 +58,7 @@ public sealed class DeliveryAttemptService(
         // "could not be read" file error rather than a format mismatch.
         var normalizedBookFormat = bookFormat.TrimStart('.');
 
+        var pending = new List<DeliveryAttempt>();
         foreach (var participant in request.Participants)
         {
             if (participant.WithdrawnAtUtc is not null ||
@@ -69,18 +72,24 @@ public sealed class DeliveryAttemptService(
             var target = await targetRepository.FindAsync(deliveryTargetId, cancellationToken);
             if (target is null || !target.IsEnabled)
             {
-                // Nothing to retry from here -- the user must re-enable/reconfigure
-                // and use the existing-book fast path if they want it later.
+                // No attempt yet: recovery can release this intent once the
+                // target is enabled again and the recipient is eligible.
                 continue;
             }
 
             var attempt = new DeliveryAttempt(
                 request.Id, participant.UserId, target.Id, ResolveProviderId(target.Provider),
                 externalBookId, normalizedBookFormat, convert: false, attemptNumber: 1, atUtc, workTitle);
-            repository.Add(attempt);
-            await repository.SaveChangesAsync(cancellationToken);
+            if (target.UserId == participant.UserId && await repository.TryAddAsync(attempt, cancellationToken))
+            {
+                pending.Add(attempt);
+            }
+        }
 
-            await SubmitAsync(attempt, cancellationToken);
+        // All recipients are durable before the first external side effect.
+        foreach (var attempt in pending)
+        {
+            await TrySubmitAsync(attempt, cancellationToken);
         }
     }
 
@@ -125,16 +134,24 @@ public sealed class DeliveryAttemptService(
         var work = await catalogRepository.GetWorkAsync(workId, cancellationToken);
 
         // The original upload format isn't tracked anywhere reachable from an
-        // existing-library lookup, so this path always asks CWA to convert to
-        // epub on the fly -- a deliberate beta simplification, unlike the
-        // release path above, which knows the real uploaded format.
+        // existing-library lookup, so this path assumes CWA's library-wide
+        // auto-convert target format (epub, CWA's own default) rather than
+        // this book's real stored format -- a deliberate beta simplification,
+        // unlike the release path above, which knows the real uploaded
+        // format. Critically this must be sent with convert=false: CWA's
+        // send_selected does NOT treat convert=1 as "convert to this format"
+        // -- it hardcodes the SOURCE format as mobi (convert=2 hardcodes
+        // azw3) and converts to book_format, so requesting convert=true here
+        // asked CWA to convert a mobi copy that was never uploaded and always
+        // failed with "mobi format not found for book id: ...". convert=false
+        // sends the assumed format directly, the same way the release path
+        // above does.
         var attempt = new DeliveryAttempt(
             requestId: null, userId, target.Id, ResolveProviderId(target.Provider),
-            externalBookId, bookFormat: "epub", convert: true, attemptNumber: 1, clock.UtcNow, work?.CanonicalTitle);
-        repository.Add(attempt);
-        await repository.SaveChangesAsync(cancellationToken);
+            externalBookId, bookFormat: "epub", convert: false, attemptNumber: 1, clock.UtcNow, work?.CanonicalTitle);
+        await repository.TryAddAsync(attempt, cancellationToken);
 
-        await SubmitAsync(attempt, cancellationToken);
+        await TrySubmitAsync(attempt, cancellationToken);
 
         return attempt.Status == DeliveryAttemptStatus.Submitted
             ? SendExistingBookResult.Success(attempt)
@@ -144,31 +161,27 @@ public sealed class DeliveryAttemptService(
     /// <summary>
     /// Finds every eligible retryable-failed attempt and submits a fresh
     /// attempt row for it. Only the latest attempt for a given
-    /// (RequestId, UserId) pair is ever retried, so a superseded failure never
+    /// delivery identity is ever retried, so a superseded failure never
     /// fires twice.
     /// </summary>
     /// <returns>The number of attempts retried.</returns>
     public async Task<int> RetryFailedAsync(CancellationToken cancellationToken)
     {
-        var oldestEligibleCompletion = clock.UtcNow - RetryCooldowns[0];
+        var oldestEligibleCompletion = clock.UtcNow - DeliveryRetryPolicy.Cooldown(1);
         var candidates = await repository.ListRetryableFailedAsync(
             oldestEligibleCompletion, MaxAttempts, cancellationToken);
 
-        var latestPerPair = candidates
-            .GroupBy(attempt => (attempt.RequestId, attempt.UserId))
-            .Select(group => group.OrderByDescending(attempt => attempt.AttemptNumber).First());
-
         var retried = 0;
-        foreach (var failed in latestPerPair)
+        foreach (var failed in candidates)
         {
-            var cooldown = RetryCooldowns[Math.Min(failed.AttemptNumber - 1, RetryCooldowns.Length - 1)];
+            var cooldown = DeliveryRetryPolicy.Cooldown(failed.AttemptNumber);
             if (failed.CompletedAtUtc is not { } completedAtUtc || clock.UtcNow - completedAtUtc < cooldown)
             {
                 continue;
             }
 
-            await CreateRetryAsync(failed, cancellationToken);
-            retried++;
+            var result = await CreateRetryAsync(failed, cancellationToken);
+            if (result.Created) retried++;
         }
 
         return retried;
@@ -189,7 +202,8 @@ public sealed class DeliveryAttemptService(
     /// but "it never arrived" is exactly the same "send it again" intent.
     /// </para>
     /// </summary>
-    public async Task<RetryDeliveryResult> RetryAsync(Guid attemptId, CancellationToken cancellationToken)
+    public async Task<RetryDeliveryResult> RetryAsync(Guid attemptId, CancellationToken cancellationToken,
+        bool confirmPossibleDuplicate = false)
     {
         if (currentUser.UserId is not { } userId)
         {
@@ -202,37 +216,36 @@ public sealed class DeliveryAttemptService(
             return RetryDeliveryResult.NotFound();
         }
 
-        var eligible = attempt.Status == DeliveryAttemptStatus.Failed ||
-            (attempt.Status == DeliveryAttemptStatus.Submitted &&
-                attempt.ConfirmationStatus == DeliveryConfirmationStatus.ReportedMissing);
+        if (attempt.Status == DeliveryAttemptStatus.SubmissionUnknown && !confirmPossibleDuplicate)
+        {
+            return RetryDeliveryResult.DuplicateConfirmationRequired();
+        }
+
+        var eligible = DeliveryRetryPolicy.CanRetry(attempt.Status, attempt.ConfirmationStatus);
         if (!eligible)
         {
             return RetryDeliveryResult.NotFailed();
         }
 
         var retry = await CreateRetryAsync(attempt, cancellationToken);
-        return RetryDeliveryResult.Success(retry);
+        return RetryDeliveryResult.Success(retry.Attempt);
     }
 
     /// <summary>
     /// The admin queue's retry action. Ownership is not checked here -- the
     /// endpoint calling this is already <c>RequireAuthorization("Admin")</c>.
-    /// Eligibility mirrors <see cref="RetryAsync"/> (F9): an administrator can
-    /// perform the same reported-missing resend a user can, not only a
-    /// straightforward <see cref="DeliveryAttemptStatus.Failed"/> retry.
     /// </summary>
-    public async Task<bool> AdminRetryAsync(Guid attemptId, CancellationToken cancellationToken)
+    public async Task<bool> AdminRetryAsync(Guid attemptId, CancellationToken cancellationToken,
+        bool confirmPossibleDuplicate = false)
     {
         var attempt = await repository.FindAsync(attemptId, cancellationToken);
-        var eligible = attempt is not null && (attempt.Status == DeliveryAttemptStatus.Failed ||
-            (attempt.Status == DeliveryAttemptStatus.Submitted &&
-                attempt.ConfirmationStatus == DeliveryConfirmationStatus.ReportedMissing));
-        if (!eligible)
+        if (attempt is null || !DeliveryRetryPolicy.CanRetry(attempt.Status, attempt.ConfirmationStatus) ||
+            (attempt.Status == DeliveryAttemptStatus.SubmissionUnknown && !confirmPossibleDuplicate))
         {
             return false;
         }
 
-        await CreateRetryAsync(attempt!, cancellationToken);
+        await CreateRetryAsync(attempt, cancellationToken);
         return true;
     }
 
@@ -283,112 +296,172 @@ public sealed class DeliveryAttemptService(
         return ConfirmDeliveryResult.Success(attempt);
     }
 
-    private async Task<DeliveryAttempt> CreateRetryAsync(DeliveryAttempt failed, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<PersonalDeliveryAttemptView>?> ListMineAsync(CancellationToken cancellationToken)
     {
+        if (currentUser.UserId is not { } userId) return null;
+        var attempts = await repository.ListForUserAsync(userId, cancellationToken);
+        var latest = attempts.GroupBy(attempt => attempt.DeliveryId)
+            .ToDictionary(group => group.Key, group => group.MaxBy(attempt => attempt.AttemptNumber)!.Id);
+        return attempts.Select(attempt => PersonalDeliveryAttemptView.From(attempt, latest[attempt.DeliveryId])).ToArray();
+    }
+
+    public async Task<PersonalDeliveryAttemptView?> GetMineAsync(Guid id, CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId) return null;
+        var attempt = await repository.FindAsync(id, cancellationToken);
+        if (attempt is null || attempt.UserId != userId) return null;
+        var latest = await repository.FindLatestAsync(attempt.DeliveryId, cancellationToken);
+        return PersonalDeliveryAttemptView.From(attempt, latest?.Id ?? attempt.Id);
+    }
+
+    /// <summary>Recover durable work using verified library state, never by repeating an uncertain send.</summary>
+    public async Task RecoverAsync(CancellationToken cancellationToken)
+    {
+        foreach (var ready in await repository.ListUnreleasedAsync(cancellationToken))
+        {
+            await ReleaseForRequestFormatAsync(ready.Request, ready.ExternalBookId, ready.BookFormat,
+                clock.UtcNow, cancellationToken, ready.WorkTitle);
+        }
+
+        foreach (var attempt in await repository.ListUnfinishedAsync(cancellationToken))
+        {
+            if (attempt.Status == DeliveryAttemptStatus.Pending)
+            {
+                // Legacy duplicate releases may leave an older Pending row
+                // behind a completed successor. Never revive superseded work.
+                var latest = await repository.FindLatestAsync(attempt.DeliveryId, cancellationToken);
+                if (latest is not null && latest.Id != attempt.Id)
+                {
+                    if (await repository.TryTransitionAsync(attempt, DeliveryAttemptStatus.Cancelled,
+                        clock.UtcNow, cancellationToken, "Superseded by a later delivery attempt."))
+                        await WriteAuditAsync(attempt, succeeded: false, cancellationToken);
+                }
+                else
+                {
+                    await TrySubmitAsync(attempt, cancellationToken);
+                }
+            }
+            else if (attempt.StartedAtUtc is not { } started || clock.UtcNow - started >= InterruptedAfter)
+            {
+                if (await repository.TryTransitionAsync(attempt, DeliveryAttemptStatus.SubmissionUnknown,
+                    clock.UtcNow, cancellationToken, UnknownSubmissionMessage))
+                    await WriteAuditAsync(attempt, succeeded: false, cancellationToken);
+            }
+        }
+    }
+
+    private async Task<(DeliveryAttempt Attempt, bool Created)> CreateRetryAsync(
+        DeliveryAttempt failed, CancellationToken cancellationToken)
+    {
+        var latest = await repository.FindLatestAsync(failed.DeliveryId, cancellationToken);
+        if (latest is not null && latest.Id != failed.Id) return (latest, false);
+
         var retry = new DeliveryAttempt(
             failed.RequestId, failed.UserId, failed.DeliveryTargetId, failed.Provider,
             failed.ExternalBookId, failed.BookFormat, failed.Convert, failed.AttemptNumber + 1, clock.UtcNow,
-            failed.BookTitle);
-        repository.Add(retry);
-        await repository.SaveChangesAsync(cancellationToken);
+            failed.BookTitle, failed.DeliveryId);
+        if (!await repository.TryAddAsync(retry, cancellationToken))
+            return ((await repository.FindLatestAsync(failed.DeliveryId, cancellationToken))!, false);
 
-        await SubmitAsync(retry, cancellationToken);
-        return retry;
+        await TrySubmitAsync(retry, cancellationToken);
+        return (retry, true);
+    }
+
+    private async Task TrySubmitAsync(DeliveryAttempt attempt, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await SubmitAsync(attempt, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The durable Pending/Submitting row is recovered by the next sweep.
+            // One participant's storage failure must not abandon the others.
+            await WriteAuditAsync(attempt, succeeded: false, cancellationToken);
+        }
     }
 
     private async Task SubmitAsync(DeliveryAttempt attempt, CancellationToken cancellationToken)
     {
-        var provider = deliveryProviders.FirstOrDefault(candidate => candidate.Id == attempt.Provider);
-        if (provider is null)
-        {
-            attempt.TransitionTo(
-                DeliveryAttemptStatus.Submitting, clock.UtcNow);
-            attempt.TransitionTo(
-                DeliveryAttemptStatus.Failed, clock.UtcNow, "No delivery provider is registered for this target.");
-            await repository.SaveChangesAsync(cancellationToken);
-            await WriteAuditAsync(attempt, succeeded: false, cancellationToken);
-            return;
-        }
+        if (attempt.Status != DeliveryAttemptStatus.Pending) return;
 
-        var target = await targetRepository.FindAsync(attempt.DeliveryTargetId, cancellationToken);
+        var target = await repository.GetEligibleTargetAsync(attempt, cancellationToken);
         if (target is null)
         {
-            attempt.TransitionTo(DeliveryAttemptStatus.Submitting, clock.UtcNow);
-            attempt.TransitionTo(DeliveryAttemptStatus.Failed, clock.UtcNow, "The delivery target no longer exists.");
-            await repository.SaveChangesAsync(cancellationToken);
-            await WriteAuditAsync(attempt, succeeded: false, cancellationToken);
+            if (await repository.TryTransitionAsync(attempt, DeliveryAttemptStatus.Cancelled, clock.UtcNow,
+                cancellationToken, "Delivery cancelled: the target or recipient is disabled, or the request was withdrawn."))
+                await WriteAuditAsync(attempt, succeeded: false, cancellationToken);
             return;
         }
 
-        if (!target.IsEnabled)
+        // xmin arbitrates multiple workers loading the same Pending row. Only
+        // the caller whose durable claim succeeds may contact the provider.
+        if (!await repository.TryTransitionAsync(attempt, DeliveryAttemptStatus.Submitting,
+            clock.UtcNow, cancellationToken)) return;
+
+        var provider = deliveryProviders.FirstOrDefault(candidate => candidate.Id == attempt.Provider);
+        EbookDeliveryOutcome outcome;
+        using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
-            // Re-checked immediately before every dispatch, not just at release
-            // time (F2): the owner or an administrator can disable a target
-            // between when a Pending row was created and when a retry -- automatic
-            // or manual -- later tries to send it.
-            attempt.TransitionTo(DeliveryAttemptStatus.Submitting, clock.UtcNow);
-            attempt.TransitionTo(DeliveryAttemptStatus.Failed, clock.UtcNow, "The delivery target is disabled.");
-            await repository.SaveChangesAsync(cancellationToken);
-            await WriteAuditAsync(attempt, succeeded: false, cancellationToken);
-            return;
+            timeout.CancelAfter(SubmissionTimeout);
+            try
+            {
+                outcome = provider is null
+                    ? EbookDeliveryOutcome.NotConfigured("No delivery provider is registered for this target.")
+                    : await provider.DeliverAsync(attempt.ExternalBookId, attempt.BookFormat, attempt.Convert,
+                        target.Address, timeout.Token).WaitAsync(timeout.Token);
+            }
+            catch (Exception)
+            {
+                // Includes request cancellation and timeout after dispatch. A
+                // retry could duplicate an accepted send, so never guess Failed.
+                outcome = EbookDeliveryOutcome.Unknown(UnknownSubmissionMessage);
+            }
         }
 
-        attempt.TransitionTo(DeliveryAttemptStatus.Submitting, clock.UtcNow);
-        await repository.SaveChangesAsync(cancellationToken);
-
-        var outcome = await provider.DeliverAsync(
-            attempt.ExternalBookId, attempt.BookFormat, attempt.Convert, target.Address, cancellationToken);
-
-        switch (outcome.Status)
+        var status = outcome.Status switch
         {
-            case EbookDeliveryStatus.Delivered:
-                attempt.TransitionTo(DeliveryAttemptStatus.Submitted, clock.UtcNow);
-                break;
-            case EbookDeliveryStatus.TransportFailure:
-                attempt.TransitionTo(DeliveryAttemptStatus.Failed, clock.UtcNow, outcome.Message, retryable: true);
-                break;
-            default:
-                attempt.TransitionTo(DeliveryAttemptStatus.Failed, clock.UtcNow, outcome.Message, retryable: false);
-                break;
-        }
+            EbookDeliveryStatus.Delivered => DeliveryAttemptStatus.Submitted,
+            EbookDeliveryStatus.SubmissionUnknown => DeliveryAttemptStatus.SubmissionUnknown,
+            _ => DeliveryAttemptStatus.Failed
+        };
 
-        await repository.SaveChangesAsync(cancellationToken);
-        await WriteAuditAsync(attempt, outcome.Succeeded, cancellationToken);
+        // Persist the observed result even if the initiating browser went away.
+        using var completion = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        if (!await repository.TryTransitionAsync(attempt, status, clock.UtcNow, completion.Token,
+            outcome.Message, retryable: outcome.Status == EbookDeliveryStatus.TransportFailure)) return;
+        await WriteAuditAsync(attempt, outcome.Succeeded, completion.Token);
 
         if (attempt.Status == DeliveryAttemptStatus.Submitted)
         {
-            // Best-effort, same posture as CwaPublishingService's own delivery
-            // release -- a notification-write failure must never make an
-            // otherwise-successful Kindle send look like it failed.
             try
             {
                 await notifications.RecordKindleDeliverySubmittedAsync(
-                    attempt.UserId, attempt.Id, attempt.BookTitle, cancellationToken);
+                    attempt.UserId, attempt.Id, attempt.BookTitle, completion.Token);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception)
             {
-                await audit.WriteAsync(
-                    AuditActions.DeliveryAttemptSubmitted, AuditSubjectTypes.DeliveryAttempt, attempt.Id.ToString(),
-                    new { attempt.Id, NotificationFailed = true, exception.Message }, cancellationToken);
+                // A notification failure cannot change the already durable send outcome.
             }
         }
     }
 
-    private Task WriteAuditAsync(DeliveryAttempt attempt, bool succeeded, CancellationToken cancellationToken) =>
-        audit.WriteAsync(
-            succeeded ? AuditActions.DeliveryAttemptSubmitted : AuditActions.DeliveryAttemptFailed,
-            AuditSubjectTypes.DeliveryAttempt,
-            attempt.Id.ToString(),
-            new
-            {
-                attempt.Id,
-                attempt.RequestId,
-                attempt.UserId,
-                attempt.ExternalBookId,
-                attempt.Provider,
-                attempt.AttemptNumber
-            },
-            cancellationToken);
+    private async Task WriteAuditAsync(DeliveryAttempt attempt, bool succeeded, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await audit.WriteAsync(
+                succeeded ? AuditActions.DeliveryAttemptSubmitted : AuditActions.DeliveryAttemptFailed,
+                AuditSubjectTypes.DeliveryAttempt, attempt.Id.ToString(),
+                new { attempt.Id, attempt.DeliveryId, attempt.RequestId, attempt.UserId,
+                    attempt.ExternalBookId, attempt.Provider, attempt.AttemptNumber, Status = attempt.Status.ToString() },
+                cancellationToken);
+        }
+        catch (Exception)
+        {
+            // The delivery row remains authoritative if the audit store is unavailable.
+        }
+    }
 
     private static string ResolveProviderId(DeliveryTargetProvider provider) => provider switch
     {
@@ -432,11 +505,15 @@ public sealed record RetryDeliveryResult(RetryDeliveryOutcome Outcome, DeliveryA
 
     public static RetryDeliveryResult NotFailed() => new(RetryDeliveryOutcome.NotFailed, null);
 
+    public static RetryDeliveryResult DuplicateConfirmationRequired() =>
+        new(RetryDeliveryOutcome.DuplicateConfirmationRequired, null);
+
     public static RetryDeliveryResult Unauthenticated() => new(RetryDeliveryOutcome.Unauthenticated, null);
 }
 
 public enum RetryDeliveryOutcome
 {
+    DuplicateConfirmationRequired,
     Success,
     NotFound,
     NotFailed,

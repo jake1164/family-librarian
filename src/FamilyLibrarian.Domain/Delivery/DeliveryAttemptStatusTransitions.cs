@@ -20,9 +20,10 @@ public static class DeliveryAttemptStatusTransitions
         [DeliveryAttemptStatus.Submitting] =
         [
             DeliveryAttemptStatus.Submitted,
-            DeliveryAttemptStatus.Failed
+            DeliveryAttemptStatus.Failed,
+            DeliveryAttemptStatus.SubmissionUnknown
         ]
-        // Submitted, Failed, and Cancelled are terminal for this row.
+        // Submitted, Failed, SubmissionUnknown and Cancelled are terminal for this row.
     };
 
     public static bool IsAllowed(DeliveryAttemptStatus from, DeliveryAttemptStatus to) =>

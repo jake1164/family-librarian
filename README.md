@@ -166,6 +166,15 @@ and sends a clean verified copy to CWA. **My requests** and the book page refres
 while open so the requester can follow safe, plain-language progress without
 seeing provider diagnostics.
 
+For Kindle delivery, configure **Ebook delivery**, then opt in on an ebook
+request or choose **Send to Kindle** for a book already in the library.
+**My Kindle deliveries** includes both paths, receipt confirmation, failures,
+and retry history. Receipt notifications link to the particular attempt.
+Administrators can see receipt reports and retry the latest eligible attempt
+in **Publishing activity**. Follow the [Kindle setup and troubleshooting
+runbook](docs/06-deployment-and-recovery.md#targeted-kindle-delivery) before the
+first send; the service sign-in test does not send a book.
+
 Administrators also get:
 
 - **Queue**, to review family requests and act on them (add a note, mark
@@ -194,14 +203,15 @@ Administrators also get:
   confirmed.
 
 The browser maintains one authenticated SignalR connection per tab. My requests,
-book request status, admin Queue/Tasks/request details, Security scans, Publishing
+My Kindle deliveries, book request status, admin Queue/Tasks/request details, Security scans, Publishing
 activity, source catalog progress, the notification tray, and navigation indicators
 subscribe to it instead of polling. The shared connection indicator shows when
 updates are unavailable and offers **Refresh**. Initial connection failures retry
 with capped backoff; reconnection reloads the open views to recover missed updates.
 Data and actions still use the existing authorized HTTP APIs. Private request
 updates go only to request participants and current admins; personal notifications remain
-private, and source/security/publishing diagnostics remain admin-only.
+private. Kindle attempt updates reach only the recipient and current admins,
+including on shared requests; source/security/publishing diagnostics remain admin-only.
 
 Each admin request detail page includes an append-only provider-activity
 timeline, including no-match, found-candidate, blocked, failed, and acquired
