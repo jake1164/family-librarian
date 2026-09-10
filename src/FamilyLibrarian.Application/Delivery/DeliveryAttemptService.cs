@@ -217,16 +217,22 @@ public sealed class DeliveryAttemptService(
     /// <summary>
     /// The admin queue's retry action. Ownership is not checked here -- the
     /// endpoint calling this is already <c>RequireAuthorization("Admin")</c>.
+    /// Eligibility mirrors <see cref="RetryAsync"/> (F9): an administrator can
+    /// perform the same reported-missing resend a user can, not only a
+    /// straightforward <see cref="DeliveryAttemptStatus.Failed"/> retry.
     /// </summary>
     public async Task<bool> AdminRetryAsync(Guid attemptId, CancellationToken cancellationToken)
     {
         var attempt = await repository.FindAsync(attemptId, cancellationToken);
-        if (attempt is null || attempt.Status != DeliveryAttemptStatus.Failed)
+        var eligible = attempt is not null && (attempt.Status == DeliveryAttemptStatus.Failed ||
+            (attempt.Status == DeliveryAttemptStatus.Submitted &&
+                attempt.ConfirmationStatus == DeliveryConfirmationStatus.ReportedMissing));
+        if (!eligible)
         {
             return false;
         }
 
-        await CreateRetryAsync(attempt, cancellationToken);
+        await CreateRetryAsync(attempt!, cancellationToken);
         return true;
     }
 
@@ -309,6 +315,19 @@ public sealed class DeliveryAttemptService(
         {
             attempt.TransitionTo(DeliveryAttemptStatus.Submitting, clock.UtcNow);
             attempt.TransitionTo(DeliveryAttemptStatus.Failed, clock.UtcNow, "The delivery target no longer exists.");
+            await repository.SaveChangesAsync(cancellationToken);
+            await WriteAuditAsync(attempt, succeeded: false, cancellationToken);
+            return;
+        }
+
+        if (!target.IsEnabled)
+        {
+            // Re-checked immediately before every dispatch, not just at release
+            // time (F2): the owner or an administrator can disable a target
+            // between when a Pending row was created and when a retry -- automatic
+            // or manual -- later tries to send it.
+            attempt.TransitionTo(DeliveryAttemptStatus.Submitting, clock.UtcNow);
+            attempt.TransitionTo(DeliveryAttemptStatus.Failed, clock.UtcNow, "The delivery target is disabled.");
             await repository.SaveChangesAsync(cancellationToken);
             await WriteAuditAsync(attempt, succeeded: false, cancellationToken);
             return;

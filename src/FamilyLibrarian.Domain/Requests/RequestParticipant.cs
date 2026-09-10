@@ -35,9 +35,10 @@ public sealed class RequestParticipant
 
     internal void Join(IEnumerable<RequestMediaType> formats, string? note, Guid? deliveryTargetId = null)
     {
+        var includesEbookThisCall = false;
         foreach (var format in formats)
         {
-            if (format == RequestMediaType.Ebook) WantsEbook = true;
+            if (format == RequestMediaType.Ebook) { WantsEbook = true; includesEbookThisCall = true; }
             else if (format == RequestMediaType.Audiobook) WantsAudiobook = true;
             else throw new ArgumentException("Unknown requested format.", nameof(formats));
         }
@@ -48,7 +49,15 @@ public sealed class RequestParticipant
         if (note?.Trim().Length > BookRequest.MaxNoteLength)
             throw new ArgumentException("The requester note is too long.", nameof(note));
         if (!string.IsNullOrWhiteSpace(note)) Note = note.Trim();
-        DeliveryTargetId = deliveryTargetId;
+
+        // F6: a call that re-specifies the ebook format is authoritative over
+        // the Kindle choice -- an omitted deliveryTargetId there means "turn
+        // delivery off" (matches re-requesting the same format without the
+        // checkbox). But a call that only adds a *different* format (e.g.
+        // joining again for the audiobook, having already gotten ebook+Kindle
+        // before) never mentions delivery at all, and must not silently wipe
+        // an ebook delivery choice it didn't touch.
+        if (deliveryTargetId is not null || includesEbookThisCall) DeliveryTargetId = deliveryTargetId;
         WithdrawnAtUtc = null;
     }
 

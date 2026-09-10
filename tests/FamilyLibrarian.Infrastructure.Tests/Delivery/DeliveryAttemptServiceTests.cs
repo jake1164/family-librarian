@@ -485,6 +485,59 @@ public sealed class DeliveryAttemptServiceTests
         Assert.AreEqual(2, result.Attempt!.AttemptNumber);
     }
 
+    /// <summary>
+    /// F9: an administrator can perform the same "it never arrived" resend a
+    /// user can -- mirroring <see cref="RetryingAfterReportedMissingSendsANewAttempt"/>
+    /// but through the admin-only entry point, which previously only accepted
+    /// <see cref="DeliveryAttemptStatus.Failed"/>.
+    /// </summary>
+    [TestMethod]
+    public async Task AdminRetrySucceedsOnASubmittedAttemptReportedMissing()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        var submitted = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        submitted.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        submitted.TransitionTo(DeliveryAttemptStatus.Submitted, Now);
+        submitted.ReportMissing(Now);
+        context.DeliveryAttempts.Add(submitted);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+
+        var succeeded = await context.Service.AdminRetryAsync(submitted.Id, CancellationToken.None);
+
+        Assert.IsTrue(succeeded);
+        Assert.HasCount(2, context.DeliveryAttempts.Rows);
+    }
+
+    /// <summary>
+    /// F2 regression: a target disabled after a Pending row was created (or
+    /// between a failure and its retry) must be re-checked immediately before
+    /// dispatch, not only when the release/existing-book paths first create
+    /// the row.
+    /// </summary>
+    [TestMethod]
+    public async Task RetryingWithADisabledTargetFailsWithoutCallingTheProvider()
+    {
+        var context = new TestContext();
+        var target = context.SeedEnabledTarget();
+        context.CurrentUser.SetUser(target.UserId);
+        var failed = new DeliveryAttempt(
+            Guid.NewGuid(), target.UserId, target.Id, "cwa", "1", "epub", false, attemptNumber: 1, Now);
+        failed.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
+        failed.TransitionTo(DeliveryAttemptStatus.Failed, Now, "timeout", retryable: true);
+        context.DeliveryAttempts.Add(failed);
+        target.SetEnabled(false, Now);
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+
+        var result = await context.Service.RetryAsync(failed.Id, CancellationToken.None);
+
+        Assert.AreEqual(RetryDeliveryOutcome.Success, result.Outcome);
+        Assert.AreEqual(DeliveryAttemptStatus.Failed, result.Attempt!.Status);
+        Assert.AreEqual("The delivery target is disabled.", result.Attempt!.FailureReason);
+        Assert.AreEqual(0, context.Provider.DeliverCallCount);
+    }
+
     private sealed class TestContext
     {
         public TestContext()
@@ -539,12 +592,17 @@ public sealed class DeliveryAttemptServiceTests
 
         public EbookDeliveryOutcome NextOutcome { get; set; } = EbookDeliveryOutcome.Delivered("Sent.");
 
+        public int DeliverCallCount { get; private set; }
+
         public Task<bool> CanDeliverAsync(CancellationToken cancellationToken) => Task.FromResult(true);
 
         public Task<EbookDeliveryOutcome> DeliverAsync(
             string providerBookId, string bookFormat, bool convert, string recipientEmail,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(NextOutcome);
+            CancellationToken cancellationToken)
+        {
+            DeliverCallCount++;
+            return Task.FromResult(NextOutcome);
+        }
 
         public Task<ConnectionTestOutcome> TestAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new ConnectionTestOutcome(true, "ok"));

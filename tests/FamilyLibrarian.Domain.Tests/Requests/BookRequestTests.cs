@@ -205,6 +205,27 @@ public sealed class BookRequestTests
         Assert.IsNull(request.Participants.Single().DeliveryTargetId);
     }
 
+    /// <summary>
+    /// F6 regression: joining again to add a *different* format the caller
+    /// never mentions delivery for must not erase a Kindle target already
+    /// set for the ebook -- unlike <see cref="RejoiningReplacesThePreviouslyRequestedDeliveryTarget"/>,
+    /// which re-specifies the ebook format itself and is therefore authoritative.
+    /// </summary>
+    [TestMethod]
+    public void AddingAnAudiobookFormatPreservesTheExistingEbookDeliveryTarget()
+    {
+        var request = Create(RequestMediaType.Ebook);
+        var targetId = Guid.NewGuid();
+        request.Join(UserId, [RequestMediaType.Ebook], null, CreatedAt.AddHours(1), targetId);
+
+        request.Join(UserId, [RequestMediaType.Audiobook], null, CreatedAt.AddHours(2), deliveryTargetId: null);
+
+        var participant = request.Participants.Single();
+        Assert.AreEqual(targetId, participant.DeliveryTargetId);
+        Assert.IsTrue(participant.WantsEbook);
+        Assert.IsTrue(participant.WantsAudiobook);
+    }
+
     private static BookRequest Create(params RequestMediaType[] mediaTypes) =>
         new(UserId, WorkId, mediaTypes, null, CreatedAt);
 }

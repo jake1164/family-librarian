@@ -126,10 +126,16 @@ else
                         }
                         else
                         {
-                            <MudText Typo="Typo.h6">Existing library book</MudText>
+                            <MudText Typo="Typo.h6">@(attempt.WorkTitle ?? "Existing library book")</MudText>
                         }
                         <MudSpacer />
                         <MudChip T="string" Size="Size.Small" Color="StatusColor(attempt.Status)">@attempt.Status</MudChip>
+                        @if (attempt.Status == "Submitted" && attempt.ConfirmationStatus != "Unconfirmed")
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="ConfirmationColor(attempt.ConfirmationStatus)">
+                                @ConfirmationLabel(attempt.ConfirmationStatus)
+                            </MudChip>
+                        }
                     </MudStack>
                     <MudText Typo="Typo.body2" Class="mt-1">
                         Requested by @attempt.RequesterDisplayName (@attempt.RequesterEmail) —
@@ -140,7 +146,7 @@ else
                     {
                         <MudText Typo="Typo.caption" Color="Color.Error">@attempt.FailureReason</MudText>
                     }
-                    @if (attempt.Status == "Failed")
+                    @if (IsRetryEligible(attempt))
                     {
                         <MudButton Variant="Variant.Outlined" Class="mt-2" Disabled="@(busyId == attempt.Id)"
                                    OnClick="@(() => RetryDeliveryAttemptAsync(attempt.Id))">
@@ -257,6 +263,29 @@ else
         "Available" or "Delivered" or "Submitted" => Color.Success,
         "Failed" => Color.Error,
         "AwaitingVerification" or "Verifying" or "Pending" or "Submitting" => Color.Warning,
+        _ => Color.Default
+    };
+
+    /// <summary>
+    /// F9: an administrator can retry an ordinary failed attempt, or a
+    /// submitted one the user has reported missing -- matching the eligibility
+    /// <c>DeliveryAttemptService.AdminRetryAsync</c> now enforces server-side.
+    /// </summary>
+    private static bool IsRetryEligible(DeliveryAttemptResponse attempt) =>
+        attempt.Status == "Failed" ||
+        (attempt.Status == "Submitted" && attempt.ConfirmationStatus == "ReportedMissing");
+
+    private static string ConfirmationLabel(string confirmationStatus) => confirmationStatus switch
+    {
+        "Confirmed" => "Received",
+        "ReportedMissing" => "Reported missing",
+        _ => confirmationStatus
+    };
+
+    private static Color ConfirmationColor(string confirmationStatus) => confirmationStatus switch
+    {
+        "Confirmed" => Color.Success,
+        "ReportedMissing" => Color.Error,
         _ => Color.Default
     };
 }

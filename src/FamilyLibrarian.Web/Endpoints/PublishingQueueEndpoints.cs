@@ -80,5 +80,7 @@ internal static class PublishingQueueEndpoints
         view.AttemptNumber,
         view.FailureReason,
         view.CreatedAtUtc,
-        view.CompletedAtUtc);
+        view.CompletedAtUtc,
+        view.ConfirmationStatus.ToString(),
+        view.ConfirmedAtUtc);
 }
