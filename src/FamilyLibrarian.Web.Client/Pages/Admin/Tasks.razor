@@ -40,7 +40,7 @@
                              Value="@snapshot.Summary.NeedsReview" Color="Color.Warning" TargetElementId="tasks-requests" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4">
-                <SummaryCard Icon="@Icons.Material.Filled.Shield" Label="Security attention"
+                <SummaryCard Icon="@Icons.Material.Filled.Shield" Label="In security pipeline"
                              Value="@snapshot.Summary.SecurityAttention" Color="Color.Warning" TargetElementId="tasks-security" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4">
@@ -131,12 +131,12 @@
             </MudText>
             @if (snapshot.Summary.SecurityAttention == 0)
             {
-                <MudAlert Severity="Severity.Success" Dense="true">No files need security attention.</MudAlert>
+                <MudAlert Severity="Severity.Success" Dense="true">No files are in the security pipeline.</MudAlert>
             }
             else
             {
                 <MudAlert Severity="Severity.Warning" Dense="true">
-                    @snapshot.Summary.SecurityAttention file@(snapshot.Summary.SecurityAttention == 1 ? string.Empty : "s") need security attention.
+                    @snapshot.Summary.SecurityAttention file@(snapshot.Summary.SecurityAttention == 1 ? string.Empty : "s") @(snapshot.Summary.SecurityAttention == 1 ? "is" : "are") in the security pipeline (awaiting scan, being scanned, or waiting on a decision).
                 </MudAlert>
             }
             <MudButton Href="admin/security" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Shield" Class="mt-3">

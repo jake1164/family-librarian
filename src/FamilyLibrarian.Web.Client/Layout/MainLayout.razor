@@ -44,40 +44,46 @@
             </Authorized>
         </AuthorizeView>
 
-        @* Config/setup pages an admin visits rarely stay tucked in this
-           dropdown rather than taking up rows in the nav rail; the
-           everyday admin destinations (Tasks/Queue/Security scans/Accounts/
-           Publishing activity) live in the drawer instead. Hiding this is
-           UX only — every page carries [Authorize] and every endpoint
-           behind it independently authorizes the caller. *@
-        <AuthorizeView Roles="Admin">
-            <MudMenu AriaLabel="Settings menu"
-                     AnchorOrigin="Origin.BottomRight"
-                     TransformOrigin="Origin.TopRight">
-                <ActivatorContent Context="settingsMenuActivator">
-                    @* Dot badge is deliberately scoped to Sources/Publishing: those are
-                       the only settings sub-pages with a connection/configuration
-                       health signal today, so it never flags a category (Metadata
-                       providers, Communications, etc.) that has nothing to check. *@
-                    <MudBadge Dot="true" Color="Color.Error" Overlap="true" Visible="@HasSettingsIssues">
-                        <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit"
-                                       aria-label="Settings menu" OnClick="settingsMenuActivator.ToggleAsync" />
-                    </MudBadge>
-                </ActivatorContent>
-                <ChildContent>
-                    <MudMenuItem Href="settings/metadata-providers" Icon="@Icons.Material.Filled.AutoStories">Metadata providers</MudMenuItem>
-                    <MudMenuItem Href="settings/sources" Icon="@Icons.Material.Filled.Source">
-                        Sources@(SourcesIssueCount == 0 ? string.Empty : $" · {SourcesIssueCount} issue{(SourcesIssueCount == 1 ? string.Empty : "s")}")
-                    </MudMenuItem>
-                    <MudMenuItem Href="settings/publishing" Icon="@Icons.Material.Filled.CloudUpload">
-                        Publishing@(PublishingIssueCount == 0 ? string.Empty : $" · {PublishingIssueCount} issue{(PublishingIssueCount == 1 ? string.Empty : "s")}")
-                    </MudMenuItem>
-                    <MudMenuItem Href="settings/communications" Icon="@Icons.Material.Filled.Email">Communications</MudMenuItem>
-                    <MudMenuItem Href="settings/acquisition-policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudMenuItem>
-                    <MudMenuItem Href="settings/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudMenuItem>
-                    <MudMenuItem Href="settings/backup" Icon="@Icons.Material.Filled.Backup">Settings backup</MudMenuItem>
-                </ChildContent>
-            </MudMenu>
+        @* Every signed-in user gets a settings menu (their Kindle/ebook
+           delivery preferences); admins get the same icon with their
+           config/setup pages appended, so there's one settings entry point
+           instead of a separate rail icon duplicating "My Kindle deliveries".
+           Hiding this is UX only — every page carries [Authorize] and every
+           endpoint behind it independently authorizes the caller. *@
+        <AuthorizeView>
+            <Authorized>
+                <MudMenu AriaLabel="Settings menu"
+                         AnchorOrigin="Origin.BottomRight"
+                         TransformOrigin="Origin.TopRight">
+                    <ActivatorContent Context="settingsMenuActivator">
+                        @* Dot badge is deliberately scoped to Sources/Publishing: those are
+                           the only settings sub-pages with a connection/configuration
+                           health signal today, so it never flags a category (Metadata
+                           providers, Communications, etc.) that has nothing to check. *@
+                        <MudBadge Dot="true" Color="Color.Error" Overlap="true" Visible="@HasSettingsIssues">
+                            <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit"
+                                           aria-label="Settings menu" OnClick="settingsMenuActivator.ToggleAsync" />
+                        </MudBadge>
+                    </ActivatorContent>
+                    <ChildContent>
+                        <MudMenuItem Href="settings/ebook-delivery" Icon="@Icons.Material.Filled.Tablet">Ebook delivery</MudMenuItem>
+                        <AuthorizeView Roles="Admin" Context="settingsAdminContext">
+                            <MudDivider Class="my-1" />
+                            <MudMenuItem Href="settings/metadata-providers" Icon="@Icons.Material.Filled.AutoStories">Metadata providers</MudMenuItem>
+                            <MudMenuItem Href="settings/sources" Icon="@Icons.Material.Filled.Source">
+                                Sources@(SourcesIssueCount == 0 ? string.Empty : $" · {SourcesIssueCount} issue{(SourcesIssueCount == 1 ? string.Empty : "s")}")
+                            </MudMenuItem>
+                            <MudMenuItem Href="settings/publishing" Icon="@Icons.Material.Filled.CloudUpload">
+                                Publishing@(PublishingIssueCount == 0 ? string.Empty : $" · {PublishingIssueCount} issue{(PublishingIssueCount == 1 ? string.Empty : "s")}")
+                            </MudMenuItem>
+                            <MudMenuItem Href="settings/communications" Icon="@Icons.Material.Filled.Email">Communications</MudMenuItem>
+                            <MudMenuItem Href="settings/acquisition-policy" Icon="@Icons.Material.Filled.Rule">Acquisition policy</MudMenuItem>
+                            <MudMenuItem Href="settings/authentication" Icon="@Icons.Material.Filled.VerifiedUser">Authentication</MudMenuItem>
+                            <MudMenuItem Href="settings/backup" Icon="@Icons.Material.Filled.Backup">Settings backup</MudMenuItem>
+                        </AuthorizeView>
+                    </ChildContent>
+                </MudMenu>
+            </Authorized>
         </AuthorizeView>
 
         <MudMenu Icon="@ThemeMenuIcon"
@@ -153,7 +159,6 @@
                 <MudNavLink Href="requests" Icon="@Icons.Material.Filled.MenuBook">My requests</MudNavLink>
                 <MudNavLink Href="reading" Icon="@Icons.Material.Filled.Star">My reading</MudNavLink>
                 <MudNavLink Href="deliveries" Icon="@Icons.Material.Filled.Tablet">My Kindle deliveries</MudNavLink>
-                <MudNavLink Href="settings/ebook-delivery" Icon="@Icons.Material.Filled.Tablet">Ebook delivery</MudNavLink>
                 @* Plain "open the library" links to the connected CWA/Audiobookshelf
                    sites, distinct from the per-book deep links on WorkDetail/BookDetail.
                    Hidden per-destination when it isn't enabled or has no URL configured. *@
