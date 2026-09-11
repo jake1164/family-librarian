@@ -4,9 +4,9 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ---
 
-## [v1.0.0-beta.1] — 2026-09-10
+## [v1.0.0-alpha.1] — 2026-09-10
 
-The first beta release of Family Librarian. Everything below was built from scratch over the last five weeks: local and OIDC/Authentik sign-in, metadata search across Google Books/Open Library/Project Gutenberg, Calibre-Web Automated and Audiobookshelf ingestion, a request/queue pipeline with real-time updates, Kindle delivery with delivery confirmation, malware scanning on every incoming file, SMTP notifications, and Postgres backup/restore — this entry is the baseline the rest of the changelog builds on.
+The first alpha release of Family Librarian. Everything below was built from scratch over the last five weeks: local and OIDC/Authentik sign-in, metadata search across Google Books/Open Library/Project Gutenberg, Calibre-Web Automated and Audiobookshelf ingestion, a request/queue pipeline with real-time updates, Kindle delivery with delivery confirmation, malware scanning on every incoming file, SMTP notifications, and Postgres backup/restore — this entry is the baseline the rest of the changelog builds on.
 
 ### Authentication and administration
 
@@ -81,6 +81,6 @@ The first beta release of Family Librarian. Everything below was built from scra
 **Container images**
 
 ```text
-ghcr.io/jake1164/family-librarian:v1.0.0-beta.1
-ghcr.io/jake1164/family-librarian:beta
+ghcr.io/jake1164/family-librarian:v1.0.0-alpha.1
+ghcr.io/jake1164/family-librarian:alpha
 ```
