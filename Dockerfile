@@ -26,8 +26,13 @@ ENV ASPNETCORE_URLS=http://+:8080
 # first run inherits this ownership instead of root:root — the security
 # pipeline's storage zones live here, and the app runs as the non-root
 # $APP_UID user below.
+#
+# libgssapi-krb5-2 isn't in this base image; without it Npgsql's GSS
+# encryption probe against Postgres fails and logs "Cannot load library
+# libgssapi_krb5.so.2" straight to stderr on every startup (Npgsql falls
+# back automatically either way, but the noise obscures real warnings).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bzip2 \
+    && apt-get install -y --no-install-recommends bzip2 libgssapi-krb5-2 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data/family-librarian \
     && chown -R $APP_UID:$APP_UID /data/family-librarian
