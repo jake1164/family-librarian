@@ -131,4 +131,60 @@ public sealed class DeterministicBookMatcherTests
 
         Assert.AreEqual(BookMatchDecision.Match, result.Decision);
     }
+
+    [TestMethod]
+    public void ACandidateWithNoDeclaredLanguageIsStillEligible()
+    {
+        var candidate = new CandidateBook("1", "Debt of Honor", "Tom Clancy", Language: null);
+
+        var result = matcher.ResolveUnique([candidate]);
+
+        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
+    }
+
+    [TestMethod]
+    public void ACandidateDeclaringEnglishIsEligible()
+    {
+        var candidate = new CandidateBook("1", "Debt of Honor", "Tom Clancy", Language: "eng");
+
+        var result = matcher.ResolveUnique([candidate]);
+
+        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
+    }
+
+    [TestMethod]
+    public void ASingleNonEnglishCandidateIsLanguageExcludedNotMatched()
+    {
+        var candidate = new CandidateBook("1", "Moby Dick", "Herman Melville", Language: "spa");
+
+        var result = matcher.ResolveUnique([candidate]);
+
+        Assert.AreEqual(BookMatchDecision.LanguageExcluded, result.Decision);
+        Assert.AreEqual(1, result.Candidates.Count);
+        Assert.IsNull(result.MatchedId);
+    }
+
+    [TestMethod]
+    public void ANonEnglishCandidateIsExcludedLeavingTheEnglishOneAsTheUniqueMatch()
+    {
+        var english = new CandidateBook("1", "Moby Dick", "Herman Melville", Language: "eng");
+        var spanish = new CandidateBook("2", "Moby Dick", "Herman Melville", Language: "spa");
+
+        var result = matcher.MatchByTitleAuthor("Moby Dick", "Herman Melville", [english, spanish]);
+
+        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
+        Assert.AreEqual("1", result.MatchedId);
+    }
+
+    [TestMethod]
+    public void TwoNonEnglishCandidatesAreLanguageExcludedTogether()
+    {
+        var spanish = new CandidateBook("1", "Moby Dick", "Herman Melville", Language: "spa");
+        var french = new CandidateBook("2", "Moby Dick", "Herman Melville", Language: "fre");
+
+        var result = matcher.MatchByTitleAuthor("Moby Dick", "Herman Melville", [spanish, french]);
+
+        Assert.AreEqual(BookMatchDecision.LanguageExcluded, result.Decision);
+        Assert.AreEqual(2, result.Candidates.Count);
+    }
 }

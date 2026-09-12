@@ -30,6 +30,7 @@ internal static class AdminRequestEndpoints
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-attempts", ListProviderAttemptsAsync);
         adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
+        adminRequests.MapPost("/{requestId:guid}/needs-review/resolve", AdminResolveNeedsReviewAsync);
         adminRequests.MapPut("/{requestId:guid}/note", SetAdminRequestNoteAsync);
         adminRequests.MapPost("/{requestId:guid}/formats/{formatId:guid}/manual-import", ManualImportAsync);
         adminRequests.MapPost(
@@ -69,6 +70,30 @@ internal static class AdminRequestEndpoints
     {
         var request = await requests.GetForAdminAsync(requestId, cancellationToken);
         return request is null ? Results.NotFound() : Results.Ok(ToAdminRequestResponse(request));
+    }
+
+    /// <summary>
+    /// SELFSERV-1: admin counterpart of the requester's own needs-review
+    /// resolve route -- additive, not exclusive. No ownership check.
+    /// </summary>
+    private static async Task<IResult> AdminResolveNeedsReviewAsync(
+        Guid requestId,
+        ResolveNeedsReviewRequest request,
+        AutomaticRequestFulfillmentService fulfillment,
+        BookRequestService requests,
+        CancellationToken cancellationToken)
+    {
+        var outcome = request.CandidateId is { } candidateId
+            ? await fulfillment.AdminResolvePreferenceAmbiguityAsync(requestId, candidateId, cancellationToken)
+            : await fulfillment.AdminDismissPreferenceAmbiguityAsync(requestId, cancellationToken);
+
+        if (outcome == PreferenceAmbiguityResolutionOutcome.NotFound)
+        {
+            return Results.NotFound();
+        }
+
+        var view = await requests.GetForAdminAsync(requestId, cancellationToken);
+        return view is null ? Results.NotFound() : Results.Ok(ToAdminRequestResponse(view));
     }
 
     private static async Task<IResult> RecheckNeedsReviewAsync(

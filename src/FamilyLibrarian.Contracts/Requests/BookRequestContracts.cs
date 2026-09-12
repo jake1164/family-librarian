@@ -55,7 +55,8 @@ public sealed record BookRequestResponse(
     string? VersionKind = null,
     string? VersionDetails = null,
     Guid? DeliveryTargetId = null,
-    KindleDeliveryResponse? KindleDelivery = null);
+    KindleDeliveryResponse? KindleDelivery = null,
+    NeedsReviewResponse? NeedsReview = null);
 
 /// <summary>The viewer's own most recent Kindle delivery attempt for this request.</summary>
 /// <param name="ConfirmationStatus">
@@ -68,6 +69,24 @@ public sealed record KindleDeliveryResponse(
     string? FailureReason,
     int AttemptNumber,
     string ConfirmationStatus = "Unconfirmed");
+
+/// <summary>
+/// SELFSERV-1: present only for a "PreferenceAmbiguity" review -- the
+/// requester (or an admin) can pick a candidate inline, or ask to keep
+/// looking. "ProviderDisagreement"/"SecurityOrIdentityFailure" stay
+/// admin-only and never populate this.
+/// </summary>
+public sealed record NeedsReviewResponse(
+    string Category,
+    IReadOnlyList<RequestReviewCandidateResponse> Candidates);
+
+public sealed record RequestReviewCandidateResponse(Guid CandidateId, string Title, string? Author, string? Language);
+
+/// <param name="CandidateId">
+/// Which offered candidate to acquire ("get it anyway"). Omit to decline
+/// every candidate instead ("keep looking").
+/// </param>
+public sealed record ResolveNeedsReviewRequest(Guid? CandidateId);
 
 public sealed record BookRequestFormatResponse(
     Guid FormatId,

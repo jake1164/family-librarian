@@ -92,6 +92,20 @@ public sealed class BookMatchServiceTests
         Assert.AreEqual(BookMatchBasis.Identifier, result.Basis);
     }
 
+    [TestMethod]
+    public async Task ALanguageExcludedResultPassesThroughUnchangedWithNoBasisStamped()
+    {
+        var service = new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver());
+        var candidate = new CandidateBook("1", "Moby Dick", "Herman Melville", Language: "spa");
+
+        var result = await service.MatchByTitleAuthorAsync(
+            "Moby Dick", "Herman Melville", [candidate], CancellationToken.None);
+
+        Assert.AreEqual(BookMatchDecision.LanguageExcluded, result.Decision);
+        Assert.IsNull(result.Basis);
+        Assert.AreEqual(1, result.Candidates.Count);
+    }
+
     private sealed class PicksSecondCandidateResolver : IAmbiguityResolver
     {
         public Task<CandidateBook?> ResolveAsync(

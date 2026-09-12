@@ -29,10 +29,23 @@ public sealed record BookRequestView(
     string? VersionKind = null,
     string? VersionDetails = null,
     Guid? DeliveryTargetId = null,
-    RequestKindleDeliveryView? KindleDelivery = null)
+    RequestKindleDeliveryView? KindleDelivery = null,
+    RequestNeedsReviewView? NeedsReview = null)
 {
     public bool IsActive => RequestStatusTransitions.IsActive(Status);
 }
+
+/// <summary>
+/// SELFSERV-1: present only for a <see cref="RequestReviewCategory.PreferenceAmbiguity"/>
+/// review -- <see cref="RequestReviewCategory.ProviderDisagreement"/> and
+/// <see cref="RequestReviewCategory.SecurityOrIdentityFailure"/> stay
+/// admin-only and unchanged, so they never populate this view.
+/// </summary>
+public sealed record RequestNeedsReviewView(
+    RequestReviewCategory Category,
+    IReadOnlyList<RequestReviewCandidateView> Candidates);
+
+public sealed record RequestReviewCandidateView(Guid CandidateId, string Title, string? Author, string? Language);
 
 public sealed record RequestFormatView(
     Guid Id,

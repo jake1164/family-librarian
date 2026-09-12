@@ -27,6 +27,25 @@ public sealed class NotificationService(
             subjectId: requestId.ToString(),
             cancellationToken);
 
+    /// <summary>
+    /// SELFSERV-1: notifies the requester that their own request has a
+    /// preference decision waiting -- additive alongside the unconditional
+    /// admin-broadcast <see cref="RecordRequestNeedsReviewAsync"/> call an
+    /// admin can still resolve it from, never a replacement for it.
+    /// </summary>
+    public Task RecordPreferenceAmbiguityAsync(
+        Guid userId, Guid requestId, string workTitle, string? reason, CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.SingleUser,
+            userId,
+            NotificationCategories.RequestPreferenceAmbiguity,
+            NotificationSeverity.Info,
+            title: $"Pick an edition for \"{workTitle}\"",
+            detail: reason,
+            subjectType: NotificationSubjectTypes.BookRequest,
+            subjectId: requestId.ToString(),
+            cancellationToken);
+
     public Task RecordRequestStatusForUserAsync(
         Guid userId, Guid requestId, string workTitle, RequestStatus to, CancellationToken cancellationToken)
     {

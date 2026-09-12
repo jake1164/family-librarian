@@ -17,6 +17,7 @@ public sealed class BookRequest
     private readonly List<RequestFormat> _formats = [];
     private readonly List<RequestStatusHistory> _statusHistory = [];
     private readonly List<RequestParticipant> _participants = [];
+    private readonly List<RequestReviewCandidate> _reviewCandidates = [];
 
     private BookRequest()
     {
@@ -113,6 +114,12 @@ public sealed class BookRequest
 
     public bool RequiresManualFulfillment { get; private set; }
 
+    /// <summary>Why this request is <see cref="RequestStatus.NeedsReview"/> -- null otherwise. See SELFSERV-1.</summary>
+    public RequestReviewCategory? ReviewCategory { get; private set; }
+
+    /// <summary>Populated only for <see cref="RequestReviewCategory.PreferenceAmbiguity"/>.</summary>
+    public IReadOnlyCollection<RequestReviewCandidate> ReviewCandidates => _reviewCandidates;
+
     public IEnumerable<Guid> ActiveRequesterIds => _participants
         .Where(participant => participant.WithdrawnAtUtc is null).Select(participant => participant.UserId);
 
@@ -132,6 +139,92 @@ public sealed class BookRequest
         VersionKind = kind;
         RequiresManualFulfillment = true;
         TransitionTo(RequestStatus.NeedsReview, actorUserId, "A specific version requires librarian review.", atUtc);
+    }
+
+    /// <summary>
+    /// Moves an automatically-processed request to <see cref="RequestStatus.NeedsReview"/>
+    /// for one of the three <see cref="RequestReviewCategory"/> reasons (see
+    /// .ai_docs/family-librarian-accuracy-selfservice-alpha2-plan.md, SELFSERV-1).
+    /// Only <see cref="RequestReviewCategory.PreferenceAmbiguity"/> carries
+    /// candidates -- the other two categories keep today's admin-only behavior
+    /// unchanged and have nothing for a requester to pick between.
+    /// </summary>
+    public void MarkNeedsReview(
+        RequestReviewCategory category,
+        string reason,
+        DateTimeOffset atUtc,
+        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string Title, string? Author, string? Language)>? candidates = null)
+    {
+        if (category == RequestReviewCategory.PreferenceAmbiguity)
+        {
+            if (candidates is null || candidates.Count == 0)
+            {
+                throw new ArgumentException(
+                    "A preference-ambiguity review requires at least one candidate.", nameof(candidates));
+            }
+        }
+        else if (candidates is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                "Only a preference-ambiguity review carries candidates.", nameof(candidates));
+        }
+
+        _reviewCandidates.Clear();
+        if (candidates is not null)
+        {
+            for (var index = 0; index < candidates.Count; index++)
+            {
+                var candidate = candidates[index];
+                _reviewCandidates.Add(new RequestReviewCandidate(
+                    Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
+                    candidate.Author, candidate.Language, index, atUtc));
+            }
+        }
+
+        ReviewCategory = category;
+        TransitionTo(RequestStatus.NeedsReview, actorUserId: null, reason, atUtc);
+    }
+
+    /// <summary>
+    /// The requester (or an admin -- additive, not exclusive) accepts a
+    /// specific <see cref="RequestReviewCandidate"/> from a
+    /// <see cref="RequestReviewCategory.PreferenceAmbiguity"/> review ("get it
+    /// anyway"). Returns the accepted candidate so the caller can drive
+    /// acquisition of that specific provider result; this method only clears
+    /// review state and reopens the request for automatic processing.
+    /// </summary>
+    public RequestReviewCandidate AcceptReviewCandidate(Guid candidateId, Guid? actorUserId, DateTimeOffset atUtc)
+    {
+        if (ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
+        {
+            throw new InvalidOperationException("Only a preference-ambiguity review has a candidate to accept.");
+        }
+
+        var candidate = _reviewCandidates.SingleOrDefault(existing => existing.Id == candidateId)
+            ?? throw new ArgumentException("That candidate does not belong to this request's review.", nameof(candidateId));
+
+        ReviewCategory = null;
+        _reviewCandidates.Clear();
+        TransitionTo(RequestStatus.PendingAcquisition, actorUserId, "The requester accepted a lower-confidence match.", atUtc);
+        return candidate;
+    }
+
+    /// <summary>
+    /// The requester (or an admin) declines every offered candidate ("keep
+    /// looking"). Returns the request to automatic acquisition unchanged --
+    /// the existing per-provider retry cooldown means it will not be
+    /// re-offered on the very next poll.
+    /// </summary>
+    public void DismissReviewPreference(Guid? actorUserId, DateTimeOffset atUtc)
+    {
+        if (ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
+        {
+            throw new InvalidOperationException("Only a preference-ambiguity review can be dismissed this way.");
+        }
+
+        ReviewCategory = null;
+        _reviewCandidates.Clear();
+        TransitionTo(RequestStatus.PendingAcquisition, actorUserId, "The requester chose to keep looking for a better match.", atUtc);
     }
 
     public void Join(

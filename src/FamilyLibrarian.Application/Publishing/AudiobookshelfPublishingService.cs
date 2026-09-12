@@ -157,11 +157,12 @@ public sealed class AudiobookshelfPublishingService(
                 return;
             }
 
-            if (existing.Decision == BookMatchDecision.Ambiguous)
+            if (existing.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
             {
-                // Multiple library items match -- guessing one as "already
-                // delivered" risks attaching the wrong edition, so this falls
-                // through to a normal upload instead, same as NoMatch.
+                // Multiple library items match, or every match was excluded
+                // for language -- guessing one as "already delivered" risks
+                // attaching the wrong edition, so this falls through to a
+                // normal upload instead, same as NoMatch.
                 await AuditMatchAmbiguousAsync(asset.Id, existing.Candidates, cancellationToken);
             }
 
@@ -267,7 +268,7 @@ public sealed class AudiobookshelfPublishingService(
                 return;
             }
 
-            if (existing.Decision == BookMatchDecision.Ambiguous)
+            if (existing.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
             {
                 await AuditMatchAmbiguousAsync(bundleId, existing.Candidates, cancellationToken);
             }
@@ -375,7 +376,7 @@ public sealed class AudiobookshelfPublishingService(
                 // durably saved -- see DeleteTrustedBytesAsync.
                 await DeleteTrustedBytesAsync(assets, cancellationToken);
             }
-            else if (result.Decision == BookMatchDecision.Ambiguous)
+            else if (result.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
             {
                 // Left Verifying -- genuine ambiguity, not a bug to guess past.
                 await AuditMatchAmbiguousAsync(assets[0].Id, result.Candidates, cancellationToken);

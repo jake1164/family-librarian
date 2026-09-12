@@ -77,6 +77,30 @@ public sealed class RequestsApiClient(HttpClient httpClient, AntiforgeryTokenPro
             : new ChangeStatusOutcome(false, null, await ReadErrorAsync(response, cancellationToken));
     }
 
+    /// <summary>
+    /// SELFSERV-1: resolve a "PreferenceAmbiguity" review -- pass a
+    /// <paramref name="candidateId"/> to accept it ("get it anyway"), or omit
+    /// it to decline every candidate ("keep looking").
+    /// </summary>
+    public async Task<ChangeStatusOutcome> ResolveNeedsReviewAsync(
+        Guid requestId,
+        Guid? candidateId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await SendAsync(
+            HttpMethod.Post,
+            $"api/v1/requests/{requestId}/needs-review/resolve",
+            new ResolveNeedsReviewRequest(candidateId),
+            cancellationToken);
+
+        return response.IsSuccessStatusCode
+            ? new ChangeStatusOutcome(
+                true,
+                await response.Content.ReadFromJsonAsync<BookRequestResponse>(cancellationToken),
+                null)
+            : new ChangeStatusOutcome(false, null, await ReadErrorAsync(response, cancellationToken));
+    }
+
     private async Task<HttpResponseMessage> SendAsync<TPayload>(
         HttpMethod method,
         string path,

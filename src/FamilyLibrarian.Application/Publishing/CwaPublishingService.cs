@@ -196,10 +196,11 @@ public sealed class CwaPublishingService(
                 // durably saved -- see DeleteTrustedBytesAsync.
                 await DeleteTrustedBytesAsync(asset, cancellationToken);
             }
-            else if (result.Decision == BookMatchDecision.Ambiguous)
+            else if (result.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
             {
                 // Left AwaitingVerification -- this is genuine ambiguity (e.g.
-                // multiple catalog editions), not a bug to guess past. The
+                // multiple catalog editions, or a same-title/author entry
+                // excluded for language) not a bug to guess past. The
                 // audit entry makes it diagnosable instead of silently stuck.
                 await audit.WriteAsync(
                     AuditActions.AssetMatchAmbiguous,

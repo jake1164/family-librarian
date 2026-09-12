@@ -158,12 +158,17 @@ public sealed class KindleDeliveryPersistenceTests
         var connection = await NewDatabaseAsync("20260909213025_AddDeliveryAttemptConfirmation");
         await using var database = Open(connection);
         var target = await SeedTargetAsync(database);
-        var request = await SeedRequestAsync(database, target);
+        // Raw SQL, not the ORM: book_requests has gained columns since this
+        // migration pin (e.g. review_category), so BookRequest's current model
+        // no longer matches the schema at this exact point in history --
+        // exactly like InsertLegacyAttemptAsync below, which exists for the
+        // same reason on delivery_attempts.
+        var requestId = await SeedLegacyRequestAsync(database, target);
         var first = Guid.NewGuid();
         var duplicate = Guid.NewGuid();
         var standalone = Guid.NewGuid();
-        await InsertLegacyAttemptAsync(database, first, request.Id, target, 1, Now, "Failed", true);
-        await InsertLegacyAttemptAsync(database, duplicate, request.Id, target, 1, Now.AddMinutes(1), "Submitted", false);
+        await InsertLegacyAttemptAsync(database, first, requestId, target, 1, Now, "Failed", true);
+        await InsertLegacyAttemptAsync(database, duplicate, requestId, target, 1, Now.AddMinutes(1), "Submitted", false);
         await InsertLegacyAttemptAsync(database, standalone, null, target, 2, Now, "Failed", true);
 
         await database.Database.MigrateAsync();
@@ -180,6 +185,45 @@ public sealed class KindleDeliveryPersistenceTests
         Assert.IsEmpty(await new DeliveryAttemptRepository(database).ListRetryableFailedAsync(Now.AddDays(1), 3, CancellationToken.None));
         Assert.IsTrue(attempts.All(row => row.DeliveryId != Guid.Empty));
         Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    /// <summary>
+    /// Inserts a minimal book_requests/request_formats/request_participants/
+    /// request_status_history row set matching the schema as of
+    /// "20260909213025_AddDeliveryAttemptConfirmation" -- equivalent to
+    /// <c>new BookRequest(target.UserId, work.Id, [RequestMediaType.Ebook], null, Now, target.Id)</c>,
+    /// but via raw SQL since the current <see cref="BookRequest"/> model has
+    /// columns (e.g. review_category) that do not exist yet at this pin.
+    /// </summary>
+    private static async Task<Guid> SeedLegacyRequestAsync(AppDbContext database, DeliveryTarget target)
+    {
+        var work = new Work("Review book", null, null, null, PublicationStatus.Published, Now);
+        database.Works.Add(work);
+        await database.SaveChangesAsync();
+
+        var requestId = Guid.NewGuid();
+        await database.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO requests.book_requests
+                (id, user_id, work_id, status, requester_note, admin_note, requires_manual_fulfillment,
+                 version_kind, version_details, requested_at_utc, status_changed_at_utc, created_at_utc, updated_at_utc)
+            VALUES ({requestId}, {target.UserId}, {work.Id}, 'PendingAcquisition', NULL, NULL, false,
+                NULL, NULL, {Now}, {Now}, {Now}, {Now})
+            """);
+        await database.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO requests.request_formats (id, request_id, media_type, status, created_at_utc, updated_at_utc)
+            VALUES ({Guid.NewGuid()}, {requestId}, 'Ebook', 'Requested', {Now}, {Now})
+            """);
+        await database.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO requests.request_participants
+                (request_id, user_id, wants_ebook, wants_audiobook, note, delivery_target_id, joined_at_utc, withdrawn_at_utc)
+            VALUES ({requestId}, {target.UserId}, true, false, NULL, {target.Id}, {Now}, NULL)
+            """);
+        await database.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO requests.request_status_history (id, request_id, from_status, to_status, actor_user_id, reason, occurred_at_utc)
+            VALUES ({Guid.NewGuid()}, {requestId}, NULL, 'PendingAcquisition', {target.UserId}, NULL, {Now})
+            """);
+
+        return requestId;
     }
 
     private static Task<int> InsertLegacyAttemptAsync(AppDbContext database, Guid id, Guid? requestId,

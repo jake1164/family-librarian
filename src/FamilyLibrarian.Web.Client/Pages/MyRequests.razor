@@ -88,6 +88,31 @@
                                                ExternalActionUri="@format.ExternalActionUri" />
                         }
                     </MudStack>
+                    @if (request.NeedsReview is { Category: "PreferenceAmbiguity" } review)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true">
+                            We found an edition, but want to check with you before getting it.
+                        </MudAlert>
+                        @foreach (var candidate in review.Candidates)
+                        {
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                <MudText Typo="Typo.body2">@CandidateLabel(candidate)</MudText>
+                                <MudButton Variant="Variant.Text"
+                                           Size="Size.Small"
+                                           Color="Color.Success"
+                                           Disabled="@(busyRequestId == request.Id)"
+                                           OnClick="() => ResolveNeedsReviewAsync(request, candidate.CandidateId)">
+                                    Get it anyway
+                                </MudButton>
+                            </MudStack>
+                        }
+                        <MudButton Variant="Variant.Text"
+                                   Size="Size.Small"
+                                   Disabled="@(busyRequestId == request.Id)"
+                                   OnClick="() => ResolveNeedsReviewAsync(request, null)">
+                            Keep looking
+                        </MudButton>
+                    }
                     @if (request.KindleDelivery is { } kindle)
                     {
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
@@ -230,6 +255,42 @@
             busyRequestId = Guid.Empty;
         }
     }
+
+    private async Task ResolveNeedsReviewAsync(BookRequestResponse request, Guid? candidateId)
+    {
+        busyRequestId = request.Id;
+        errorMessage = null;
+
+        try
+        {
+            var outcome = await Requests.ResolveNeedsReviewAsync(request.Id, candidateId);
+            if (outcome.Succeeded)
+            {
+                await LoadAsync();
+            }
+            else
+            {
+                errorMessage = outcome.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That choice could not be saved. Please try again.";
+        }
+        finally
+        {
+            busyRequestId = Guid.Empty;
+        }
+    }
+
+    private static string CandidateLabel(RequestReviewCandidateResponse candidate) =>
+        candidate.Author is { } author
+            ? string.IsNullOrWhiteSpace(candidate.Language)
+                ? $"{candidate.Title} by {author}"
+                : $"{candidate.Title} by {author} ({candidate.Language})"
+            : string.IsNullOrWhiteSpace(candidate.Language)
+                ? candidate.Title
+                : $"{candidate.Title} ({candidate.Language})";
 
     private async Task RetryKindleDeliveryAsync(Guid attemptId, bool confirmPossibleDuplicate)
     {

@@ -52,6 +52,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<RequestStatusHistory> RequestStatusHistory => Set<RequestStatusHistory>();
 
+    public DbSet<RequestReviewCandidate> RequestReviewCandidates => Set<RequestReviewCandidate>();
+
     public DbSet<NotificationEvent> NotificationEvents => Set<NotificationEvent>();
 
     public DbSet<NotificationReceipt> NotificationReceipts => Set<NotificationReceipt>();
@@ -350,6 +352,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(request => request.RequiresManualFulfillment).HasColumnName("requires_manual_fulfillment");
             entity.Property(request => request.VersionKind).HasColumnName("version_kind").HasMaxLength(32);
             entity.Property(request => request.VersionDetails).HasColumnName("version_details").HasMaxLength(BookRequest.MaxNoteLength);
+            entity.Property(request => request.ReviewCategory).HasColumnName("review_category").HasConversion<string>().HasMaxLength(32);
             entity.Ignore(request => request.ActiveRequesterIds);
             entity.Ignore(request => request.SatisfiedRequesterIds);
             entity.Property(request => request.RequestedAtUtc).HasColumnName("requested_at_utc").HasColumnType("timestamp with time zone");
@@ -391,6 +394,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasMany(request => request.Participants).WithOne()
                 .HasForeignKey(participant => participant.RequestId).OnDelete(DeleteBehavior.Cascade);
             entity.Navigation(request => request.Participants).UsePropertyAccessMode(PropertyAccessMode.Field);
+            entity.HasMany(request => request.ReviewCandidates).WithOne()
+                .HasForeignKey(candidate => candidate.RequestId).OnDelete(DeleteBehavior.Cascade);
+            entity.Navigation(request => request.ReviewCandidates).UsePropertyAccessMode(PropertyAccessMode.Field);
         });
 
         builder.Entity<RequestParticipant>(entity =>
@@ -427,6 +433,32 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             // One row per media type per request: the database, not the command
             // handler, is what makes "ebook twice" impossible.
             entity.HasIndex(format => new { format.RequestId, format.MediaType }).IsUnique();
+        });
+
+        builder.Entity<RequestReviewCandidate>(entity =>
+        {
+            entity.ToTable("request_review_candidates", "requests");
+            entity.HasKey(candidate => candidate.Id);
+            entity.Property(candidate => candidate.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(candidate => candidate.RequestId).HasColumnName("request_id");
+            entity.Property(candidate => candidate.RequestFormatId).HasColumnName("request_format_id");
+            entity.Property(candidate => candidate.ProviderId).HasColumnName("provider_id").HasMaxLength(128);
+            entity.Property(candidate => candidate.ProviderResultId).HasColumnName("provider_result_id").HasMaxLength(256);
+            entity.Property(candidate => candidate.Title).HasColumnName("title").HasMaxLength(512);
+            entity.Property(candidate => candidate.Author).HasColumnName("author").HasMaxLength(512);
+            entity.Property(candidate => candidate.Language).HasColumnName("language").HasMaxLength(32);
+            entity.Property(candidate => candidate.DisplayOrder).HasColumnName("display_order");
+            entity.Property(candidate => candidate.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+
+            entity.HasIndex(candidate => new { candidate.RequestId, candidate.DisplayOrder });
+
+            // Restrict, not Cascade: RequestFormat is cascade-deleted from its
+            // parent BookRequest, and that same delete already cascades this
+            // row via the RequestId FK above -- a second cascade path here
+            // would create a multiple-cascade-paths error in the provider.
+            entity.HasOne<RequestFormat>().WithMany()
+                .HasForeignKey(candidate => candidate.RequestFormatId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<RequestStatusHistory>(entity =>

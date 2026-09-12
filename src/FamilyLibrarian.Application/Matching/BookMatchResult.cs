@@ -4,7 +4,16 @@ public enum BookMatchDecision
 {
     Match,
     Ambiguous,
-    NoMatch
+    NoMatch,
+
+    /// <summary>
+    /// Candidates existed and otherwise matched, but every one of them was
+    /// excluded by <see cref="LanguageAcceptance"/> -- distinct from
+    /// <see cref="NoMatch"/> (nothing found at all) so a caller can route
+    /// this to a preference decision instead of silently treating it as "not
+    /// found yet" or forcing a wrong-language match through.
+    /// </summary>
+    LanguageExcluded
 }
 
 /// <summary>
@@ -32,8 +41,9 @@ public enum BookMatchBasis
 /// <see cref="Candidates"/> is empty for <see cref="BookMatchDecision.NoMatch"/>,
 /// holds every conflicting candidate for <see cref="BookMatchDecision.Ambiguous"/>
 /// (so a future <see cref="IAmbiguityResolver"/> or an admin review screen has
-/// something to reason about), and holds the single matched candidate for
-/// <see cref="BookMatchDecision.Match"/>. <see cref="Basis"/> is set only for
+/// something to reason about), holds every excluded candidate for
+/// <see cref="BookMatchDecision.LanguageExcluded"/>, and holds the single
+/// matched candidate for <see cref="BookMatchDecision.Match"/>. <see cref="Basis"/> is set only for
 /// a <see cref="BookMatchDecision.Match"/>, by <see cref="IBookMatchService"/>
 /// (the one place that knows which lookup tier produced <paramref name="Candidates"/>).
 /// </remarks>
@@ -48,4 +58,7 @@ public sealed record BookMatchResult(
 
     public static BookMatchResult Ambiguous(IReadOnlyList<CandidateBook> candidates) =>
         new(BookMatchDecision.Ambiguous, null, candidates);
+
+    public static BookMatchResult LanguageExcluded(IReadOnlyList<CandidateBook> candidates) =>
+        new(BookMatchDecision.LanguageExcluded, null, candidates);
 }

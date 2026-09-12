@@ -24,6 +24,7 @@ public sealed class RequestRepository(
         await database.BookRequests
             .Include(request => request.Participants)
             .Include(request => request.Formats)
+            .Include(request => request.ReviewCandidates)
             .Where(request => request.WorkId == workId &&
                 (request.Status == RequestStatus.PendingAcquisition ||
                     request.Status == RequestStatus.NeedsReview))
@@ -38,6 +39,7 @@ public sealed class RequestRepository(
             .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
+            .Include(request => request.ReviewCandidates)
             .SingleOrDefaultAsync(
                 request => request.Id == requestId && request.Participants.Any(participant => participant.UserId == userId),
                 cancellationToken);
@@ -93,6 +95,7 @@ public sealed class RequestRepository(
             .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
+            .Include(request => request.ReviewCandidates)
             .SingleOrDefaultAsync(request => request.Id == requestId, cancellationToken);
 
     public async Task<IReadOnlyList<BookRequest>> ListPendingForAutomaticFulfillmentAsync(
@@ -105,6 +108,7 @@ public sealed class RequestRepository(
             .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
+            .Include(request => request.ReviewCandidates)
             .Where(request => request.Status == RequestStatus.PendingAcquisition && !request.RequiresManualFulfillment)
             .OrderBy(request => request.RequestedAtUtc)
             .Take(maximumCount)
@@ -125,6 +129,7 @@ public sealed class RequestRepository(
             .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
+            .Include(request => request.ReviewCandidates)
             .SingleOrDefaultAsync(
                 request => request.Formats.Any(format => format.Id == requestFormatId),
                 cancellationToken);
@@ -152,6 +157,7 @@ public sealed class RequestRepository(
             .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
+            .Include(request => request.ReviewCandidates)
             .Where(request => request.Status == status);
 
         if (providerId is not null)
@@ -221,6 +227,8 @@ public sealed class RequestRepository(
         // attempt can exist -- and this needs to keep showing it -- even once
         // its request has no outstanding formats left).
         var kindleDeliveries = await LoadKindleDeliveriesAsync(requests, cancellationToken);
+        var needsReview = await LoadNeedsReviewAsync(requests, cancellationToken);
+        requests = ApplyNeedsReview(requests, needsReview);
 
         var formatIds = requests
             .SelectMany(request => request.Formats)
@@ -424,6 +432,68 @@ public sealed class RequestRepository(
                     : request)
                 .ToArray();
 
+    /// <summary>
+    /// SELFSERV-1: only a <see cref="RequestReviewCategory.PreferenceAmbiguity"/>
+    /// review is ever loaded here -- <see cref="RequestReviewCategory.ProviderDisagreement"/>/
+    /// <see cref="RequestReviewCategory.SecurityOrIdentityFailure"/> stay
+    /// admin-only and unchanged, with nothing new for the owner to see.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<Guid, RequestNeedsReviewView>> LoadNeedsReviewAsync(
+        IReadOnlyList<BookRequestView> requests, CancellationToken cancellationToken)
+    {
+        var needsReviewIds = requests
+            .Where(request => request.Status == RequestStatus.NeedsReview)
+            .Select(request => request.Id)
+            .ToArray();
+        if (needsReviewIds.Length == 0)
+        {
+            return new Dictionary<Guid, RequestNeedsReviewView>();
+        }
+
+        var preferenceAmbiguityIds = await database.BookRequests
+            .AsNoTracking()
+            .Where(request => needsReviewIds.Contains(request.Id) &&
+                request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity)
+            .Select(request => request.Id)
+            .ToArrayAsync(cancellationToken);
+        if (preferenceAmbiguityIds.Length == 0)
+        {
+            return new Dictionary<Guid, RequestNeedsReviewView>();
+        }
+
+        var candidates = await database.RequestReviewCandidates
+            .AsNoTracking()
+            .Where(candidate => preferenceAmbiguityIds.Contains(candidate.RequestId))
+            .OrderBy(candidate => candidate.DisplayOrder)
+            .Select(candidate => new RequestReviewCandidateRow(
+                candidate.RequestId, candidate.Id, candidate.Title, candidate.Author, candidate.Language))
+            .ToArrayAsync(cancellationToken);
+        var candidatesByRequest = candidates
+            .GroupBy(candidate => candidate.RequestId)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<RequestReviewCandidateView>)group
+                    .Select(candidate => new RequestReviewCandidateView(
+                        candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language))
+                    .ToArray());
+
+        return preferenceAmbiguityIds.ToDictionary(
+            requestId => requestId,
+            requestId => new RequestNeedsReviewView(
+                RequestReviewCategory.PreferenceAmbiguity,
+                candidatesByRequest.TryGetValue(requestId, out var list) ? list : []));
+    }
+
+    private static IReadOnlyList<BookRequestView> ApplyNeedsReview(
+        IReadOnlyList<BookRequestView> requests, IReadOnlyDictionary<Guid, RequestNeedsReviewView> reviews) =>
+        reviews.Count == 0
+            ? requests
+            : requests
+                .Select(request => reviews.TryGetValue(request.Id, out var review)
+                    ? request with { NeedsReview = review }
+                    : request)
+                .ToArray();
+
     private async Task<IReadOnlyList<AdminBookRequestView>> AddAdminProgressAsync(
         IReadOnlyList<AdminBookRequestView> requests,
         CancellationToken cancellationToken)
@@ -559,4 +629,7 @@ public sealed class RequestRepository(
     private sealed record KindleDeliveryProgressRow(
         Guid RequestId, Guid DeliveryTargetId, Guid AttemptId, DeliveryAttemptStatus Status,
         string? FailureReason, int AttemptNumber, DeliveryConfirmationStatus ConfirmationStatus);
+
+    private sealed record RequestReviewCandidateRow(
+        Guid RequestId, Guid CandidateId, string Title, string? Author, string? Language);
 }

@@ -28,13 +28,22 @@ namespace FamilyLibrarian.Application.Acquisition;
 /// so the request stays in the automatic queue and tries again later.
 /// </para>
 /// </remarks>
+/// <summary>Outcome of resolving a SELFSERV-1 <see cref="RequestReviewCategory.PreferenceAmbiguity"/> review.</summary>
+public enum PreferenceAmbiguityResolutionOutcome
+{
+    Resolved,
+    NotFound,
+    Unauthenticated
+}
+
 public sealed class AutomaticRequestFulfillmentService(
     IRequestRepository requests,
     IProviderAttemptRepository attempts,
     IEnumerable<IAutomaticDirectAcquisitionProvider> providers,
     DirectAcquisitionSecurityService acquisition,
     IClock clock,
-    NotificationService notifications)
+    NotificationService notifications,
+    ICurrentUser currentUser)
 {
     private const int BatchSize = 20;
 
@@ -117,20 +126,44 @@ public sealed class AutomaticRequestFulfillmentService(
                     .Select(group => group.Single())
                     .ToArray();
 
-                if (distinctOptions.Length > 1)
+                // A RequiresLanguageConfirmation option (ACCURACY-1: title/author
+                // matched, but every result was excluded by LanguageAcceptance)
+                // must never be auto-selected here -- it is kept separate so it
+                // can be offered to the requester as a preference decision below
+                // instead of silently acquired or silently discarded.
+                var autoEligible = distinctOptions.Where(option => !option.RequiresLanguageConfirmation).ToArray();
+                var languageExcluded = distinctOptions.Where(option => option.RequiresLanguageConfirmation).ToArray();
+
+                if (autoEligible.Length > 1)
                 {
                     // Different providers confidently disagree on the file. Picking
                     // one automatically risks shipping the wrong edition, so this is
                     // the one "found something" case that still needs a librarian.
                     await MarkForReviewAsync(
-                        request, "More than one high-confidence automatic copy was found.", cancellationToken);
+                        request, RequestReviewCategory.ProviderDisagreement,
+                        "More than one high-confidence automatic copy was found.", cancellationToken);
                     await attempts.SaveChangesAsync(cancellationToken);
                     await requests.SaveChangesAsync(cancellationToken);
                     break;
                 }
 
-                if (distinctOptions.Length == 0)
+                if (autoEligible.Length == 0)
                 {
+                    if (languageExcluded.Length > 0)
+                    {
+                        // Something was found, but only in a language the requester
+                        // didn't ask for -- a preference decision, not a trust/safety
+                        // judgment, so it goes to them (SELFSERV-1), not just an admin.
+                        await MarkForReviewAsync(
+                            request, RequestReviewCategory.PreferenceAmbiguity,
+                            "A copy was found, but not in English.", cancellationToken,
+                            languageExcluded.Select(option => (format.Id, option.ProviderId, option.ProviderResultId, option.Language))
+                                .ToArray());
+                        await attempts.SaveChangesAsync(cancellationToken);
+                        await requests.SaveChangesAsync(cancellationToken);
+                        break;
+                    }
+
                     // Nothing found yet, not a failure — leave the request in the
                     // automatic queue. The cooldown above means this format is tried
                     // again once it elapses, with no librarian action needed.
@@ -138,58 +171,185 @@ public sealed class AutomaticRequestFulfillmentService(
                     continue;
                 }
 
-                var option = distinctOptions[0];
-                ManualImportResult result;
-                try
+                if (await AcquireOptionAsync(request, format, autoEligible[0], cancellationToken))
                 {
-                    result = await acquisition.AcquireAndEvaluateAsync(
-                        request.Id,
-                        format.Id,
-                        option.ProviderId,
-                        option.ProviderResultId,
-                        cancellationToken);
+                    processed++;
                 }
-                catch (Exception exception) when (exception is IOException or HttpRequestException or TaskCanceledException or InvalidOperationException)
+                else
                 {
-                    // A transport-level failure mid-download (e.g. the source
-                    // closing an idle connection partway through a multi-file
-                    // audiobook fetch), or the security/approval pipeline
-                    // rejecting the asset's state (AutomatedSecurityPipeline
-                    // throws InvalidOperationException when approval fails
-                    // for a reason other than an identity mismatch), must not
-                    // abort the whole batch — every other pending request
-                    // would silently stop being processed until the next
-                    // poll. Treat it exactly like an acquisition failure
-                    // below: unlike a search-phase failure (see
-                    // DescribeProviderFailure), this sends the request to
-                    // review rather than retrying on its own, so the reason
-                    // should not claim otherwise.
-                    result = ManualImportResult.Invalid(
-                        $"The file could not be processed: {exception.Message}");
-                }
-
-                if (result.Outcome != ManualImportOutcome.Success)
-                {
-                    attempts.Add(new ProviderAttempt(
-                        request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Failed,
-                        result.Error ?? "The automatic copy could not be acquired.", clock.UtcNow,
-                        nextEligibleCheckAtUtc: null));
-                    await MarkForReviewAsync(request, result.Error ?? "The automatic copy could not be acquired.", cancellationToken);
-                    await attempts.SaveChangesAsync(cancellationToken);
-                    await requests.SaveChangesAsync(cancellationToken);
                     break;
                 }
-
-                attempts.Add(new ProviderAttempt(
-                    request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Acquired,
-                    "A high-confidence copy was acquired and sent through the security pipeline.", clock.UtcNow,
-                    nextEligibleCheckAtUtc: null));
-                await attempts.SaveChangesAsync(cancellationToken);
-                processed++;
             }
         }
 
         return processed;
+    }
+
+    /// <summary>
+    /// Acquires one already-chosen option and records the outcome -- shared by
+    /// the automatic single-match path above and by
+    /// <see cref="ResolvePreferenceAmbiguityAsync"/> ("get it anyway"), which
+    /// hands this the specific candidate the requester picked instead of an
+    /// automatically-selected one.
+    /// </summary>
+    private async Task<bool> AcquireOptionAsync(
+        BookRequest request, RequestFormat format, FulfillmentOption option, CancellationToken cancellationToken)
+    {
+        ManualImportResult result;
+        try
+        {
+            result = await acquisition.AcquireAndEvaluateAsync(
+                request.Id,
+                format.Id,
+                option.ProviderId,
+                option.ProviderResultId,
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is IOException or HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            // A transport-level failure mid-download (e.g. the source
+            // closing an idle connection partway through a multi-file
+            // audiobook fetch), or the security/approval pipeline
+            // rejecting the asset's state (AutomatedSecurityPipeline
+            // throws InvalidOperationException when approval fails
+            // for a reason other than an identity mismatch), must not
+            // abort the whole batch — every other pending request
+            // would silently stop being processed until the next
+            // poll. Treat it exactly like an acquisition failure
+            // below: unlike a search-phase failure (see
+            // DescribeProviderFailure), this sends the request to
+            // review rather than retrying on its own, so the reason
+            // should not claim otherwise.
+            result = ManualImportResult.Invalid(
+                $"The file could not be processed: {exception.Message}");
+        }
+
+        if (result.Outcome != ManualImportOutcome.Success)
+        {
+            attempts.Add(new ProviderAttempt(
+                request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Failed,
+                result.Error ?? "The automatic copy could not be acquired.", clock.UtcNow,
+                nextEligibleCheckAtUtc: null));
+            await MarkForReviewAsync(
+                request, RequestReviewCategory.SecurityOrIdentityFailure,
+                result.Error ?? "The automatic copy could not be acquired.", cancellationToken);
+            await attempts.SaveChangesAsync(cancellationToken);
+            await requests.SaveChangesAsync(cancellationToken);
+            return false;
+        }
+
+        attempts.Add(new ProviderAttempt(
+            request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Acquired,
+            "A high-confidence copy was acquired and sent through the security pipeline.", clock.UtcNow,
+            nextEligibleCheckAtUtc: null));
+        await attempts.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    /// <summary>
+    /// SELFSERV-1: the requester accepted a specific
+    /// <see cref="RequestReviewCategory.PreferenceAmbiguity"/> candidate ("get
+    /// it anyway"), scoped to their own request -- mirrors
+    /// <c>DeliveryAttemptService.RetryAsync</c>'s owner-check shape.
+    /// </summary>
+    public async Task<PreferenceAmbiguityResolutionOutcome> ResolvePreferenceAmbiguityAsync(
+        Guid requestId, Guid candidateId, CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return PreferenceAmbiguityResolutionOutcome.Unauthenticated;
+        }
+
+        var request = await requests.FindOwnedRequestAsync(requestId, userId, cancellationToken);
+        return request is null
+            ? PreferenceAmbiguityResolutionOutcome.NotFound
+            : await AcceptCandidateAsync(request, candidateId, userId, cancellationToken);
+    }
+
+    /// <summary>Admin counterpart of <see cref="ResolvePreferenceAmbiguityAsync"/> -- no ownership check, additive per SELFSERV-1.</summary>
+    public async Task<PreferenceAmbiguityResolutionOutcome> AdminResolvePreferenceAmbiguityAsync(
+        Guid requestId, Guid candidateId, CancellationToken cancellationToken)
+    {
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        return request is null
+            ? PreferenceAmbiguityResolutionOutcome.NotFound
+            : await AcceptCandidateAsync(request, candidateId, currentUser.UserId, cancellationToken);
+    }
+
+    /// <summary>
+    /// SELFSERV-1: the requester declined every offered candidate ("keep
+    /// looking"), scoped to their own request. Returns the request to
+    /// automatic acquisition, which will try again once each provider's retry
+    /// cooldown elapses.
+    /// </summary>
+    public async Task<PreferenceAmbiguityResolutionOutcome> DismissPreferenceAmbiguityAsync(
+        Guid requestId, CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return PreferenceAmbiguityResolutionOutcome.Unauthenticated;
+        }
+
+        var request = await requests.FindOwnedRequestAsync(requestId, userId, cancellationToken);
+        return request is null
+            ? PreferenceAmbiguityResolutionOutcome.NotFound
+            : await DismissAsync(request, userId, cancellationToken);
+    }
+
+    /// <summary>Admin counterpart of <see cref="DismissPreferenceAmbiguityAsync"/> -- no ownership check.</summary>
+    public async Task<PreferenceAmbiguityResolutionOutcome> AdminDismissPreferenceAmbiguityAsync(
+        Guid requestId, CancellationToken cancellationToken)
+    {
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        return request is null
+            ? PreferenceAmbiguityResolutionOutcome.NotFound
+            : await DismissAsync(request, currentUser.UserId, cancellationToken);
+    }
+
+    private async Task<PreferenceAmbiguityResolutionOutcome> AcceptCandidateAsync(
+        BookRequest request, Guid candidateId, Guid? actorUserId, CancellationToken cancellationToken)
+    {
+        RequestReviewCandidate candidate;
+        try
+        {
+            candidate = request.AcceptReviewCandidate(candidateId, actorUserId, clock.UtcNow);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            return PreferenceAmbiguityResolutionOutcome.NotFound;
+        }
+
+        var format = request.Formats.Single(candidateFormat => candidateFormat.Id == candidate.RequestFormatId);
+        await requests.SaveChangesAsync(cancellationToken);
+
+        var option = new FulfillmentOption(
+            candidate.ProviderId, candidate.ProviderResultId, request.WorkId, EditionId: null,
+            format.MediaType, OptionKind.DirectAcquisition, AcquisitionMethod.DirectDownload,
+            Format: null, candidate.Language, Quality: null, Availability: null, Cost: null, Currency: null,
+            LicenseOrUsageStatus: null, DrmStatus: null, ExternalActionUri: null, ProviderData: null);
+
+        // Whether or not the acquisition itself succeeds, the review action
+        // has been resolved -- a failure already re-flags the request as
+        // SecurityOrIdentityFailure via AcquireOptionAsync, which the caller
+        // will see on its next load.
+        await AcquireOptionAsync(request, format, option, cancellationToken);
+        return PreferenceAmbiguityResolutionOutcome.Resolved;
+    }
+
+    private async Task<PreferenceAmbiguityResolutionOutcome> DismissAsync(
+        BookRequest request, Guid? actorUserId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            request.DismissReviewPreference(actorUserId, clock.UtcNow);
+        }
+        catch (InvalidOperationException)
+        {
+            return PreferenceAmbiguityResolutionOutcome.NotFound;
+        }
+
+        await requests.SaveChangesAsync(cancellationToken);
+        return PreferenceAmbiguityResolutionOutcome.Resolved;
     }
 
     /// <summary>
@@ -205,17 +365,37 @@ public sealed class AutomaticRequestFulfillmentService(
         attempt.AttemptedAtUtc >= request.StatusChangedAtUtc &&
         attempt.AttemptedAtUtc >= clock.UtcNow - RetryCooldown;
 
-    private async Task MarkForReviewAsync(BookRequest request, string reason, CancellationToken cancellationToken)
+    private async Task MarkForReviewAsync(
+        BookRequest request,
+        RequestReviewCategory category,
+        string reason,
+        CancellationToken cancellationToken,
+        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string? Language)>? languageExcludedOptions = null)
     {
         if (request.Status != RequestStatus.PendingAcquisition)
         {
             return;
         }
 
-        request.TransitionTo(RequestStatus.NeedsReview, actorUserId: null, reason, clock.UtcNow);
         var view = await requests.FindAdminViewAsync(request.Id, cancellationToken);
         var workTitle = view?.Request.WorkTitle ?? request.WorkId.ToString();
+
+        var candidates = languageExcludedOptions?
+            .Select(option => (option.RequestFormatId, option.ProviderId, option.ProviderResultId, Title: workTitle, Author: (string?)null, option.Language))
+            .ToArray();
+        request.MarkNeedsReview(category, reason, clock.UtcNow, candidates);
+
+        // Admin can still resolve a PreferenceAmbiguity item too (additive,
+        // not exclusive), so this fires unconditionally for every category.
         await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
+
+        if (category == RequestReviewCategory.PreferenceAmbiguity)
+        {
+            foreach (var requesterId in request.ActiveRequesterIds)
+            {
+                await notifications.RecordPreferenceAmbiguityAsync(requesterId, request.Id, workTitle, reason, cancellationToken);
+            }
+        }
     }
 
     private static string DescribeProviderFailure(Exception exception) => exception switch

@@ -84,6 +84,15 @@ public sealed class GutenbergProvider(
             RequireEpub: mediaType == RequestMediaType.Ebook,
             Take: 30), cancellationToken);
 
+        // Scan every title/author match before giving up on an English (or
+        // unspecified-language) edition -- stopping at the first match
+        // regardless of language (the old behavior) could return a foreign
+        // translation while a later candidate is the requested English
+        // edition. Non-English matches are kept, marked
+        // RequiresLanguageConfirmation, so a caller can offer them as a
+        // SELFSERV-1 preference choice instead of silently auto-acquiring
+        // (or silently discarding) them.
+        var languageExcluded = new List<FulfillmentOption>();
         foreach (var candidate in candidates)
         {
             if (!bookMatcher.TitleMatches(identity.Title, candidate.Title) ||
@@ -97,13 +106,20 @@ public sealed class GutenbergProvider(
             var option = mediaType == RequestMediaType.Ebook
                 ? BuildEbookOption(candidate)
                 : BuildAudiobookOption(candidate);
-            if (option is not null)
+            if (option is null)
+            {
+                continue;
+            }
+
+            if (LanguageAcceptance.IsEnglishOrUnspecified(option.Language))
             {
                 return [option];
             }
+
+            languageExcluded.Add(option with { RequiresLanguageConfirmation = true });
         }
 
-        return [];
+        return languageExcluded;
     }
 
     public async Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(

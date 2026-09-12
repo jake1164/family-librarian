@@ -178,7 +178,8 @@ public sealed class AudiobookshelfApiClient(
             }
 
             var itemAuthor = metadata?["authorName"]?.GetValue<string>();
-            candidates.Add(new CandidateBook(id, itemTitle, itemAuthor));
+            var itemLanguage = metadata?["language"]?.GetValue<string>();
+            candidates.Add(new CandidateBook(id, itemTitle, itemAuthor, itemLanguage));
         }
 
         return candidates;

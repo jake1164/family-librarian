@@ -1,3 +1,5 @@
+using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain.Requests;
@@ -19,6 +21,7 @@ internal static class RequestEndpoints
 
         requests.MapPost("/", CreateBookRequestAsync);
         requests.MapPost("/{requestId:guid}/transitions", ChangeBookRequestStatusAsync);
+        requests.MapPost("/{requestId:guid}/needs-review/resolve", ResolveNeedsReviewAsync);
     }
 
     private static async Task<IResult> ListMyRequestsAsync(
@@ -127,6 +130,38 @@ internal static class RequestEndpoints
         };
     }
 
+    /// <summary>
+    /// SELFSERV-1: the requester resolves their own "PreferenceAmbiguity"
+    /// review -- pick a candidate ("get it anyway") or omit one ("keep
+    /// looking"). Ownership is enforced inside <see cref="AutomaticRequestFulfillmentService"/>,
+    /// same as every other route in this file.
+    /// </summary>
+    private static async Task<IResult> ResolveNeedsReviewAsync(
+        Guid requestId,
+        ResolveNeedsReviewRequest request,
+        AutomaticRequestFulfillmentService fulfillment,
+        IRequestRepository repository,
+        ICurrentUser currentUser,
+        CancellationToken cancellationToken)
+    {
+        var outcome = request.CandidateId is { } candidateId
+            ? await fulfillment.ResolvePreferenceAmbiguityAsync(requestId, candidateId, cancellationToken)
+            : await fulfillment.DismissPreferenceAmbiguityAsync(requestId, cancellationToken);
+
+        if (outcome == PreferenceAmbiguityResolutionOutcome.Unauthenticated || currentUser.UserId is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (outcome == PreferenceAmbiguityResolutionOutcome.NotFound)
+        {
+            return Results.NotFound();
+        }
+
+        var view = await repository.FindViewAsync(requestId, userId, cancellationToken);
+        return view is null ? Results.NotFound() : Results.Ok(ToRequestResponse(view));
+    }
+
     private static bool TryParseMediaTypes(
         IReadOnlyList<string>? formats,
         out RequestMediaType[] mediaTypes)
@@ -198,6 +233,14 @@ internal static class RequestEndpoints
                 kindleDelivery.FailureReason,
                 kindleDelivery.AttemptNumber,
                 kindleDelivery.ConfirmationStatus.ToString())
+            : null,
+        request.NeedsReview is { } needsReview
+            ? new NeedsReviewResponse(
+                needsReview.Category.ToString(),
+                needsReview.Candidates
+                    .Select(candidate => new RequestReviewCandidateResponse(
+                        candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language))
+                    .ToArray())
             : null);
 
     // Plain language for a family, not the enum name. The status itself travels
