@@ -84,12 +84,17 @@ internal static class AdminRequestEndpoints
         CancellationToken cancellationToken)
     {
         var outcome = request.CandidateId is { } candidateId
-            ? await fulfillment.AdminResolvePreferenceAmbiguityAsync(requestId, candidateId, cancellationToken)
-            : await fulfillment.AdminDismissPreferenceAmbiguityAsync(requestId, cancellationToken);
+            ? await fulfillment.AdminResolvePreferenceAmbiguityAsync(requestId, candidateId, request.ExpectedVersion, cancellationToken)
+            : await fulfillment.AdminDismissPreferenceAmbiguityAsync(requestId, request.ExpectedVersion, cancellationToken);
 
         if (outcome == PreferenceAmbiguityResolutionOutcome.NotFound)
         {
             return Results.NotFound();
+        }
+
+        if (outcome == PreferenceAmbiguityResolutionOutcome.Conflict)
+        {
+            return Results.Conflict(new { message = "Someone else updated this request. Reload it before making another change." });
         }
 
         var view = await requests.GetForAdminAsync(requestId, cancellationToken);

@@ -85,12 +85,13 @@ public sealed class RequestsApiClient(HttpClient httpClient, AntiforgeryTokenPro
     public async Task<ChangeStatusOutcome> ResolveNeedsReviewAsync(
         Guid requestId,
         Guid? candidateId,
+        uint? expectedVersion = null,
         CancellationToken cancellationToken = default)
     {
         using var response = await SendAsync(
             HttpMethod.Post,
             $"api/v1/requests/{requestId}/needs-review/resolve",
-            new ResolveNeedsReviewRequest(candidateId),
+            new ResolveNeedsReviewRequest(candidateId, expectedVersion),
             cancellationToken);
 
         return response.IsSuccessStatusCode

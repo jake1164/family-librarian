@@ -145,8 +145,8 @@ internal static class RequestEndpoints
         CancellationToken cancellationToken)
     {
         var outcome = request.CandidateId is { } candidateId
-            ? await fulfillment.ResolvePreferenceAmbiguityAsync(requestId, candidateId, cancellationToken)
-            : await fulfillment.DismissPreferenceAmbiguityAsync(requestId, cancellationToken);
+            ? await fulfillment.ResolvePreferenceAmbiguityAsync(requestId, candidateId, request.ExpectedVersion, cancellationToken)
+            : await fulfillment.DismissPreferenceAmbiguityAsync(requestId, request.ExpectedVersion, cancellationToken);
 
         if (outcome == PreferenceAmbiguityResolutionOutcome.Unauthenticated || currentUser.UserId is not { } userId)
         {
@@ -156,6 +156,11 @@ internal static class RequestEndpoints
         if (outcome == PreferenceAmbiguityResolutionOutcome.NotFound)
         {
             return Results.NotFound();
+        }
+
+        if (outcome == PreferenceAmbiguityResolutionOutcome.Conflict)
+        {
+            return Results.Conflict(new { message = "Someone else updated this request. Reload it before making another change." });
         }
 
         var view = await repository.FindViewAsync(requestId, userId, cancellationToken);

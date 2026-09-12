@@ -86,7 +86,13 @@ public sealed record RequestReviewCandidateResponse(Guid CandidateId, string Tit
 /// Which offered candidate to acquire ("get it anyway"). Omit to decline
 /// every candidate instead ("keep looking").
 /// </param>
-public sealed record ResolveNeedsReviewRequest(Guid? CandidateId);
+/// <param name="ExpectedVersion">
+/// Optional optimistic-concurrency check, same convention as
+/// <see cref="ChangeBookRequestStatusRequest.ExpectedVersion"/> -- guards
+/// against two participants on a shared request resolving the same review
+/// at once.
+/// </param>
+public sealed record ResolveNeedsReviewRequest(Guid? CandidateId, uint? ExpectedVersion = null);
 
 public sealed record BookRequestFormatResponse(
     Guid FormatId,

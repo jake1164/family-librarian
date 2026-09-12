@@ -33,7 +33,8 @@ public enum PreferenceAmbiguityResolutionOutcome
 {
     Resolved,
     NotFound,
-    Unauthenticated
+    Unauthenticated,
+    Conflict
 }
 
 public sealed class AutomaticRequestFulfillmentService(
@@ -253,7 +254,7 @@ public sealed class AutomaticRequestFulfillmentService(
     /// <c>DeliveryAttemptService.RetryAsync</c>'s owner-check shape.
     /// </summary>
     public async Task<PreferenceAmbiguityResolutionOutcome> ResolvePreferenceAmbiguityAsync(
-        Guid requestId, Guid candidateId, CancellationToken cancellationToken)
+        Guid requestId, Guid candidateId, uint? expectedVersion, CancellationToken cancellationToken)
     {
         if (currentUser.UserId is not { } userId)
         {
@@ -263,17 +264,17 @@ public sealed class AutomaticRequestFulfillmentService(
         var request = await requests.FindOwnedRequestAsync(requestId, userId, cancellationToken);
         return request is null
             ? PreferenceAmbiguityResolutionOutcome.NotFound
-            : await AcceptCandidateAsync(request, candidateId, userId, cancellationToken);
+            : await AcceptCandidateAsync(request, candidateId, expectedVersion, userId, cancellationToken);
     }
 
     /// <summary>Admin counterpart of <see cref="ResolvePreferenceAmbiguityAsync"/> -- no ownership check, additive per SELFSERV-1.</summary>
     public async Task<PreferenceAmbiguityResolutionOutcome> AdminResolvePreferenceAmbiguityAsync(
-        Guid requestId, Guid candidateId, CancellationToken cancellationToken)
+        Guid requestId, Guid candidateId, uint? expectedVersion, CancellationToken cancellationToken)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         return request is null
             ? PreferenceAmbiguityResolutionOutcome.NotFound
-            : await AcceptCandidateAsync(request, candidateId, currentUser.UserId, cancellationToken);
+            : await AcceptCandidateAsync(request, candidateId, expectedVersion, currentUser.UserId, cancellationToken);
     }
 
     /// <summary>
@@ -283,7 +284,7 @@ public sealed class AutomaticRequestFulfillmentService(
     /// cooldown elapses.
     /// </summary>
     public async Task<PreferenceAmbiguityResolutionOutcome> DismissPreferenceAmbiguityAsync(
-        Guid requestId, CancellationToken cancellationToken)
+        Guid requestId, uint? expectedVersion, CancellationToken cancellationToken)
     {
         if (currentUser.UserId is not { } userId)
         {
@@ -293,22 +294,32 @@ public sealed class AutomaticRequestFulfillmentService(
         var request = await requests.FindOwnedRequestAsync(requestId, userId, cancellationToken);
         return request is null
             ? PreferenceAmbiguityResolutionOutcome.NotFound
-            : await DismissAsync(request, userId, cancellationToken);
+            : await DismissAsync(request, expectedVersion, userId, cancellationToken);
     }
 
     /// <summary>Admin counterpart of <see cref="DismissPreferenceAmbiguityAsync"/> -- no ownership check.</summary>
     public async Task<PreferenceAmbiguityResolutionOutcome> AdminDismissPreferenceAmbiguityAsync(
-        Guid requestId, CancellationToken cancellationToken)
+        Guid requestId, uint? expectedVersion, CancellationToken cancellationToken)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         return request is null
             ? PreferenceAmbiguityResolutionOutcome.NotFound
-            : await DismissAsync(request, currentUser.UserId, cancellationToken);
+            : await DismissAsync(request, expectedVersion, currentUser.UserId, cancellationToken);
     }
 
     private async Task<PreferenceAmbiguityResolutionOutcome> AcceptCandidateAsync(
-        BookRequest request, Guid candidateId, Guid? actorUserId, CancellationToken cancellationToken)
+        BookRequest request, Guid candidateId, uint? expectedVersion, Guid? actorUserId, CancellationToken cancellationToken)
     {
+        // Same optimistic-concurrency convention as BookRequestService.TransitionAsync:
+        // two participants on a shared request could otherwise both act on the
+        // same review at once (one accepting a candidate, the other dismissing,
+        // or two different candidates), and the loser should see a clean
+        // conflict rather than an unhandled DbUpdateConcurrencyException.
+        if (expectedVersion is not null && request.Version != expectedVersion)
+        {
+            return PreferenceAmbiguityResolutionOutcome.Conflict;
+        }
+
         RequestReviewCandidate candidate;
         try
         {
@@ -337,8 +348,13 @@ public sealed class AutomaticRequestFulfillmentService(
     }
 
     private async Task<PreferenceAmbiguityResolutionOutcome> DismissAsync(
-        BookRequest request, Guid? actorUserId, CancellationToken cancellationToken)
+        BookRequest request, uint? expectedVersion, Guid? actorUserId, CancellationToken cancellationToken)
     {
+        if (expectedVersion is not null && request.Version != expectedVersion)
+        {
+            return PreferenceAmbiguityResolutionOutcome.Conflict;
+        }
+
         try
         {
             request.DismissReviewPreference(actorUserId, clock.UtcNow);

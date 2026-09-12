@@ -263,7 +263,7 @@
 
         try
         {
-            var outcome = await Requests.ResolveNeedsReviewAsync(request.Id, candidateId);
+            var outcome = await Requests.ResolveNeedsReviewAsync(request.Id, candidateId, expectedVersion: request.Version);
             if (outcome.Succeeded)
             {
                 await LoadAsync();

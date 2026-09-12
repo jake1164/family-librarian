@@ -400,6 +400,44 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     [TestMethod]
+    public async Task AStaleExpectedVersionOnResolveReturnsConflictWithoutMutatingTheRequest()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(
+            fixture, new FakeProvider(matches: true, requiresLanguageConfirmation: true, language: "spa"));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, _) = await CreateEbookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        Guid candidateId;
+        uint currentVersion;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            candidateId = (await database.RequestReviewCandidates.SingleAsync(c => c.RequestId == requestId)).Id;
+            currentVersion = (await database.BookRequests.SingleAsync(r => r.Id == requestId)).Version;
+        }
+
+        // Simulates a second household member acting on a stale copy of the
+        // page -- the loser of a race must see a clean conflict, not an
+        // unhandled DbUpdateConcurrencyException (a real gap found in review:
+        // this endpoint originally had no version check at all).
+        var response = await requester.PostAsJsonAsync(
+            $"/api/v1/requests/{requestId}/needs-review/resolve",
+            new ResolveNeedsReviewRequest(candidateId, ExpectedVersion: currentVersion + 12345));
+
+        Assert.AreEqual(HttpStatusCode.Conflict, response.StatusCode);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyDatabase = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var verifiedRequest = await verifyDatabase.BookRequests.SingleAsync(r => r.Id == requestId);
+        Assert.AreEqual(RequestStatus.NeedsReview, verifiedRequest.Status);
+        Assert.AreEqual(RequestReviewCategory.PreferenceAmbiguity, verifiedRequest.ReviewCategory);
+        Assert.AreEqual(1, await verifyDatabase.RequestReviewCandidates.CountAsync(c => c.RequestId == requestId));
+    }
+
+    [TestMethod]
     public async Task AnAdminCanResolveAPreferenceAmbiguityReviewTooAdditiveNotExclusive()
     {
         var fixture = WebTestFixture.Require(_fixture);
