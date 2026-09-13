@@ -3,10 +3,12 @@
 @implements IDisposable
 @using FamilyLibrarian.Contracts.Delivery
 @using FamilyLibrarian.Web.Client.Delivery
+@using FamilyLibrarian.Web.Client.Following
 @inject CatalogApiClient Catalog
 @inject CatalogSearchState SearchState
 @inject RequestsApiClient Requests
 @inject DeliveryTargetApiClient DeliveryTargets
+@inject FollowApiClient Follows
 
 <PageTitle>@(book?.Title ?? "Book") · Family Librarian</PageTitle>
 
@@ -124,9 +126,18 @@
                 <MudText Typo="Typo.h6">Known series context</MudText>
                 @foreach (var series in book.Series)
                 {
-                    <MudText Typo="Typo.body2">
-                        @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
-                    </MudText>
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                        <MudText Typo="Typo.body2">
+                            @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
+                        </MudText>
+                        <MudButton Variant="Variant.Text"
+                                   Size="Size.Small"
+                                   Color="@(IsFollowingSeriesNamed(series.Name) ? Color.Primary : Color.Default)"
+                                   Disabled="@isTogglingSeriesFollow"
+                                   OnClick="() => ToggleSeriesFollowAsync(series.Name)">
+                            @(IsFollowingSeriesNamed(series.Name) ? "Following" : "Follow this series")
+                        </MudButton>
+                    </MudStack>
                 }
             </MudPaper>
         }
@@ -419,6 +430,9 @@
     private bool sendExistingSucceeded;
     private string? sendExistingMessage;
     private bool sendExistingRequiresConfirmation;
+    private HashSet<Guid> followedSeriesIds = [];
+    private readonly Dictionary<string, Guid> resolvedSeriesIdsByName = new(StringComparer.OrdinalIgnoreCase);
+    private bool isTogglingSeriesFollow;
 
     private bool HasFormatSelected => wantsEbook || wantsAudiobook;
 
@@ -433,6 +447,63 @@
         {
             // Informational only -- a failed lookup just hides the Kindle
             // checkbox rather than failing the page.
+        }
+
+        try
+        {
+            followedSeriesIds = (await Follows.GetMineAsync()).Series.Select(series => series.SeriesId).ToHashSet();
+        }
+        catch (HttpRequestException)
+        {
+            // Informational only -- a failed lookup just shows every follow
+            // button as "not yet following" rather than failing the page.
+        }
+    }
+
+    private bool IsFollowingSeriesNamed(string name) =>
+        resolvedSeriesIdsByName.TryGetValue(name, out var seriesId) && followedSeriesIds.Contains(seriesId);
+
+    // A raw, not-yet-resolved candidate's series has no persisted Series.Id
+    // to follow -- it only becomes a real, followable catalog entity once
+    // resolved into a Work, same as "Request this book" already resolves it.
+    // Resolving is idempotent (returns the existing Work if this candidate
+    // was already resolved), so following does not also create a request.
+    private async Task ToggleSeriesFollowAsync(string seriesName)
+    {
+        isTogglingSeriesFollow = true;
+
+        try
+        {
+            resolvedWork ??= await Catalog.ResolveCandidateAsync(ProviderId, ExternalId);
+            var matched = resolvedWork.Series.FirstOrDefault(series =>
+                string.Equals(series.Name, seriesName, StringComparison.OrdinalIgnoreCase) && series.Id is not null);
+            if (matched?.Id is not { } seriesId)
+            {
+                return;
+            }
+
+            resolvedSeriesIdsByName[seriesName] = seriesId;
+
+            var succeeded = followedSeriesIds.Contains(seriesId)
+                ? await Follows.UnfollowSeriesAsync(seriesId)
+                : await Follows.FollowSeriesAsync(seriesId);
+
+            if (succeeded)
+            {
+                if (!followedSeriesIds.Remove(seriesId))
+                {
+                    followedSeriesIds.Add(seriesId);
+                }
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: the button simply reflects whatever the last
+            // successful toggle left it as.
+        }
+        finally
+        {
+            isTogglingSeriesFollow = false;
         }
     }
 
