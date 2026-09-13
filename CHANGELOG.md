@@ -4,6 +4,34 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ---
 
+## [v1.0.0-alpha.2] — 2026-09-13
+
+Accuracy and self-service: automatic acquisition now enforces language instead of silently accepting a mismatched translation, and a book found only in another language (or with more than one plausible edition) is offered to the requester to decide, not routed straight to an admin queue.
+
+### Language accuracy in matching
+
+- Automatic acquisition — the free-source lookup, Calibre-Web Automated, and Audiobookshelf — now defaults to English: a candidate whose declared language isn't English is never silently auto-selected, while a title with no language metadata at all is unaffected, not penalized
+- EPUB identity verification enforces the same language check as the destination libraries, so a mismatched translation can't pass just because its title and author matched
+- Common language spellings and codes are recognized as equivalent (for example `es`, `spa`, `Spanish`, `es-MX`), so a legitimate match isn't rejected over notation
+- "Already owned" lookups against Calibre-Web Automated/Audiobookshelf only report a title as owned on a single confident match — an ambiguous result or a library entry in the wrong language is never treated as satisfying a request
+
+### Self-service resolution for ambiguous matches
+
+- When automatic acquisition finds a book only in another language, or finds more than one plausible edition, the requester is notified and sees it directly on their own request, with the choice to accept a specific edition ("Get it anyway") or ask for another pass ("Keep looking") — no admin involvement required
+- Offered editions show their own title and author instead of the generic book title, so multiple candidates are actually distinguishable
+- An admin can resolve that same choice from the request detail page, for a request with no active participant left to decide
+- Accepting a specific edition carries all the way through: the accepted language is verified against both the destination library and the downloaded file itself before a request is marked delivered, so "get it anyway" can't be satisfied by a different, unrelated language
+- "Keep looking" no longer immediately re-offers the exact edition just declined
+- Two people acting on the same shared request's review at the same time no longer risk a server error — one succeeds and the other is asked to reload
+- Withdrawing from or cancelling a request invalidates any pending language/edition review on it, so a stale decision can't reopen or misroute a request that no longer needs one
+
+**Container images**
+
+```text
+ghcr.io/jake1164/family-librarian:v1.0.0-alpha.2
+ghcr.io/jake1164/family-librarian:alpha
+```
+
 ## [v1.0.0-alpha.1] — 2026-09-10
 
 The first alpha release of Family Librarian. Everything below was built from scratch over the last five weeks: local and OIDC/Authentik sign-in, metadata search across Google Books/Open Library/Project Gutenberg, Calibre-Web Automated and Audiobookshelf ingestion, a request/queue pipeline with real-time updates, Kindle delivery with delivery confirmation, malware scanning on every incoming file, SMTP notifications, and Postgres backup/restore — this entry is the baseline the rest of the changelog builds on.
