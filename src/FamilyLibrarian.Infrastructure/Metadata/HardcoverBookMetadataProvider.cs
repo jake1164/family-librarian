@@ -40,6 +40,8 @@ public sealed class HardcoverBookMetadataProvider(
         description
         release_date
         slug
+        compilation
+        is_partial_book
         cached_image
         contributions {
           author {
@@ -175,6 +177,19 @@ public sealed class HardcoverBookMetadataProvider(
     {
         var title = book.Title?.Trim();
         if (string.IsNullOrWhiteSpace(title))
+        {
+            return null;
+        }
+
+        // Observed live: a real, well-populated Hardcover row (cover,
+        // description, correctly-linked contributors) can still be a
+        // multi-book omnibus titled only after its author, e.g. a "Tom
+        // Clancy" 3-in-1 audiobook compilation — not a stub, but not a
+        // single describable work either, and FL's acquisition model has no
+        // notion of a bundle. This was named in this provider's own plan
+        // (§H) from the start; wiring it in was simply missed until this was
+        // found live.
+        if (book.Compilation || book.IsPartialBook == true)
         {
             return null;
         }
@@ -370,6 +385,12 @@ public sealed class HardcoverBookMetadataProvider(
 
         [JsonPropertyName("slug")]
         public string? Slug { get; init; }
+
+        [JsonPropertyName("compilation")]
+        public bool Compilation { get; init; }
+
+        [JsonPropertyName("is_partial_book")]
+        public bool? IsPartialBook { get; init; }
 
         [JsonPropertyName("cached_image")]
         public JsonElement? CachedImage { get; init; }

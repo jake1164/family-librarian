@@ -98,6 +98,48 @@ public sealed class HardcoverBookMetadataProviderTests
     }
 
     [TestMethod]
+    public async Task GetDetailsAsyncDropsACompilationEvenWithRealContent()
+    {
+        // Reproduces a second, subtler real result observed live: Hardcover
+        // book id 2135046 is a genuine, well-populated row — real cover,
+        // real description, correctly-linked "Author"/"Read by" contributors
+        // — but it is a 3-in-1 audiobook compilation titled only "Tom
+        // Clancy", not a describable single work. The stub filter above does
+        // not catch this (it has real content); only `compilation` does.
+        using var handler = new StubHttpMessageHandler((_, _) =>
+            Task.FromResult(JsonResponse(
+                """
+                {
+                  "data": {
+                    "books_by_pk": {
+                      "id": 2135046,
+                      "title": "Tom Clancy",
+                      "description": "CARDINAL OF THE KREMLIN Mikhail Filitov is a war hero...",
+                      "release_date": "2000-11-01",
+                      "compilation": true,
+                      "is_partial_book": false,
+                      "cached_image": {
+                        "url": "https://assets.hardcover.app/external_data/1515595/hobbit.jpeg"
+                      },
+                      "contributions": [
+                        { "author": { "name": "Tom Clancy" } },
+                        { "author": { "name": "David Ogden Stiers" } }
+                      ],
+                      "editions": [
+                        { "isbn_13": "9780743506977", "edition_format": "", "release_date": "2000-11-01" }
+                      ]
+                    }
+                  }
+                }
+                """)));
+        var provider = CreateProvider(handler);
+
+        var result = await provider.GetDetailsAsync("2135046", CancellationToken.None);
+
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
     public async Task SearchAsyncReturnsAnEmptyPageWithoutASecondRequestWhenNothingMatches()
     {
         var requestCount = 0;
