@@ -10,14 +10,15 @@ namespace FamilyLibrarian.Application.Matching;
 /// </summary>
 public sealed class DeterministicBookMatcher : IBookMatcher
 {
-    public BookMatchResult ResolveUnique(IReadOnlyList<CandidateBook> candidates)
+    public BookMatchResult ResolveUnique(IReadOnlyList<CandidateBook> candidates, string? acceptedLanguage = null)
     {
         if (candidates.Count == 0)
         {
             return BookMatchResult.NoMatchResult;
         }
 
-        var eligible = candidates.Where(candidate => LanguageAcceptance.IsEnglishOrUnspecified(candidate.Language))
+        var eligible = candidates.Where(candidate =>
+                LanguageAcceptance.IsEnglishOrUnspecified(candidate.Language) || acceptedLanguage is not null)
             .ToArray();
         if (eligible.Length == 0)
         {
@@ -35,13 +36,14 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         };
     }
 
-    public BookMatchResult MatchByTitleAuthor(string title, string? author, IReadOnlyList<CandidateBook> candidates)
+    public BookMatchResult MatchByTitleAuthor(
+        string title, string? author, IReadOnlyList<CandidateBook> candidates, string? acceptedLanguage = null)
     {
         var matches = candidates
             .Where(candidate => TitleMatches(title, candidate.Title) && AuthorMatches(author, candidate.Author))
             .ToArray();
 
-        return ResolveUnique(matches);
+        return ResolveUnique(matches, acceptedLanguage);
     }
 
     public bool TitleMatches(string expectedTitle, string candidateTitle)

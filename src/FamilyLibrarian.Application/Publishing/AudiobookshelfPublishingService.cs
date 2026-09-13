@@ -145,7 +145,8 @@ public sealed class AudiobookshelfPublishingService(
 
         try
         {
-            var existing = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
+            var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
+            var existing = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken, acceptedLanguage);
             if (existing.Decision == BookMatchDecision.Match)
             {
                 delivery.MarkDelivered(existing.MatchedId!, clock.UtcNow);
@@ -256,7 +257,8 @@ public sealed class AudiobookshelfPublishingService(
 
         try
         {
-            var existing = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
+            var acceptedLanguage = await FindAcceptedLanguageAsync(tracks[0].AssociatedRequestFormatId, cancellationToken);
+            var existing = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken, acceptedLanguage);
             if (existing.Decision == BookMatchDecision.Match)
             {
                 delivery.MarkDelivered(existing.MatchedId!, clock.UtcNow);
@@ -364,7 +366,8 @@ public sealed class AudiobookshelfPublishingService(
     {
         try
         {
-            var result = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
+            var acceptedLanguage = await FindAcceptedLanguageAsync(assets[0].AssociatedRequestFormatId, cancellationToken);
+            var result = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken, acceptedLanguage);
             if (result.Decision == BookMatchDecision.Match)
             {
                 delivery.MarkDelivered(result.MatchedId!, clock.UtcNow);
@@ -423,6 +426,18 @@ public sealed class AudiobookshelfPublishingService(
                     cancellationToken);
             }
         }
+    }
+
+    /// <summary>
+    /// The language the requester already explicitly accepted for this
+    /// specific format (F1 in alpha2-review-2026-09-12.md), if any -- widens
+    /// this one verification lookup past the ordinary English-or-unspecified
+    /// filter so an accepted foreign-language copy can actually be confirmed.
+    /// </summary>
+    private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
+    {
+        var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
+        return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
     }
 
     private async Task MarkRequestFormatAvailableAsync(

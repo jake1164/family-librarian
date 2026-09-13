@@ -122,9 +122,20 @@ public sealed class AutomaticRequestFulfillmentService(
                     }
                 }
 
+                // A previously-declined candidate (F3 in
+                // alpha2-review-2026-09-12.md: "keep looking") must not come
+                // back on the very next pass just because the retry cooldown
+                // was bypassed by the dismissal itself -- only a genuinely
+                // different provider result is offered again.
+                var declined = request.DeclinedCandidates
+                    .Where(candidate => candidate.RequestFormatId == format.Id)
+                    .Select(candidate => (candidate.ProviderId, candidate.ProviderResultId))
+                    .ToHashSet(StringTupleComparer.OrdinalIgnoreCase);
+
                 var distinctOptions = options
                     .GroupBy(option => (option.ProviderId, option.ProviderResultId), StringTupleComparer.OrdinalIgnoreCase)
                     .Select(group => group.Single())
+                    .Where(option => !declined.Contains((option.ProviderId, option.ProviderResultId)))
                     .ToArray();
 
                 // A RequiresLanguageConfirmation option (ACCURACY-1: title/author
@@ -137,6 +148,23 @@ public sealed class AutomaticRequestFulfillmentService(
 
                 if (autoEligible.Length > 1)
                 {
+                    if (autoEligible.Select(option => option.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
+                    {
+                        // One provider found multiple plausible editions of the
+                        // same work -- per SELFSERV-1, an edition preference is
+                        // the requester's call, not a trust/safety concern, so
+                        // this is routed the same way as a language-excluded
+                        // result rather than the cross-provider case below.
+                        await MarkForReviewAsync(
+                            request, RequestReviewCategory.PreferenceAmbiguity,
+                            "Multiple plausible editions were found.", cancellationToken,
+                            autoEligible.Select(option => (format.Id, option.ProviderId, option.ProviderResultId, option.Title, option.Author, option.Language))
+                                .ToArray());
+                        await attempts.SaveChangesAsync(cancellationToken);
+                        await requests.SaveChangesAsync(cancellationToken);
+                        break;
+                    }
+
                     // Different providers confidently disagree on the file. Picking
                     // one automatically risks shipping the wrong edition, so this is
                     // the one "found something" case that still needs a librarian.
@@ -158,7 +186,7 @@ public sealed class AutomaticRequestFulfillmentService(
                         await MarkForReviewAsync(
                             request, RequestReviewCategory.PreferenceAmbiguity,
                             "A copy was found, but not in English.", cancellationToken,
-                            languageExcluded.Select(option => (format.Id, option.ProviderId, option.ProviderResultId, option.Language))
+                            languageExcluded.Select(option => (format.Id, option.ProviderId, option.ProviderResultId, option.Title, option.Author, option.Language))
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
@@ -261,20 +289,48 @@ public sealed class AutomaticRequestFulfillmentService(
             return PreferenceAmbiguityResolutionOutcome.Unauthenticated;
         }
 
-        var request = await requests.FindOwnedRequestAsync(requestId, userId, cancellationToken);
-        return request is null
-            ? PreferenceAmbiguityResolutionOutcome.NotFound
-            : await AcceptCandidateAsync(request, candidateId, expectedVersion, userId, cancellationToken);
+        // The pre-lock lookup deliberately uses the projected view, not
+        // FindOwnedRequestAsync -- a tracking query here would be cached by
+        // EF's identity map, so the "reload" inside the lock below would
+        // silently return that same stale tracked instance instead of a
+        // fresh row (missing the concurrent-update case F4 exists to catch).
+        // Mirrors BookRequestService.TransitionAsync's FindViewAsync usage.
+        var initial = await requests.FindViewAsync(requestId, userId, cancellationToken);
+        if (initial is null)
+        {
+            return PreferenceAmbiguityResolutionOutcome.NotFound;
+        }
+
+        return await requests.InCreateRequestScopeAsync(userId, initial.WorkId, async token =>
+        {
+            var request = await requests.FindOwnedRequestAsync(requestId, userId, token);
+            return request is null || !IsActiveParticipant(request, userId)
+                ? PreferenceAmbiguityResolutionOutcome.NotFound
+                : await AcceptCandidateAsync(request, candidateId, expectedVersion, userId, token);
+        }, cancellationToken);
     }
 
     /// <summary>Admin counterpart of <see cref="ResolvePreferenceAmbiguityAsync"/> -- no ownership check, additive per SELFSERV-1.</summary>
     public async Task<PreferenceAmbiguityResolutionOutcome> AdminResolvePreferenceAmbiguityAsync(
         Guid requestId, Guid candidateId, uint? expectedVersion, CancellationToken cancellationToken)
     {
-        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
-        return request is null
-            ? PreferenceAmbiguityResolutionOutcome.NotFound
-            : await AcceptCandidateAsync(request, candidateId, expectedVersion, currentUser.UserId, cancellationToken);
+        // See the remark on ResolvePreferenceAmbiguityAsync -- FindAdminViewAsync
+        // is a projection, so it does not pre-track the entity the lock's
+        // reload needs to actually re-read.
+        var initial = await requests.FindAdminViewAsync(requestId, cancellationToken);
+        if (initial is null)
+        {
+            return PreferenceAmbiguityResolutionOutcome.NotFound;
+        }
+
+        var actorUserId = currentUser.UserId;
+        return await requests.InCreateRequestScopeAsync(actorUserId ?? Guid.Empty, initial.Request.WorkId, async token =>
+        {
+            var request = await requests.FindRequestForAdminAsync(requestId, token);
+            return request is null
+                ? PreferenceAmbiguityResolutionOutcome.NotFound
+                : await AcceptCandidateAsync(request, candidateId, expectedVersion, actorUserId, token);
+        }, cancellationToken);
     }
 
     /// <summary>
@@ -291,30 +347,53 @@ public sealed class AutomaticRequestFulfillmentService(
             return PreferenceAmbiguityResolutionOutcome.Unauthenticated;
         }
 
-        var request = await requests.FindOwnedRequestAsync(requestId, userId, cancellationToken);
-        return request is null
-            ? PreferenceAmbiguityResolutionOutcome.NotFound
-            : await DismissAsync(request, expectedVersion, userId, cancellationToken);
+        var initial = await requests.FindViewAsync(requestId, userId, cancellationToken);
+        if (initial is null)
+        {
+            return PreferenceAmbiguityResolutionOutcome.NotFound;
+        }
+
+        return await requests.InCreateRequestScopeAsync(userId, initial.WorkId, async token =>
+        {
+            var request = await requests.FindOwnedRequestAsync(requestId, userId, token);
+            return request is null || !IsActiveParticipant(request, userId)
+                ? PreferenceAmbiguityResolutionOutcome.NotFound
+                : await DismissAsync(request, expectedVersion, userId, token);
+        }, cancellationToken);
     }
 
     /// <summary>Admin counterpart of <see cref="DismissPreferenceAmbiguityAsync"/> -- no ownership check.</summary>
     public async Task<PreferenceAmbiguityResolutionOutcome> AdminDismissPreferenceAmbiguityAsync(
         Guid requestId, uint? expectedVersion, CancellationToken cancellationToken)
     {
-        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
-        return request is null
-            ? PreferenceAmbiguityResolutionOutcome.NotFound
-            : await DismissAsync(request, expectedVersion, currentUser.UserId, cancellationToken);
+        var initial = await requests.FindAdminViewAsync(requestId, cancellationToken);
+        if (initial is null)
+        {
+            return PreferenceAmbiguityResolutionOutcome.NotFound;
+        }
+
+        var actorUserId = currentUser.UserId;
+        return await requests.InCreateRequestScopeAsync(actorUserId ?? Guid.Empty, initial.Request.WorkId, async token =>
+        {
+            var request = await requests.FindRequestForAdminAsync(requestId, token);
+            return request is null
+                ? PreferenceAmbiguityResolutionOutcome.NotFound
+                : await DismissAsync(request, expectedVersion, actorUserId, token);
+        }, cancellationToken);
     }
 
+    /// <summary>
+    /// Callers reload <paramref name="request"/> fresh, inside
+    /// <see cref="IRequestRepository.InCreateRequestScopeAsync{TResult}"/>'s
+    /// advisory lock on its Work, immediately before calling this -- the
+    /// combination is what actually closes the race two concurrent
+    /// resolutions could otherwise hit (F4 in alpha2-review-2026-09-12.md):
+    /// checking <see cref="BookRequest.Version"/> against a version loaded
+    /// before the lock was acquired would let both callers pass the check.
+    /// </summary>
     private async Task<PreferenceAmbiguityResolutionOutcome> AcceptCandidateAsync(
         BookRequest request, Guid candidateId, uint? expectedVersion, Guid? actorUserId, CancellationToken cancellationToken)
     {
-        // Same optimistic-concurrency convention as BookRequestService.TransitionAsync:
-        // two participants on a shared request could otherwise both act on the
-        // same review at once (one accepting a candidate, the other dismissing,
-        // or two different candidates), and the loser should see a clean
-        // conflict rather than an unhandled DbUpdateConcurrencyException.
         if (expectedVersion is not null && request.Version != expectedVersion)
         {
             return PreferenceAmbiguityResolutionOutcome.Conflict;
@@ -347,6 +426,7 @@ public sealed class AutomaticRequestFulfillmentService(
         return PreferenceAmbiguityResolutionOutcome.Resolved;
     }
 
+    /// <summary>See the remark on <see cref="AcceptCandidateAsync"/> -- same locking contract.</summary>
     private async Task<PreferenceAmbiguityResolutionOutcome> DismissAsync(
         BookRequest request, uint? expectedVersion, Guid? actorUserId, CancellationToken cancellationToken)
     {
@@ -369,6 +449,16 @@ public sealed class AutomaticRequestFulfillmentService(
     }
 
     /// <summary>
+    /// F2 in alpha2-review-2026-09-12.md: <see cref="IRequestRepository.FindOwnedRequestAsync"/>
+    /// deliberately still returns a request for a withdrawn participant (so
+    /// BookRequestService.TransitionAsync can let them reopen it), so a
+    /// requester-facing review resolution must check active participation
+    /// itself rather than relying on the lookup to have done it.
+    /// </summary>
+    private static bool IsActiveParticipant(BookRequest request, Guid userId) =>
+        request.Participants.Any(participant => participant.UserId == userId && participant.WithdrawnAtUtc is null);
+
+    /// <summary>
     /// Whether this provider was already asked about this format recently
     /// enough to skip asking it again — nothing has changed since (no status
     /// change) and the cooldown has not elapsed yet. Cancelling and reopening
@@ -386,7 +476,7 @@ public sealed class AutomaticRequestFulfillmentService(
         RequestReviewCategory category,
         string reason,
         CancellationToken cancellationToken,
-        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string? Language)>? languageExcludedOptions = null)
+        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string? Title, string? Author, string? Language)>? candidateOptions = null)
     {
         if (request.Status != RequestStatus.PendingAcquisition)
         {
@@ -396,8 +486,14 @@ public sealed class AutomaticRequestFulfillmentService(
         var view = await requests.FindAdminViewAsync(request.Id, cancellationToken);
         var workTitle = view?.Request.WorkTitle ?? request.WorkId.ToString();
 
-        var candidates = languageExcludedOptions?
-            .Select(option => (option.RequestFormatId, option.ProviderId, option.ProviderResultId, Title: workTitle, Author: (string?)null, option.Language))
+        // Prefer each option's own title/author, when the provider supplied
+        // one, so distinct editions stay distinguishable to the requester
+        // (see the P2 "candidate presentation" finding in
+        // alpha2-review-2026-09-12.md) -- fall back to the canonical Work
+        // title/no author only when a provider didn't supply its own.
+        var candidates = candidateOptions?
+            .Select(option => (option.RequestFormatId, option.ProviderId, option.ProviderResultId,
+                Title: option.Title ?? workTitle, option.Author, option.Language))
             .ToArray();
         request.MarkNeedsReview(category, reason, clock.UtcNow, candidates);
 

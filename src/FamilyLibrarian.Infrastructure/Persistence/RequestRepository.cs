@@ -40,7 +40,15 @@ public sealed class RequestRepository(
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
             .Include(request => request.ReviewCandidates)
+            .Include(request => request.DeclinedCandidates)
             .SingleOrDefaultAsync(
+                // Deliberately includes a withdrawn participant: BookRequestService.TransitionAsync
+                // reuses this same lookup to let someone who cancelled their
+                // own request reopen it (RequestWorkflowEndpointTests.ARequesterCanWithdrawAndSafelyReopenTheirRequest).
+                // Callers that must not act on a stale review for a withdrawn
+                // participant (F2 in alpha2-review-2026-09-12.md) check
+                // active participation themselves after loading -- see
+                // AutomaticRequestFulfillmentService's resolve/dismiss methods.
                 request => request.Id == requestId && request.Participants.Any(participant => participant.UserId == userId),
                 cancellationToken);
 
@@ -96,6 +104,7 @@ public sealed class RequestRepository(
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
             .Include(request => request.ReviewCandidates)
+            .Include(request => request.DeclinedCandidates)
             .SingleOrDefaultAsync(request => request.Id == requestId, cancellationToken);
 
     public async Task<IReadOnlyList<BookRequest>> ListPendingForAutomaticFulfillmentAsync(
@@ -109,6 +118,7 @@ public sealed class RequestRepository(
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
             .Include(request => request.ReviewCandidates)
+            .Include(request => request.DeclinedCandidates)
             .Where(request => request.Status == RequestStatus.PendingAcquisition && !request.RequiresManualFulfillment)
             .OrderBy(request => request.RequestedAtUtc)
             .Take(maximumCount)

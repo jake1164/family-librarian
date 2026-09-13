@@ -15,23 +15,27 @@ public interface IBookMatchService
     /// not used to filter them.
     /// </param>
     Task<BookMatchResult> ResolveUniqueAsync(
-        string title, string? author, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken);
+        string title, string? author, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken,
+        string? acceptedLanguage = null);
 
     Task<BookMatchResult> MatchByTitleAuthorAsync(
-        string title, string? author, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken);
+        string title, string? author, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken,
+        string? acceptedLanguage = null);
 }
 
 public sealed class BookMatchService(IBookMatcher matcher, IAmbiguityResolver ambiguityResolver) : IBookMatchService
 {
     public Task<BookMatchResult> ResolveUniqueAsync(
-        string title, string? author, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken) =>
+        string title, string? author, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken,
+        string? acceptedLanguage = null) =>
         ResolveAmbiguityAsync(
-            matcher.ResolveUnique(candidates), title, author, BookMatchBasis.Identifier, cancellationToken);
+            matcher.ResolveUnique(candidates, acceptedLanguage), title, author, BookMatchBasis.Identifier, cancellationToken);
 
     public Task<BookMatchResult> MatchByTitleAuthorAsync(
-        string title, string? author, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken) =>
+        string title, string? author, IReadOnlyList<CandidateBook> candidates, CancellationToken cancellationToken,
+        string? acceptedLanguage = null) =>
         ResolveAmbiguityAsync(
-            matcher.MatchByTitleAuthor(title, author, candidates), title, author, BookMatchBasis.TitleAuthor,
+            matcher.MatchByTitleAuthor(title, author, candidates, acceptedLanguage), title, author, BookMatchBasis.TitleAuthor,
             cancellationToken);
 
     private async Task<BookMatchResult> ResolveAmbiguityAsync(

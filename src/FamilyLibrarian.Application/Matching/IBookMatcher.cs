@@ -13,7 +13,16 @@ public interface IBookMatcher
     /// query): the query string itself is already the filter, so this only
     /// needs to confirm there is exactly one result.
     /// </summary>
-    BookMatchResult ResolveUnique(IReadOnlyList<CandidateBook> candidates);
+    /// <param name="acceptedLanguage">
+    /// Non-null only when the requester already explicitly accepted a
+    /// non-English candidate for the specific format this lookup verifies
+    /// ("get it anyway"). Its presence widens language eligibility for this
+    /// one call; its value is not compared against a candidate's declared
+    /// language, since providers do not share a language-code vocabulary.
+    /// Every ordinary (non-overridden) lookup passes <c>null</c> and is
+    /// unaffected.
+    /// </param>
+    BookMatchResult ResolveUnique(IReadOnlyList<CandidateBook> candidates, string? acceptedLanguage = null);
 
     /// <summary>
     /// Determines whether observed metadata can identify the expected title.
@@ -36,5 +45,6 @@ public interface IBookMatcher
     /// same-title/conflicting-author rule, then requires exactly one
     /// surviving candidate.
     /// </summary>
-    BookMatchResult MatchByTitleAuthor(string title, string? author, IReadOnlyList<CandidateBook> candidates);
+    BookMatchResult MatchByTitleAuthor(
+        string title, string? author, IReadOnlyList<CandidateBook> candidates, string? acceptedLanguage = null);
 }

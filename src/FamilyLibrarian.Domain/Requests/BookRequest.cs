@@ -18,6 +18,7 @@ public sealed class BookRequest
     private readonly List<RequestStatusHistory> _statusHistory = [];
     private readonly List<RequestParticipant> _participants = [];
     private readonly List<RequestReviewCandidate> _reviewCandidates = [];
+    private readonly List<DeclinedRequestCandidate> _declinedCandidates = [];
 
     private BookRequest()
     {
@@ -120,6 +121,9 @@ public sealed class BookRequest
     /// <summary>Populated only for <see cref="RequestReviewCategory.PreferenceAmbiguity"/>.</summary>
     public IReadOnlyCollection<RequestReviewCandidate> ReviewCandidates => _reviewCandidates;
 
+    /// <summary>Provider results previously declined via "keep looking" -- see <see cref="DeclinedRequestCandidate"/>.</summary>
+    public IReadOnlyCollection<DeclinedRequestCandidate> DeclinedCandidates => _declinedCandidates;
+
     public IEnumerable<Guid> ActiveRequesterIds => _participants
         .Where(participant => participant.WithdrawnAtUtc is null).Select(participant => participant.UserId);
 
@@ -143,8 +147,8 @@ public sealed class BookRequest
 
     /// <summary>
     /// Moves an automatically-processed request to <see cref="RequestStatus.NeedsReview"/>
-    /// for one of the three <see cref="RequestReviewCategory"/> reasons (see
-    /// .ai_docs/family-librarian-accuracy-selfservice-alpha2-plan.md, SELFSERV-1).
+    /// for one of the three <see cref="RequestReviewCategory"/> reasons (SELFSERV-1:
+    /// routing preference ambiguity to the requesting user, not just admins).
     /// Only <see cref="RequestReviewCategory.PreferenceAmbiguity"/> carries
     /// candidates -- the other two categories keep today's admin-only behavior
     /// unchanged and have nothing for a requester to pick between.
@@ -195,13 +199,16 @@ public sealed class BookRequest
     /// </summary>
     public RequestReviewCandidate AcceptReviewCandidate(Guid candidateId, Guid? actorUserId, DateTimeOffset atUtc)
     {
-        if (ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
+        if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
         {
             throw new InvalidOperationException("Only a preference-ambiguity review has a candidate to accept.");
         }
 
         var candidate = _reviewCandidates.SingleOrDefault(existing => existing.Id == candidateId)
             ?? throw new ArgumentException("That candidate does not belong to this request's review.", nameof(candidateId));
+
+        var format = _formats.Single(candidateFormat => candidateFormat.Id == candidate.RequestFormatId);
+        format.AcceptLanguage(candidate.Language);
 
         ReviewCategory = null;
         _reviewCandidates.Clear();
@@ -217,9 +224,19 @@ public sealed class BookRequest
     /// </summary>
     public void DismissReviewPreference(Guid? actorUserId, DateTimeOffset atUtc)
     {
-        if (ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
+        if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
         {
             throw new InvalidOperationException("Only a preference-ambiguity review can be dismissed this way.");
+        }
+
+        foreach (var candidate in _reviewCandidates)
+        {
+            _declinedCandidates.RemoveAll(declined =>
+                declined.RequestFormatId == candidate.RequestFormatId &&
+                declined.ProviderId == candidate.ProviderId &&
+                declined.ProviderResultId == candidate.ProviderResultId);
+            _declinedCandidates.Add(new DeclinedRequestCandidate(
+                Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, atUtc));
         }
 
         ReviewCategory = null;
@@ -284,6 +301,21 @@ public sealed class BookRequest
         }
 
         var from = Status;
+
+        // A NeedsReview review (and any offered candidates) is only ever
+        // meaningful while the request stays NeedsReview. Any other
+        // transition out of it -- an admin override, or Withdraw's own
+        // auto-cancel when the last requester leaves -- must invalidate it,
+        // so a stale AcceptReviewCandidate/DismissReviewPreference call
+        // afterward has nothing left to act on (see F2 in
+        // alpha2-review-2026-09-12.md: a cancelled/unavailable request must
+        // not be reopened by resolving a review that no longer applies).
+        if (from == RequestStatus.NeedsReview && to != RequestStatus.NeedsReview)
+        {
+            ReviewCategory = null;
+            _reviewCandidates.Clear();
+        }
+
         Status = to;
         StatusChangedAtUtc = atUtc;
         UpdatedAtUtc = atUtc;

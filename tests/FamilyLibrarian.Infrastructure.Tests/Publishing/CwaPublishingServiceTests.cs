@@ -551,10 +551,14 @@ public sealed class CwaPublishingServiceTests
 
         public IReadOnlyCollection<string>? LastIsbn13Candidates { get; private set; }
 
+        public string? LastAcceptedLanguage { get; private set; }
+
         public Task<BookMatchResult> FindBookIdAsync(
-            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken)
+            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken,
+            string? acceptedLanguage = null)
         {
             LastIsbn13Candidates = isbn13Candidates;
+            LastAcceptedLanguage = acceptedLanguage;
             if (NextAmbiguousCandidates is not null)
             {
                 return Task.FromResult(BookMatchResult.Ambiguous(NextAmbiguousCandidates));

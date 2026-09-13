@@ -7,6 +7,7 @@ namespace FamilyLibrarian.Web.Tests.Harness;
 internal sealed class AlwaysEmptyCwaCatalogClient : ICwaCatalogClient
 {
     public Task<BookMatchResult> FindBookIdAsync(
-        string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken) =>
+        string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken,
+        string? acceptedLanguage = null) =>
         Task.FromResult(BookMatchResult.NoMatchResult);
 }

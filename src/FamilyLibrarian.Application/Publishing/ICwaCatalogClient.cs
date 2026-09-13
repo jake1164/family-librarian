@@ -21,9 +21,16 @@ public interface ICwaCatalogClient
     /// Known ISBN-13s for the Work being matched, if any. Tried first, as an
     /// OPDS search query, before falling back to title/author matching.
     /// </param>
+    /// <param name="acceptedLanguage">
+    /// Non-null only when the requester already explicitly accepted a
+    /// non-English candidate for the specific format this verifies. See
+    /// <see cref="Matching.IBookMatcher.ResolveUnique"/> for why this widens
+    /// eligibility rather than being compared against a candidate's language.
+    /// </param>
     Task<BookMatchResult> FindBookIdAsync(
         string title,
         string? author,
         IReadOnlyCollection<string> isbn13Candidates,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string? acceptedLanguage = null);
 }

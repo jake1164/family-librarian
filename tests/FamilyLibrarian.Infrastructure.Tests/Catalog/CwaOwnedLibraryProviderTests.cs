@@ -235,7 +235,8 @@ public sealed class CwaOwnedLibraryProviderTests
         public IReadOnlyCollection<string>? LastIsbn13Candidates { get; private set; }
 
         public Task<BookMatchResult> FindBookIdAsync(
-            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken)
+            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken,
+            string? acceptedLanguage = null)
         {
             CallCount++;
             LastIsbn13Candidates = isbn13Candidates;

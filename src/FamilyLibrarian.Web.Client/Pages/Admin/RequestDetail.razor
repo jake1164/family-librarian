@@ -133,6 +133,34 @@
             </MudStack>
         </MudPaper>
 
+        @if (request.Request.NeedsReview is { Category: "PreferenceAmbiguity" } review)
+        {
+            <MudPaper Outlined="true" Class="pa-4">
+                <MudStack Spacing="2">
+                    <MudText Typo="Typo.h6">Preference review</MudText>
+                    <MudText Typo="Typo.body2">
+                        The requester was offered these candidates directly. An admin can resolve the same review
+                        (additive, not exclusive) if the requester hasn't -- e.g. for a request with no active participant.
+                    </MudText>
+                    @foreach (var candidate in review.Candidates)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudText Typo="Typo.body2">@CandidateLabel(candidate)</MudText>
+                            <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Success"
+                                       Disabled="@isBusy"
+                                       OnClick="() => ResolveNeedsReviewAsync(candidate.CandidateId)">
+                                Get it anyway
+                            </MudButton>
+                        </MudStack>
+                    }
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Disabled="@isBusy"
+                               OnClick="() => ResolveNeedsReviewAsync(null)">
+                        Keep looking
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+        }
+
         <MudPaper Outlined="true" Class="pa-4">
             <MudStack Spacing="2">
                 <MudText Typo="Typo.h6">Review action</MudText>
@@ -463,6 +491,40 @@
             isBusy = false;
         }
     }
+
+    private async Task ResolveNeedsReviewAsync(Guid? candidateId)
+    {
+        if (request is null)
+        {
+            return;
+        }
+
+        isBusy = true;
+        errorMessage = null;
+        try
+        {
+            var outcome = await Requests.ResolveNeedsReviewAsync(
+                request.Request.Id, candidateId, request.Request.Version);
+            await ApplyOutcomeAsync(outcome);
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That choice could not be saved. Please try again.";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private static string CandidateLabel(RequestReviewCandidateResponse candidate) =>
+        candidate.Author is { } author
+            ? string.IsNullOrWhiteSpace(candidate.Language)
+                ? $"{candidate.Title} by {author}"
+                : $"{candidate.Title} by {author} ({candidate.Language})"
+            : string.IsNullOrWhiteSpace(candidate.Language)
+                ? candidate.Title
+                : $"{candidate.Title} ({candidate.Language})";
 
     private async Task ApplyOutcomeAsync(AdminRequestActionOutcome outcome)
     {

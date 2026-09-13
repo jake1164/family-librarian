@@ -36,8 +36,8 @@ public enum RequestFormatStatus
 }
 
 /// <summary>
-/// Why a request is <see cref="RequestStatus.NeedsReview"/> -- see
-/// .ai_docs/family-librarian-accuracy-selfservice-alpha2-plan.md (SELFSERV-1).
+/// Why a request is <see cref="RequestStatus.NeedsReview"/> (SELFSERV-1:
+/// routing preference ambiguity to the requesting user, not just admins).
 /// </summary>
 public enum RequestReviewCategory
 {

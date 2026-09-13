@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Requests;
@@ -334,6 +335,50 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     [TestMethod]
+    public async Task MultiplePlausibleEditionsFromOneProviderRouteToThePreferenceAmbiguityFlowNotProviderDisagreement()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        // Two English-eligible editions from the same provider (P2 in
+        // alpha2-review-2026-09-12.md): an edition preference the requester
+        // can decide, not a cross-provider trust disagreement for an admin.
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: true, matchCount: 2));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        Guid firstCandidateId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var request = await database.BookRequests.SingleAsync(request => request.Id == requestId);
+            Assert.AreEqual(RequestStatus.NeedsReview, request.Status);
+            Assert.AreEqual(RequestReviewCategory.PreferenceAmbiguity, request.ReviewCategory);
+            Assert.AreEqual(0, await database.MediaAssets.CountAsync(asset => asset.AssociatedRequestFormatId == formatId));
+
+            var candidates = await database.RequestReviewCandidates
+                .Where(c => c.RequestId == requestId).OrderBy(c => c.DisplayOrder).ToArrayAsync();
+            Assert.AreEqual(2, candidates.Length);
+            Assert.AreEqual("1234-0", candidates[0].ProviderResultId);
+            Assert.AreEqual("1234-1", candidates[1].ProviderResultId);
+            // Each edition keeps its own distinguishable title -- not the
+            // canonical Work title repeated for every candidate.
+            Assert.AreEqual("The Hobbit (Edition 1)", candidates[0].Title);
+            Assert.AreEqual("The Hobbit (Edition 2)", candidates[1].Title);
+            Assert.AreEqual("J. R. R. Tolkien", candidates[0].Author);
+            firstCandidateId = candidates[0].Id;
+        }
+
+        var response = await requester.PostAsJsonAsync(
+            $"/api/v1/requests/{requestId}/needs-review/resolve", new ResolveNeedsReviewRequest(firstCandidateId));
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyDatabase = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(1, await verifyDatabase.MediaAssets.CountAsync(asset => asset.AssociatedRequestFormatId == formatId));
+    }
+
+    [TestMethod]
     public async Task AcceptingAPreferenceAmbiguityCandidateAcquiresItAndClearsReviewState()
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -368,11 +413,11 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     [TestMethod]
-    public async Task DismissingAPreferenceAmbiguityReviewReopensTheRequestForAnotherAutomaticPass()
+    public async Task DismissingAPreferenceAmbiguityReviewDoesNotImmediatelyReofferTheSameDeclinedCandidate()
     {
         var fixture = WebTestFixture.Require(_fixture);
-        await using var factory = CreateFactory(
-            fixture, new FakeProvider(matches: true, requiresLanguageConfirmation: true, language: "spa"));
+        var provider = new FakeProvider(matches: true, requiresLanguageConfirmation: true, language: "spa");
+        await using var factory = CreateFactory(fixture, provider);
         using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
         var (requestId, _) = await CreateEbookRequestAsync(requester);
 
@@ -388,7 +433,10 @@ public sealed class DirectAcquisitionEndpointTests
 
         // Dismissing bumps StatusChangedAtUtc, which is what lets the retry
         // cooldown be bypassed immediately -- same mechanism a librarian's
-        // manual recheck already relies on.
+        // manual recheck already relies on. F3 in alpha2-review-2026-09-12.md:
+        // that must not immediately re-offer the exact edition just declined,
+        // even though the provider is still queried (bypassing the cooldown
+        // is what makes that querying possible in the first place).
         await ProcessAutomaticFulfillmentAsync(factory);
 
         await using var verifyScope = factory.Services.CreateAsyncScope();
@@ -396,7 +444,40 @@ public sealed class DirectAcquisitionEndpointTests
         Assert.AreEqual(2, await verifyDatabase.ProviderAttempts.CountAsync(
             attempt => attempt.RequestId == requestId && attempt.ProviderId == "gutendex"));
         var reprocessedRequest = await verifyDatabase.BookRequests.SingleAsync(r => r.Id == requestId);
+        Assert.IsNull(reprocessedRequest.ReviewCategory);
+        Assert.AreEqual(RequestStatus.PendingAcquisition, reprocessedRequest.Status);
+    }
+
+    [TestMethod]
+    public async Task ADeclinedCandidateDoesNotSuppressADifferentEditionFromTheSameProvider()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var provider = new FakeProvider(matches: true, requiresLanguageConfirmation: true, language: "spa");
+        await using var factory = CreateFactory(fixture, provider);
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, _) = await CreateEbookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+        var dismissResponse = await requester.PostAsJsonAsync(
+            $"/api/v1/requests/{requestId}/needs-review/resolve", new ResolveNeedsReviewRequest(CandidateId: null));
+        Assert.AreEqual(HttpStatusCode.OK, dismissResponse.StatusCode);
+
+        // The declined-candidate exclusion (F3) is scoped to the exact
+        // provider result that was declined -- it must not blanket-exclude
+        // every future result from that provider for this format. Changed
+        // before the next pass (rather than after, like the
+        // "DoesNotImmediatelyReoffer" test) so this exercises the one poll
+        // where the retry cooldown has not yet re-armed, isolating the
+        // exclusion predicate itself from that separate timing mechanism.
+        provider.ProviderResultId = "5678";
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyDatabase = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var reprocessedRequest = await verifyDatabase.BookRequests.SingleAsync(r => r.Id == requestId);
         Assert.AreEqual(RequestReviewCategory.PreferenceAmbiguity, reprocessedRequest.ReviewCategory);
+        var candidate = await verifyDatabase.RequestReviewCandidates.SingleAsync(c => c.RequestId == requestId);
+        Assert.AreEqual("5678", candidate.ProviderResultId);
     }
 
     [TestMethod]
@@ -464,6 +545,82 @@ public sealed class DirectAcquisitionEndpointTests
         var verifyDatabase = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
         Assert.AreEqual(1, await verifyDatabase.MediaAssets.CountAsync(
             asset => asset.AssociatedRequestFormatId == formatId));
+    }
+
+    [TestMethod]
+    public async Task ACancelledReviewCannotBeResolvedIntoReopeningTheRequest()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(
+            fixture, new FakeProvider(matches: true, requiresLanguageConfirmation: true, language: "spa"));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        var list = await requester.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        var review = list!.Active.Single(request => request.Id == requestId);
+        var candidateId = review.NeedsReview!.Candidates.Single().CandidateId;
+
+        // Withdrawing the sole requester cancels the request outright (F2 in
+        // alpha2-review-2026-09-12.md): a stale saved candidate must not
+        // still be resolvable afterward, even using the cancellation
+        // response's own current Version.
+        var cancelled = await requester.PostAsJsonAsync(
+            $"/api/v1/requests/{requestId}/transitions", new ChangeBookRequestStatusRequest("Cancelled", null, review.Version));
+        Assert.AreEqual(HttpStatusCode.OK, cancelled.StatusCode);
+        var cancelledView = await cancelled.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(cancelledView);
+
+        var resolved = await requester.PostAsJsonAsync(
+            $"/api/v1/requests/{requestId}/needs-review/resolve",
+            new ResolveNeedsReviewRequest(candidateId, cancelledView.Version));
+        Assert.AreEqual(HttpStatusCode.NotFound, resolved.StatusCode);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyDatabase = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var verifiedRequest = await verifyDatabase.BookRequests.SingleAsync(r => r.Id == requestId);
+        Assert.AreEqual(RequestStatus.Cancelled, verifiedRequest.Status);
+        Assert.AreEqual(0, await verifyDatabase.MediaAssets.CountAsync(asset => asset.AssociatedRequestFormatId == formatId));
+    }
+
+    [TestMethod]
+    public async Task ConcurrentAdminDismissalsOnTheSameVersionLeaveOnlyOneAWinner()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(
+            fixture, new FakeProvider(matches: true, requiresLanguageConfirmation: true, language: "spa"));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, _) = await CreateEbookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        await using var firstScope = factory.Services.CreateAsyncScope();
+        await using var secondScope = factory.Services.CreateAsyncScope();
+        var firstRepository = firstScope.ServiceProvider.GetRequiredService<IRequestRepository>();
+        var secondRepository = secondScope.ServiceProvider.GetRequiredService<IRequestRepository>();
+
+        // Both scopes load the same version before either saves -- the
+        // pre-save-only check in place before F4's fix (in
+        // alpha2-review-2026-09-12.md) let both pass and threw an unhandled
+        // DbUpdateConcurrencyException on the second SaveChangesAsync. Reads
+        // the version via the same projected view a real HTTP client would
+        // see (not a tracked entity): a tracking read here would pre-empt
+        // each scope's own DbContext identity map, hiding the very race this
+        // test exists to reproduce.
+        var first = await firstRepository.FindAdminViewAsync(requestId, CancellationToken.None);
+        var second = await secondRepository.FindAdminViewAsync(requestId, CancellationToken.None);
+        Assert.AreEqual(first!.Request.Version, second!.Request.Version);
+
+        var firstService = firstScope.ServiceProvider.GetRequiredService<AutomaticRequestFulfillmentService>();
+        var secondService = secondScope.ServiceProvider.GetRequiredService<AutomaticRequestFulfillmentService>();
+
+        Assert.AreEqual(
+            PreferenceAmbiguityResolutionOutcome.Resolved,
+            await firstService.AdminDismissPreferenceAmbiguityAsync(requestId, first.Request.Version, CancellationToken.None));
+        Assert.AreEqual(
+            PreferenceAmbiguityResolutionOutcome.Conflict,
+            await secondService.AdminDismissPreferenceAmbiguityAsync(requestId, second.Request.Version, CancellationToken.None));
     }
 
     private static async Task<Guid> GetUserIdAsync(AppDbContext database, string email) =>
@@ -570,10 +727,19 @@ public sealed class DirectAcquisitionEndpointTests
     /// <summary>Always reports one DirectAcquisition match (or none), and fetches a fake EPUB.</summary>
     private sealed class FakeProvider(
         bool matches, string providerId = "gutendex", string providerResultId = "1234", bool throwsOnFetch = false,
-        bool isReady = true, bool requiresLanguageConfirmation = false, string? language = null)
+        bool isReady = true, bool requiresLanguageConfirmation = false, string? language = null, int matchCount = 1)
         : IAutomaticDirectAcquisitionProvider
     {
         public string Id => providerId;
+
+        /// <summary>
+        /// Mutable so a test can simulate the catalog returning a genuinely
+        /// different edition on a later automatic pass, without needing a
+        /// second <see cref="FamilyLibrarianAppFactory"/> (the provider is
+        /// registered as a singleton instance) -- see F3 in
+        /// alpha2-review-2026-09-12.md.
+        /// </summary>
+        public string ProviderResultId { get; set; } = providerResultId;
 
         public Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(isReady);
 
@@ -585,11 +751,10 @@ public sealed class DirectAcquisitionEndpointTests
                 return Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
             }
 
-            IReadOnlyList<FulfillmentOption> options =
-            [
-                new FulfillmentOption(
+            IReadOnlyList<FulfillmentOption> options = Enumerable.Range(0, matchCount)
+                .Select(index => new FulfillmentOption(
                     ProviderId: Id,
-                    ProviderResultId: providerResultId,
+                    ProviderResultId: matchCount == 1 ? ProviderResultId : $"{ProviderResultId}-{index}",
                     WorkId: workId,
                     EditionId: null,
                     MediaType: RequestMediaType.Ebook,
@@ -606,8 +771,10 @@ public sealed class DirectAcquisitionEndpointTests
                     ExternalActionUri: null,
                     ProviderData: "https://example.test/book.epub",
                     MatchBasis: null,
-                    RequiresLanguageConfirmation: requiresLanguageConfirmation)
-            ];
+                    RequiresLanguageConfirmation: requiresLanguageConfirmation,
+                    Title: matchCount == 1 ? null : $"The Hobbit (Edition {index + 1})",
+                    Author: matchCount == 1 ? null : "J. R. R. Tolkien"))
+                .ToArray();
             return Task.FromResult(options);
         }
 

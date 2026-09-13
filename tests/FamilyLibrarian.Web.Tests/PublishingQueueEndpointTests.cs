@@ -733,7 +733,8 @@ public sealed class PublishingQueueEndpointTests
         public string? NextBookId { get; set; } = bookIdOnFirstCall;
 
         public Task<BookMatchResult> FindBookIdAsync(
-            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken) =>
+            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken,
+            string? acceptedLanguage = null) =>
             Task.FromResult(NextBookId is null
                 ? BookMatchResult.NoMatchResult
                 : BookMatchResult.Match(new CandidateBook(NextBookId, title, author)));

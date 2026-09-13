@@ -42,6 +42,15 @@ public sealed class RequestFormat
 
     public uint Version { get; private set; }
 
+    /// <summary>
+    /// Non-null once the requester (or an admin) explicitly accepted a
+    /// non-English <see cref="RequestReviewCandidate"/> for this format ("get
+    /// it anyway"). Downstream identity/destination verification for this
+    /// specific format must treat this as a standing exception to the
+    /// ordinary English-or-unspecified language filter.
+    /// </summary>
+    public string? AcceptedLanguage { get; private set; }
+
     internal void SetStatus(RequestFormatStatus status, DateTimeOffset atUtc)
     {
         if (Status == status)
@@ -52,4 +61,6 @@ public sealed class RequestFormat
         Status = status;
         UpdatedAtUtc = atUtc;
     }
+
+    internal void AcceptLanguage(string? language) => AcceptedLanguage = language;
 }

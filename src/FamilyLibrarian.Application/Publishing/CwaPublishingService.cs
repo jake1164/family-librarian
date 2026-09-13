@@ -184,7 +184,9 @@ public sealed class CwaPublishingService(
     {
         try
         {
-            var result = await catalogClient.FindBookIdAsync(title, author, isbn13Candidates, cancellationToken);
+            var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
+            var result = await catalogClient.FindBookIdAsync(
+                title, author, isbn13Candidates, cancellationToken, acceptedLanguage);
             if (result.Decision == BookMatchDecision.Match)
             {
                 import.MarkAvailable(result.MatchedId!, clock.UtcNow);
@@ -273,6 +275,18 @@ public sealed class CwaPublishingService(
                 new { asset.Id, Destination = "cwa", Reason = exception.Message },
                 cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// The language the requester already explicitly accepted for this
+    /// specific format (F1 in alpha2-review-2026-09-12.md), if any -- widens
+    /// this one verification lookup past the ordinary English-or-unspecified
+    /// filter so an accepted foreign-language copy can actually be confirmed.
+    /// </summary>
+    private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
+    {
+        var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
+        return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
     }
 
     private async Task MarkRequestFormatAvailableAsync(

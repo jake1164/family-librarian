@@ -54,6 +54,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<RequestReviewCandidate> RequestReviewCandidates => Set<RequestReviewCandidate>();
 
+    public DbSet<DeclinedRequestCandidate> DeclinedRequestCandidates => Set<DeclinedRequestCandidate>();
+
     public DbSet<NotificationEvent> NotificationEvents => Set<NotificationEvent>();
 
     public DbSet<NotificationReceipt> NotificationReceipts => Set<NotificationReceipt>();
@@ -397,6 +399,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasMany(request => request.ReviewCandidates).WithOne()
                 .HasForeignKey(candidate => candidate.RequestId).OnDelete(DeleteBehavior.Cascade);
             entity.Navigation(request => request.ReviewCandidates).UsePropertyAccessMode(PropertyAccessMode.Field);
+            entity.HasMany(request => request.DeclinedCandidates).WithOne()
+                .HasForeignKey(candidate => candidate.RequestId).OnDelete(DeleteBehavior.Cascade);
+            entity.Navigation(request => request.DeclinedCandidates).UsePropertyAccessMode(PropertyAccessMode.Field);
         });
 
         builder.Entity<RequestParticipant>(entity =>
@@ -428,6 +433,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(format => format.RequestId).HasColumnName("request_id");
             entity.Property(format => format.MediaType).HasColumnName("media_type").HasConversion<string>().HasMaxLength(32);
             entity.Property(format => format.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+            entity.Property(format => format.AcceptedLanguage).HasColumnName("accepted_language").HasMaxLength(32);
             ConfigureTimestamps(entity);
 
             // One row per media type per request: the database, not the command
@@ -456,6 +462,27 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             // parent BookRequest, and that same delete already cascades this
             // row via the RequestId FK above -- a second cascade path here
             // would create a multiple-cascade-paths error in the provider.
+            entity.HasOne<RequestFormat>().WithMany()
+                .HasForeignKey(candidate => candidate.RequestFormatId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<DeclinedRequestCandidate>(entity =>
+        {
+            entity.ToTable("request_declined_candidates", "requests");
+            entity.HasKey(candidate => candidate.Id);
+            entity.Property(candidate => candidate.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(candidate => candidate.RequestId).HasColumnName("request_id");
+            entity.Property(candidate => candidate.RequestFormatId).HasColumnName("request_format_id");
+            entity.Property(candidate => candidate.ProviderId).HasColumnName("provider_id").HasMaxLength(128);
+            entity.Property(candidate => candidate.ProviderResultId).HasColumnName("provider_result_id").HasMaxLength(256);
+            entity.Property(candidate => candidate.DeclinedAtUtc).HasColumnName("declined_at_utc").HasColumnType("timestamp with time zone");
+
+            entity.HasIndex(candidate => new { candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId });
+
+            // Restrict, not Cascade: same multiple-cascade-paths rationale as
+            // RequestReviewCandidate above -- the parent BookRequest's cascade
+            // already covers this row via the RequestId FK.
             entity.HasOne<RequestFormat>().WithMany()
                 .HasForeignKey(candidate => candidate.RequestFormatId)
                 .OnDelete(DeleteBehavior.Restrict);

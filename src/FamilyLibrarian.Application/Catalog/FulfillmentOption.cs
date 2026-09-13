@@ -49,7 +49,16 @@ public sealed record FulfillmentOption(
     // auto-acquired; AutomaticRequestFulfillmentService instead offers it to
     // the requester as a SELFSERV-1 preference decision ("get it anyway, or
     // keep looking?").
-    bool RequiresLanguageConfirmation = false);
+    bool RequiresLanguageConfirmation = false,
+    // This specific candidate's own title/author, when the provider can
+    // supply one distinct from the canonical Work title -- e.g. a specific
+    // Gutenberg edition. Null for a provider that only ever returns a
+    // single already-verified match (an Owned lookup): those need no
+    // disambiguation from the Work they already matched. Used only to label
+    // a RequestReviewCandidate distinctly (SELFSERV-1); never persisted
+    // beyond that review.
+    string? Title = null,
+    string? Author = null);
 
 public enum OptionKind
 {

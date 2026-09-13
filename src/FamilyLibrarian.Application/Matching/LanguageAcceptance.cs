@@ -1,10 +1,10 @@
 namespace FamilyLibrarian.Application.Matching;
 
 /// <summary>
-/// The hardcoded English-only language policy for automatic matching (see
-/// .ai_docs/family-librarian-accuracy-selfservice-alpha2-plan.md, ACCURACY-1).
-/// Full multi-language/household-preference support is a longer-term goal,
-/// not this.
+/// The hardcoded English-only language policy for automatic matching
+/// (ACCURACY-1: English-language enforcement in matching). Full
+/// multi-language/household-preference support is a longer-term goal, not
+/// this.
 /// </summary>
 public static class LanguageAcceptance
 {

@@ -3,6 +3,7 @@ using System.Xml;
 using System.Xml.Linq;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 
@@ -19,7 +20,8 @@ namespace FamilyLibrarian.Infrastructure.Security;
 /// <see cref="EpubValidator"/>, because an identity verifier handles the same
 /// untrusted input and must remain safe if its invocation order changes.
 /// </remarks>
-public sealed class EpubAssetIdentityVerifier(IWorkLookup works, IBookMatcher bookMatcher) : IAssetIdentityVerifier
+public sealed class EpubAssetIdentityVerifier(
+    IWorkLookup works, IBookMatcher bookMatcher, IBookRequestFulfillmentStore requestFulfillment) : IAssetIdentityVerifier
 {
     private const long MaxMetadataEntryBytes = 1024 * 1024;
     private const int MaxEntryCount = 10_000;
@@ -67,13 +69,30 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works, IBookMatcher bo
                 return AssetIdentityVerificationResult.Unmatched(Id);
             }
 
-            var (titles, creators) = await ReadPackageMetadataAsync(package, cancellationToken);
+            var (titles, creators, languages) = await ReadPackageMetadataAsync(package, cancellationToken);
             var titleMatches = titles.Any(title => bookMatcher.TitleMatches(expected.Title, title));
             var authorMatches = creators.Any(creator => bookMatcher.AuthorMatches(expected.PrimaryAuthor, creator));
+            if (!titleMatches || !authorMatches)
+            {
+                return AssetIdentityVerificationResult.Unmatched(Id);
+            }
 
-            return titleMatches && authorMatches
-                ? AssetIdentityVerificationResult.Match(Id)
-                : AssetIdentityVerificationResult.Unmatched(Id);
+            // ACCURACY-1 (plan: EPUB identity checks): a declared non-English
+            // language must not pass identity verification unless the
+            // requester already explicitly accepted it for this format
+            // ("get it anyway") -- an EPUB with no declared language is
+            // unaffected, matching the "don't punish missing metadata" rule
+            // used everywhere else in the language filter.
+            if (languages.Count > 0 && !languages.Any(LanguageAcceptance.IsEnglishOrUnspecified))
+            {
+                var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
+                if (acceptedLanguage is null)
+                {
+                    return AssetIdentityVerificationResult.Unmatched(Id);
+                }
+            }
+
+            return AssetIdentityVerificationResult.Match(Id);
         }
         catch (Exception exception) when (exception is InvalidDataException or ArgumentException or XmlException)
         {
@@ -93,9 +112,8 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works, IBookMatcher bo
             .Trim();
     }
 
-    private static async Task<(IReadOnlyList<string> Titles, IReadOnlyList<string> Creators)> ReadPackageMetadataAsync(
-        ZipArchiveEntry package,
-        CancellationToken cancellationToken)
+    private static async Task<(IReadOnlyList<string> Titles, IReadOnlyList<string> Creators, IReadOnlyList<string> Languages)>
+        ReadPackageMetadataAsync(ZipArchiveEntry package, CancellationToken cancellationToken)
     {
         var document = await ReadXmlAsync(package, cancellationToken);
         return (
@@ -108,7 +126,22 @@ public sealed class EpubAssetIdentityVerifier(IWorkLookup works, IBookMatcher bo
                 .Where(element => element.Name.LocalName == "creator")
                 .Select(element => element.Value.Trim())
                 .Where(value => !string.IsNullOrWhiteSpace(value))
+                .ToArray(),
+            document.Descendants()
+                .Where(element => element.Name.LocalName == "language")
+                .Select(element => element.Value.Trim())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
                 .ToArray());
+    }
+
+    /// <summary>
+    /// The language the requester already explicitly accepted for this
+    /// specific format (F1 in alpha2-review-2026-09-12.md), if any.
+    /// </summary>
+    private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
+    {
+        var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
+        return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
     }
 
     private static async Task<XDocument> ReadXmlAsync(

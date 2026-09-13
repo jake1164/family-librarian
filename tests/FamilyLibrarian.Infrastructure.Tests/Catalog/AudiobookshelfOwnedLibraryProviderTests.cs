@@ -200,7 +200,7 @@ public sealed class AudiobookshelfOwnedLibraryProviderTests
         public int CallCount { get; private set; }
 
         public Task<BookMatchResult> FindExistingItemIdAsync(
-            string title, string? author, CancellationToken cancellationToken)
+            string title, string? author, CancellationToken cancellationToken, string? acceptedLanguage = null)
         {
             CallCount++;
             return Task.FromResult(ExistingItemId is null

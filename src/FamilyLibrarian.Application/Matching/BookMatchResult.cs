@@ -21,11 +21,9 @@ public enum BookMatchDecision
 /// <see cref="Identifier"/> for an ISBN (or other effectively-unique
 /// identifier) lookup, <see cref="TitleAuthor"/> for the normalized
 /// title/author fallback. A title/author match is a reviewable fallback, not
-/// a verified identity: see
-/// .ai_docs/cwa-topology-and-delivery-design-review.md item 4. Consumers that
-/// treat an owned match as safe to act on automatically (e.g. the Kindle
-/// existing-book send) should require explicit confirmation for
-/// <see cref="TitleAuthor"/> matches.
+/// a verified identity. Consumers that treat an owned match as safe to act
+/// on automatically (e.g. the Kindle existing-book send) should require
+/// explicit confirmation for <see cref="TitleAuthor"/> matches.
 /// </summary>
 public enum BookMatchBasis
 {

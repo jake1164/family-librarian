@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Security;
@@ -116,7 +117,49 @@ public sealed class EpubAssetIdentityVerifierTests
         Assert.IsFalse(result.IsMatch);
     }
 
-    private static MediaAsset CreateAsset() => new(
+    [TestMethod]
+    public async Task ASpanishDeclaredLanguageWithNoAcceptanceIsHeldUnmatched()
+    {
+        var verifier = CreateVerifier("Restore Me", "Tahereh Mafi");
+
+        var result = await verifier.VerifyAsync(
+            CreateAsset(),
+            BuildEpub("Restore Me", "Tahereh Mafi", language: "spa"),
+            CancellationToken.None);
+
+        Assert.IsFalse(result.IsMatch);
+    }
+
+    [TestMethod]
+    public async Task ASpanishDeclaredLanguageIsAcceptedOnceTheRequesterAcceptedItForThisFormat()
+    {
+        var (request, format) = CreateAcceptedRequest("spa");
+        var asset = CreateAsset(format.Id);
+        var verifier = CreateVerifier(
+            "Restore Me", "Tahereh Mafi", new FakeRequestFulfillmentStore(format.Id, request));
+
+        var result = await verifier.VerifyAsync(
+            asset,
+            BuildEpub("Restore Me", "Tahereh Mafi", language: "spa"),
+            CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch);
+    }
+
+    [TestMethod]
+    public async Task ANoDeclaredLanguageEpubIsUnaffectedByTheLanguageCheck()
+    {
+        var verifier = CreateVerifier("Restore Me", "Tahereh Mafi");
+
+        var result = await verifier.VerifyAsync(
+            CreateAsset(),
+            BuildEpub("Restore Me", "Tahereh Mafi", language: null),
+            CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch);
+    }
+
+    private static MediaAsset CreateAsset(Guid? requestFormatId = null) => new(
         Guid.NewGuid(),
         editionId: null,
         RequestMediaType.Ebook,
@@ -126,14 +169,36 @@ public sealed class EpubAssetIdentityVerifierTests
         sizeBytes: 1,
         new string('a', 64),
         "application/epub+zip",
-        Guid.NewGuid(),
+        requestFormatId ?? Guid.NewGuid(),
         sourceAcquisitionCandidateId: null,
         DateTimeOffset.UtcNow);
 
-    private static EpubAssetIdentityVerifier CreateVerifier(string title, string author) =>
-        new(new StubWorkLookup(title, author), new DeterministicBookMatcher());
+    /// <summary>
+    /// A real <see cref="BookRequest"/> whose sole Ebook format already has
+    /// its <see cref="RequestFormat.AcceptedLanguage"/> set to
+    /// <paramref name="language"/>, driven entirely through the same public
+    /// SELFSERV-1 API production code uses ("get it anyway") -- not by
+    /// reaching into internal setters.
+    /// </summary>
+    private static (BookRequest Request, RequestFormat Format) CreateAcceptedRequest(string language)
+    {
+        var request = new BookRequest(
+            Guid.NewGuid(), Guid.NewGuid(), [RequestMediaType.Ebook], null, DateTimeOffset.UtcNow);
+        var format = request.Formats.Single();
+        request.MarkNeedsReview(
+            RequestReviewCategory.PreferenceAmbiguity, "A copy was found, but not in English.", DateTimeOffset.UtcNow,
+            [(format.Id, "gutenberg", "12345", "Restore Me", "Tahereh Mafi", language)]);
+        var candidateId = request.ReviewCandidates.Single().Id;
+        request.AcceptReviewCandidate(candidateId, actorUserId: null, DateTimeOffset.UtcNow);
+        return (request, format);
+    }
 
-    private static MemoryStream BuildEpub(string title, string? creator)
+    private static EpubAssetIdentityVerifier CreateVerifier(
+        string title, string author, IBookRequestFulfillmentStore? requestFulfillment = null) =>
+        new(new StubWorkLookup(title, author), new DeterministicBookMatcher(),
+            requestFulfillment ?? new FakeRequestFulfillmentStore(null, null));
+
+    private static MemoryStream BuildEpub(string title, string? creator, string? language = null)
     {
         var stream = new MemoryStream();
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
@@ -146,7 +211,7 @@ public sealed class EpubAssetIdentityVerifierTests
             WriteEntry(
                 archive,
                 "OPS/content.opf",
-                $"""<?xml version="1.0"?><package><metadata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">{title}</dc:title>{(creator is null ? string.Empty : $"<dc:creator xmlns:dc=\"http://purl.org/dc/elements/1.1/\">{creator}</dc:creator>")}</metadata></package>""");
+                $"""<?xml version="1.0"?><package><metadata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">{title}</dc:title>{(creator is null ? string.Empty : $"<dc:creator xmlns:dc=\"http://purl.org/dc/elements/1.1/\">{creator}</dc:creator>")}{(language is null ? string.Empty : $"<dc:language xmlns:dc=\"http://purl.org/dc/elements/1.1/\">{language}</dc:language>")}</metadata></package>""");
         }
 
         stream.Position = 0;
@@ -168,5 +233,11 @@ public sealed class EpubAssetIdentityVerifierTests
     {
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
             Task.FromResult<WorkSummary?>(new WorkSummary(workId, title, author, []));
+    }
+
+    private sealed class FakeRequestFulfillmentStore(Guid? requestFormatId, BookRequest? request) : IBookRequestFulfillmentStore
+    {
+        public Task<BookRequest?> FindByFormatIdAsync(Guid formatId, CancellationToken cancellationToken) =>
+            Task.FromResult(requestFormatId == formatId ? request : null);
     }
 }

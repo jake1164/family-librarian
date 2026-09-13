@@ -6,7 +6,8 @@ namespace FamilyLibrarian.Web.Tests.Harness;
 /// <summary>Default-safe Audiobookshelf fake: no real network call ever happens in the ordinary test suite.</summary>
 internal sealed class AlwaysEmptyAudiobookshelfApiClient : IAudiobookshelfApiClient
 {
-    public Task<BookMatchResult> FindExistingItemIdAsync(string title, string? author, CancellationToken cancellationToken) =>
+    public Task<BookMatchResult> FindExistingItemIdAsync(
+        string title, string? author, CancellationToken cancellationToken, string? acceptedLanguage = null) =>
         Task.FromResult(BookMatchResult.NoMatchResult);
 
     public Task<AudiobookshelfUploadResult> UploadAsync(
