@@ -173,6 +173,89 @@ public sealed class GutenbergProviderTests
         Assert.IsFalse(options[0].RequiresLanguageConfirmation);
     }
 
+    [TestMethod]
+    public async Task AClearlyDominantDownloadCountAutoResolvesInsteadOfStayingAmbiguous()
+    {
+        // Reproduces real Gutenberg data found live: three English "Moby Dick"
+        // entries where #2701 has ~6.5x the next-highest download count.
+        var context = new TestContext();
+        context.Catalog.Books =
+        [
+            EnglishMobyDickCandidate(15, downloadCount: 3_856),
+            EnglishMobyDickCandidate(2489, downloadCount: 25_142),
+            EnglishMobyDickCandidate(2701, downloadCount: 164_301)
+        ];
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual("2701", options[0].ProviderResultId);
+    }
+
+    [TestMethod]
+    public async Task CloseDownloadCountsStayAmbiguousRatherThanGuessing()
+    {
+        var context = new TestContext();
+        context.Catalog.Books =
+        [
+            EnglishMobyDickCandidate(2489, downloadCount: 25_142),
+            EnglishMobyDickCandidate(2701, downloadCount: 40_000)
+        ];
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(2, options.Count);
+    }
+
+    [TestMethod]
+    public async Task MissingDownloadCountsStayAmbiguousRatherThanGuessing()
+    {
+        var context = new TestContext();
+        context.Catalog.Books =
+        [
+            EnglishMobyDickCandidate(15, downloadCount: null),
+            EnglishMobyDickCandidate(2701, downloadCount: null)
+        ];
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(2, options.Count);
+    }
+
+    [TestMethod]
+    public async Task ADominantDownloadCountBelowTheMinimumFloorStaysAmbiguous()
+    {
+        // 900 vs 10 is a huge ratio but neither number is a meaningful signal
+        // at that scale -- the absolute floor exists so two barely-downloaded
+        // entries don't "dominate" each other on noise.
+        var context = new TestContext();
+        context.Catalog.Books =
+        [
+            EnglishMobyDickCandidate(15, downloadCount: 10),
+            EnglishMobyDickCandidate(2701, downloadCount: 900)
+        ];
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(2, options.Count);
+    }
+
+    private static GutenbergCatalogBook EnglishMobyDickCandidate(int gutenbergId, int? downloadCount) => new(
+        gutenbergId,
+        "Moby Dick",
+        "moby dick",
+        "Ebook",
+        "Public domain",
+        [new GutenbergCatalogPerson("Herman Melville", GutenbergPersonRole.Author)],
+        ["en"],
+        [new GutenbergCatalogFormat(
+            $"{gutenbergId}/{gutenbergId}-images.epub", "application/epub+zip", GutenbergFormatKind.EpubImages, 500_000, null)],
+        downloadCount);
+
     private static readonly ProviderDescriptor UsableDescriptor = new(
         "gutendex",
         "Project Gutenberg",

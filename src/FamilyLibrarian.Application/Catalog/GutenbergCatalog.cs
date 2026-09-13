@@ -40,6 +40,13 @@ public sealed record GutenbergCatalogSearchQuery(
     bool RequireEpub = false,
     int Take = 20);
 
+/// <param name="DownloadCount">
+/// Project Gutenberg's own reported download count, mirrored locally.
+/// Nothing about rights, language, or content quality — used only as a
+/// popularity signal to break a tie between otherwise equally plausible
+/// editions of the same public-domain title (see
+/// <c>GutenbergProvider.PickDominantByPopularity</c>).
+/// </param>
 public sealed record GutenbergCatalogBook(
     int GutenbergId,
     string Title,
@@ -48,7 +55,8 @@ public sealed record GutenbergCatalogBook(
     string RightsStatus,
     IReadOnlyList<GutenbergCatalogPerson> People,
     IReadOnlyList<string> Languages,
-    IReadOnlyList<GutenbergCatalogFormat> Formats);
+    IReadOnlyList<GutenbergCatalogFormat> Formats,
+    int? DownloadCount = null);
 
 public sealed record GutenbergCatalogPerson(string Name, GutenbergPersonRole Role);
 

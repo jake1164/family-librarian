@@ -26,6 +26,11 @@ public sealed class GutenbergProvider(
 {
     private const string AudioBundleFormat = "audio-bundle";
 
+    // See PickDominantByPopularity's remarks for why these exist and what
+    // they deliberately do not do.
+    private const int MinimumDominantDownloadCount = 1_000;
+    private const double DominantDownloadRatio = 3.0;
+
     public string Id => ProviderRegistry.GutenbergProviderId;
 
     /// <summary>Not ready while the local RDF catalogue is still (re)importing — see <see cref="IDirectAcquisitionProvider.IsReadyAsync"/>.</summary>
@@ -95,7 +100,7 @@ public sealed class GutenbergProvider(
         // preference choice, and a non-English match is kept, marked
         // RequiresLanguageConfirmation, for the same preference-choice
         // treatment instead of silently auto-acquiring (or discarding) it.
-        var autoEligible = new List<FulfillmentOption>();
+        var autoEligible = new List<(FulfillmentOption Option, int? DownloadCount)>();
         var languageExcluded = new List<FulfillmentOption>();
         foreach (var candidate in candidates)
         {
@@ -126,7 +131,7 @@ public sealed class GutenbergProvider(
 
             if (LanguageAcceptance.IsEnglishOrUnspecified(option.Language))
             {
-                autoEligible.Add(option);
+                autoEligible.Add((option, candidate.DownloadCount));
             }
             else
             {
@@ -134,7 +139,43 @@ public sealed class GutenbergProvider(
             }
         }
 
-        return autoEligible.Count > 0 ? autoEligible : languageExcluded;
+        if (autoEligible.Count > 1 && PickDominantByPopularity(autoEligible) is { } dominant)
+        {
+            return [dominant];
+        }
+
+        return autoEligible.Count > 0
+            ? autoEligible.Select(entry => entry.Option).ToArray()
+            : languageExcluded;
+    }
+
+    // Multiple same-language editions of a public-domain title are common on
+    // Gutenberg (independent transcriptions/reprints over the decades) and
+    // are not all equally "the" edition most people mean -- e.g. Moby-Dick
+    // has separate entries at #15 (1991, ~4k downloads), #2489 (2001, ~25k),
+    // and #2701 (2001, ~164k). Rather than always asking a human to choose
+    // between editions that are, in practice, interchangeable copies of the
+    // same text, auto-resolve to the one with a clearly dominant download
+    // count -- Project Gutenberg's own usage signal for which entry the
+    // community treats as the standard one -- and keep asking only when no
+    // candidate dominates by this margin. This is a deliberate, narrow
+    // carve-out from SELFSERV-1's "always ask on ambiguity" default, not a
+    // reversal of it: it never crosses a language boundary (only ever
+    // compares within the already-English-filtered autoEligible set), and a
+    // missing or unimpressive download count just falls through to asking,
+    // same as before.
+    private static FulfillmentOption? PickDominantByPopularity(
+        IReadOnlyList<(FulfillmentOption Option, int? DownloadCount)> candidates)
+    {
+        var ranked = candidates.OrderByDescending(entry => entry.DownloadCount ?? 0).ToArray();
+        var top = ranked[0];
+        if (top.DownloadCount is not { } topCount || topCount < MinimumDominantDownloadCount)
+        {
+            return null;
+        }
+
+        var runnerUpCount = ranked[1].DownloadCount ?? 0;
+        return topCount >= runnerUpCount * DominantDownloadRatio ? top.Option : null;
     }
 
     public async Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(

@@ -99,7 +99,8 @@ internal sealed class GutenbergCatalogRepository(AppDbContext database) : IGuten
                 ? kind
                 : GutenbergFormatKind.Other,
             format.FileSizeBytes,
-            format.ModifiedAtUtc)).ToArray());
+            format.ModifiedAtUtc)).ToArray(),
+        book.DownloadCount);
 
     internal static string Normalize(string value) => new(value
         .Normalize(NormalizationForm.FormKC)
