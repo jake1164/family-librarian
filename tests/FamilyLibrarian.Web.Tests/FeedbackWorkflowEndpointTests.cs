@@ -7,8 +7,8 @@ using FamilyLibrarian.Web.Tests.Harness;
 namespace FamilyLibrarian.Web.Tests;
 
 /// <summary>
-/// My Reading (completion date + rating) against the real host and a real
-/// PostgreSQL database.
+/// My Reading (completion date only, no native rating) against the real host
+/// and a real PostgreSQL database.
 /// </summary>
 /// <remarks>
 /// Nothing is stubbed: feedback is recorded through the same endpoints the
@@ -40,24 +40,23 @@ public sealed class FeedbackWorkflowEndpointTests
     }
 
     [TestMethod]
-    public async Task ARatingCanBeRecordedAndSeenInMyReading()
+    public async Task ACompletionCanBeRecordedAndSeenInMyReading()
     {
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateFeedbackClientAsync(fixture);
         var workId = await ResolveWorkAsync(client, "the-hobbit");
         await EnsureNoFeedbackAsync(client, workId);
 
-        var response = await SetFeedbackAsync(client, workId, CompletedOn, 5, expectedVersion: null);
+        var response = await SetFeedbackAsync(client, workId, CompletedOn, expectedVersion: null);
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
         var feedback = await response.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
         Assert.IsNotNull(feedback);
         Assert.AreEqual(CompletedOn, feedback.CompletedOn);
-        Assert.AreEqual(5, feedback.Rating);
 
         var mine = await client.GetFromJsonAsync<WorkFeedbackListResponse>("/api/v1/me/feedback");
         Assert.IsNotNull(mine);
-        Assert.IsTrue(mine.Items.Any(item => item.WorkId == workId && item.Rating == 5));
+        Assert.IsTrue(mine.Items.Any(item => item.WorkId == workId && item.CompletedOn == CompletedOn));
     }
 
     [TestMethod]
@@ -68,7 +67,7 @@ public sealed class FeedbackWorkflowEndpointTests
         var workId = await ResolveWorkAsync(client, "a-wrinkle-in-time");
         await EnsureNoFeedbackAsync(client, workId);
 
-        var first = await SetFeedbackAsync(client, workId, CompletedOn, 3, expectedVersion: null);
+        var first = await SetFeedbackAsync(client, workId, CompletedOn, expectedVersion: null);
         Assert.AreEqual(HttpStatusCode.OK, first.StatusCode);
         var created = await first.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
         Assert.IsNotNull(created);
@@ -77,29 +76,16 @@ public sealed class FeedbackWorkflowEndpointTests
             client,
             workId,
             CompletedOn.AddDays(1),
-            4,
             expectedVersion: created.Version);
 
         Assert.AreEqual(HttpStatusCode.OK, second.StatusCode);
         var corrected = await second.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
         Assert.IsNotNull(corrected);
-        Assert.AreEqual(4, corrected.Rating);
+        Assert.AreEqual(CompletedOn.AddDays(1), corrected.CompletedOn);
 
         var mine = await client.GetFromJsonAsync<WorkFeedbackListResponse>("/api/v1/me/feedback");
         Assert.IsNotNull(mine);
         Assert.AreEqual(1, mine.Items.Count(item => item.WorkId == workId));
-    }
-
-    [TestMethod]
-    public async Task ARatingOutsideOneToFiveIsRejected()
-    {
-        var fixture = WebTestFixture.Require(_fixture);
-        using var client = await CreateFeedbackClientAsync(fixture);
-        var workId = await ResolveWorkAsync(client, "project-hail-mary");
-
-        var response = await SetFeedbackAsync(client, workId, CompletedOn, 6, expectedVersion: null);
-
-        Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [TestMethod]
@@ -108,7 +94,7 @@ public sealed class FeedbackWorkflowEndpointTests
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateFeedbackClientAsync(fixture);
 
-        var response = await SetFeedbackAsync(client, Guid.NewGuid(), CompletedOn, 3, expectedVersion: null);
+        var response = await SetFeedbackAsync(client, Guid.NewGuid(), CompletedOn, expectedVersion: null);
 
         Assert.AreEqual(HttpStatusCode.NotFound, response.StatusCode);
     }
@@ -121,15 +107,15 @@ public sealed class FeedbackWorkflowEndpointTests
         var workId = await ResolveWorkAsync(client, "the-hobbit");
         await EnsureNoFeedbackAsync(client, workId);
 
-        var first = await SetFeedbackAsync(client, workId, CompletedOn, 3, expectedVersion: null);
+        var first = await SetFeedbackAsync(client, workId, CompletedOn, expectedVersion: null);
         Assert.AreEqual(HttpStatusCode.OK, first.StatusCode);
         var created = await first.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
         Assert.IsNotNull(created);
 
         // Someone else's tab already moved the version forward.
-        await SetFeedbackAsync(client, workId, CompletedOn, 4, expectedVersion: created.Version);
+        await SetFeedbackAsync(client, workId, CompletedOn.AddDays(1), expectedVersion: created.Version);
 
-        var stale = await SetFeedbackAsync(client, workId, CompletedOn, 5, expectedVersion: created.Version);
+        var stale = await SetFeedbackAsync(client, workId, CompletedOn.AddDays(2), expectedVersion: created.Version);
 
         Assert.AreEqual(HttpStatusCode.Conflict, stale.StatusCode);
     }
@@ -142,7 +128,7 @@ public sealed class FeedbackWorkflowEndpointTests
         var workId = await ResolveWorkAsync(client, "a-wrinkle-in-time");
         await EnsureNoFeedbackAsync(client, workId);
 
-        var created = await SetFeedbackAsync(client, workId, CompletedOn, 3, expectedVersion: null);
+        var created = await SetFeedbackAsync(client, workId, CompletedOn, expectedVersion: null);
         Assert.AreEqual(HttpStatusCode.OK, created.StatusCode);
         var feedback = await created.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
         Assert.IsNotNull(feedback);
@@ -161,13 +147,13 @@ public sealed class FeedbackWorkflowEndpointTests
         using var owner = await CreateFeedbackClientAsync(fixture);
         var workId = await ResolveWorkAsync(owner, "project-hail-mary");
         await EnsureNoFeedbackAsync(owner, workId);
-        var created = await SetFeedbackAsync(owner, workId, CompletedOn, 5, expectedVersion: null);
+        var created = await SetFeedbackAsync(owner, workId, CompletedOn, expectedVersion: null);
         Assert.AreEqual(HttpStatusCode.OK, created.StatusCode);
         var feedback = await created.Content.ReadFromJsonAsync<WorkFeedbackResponse>();
         Assert.IsNotNull(feedback);
 
         // A different account — and an administrator at that, so this also shows
-        // an admin has no back door into another family member's private rating.
+        // an admin has no back door into another family member's private record.
         using var other = await fixture.CreateAdminClientAsync();
         var otherToken = await WebTestFixture.GetAntiforgeryTokenAsync(other);
         other.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, otherToken);
@@ -179,7 +165,7 @@ public sealed class FeedbackWorkflowEndpointTests
         Assert.IsNotNull(theirList);
         Assert.IsFalse(theirList.Items.Any(item => item.WorkId == workId));
 
-        // 404, not 403: answering "forbidden" would confirm the rating exists.
+        // 404, not 403: answering "forbidden" would confirm the record exists.
         Assert.AreEqual(HttpStatusCode.NotFound, readAttempt.StatusCode);
         Assert.AreEqual(HttpStatusCode.NotFound, removeAttempt.StatusCode);
 
@@ -195,7 +181,7 @@ public sealed class FeedbackWorkflowEndpointTests
         using var client = await CreateFeedbackClientAsync(fixture);
         var workId = await ResolveWorkAsync(client, "project-hail-mary");
         await EnsureNoFeedbackAsync(client, workId);
-        var recorded = await SetFeedbackAsync(client, workId, CompletedOn, 5, expectedVersion: null);
+        var recorded = await SetFeedbackAsync(client, workId, CompletedOn, expectedVersion: null);
         Assert.AreEqual(HttpStatusCode.OK, recorded.StatusCode);
 
         await using var restarted = fixture.RestartHost();
@@ -206,7 +192,7 @@ public sealed class FeedbackWorkflowEndpointTests
         Assert.IsNotNull(mine);
         var found = mine.Items.SingleOrDefault(item => item.WorkId == workId);
         Assert.IsNotNull(found, "The feedback did not survive the restart.");
-        Assert.AreEqual(5, found.Rating);
+        Assert.AreEqual(CompletedOn, found.CompletedOn);
     }
 
     private static async Task<HttpClient> CreateFeedbackClientAsync(WebTestFixture fixture)
@@ -258,11 +244,10 @@ public sealed class FeedbackWorkflowEndpointTests
         HttpClient client,
         Guid workId,
         DateOnly completedOn,
-        int rating,
         uint? expectedVersion) =>
         client.PutAsJsonAsync(
             $"/api/v1/me/feedback/{workId}",
-            new SetWorkFeedbackRequest(completedOn, rating, expectedVersion));
+            new SetWorkFeedbackRequest(completedOn, expectedVersion));
 
     private static Task<HttpResponseMessage> RemoveFeedbackAsync(
         HttpClient client,

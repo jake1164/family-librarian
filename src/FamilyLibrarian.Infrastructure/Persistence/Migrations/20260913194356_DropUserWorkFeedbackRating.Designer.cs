@@ -3,6 +3,7 @@ using System;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260913194356_DropUserWorkFeedbackRating")]
+    partial class DropUserWorkFeedbackRating
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1355,50 +1358,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("user_work_feedback", "feedback");
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Following.Follow", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<Guid>("SubjectId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("subject_id");
-
-                    b.Property<string>("SubjectType")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("subject_type");
-
-                    b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at_utc");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("user_id");
-
-                    b.Property<uint>("Version")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SubjectType", "SubjectId");
-
-                    b.HasIndex("UserId", "SubjectType", "SubjectId")
-                        .IsUnique();
-
-                    b.ToTable("follows", "following");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Notifications.NotificationEvent", b =>
@@ -3396,15 +3355,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("WorkId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Following.Follow", b =>
-                {
-                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

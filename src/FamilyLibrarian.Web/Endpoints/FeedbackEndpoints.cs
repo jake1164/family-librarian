@@ -8,8 +8,8 @@ internal static class FeedbackEndpoints
 {
     public static void MapFeedbackEndpoints(this IEndpointRouteBuilder app)
     {
-        // My Reading: a completion date and 1-5 star rating per Work, private to the
-        // owner. Ownership is enforced inside UserWorkFeedbackService, same as Requests.
+        // My Reading: a completion date per Work, private to the owner. Ownership
+        // is enforced inside UserWorkFeedbackService, same as Requests.
         var feedback = app.MapGroup("/api/v1/me/feedback")
             .RequireAuthorization()
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
@@ -46,7 +46,6 @@ internal static class FeedbackEndpoints
         var result = await feedback.SetFeedbackAsync(
             workId,
             request.CompletedOn,
-            request.Rating,
             request.ExpectedVersion,
             cancellationToken);
 
@@ -56,10 +55,7 @@ internal static class FeedbackEndpoints
             SetFeedbackOutcome.WorkNotFound => Results.NotFound(),
             SetFeedbackOutcome.Unauthenticated => Results.Unauthorized(),
             SetFeedbackOutcome.Conflict => Results.Conflict(new { message = result.Error }),
-            _ => Results.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["rating"] = [result.Error ?? "That rating could not be saved."]
-            })
+            _ => Results.Problem(statusCode: StatusCodes.Status500InternalServerError)
         };
     }
 
@@ -87,6 +83,5 @@ internal static class FeedbackEndpoints
         feedback.Authors,
         feedback.CoverUrl,
         feedback.CompletedOn,
-        feedback.Rating,
         feedback.Version);
 }

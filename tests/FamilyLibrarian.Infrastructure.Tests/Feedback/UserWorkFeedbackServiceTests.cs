@@ -6,7 +6,7 @@ namespace FamilyLibrarian.Infrastructure.Tests.Feedback;
 
 /// <summary>
 /// Ownership, concurrency, and the create-vs-correct behavior behind My
-/// Reading and the completion/rating action on Work detail.
+/// Reading and the "mark read" action on Work detail.
 /// </summary>
 [TestClass]
 public sealed class UserWorkFeedbackServiceTests
@@ -24,13 +24,13 @@ public sealed class UserWorkFeedbackServiceTests
         var service = Create(repository, Reader);
 
         var result = await service.SetFeedbackAsync(
-            Work, CompletedOn, 4, expectedVersion: null, CancellationToken.None);
+            Work, CompletedOn, expectedVersion: null, CancellationToken.None);
 
         Assert.AreEqual(SetFeedbackOutcome.Success, result.Outcome);
         var stored = repository.Rows.Single();
         Assert.AreEqual(Reader, stored.UserId);
         Assert.AreEqual(Work, stored.WorkId);
-        Assert.AreEqual(4, stored.Rating);
+        Assert.AreEqual(CompletedOn, stored.CompletedOn);
     }
 
     [TestMethod]
@@ -40,28 +40,14 @@ public sealed class UserWorkFeedbackServiceTests
         var service = Create(repository, Reader);
 
         var first = await service.SetFeedbackAsync(
-            Work, CompletedOn, 3, expectedVersion: null, CancellationToken.None);
+            Work, CompletedOn, expectedVersion: null, CancellationToken.None);
 
         var second = await service.SetFeedbackAsync(
-            Work, CompletedOn.AddDays(1), 5, first.Feedback!.Version, CancellationToken.None);
+            Work, CompletedOn.AddDays(1), first.Feedback!.Version, CancellationToken.None);
 
         Assert.AreEqual(SetFeedbackOutcome.Success, second.Outcome);
         Assert.AreEqual(1, repository.Rows.Count);
-        Assert.AreEqual(5, repository.Rows.Single().Rating);
         Assert.AreEqual(CompletedOn.AddDays(1), repository.Rows.Single().CompletedOn);
-    }
-
-    [TestMethod]
-    public async Task ARatingOutsideOneToFiveIsRejectedBeforeAnyDatabaseWork()
-    {
-        var repository = new InMemoryFeedbackRepository();
-        var service = Create(repository, Reader);
-
-        var result = await service.SetFeedbackAsync(
-            Work, CompletedOn, 6, expectedVersion: null, CancellationToken.None);
-
-        Assert.AreEqual(SetFeedbackOutcome.Invalid, result.Outcome);
-        Assert.AreEqual(0, repository.Rows.Count);
     }
 
     [TestMethod]
@@ -71,7 +57,7 @@ public sealed class UserWorkFeedbackServiceTests
         var service = Create(repository, Reader);
 
         var result = await service.SetFeedbackAsync(
-            Work, CompletedOn, 3, expectedVersion: null, CancellationToken.None);
+            Work, CompletedOn, expectedVersion: null, CancellationToken.None);
 
         Assert.AreEqual(SetFeedbackOutcome.WorkNotFound, result.Outcome);
         Assert.AreEqual(0, repository.Rows.Count);
@@ -84,7 +70,7 @@ public sealed class UserWorkFeedbackServiceTests
         var service = Create(repository, userId: null);
 
         var result = await service.SetFeedbackAsync(
-            Work, CompletedOn, 3, expectedVersion: null, CancellationToken.None);
+            Work, CompletedOn, expectedVersion: null, CancellationToken.None);
 
         Assert.AreEqual(SetFeedbackOutcome.Unauthenticated, result.Outcome);
         Assert.AreEqual(0, repository.Rows.Count);
@@ -96,7 +82,7 @@ public sealed class UserWorkFeedbackServiceTests
         var repository = new InMemoryFeedbackRepository();
         var service = Create(repository, Reader);
 
-        var result = await service.SetFeedbackAsync(Work, CompletedOn, 3, expectedVersion: 1, CancellationToken.None);
+        var result = await service.SetFeedbackAsync(Work, CompletedOn, expectedVersion: 1, CancellationToken.None);
 
         Assert.AreEqual(SetFeedbackOutcome.Conflict, result.Outcome);
         Assert.AreEqual(0, repository.Rows.Count);
@@ -106,21 +92,21 @@ public sealed class UserWorkFeedbackServiceTests
     public async Task ListMineReturnsOnlyTheCallersFeedback()
     {
         var repository = new InMemoryFeedbackRepository();
-        repository.Seed(new UserWorkFeedback(Reader, Work, CompletedOn, 4, Now));
-        repository.Seed(new UserWorkFeedback(OtherReader, Work, CompletedOn, 2, Now));
+        repository.Seed(new UserWorkFeedback(Reader, Work, CompletedOn, Now));
+        repository.Seed(new UserWorkFeedback(OtherReader, Work, CompletedOn, Now));
         var service = Create(repository, Reader);
 
         var mine = await service.ListMineAsync(CancellationToken.None);
 
         Assert.AreEqual(1, mine.Count);
-        Assert.AreEqual(4, mine[0].Rating);
+        Assert.AreEqual(CompletedOn, mine[0].CompletedOn);
     }
 
     [TestMethod]
     public async Task AUserCannotSeeAnotherUsersFeedback()
     {
         var repository = new InMemoryFeedbackRepository();
-        repository.Seed(new UserWorkFeedback(OtherReader, Work, CompletedOn, 5, Now));
+        repository.Seed(new UserWorkFeedback(OtherReader, Work, CompletedOn, Now));
         var service = Create(repository, Reader);
 
         var mine = await service.FindMineAsync(Work, CancellationToken.None);
@@ -132,25 +118,25 @@ public sealed class UserWorkFeedbackServiceTests
     public async Task AUserCannotCorrectAnotherUsersFeedbackAndIsToldItDoesNotExist()
     {
         var repository = new InMemoryFeedbackRepository();
-        var theirs = new UserWorkFeedback(OtherReader, Work, CompletedOn, 5, Now);
+        var theirs = new UserWorkFeedback(OtherReader, Work, CompletedOn, Now);
         repository.Seed(theirs);
         var service = Create(repository, Reader);
 
         // No expectedVersion supplied means "create", but a row already exists
         // for this Work under a different user, so nothing should be written.
         var result = await service.SetFeedbackAsync(
-            Work, CompletedOn, 1, expectedVersion: null, CancellationToken.None);
+            Work, CompletedOn, expectedVersion: null, CancellationToken.None);
 
         Assert.AreEqual(SetFeedbackOutcome.Success, result.Outcome);
         Assert.AreEqual(2, repository.Rows.Count);
-        Assert.AreEqual(5, theirs.Rating);
+        Assert.AreEqual(CompletedOn, theirs.CompletedOn);
     }
 
     [TestMethod]
     public async Task ARequesterCanRemoveTheirOwnFeedback()
     {
         var repository = new InMemoryFeedbackRepository();
-        var feedback = new UserWorkFeedback(Reader, Work, CompletedOn, 3, Now);
+        var feedback = new UserWorkFeedback(Reader, Work, CompletedOn, Now);
         repository.Seed(feedback);
         var service = Create(repository, Reader);
 
@@ -164,7 +150,7 @@ public sealed class UserWorkFeedbackServiceTests
     public async Task AUserCannotRemoveAnotherUsersFeedbackAndIsToldItDoesNotExist()
     {
         var repository = new InMemoryFeedbackRepository();
-        var theirs = new UserWorkFeedback(OtherReader, Work, CompletedOn, 3, Now);
+        var theirs = new UserWorkFeedback(OtherReader, Work, CompletedOn, Now);
         repository.Seed(theirs);
         var service = Create(repository, Reader);
 
@@ -180,7 +166,7 @@ public sealed class UserWorkFeedbackServiceTests
     public async Task RemovingWithAStaleVersionIsAConflictAndLeavesItInPlace()
     {
         var repository = new InMemoryFeedbackRepository();
-        var feedback = new UserWorkFeedback(Reader, Work, CompletedOn, 3, Now);
+        var feedback = new UserWorkFeedback(Reader, Work, CompletedOn, Now);
         repository.Seed(feedback);
         var service = Create(repository, Reader);
 
@@ -251,7 +237,6 @@ public sealed class UserWorkFeedbackServiceTests
             ["Andy Weir"],
             null,
             feedback.CompletedOn,
-            feedback.Rating,
             feedback.Version);
     }
 }

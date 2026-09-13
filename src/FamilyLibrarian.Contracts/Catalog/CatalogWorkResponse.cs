@@ -5,13 +5,18 @@ namespace FamilyLibrarian.Contracts.Catalog;
 public sealed record CatalogWorkResponse(
     Guid Id,
     string Title,
-    IReadOnlyList<string> Authors,
+    IReadOnlyList<CatalogWorkAuthorResponse> Authors,
     string? Description,
     string? CoverUrl,
     DateOnly? PublicationDate,
     IReadOnlyList<CatalogEditionResponse> Editions,
     IReadOnlyList<CatalogSeriesResponse> Series,
     IReadOnlyList<CatalogWorkSourceResponse> Sources);
+
+/// <summary>An author as displayed on a resolved Work — unlike a raw search
+/// candidate's plain name strings, this carries the catalog <c>Author</c>'s
+/// id so it can be followed.</summary>
+public sealed record CatalogWorkAuthorResponse(Guid Id, string Name);
 
 public sealed record CatalogWorkSourceResponse(
     string ProviderId,

@@ -10,5 +10,4 @@ public sealed record UserWorkFeedbackView(
     IReadOnlyList<string> Authors,
     string? CoverUrl,
     DateOnly CompletedOn,
-    int Rating,
     uint Version);

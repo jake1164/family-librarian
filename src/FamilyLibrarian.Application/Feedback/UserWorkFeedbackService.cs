@@ -38,8 +38,8 @@ public sealed class UserWorkFeedbackService(
             : null;
 
     /// <summary>
-    /// Records a new completion/rating, or corrects the caller's existing one
-    /// for the same Work.
+    /// Records that the caller has read a Work, or corrects the date on their
+    /// existing record for the same Work.
     /// </summary>
     /// <param name="expectedVersion">
     /// <see langword="null"/> when creating; the row's current <c>Version</c>
@@ -50,19 +50,12 @@ public sealed class UserWorkFeedbackService(
     public async Task<SetFeedbackResult> SetFeedbackAsync(
         Guid workId,
         DateOnly completedOn,
-        int rating,
         uint? expectedVersion,
         CancellationToken cancellationToken)
     {
         if (currentUser.UserId is not { } userId)
         {
             return SetFeedbackResult.Unauthenticated();
-        }
-
-        if (rating is < UserWorkFeedback.MinRating or > UserWorkFeedback.MaxRating)
-        {
-            return SetFeedbackResult.Invalid(
-                $"Choose a rating between {UserWorkFeedback.MinRating} and {UserWorkFeedback.MaxRating} stars.");
         }
 
         if (!await repository.WorkExistsAsync(workId, cancellationToken))
@@ -81,7 +74,7 @@ public sealed class UserWorkFeedbackService(
                 return SetFeedbackResult.Conflict();
             }
 
-            var created = new UserWorkFeedback(userId, workId, completedOn, rating, clock.UtcNow);
+            var created = new UserWorkFeedback(userId, workId, completedOn, clock.UtcNow);
             repository.Add(created);
         }
         else
@@ -91,7 +84,7 @@ public sealed class UserWorkFeedbackService(
                 return SetFeedbackResult.Conflict();
             }
 
-            existing.Correct(completedOn, rating, clock.UtcNow);
+            existing.Correct(completedOn, clock.UtcNow);
         }
 
         await repository.SaveChangesAsync(cancellationToken);
@@ -139,9 +132,6 @@ public sealed record SetFeedbackResult(SetFeedbackOutcome Outcome, UserWorkFeedb
     public static SetFeedbackResult Conflict() =>
         new(SetFeedbackOutcome.Conflict, null, "This has changed since you loaded it. Reload and try again.");
 
-    public static SetFeedbackResult Invalid(string error) =>
-        new(SetFeedbackOutcome.Invalid, null, error);
-
     public static SetFeedbackResult Unauthenticated() =>
         new(SetFeedbackOutcome.Unauthenticated, null, null);
 }
@@ -151,7 +141,6 @@ public enum SetFeedbackOutcome
     Success,
     WorkNotFound,
     Conflict,
-    Invalid,
     Unauthenticated
 }
 

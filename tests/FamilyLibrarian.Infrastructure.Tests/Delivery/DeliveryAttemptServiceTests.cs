@@ -1081,6 +1081,12 @@ public sealed class DeliveryAttemptServiceTests
             string normalizedName, CancellationToken cancellationToken) =>
             throw new NotSupportedException("Not exercised by these tests.");
 
+        public Task<Series?> GetSeriesAsync(Guid seriesId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<Author?> GetAuthorAsync(Guid authorId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
         public void AddWork(Work work) => _works[work.Id] = work;
 
         public void AddAuthor(Author author) => throw new NotSupportedException("Not exercised by these tests.");

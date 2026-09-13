@@ -32,14 +32,13 @@ public sealed class FeedbackApiClient(HttpClient httpClient, AntiforgeryTokenPro
     public async Task<SetFeedbackOutcome> SetAsync(
         Guid workId,
         DateOnly completedOn,
-        int rating,
         uint? expectedVersion,
         CancellationToken cancellationToken = default)
     {
         using var response = await SendAsync(
             HttpMethod.Put,
             $"api/v1/me/feedback/{workId}",
-            new SetWorkFeedbackRequest(completedOn, rating, expectedVersion),
+            new SetWorkFeedbackRequest(completedOn, expectedVersion),
             cancellationToken);
 
         return response.IsSuccessStatusCode

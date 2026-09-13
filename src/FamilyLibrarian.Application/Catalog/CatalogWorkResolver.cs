@@ -1,12 +1,17 @@
 using System.Globalization;
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Following;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Following;
 
 namespace FamilyLibrarian.Application.Catalog;
 
 public sealed class CatalogWorkResolver(
     IEnumerable<IBookMetadataProvider> providers,
     ICatalogRepository catalogRepository,
+    IFollowRepository followRepository,
+    NotificationService notifications,
     IClock clock)
 {
     private readonly Dictionary<string, IBookMetadataProvider> _providers = providers
@@ -66,9 +71,13 @@ public sealed class CatalogWorkResolver(
             candidate.PublicationDate is null ? PublicationStatus.Unknown : PublicationStatus.Published,
             observedAtUtc);
 
-        await AddAuthorsAsync(work, candidate.Authors, observedAtUtc, cancellationToken);
+        var authorFollowerNotifications = new List<(Guid FollowerUserId, Guid AuthorId, string AuthorName)>();
+        var seriesFollowerNotifications = new List<(Guid FollowerUserId, Guid SeriesId, string SeriesName)>();
+
+        await AddAuthorsAsync(work, candidate.Authors, observedAtUtc, authorFollowerNotifications, cancellationToken);
         AddEditions(work, candidate.Editions, observedAtUtc);
-        await AddSeriesEntriesAsync(work, candidate.Series, observedAtUtc, cancellationToken);
+        await AddSeriesEntriesAsync(
+            work, candidate.Series, observedAtUtc, seriesFollowerNotifications, cancellationToken);
         catalogRepository.AddWork(work);
         catalogRepository.AddExternalReference(new ExternalReference(
             provider.Id,
@@ -77,6 +86,11 @@ public sealed class CatalogWorkResolver(
             candidate.ExternalId,
             observedAtUtc));
         await catalogRepository.SaveChangesAsync(cancellationToken);
+
+        // Only after the catalog write actually commits: a notification for
+        // a Work that failed to save would be worse than not sending one.
+        await NotifyFollowersAsync(
+            work, authorFollowerNotifications, seriesFollowerNotifications, cancellationToken);
 
         return new CatalogWorkResolution(work, true);
     }
@@ -93,6 +107,7 @@ public sealed class CatalogWorkResolver(
         Work work,
         IReadOnlyList<string> names,
         DateTimeOffset observedAtUtc,
+        List<(Guid FollowerUserId, Guid AuthorId, string AuthorName)> followerNotifications,
         CancellationToken cancellationToken)
     {
         foreach (var name in names
@@ -105,6 +120,9 @@ public sealed class CatalogWorkResolver(
             var author = await catalogRepository.FindAuthorByNormalizedNameAsync(
                 normalizedName,
                 cancellationToken);
+            // An author nobody could have followed yet (this is the first
+            // time FL has ever seen them) has no followers to look up.
+            var isNewAuthor = author is null;
             if (author is null)
             {
                 author = new Author(name.name, null, observedAtUtc);
@@ -112,6 +130,14 @@ public sealed class CatalogWorkResolver(
             }
 
             work.AddAuthor(author, name.ordinal);
+
+            if (!isNewAuthor)
+            {
+                var followers = await followRepository.ListFollowersAsync(
+                    FollowSubjectType.Author, author.Id, cancellationToken);
+                followerNotifications.AddRange(
+                    followers.Select(follower => (follower.UserId, author.Id, author.CanonicalName)));
+            }
         }
     }
 
@@ -137,6 +163,7 @@ public sealed class CatalogWorkResolver(
         Work work,
         IReadOnlyList<BookSeriesCandidate> candidates,
         DateTimeOffset observedAtUtc,
+        List<(Guid FollowerUserId, Guid SeriesId, string SeriesName)> followerNotifications,
         CancellationToken cancellationToken)
     {
         foreach (var candidate in candidates.Where(candidate =>
@@ -146,6 +173,9 @@ public sealed class CatalogWorkResolver(
             var series = await catalogRepository.FindSeriesByNormalizedNameAsync(
                 normalizedName,
                 cancellationToken);
+            // A series nobody could have followed yet (this is the first time
+            // FL has ever seen it) has no followers to look up.
+            var isNewSeries = series is null;
             if (series is null)
             {
                 series = new Series(
@@ -166,6 +196,44 @@ public sealed class CatalogWorkResolver(
                 candidate.PositionSort ?? TryParsePosition(candidate.PositionLabel),
                 candidate.IsPrimary,
                 observedAtUtc));
+
+            if (!isNewSeries)
+            {
+                var followers = await followRepository.ListFollowersAsync(
+                    FollowSubjectType.Series, series.Id, cancellationToken);
+                followerNotifications.AddRange(
+                    followers.Select(follower => (follower.UserId, series.Id, series.Name)));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Best-effort: a notification failure must never undo or fail an
+    /// otherwise-successful catalog resolution a request is waiting on.
+    /// </summary>
+    private async Task NotifyFollowersAsync(
+        Work work,
+        List<(Guid FollowerUserId, Guid AuthorId, string AuthorName)> authorFollowerNotifications,
+        List<(Guid FollowerUserId, Guid SeriesId, string SeriesName)> seriesFollowerNotifications,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            foreach (var (followerUserId, authorId, authorName) in authorFollowerNotifications)
+            {
+                await notifications.RecordAuthorWorkAddedAsync(
+                    followerUserId, authorId, authorName, work.Id, work.CanonicalTitle, cancellationToken);
+            }
+
+            foreach (var (followerUserId, seriesId, seriesName) in seriesFollowerNotifications)
+            {
+                await notifications.RecordSeriesEntryAddedAsync(
+                    followerUserId, seriesId, seriesName, work.Id, work.CanonicalTitle, cancellationToken);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Swallowed deliberately -- see the summary above.
         }
     }
 

@@ -118,6 +118,50 @@ public sealed class NotificationService(
             subjectId: deliveryId.ToString(),
             cancellationToken);
 
+    /// <summary>
+    /// TRACKING-1: tells one follower of a Series that a newly resolved Work
+    /// joined it. Called once per follower per new entry -- keying on the
+    /// new Work's id rather than the stable Series id means this is never
+    /// collapsed by <see cref="UpsertAsync"/>'s normal recur behavior, by
+    /// design (an unrelated later entry must not silently absorb this one).
+    /// </summary>
+    public Task RecordSeriesEntryAddedAsync(
+        Guid followerUserId,
+        Guid seriesId,
+        string seriesName,
+        Guid newWorkId,
+        string newWorkTitle,
+        CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.SingleUser,
+            followerUserId,
+            NotificationCategories.SeriesNewEntryDetected,
+            NotificationSeverity.Info,
+            title: $"\"{newWorkTitle}\" joined {seriesName}",
+            detail: "You're following this series.",
+            subjectType: NotificationSubjectTypes.Work,
+            subjectId: newWorkId.ToString(),
+            cancellationToken);
+
+    /// <summary>Author-follow counterpart to <see cref="RecordSeriesEntryAddedAsync"/>.</summary>
+    public Task RecordAuthorWorkAddedAsync(
+        Guid followerUserId,
+        Guid authorId,
+        string authorName,
+        Guid newWorkId,
+        string newWorkTitle,
+        CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.SingleUser,
+            followerUserId,
+            NotificationCategories.AuthorNewWorkDetected,
+            NotificationSeverity.Info,
+            title: $"New from {authorName}: \"{newWorkTitle}\"",
+            detail: "You're following this author.",
+            subjectType: NotificationSubjectTypes.Work,
+            subjectId: newWorkId.ToString(),
+            cancellationToken);
+
     public async Task<IReadOnlyList<NotificationView>> ListForViewerAsync(
         bool isAdmin, CancellationToken cancellationToken)
     {

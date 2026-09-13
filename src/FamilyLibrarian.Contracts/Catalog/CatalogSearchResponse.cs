@@ -34,7 +34,14 @@ public sealed record CatalogEditionResponse(
     string Format,
     DateOnly? PublicationDate);
 
+/// <param name="Id">
+/// The catalog <c>Series</c>' id, so it can be followed — only ever populated
+/// once this series belongs to a resolved <c>Work</c> (see
+/// <c>CatalogWorkResponse</c>); a raw, not-yet-resolved search candidate has
+/// no persisted series to reference yet, so this is null there.
+/// </param>
 public sealed record CatalogSeriesResponse(
     string Name,
     string? PositionLabel,
-    bool IsPrimary);
+    bool IsPrimary,
+    Guid? Id = null);

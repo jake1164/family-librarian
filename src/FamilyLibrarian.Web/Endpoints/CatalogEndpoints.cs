@@ -380,7 +380,7 @@ internal static class CatalogEndpoints
             work.CanonicalTitle,
             work.Authors
                 .OrderBy(author => author.Ordinal)
-                .Select(author => author.Author.CanonicalName)
+                .Select(author => new CatalogWorkAuthorResponse(author.Author.Id, author.Author.CanonicalName))
                 .ToArray(),
             work.Description,
             work.CoverUrl,
@@ -401,7 +401,8 @@ internal static class CatalogEndpoints
                 .Select(entry => new CatalogSeriesResponse(
                     entry.Series.Name,
                     entry.PositionLabel,
-                    entry.IsPrimary))
+                    entry.IsPrimary,
+                    entry.SeriesId))
                 .ToArray(),
             sources.Select(source => new CatalogWorkSourceResponse(
                 source.ProviderId,

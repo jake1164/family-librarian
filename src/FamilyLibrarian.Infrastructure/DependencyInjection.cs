@@ -5,6 +5,7 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Feedback;
+using FamilyLibrarian.Application.Following;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
@@ -195,6 +196,9 @@ public static class DependencyInjection
 
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
         services.AddScoped<UserWorkFeedbackService>();
+
+        services.AddScoped<IFollowRepository, FollowRepository>();
+        services.AddScoped<FollowService>();
         services.AddScoped<DeliveryTargetService>();
         services.AddScoped<DeliveryAttemptService>();
 

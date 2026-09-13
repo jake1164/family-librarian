@@ -30,10 +30,26 @@ public static class NotificationCategories
     /// and needs a human to act from the /admin/publishing queue.
     /// </summary>
     public const string DeliveryNeedsAttention = "delivery.needs_attention";
+
+    /// <summary>
+    /// TRACKING-1: raised for every active follower of a Series when a newly
+    /// resolved Work joins it. Keyed by subject id on the new Work (not the
+    /// stable Series), so by design it is never collapsed/recurred the way
+    /// every other category here is -- an explicit product decision that
+    /// series-follow and author-follow notifications are independent and not
+    /// deduplicated against each other or against themselves.
+    /// </summary>
+    public const string SeriesNewEntryDetected = "following.series_entry_added";
+
+    /// <summary>Author-follow counterpart to <see cref="SeriesNewEntryDetected"/>:
+    /// raised for every active follower of an Author when a newly resolved
+    /// Work is credited to them.</summary>
+    public const string AuthorNewWorkDetected = "following.author_work_added";
 }
 
 public static class NotificationSubjectTypes
 {
     public const string BookRequest = "book_request";
     public const string DeliveryAttempt = "delivery_attempt";
+    public const string Work = "work";
 }

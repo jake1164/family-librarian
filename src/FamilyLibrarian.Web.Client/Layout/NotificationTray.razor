@@ -219,6 +219,10 @@
     private const string DeliveryNeedsAttentionCategory = "delivery.needs_attention";
     // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.RequestPreferenceAmbiguity.
     private const string RequestPreferenceAmbiguityCategory = "request.preference_ambiguity";
+    // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.SeriesNewEntryDetected.
+    private const string SeriesNewEntryDetectedCategory = "following.series_entry_added";
+    // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.AuthorNewWorkDetected.
+    private const string AuthorNewWorkDetectedCategory = "following.author_work_added";
 
     private static string? LinkFor(string category, string? subjectType, string? subjectId) => (category, subjectType, subjectId) switch
     {
@@ -234,6 +238,10 @@
         // the accept/decline actions live inline on the request card in My
         // Requests, not on their own per-request route.
         (RequestPreferenceAmbiguityCategory, "book_request", not null) => "requests",
+        // Both are keyed on the newly-detected Work itself -- go straight to
+        // it rather than the Following list it was found through.
+        (SeriesNewEntryDetectedCategory, "work", { } id) => $"works/{id}",
+        (AuthorNewWorkDetectedCategory, "work", { } id) => $"works/{id}",
         _ => null
     };
 
@@ -243,6 +251,7 @@
         ProviderIssueCategory => Icons.Material.Filled.Source,
         SourceIssueCategory => Icons.Material.Filled.Source,
         PublishingIssueCategory => Icons.Material.Filled.CloudUpload,
+        SeriesNewEntryDetectedCategory or AuthorNewWorkDetectedCategory => Icons.Material.Filled.NewReleases,
         _ => SeverityIcon(entry.Severity)
     };
 
