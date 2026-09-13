@@ -70,6 +70,23 @@ public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTok
         return new RecheckOutcome(false, 0, await ReadErrorAsync(response, cancellationToken));
     }
 
+    /// <summary>
+    /// Admin counterpart of the requester's own needs-review resolve route --
+    /// additive, not exclusive. A non-null <paramref name="candidateId"/>
+    /// accepts that candidate ("get it anyway"); null declines every offered
+    /// candidate ("keep looking").
+    /// </summary>
+    public Task<AdminRequestActionOutcome> ResolveNeedsReviewAsync(
+        Guid requestId,
+        Guid? candidateId,
+        uint? expectedVersion,
+        CancellationToken cancellationToken = default) =>
+        SendForOutcomeAsync(
+            HttpMethod.Post,
+            $"api/v1/admin/requests/{requestId}/needs-review/resolve",
+            new ResolveNeedsReviewRequest(candidateId, expectedVersion),
+            cancellationToken);
+
     public Task<AdminRequestActionOutcome> SetNoteAsync(
         Guid requestId,
         string? note,

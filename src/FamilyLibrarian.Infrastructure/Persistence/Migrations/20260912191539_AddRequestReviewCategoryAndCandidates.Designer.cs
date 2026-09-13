@@ -3,6 +3,7 @@ using System;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260912191539_AddRequestReviewCategoryAndCandidates")]
+    partial class AddRequestReviewCategoryAndCandidates
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2264,55 +2267,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("book_requests", "requests");
                 });
 
-            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.DeclinedRequestCandidate", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("DeclinedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("declined_at_utc");
-
-                    b.Property<string>("ProviderId")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("provider_id");
-
-                    b.Property<string>("ProviderResultId")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
-                        .HasColumnName("provider_result_id");
-
-                    b.Property<Guid>("RequestFormatId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("request_format_id");
-
-                    b.Property<Guid>("RequestId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("request_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RequestId");
-
-                    b.HasIndex("RequestFormatId", "ProviderId", "ProviderResultId");
-
-                    b.ToTable("request_declined_candidates", "requests");
-                });
-
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestFormat", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
-
-                    b.Property<string>("AcceptedLanguage")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("accepted_language");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
@@ -3391,21 +3350,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.DeclinedRequestCandidate", b =>
-                {
-                    b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
-                        .WithMany()
-                        .HasForeignKey("RequestFormatId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
-                        .WithMany("DeclinedCandidates")
-                        .HasForeignKey("RequestId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequestFormat", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", "Request")
@@ -3614,8 +3558,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.BookRequest", b =>
                 {
-                    b.Navigation("DeclinedCandidates");
-
                     b.Navigation("Formats");
 
                     b.Navigation("Participants");

@@ -145,7 +145,8 @@ public sealed class AudiobookshelfPublishingService(
 
         try
         {
-            var existing = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
+            var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
+            var existing = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken, acceptedLanguage);
             if (existing.Decision == BookMatchDecision.Match)
             {
                 delivery.MarkDelivered(existing.MatchedId!, clock.UtcNow);
@@ -157,11 +158,12 @@ public sealed class AudiobookshelfPublishingService(
                 return;
             }
 
-            if (existing.Decision == BookMatchDecision.Ambiguous)
+            if (existing.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
             {
-                // Multiple library items match -- guessing one as "already
-                // delivered" risks attaching the wrong edition, so this falls
-                // through to a normal upload instead, same as NoMatch.
+                // Multiple library items match, or every match was excluded
+                // for language -- guessing one as "already delivered" risks
+                // attaching the wrong edition, so this falls through to a
+                // normal upload instead, same as NoMatch.
                 await AuditMatchAmbiguousAsync(asset.Id, existing.Candidates, cancellationToken);
             }
 
@@ -255,7 +257,8 @@ public sealed class AudiobookshelfPublishingService(
 
         try
         {
-            var existing = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
+            var acceptedLanguage = await FindAcceptedLanguageAsync(tracks[0].AssociatedRequestFormatId, cancellationToken);
+            var existing = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken, acceptedLanguage);
             if (existing.Decision == BookMatchDecision.Match)
             {
                 delivery.MarkDelivered(existing.MatchedId!, clock.UtcNow);
@@ -267,7 +270,7 @@ public sealed class AudiobookshelfPublishingService(
                 return;
             }
 
-            if (existing.Decision == BookMatchDecision.Ambiguous)
+            if (existing.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
             {
                 await AuditMatchAmbiguousAsync(bundleId, existing.Candidates, cancellationToken);
             }
@@ -363,7 +366,8 @@ public sealed class AudiobookshelfPublishingService(
     {
         try
         {
-            var result = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken);
+            var acceptedLanguage = await FindAcceptedLanguageAsync(assets[0].AssociatedRequestFormatId, cancellationToken);
+            var result = await apiClient.FindExistingItemIdAsync(title, author, cancellationToken, acceptedLanguage);
             if (result.Decision == BookMatchDecision.Match)
             {
                 delivery.MarkDelivered(result.MatchedId!, clock.UtcNow);
@@ -375,7 +379,7 @@ public sealed class AudiobookshelfPublishingService(
                 // durably saved -- see DeleteTrustedBytesAsync.
                 await DeleteTrustedBytesAsync(assets, cancellationToken);
             }
-            else if (result.Decision == BookMatchDecision.Ambiguous)
+            else if (result.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
             {
                 // Left Verifying -- genuine ambiguity, not a bug to guess past.
                 await AuditMatchAmbiguousAsync(assets[0].Id, result.Candidates, cancellationToken);
@@ -422,6 +426,17 @@ public sealed class AudiobookshelfPublishingService(
                     cancellationToken);
             }
         }
+    }
+
+    /// <summary>
+    /// The language the requester already explicitly accepted for this
+    /// specific format, if any. Verification must match this language after
+    /// alias normalization; null retains the English-or-unspecified default.
+    /// </summary>
+    private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
+    {
+        var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
+        return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
     }
 
     private async Task MarkRequestFormatAvailableAsync(

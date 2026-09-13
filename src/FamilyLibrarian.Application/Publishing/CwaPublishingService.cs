@@ -184,7 +184,9 @@ public sealed class CwaPublishingService(
     {
         try
         {
-            var result = await catalogClient.FindBookIdAsync(title, author, isbn13Candidates, cancellationToken);
+            var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
+            var result = await catalogClient.FindBookIdAsync(
+                title, author, isbn13Candidates, cancellationToken, acceptedLanguage);
             if (result.Decision == BookMatchDecision.Match)
             {
                 import.MarkAvailable(result.MatchedId!, clock.UtcNow);
@@ -196,10 +198,11 @@ public sealed class CwaPublishingService(
                 // durably saved -- see DeleteTrustedBytesAsync.
                 await DeleteTrustedBytesAsync(asset, cancellationToken);
             }
-            else if (result.Decision == BookMatchDecision.Ambiguous)
+            else if (result.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
             {
                 // Left AwaitingVerification -- this is genuine ambiguity (e.g.
-                // multiple catalog editions), not a bug to guess past. The
+                // multiple catalog editions, or a same-title/author entry
+                // excluded for language) not a bug to guess past. The
                 // audit entry makes it diagnosable instead of silently stuck.
                 await audit.WriteAsync(
                     AuditActions.AssetMatchAmbiguous,
@@ -272,6 +275,17 @@ public sealed class CwaPublishingService(
                 new { asset.Id, Destination = "cwa", Reason = exception.Message },
                 cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// The language the requester already explicitly accepted for this
+    /// specific format, if any. Verification must match this language after
+    /// alias normalization; null retains the English-or-unspecified default.
+    /// </summary>
+    private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
+    {
+        var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
+        return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
     }
 
     private async Task MarkRequestFormatAvailableAsync(

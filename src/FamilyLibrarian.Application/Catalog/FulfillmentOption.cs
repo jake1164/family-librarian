@@ -42,7 +42,23 @@ public sealed record FulfillmentOption(
     // a title/author fallback match is a reviewable guess, not a verified
     // identity, and a consumer that acts on Owned automatically (e.g. the
     // Kindle existing-book send) must not treat the two the same way.
-    BookMatchBasis? MatchBasis = null);
+    BookMatchBasis? MatchBasis = null,
+    // True when this is the only kind of match an IAutomaticDirectAcquisitionProvider
+    // found -- title/author matched, but every result was excluded by
+    // LanguageAcceptance (ACCURACY-1). Such an option must never be
+    // auto-acquired; AutomaticRequestFulfillmentService instead offers it to
+    // the requester as a SELFSERV-1 preference decision ("get it anyway, or
+    // keep looking?").
+    bool RequiresLanguageConfirmation = false,
+    // This specific candidate's own title/author, when the provider can
+    // supply one distinct from the canonical Work title -- e.g. a specific
+    // Gutenberg edition. Null for a provider that only ever returns a
+    // single already-verified match (an Owned lookup): those need no
+    // disambiguation from the Work they already matched. Used only to label
+    // a RequestReviewCandidate distinctly (SELFSERV-1); never persisted
+    // beyond that review.
+    string? Title = null,
+    string? Author = null);
 
 public enum OptionKind
 {

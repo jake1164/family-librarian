@@ -62,35 +62,41 @@ public sealed class AudiobookshelfOwnedLibraryProvider(
     private async Task<IReadOnlyList<FulfillmentOption>> MatchAsync(
         BookIdentity identity, Domain.Publishing.AudiobookshelfSettings settings, CancellationToken cancellationToken)
     {
-        var result = await apiClient.FindExistingItemIdAsync(identity.Title, identity.Author, cancellationToken);
-        if (result.Decision != BookMatchDecision.Match)
+        // No specific accepted format is in play for a generic Work-level
+        // ownership check, so the ordinary English-or-unspecified filter
+        // applies unmodified -- see IBookMatcher.ResolveUnique.
+        var result = await apiClient.FindExistingItemIdAsync(
+            identity.Title, identity.Author, cancellationToken, acceptedLanguage: null);
+
+        if (result.Decision == BookMatchDecision.Match)
         {
-            return [];
+            var itemId = result.MatchedId!;
+            return
+            [
+                new FulfillmentOption(
+                    ProviderId: Id,
+                    ProviderResultId: itemId,
+                    WorkId: Guid.Empty,
+                    EditionId: null,
+                    MediaType: RequestMediaType.Audiobook,
+                    OptionKind: OptionKind.Owned,
+                    AcquisitionMethod: AcquisitionMethod.OwnedImport,
+                    Format: null,
+                    Language: null,
+                    Quality: null,
+                    Availability: null,
+                    Cost: null,
+                    Currency: null,
+                    LicenseOrUsageStatus: null,
+                    DrmStatus: null,
+                    ExternalActionUri: ExternalLibraryLinks.BuildAudiobookshelfItemLink(settings, itemId),
+                    ProviderData: null,
+                    MatchBasis: result.Basis)
+            ];
         }
 
-        var itemId = result.MatchedId!;
-
-        return
-        [
-            new FulfillmentOption(
-                ProviderId: Id,
-                ProviderResultId: itemId,
-                WorkId: Guid.Empty,
-                EditionId: null,
-                MediaType: RequestMediaType.Audiobook,
-                OptionKind: OptionKind.Owned,
-                AcquisitionMethod: AcquisitionMethod.OwnedImport,
-                Format: null,
-                Language: null,
-                Quality: null,
-                Availability: null,
-                Cost: null,
-                Currency: null,
-                LicenseOrUsageStatus: null,
-                DrmStatus: null,
-                ExternalActionUri: ExternalLibraryLinks.BuildAudiobookshelfItemLink(settings, itemId),
-                ProviderData: null,
-                MatchBasis: result.Basis)
-        ];
+        // Owned options drive request suppression and delivery, not just display.
+        // Ambiguous and language-excluded candidates are not confirmed ownership.
+        return [];
     }
 }

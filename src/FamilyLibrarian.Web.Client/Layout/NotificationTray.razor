@@ -217,6 +217,8 @@
     private const string KindleDeliveryConfirmationRequestedCategory = "delivery.kindle_confirmation_requested";
     // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.DeliveryNeedsAttention.
     private const string DeliveryNeedsAttentionCategory = "delivery.needs_attention";
+    // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.RequestPreferenceAmbiguity.
+    private const string RequestPreferenceAmbiguityCategory = "request.preference_ambiguity";
 
     private static string? LinkFor(string category, string? subjectType, string? subjectId) => (category, subjectType, subjectId) switch
     {
@@ -228,6 +230,10 @@
         // Keyed on the stable DeliveryId, not one attempt row, and the admin
         // queue has no per-row route -- just get the admin to the queue.
         (DeliveryNeedsAttentionCategory, "delivery_attempt", not null) => "admin/publishing",
+        // SELFSERV-1: same reasoning as Kindle's confirm/report buttons above --
+        // the accept/decline actions live inline on the request card in My
+        // Requests, not on their own per-request route.
+        (RequestPreferenceAmbiguityCategory, "book_request", not null) => "requests",
         _ => null
     };
 

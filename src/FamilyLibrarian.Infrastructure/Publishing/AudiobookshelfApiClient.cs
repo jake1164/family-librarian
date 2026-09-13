@@ -29,7 +29,7 @@ public sealed class AudiobookshelfApiClient(
     IBookMatchService matchService) : IAudiobookshelfApiClient
 {
     public async Task<BookMatchResult> FindExistingItemIdAsync(
-        string title, string? author, CancellationToken cancellationToken)
+        string title, string? author, CancellationToken cancellationToken, string? acceptedLanguage = null)
     {
         var settings = await settingsStore.FindAsync(cancellationToken);
         if (settings is null || string.IsNullOrWhiteSpace(settings.BaseUrl) ||
@@ -55,7 +55,8 @@ public sealed class AudiobookshelfApiClient(
         }
 
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        return await matchService.MatchByTitleAuthorAsync(title, author, ExtractCandidates(body), cancellationToken);
+        return await matchService.MatchByTitleAuthorAsync(
+            title, author, ExtractCandidates(body), cancellationToken, acceptedLanguage);
     }
 
     public Task<AudiobookshelfUploadResult> UploadAsync(
@@ -178,7 +179,8 @@ public sealed class AudiobookshelfApiClient(
             }
 
             var itemAuthor = metadata?["authorName"]?.GetValue<string>();
-            candidates.Add(new CandidateBook(id, itemTitle, itemAuthor));
+            var itemLanguage = metadata?["language"]?.GetValue<string>();
+            candidates.Add(new CandidateBook(id, itemTitle, itemAuthor, itemLanguage));
         }
 
         return candidates;

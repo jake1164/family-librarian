@@ -356,11 +356,29 @@ CatalogUrl?
 LastVerifiedAt
 ```
 
+Ordinary ownership lookup accepts only a unique English-or-unspecified match.
+Ambiguous and language-excluded library candidates are not `Owned` fulfillment
+options: they must neither block an ordinary request nor enable Send Existing.
+A low-confidence title/author confirmation does not resolve either condition.
+Owned-library candidate selection remains a separate future workflow.
+
 The reference is retained only after an identifier-first or explicitly reviewed
 match. A title/author-only match remains ambiguous until confirmed. A catalog
 URL is a user-facing deep-link hint, never a credential-bearing download URL.
 
 ---
+
+### Language consent
+
+Automatic matching defaults to English; missing language metadata stays eligible.
+Accepting a preference-review candidate stores that candidate's language on the
+request format. EPUB identity verification and CWA/Audiobookshelf verification
+then require that language, including when the selected edition is English.
+Known two/three-letter ISO codes, regional tags, and English language names are
+normalized (for example `es`, `spa`, `Spanish`, and `es-MX`). Unknown values
+require exact case-insensitive equality. Accepting Spanish never authorizes
+French or another declared language. With multiple EPUB language declarations,
+at least one must match. Missing declarations remain eligible.
 
 ### FulfillmentOption
 

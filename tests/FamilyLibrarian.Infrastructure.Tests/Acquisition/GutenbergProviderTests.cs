@@ -114,6 +114,65 @@ public sealed class GutenbergProviderTests
         Assert.AreEqual(workId, options[0].WorkId);
     }
 
+    [TestMethod]
+    public async Task AForeignOnlyMatchIsReturnedMarkedAsRequiringLanguageConfirmation()
+    {
+        var context = new TestContext();
+        context.Catalog.Books =
+        [
+            new GutenbergCatalogBook(
+                2701,
+                "Moby Dick",
+                "moby dick",
+                "Ebook",
+                "Public domain",
+                [new GutenbergCatalogPerson("Herman Melville", GutenbergPersonRole.Author)],
+                ["es"],
+                [new GutenbergCatalogFormat("2701/2701-images.epub", "application/epub+zip", GutenbergFormatKind.EpubImages, 500_000, null)])
+        ];
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.IsTrue(options[0].RequiresLanguageConfirmation);
+        Assert.AreEqual("es", options[0].Language);
+    }
+
+    [TestMethod]
+    public async Task AnEnglishMatchIsPreferredOverAnEarlierForeignCandidate()
+    {
+        var context = new TestContext();
+        context.Catalog.Books =
+        [
+            new GutenbergCatalogBook(
+                1,
+                "Moby Dick",
+                "moby dick",
+                "Ebook",
+                "Public domain",
+                [new GutenbergCatalogPerson("Herman Melville", GutenbergPersonRole.Author)],
+                ["es"],
+                [new GutenbergCatalogFormat("1/1-images.epub", "application/epub+zip", GutenbergFormatKind.EpubImages, 500_000, null)]),
+            new GutenbergCatalogBook(
+                2701,
+                "Moby Dick",
+                "moby dick",
+                "Ebook",
+                "Public domain",
+                [new GutenbergCatalogPerson("Herman Melville", GutenbergPersonRole.Author)],
+                ["en"],
+                [new GutenbergCatalogFormat("2701/2701-images.epub", "application/epub+zip", GutenbergFormatKind.EpubImages, 500_000, null)])
+        ];
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual("2701", options[0].ProviderResultId);
+        Assert.IsFalse(options[0].RequiresLanguageConfirmation);
+    }
+
     private static readonly ProviderDescriptor UsableDescriptor = new(
         "gutendex",
         "Project Gutenberg",

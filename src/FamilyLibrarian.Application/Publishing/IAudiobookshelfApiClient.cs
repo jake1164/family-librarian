@@ -11,7 +11,13 @@ public interface IAudiobookshelfApiClient
     /// <see cref="ICwaCatalogClient.FindBookIdAsync"/> for the same
     /// "ambiguous is not a guess" posture applied to this destination.
     /// </summary>
-    Task<BookMatchResult> FindExistingItemIdAsync(string title, string? author, CancellationToken cancellationToken);
+    /// <param name="acceptedLanguage">
+    /// Language explicitly accepted for the specific format this verifies.
+    /// Other declared languages remain excluded -- see
+    /// <see cref="ICwaCatalogClient.FindBookIdAsync"/>.
+    /// </param>
+    Task<BookMatchResult> FindExistingItemIdAsync(
+        string title, string? author, CancellationToken cancellationToken, string? acceptedLanguage = null);
 
     Task<AudiobookshelfUploadResult> UploadAsync(
         Stream content,

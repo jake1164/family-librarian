@@ -10,21 +10,40 @@ namespace FamilyLibrarian.Application.Matching;
 /// </summary>
 public sealed class DeterministicBookMatcher : IBookMatcher
 {
-    public BookMatchResult ResolveUnique(IReadOnlyList<CandidateBook> candidates) =>
-        candidates.Count switch
+    public BookMatchResult ResolveUnique(IReadOnlyList<CandidateBook> candidates, string? acceptedLanguage = null)
+    {
+        if (candidates.Count == 0)
         {
-            0 => BookMatchResult.NoMatchResult,
-            1 => BookMatchResult.Match(candidates[0]),
-            _ => BookMatchResult.Ambiguous(candidates)
-        };
+            return BookMatchResult.NoMatchResult;
+        }
 
-    public BookMatchResult MatchByTitleAuthor(string title, string? author, IReadOnlyList<CandidateBook> candidates)
+        var eligible = candidates.Where(candidate =>
+                LanguageAcceptance.IsAcceptedOrUnspecified(candidate.Language, acceptedLanguage))
+            .ToArray();
+        if (eligible.Length == 0)
+        {
+            // Every otherwise-matching candidate was excluded for language --
+            // distinct from "nothing found," so a caller can hand this to a
+            // preference decision instead of silently forcing a wrong-language
+            // match through or losing the fact that something was found.
+            return BookMatchResult.LanguageExcluded(candidates);
+        }
+
+        return eligible.Length switch
+        {
+            1 => BookMatchResult.Match(eligible[0]),
+            _ => BookMatchResult.Ambiguous(eligible)
+        };
+    }
+
+    public BookMatchResult MatchByTitleAuthor(
+        string title, string? author, IReadOnlyList<CandidateBook> candidates, string? acceptedLanguage = null)
     {
         var matches = candidates
             .Where(candidate => TitleMatches(title, candidate.Title) && AuthorMatches(author, candidate.Author))
             .ToArray();
 
-        return ResolveUnique(matches);
+        return ResolveUnique(matches, acceptedLanguage);
     }
 
     public bool TitleMatches(string expectedTitle, string candidateTitle)

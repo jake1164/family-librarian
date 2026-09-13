@@ -84,12 +84,27 @@ public sealed class GutenbergProvider(
             RequireEpub: mediaType == RequestMediaType.Ebook,
             Take: 30), cancellationToken);
 
+        // Scan every title/author match rather than stopping at the first one:
+        // an early return here (the old behavior) could return a foreign
+        // translation while a later candidate is the requested English
+        // edition, and even among English/unspecified candidates there can be
+        // more than one plausible edition -- both English-eligible and
+        // non-English matches are collected and left for the caller
+        // (AutomaticRequestFulfillmentService) to decide between: a single
+        // eligible match auto-acquires, more than one becomes a SELFSERV-1
+        // preference choice, and a non-English match is kept, marked
+        // RequiresLanguageConfirmation, for the same preference-choice
+        // treatment instead of silently auto-acquiring (or discarding) it.
+        var autoEligible = new List<FulfillmentOption>();
+        var languageExcluded = new List<FulfillmentOption>();
         foreach (var candidate in candidates)
         {
+            var matchedAuthor = candidate.People
+                .Where(person => person.Role == GutenbergPersonRole.Author)
+                .FirstOrDefault(person => !string.IsNullOrWhiteSpace(identity.Author) &&
+                    bookMatcher.AuthorMatches(identity.Author, person.Name));
             if (!bookMatcher.TitleMatches(identity.Title, candidate.Title) ||
-                (!string.IsNullOrWhiteSpace(identity.Author) && !candidate.People
-                    .Where(person => person.Role == GutenbergPersonRole.Author)
-                    .Any(person => bookMatcher.AuthorMatches(identity.Author, person.Name))))
+                (!string.IsNullOrWhiteSpace(identity.Author) && matchedAuthor is null))
             {
                 continue;
             }
@@ -97,13 +112,29 @@ public sealed class GutenbergProvider(
             var option = mediaType == RequestMediaType.Ebook
                 ? BuildEbookOption(candidate)
                 : BuildAudiobookOption(candidate);
-            if (option is not null)
+            if (option is null)
             {
-                return [option];
+                continue;
+            }
+
+            option = option with
+            {
+                Title = candidate.Title,
+                Author = matchedAuthor?.Name ?? candidate.People
+                    .FirstOrDefault(person => person.Role == GutenbergPersonRole.Author)?.Name
+            };
+
+            if (LanguageAcceptance.IsEnglishOrUnspecified(option.Language))
+            {
+                autoEligible.Add(option);
+            }
+            else
+            {
+                languageExcluded.Add(option with { RequiresLanguageConfirmation = true });
             }
         }
 
-        return [];
+        return autoEligible.Count > 0 ? autoEligible : languageExcluded;
     }
 
     public async Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(

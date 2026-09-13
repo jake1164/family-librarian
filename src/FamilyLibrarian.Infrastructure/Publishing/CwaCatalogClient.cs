@@ -44,7 +44,8 @@ public sealed partial class CwaCatalogClient(
         string title,
         string? author,
         IReadOnlyCollection<string> isbn13Candidates,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? acceptedLanguage = null)
     {
         var settings = await settingsStore.FindAsync(cancellationToken);
         if (settings is null || string.IsNullOrWhiteSpace(settings.OpdsBaseUrl))
@@ -63,7 +64,7 @@ public sealed partial class CwaCatalogClient(
 
             var isbnCandidates = ExtractCandidates(isbnBody);
             var isbnResult = await matchService.ResolveUniqueAsync(
-                title, author, isbnCandidates, cancellationToken);
+                title, author, isbnCandidates, cancellationToken, acceptedLanguage);
             if (isbnResult.Decision == BookMatchDecision.Match)
             {
                 LogIsbnMatch(title, author, isbnResult.MatchedId, isbn);
@@ -86,7 +87,7 @@ public sealed partial class CwaCatalogClient(
 
             var titleCandidates = ExtractCandidates(titleBody);
             var titleResult = await matchService.MatchByTitleAuthorAsync(
-                title, author, titleCandidates, cancellationToken);
+                title, author, titleCandidates, cancellationToken, acceptedLanguage);
             LogTitleQueryResolved(titleQuery, title, author, titleResult.Decision);
             if (titleResult.Decision != BookMatchDecision.NoMatch)
             {
@@ -106,7 +107,8 @@ public sealed partial class CwaCatalogClient(
         }
 
         var recentCandidates = ExtractCandidates(recentBody);
-        var recentResult = await matchService.MatchByTitleAuthorAsync(title, author, recentCandidates, cancellationToken);
+        var recentResult = await matchService.MatchByTitleAuthorAsync(
+            title, author, recentCandidates, cancellationToken, acceptedLanguage);
         LogFinalDecision(title, author, recentResult.Decision);
         return recentResult;
     }
@@ -215,6 +217,16 @@ public sealed partial class CwaCatalogClient(
     private static readonly XNamespace AtomNamespace = "http://www.w3.org/2005/Atom";
 
     /// <summary>
+    /// Calibre-Web's OPDS entries carry a Dublin Core Terms
+    /// <c>&lt;dcterms:language&gt;</c> element (e.g. <c>eng</c>) per book —
+    /// used only to populate <see cref="CandidateBook.Language"/> for
+    /// ACCURACY-1's language filtering. If a given feed never emits it, entries
+    /// simply come back with <c>Language = null</c> (unspecified, still
+    /// eligible), not an error.
+    /// </summary>
+    private static readonly XNamespace DcTermsNamespace = "http://purl.org/dc/terms/";
+
+    /// <summary>
     /// Every entry in the feed, normalized to a <see cref="CandidateBook"/>.
     /// Filtering (unwanted variants, title/author matching, uniqueness) is
     /// delegated to <see cref="IBookMatchService"/> rather than done here — a
@@ -240,7 +252,8 @@ public sealed partial class CwaCatalogClient(
             }
 
             var entryAuthor = entry.Element(AtomNamespace + "author")?.Element(AtomNamespace + "name")?.Value;
-            candidates.Add(new CandidateBook(id, entryTitle, entryAuthor));
+            var entryLanguage = entry.Element(DcTermsNamespace + "language")?.Value;
+            candidates.Add(new CandidateBook(id, entryTitle, entryAuthor, entryLanguage));
         }
 
         return candidates.ToArray();

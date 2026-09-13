@@ -67,36 +67,41 @@ public sealed class CwaOwnedLibraryProvider(
     private async Task<IReadOnlyList<FulfillmentOption>> MatchAsync(
         BookIdentity identity, Domain.Publishing.CwaSettings settings, CancellationToken cancellationToken)
     {
+        // No specific accepted format is in play for a generic Work-level
+        // ownership check, so the ordinary English-or-unspecified filter
+        // applies unmodified -- see IBookMatcher.ResolveUnique.
         var result = await catalogClient.FindBookIdAsync(
-            identity.Title, identity.Author, identity.Isbn13Candidates, cancellationToken);
-        if (result.Decision != BookMatchDecision.Match)
+            identity.Title, identity.Author, identity.Isbn13Candidates, cancellationToken, acceptedLanguage: null);
+
+        if (result.Decision == BookMatchDecision.Match)
         {
-            return [];
+            var bookId = result.MatchedId!;
+            return
+            [
+                new FulfillmentOption(
+                    ProviderId: Id,
+                    ProviderResultId: bookId,
+                    WorkId: Guid.Empty,
+                    EditionId: null,
+                    MediaType: RequestMediaType.Ebook,
+                    OptionKind: OptionKind.Owned,
+                    AcquisitionMethod: AcquisitionMethod.OwnedImport,
+                    Format: null,
+                    Language: null,
+                    Quality: null,
+                    Availability: null,
+                    Cost: null,
+                    Currency: null,
+                    LicenseOrUsageStatus: null,
+                    DrmStatus: null,
+                    ExternalActionUri: ExternalLibraryLinks.BuildCwaBookLink(settings, bookId),
+                    ProviderData: null,
+                    MatchBasis: result.Basis)
+            ];
         }
 
-        var bookId = result.MatchedId!;
-
-        return
-        [
-            new FulfillmentOption(
-                ProviderId: Id,
-                ProviderResultId: bookId,
-                WorkId: Guid.Empty,
-                EditionId: null,
-                MediaType: RequestMediaType.Ebook,
-                OptionKind: OptionKind.Owned,
-                AcquisitionMethod: AcquisitionMethod.OwnedImport,
-                Format: null,
-                Language: null,
-                Quality: null,
-                Availability: null,
-                Cost: null,
-                Currency: null,
-                LicenseOrUsageStatus: null,
-                DrmStatus: null,
-                ExternalActionUri: ExternalLibraryLinks.BuildCwaBookLink(settings, bookId),
-                ProviderData: null,
-                MatchBasis: result.Basis)
-        ];
+        // Owned options drive request suppression and delivery, not just display.
+        // Ambiguous and language-excluded candidates are not confirmed ownership.
+        return [];
     }
 }

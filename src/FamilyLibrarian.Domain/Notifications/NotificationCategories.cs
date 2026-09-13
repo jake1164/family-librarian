@@ -6,6 +6,15 @@ public static class NotificationCategories
     public const string RequestStatusChanged = "request.status_changed";
 
     /// <summary>
+    /// SELFSERV-1: sent to the requester (in addition to the admin-broadcast
+    /// <see cref="RequestNeedsReview"/>, which still fires unconditionally --
+    /// additive, not exclusive) when a request needs a
+    /// <c>RequestReviewCategory.PreferenceAmbiguity</c> decision only they, or
+    /// an admin, can make.
+    /// </summary>
+    public const string RequestPreferenceAmbiguity = "request.preference_ambiguity";
+
+    /// <summary>
     /// KINDLE-7: sent once a <c>DeliveryAttempt</c> reaches
     /// <c>DeliveryAttemptStatus.Submitted</c>, asking the user to confirm it
     /// actually arrived on their Kindle -- distinct from

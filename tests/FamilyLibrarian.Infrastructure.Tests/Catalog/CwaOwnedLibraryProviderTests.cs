@@ -180,6 +180,27 @@ public sealed class CwaOwnedLibraryProviderTests
         Assert.AreEqual(workId, options[0].WorkId);
     }
 
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task UncertainCandidatesAreNeverReportedAsOwned(bool ambiguous)
+    {
+        var context = ConfiguredContext();
+        CandidateBook[] candidates = ambiguous
+            ? [new("first", "The Hobbit", "J. R. R. Tolkien", "en"),
+               new("second", "The Hobbit", "J. R. R. Tolkien", "en")]
+            : [new("spanish", "The Hobbit", "J. R. R. Tolkien", "spa")];
+        context.CatalogClient.Result = new DeterministicBookMatcher().ResolveUnique(candidates);
+
+        var byWork = await context.Provider.FindOwnedMatchesAsync(
+            Guid.NewGuid(), RequestMediaType.Ebook, CancellationToken.None);
+        var byIdentity = await context.Provider.FindOwnedMatchesAsync(
+            new BookIdentity("The Hobbit", "J. R. R. Tolkien", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(0, byWork.Count);
+        Assert.AreEqual(0, byIdentity.Count);
+    }
+
     private static TestContext ConfiguredContext()
     {
         var context = new TestContext();
@@ -230,14 +251,18 @@ public sealed class CwaOwnedLibraryProviderTests
 
         public BookMatchBasis NextBasis { get; set; } = BookMatchBasis.Identifier;
 
+        public BookMatchResult? Result { get; set; }
+
         public int CallCount { get; private set; }
 
         public IReadOnlyCollection<string>? LastIsbn13Candidates { get; private set; }
 
         public Task<BookMatchResult> FindBookIdAsync(
-            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken)
+            string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken,
+            string? acceptedLanguage = null)
         {
             CallCount++;
+            if (Result is not null) return Task.FromResult(Result);
             LastIsbn13Candidates = isbn13Candidates;
             return Task.FromResult(NextBookId is null
                 ? BookMatchResult.NoMatchResult
