@@ -95,37 +95,8 @@ public sealed class AudiobookshelfOwnedLibraryProvider(
             ];
         }
 
-        if (result.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
-        {
-            // See the matching branch in CwaOwnedLibraryProvider.MatchAsync
-            // for why this is surfaced instead of silently discarded (P2 in
-            // alpha2-review-2026-09-12.md).
-            return result.Candidates
-                .Select(candidate => new FulfillmentOption(
-                    ProviderId: Id,
-                    ProviderResultId: candidate.ExternalId,
-                    WorkId: Guid.Empty,
-                    EditionId: null,
-                    MediaType: RequestMediaType.Audiobook,
-                    OptionKind: OptionKind.Owned,
-                    AcquisitionMethod: AcquisitionMethod.OwnedImport,
-                    Format: null,
-                    Language: candidate.Language,
-                    Quality: null,
-                    Availability: null,
-                    Cost: null,
-                    Currency: null,
-                    LicenseOrUsageStatus: null,
-                    DrmStatus: null,
-                    ExternalActionUri: ExternalLibraryLinks.BuildAudiobookshelfItemLink(settings, candidate.ExternalId),
-                    ProviderData: null,
-                    MatchBasis: result.Basis,
-                    RequiresLanguageConfirmation: result.Decision == BookMatchDecision.LanguageExcluded,
-                    Title: candidate.Title,
-                    Author: candidate.Author))
-                .ToArray();
-        }
-
+        // Owned options drive request suppression and delivery, not just display.
+        // Ambiguous and language-excluded candidates are not confirmed ownership.
         return [];
     }
 }

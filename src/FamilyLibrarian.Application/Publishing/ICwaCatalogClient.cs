@@ -22,10 +22,9 @@ public interface ICwaCatalogClient
     /// OPDS search query, before falling back to title/author matching.
     /// </param>
     /// <param name="acceptedLanguage">
-    /// Non-null only when the requester already explicitly accepted a
-    /// non-English candidate for the specific format this verifies. See
-    /// <see cref="Matching.IBookMatcher.ResolveUnique"/> for why this widens
-    /// eligibility rather than being compared against a candidate's language.
+    /// Language explicitly accepted for this request format. Verification
+    /// compares normalized language values; null retains the English default.
+    /// See <see cref="Matching.IBookMatcher.ResolveUnique"/>.
     /// </param>
     Task<BookMatchResult> FindBookIdAsync(
         string title,

@@ -18,7 +18,7 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         }
 
         var eligible = candidates.Where(candidate =>
-                LanguageAcceptance.IsEnglishOrUnspecified(candidate.Language) || acceptedLanguage is not null)
+                LanguageAcceptance.IsAcceptedOrUnspecified(candidate.Language, acceptedLanguage))
             .ToArray();
         if (eligible.Length == 0)
         {

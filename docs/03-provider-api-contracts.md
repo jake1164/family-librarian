@@ -271,6 +271,13 @@ the exact title query has no match; those broad queries discover candidates,
 but never decide identity. If those searches have no match, it also reads CWA's
 authenticated, timestamp-descending `/opds/new` feed once and applies the same
 matcher to its entries; an unavailable Recent Books feed is treated as no match.
+Language eligibility is checked at every matching tier. Generic ownership checks
+use English-or-unspecified; verification of an accepted request format compares
+the normalized declared language to its accepted language. The presence of an
+accepted-language value never bypasses the language check. Ambiguous and
+language-excluded results carry diagnostic candidates internally but do not
+become actionable `Owned` options.
+
 It still collects every
 matching entry rather than the first: a single distinct book ID is accepted,
 while more than one distinct ID is treated as ambiguous and returns "not found"

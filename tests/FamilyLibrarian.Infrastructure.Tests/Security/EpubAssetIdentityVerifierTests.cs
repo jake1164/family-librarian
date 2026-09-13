@@ -159,6 +159,23 @@ public sealed class EpubAssetIdentityVerifierTests
         Assert.IsTrue(result.IsMatch);
     }
 
+    [TestMethod]
+    [DataRow("es", "spa", true)]
+    [DataRow("Spanish", "es-MX", true)]
+    [DataRow("en", "spa", false)]
+    [DataRow("spa", "fra", false)]
+    [DataRow("spa", "en", false)]
+    [DataRow("spa", null, true)]
+    public async Task DownloadedLanguageMustMatchTheAcceptedLanguage(string accepted, string? actual, bool expected)
+    {
+        var (request, format) = CreateAcceptedRequest(accepted);
+        var verifier = CreateVerifier("Restore Me", "Tahereh Mafi",
+            new FakeRequestFulfillmentStore(format.Id, request));
+        using var epub = BuildEpub("Restore Me", "Tahereh Mafi", actual);
+        var result = await verifier.VerifyAsync(CreateAsset(format.Id), epub, CancellationToken.None);
+        Assert.AreEqual(expected, result.IsMatch);
+    }
+
     private static MediaAsset CreateAsset(Guid? requestFormatId = null) => new(
         Guid.NewGuid(),
         editionId: null,

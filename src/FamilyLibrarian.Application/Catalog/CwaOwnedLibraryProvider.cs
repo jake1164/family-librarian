@@ -100,41 +100,8 @@ public sealed class CwaOwnedLibraryProvider(
             ];
         }
 
-        if (result.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
-        {
-            // Found something, but not confidently enough to call it "owned"
-            // outright -- surfaced as informational candidates instead of a
-            // silently empty list (P2 in alpha2-review-2026-09-12.md), so an
-            // admin looking at this Work's fulfillment options can at least
-            // see what CWA already has. RequiresLanguageConfirmation flags a
-            // LanguageExcluded result specifically -- neither ever
-            // auto-acquires, since this pipeline is display-only.
-            return result.Candidates
-                .Select(candidate => new FulfillmentOption(
-                    ProviderId: Id,
-                    ProviderResultId: candidate.ExternalId,
-                    WorkId: Guid.Empty,
-                    EditionId: null,
-                    MediaType: RequestMediaType.Ebook,
-                    OptionKind: OptionKind.Owned,
-                    AcquisitionMethod: AcquisitionMethod.OwnedImport,
-                    Format: null,
-                    Language: candidate.Language,
-                    Quality: null,
-                    Availability: null,
-                    Cost: null,
-                    Currency: null,
-                    LicenseOrUsageStatus: null,
-                    DrmStatus: null,
-                    ExternalActionUri: ExternalLibraryLinks.BuildCwaBookLink(settings, candidate.ExternalId),
-                    ProviderData: null,
-                    MatchBasis: result.Basis,
-                    RequiresLanguageConfirmation: result.Decision == BookMatchDecision.LanguageExcluded,
-                    Title: candidate.Title,
-                    Author: candidate.Author))
-                .ToArray();
-        }
-
+        // Owned options drive request suppression and delivery, not just display.
+        // Ambiguous and language-excluded candidates are not confirmed ownership.
         return [];
     }
 }

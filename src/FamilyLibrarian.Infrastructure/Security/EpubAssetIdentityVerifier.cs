@@ -77,19 +77,13 @@ public sealed class EpubAssetIdentityVerifier(
                 return AssetIdentityVerificationResult.Unmatched(Id);
             }
 
-            // ACCURACY-1 (plan: EPUB identity checks): a declared non-English
-            // language must not pass identity verification unless the
-            // requester already explicitly accepted it for this format
-            // ("get it anyway") -- an EPUB with no declared language is
-            // unaffected, matching the "don't punish missing metadata" rule
-            // used everywhere else in the language filter.
-            if (languages.Count > 0 && !languages.Any(LanguageAcceptance.IsEnglishOrUnspecified))
+            // Consent is specific to the selected language, including English.
+            // Missing metadata remains eligible; an explicit mismatch does not.
+            var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
+            if (languages.Count > 0 &&
+                !languages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage)))
             {
-                var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
-                if (acceptedLanguage is null)
-                {
-                    return AssetIdentityVerificationResult.Unmatched(Id);
-                }
+                return AssetIdentityVerificationResult.Unmatched(Id);
             }
 
             return AssetIdentityVerificationResult.Match(Id);

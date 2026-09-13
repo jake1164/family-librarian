@@ -21,6 +21,26 @@ namespace FamilyLibrarian.Infrastructure.Tests.Publishing;
 [TestClass]
 public sealed class CwaPublishingServiceTests
 {
+    [TestMethod]
+    [DataRow("es", "spa", true)]
+    [DataRow("es", "fra", false)]
+    [DataRow("en", "spa", false)]
+    public async Task DestinationVerificationHonorsOnlyTheAcceptedLanguage(string accepted, string actual, bool available)
+    {
+        var context = context_Configured();
+        context.CatalogClient.NextBookId = "42";
+        context.CatalogClient.NextLanguage = actual;
+        var request = new BookRequest(Guid.NewGuid(), Guid.NewGuid(), [RequestMediaType.Ebook], null, Now);
+        var formatId = request.Formats.Single().Id;
+        request.MarkNeedsReview(RequestReviewCategory.PreferenceAmbiguity, "Choose edition", Now,
+            [(formatId, "gutendex", "1234", "The Hobbit", "J. R. R. Tolkien", accepted)]);
+        request.AcceptReviewCandidate(request.ReviewCandidates.Single().Id, request.UserId, Now);
+        context.RequestFulfillment.Requests[formatId] = request;
+        await context.Service.PublishAsync(context.CreateAsset(formatId, request.WorkId), CancellationToken.None);
+        Assert.AreEqual(accepted, context.CatalogClient.LastAcceptedLanguage);
+        Assert.AreEqual(available, request.Status == RequestStatus.Available);
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 8, 15, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
@@ -547,6 +567,8 @@ public sealed class CwaPublishingServiceTests
     {
         public string? NextBookId { get; set; }
 
+        public string? NextLanguage { get; set; }
+
         public IReadOnlyList<CandidateBook>? NextAmbiguousCandidates { get; set; }
 
         public IReadOnlyCollection<string>? LastIsbn13Candidates { get; private set; }
@@ -566,7 +588,7 @@ public sealed class CwaPublishingServiceTests
 
             return Task.FromResult(NextBookId is null
                 ? BookMatchResult.NoMatchResult
-                : BookMatchResult.Match(new CandidateBook(NextBookId, title, author)));
+                : new DeterministicBookMatcher().ResolveUnique([new CandidateBook(NextBookId, title, author, NextLanguage)], acceptedLanguage));
         }
     }
 

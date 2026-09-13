@@ -14,13 +14,10 @@ public interface IBookMatcher
     /// needs to confirm there is exactly one result.
     /// </summary>
     /// <param name="acceptedLanguage">
-    /// Non-null only when the requester already explicitly accepted a
-    /// non-English candidate for the specific format this lookup verifies
-    /// ("get it anyway"). Its presence widens language eligibility for this
-    /// one call; its value is not compared against a candidate's declared
-    /// language, since providers do not share a language-code vocabulary.
-    /// Every ordinary (non-overridden) lookup passes <c>null</c> and is
-    /// unaffected.
+    /// The language explicitly accepted for the specific request format being
+    /// verified. Known aliases are normalized before comparison; consent never
+    /// authorizes a different language. Null retains English as the default.
+    /// Missing candidate language remains eligible in either case.
     /// </param>
     BookMatchResult ResolveUnique(IReadOnlyList<CandidateBook> candidates, string? acceptedLanguage = null);
 

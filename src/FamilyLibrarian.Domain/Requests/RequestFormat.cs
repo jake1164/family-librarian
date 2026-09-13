@@ -44,10 +44,10 @@ public sealed class RequestFormat
 
     /// <summary>
     /// Non-null once the requester (or an admin) explicitly accepted a
-    /// non-English <see cref="RequestReviewCandidate"/> for this format ("get
+    /// <see cref="RequestReviewCandidate"/> for this format ("get
     /// it anyway"). Downstream identity/destination verification for this
-    /// specific format must treat this as a standing exception to the
-    /// ordinary English-or-unspecified language filter.
+    /// specific format must compare declared languages to this choice, normalizing aliases.
+    /// It never authorizes another language.
     /// </summary>
     public string? AcceptedLanguage { get; private set; }
 

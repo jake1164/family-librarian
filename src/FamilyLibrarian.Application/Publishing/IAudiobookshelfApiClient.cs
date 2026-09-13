@@ -12,8 +12,8 @@ public interface IAudiobookshelfApiClient
     /// "ambiguous is not a guess" posture applied to this destination.
     /// </summary>
     /// <param name="acceptedLanguage">
-    /// Non-null only when the requester already explicitly accepted a
-    /// non-English candidate for the specific format this verifies -- see
+    /// Language explicitly accepted for the specific format this verifies.
+    /// Other declared languages remain excluded -- see
     /// <see cref="ICwaCatalogClient.FindBookIdAsync"/>.
     /// </param>
     Task<BookMatchResult> FindExistingItemIdAsync(

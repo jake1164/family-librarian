@@ -430,9 +430,8 @@ public sealed class AudiobookshelfPublishingService(
 
     /// <summary>
     /// The language the requester already explicitly accepted for this
-    /// specific format (F1 in alpha2-review-2026-09-12.md), if any -- widens
-    /// this one verification lookup past the ordinary English-or-unspecified
-    /// filter so an accepted foreign-language copy can actually be confirmed.
+    /// specific format, if any. Verification must match this language after
+    /// alias normalization; null retains the English-or-unspecified default.
     /// </summary>
     private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
     {

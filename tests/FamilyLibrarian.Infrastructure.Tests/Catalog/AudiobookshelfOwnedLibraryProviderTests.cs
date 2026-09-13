@@ -148,6 +148,27 @@ public sealed class AudiobookshelfOwnedLibraryProviderTests
         Assert.AreEqual(workId, options[0].WorkId);
     }
 
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task UncertainCandidatesAreNeverReportedAsOwned(bool ambiguous)
+    {
+        var context = ConfiguredContext();
+        CandidateBook[] candidates = ambiguous
+            ? [new("first", "The Hobbit", "J. R. R. Tolkien", "en"),
+               new("second", "The Hobbit", "J. R. R. Tolkien", "en")]
+            : [new("spanish", "The Hobbit", "J. R. R. Tolkien", "spa")];
+        context.ApiClient.Result = new DeterministicBookMatcher().ResolveUnique(candidates);
+
+        var byWork = await context.Provider.FindOwnedMatchesAsync(
+            Guid.NewGuid(), RequestMediaType.Audiobook, CancellationToken.None);
+        var byIdentity = await context.Provider.FindOwnedMatchesAsync(
+            new BookIdentity("The Hobbit", "J. R. R. Tolkien", []), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(0, byWork.Count);
+        Assert.AreEqual(0, byIdentity.Count);
+    }
+
     private static TestContext ConfiguredContext()
     {
         var context = new TestContext();
@@ -197,12 +218,15 @@ public sealed class AudiobookshelfOwnedLibraryProviderTests
     {
         public string? ExistingItemId { get; set; }
 
+        public BookMatchResult? Result { get; set; }
+
         public int CallCount { get; private set; }
 
         public Task<BookMatchResult> FindExistingItemIdAsync(
             string title, string? author, CancellationToken cancellationToken, string? acceptedLanguage = null)
         {
             CallCount++;
+            if (Result is not null) return Task.FromResult(Result);
             return Task.FromResult(ExistingItemId is null
                 ? BookMatchResult.NoMatchResult
                 : BookMatchResult.Match(new CandidateBook(ExistingItemId, title, author))
