@@ -4,8 +4,7 @@ namespace FamilyLibrarian.Domain.Requests;
 /// Remembers one provider result the requester explicitly declined via
 /// "keep looking" on a <see cref="RequestReviewCategory.PreferenceAmbiguity"/>
 /// review, so the very next automatic pass does not immediately re-offer the
-/// same edition from an otherwise-unchanged catalog (see F3 in
-/// alpha2-review-2026-09-12.md).
+/// same edition from an otherwise-unchanged catalog.
 /// </summary>
 public sealed class DeclinedRequestCandidate
 {

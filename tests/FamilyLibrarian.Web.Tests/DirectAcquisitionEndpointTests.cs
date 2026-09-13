@@ -338,9 +338,9 @@ public sealed class DirectAcquisitionEndpointTests
     public async Task MultiplePlausibleEditionsFromOneProviderRouteToThePreferenceAmbiguityFlowNotProviderDisagreement()
     {
         var fixture = WebTestFixture.Require(_fixture);
-        // Two English-eligible editions from the same provider (P2 in
-        // alpha2-review-2026-09-12.md): an edition preference the requester
-        // can decide, not a cross-provider trust disagreement for an admin.
+        // Two English-eligible editions from the same provider: an edition
+        // preference the requester can decide, not a cross-provider trust
+        // disagreement for an admin.
         await using var factory = CreateFactory(fixture, new FakeProvider(matches: true, matchCount: 2));
         using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
         var (requestId, formatId) = await CreateEbookRequestAsync(requester);
@@ -433,9 +433,9 @@ public sealed class DirectAcquisitionEndpointTests
 
         // Dismissing bumps StatusChangedAtUtc, which is what lets the retry
         // cooldown be bypassed immediately -- same mechanism a librarian's
-        // manual recheck already relies on. F3 in alpha2-review-2026-09-12.md:
-        // that must not immediately re-offer the exact edition just declined,
-        // even though the provider is still queried (bypassing the cooldown
+        // manual recheck already relies on. That must not immediately
+        // re-offer the exact edition just declined, even though the
+        // provider is still queried (bypassing the cooldown
         // is what makes that querying possible in the first place).
         await ProcessAutomaticFulfillmentAsync(factory);
 
@@ -562,10 +562,9 @@ public sealed class DirectAcquisitionEndpointTests
         var review = list!.Active.Single(request => request.Id == requestId);
         var candidateId = review.NeedsReview!.Candidates.Single().CandidateId;
 
-        // Withdrawing the sole requester cancels the request outright (F2 in
-        // alpha2-review-2026-09-12.md): a stale saved candidate must not
-        // still be resolvable afterward, even using the cancellation
-        // response's own current Version.
+        // Withdrawing the sole requester cancels the request outright: a
+        // stale saved candidate must not still be resolvable afterward,
+        // even using the cancellation response's own current Version.
         var cancelled = await requester.PostAsJsonAsync(
             $"/api/v1/requests/{requestId}/transitions", new ChangeBookRequestStatusRequest("Cancelled", null, review.Version));
         Assert.AreEqual(HttpStatusCode.OK, cancelled.StatusCode);
@@ -601,9 +600,9 @@ public sealed class DirectAcquisitionEndpointTests
         var secondRepository = secondScope.ServiceProvider.GetRequiredService<IRequestRepository>();
 
         // Both scopes load the same version before either saves -- the
-        // pre-save-only check in place before F4's fix (in
-        // alpha2-review-2026-09-12.md) let both pass and threw an unhandled
-        // DbUpdateConcurrencyException on the second SaveChangesAsync. Reads
+        // pre-save-only version check that used to exist here let both
+        // pass and threw an unhandled DbUpdateConcurrencyException on the
+        // second SaveChangesAsync. Reads
         // the version via the same projected view a real HTTP client would
         // see (not a tracked entity): a tracking read here would pre-empt
         // each scope's own DbContext identity map, hiding the very race this
@@ -736,8 +735,7 @@ public sealed class DirectAcquisitionEndpointTests
         /// Mutable so a test can simulate the catalog returning a genuinely
         /// different edition on a later automatic pass, without needing a
         /// second <see cref="FamilyLibrarianAppFactory"/> (the provider is
-        /// registered as a singleton instance) -- see F3 in
-        /// alpha2-review-2026-09-12.md.
+        /// registered as a singleton instance).
         /// </summary>
         public string ProviderResultId { get; set; } = providerResultId;
 

@@ -307,9 +307,9 @@ public sealed class BookRequest
         // transition out of it -- an admin override, or Withdraw's own
         // auto-cancel when the last requester leaves -- must invalidate it,
         // so a stale AcceptReviewCandidate/DismissReviewPreference call
-        // afterward has nothing left to act on (see F2 in
-        // alpha2-review-2026-09-12.md: a cancelled/unavailable request must
-        // not be reopened by resolving a review that no longer applies).
+        // afterward has nothing left to act on: a cancelled/unavailable
+        // request must not be reopened by resolving a review that no
+        // longer applies.
         if (from == RequestStatus.NeedsReview && to != RequestStatus.NeedsReview)
         {
             ReviewCategory = null;

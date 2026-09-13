@@ -122,9 +122,8 @@ public sealed class AutomaticRequestFulfillmentService(
                     }
                 }
 
-                // A previously-declined candidate (F3 in
-                // alpha2-review-2026-09-12.md: "keep looking") must not come
-                // back on the very next pass just because the retry cooldown
+                // A previously-declined candidate ("keep looking") must not
+                // come back on the very next pass just because the retry cooldown
                 // was bypassed by the dismissal itself -- only a genuinely
                 // different provider result is offered again.
                 var declined = request.DeclinedCandidates
@@ -387,8 +386,7 @@ public sealed class AutomaticRequestFulfillmentService(
     /// <see cref="IRequestRepository.InCreateRequestScopeAsync{TResult}"/>'s
     /// advisory lock on its Work, immediately before calling this -- the
     /// combination is what actually closes the race two concurrent
-    /// resolutions could otherwise hit (F4 in alpha2-review-2026-09-12.md):
-    /// checking <see cref="BookRequest.Version"/> against a version loaded
+    /// resolutions could otherwise hit: checking <see cref="BookRequest.Version"/> against a version loaded
     /// before the lock was acquired would let both callers pass the check.
     /// </summary>
     private async Task<PreferenceAmbiguityResolutionOutcome> AcceptCandidateAsync(
@@ -449,7 +447,7 @@ public sealed class AutomaticRequestFulfillmentService(
     }
 
     /// <summary>
-    /// F2 in alpha2-review-2026-09-12.md: <see cref="IRequestRepository.FindOwnedRequestAsync"/>
+    /// <see cref="IRequestRepository.FindOwnedRequestAsync"/>
     /// deliberately still returns a request for a withdrawn participant (so
     /// BookRequestService.TransitionAsync can let them reopen it), so a
     /// requester-facing review resolution must check active participation
@@ -487,10 +485,9 @@ public sealed class AutomaticRequestFulfillmentService(
         var workTitle = view?.Request.WorkTitle ?? request.WorkId.ToString();
 
         // Prefer each option's own title/author, when the provider supplied
-        // one, so distinct editions stay distinguishable to the requester
-        // (see the P2 "candidate presentation" finding in
-        // alpha2-review-2026-09-12.md) -- fall back to the canonical Work
-        // title/no author only when a provider didn't supply its own.
+        // one, so distinct editions stay distinguishable to the requester --
+        // fall back to the canonical Work title/no author only when a
+        // provider didn't supply its own.
         var candidates = candidateOptions?
             .Select(option => (option.RequestFormatId, option.ProviderId, option.ProviderResultId,
                 Title: option.Title ?? workTitle, option.Author, option.Language))

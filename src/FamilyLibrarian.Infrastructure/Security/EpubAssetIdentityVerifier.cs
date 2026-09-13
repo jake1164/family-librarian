@@ -130,7 +130,7 @@ public sealed class EpubAssetIdentityVerifier(
 
     /// <summary>
     /// The language the requester already explicitly accepted for this
-    /// specific format (F1 in alpha2-review-2026-09-12.md), if any.
+    /// specific format, if any.
     /// </summary>
     private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
     {

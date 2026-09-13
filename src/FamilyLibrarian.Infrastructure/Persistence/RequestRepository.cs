@@ -46,9 +46,9 @@ public sealed class RequestRepository(
                 // reuses this same lookup to let someone who cancelled their
                 // own request reopen it (RequestWorkflowEndpointTests.ARequesterCanWithdrawAndSafelyReopenTheirRequest).
                 // Callers that must not act on a stale review for a withdrawn
-                // participant (F2 in alpha2-review-2026-09-12.md) check
-                // active participation themselves after loading -- see
-                // AutomaticRequestFulfillmentService's resolve/dismiss methods.
+                // participant check active participation themselves after
+                // loading -- see AutomaticRequestFulfillmentService's
+                // resolve/dismiss methods.
                 request => request.Id == requestId && request.Participants.Any(participant => participant.UserId == userId),
                 cancellationToken);
 
