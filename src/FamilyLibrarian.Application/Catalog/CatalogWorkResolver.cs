@@ -148,15 +148,22 @@ public sealed class CatalogWorkResolver(
                 cancellationToken);
             if (series is null)
             {
-                series = new Series(candidate.Name, SeriesStatus.Unknown, observedAtUtc);
+                series = new Series(
+                    candidate.Name,
+                    candidate.IsCompleted ? SeriesStatus.Completed : SeriesStatus.Unknown,
+                    observedAtUtc);
                 catalogRepository.AddSeries(series);
+            }
+            else if (candidate.IsCompleted)
+            {
+                series.MarkCompleted(observedAtUtc);
             }
 
             work.AddSeriesEntry(new SeriesEntry(
                 series,
                 work,
                 candidate.PositionLabel,
-                TryParsePosition(candidate.PositionLabel),
+                candidate.PositionSort ?? TryParsePosition(candidate.PositionLabel),
                 candidate.IsPrimary,
                 observedAtUtc));
         }

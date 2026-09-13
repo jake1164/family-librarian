@@ -65,6 +65,30 @@ public sealed class CatalogEntityTests
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => work.AddAuthor(author, -1));
     }
 
+    [TestMethod]
+    public void SeriesMarkCompletedTransitionsFromUnknownAndTouchesUpdatedAtUtc()
+    {
+        var series = new Series("Project Hail Mary Universe", SeriesStatus.Unknown, CreatedAtUtc);
+        var laterUtc = CreatedAtUtc.AddDays(1);
+
+        series.MarkCompleted(laterUtc);
+
+        Assert.AreEqual(SeriesStatus.Completed, series.Status);
+        Assert.AreEqual(laterUtc, series.UpdatedAtUtc);
+    }
+
+    [TestMethod]
+    public void SeriesMarkCompletedIsANoOpOnceAlreadyCompleted()
+    {
+        var series = new Series("Project Hail Mary Universe", SeriesStatus.Unknown, CreatedAtUtc);
+        series.MarkCompleted(CreatedAtUtc.AddDays(1));
+
+        series.MarkCompleted(CreatedAtUtc.AddDays(2));
+
+        Assert.AreEqual(SeriesStatus.Completed, series.Status);
+        Assert.AreEqual(CreatedAtUtc.AddDays(1), series.UpdatedAtUtc);
+    }
+
     private static Work CreateWork(string title) => new(
         title,
         null,

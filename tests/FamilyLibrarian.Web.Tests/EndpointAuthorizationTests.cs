@@ -19,7 +19,8 @@ namespace FamilyLibrarian.Web.Tests;
 [TestClass]
 public sealed class EndpointAuthorizationTests
 {
-    private static readonly string[] InstalledProviderIds = ["demo", "openlibrary", "googlebooks", "gutendex"];
+    private static readonly string[] InstalledProviderIds =
+        ["demo", "openlibrary", "googlebooks", "hardcover", "gutendex"];
 
     private static WebTestFixture? _fixture;
 

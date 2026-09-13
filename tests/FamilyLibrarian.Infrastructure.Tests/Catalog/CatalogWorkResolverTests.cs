@@ -99,6 +99,59 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
+    public async Task ResolveAsyncPrefersAnExplicitPositionSortOverParsingTheLabel()
+    {
+        var repository = new InMemoryCatalogRepository();
+        var candidate = CreateCandidate() with
+        {
+            Series = [new BookSeriesCandidate("Project Hail Mary Universe", "3rd", true, PositionSort: 3m)]
+        };
+        var provider = new StubProvider(candidate);
+        var resolver = new CatalogWorkResolver([provider], repository, new FixedClock());
+
+        var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
+
+        var entry = result.Work.SeriesEntries.Single();
+        Assert.AreEqual(3m, entry.PositionSort);
+        Assert.AreEqual("3rd", entry.PositionLabel);
+    }
+
+    [TestMethod]
+    public async Task ResolveAsyncMarksANewlyDiscoveredSeriesCompletedWhenTheCandidateSaysSo()
+    {
+        var repository = new InMemoryCatalogRepository();
+        var candidate = CreateCandidate() with
+        {
+            Series = [new BookSeriesCandidate("Project Hail Mary Universe", "1", true, IsCompleted: true)]
+        };
+        var provider = new StubProvider(candidate);
+        var resolver = new CatalogWorkResolver([provider], repository, new FixedClock());
+
+        var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
+
+        Assert.AreEqual(SeriesStatus.Completed, result.Work.SeriesEntries.Single().Series.Status);
+    }
+
+    [TestMethod]
+    public async Task ResolveAsyncMarksAnExistingUnknownSeriesCompletedWhenALaterCandidateSaysSo()
+    {
+        var repository = new InMemoryCatalogRepository();
+        var existingSeries = new Series("Project Hail Mary Universe", SeriesStatus.Unknown, Now);
+        repository.AddSeries(existingSeries);
+        var candidate = CreateCandidate() with
+        {
+            Series = [new BookSeriesCandidate("Project Hail Mary Universe", "1", true, IsCompleted: true)]
+        };
+        var provider = new StubProvider(candidate);
+        var resolver = new CatalogWorkResolver([provider], repository, new FixedClock());
+
+        var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
+
+        Assert.AreSame(existingSeries, result.Work.SeriesEntries.Single().Series);
+        Assert.AreEqual(SeriesStatus.Completed, existingSeries.Status);
+    }
+
+    [TestMethod]
     public async Task ResolveAsyncReusesExistingProviderReferenceWithoutCallingProvider()
     {
         var repository = new InMemoryCatalogRepository();

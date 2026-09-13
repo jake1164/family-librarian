@@ -29,4 +29,6 @@ public sealed record BookEditionCandidate(
 public sealed record BookSeriesCandidate(
     string Name,
     string? PositionLabel,
-    bool IsPrimary);
+    bool IsPrimary,
+    decimal? PositionSort = null,
+    bool IsCompleted = false);
