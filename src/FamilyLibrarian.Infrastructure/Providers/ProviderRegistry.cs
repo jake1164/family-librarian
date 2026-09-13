@@ -106,9 +106,11 @@ public sealed class ProviderRegistry : IProviderRegistry
                 SetupInstructions:
                     "Hardcover has no app-level key — this uses the admin's own personal " +
                     "access token for every household lookup. Create one in Hardcover's " +
-                    "API settings with the narrowest scope that includes book/series/author " +
-                    "reads (not the 'all' scope, which grants full account access). The " +
-                    "free tier allows 5,000 requests/day.",
+                    "API settings with only the 'read:catalog:search' and 'read:catalog:data' " +
+                    "scopes checked — that covers every lookup this integration makes " +
+                    "(search plus book/edition/series/author reads). Do not grant 'all': it " +
+                    "gives full account access this integration never needs. The free tier " +
+                    "allows 5,000 requests/day.",
                 SetupLinks:
                 [
                     new ProviderSetupLink("Explore Hardcover", "https://hardcover.app/"),
