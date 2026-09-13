@@ -231,6 +231,51 @@ public sealed class OpenLibraryBookMetadataProviderTests
     }
 
     [TestMethod]
+    public async Task SearchAsyncKeepsTheEditionsOwnTitleWhenItsLanguageIsSimplyUnknown()
+    {
+        // Reproduces a real result observed live: searching "Little Women"
+        // surfaced a candidate whose work-level aggregate title was the
+        // Spanish "Mujercitas" (Open Library work OL29983W mixes every
+        // translation/reprint under one work id), while the one included
+        // edition -- with no language tag of its own -- was genuinely
+        // titled "Little Women - Complete Authorized Edition". An unknown
+        // edition language must not be treated the same as a confirmed
+        // foreign one.
+        using var handler = new StubHttpMessageHandler((_, _) =>
+            JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL29983W",
+                      "title": "Mujercitas",
+                      "author_name": ["Louisa May Alcott"],
+                      "publisher": ["Ed. Brujas"],
+                      "language": ["fre", "spa"],
+                      "editions": {
+                        "docs": [
+                          {
+                            "title": "Little Women - Complete Authorized Edition",
+                            "publisher": ["Newmarket Press"]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """));
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var results = await provider.SearchAsync(
+            new BookSearchQuery("Little Women"),
+            CancellationToken.None);
+
+        Assert.HasCount(1, results.Candidates);
+        Assert.AreEqual("Little Women - Complete Authorized Edition", results.Candidates[0].Title);
+    }
+
+    [TestMethod]
     public async Task SearchAsyncUsesValidatedIsbnQueryAndDoesNotInventYearPrecision()
     {
         Uri? requestedUri = null;
