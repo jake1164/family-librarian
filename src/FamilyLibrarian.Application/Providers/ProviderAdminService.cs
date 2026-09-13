@@ -126,12 +126,29 @@ public sealed class ProviderAdminService(
         }
 
         var setting = await store.GetOrCreateAsync(descriptor.Id, cancellationToken);
+        var wasEnabledBeforeSave = setting.IsEnabled;
         setting.SetCredential(
             protector.Protect(descriptor.Id, trimmed),
             protector.FormatVersion,
             BuildHint(trimmed),
             currentUser.UserId,
             clock.UtcNow);
+
+        // Saving a working key is the admin's clear signal they want this
+        // provider active -- and the setup card's own text already promises
+        // exactly this ("Save a working API key above to enable this
+        // provider"), but nothing ever actually did it. The enable switch's
+        // first click on an unconfigured provider only ever reveals this
+        // form (see Integrations.razor's SetEnabledAsync remarks) rather
+        // than calling this endpoint, so an admin who stops after Save +
+        // Test — reasonably, since the card now visibly shows a successful
+        // test — was left with a saved-and-verified-but-silently-disabled
+        // provider with no further prompt telling them a second click was
+        // still required.
+        if (!wasEnabledBeforeSave)
+        {
+            setting.SetEnabled(true, currentUser.UserId, clock.UtcNow);
+        }
 
         await store.SaveChangesAsync(cancellationToken);
 
@@ -142,6 +159,16 @@ public sealed class ProviderAdminService(
             descriptor.Id,
             new { descriptor.Id, HasCredential = true },
             cancellationToken);
+
+        if (!wasEnabledBeforeSave)
+        {
+            await audit.WriteAsync(
+                AuditActions.ProviderEnabled,
+                AuditSubjectTypes.Provider,
+                descriptor.Id,
+                new { descriptor.Id, Enabled = true },
+                cancellationToken);
+        }
 
         return ProviderCommandResult.Success(ToStatus(descriptor, setting));
     }
