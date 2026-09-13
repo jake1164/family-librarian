@@ -188,6 +188,24 @@ public sealed class HardcoverBookMetadataProvider(
 
         var editions = BuildEditions(book, title);
         var series = BuildSeries(book);
+        var description = GetDescription(book.Description);
+        var coverUrl = GetCoverUrl(book.CachedImage);
+
+        // Hardcover's catalog is community-editable and has stub "book" rows
+        // with essentially nothing filled in — observed live: an author-search
+        // for "Tom Clancy" surfaced a bare book titled "Tom Clancy" itself,
+        // with no cover, no description, no linked contributor, and no
+        // editions (Hardcover's own auto-generated slug for it,
+        // "tom-clancy-<uuid>", is that same fallback pattern: a title-plus-
+        // random-id used only when there is nothing more specific to build a
+        // slug from). A row with a title and *zero* other signal of being a
+        // real, describable book is not a usable search result regardless of
+        // provider, so it is dropped here rather than reaching the catalog.
+        if (authors.Length == 0 && editions.Length == 0 &&
+            description is null && coverUrl is null)
+        {
+            return null;
+        }
 
         var representativeEdition = book.DefaultPhysicalEdition ?? book.DefaultEbookEdition;
         var language = representativeEdition?.LanguageId is { } languageId
@@ -200,8 +218,8 @@ public sealed class HardcoverBookMetadataProvider(
             book.Id.ToString(CultureInfo.InvariantCulture),
             title,
             authors,
-            GetDescription(book.Description),
-            GetCoverUrl(book.CachedImage),
+            description,
+            coverUrl,
             TryParseExactDate(book.ReleaseDate),
             editions,
             series,

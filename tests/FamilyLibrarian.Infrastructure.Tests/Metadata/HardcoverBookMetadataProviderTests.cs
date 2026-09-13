@@ -31,8 +31,16 @@ public sealed class HardcoverBookMetadataProviderTests
                 {
                   "data": {
                     "books": [
-                      { "id": 7, "title": "Red Storm Rising" },
-                      { "id": 42, "title": "The Hunt for Red October" }
+                      {
+                        "id": 7,
+                        "title": "Red Storm Rising",
+                        "contributions": [{ "author": { "name": "Tom Clancy" } }]
+                      },
+                      {
+                        "id": 42,
+                        "title": "The Hunt for Red October",
+                        "contributions": [{ "author": { "name": "Tom Clancy" } }]
+                      }
                     ]
                   }
                 }
@@ -48,6 +56,45 @@ public sealed class HardcoverBookMetadataProviderTests
         Assert.AreEqual("7", result.Candidates[1].ExternalId);
         Assert.HasCount(2, requestBodies);
         StringAssert.Contains(requestBodies[1], "BooksByIds");
+    }
+
+    [TestMethod]
+    public async Task SearchAsyncDropsAStubBookThatHasNothingButATitle()
+    {
+        // Reproduces a real result observed live: searching Hardcover for the
+        // author "Tom Clancy" surfaced a bare book, itself titled
+        // "Tom Clancy", with no cover, no description, no linked contributor,
+        // and no editions — a community-catalog stub, not a usable result.
+        using var handler = new StubHttpMessageHandler(async (request, ct) =>
+        {
+            var body = await request.Content!.ReadAsStringAsync(ct);
+            if (body.Contains("query Search", StringComparison.Ordinal))
+            {
+                return JsonResponse("""{"data":{"search":{"ids":[7,99]}}}""");
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "data": {
+                    "books": [
+                      {
+                        "id": 7,
+                        "title": "Red Storm Rising",
+                        "contributions": [{ "author": { "name": "Tom Clancy" } }]
+                      },
+                      { "id": 99, "title": "Tom Clancy" }
+                    ]
+                  }
+                }
+                """);
+        });
+        var provider = CreateProvider(handler);
+
+        var result = await provider.SearchAsync(new BookSearchQuery("Tom Clancy"), CancellationToken.None);
+
+        Assert.HasCount(1, result.Candidates);
+        Assert.AreEqual("Red Storm Rising", result.Candidates[0].Title);
     }
 
     [TestMethod]
