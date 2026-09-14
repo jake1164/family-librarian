@@ -1,17 +1,19 @@
+using FamilyLibrarian.Domain.Catalog;
+
 namespace FamilyLibrarian.Application.Catalog;
 
 public static class BookCandidateGrouper
 {
-    public static IReadOnlyList<BookCandidate> GroupExactIsbnMatches(
+    public static IReadOnlyList<BookCandidate> GroupMatchingCandidates(
         IEnumerable<BookCandidate> candidates) =>
-        GroupExactIsbnMatches(candidates, null);
+        GroupMatchingCandidates(candidates, null);
 
-    public static IReadOnlyList<BookCandidate> GroupExactIsbnMatches(
+    public static IReadOnlyList<BookCandidate> GroupMatchingCandidates(
         IEnumerable<BookCandidate> candidates,
         string? searchText)
     {
         var groupedCandidates = candidates
-            .GroupBy(GetExactMatchKey, StringComparer.Ordinal)
+            .GroupBy(GetMatchKey, StringComparer.Ordinal)
             .Select(group => group
                 .OrderByDescending(GetCompletenessScore)
                 .ThenBy(candidate => candidate.ProviderId, StringComparer.Ordinal)
@@ -47,19 +49,56 @@ public static class BookCandidateGrouper
             ? 1
             : 0;
 
-    private static string GetExactMatchKey(BookCandidate candidate)
+    private static string GetMatchKey(BookCandidate candidate)
     {
-        var isbn13s = candidate.Editions
-            .Select(edition => edition.Isbn13)
-            .Where(isbn13 => !string.IsNullOrWhiteSpace(isbn13))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        // Merge on the work itself, not the print edition: FL only ever acquires
+        // ebooks/audiobooks, so a hardcover-vs-paperback ISBN difference between
+        // providers is not a reason to show two rows for the same book -- an
+        // exact ISBN match no longer gets a separate, higher-priority key, since
+        // that let differing print-edition ISBNs (which are expected, not a sign
+        // of a different work) keep matching candidates apart. Title/author are
+        // normalized (diacritics, case, punctuation) so minor formatting
+        // differences between providers don't defeat the match; this does not
+        // reach differently-punctuated titles (e.g. "Moby Dick" vs. "Moby-Dick;
+        // or, The Whale") since that needs fuzzier title matching than this
+        // static grouping key can do. Language is kept as its own bucket so a
+        // foreign-language edition never merges behind (and hides) an English one.
+        if (string.IsNullOrWhiteSpace(candidate.Title))
+        {
+            return $"provider:{candidate.ProviderId}:{candidate.ExternalId}";
+        }
 
-        // An exact shared ISBN is authoritative. All other candidates intentionally
-        // retain their provider-specific identity for user review.
-        return isbn13s.Length == 1
-            ? $"isbn:{isbn13s[0]}"
-            : $"provider:{candidate.ProviderId}:{candidate.ExternalId}";
+        var normalizedTitle = CatalogText.NormalizeForMatch(candidate.Title);
+        var normalizedAuthor = NormalizeAuthorForGrouping(GetFirstAuthor(candidate));
+        var languageGroup = GetLanguageGroup(candidate.Language);
+        return $"work:{normalizedTitle}:{normalizedAuthor}:{languageGroup}";
+    }
+
+    private static string GetLanguageGroup(string? language) =>
+        string.IsNullOrWhiteSpace(language) ||
+        string.Equals(language, DefaultPreferredLanguage, StringComparison.OrdinalIgnoreCase)
+            ? DefaultPreferredLanguage
+            : language.Trim().ToLowerInvariant();
+
+    private static string NormalizeAuthorForGrouping(string? author)
+    {
+        if (string.IsNullOrWhiteSpace(author))
+        {
+            return string.Empty;
+        }
+
+        // Strip trailing notes some providers include (e.g. "Carr, Jack (Joint
+        // pseudonym)") and reorder "Last, First" to "First Last" so it lines up
+        // with the form other providers use for the same person.
+        var openParenIndex = author.IndexOf('(');
+        var withoutParenthetical = (openParenIndex < 0 ? author : author[..openParenIndex]).Trim();
+
+        var commaIndex = withoutParenthetical.IndexOf(',');
+        var reordered = commaIndex > 0 && commaIndex < withoutParenthetical.Length - 1
+            ? $"{withoutParenthetical[(commaIndex + 1)..].Trim()} {withoutParenthetical[..commaIndex].Trim()}"
+            : withoutParenthetical;
+
+        return reordered.Length == 0 ? string.Empty : CatalogText.NormalizeForMatch(reordered);
     }
 
     private static int GetCompletenessScore(BookCandidate candidate) =>

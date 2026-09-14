@@ -15,7 +15,7 @@ public sealed class CatalogWorkResolverTests
         new(2026, 8, 11, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
-    public void GroupExactIsbnMatchesKeepsOnlyTheMostCompleteCandidate()
+    public void GroupMatchingCandidatesKeepsOnlyTheMostCompleteCandidate()
     {
         var sparse = CreateCandidate() with
         {
@@ -25,16 +25,85 @@ public sealed class CatalogWorkResolverTests
         };
         var complete = CreateCandidate() with { ProviderId = "source-b" };
 
-        var grouped = BookCandidateGrouper.GroupExactIsbnMatches([sparse, complete]);
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([sparse, complete]);
 
         Assert.HasCount(1, grouped);
         Assert.AreEqual("source-b", grouped[0].ProviderId);
     }
 
     [TestMethod]
-    public void GroupExactIsbnMatchesRanksExactTitleMatchesAheadOfBroadProviderMatches()
+    public void GroupMatchingCandidatesMergesDifferentPrintEditionsOfTheSameWork()
     {
-        var results = BookCandidateGrouper.GroupExactIsbnMatches(
+        // Same work from two providers with different ISBNs -- one for the
+        // hardcover, one for the paperback -- neither of which matters for
+        // acquiring an ebook/audiobook. They should still merge into one row.
+        var hardcover = CreateCandidate() with
+        {
+            ProviderId = "source-a",
+            Editions = [new BookEditionCandidate("Project Hail Mary", "9780593135204", "Hardcover", new DateOnly(2021, 5, 4))]
+        };
+        var paperback = CreateCandidate() with
+        {
+            ProviderId = "source-b",
+            Editions = [new BookEditionCandidate("Project Hail Mary", "9780593396166", "Paperback", new DateOnly(2022, 4, 26))]
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([hardcover, paperback]);
+
+        Assert.HasCount(1, grouped);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesMergesOnNormalizedLastFirstAuthorName()
+    {
+        // One provider (e.g. Hardcover) gives "Last, First" with a trailing note;
+        // another gives the plain "First Last" form. Both describe the same person
+        // and the same work, so they should merge.
+        var plainName = CreateCandidate("Terminal List", "plain-name") with
+        {
+            ProviderId = "source-a",
+            Authors = ["Jack Carr"],
+            Editions = []
+        };
+        var lastFirstWithNote = CreateCandidate("Terminal List", "last-first-note") with
+        {
+            ProviderId = "source-b",
+            Authors = ["Carr, Jack (Joint pseudonym)"],
+            Editions = []
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([plainName, lastFirstWithNote]);
+
+        Assert.HasCount(1, grouped);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesKeepsDifferentLanguageEditionsSeparate()
+    {
+        var english = CreateCandidate("Little Women", "english") with
+        {
+            ProviderId = "source-a",
+            Authors = ["Louisa May Alcott"],
+            Editions = [],
+            Language = "en"
+        };
+        var spanish = CreateCandidate("Little Women", "spanish") with
+        {
+            ProviderId = "source-b",
+            Authors = ["Louisa May Alcott"],
+            Editions = [],
+            Language = "es"
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([english, spanish]);
+
+        Assert.HasCount(2, grouped);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesRanksExactTitleMatchesAheadOfBroadProviderMatches()
+    {
+        var results = BookCandidateGrouper.GroupMatchingCandidates(
             [
                 CreateCandidate("Dim sum of all fears", "dim-sum") with { Editions = [] },
                 CreateCandidate("Kol ha-peḥadim kulam", "translated") with { Editions = [] },
@@ -48,7 +117,7 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
-    public void GroupExactIsbnMatchesRanksPreferredLanguageAheadOfOtherLanguagesOnTiedMatchKind()
+    public void GroupMatchingCandidatesRanksPreferredLanguageAheadOfOtherLanguagesOnTiedMatchKind()
     {
         // Titles are chosen so that alphabetical order alone (the tiebreak below
         // the language rank) would put the Spanish edition first; only the
@@ -70,7 +139,7 @@ public sealed class CatalogWorkResolverTests
             Language = null
         };
 
-        var results = BookCandidateGrouper.GroupExactIsbnMatches(
+        var results = BookCandidateGrouper.GroupMatchingCandidates(
             [spanish, english, unknownLanguage],
             "tom clancy");
 

@@ -64,7 +64,7 @@ internal static class CatalogEndpoints
         var providerResults = await Task.WhenAll(searches);
 
         return Results.Ok(new CatalogSearchResponse(
-            BookCandidateGrouper.GroupExactIsbnMatches(providerResults
+            BookCandidateGrouper.GroupMatchingCandidates(providerResults
                 .Where(result => result.Succeeded)
                 .SelectMany(result => result.Candidates)
                 .ToArray(), searchText)
