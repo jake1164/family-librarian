@@ -101,6 +101,29 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
+    public void GroupMatchingCandidatesMergesTitlesDifferingOnlyByALeadingArticle()
+    {
+        // Real observed live-testing gap: one provider's "Gray Man" and another's
+        // "The Gray Man", same author, same book -- must merge into one row.
+        var withoutArticle = CreateCandidate("Gray Man", "no-article") with
+        {
+            ProviderId = "source-a",
+            Authors = ["Mark Greaney"],
+            Editions = []
+        };
+        var withArticle = CreateCandidate("The Gray Man", "with-article") with
+        {
+            ProviderId = "source-b",
+            Authors = ["Mark Greaney"],
+            Editions = []
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([withoutArticle, withArticle]);
+
+        Assert.HasCount(1, grouped);
+    }
+
+    [TestMethod]
     public void GroupMatchingCandidatesRanksExactTitleMatchesAheadOfBroadProviderMatches()
     {
         var results = BookCandidateGrouper.GroupMatchingCandidates(

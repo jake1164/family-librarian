@@ -68,10 +68,28 @@ public static class BookCandidateGrouper
             return $"provider:{candidate.ProviderId}:{candidate.ExternalId}";
         }
 
-        var normalizedTitle = CatalogText.NormalizeForMatch(candidate.Title);
+        var normalizedTitle = NormalizeTitleForGrouping(candidate.Title);
         var normalizedAuthor = NormalizeAuthorForGrouping(GetFirstAuthor(candidate));
         var languageGroup = GetLanguageGroup(candidate.Language);
         return $"work:{normalizedTitle}:{normalizedAuthor}:{languageGroup}";
+    }
+
+    private static string NormalizeTitleForGrouping(string title)
+    {
+        // A leading article is real observed provider inconsistency, not a
+        // different book -- e.g. one provider's "Gray Man" and another's "The
+        // Gray Man" for the same Mark Greaney novel -- so it's dropped the same
+        // way GetTextMatch already drops it for search-relevance ranking.
+        var normalized = CatalogText.NormalizeForMatch(title);
+        foreach (var article in new[] { "the ", "an ", "a " })
+        {
+            if (normalized.StartsWith(article, StringComparison.Ordinal))
+            {
+                return normalized[article.Length..];
+            }
+        }
+
+        return normalized;
     }
 
     private static string GetLanguageGroup(string? language) =>
