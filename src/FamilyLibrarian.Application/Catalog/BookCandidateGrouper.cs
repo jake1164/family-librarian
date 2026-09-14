@@ -47,6 +47,7 @@ public static class BookCandidateGrouper
 
         return groupedCandidates
             .OrderByDescending(candidate => GetMatchKind(candidate, searchText))
+            .ThenByDescending(candidate => GetTokenOverlapScore(candidate, searchText))
             .ThenByDescending(GetLanguageRank)
             .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
             .ThenBy(candidate => GetFirstAuthor(candidate), StringComparer.OrdinalIgnoreCase)
@@ -162,8 +163,42 @@ public static class BookCandidateGrouper
         {
             TitleMatch.Exact => BookCandidateMatchKind.Exact,
             TitleMatch.StartsWithSearch => BookCandidateMatchKind.Close,
+            TitleMatch.ContainsSearch => BookCandidateMatchKind.Contains,
             _ => BookCandidateMatchKind.Other
         };
+    }
+
+    // A pure substring/prefix/exact check gives no credit to a near-miss --
+    // e.g. a typo'd search ("back luck and trouble") shares no substring with
+    // its intended title ("Bad Luck and Trouble") at all, so it would
+    // otherwise tie with completely unrelated results in the same MatchKind
+    // tier and fall back to alphabetical order. Token overlap (what fraction
+    // of the search's words appear, whole, in the title/author) catches this
+    // without attempting real fuzzy/edit-distance matching.
+    private static double GetTokenOverlapScore(BookCandidate candidate, string searchText)
+    {
+        var titleScore = GetTokenOverlapScore(candidate.Title, searchText);
+        var authorScore = candidate.Authors
+            .Select(author => GetTokenOverlapScore(author, searchText))
+            .DefaultIfEmpty(0d)
+            .Max();
+        return Math.Max(titleScore, authorScore);
+    }
+
+    private static double GetTokenOverlapScore(string text, string searchText)
+    {
+        var searchTokens = NormalizeForSearch(searchText)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (searchTokens.Length == 0)
+        {
+            return 0d;
+        }
+
+        var textTokens = new HashSet<string>(
+            NormalizeForSearch(text).Split(' ', StringSplitOptions.RemoveEmptyEntries),
+            StringComparer.Ordinal);
+        var matchedTokenCount = searchTokens.Count(textTokens.Contains);
+        return (double)matchedTokenCount / searchTokens.Length;
     }
 
     private static TitleMatch GetTextMatch(string title, string searchText)
@@ -231,6 +266,7 @@ public static class BookCandidateGrouper
 public enum BookCandidateMatchKind
 {
     Other,
+    Contains,
     Close,
     Exact
 }

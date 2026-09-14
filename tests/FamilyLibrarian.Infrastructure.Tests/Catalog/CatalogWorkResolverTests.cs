@@ -203,6 +203,46 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
+    public void GroupMatchingCandidatesRanksASubstringMatchAheadOfAnUnrelatedResult()
+    {
+        // RANK-1: a genuine substring match (title contains the whole search
+        // phrase, just not at the start) used to rank no higher than a
+        // completely unrelated result -- both fell into the same undifferentiated
+        // "Other" tier. It now gets its own tier between "Close" and "Other".
+        var results = BookCandidateGrouper.GroupMatchingCandidates(
+            [
+                CreateCandidate("American Film, Volume VII, Number 9", "unrelated") with { Editions = [] },
+                CreateCandidate("The Return of Bad Luck and Trouble", "contains-match") with { Editions = [] }
+            ],
+            "bad luck and trouble");
+
+        Assert.HasCount(2, results);
+        Assert.AreEqual("contains-match", results[0].ExternalId);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesRanksATypoedSearchAheadOfUnrelatedResultsByTokenOverlap()
+    {
+        // RANK-1, reproducing the exact live-observed failure: searching a
+        // typo ("back luck and trouble" for "Bad Luck and Trouble") shares no
+        // substring with the intended title at all -- "back" != "bad" -- so it
+        // still lands in the "Other" tier alongside every unrelated result and
+        // used to fall back to alphabetical order. Token overlap (3 of the 4
+        // search words -- "luck", "and", "trouble" -- appear in the title)
+        // should still rank it ahead of results that share none of those words.
+        var results = BookCandidateGrouper.GroupMatchingCandidates(
+            [
+                CreateCandidate("American Film, Volume VII, Number 9", "american-film") with { Editions = [] },
+                CreateCandidate("Sam \"Lightnin'\" Hopkins", "sam-hopkins") with { Editions = [] },
+                CreateCandidate("Bad Luck and Trouble", "bad-luck-and-trouble") with { Editions = [] }
+            ],
+            "back luck and trouble");
+
+        Assert.HasCount(3, results);
+        Assert.AreEqual("bad-luck-and-trouble", results[0].ExternalId);
+    }
+
+    [TestMethod]
     public async Task ResolveAsyncNotifiesEveryFollowerOfAMatchedSeriesAndAuthor()
     {
         var repository = new InMemoryCatalogRepository();
