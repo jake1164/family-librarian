@@ -14,11 +14,26 @@ public static class BookCandidateGrouper
     {
         var groupedCandidates = candidates
             .GroupBy(GetMatchKey, StringComparer.Ordinal)
-            .Select(group => group
-                .OrderByDescending(GetCompletenessScore)
-                .ThenBy(candidate => candidate.ProviderId, StringComparer.Ordinal)
-                .ThenBy(candidate => candidate.ExternalId, StringComparer.Ordinal)
-                .First())
+            .Select(group =>
+            {
+                var ordered = group
+                    .OrderByDescending(GetCompletenessScore)
+                    .ThenBy(candidate => candidate.ProviderId, StringComparer.Ordinal)
+                    .ThenBy(candidate => candidate.ExternalId, StringComparer.Ordinal)
+                    .ToArray();
+
+                // The most complete candidate represents the group in the results
+                // list, but every provider that reported this same work is kept
+                // as a merged source so the UI can still link out to each of them.
+                var sources = ordered
+                    .Select(candidate => new BookCandidateSource(
+                        candidate.ProviderId,
+                        candidate.ProviderName,
+                        candidate.ExternalId,
+                        candidate.SourceUrl))
+                    .ToArray();
+                return ordered[0] with { MergedSources = sources };
+            })
             .ToArray();
 
         if (string.IsNullOrWhiteSpace(searchText))

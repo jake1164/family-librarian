@@ -56,6 +56,10 @@
                     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
                         <MudText Typo="Typo.overline">Catalog record</MudText>
                         <ProviderChip ProviderName="@book.ProviderName" SourceUrl="@book.SourceUrl" />
+                        @foreach (var source in OtherSources())
+                        {
+                            <ProviderChip ProviderName="@source.ProviderName" SourceUrl="@source.SourceUrl" />
+                        }
                         <AvailabilityBadges Availability="@availability" />
                     </MudStack>
 
@@ -185,9 +189,10 @@
         </MudPaper>
 
         <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-            Similar titles are kept separate unless catalog sources report the same ISBN. Contributor
-            names, subtitles, formats, and dates can indicate a different edition, adaptation,
-            retelling, translation, or a separate catalog record.
+            Matching titles from different sources are merged into one catalog record automatically
+            when they agree on title, author, and language — the chips above link to every source
+            that was merged into this one. Contributor names, subtitles, formats, dates, or a
+            different language can still indicate a separate catalog record.
         </MudAlert>
 
         @if (HasOwnedOption(availability?.Ebook) || HasOwnedOption(availability?.Audiobook))
@@ -545,6 +550,16 @@
         try
         {
             var fresh = await Catalog.GetCandidateAsync(ProviderId, ExternalId);
+
+            // The single-candidate lookup above only ever asks one provider, so
+            // it never has merged-source info -- carry forward what search
+            // already found (from the cached copy) rather than silently
+            // dropping the other sources this record was merged from.
+            if (fresh is { Sources.Count: 0 } && cached is { Sources.Count: > 0 })
+            {
+                fresh = fresh with { Sources = cached.Sources };
+            }
+
             book = fresh;
         }
         catch (HttpRequestException)
@@ -613,6 +628,15 @@
         SearchState.Results.FirstOrDefault(result =>
             string.Equals(result.ProviderId, ProviderId, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(result.ExternalId, ExternalId, StringComparison.OrdinalIgnoreCase));
+
+    // Sources includes the record currently on screen alongside every other
+    // provider merged into it -- exclude that one so only the "also found in"
+    // sources are chipped.
+    private IEnumerable<CatalogCandidateSourceResponse> OtherSources() =>
+        book?.Sources.Where(source =>
+            !(string.Equals(source.ProviderId, book.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+              string.Equals(source.ExternalId, book.ExternalId, StringComparison.OrdinalIgnoreCase)))
+        ?? [];
 
     private async Task SubmitAsync()
     {

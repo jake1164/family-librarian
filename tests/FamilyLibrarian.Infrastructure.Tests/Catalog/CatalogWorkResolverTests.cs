@@ -54,6 +54,36 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
+    public void GroupMatchingCandidatesRecordsEveryMergedProviderAsASource()
+    {
+        // The UI needs to link out to every source a merged record came from,
+        // not just the one chosen to represent the group -- see MergedSources.
+        var hardcover = CreateCandidate() with
+        {
+            ProviderId = "source-a",
+            SourceUrl = "https://source-a.example/work",
+            Editions = [new BookEditionCandidate("Project Hail Mary", "9780593135204", "Hardcover", new DateOnly(2021, 5, 4))]
+        };
+        var paperback = CreateCandidate() with
+        {
+            ProviderId = "source-b",
+            SourceUrl = "https://source-b.example/work",
+            Editions = [new BookEditionCandidate("Project Hail Mary", "9780593396166", "Paperback", new DateOnly(2022, 4, 26))]
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([hardcover, paperback]);
+
+        Assert.HasCount(1, grouped);
+        var mergedProviderIds = grouped[0].MergedSources
+            .Select(source => source.ProviderId)
+            .OrderBy(providerId => providerId, StringComparer.Ordinal)
+            .ToArray();
+        Assert.HasCount(2, mergedProviderIds);
+        Assert.AreEqual("source-a", mergedProviderIds[0]);
+        Assert.AreEqual("source-b", mergedProviderIds[1]);
+    }
+
+    [TestMethod]
     public void GroupMatchingCandidatesMergesOnNormalizedLastFirstAuthorName()
     {
         // One provider (e.g. Hardcover) gives "Last, First" with a trailing note;

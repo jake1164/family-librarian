@@ -367,7 +367,12 @@ internal static class CatalogEndpoints
         candidate.PageCount,
         candidate.Subjects,
         candidate.SourceUrl,
-        BookCandidateGrouper.GetMatchKind(candidate, searchText).ToString());
+        BookCandidateGrouper.GetMatchKind(candidate, searchText).ToString(),
+        candidate.MergedSources.Select(source => new CatalogCandidateSourceResponse(
+            source.ProviderId,
+            source.ProviderName,
+            source.ExternalId,
+            source.SourceUrl)).ToArray());
 
     private static async Task<CatalogWorkResponse> ToWorkResponseAsync(
         Domain.Catalog.Work work,
