@@ -41,6 +41,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
     builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();
+    builder.Services.AddHostedService<MatrixInboundSyncHostedService>();
 }
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgresql")
@@ -221,6 +222,8 @@ app.MapAdminTasksEndpoints();
 app.MapGutenbergCatalogEndpoints();
 app.MapNotificationEndpoints();
 app.MapSmtpSettingsEndpoints();
+app.MapMatrixSettingsEndpoints();
+app.MapMatrixIdentityLinkEndpoints();
 app.MapFeedbackEndpoints();
 app.MapFollowingEndpoints();
 app.MapDeliveryTargetEndpoints();

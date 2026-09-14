@@ -21,5 +21,13 @@ public sealed class OutboundCommunicationRepository(AppDbContext database) : IOu
             .Take(maxCount)
             .ToListAsync(cancellationToken);
 
+    public Task<OutboundCommunication?> FindMostRecentByTypeAsync(
+        Guid recipientUserId, string communicationType, CancellationToken cancellationToken) =>
+        database.OutboundCommunications
+            .Where(communication =>
+                communication.RecipientUserId == recipientUserId && communication.CommunicationType == communicationType)
+            .OrderByDescending(communication => communication.CreatedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
     public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);
 }

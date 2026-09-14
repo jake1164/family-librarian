@@ -4,4 +4,5 @@ namespace FamilyLibrarian.Application.Communications;
 public static class CommunicationSecretPurposes
 {
     public const string SmtpPassword = "smtp-password";
+    public const string MatrixAccessToken = "matrix-access-token";
 }

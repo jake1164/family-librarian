@@ -194,6 +194,21 @@ public static class DependencyInjection
         services.AddScoped<IUserEmailLookup, UserEmailLookup>();
         services.AddScoped<IOutboundCommunicationProvider, SmtpOutboundCommunicationProvider>();
 
+        // Matrix (COMM-1): a second IOutboundCommunicationProvider, plus the
+        // extra plumbing SMTP doesn't need -- a raw Client-Server API client,
+        // per-user identity linking, and inbound message routing. Same
+        // "dormant until configured and tested" posture as SMTP above.
+        services.AddScoped<IMatrixSettingsStore, MatrixSettingsStore>();
+        services.AddScoped<IMatrixClient, HttpMatrixClient>();
+        services.AddScoped<MatrixSettingsService>();
+        services.AddScoped<UserMatrixDestinationRepository>();
+        services.AddScoped<IUserMatrixDestinationStore>(provider => provider.GetRequiredService<UserMatrixDestinationRepository>());
+        services.AddScoped<IUserMatrixDestinationLookup>(provider => provider.GetRequiredService<UserMatrixDestinationRepository>());
+        services.AddScoped<MatrixIdentityLinkService>();
+        services.AddScoped<MatrixInboundRouter>();
+        services.AddScoped<MatrixInboundSyncCoordinator>();
+        services.AddScoped<IOutboundCommunicationProvider, MatrixOutboundCommunicationProvider>();
+
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
         services.AddScoped<UserWorkFeedbackService>();
 

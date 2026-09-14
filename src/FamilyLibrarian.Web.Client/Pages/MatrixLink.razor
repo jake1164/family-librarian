@@ -1,0 +1,147 @@
+@page "/settings/matrix"
+@attribute [Authorize]
+@using FamilyLibrarian.Contracts.Communications
+@using FamilyLibrarian.Web.Client.Communications
+@inject MatrixLinkApiClient MatrixLinkApi
+@inject ISnackbar Snackbar
+
+<PageTitle>Matrix chat · Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Matrix chat</MudText>
+<MudText Typo="Typo.body1" Class="mb-6">
+    Link your Matrix ID to receive Family Librarian notifications as chat messages,
+    in addition to email. Once linked, you can reply directly to some notifications
+    -- for example, confirming a Kindle delivery arrived with a simple "yes" or "no".
+</MudText>
+
+@if (isLoading)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading Matrix link settings" />
+}
+else if (loadFailed)
+{
+    <MudAlert Severity="Severity.Error">We could not load your Matrix link settings.</MudAlert>
+}
+else
+{
+    <MudPaper Class="pa-4" Outlined="true">
+        @if (status is { IsVerified: true })
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" />
+                <MudText Typo="Typo.h6">Linked to @status.MatrixUserId</MudText>
+            </MudStack>
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@busy" OnClick="UnlinkAsync">
+                Remove link
+            </MudButton>
+        }
+        else
+        {
+            @if (status is { AwaitingVerification: true })
+            {
+                <MudAlert Severity="Severity.Info" Class="mb-3">
+                    We sent a verification code to @status.MatrixUserId on Matrix. Reply with that
+                    code in the chat to finish linking. Requesting a new code below replaces it.
+                </MudAlert>
+            }
+
+            <MudStack Spacing="3">
+                <MudTextField T="string" @bind-Value="matrixUserId" Label="Your Matrix ID" Disabled="@busy"
+                              Placeholder="@("@you:example.org")" />
+
+                @if (!string.IsNullOrWhiteSpace(errorMessage))
+                {
+                    <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+                }
+
+                <div>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="RequestLinkAsync">
+                        Send verification code
+                    </MudButton>
+                </div>
+            </MudStack>
+        }
+    </MudPaper>
+}
+
+@code {
+    private bool isLoading = true;
+    private bool loadFailed;
+    private bool busy;
+    private MatrixLinkStatusResponse? status;
+    private string matrixUserId = string.Empty;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            status = await MatrixLinkApi.GetAsync();
+            matrixUserId = status?.MatrixUserId ?? matrixUserId;
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RequestLinkAsync()
+    {
+        busy = true;
+        errorMessage = null;
+
+        try
+        {
+            var result = await MatrixLinkApi.RequestLinkAsync(matrixUserId);
+            if (result.Succeeded)
+            {
+                status = result.Status;
+                Snackbar.Add("Verification code sent on Matrix.", Severity.Success);
+            }
+            else
+            {
+                errorMessage = result.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That could not be saved. Please try again.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task UnlinkAsync()
+    {
+        busy = true;
+
+        try
+        {
+            var result = await MatrixLinkApi.UnlinkAsync();
+            if (result.Succeeded)
+            {
+                status = result.Status;
+                matrixUserId = string.Empty;
+                Snackbar.Add("Matrix link removed.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add(result.Error ?? "That could not be removed.", Severity.Error);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add("That could not be removed. Please try again.", Severity.Error);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

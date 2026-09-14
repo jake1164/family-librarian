@@ -760,6 +760,10 @@ public sealed class BookRequestServiceTests
             int maxCount, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<OutboundCommunication>>([]);
 
+        public Task<OutboundCommunication?> FindMostRecentByTypeAsync(
+            Guid recipientUserId, string communicationType, CancellationToken cancellationToken) =>
+            Task.FromResult<OutboundCommunication?>(null);
+
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 

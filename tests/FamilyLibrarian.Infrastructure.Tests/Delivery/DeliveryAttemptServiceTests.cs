@@ -1,11 +1,13 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Requests;
@@ -108,6 +110,30 @@ public sealed class DeliveryAttemptServiceTests
         var attempt = context.DeliveryAttempts.Rows.Single();
         Assert.AreEqual(DeliveryAttemptStatus.Submitted, attempt.Status);
         Assert.IsFalse(attempt.IsRetryable);
+    }
+
+    /// <summary>
+    /// COMM-1 §A: a successful Kindle send must reach the outbound pipeline
+    /// (SMTP/Matrix), not just the in-app notification tray as before.
+    /// </summary>
+    [TestMethod]
+    public async Task ASuccessfulDeliveryEnqueuesAnOutboundConfirmationAsk()
+    {
+        var context = new TestContext();
+        context.Provider.NextOutcome = EbookDeliveryOutcome.Delivered("Sent.");
+        var target = context.SeedEnabledTarget();
+        var request = new BookRequest(
+            target.UserId, Guid.NewGuid(), [RequestMediaType.Ebook], null, Now, deliveryTargetId: target.Id);
+
+        await context.Service.ReleaseForRequestFormatAsync(request, "42", "epub", Now, CancellationToken.None, "Dune");
+
+        var attempt = context.DeliveryAttempts.Rows.Single();
+        var communication = context.OutboundCommunicationStore.All.Single();
+        Assert.AreEqual(OutboundCommunicationTypes.KindleDeliveryConfirmationRequested, communication.CommunicationType);
+        Assert.AreEqual(target.UserId, communication.RecipientUserId);
+        Assert.AreEqual("DeliveryAttempt", communication.RelatedEntityType);
+        Assert.AreEqual(attempt.Id, communication.RelatedEntityId);
+        StringAssert.Contains(communication.Body, "Dune");
     }
 
     [TestMethod]
@@ -840,10 +866,11 @@ public sealed class DeliveryAttemptServiceTests
             CatalogRepository = new StubCatalogRepository();
             NotificationRepository = new RecordingNotificationRepository();
             Notifications = new NotificationService(NotificationRepository, CurrentUser, Clock);
+            OutboundCommunications = new OutboundCommunicationService(OutboundCommunicationStore, Clock);
             DeliveryAttempts.Targets = DeliveryTargets.Rows;
             Service = new DeliveryAttemptService(
                 DeliveryAttempts, DeliveryTargets, [Provider], [OwnedLibrary], CurrentUser, new NoOpAuditWriter(),
-                Clock, CatalogRepository, Notifications);
+                Clock, CatalogRepository, Notifications, OutboundCommunications);
         }
 
         public InMemoryDeliveryAttemptRepository DeliveryAttempts { get; } = new();
@@ -859,6 +886,10 @@ public sealed class DeliveryAttemptServiceTests
         public RecordingNotificationRepository NotificationRepository { get; }
 
         public NotificationService Notifications { get; }
+
+        public FakeOutboundCommunicationStore OutboundCommunicationStore { get; } = new();
+
+        public OutboundCommunicationService OutboundCommunications { get; }
 
         public StubCurrentUser CurrentUser { get; }
 
@@ -946,6 +977,30 @@ public sealed class DeliveryAttemptServiceTests
             ExternalActionUri: null,
             ProviderData: null,
             MatchBasis: MatchBasis);
+    }
+
+    private sealed class FakeOutboundCommunicationStore : IOutboundCommunicationStore
+    {
+        public List<OutboundCommunication> All { get; } = [];
+
+        public Task EnqueueAsync(OutboundCommunication communication, CancellationToken cancellationToken)
+        {
+            All.Add(communication);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<OutboundCommunication>> GetUnprocessedBatchAsync(
+            int maxCount, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<OutboundCommunication>>(
+                All.Where(communication => communication.ProcessedAtUtc is null).Take(maxCount).ToList());
+
+        public Task<OutboundCommunication?> FindMostRecentByTypeAsync(
+            Guid recipientUserId, string communicationType, CancellationToken cancellationToken) =>
+            Task.FromResult(All
+                .Where(communication => communication.RecipientUserId == recipientUserId && communication.CommunicationType == communicationType)
+                .MaxBy(communication => communication.CreatedAtUtc));
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class StubCurrentUser : ICurrentUser

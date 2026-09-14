@@ -1,9 +1,11 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Requests;
 
@@ -23,7 +25,8 @@ public sealed class DeliveryAttemptService(
     IAuditWriter audit,
     IClock clock,
     ICatalogRepository catalogRepository,
-    NotificationService notifications)
+    NotificationService notifications,
+    OutboundCommunicationService outboundCommunications)
 {
     /// <summary>Beta retry policy (beta plan §20) -- a fixed step schedule, not exponential backoff.</summary>
     private const int MaxAttempts = DeliveryRetryPolicy.MaxAttempts;
@@ -269,8 +272,19 @@ public sealed class DeliveryAttemptService(
     /// attempt actually arrived on their Kindle.
     /// </summary>
     public Task<ConfirmDeliveryResult> ConfirmReceivedAsync(Guid attemptId, CancellationToken cancellationToken) =>
+        currentUser.UserId is { } userId
+            ? ConfirmReceivedAsync(attemptId, userId, cancellationToken)
+            : Task.FromResult(ConfirmDeliveryResult.Unauthenticated());
+
+    /// <summary>
+    /// The same confirmation, for a caller acting on a specific user's behalf
+    /// outside an authenticated HTTP request -- COMM-1 §D's Matrix inbound
+    /// router, which resolves a DM's sender to an FL user itself and has no
+    /// ambient <see cref="ICurrentUser"/> to read.
+    /// </summary>
+    public Task<ConfirmDeliveryResult> ConfirmReceivedAsync(Guid attemptId, Guid userId, CancellationToken cancellationToken) =>
         RecordConfirmationAsync(
-            attemptId, AuditActions.DeliveryAttemptConfirmed, attempt => attempt.ConfirmReceived(clock.UtcNow),
+            attemptId, userId, AuditActions.DeliveryAttemptConfirmed, attempt => attempt.ConfirmReceived(clock.UtcNow),
             cancellationToken);
 
     /// <summary>
@@ -278,10 +292,16 @@ public sealed class DeliveryAttemptService(
     /// attempt never arrived. Does not itself retry -- see the widened
     /// eligibility on <see cref="RetryAsync"/>.
     /// </summary>
-    public async Task<ConfirmDeliveryResult> ReportMissingAsync(Guid attemptId, CancellationToken cancellationToken)
+    public Task<ConfirmDeliveryResult> ReportMissingAsync(Guid attemptId, CancellationToken cancellationToken) =>
+        currentUser.UserId is { } userId
+            ? ReportMissingAsync(attemptId, userId, cancellationToken)
+            : Task.FromResult(ConfirmDeliveryResult.Unauthenticated());
+
+    /// <summary>See the explicit-actor remarks on <see cref="ConfirmReceivedAsync(Guid, Guid, CancellationToken)"/>.</summary>
+    public async Task<ConfirmDeliveryResult> ReportMissingAsync(Guid attemptId, Guid userId, CancellationToken cancellationToken)
     {
         var result = await RecordConfirmationAsync(
-            attemptId, AuditActions.DeliveryAttemptReportedMissing, attempt => attempt.ReportMissing(clock.UtcNow),
+            attemptId, userId, AuditActions.DeliveryAttemptReportedMissing, attempt => attempt.ReportMissing(clock.UtcNow),
             cancellationToken);
 
         if (result.Outcome == ConfirmDeliveryOutcome.Success && result.Attempt is { } attempt)
@@ -302,13 +322,8 @@ public sealed class DeliveryAttemptService(
     }
 
     private async Task<ConfirmDeliveryResult> RecordConfirmationAsync(
-        Guid attemptId, string auditAction, Action<DeliveryAttempt> apply, CancellationToken cancellationToken)
+        Guid attemptId, Guid userId, string auditAction, Action<DeliveryAttempt> apply, CancellationToken cancellationToken)
     {
-        if (currentUser.UserId is not { } userId)
-        {
-            return ConfirmDeliveryResult.Unauthenticated();
-        }
-
         var attempt = await repository.FindAsync(attemptId, cancellationToken);
         if (attempt is null || attempt.UserId != userId)
         {
@@ -476,6 +491,22 @@ public sealed class DeliveryAttemptService(
             {
                 // A notification failure cannot change the already durable send outcome.
             }
+
+            try
+            {
+                await outboundCommunications.EnqueueAsync(
+                    attempt.UserId,
+                    OutboundCommunicationTypes.KindleDeliveryConfirmationRequested,
+                    body: BuildDeliveryConfirmationBody(attempt.BookTitle),
+                    subject: "Family Librarian — did your book arrive?",
+                    relatedEntityType: "DeliveryAttempt",
+                    relatedEntityId: attempt.Id,
+                    completion.Token);
+            }
+            catch (Exception)
+            {
+                // A notification failure cannot change the already durable send outcome.
+            }
         }
         else if (attempt.Status == DeliveryAttemptStatus.SubmissionUnknown ||
             (attempt.Status == DeliveryAttemptStatus.Failed && DeliveryRetryPolicy.NextAutomaticRetryAt(
@@ -513,6 +544,12 @@ public sealed class DeliveryAttemptService(
             // The delivery row remains authoritative if the audit store is unavailable.
         }
     }
+
+    private static string BuildDeliveryConfirmationBody(string? bookTitle) =>
+        (bookTitle is { } title
+            ? $"Did \"{title}\" arrive on your Kindle?"
+            : "Did your book arrive on your Kindle?") +
+        " Open Family Librarian's Requests page and let us know -- reply YES or NO here if you're linked on Matrix.";
 
     private static string ResolveProviderId(DeliveryTargetProvider provider) => provider switch
     {

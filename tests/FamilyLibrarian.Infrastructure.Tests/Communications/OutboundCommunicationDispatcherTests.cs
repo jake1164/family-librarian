@@ -121,6 +121,12 @@ public sealed class OutboundCommunicationDispatcherTests
             Task.FromResult<IReadOnlyList<OutboundCommunication>>(
                 All.Where(communication => communication.ProcessedAtUtc is null).Take(maxCount).ToList());
 
+        public Task<OutboundCommunication?> FindMostRecentByTypeAsync(
+            Guid recipientUserId, string communicationType, CancellationToken cancellationToken) =>
+            Task.FromResult(All
+                .Where(communication => communication.RecipientUserId == recipientUserId && communication.CommunicationType == communicationType)
+                .MaxBy(communication => communication.CreatedAtUtc));
+
         public Task SaveChangesAsync(CancellationToken cancellationToken)
         {
             SaveChangesCallCount++;
