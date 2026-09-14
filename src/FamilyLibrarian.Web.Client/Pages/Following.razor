@@ -1,0 +1,197 @@
+@page "/following"
+@attribute [Authorize]
+@inherits LiveComponentBase
+@using FamilyLibrarian.Contracts.Following
+@using FamilyLibrarian.Web.Client.Following
+@inject FollowApiClient Follows
+
+<PageTitle>Following · Family Librarian</PageTitle>
+
+<MudStack Spacing="4">
+    <div>
+        <MudText Typo="Typo.h3">Following</MudText>
+        <MudText Typo="Typo.body1">
+            Series and authors you're keeping up with. Only you can see this list.
+        </MudText>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+    }
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (series.Count == 0 && authors.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">
+            Not following anything yet. Follow a series or author from its book's page.
+        </MudAlert>
+    }
+    else
+    {
+        @if (series.Count > 0)
+        {
+            <MudText Typo="Typo.h5">Series</MudText>
+            @foreach (var entry in series)
+            {
+                <MudCard Outlined="true" Class="mb-3" @key="entry.SeriesId">
+                    <MudCardContent>
+                        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                            <MudStack Spacing="0">
+                                <MudText Typo="Typo.h6">@entry.SeriesName</MudText>
+                                <MudText Typo="Typo.caption">
+                                    @(entry.IsCaughtUp ? "Caught up" : "New books to catch up on")
+                                    @(entry.Status == "Completed" ? " · Series complete" : string.Empty)
+                                </MudText>
+                            </MudStack>
+                            <MudButton Variant="Variant.Text"
+                                       Color="Color.Error"
+                                       Disabled="@(busySubjectId == entry.SeriesId)"
+                                       OnClick="() => UnfollowSeriesAsync(entry.SeriesId)">
+                                Unfollow
+                            </MudButton>
+                        </MudStack>
+                        @foreach (var work in entry.Entries)
+                        {
+                            <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Center" Class="mt-1">
+                                <MudText Typo="Typo.body2" Style="min-width: 3em;">@(work.PositionLabel ?? "—")</MudText>
+                                <MudLink Href="@($"works/{work.WorkId}")" Class="flex-grow-1">@work.WorkTitle</MudLink>
+                                <MudChip T="string" Size="Size.Small" Color="@(work.IsRead ? Color.Success : Color.Default)">
+                                    @(work.IsRead ? "Read" : "Unread")
+                                </MudChip>
+                                <MudChip T="string" Size="Size.Small" Color="@(work.IsOwned ? Color.Success : Color.Warning)">
+                                    @(work.IsOwned ? "Owned" : "Missing")
+                                </MudChip>
+                            </MudStack>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            }
+        }
+
+        @if (authors.Count > 0)
+        {
+            <MudText Typo="Typo.h5">Authors</MudText>
+            @foreach (var entry in authors)
+            {
+                <MudCard Outlined="true" Class="mb-3" @key="entry.AuthorId">
+                    <MudCardContent>
+                        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                            <MudText Typo="Typo.h6">@entry.AuthorName</MudText>
+                            <MudButton Variant="Variant.Text"
+                                       Color="Color.Error"
+                                       Disabled="@(busySubjectId == entry.AuthorId)"
+                                       OnClick="() => UnfollowAuthorAsync(entry.AuthorId)">
+                                Unfollow
+                            </MudButton>
+                        </MudStack>
+                        @foreach (var work in entry.Works)
+                        {
+                            <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Center" Class="mt-1">
+                                <MudLink Href="@($"works/{work.WorkId}")" Class="flex-grow-1">@work.WorkTitle</MudLink>
+                                <MudChip T="string" Size="Size.Small" Color="@(work.IsRead ? Color.Success : Color.Default)">
+                                    @(work.IsRead ? "Read" : "Unread")
+                                </MudChip>
+                                <MudChip T="string" Size="Size.Small" Color="@(work.IsOwned ? Color.Success : Color.Warning)">
+                                    @(work.IsOwned ? "Owned" : "Missing")
+                                </MudChip>
+                            </MudStack>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            }
+        }
+    }
+</MudStack>
+
+@code {
+    private IReadOnlyList<FollowedSeriesResponse> series = [];
+    private IReadOnlyList<FollowedAuthorResponse> authors = [];
+    private bool isLoading = true;
+    private string? errorMessage;
+    private Guid busySubjectId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Observe(LiveUpdateTopics.Requests, LoadAsync);
+        await RefreshLiveAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            var mine = await Follows.GetMineAsync();
+            series = mine.Series;
+            authors = mine.Authors;
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "Your following list could not be loaded. Please try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task UnfollowSeriesAsync(Guid seriesId)
+    {
+        busySubjectId = seriesId;
+        errorMessage = null;
+
+        try
+        {
+            var succeeded = await Follows.UnfollowSeriesAsync(seriesId);
+            if (succeeded)
+            {
+                await LoadAsync();
+            }
+            else
+            {
+                errorMessage = "That could not be unfollowed. Please try again.";
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That could not be unfollowed. Please try again.";
+        }
+        finally
+        {
+            busySubjectId = Guid.Empty;
+        }
+    }
+
+    private async Task UnfollowAuthorAsync(Guid authorId)
+    {
+        busySubjectId = authorId;
+        errorMessage = null;
+
+        try
+        {
+            var succeeded = await Follows.UnfollowAuthorAsync(authorId);
+            if (succeeded)
+            {
+                await LoadAsync();
+            }
+            else
+            {
+                errorMessage = "That could not be unfollowed. Please try again.";
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "That could not be unfollowed. Please try again.";
+        }
+        finally
+        {
+            busySubjectId = Guid.Empty;
+        }
+    }
+}

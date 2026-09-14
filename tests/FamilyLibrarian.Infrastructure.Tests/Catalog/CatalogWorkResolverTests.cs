@@ -1,6 +1,10 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Following;
+using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Following;
+using FamilyLibrarian.Domain.Notifications;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Catalog;
 
@@ -11,7 +15,7 @@ public sealed class CatalogWorkResolverTests
         new(2026, 8, 11, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
-    public void GroupExactIsbnMatchesKeepsOnlyTheMostCompleteCandidate()
+    public void GroupMatchingCandidatesKeepsOnlyTheMostCompleteCandidate()
     {
         var sparse = CreateCandidate() with
         {
@@ -21,16 +25,138 @@ public sealed class CatalogWorkResolverTests
         };
         var complete = CreateCandidate() with { ProviderId = "source-b" };
 
-        var grouped = BookCandidateGrouper.GroupExactIsbnMatches([sparse, complete]);
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([sparse, complete]);
 
         Assert.HasCount(1, grouped);
         Assert.AreEqual("source-b", grouped[0].ProviderId);
     }
 
     [TestMethod]
-    public void GroupExactIsbnMatchesRanksExactTitleMatchesAheadOfBroadProviderMatches()
+    public void GroupMatchingCandidatesMergesDifferentPrintEditionsOfTheSameWork()
     {
-        var results = BookCandidateGrouper.GroupExactIsbnMatches(
+        // Same work from two providers with different ISBNs -- one for the
+        // hardcover, one for the paperback -- neither of which matters for
+        // acquiring an ebook/audiobook. They should still merge into one row.
+        var hardcover = CreateCandidate() with
+        {
+            ProviderId = "source-a",
+            Editions = [new BookEditionCandidate("Project Hail Mary", "9780593135204", "Hardcover", new DateOnly(2021, 5, 4))]
+        };
+        var paperback = CreateCandidate() with
+        {
+            ProviderId = "source-b",
+            Editions = [new BookEditionCandidate("Project Hail Mary", "9780593396166", "Paperback", new DateOnly(2022, 4, 26))]
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([hardcover, paperback]);
+
+        Assert.HasCount(1, grouped);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesRecordsEveryMergedProviderAsASource()
+    {
+        // The UI needs to link out to every source a merged record came from,
+        // not just the one chosen to represent the group -- see MergedSources.
+        var hardcover = CreateCandidate() with
+        {
+            ProviderId = "source-a",
+            SourceUrl = "https://source-a.example/work",
+            Editions = [new BookEditionCandidate("Project Hail Mary", "9780593135204", "Hardcover", new DateOnly(2021, 5, 4))]
+        };
+        var paperback = CreateCandidate() with
+        {
+            ProviderId = "source-b",
+            SourceUrl = "https://source-b.example/work",
+            Editions = [new BookEditionCandidate("Project Hail Mary", "9780593396166", "Paperback", new DateOnly(2022, 4, 26))]
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([hardcover, paperback]);
+
+        Assert.HasCount(1, grouped);
+        var mergedProviderIds = grouped[0].MergedSources
+            .Select(source => source.ProviderId)
+            .OrderBy(providerId => providerId, StringComparer.Ordinal)
+            .ToArray();
+        Assert.HasCount(2, mergedProviderIds);
+        Assert.AreEqual("source-a", mergedProviderIds[0]);
+        Assert.AreEqual("source-b", mergedProviderIds[1]);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesMergesOnNormalizedLastFirstAuthorName()
+    {
+        // One provider (e.g. Hardcover) gives "Last, First" with a trailing note;
+        // another gives the plain "First Last" form. Both describe the same person
+        // and the same work, so they should merge.
+        var plainName = CreateCandidate("Terminal List", "plain-name") with
+        {
+            ProviderId = "source-a",
+            Authors = ["Jack Carr"],
+            Editions = []
+        };
+        var lastFirstWithNote = CreateCandidate("Terminal List", "last-first-note") with
+        {
+            ProviderId = "source-b",
+            Authors = ["Carr, Jack (Joint pseudonym)"],
+            Editions = []
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([plainName, lastFirstWithNote]);
+
+        Assert.HasCount(1, grouped);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesKeepsDifferentLanguageEditionsSeparate()
+    {
+        var english = CreateCandidate("Little Women", "english") with
+        {
+            ProviderId = "source-a",
+            Authors = ["Louisa May Alcott"],
+            Editions = [],
+            Language = "en"
+        };
+        var spanish = CreateCandidate("Little Women", "spanish") with
+        {
+            ProviderId = "source-b",
+            Authors = ["Louisa May Alcott"],
+            Editions = [],
+            Language = "es"
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([english, spanish]);
+
+        Assert.HasCount(2, grouped);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesMergesTitlesDifferingOnlyByALeadingArticle()
+    {
+        // Real observed live-testing gap: one provider's "Gray Man" and another's
+        // "The Gray Man", same author, same book -- must merge into one row.
+        var withoutArticle = CreateCandidate("Gray Man", "no-article") with
+        {
+            ProviderId = "source-a",
+            Authors = ["Mark Greaney"],
+            Editions = []
+        };
+        var withArticle = CreateCandidate("The Gray Man", "with-article") with
+        {
+            ProviderId = "source-b",
+            Authors = ["Mark Greaney"],
+            Editions = []
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([withoutArticle, withArticle]);
+
+        Assert.HasCount(1, grouped);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesRanksExactTitleMatchesAheadOfBroadProviderMatches()
+    {
+        var results = BookCandidateGrouper.GroupMatchingCandidates(
             [
                 CreateCandidate("Dim sum of all fears", "dim-sum") with { Editions = [] },
                 CreateCandidate("Kol ha-peḥadim kulam", "translated") with { Editions = [] },
@@ -44,7 +170,7 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
-    public void GroupExactIsbnMatchesRanksPreferredLanguageAheadOfOtherLanguagesOnTiedMatchKind()
+    public void GroupMatchingCandidatesRanksPreferredLanguageAheadOfOtherLanguagesOnTiedMatchKind()
     {
         // Titles are chosen so that alphabetical order alone (the tiebreak below
         // the language rank) would put the Spanish edition first; only the
@@ -66,7 +192,7 @@ public sealed class CatalogWorkResolverTests
             Language = null
         };
 
-        var results = BookCandidateGrouper.GroupExactIsbnMatches(
+        var results = BookCandidateGrouper.GroupMatchingCandidates(
             [spanish, english, unknownLanguage],
             "tom clancy");
 
@@ -77,11 +203,107 @@ public sealed class CatalogWorkResolverTests
     }
 
     [TestMethod]
+    public void GroupMatchingCandidatesRanksASubstringMatchAheadOfAnUnrelatedResult()
+    {
+        // RANK-1: a genuine substring match (title contains the whole search
+        // phrase, just not at the start) used to rank no higher than a
+        // completely unrelated result -- both fell into the same undifferentiated
+        // "Other" tier. It now gets its own tier between "Close" and "Other".
+        var results = BookCandidateGrouper.GroupMatchingCandidates(
+            [
+                CreateCandidate("American Film, Volume VII, Number 9", "unrelated") with { Editions = [] },
+                CreateCandidate("The Return of Bad Luck and Trouble", "contains-match") with { Editions = [] }
+            ],
+            "bad luck and trouble");
+
+        Assert.HasCount(2, results);
+        Assert.AreEqual("contains-match", results[0].ExternalId);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesRanksATypoedSearchAheadOfUnrelatedResultsByTokenOverlap()
+    {
+        // RANK-1, reproducing the exact live-observed failure: searching a
+        // typo ("back luck and trouble" for "Bad Luck and Trouble") shares no
+        // substring with the intended title at all -- "back" != "bad" -- so it
+        // still lands in the "Other" tier alongside every unrelated result and
+        // used to fall back to alphabetical order. Token overlap (3 of the 4
+        // search words -- "luck", "and", "trouble" -- appear in the title)
+        // should still rank it ahead of results that share none of those words.
+        var results = BookCandidateGrouper.GroupMatchingCandidates(
+            [
+                CreateCandidate("American Film, Volume VII, Number 9", "american-film") with { Editions = [] },
+                CreateCandidate("Sam \"Lightnin'\" Hopkins", "sam-hopkins") with { Editions = [] },
+                CreateCandidate("Bad Luck and Trouble", "bad-luck-and-trouble") with { Editions = [] }
+            ],
+            "back luck and trouble");
+
+        Assert.HasCount(3, results);
+        Assert.AreEqual("bad-luck-and-trouble", results[0].ExternalId);
+    }
+
+    [TestMethod]
+    public async Task ResolveAsyncNotifiesEveryFollowerOfAMatchedSeriesAndAuthor()
+    {
+        var repository = new InMemoryCatalogRepository();
+        var existingSeries = new Series("Project Hail Mary Universe", SeriesStatus.Unknown, Now);
+        repository.AddSeries(existingSeries);
+        var existingAuthor = new Author("Andy Weir", null, Now);
+        repository.AddAuthor(existingAuthor);
+
+        var follows = new InMemoryFollowRepository();
+        var seriesFollowerId = Guid.NewGuid();
+        var authorFollowerId = Guid.NewGuid();
+        follows.Seed(new Follow(seriesFollowerId, FollowSubjectType.Series, existingSeries.Id, Now));
+        follows.Seed(new Follow(authorFollowerId, FollowSubjectType.Author, existingAuthor.Id, Now));
+
+        var notificationRepository = new RecordingNotificationRepository();
+        var notifications = new NotificationService(notificationRepository, new StubCurrentUser(), new FixedClock());
+
+        var provider = new StubProvider(CreateCandidate());
+        var resolver = new CatalogWorkResolver([provider], repository, follows, notifications, new FixedClock());
+
+        var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
+
+        Assert.HasCount(2, notificationRepository.Added);
+        var seriesNotification = notificationRepository.Added.Single(
+            notification => notification.Category == NotificationCategories.SeriesNewEntryDetected);
+        Assert.AreEqual(seriesFollowerId, seriesNotification.RecipientUserId);
+        Assert.AreEqual(NotificationSubjectTypes.Work, seriesNotification.SubjectType);
+        Assert.AreEqual(result.Work.Id.ToString(), seriesNotification.SubjectId);
+        StringAssert.Contains(seriesNotification.Title, "Project Hail Mary");
+
+        var authorNotification = notificationRepository.Added.Single(
+            notification => notification.Category == NotificationCategories.AuthorNewWorkDetected);
+        Assert.AreEqual(authorFollowerId, authorNotification.RecipientUserId);
+        StringAssert.Contains(authorNotification.Title, "Project Hail Mary");
+    }
+
+    [TestMethod]
+    public async Task ResolveAsyncDoesNotNotifyForABrandNewSeriesOrAuthorNobodyCouldHaveFollowedYet()
+    {
+        var repository = new InMemoryCatalogRepository();
+        var follows = new InMemoryFollowRepository();
+        var notificationRepository = new RecordingNotificationRepository();
+        var notifications = new NotificationService(notificationRepository, new StubCurrentUser(), new FixedClock());
+        var provider = new StubProvider(CreateCandidate());
+        var resolver = new CatalogWorkResolver([provider], repository, follows, notifications, new FixedClock());
+
+        await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
+
+        // Neither the series nor the author existed before this resolve, so
+        // ListFollowersAsync is never even asked about them.
+        Assert.IsEmpty(notificationRepository.Added);
+        Assert.IsEmpty(follows.FollowersQueriedFor);
+    }
+
+    [TestMethod]
     public async Task ResolveAsyncCreatesCanonicalWorkAndProvenance()
     {
         var repository = new InMemoryCatalogRepository();
         var provider = new StubProvider(CreateCandidate());
-        var resolver = new CatalogWorkResolver([provider], repository, new FixedClock());
+        var resolver = new CatalogWorkResolver(
+            [provider], repository, new EmptyFollowRepository(), CreateNotificationService(), new FixedClock());
 
         var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
 
@@ -96,6 +318,62 @@ public sealed class CatalogWorkResolverTests
         Assert.AreEqual(2.5m, result.Work.SeriesEntries.Single().PositionSort);
         Assert.HasCount(1, repository.ExternalReferences);
         Assert.AreEqual(1, repository.SaveCount);
+    }
+
+    [TestMethod]
+    public async Task ResolveAsyncPrefersAnExplicitPositionSortOverParsingTheLabel()
+    {
+        var repository = new InMemoryCatalogRepository();
+        var candidate = CreateCandidate() with
+        {
+            Series = [new BookSeriesCandidate("Project Hail Mary Universe", "3rd", true, PositionSort: 3m)]
+        };
+        var provider = new StubProvider(candidate);
+        var resolver = new CatalogWorkResolver(
+            [provider], repository, new EmptyFollowRepository(), CreateNotificationService(), new FixedClock());
+
+        var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
+
+        var entry = result.Work.SeriesEntries.Single();
+        Assert.AreEqual(3m, entry.PositionSort);
+        Assert.AreEqual("3rd", entry.PositionLabel);
+    }
+
+    [TestMethod]
+    public async Task ResolveAsyncMarksANewlyDiscoveredSeriesCompletedWhenTheCandidateSaysSo()
+    {
+        var repository = new InMemoryCatalogRepository();
+        var candidate = CreateCandidate() with
+        {
+            Series = [new BookSeriesCandidate("Project Hail Mary Universe", "1", true, IsCompleted: true)]
+        };
+        var provider = new StubProvider(candidate);
+        var resolver = new CatalogWorkResolver(
+            [provider], repository, new EmptyFollowRepository(), CreateNotificationService(), new FixedClock());
+
+        var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
+
+        Assert.AreEqual(SeriesStatus.Completed, result.Work.SeriesEntries.Single().Series.Status);
+    }
+
+    [TestMethod]
+    public async Task ResolveAsyncMarksAnExistingUnknownSeriesCompletedWhenALaterCandidateSaysSo()
+    {
+        var repository = new InMemoryCatalogRepository();
+        var existingSeries = new Series("Project Hail Mary Universe", SeriesStatus.Unknown, Now);
+        repository.AddSeries(existingSeries);
+        var candidate = CreateCandidate() with
+        {
+            Series = [new BookSeriesCandidate("Project Hail Mary Universe", "1", true, IsCompleted: true)]
+        };
+        var provider = new StubProvider(candidate);
+        var resolver = new CatalogWorkResolver(
+            [provider], repository, new EmptyFollowRepository(), CreateNotificationService(), new FixedClock());
+
+        var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
+
+        Assert.AreSame(existingSeries, result.Work.SeriesEntries.Single().Series);
+        Assert.AreEqual(SeriesStatus.Completed, existingSeries.Status);
     }
 
     [TestMethod]
@@ -117,7 +395,8 @@ public sealed class CatalogWorkResolverTests
             "work-1",
             Now));
         var provider = new StubProvider(CreateCandidate()) { ThrowIfCalled = true };
-        var resolver = new CatalogWorkResolver([provider], repository, new FixedClock());
+        var resolver = new CatalogWorkResolver(
+            [provider], repository, new EmptyFollowRepository(), CreateNotificationService(), new FixedClock());
 
         var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
 
@@ -147,7 +426,8 @@ public sealed class CatalogWorkResolverTests
             Now));
         repository.AddWork(existing);
         var provider = new StubProvider(CreateCandidate());
-        var resolver = new CatalogWorkResolver([provider], repository, new FixedClock());
+        var resolver = new CatalogWorkResolver(
+            [provider], repository, new EmptyFollowRepository(), CreateNotificationService(), new FixedClock());
 
         var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
 
@@ -171,9 +451,142 @@ public sealed class CatalogWorkResolverTests
         [new BookEditionCandidate(title, "9780593135204", "Ebook", new DateOnly(2021, 5, 4))],
         [new BookSeriesCandidate("Project Hail Mary Universe", "2.5", true)]);
 
+    // No test here ever follows a series/author, so ListFollowersAsync always
+    // returns empty and NotificationService is never actually called through
+    // it -- these exist only to satisfy CatalogWorkResolver's constructor.
+    private static NotificationService CreateNotificationService() =>
+        new(new ThrowingNotificationRepository(), new StubCurrentUser(), new FixedClock());
+
     private sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    private sealed class StubCurrentUser : ICurrentUser
+    {
+        public Guid? UserId => null;
+        public string? DisplayName => null;
+    }
+
+    private sealed class EmptyFollowRepository : IFollowRepository
+    {
+        public Task<Follow?> FindAsync(
+            Guid userId, FollowSubjectType subjectType, Guid subjectId, CancellationToken cancellationToken) =>
+            Task.FromResult<Follow?>(null);
+
+        public Task<IReadOnlyList<Follow>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Follow>>([]);
+
+        public Task<IReadOnlyList<Follow>> ListFollowersAsync(
+            FollowSubjectType subjectType, Guid subjectId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Follow>>([]);
+
+        public void Add(Follow follow) => throw new NotSupportedException("Not exercised by these tests.");
+
+        public void Remove(Follow follow) => throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class InMemoryFollowRepository : IFollowRepository
+    {
+        private readonly List<Follow> _rows = [];
+
+        public List<(FollowSubjectType SubjectType, Guid SubjectId)> FollowersQueriedFor { get; } = [];
+
+        public void Seed(Follow follow) => _rows.Add(follow);
+
+        public Task<Follow?> FindAsync(
+            Guid userId, FollowSubjectType subjectType, Guid subjectId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<IReadOnlyList<Follow>> ListForUserAsync(Guid userId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<IReadOnlyList<Follow>> ListFollowersAsync(
+            FollowSubjectType subjectType, Guid subjectId, CancellationToken cancellationToken)
+        {
+            FollowersQueriedFor.Add((subjectType, subjectId));
+            return Task.FromResult<IReadOnlyList<Follow>>(_rows
+                .Where(follow => follow.SubjectType == subjectType && follow.SubjectId == subjectId)
+                .ToArray());
+        }
+
+        public void Add(Follow follow) => throw new NotSupportedException("Not exercised by these tests.");
+
+        public void Remove(Follow follow) => throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class RecordingNotificationRepository : INotificationRepository
+    {
+        public List<NotificationEvent> Added { get; } = [];
+
+        public Task<NotificationEvent?> FindLatestAsync(
+            NotificationAudience audience, Guid? recipientUserId, string category,
+            string? subjectType, string? subjectId, CancellationToken cancellationToken) =>
+            Task.FromResult<NotificationEvent?>(null);
+
+        public Task AddAsync(NotificationEvent notification, CancellationToken cancellationToken)
+        {
+            Added.Add(notification);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<NotificationReceipt>> ListReceiptsAsync(
+            Guid notificationEventId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task RemoveReceiptsAsync(
+            IReadOnlyList<NotificationReceipt> receipts, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<IReadOnlyList<(NotificationEvent Event, NotificationReceipt? Receipt)>> ListForViewerAsync(
+            Guid userId, bool isAdmin, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<NotificationReceipt?> FindReceiptAsync(
+            Guid notificationEventId, Guid userId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task AddReceiptAsync(NotificationReceipt receipt, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class ThrowingNotificationRepository : INotificationRepository
+    {
+        public Task<NotificationEvent?> FindLatestAsync(
+            NotificationAudience audience, Guid? recipientUserId, string category,
+            string? subjectType, string? subjectId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task AddAsync(NotificationEvent notification, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<IReadOnlyList<NotificationReceipt>> ListReceiptsAsync(
+            Guid notificationEventId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task RemoveReceiptsAsync(
+            IReadOnlyList<NotificationReceipt> receipts, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<IReadOnlyList<(NotificationEvent Event, NotificationReceipt? Receipt)>> ListForViewerAsync(
+            Guid userId, bool isAdmin, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task<NotificationReceipt?> FindReceiptAsync(
+            Guid notificationEventId, Guid userId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task AddReceiptAsync(NotificationReceipt receipt, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Not exercised by these tests.");
     }
 
     private sealed class StubProvider(BookCandidate candidate) : IBookMetadataProvider
@@ -250,6 +663,12 @@ public sealed class CatalogWorkResolverTests
             string normalizedName,
             CancellationToken cancellationToken) =>
             Task.FromResult(_series.SingleOrDefault(series => series.NormalizedName == normalizedName));
+
+        public Task<Series?> GetSeriesAsync(Guid seriesId, CancellationToken cancellationToken) =>
+            Task.FromResult(_series.SingleOrDefault(series => series.Id == seriesId));
+
+        public Task<Author?> GetAuthorAsync(Guid authorId, CancellationToken cancellationToken) =>
+            Task.FromResult(_authors.SingleOrDefault(author => author.Id == authorId));
 
         public void AddWork(Work work) => _works.Add(work);
 

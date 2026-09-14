@@ -213,9 +213,21 @@ public sealed class OpenLibraryBookMetadataProvider(
             PreferredLanguage,
             StringComparison.OrdinalIgnoreCase);
 
-        var displayTitle = useEditionFields && !string.IsNullOrWhiteSpace(primaryEdition!.Title)
-            ? primaryEdition.Title.Trim()
-            : title;
+        // Title gets its own, slightly looser rule than cover/publisher/language
+        // below: an edition whose language is merely *unknown* (not confirmed
+        // to be some other language) still gets to keep its own title. Observed
+        // live: an edition titled "Little Women - Complete Authorized Edition"
+        // with no language tag lost its title to the work's own aggregate
+        // title "Mujercitas" -- Open Library's work-level fields are mixed
+        // across every translation/reprint ever indexed under that work id,
+        // so treating "unknown" the same as "confirmed foreign" here can
+        // silently substitute a completely different-language title instead
+        // of just keeping the one real edition's own.
+        var editionConfirmedOtherLanguage = primaryEditionLanguage is not null && !useEditionFields;
+        var displayTitle = primaryEdition is not null && !editionConfirmedOtherLanguage &&
+            !string.IsNullOrWhiteSpace(primaryEdition.Title)
+                ? primaryEdition.Title.Trim()
+                : title;
         var coverId = useEditionFields ? primaryEdition!.CoverId ?? document.CoverId : document.CoverId;
         var publisher = useEditionFields
             ? FirstString(primaryEdition!.Publishers) ?? FirstString(document.Publishers)

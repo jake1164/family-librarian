@@ -27,6 +27,14 @@ public interface ICatalogRepository
         string normalizedName,
         CancellationToken cancellationToken);
 
+    /// <summary>The Series with its <c>Entries</c> (and each entry's Work)
+    /// loaded, for following/gap-detection.</summary>
+    Task<Series?> GetSeriesAsync(Guid seriesId, CancellationToken cancellationToken);
+
+    /// <summary>The Author with its <c>WorkAuthors</c> (and each Work) loaded,
+    /// for following/gap-detection.</summary>
+    Task<Author?> GetAuthorAsync(Guid authorId, CancellationToken cancellationToken);
+
     void AddWork(Work work);
 
     void AddAuthor(Author author);

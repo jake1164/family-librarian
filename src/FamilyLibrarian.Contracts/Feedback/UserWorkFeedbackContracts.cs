@@ -6,7 +6,6 @@ namespace FamilyLibrarian.Contracts.Feedback;
 /// </param>
 public sealed record SetWorkFeedbackRequest(
     DateOnly CompletedOn,
-    int Rating,
     uint? ExpectedVersion);
 
 public sealed record RemoveWorkFeedbackRequest(uint ExpectedVersion);
@@ -17,7 +16,6 @@ public sealed record WorkFeedbackResponse(
     IReadOnlyList<string> Authors,
     string? CoverUrl,
     DateOnly CompletedOn,
-    int Rating,
     uint Version);
 
 public sealed record WorkFeedbackListResponse(IReadOnlyList<WorkFeedbackResponse> Items);

@@ -3,10 +3,12 @@
 @implements IDisposable
 @using FamilyLibrarian.Contracts.Delivery
 @using FamilyLibrarian.Web.Client.Delivery
+@using FamilyLibrarian.Web.Client.Following
 @inject CatalogApiClient Catalog
 @inject CatalogSearchState SearchState
 @inject RequestsApiClient Requests
 @inject DeliveryTargetApiClient DeliveryTargets
+@inject FollowApiClient Follows
 
 <PageTitle>@(book?.Title ?? "Book") · Family Librarian</PageTitle>
 
@@ -54,6 +56,10 @@
                     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
                         <MudText Typo="Typo.overline">Catalog record</MudText>
                         <ProviderChip ProviderName="@book.ProviderName" SourceUrl="@book.SourceUrl" />
+                        @foreach (var source in OtherSources())
+                        {
+                            <ProviderChip ProviderName="@source.ProviderName" SourceUrl="@source.SourceUrl" />
+                        }
                         <AvailabilityBadges Availability="@availability" />
                     </MudStack>
 
@@ -124,9 +130,18 @@
                 <MudText Typo="Typo.h6">Known series context</MudText>
                 @foreach (var series in book.Series)
                 {
-                    <MudText Typo="Typo.body2">
-                        @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
-                    </MudText>
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                        <MudText Typo="Typo.body2">
+                            @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
+                        </MudText>
+                        <MudButton Variant="Variant.Text"
+                                   Size="Size.Small"
+                                   Color="@(IsFollowingSeriesNamed(series.Name) ? Color.Primary : Color.Default)"
+                                   Disabled="@isTogglingSeriesFollow"
+                                   OnClick="() => ToggleSeriesFollowAsync(series.Name)">
+                            @(IsFollowingSeriesNamed(series.Name) ? "Following" : "Follow this series")
+                        </MudButton>
+                    </MudStack>
                 }
             </MudPaper>
         }
@@ -174,9 +189,10 @@
         </MudPaper>
 
         <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-            Similar titles are kept separate unless catalog sources report the same ISBN. Contributor
-            names, subtitles, formats, and dates can indicate a different edition, adaptation,
-            retelling, translation, or a separate catalog record.
+            Matching titles from different sources are merged into one catalog record automatically
+            when they agree on title, author, and language — the chips above link to every source
+            that was merged into this one. Contributor names, subtitles, formats, dates, or a
+            different language can still indicate a separate catalog record.
         </MudAlert>
 
         @if (HasOwnedOption(availability?.Ebook) || HasOwnedOption(availability?.Audiobook))
@@ -419,6 +435,9 @@
     private bool sendExistingSucceeded;
     private string? sendExistingMessage;
     private bool sendExistingRequiresConfirmation;
+    private HashSet<Guid> followedSeriesIds = [];
+    private readonly Dictionary<string, Guid> resolvedSeriesIdsByName = new(StringComparer.OrdinalIgnoreCase);
+    private bool isTogglingSeriesFollow;
 
     private bool HasFormatSelected => wantsEbook || wantsAudiobook;
 
@@ -433,6 +452,63 @@
         {
             // Informational only -- a failed lookup just hides the Kindle
             // checkbox rather than failing the page.
+        }
+
+        try
+        {
+            followedSeriesIds = (await Follows.GetMineAsync()).Series.Select(series => series.SeriesId).ToHashSet();
+        }
+        catch (HttpRequestException)
+        {
+            // Informational only -- a failed lookup just shows every follow
+            // button as "not yet following" rather than failing the page.
+        }
+    }
+
+    private bool IsFollowingSeriesNamed(string name) =>
+        resolvedSeriesIdsByName.TryGetValue(name, out var seriesId) && followedSeriesIds.Contains(seriesId);
+
+    // A raw, not-yet-resolved candidate's series has no persisted Series.Id
+    // to follow -- it only becomes a real, followable catalog entity once
+    // resolved into a Work, same as "Request this book" already resolves it.
+    // Resolving is idempotent (returns the existing Work if this candidate
+    // was already resolved), so following does not also create a request.
+    private async Task ToggleSeriesFollowAsync(string seriesName)
+    {
+        isTogglingSeriesFollow = true;
+
+        try
+        {
+            resolvedWork ??= await Catalog.ResolveCandidateAsync(ProviderId, ExternalId);
+            var matched = resolvedWork.Series.FirstOrDefault(series =>
+                string.Equals(series.Name, seriesName, StringComparison.OrdinalIgnoreCase) && series.Id is not null);
+            if (matched?.Id is not { } seriesId)
+            {
+                return;
+            }
+
+            resolvedSeriesIdsByName[seriesName] = seriesId;
+
+            var succeeded = followedSeriesIds.Contains(seriesId)
+                ? await Follows.UnfollowSeriesAsync(seriesId)
+                : await Follows.FollowSeriesAsync(seriesId);
+
+            if (succeeded)
+            {
+                if (!followedSeriesIds.Remove(seriesId))
+                {
+                    followedSeriesIds.Add(seriesId);
+                }
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: the button simply reflects whatever the last
+            // successful toggle left it as.
+        }
+        finally
+        {
+            isTogglingSeriesFollow = false;
         }
     }
 
@@ -474,6 +550,16 @@
         try
         {
             var fresh = await Catalog.GetCandidateAsync(ProviderId, ExternalId);
+
+            // The single-candidate lookup above only ever asks one provider, so
+            // it never has merged-source info -- carry forward what search
+            // already found (from the cached copy) rather than silently
+            // dropping the other sources this record was merged from.
+            if (fresh is { Sources.Count: 0 } && cached is { Sources.Count: > 0 })
+            {
+                fresh = fresh with { Sources = cached.Sources };
+            }
+
             book = fresh;
         }
         catch (HttpRequestException)
@@ -542,6 +628,15 @@
         SearchState.Results.FirstOrDefault(result =>
             string.Equals(result.ProviderId, ProviderId, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(result.ExternalId, ExternalId, StringComparison.OrdinalIgnoreCase));
+
+    // Sources includes the record currently on screen alongside every other
+    // provider merged into it -- exclude that one so only the "also found in"
+    // sources are chipped.
+    private IEnumerable<CatalogCandidateSourceResponse> OtherSources() =>
+        book?.Sources.Where(source =>
+            !(string.Equals(source.ProviderId, book.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+              string.Equals(source.ExternalId, book.ExternalId, StringComparison.OrdinalIgnoreCase)))
+        ?? [];
 
     private async Task SubmitAsync()
     {

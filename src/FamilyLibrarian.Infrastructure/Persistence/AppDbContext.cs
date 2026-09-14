@@ -7,6 +7,7 @@ using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Feedback;
+using FamilyLibrarian.Domain.Following;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Policy;
 using FamilyLibrarian.Domain.Providers;
@@ -67,6 +68,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<OutboundCommunicationDelivery> OutboundCommunicationDeliveries => Set<OutboundCommunicationDelivery>();
 
     public DbSet<UserWorkFeedback> UserWorkFeedback => Set<UserWorkFeedback>();
+
+    public DbSet<Follow> Follows => Set<Follow>();
 
     public DbSet<AcquisitionJob> AcquisitionJobs => Set<AcquisitionJob>();
 
@@ -142,6 +145,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         ConfigureNotifications(builder);
         ConfigureCommunications(builder);
         ConfigureFeedback(builder);
+        ConfigureFollows(builder);
         ConfigureProviders(builder);
         ConfigureAcquisition(builder);
         ConfigureSecurity(builder);
@@ -274,7 +278,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(feedback => feedback.UserId).HasColumnName("user_id");
             entity.Property(feedback => feedback.WorkId).HasColumnName("work_id");
             entity.Property(feedback => feedback.CompletedOn).HasColumnName("completed_on");
-            entity.Property(feedback => feedback.Rating).HasColumnName("rating");
             ConfigureTimestamps(entity);
 
             // One feedback row per (user, Work); the read pattern (mine, or
@@ -291,6 +294,40 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(feedback => feedback.WorkId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureFollows(ModelBuilder builder)
+    {
+        builder.Entity<Follow>(entity =>
+        {
+            entity.ToTable("follows", "following");
+            entity.HasKey(follow => follow.Id);
+            entity.Property(follow => follow.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(follow => follow.UserId).HasColumnName("user_id");
+            entity.Property(follow => follow.SubjectType)
+                .HasColumnName("subject_type")
+                .HasConversion<string>()
+                .HasMaxLength(32);
+            // A plain, unconstrained id rather than a real foreign key: the
+            // target table depends on SubjectType (catalog.series or
+            // catalog.authors), which EF Core cannot express as a single
+            // relationship — the same polymorphic-reference shape
+            // NotificationEvent already uses for its SubjectType/SubjectId.
+            entity.Property(follow => follow.SubjectId).HasColumnName("subject_id");
+            ConfigureTimestamps(entity);
+
+            // One follow per (user, subject); the read pattern never needs
+            // anything looser.
+            entity.HasIndex(follow => new { follow.UserId, follow.SubjectType, follow.SubjectId }).IsUnique();
+
+            // The release-monitoring fan-out reads "who follows this subject".
+            entity.HasIndex(follow => new { follow.SubjectType, follow.SubjectId });
+
+            entity.HasOne<AppUser>()
+                .WithMany()
+                .HasForeignKey(follow => follow.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 

@@ -19,6 +19,7 @@ public sealed class ProviderRegistry : IProviderRegistry
     public const string DemoProviderId = "demo";
     public const string OpenLibraryProviderId = "openlibrary";
     public const string GoogleBooksProviderId = "googlebooks";
+    public const string HardcoverProviderId = "hardcover";
     // Keep the persisted provider key stable so existing administrator
     // enablement choices and attempt history continue to resolve after the
     // implementation moves from the Gutendex API to the local RDF catalogue.
@@ -93,6 +94,32 @@ public sealed class ProviderRegistry : IProviderRegistry
                     new ProviderSetupLink(
                         "Create an API key",
                         "https://console.cloud.google.com/apis/credentials")
+                ]),
+            new ProviderDescriptor(
+                HardcoverProviderId,
+                "Hardcover",
+                MetadataOnly,
+                RequiresCredential: true,
+                HasExternallyManagedCredential: false,
+                DefaultEnabled: configuration.GetValue(
+                    $"{HardcoverMetadataOptions.SectionName}:Enabled", false),
+                SetupInstructions:
+                    "Hardcover has no app-level key — this uses the admin's own personal " +
+                    "access token for every household lookup. Create one in Hardcover's " +
+                    "API settings with only the 'read:catalog:search' and 'read:catalog:data' " +
+                    "scopes checked — that covers every lookup this integration makes " +
+                    "(search plus book/edition/series/author reads). Do not grant 'all': it " +
+                    "gives full account access this integration never needs. The free tier " +
+                    "allows 5,000 requests/day.",
+                SetupLinks:
+                [
+                    new ProviderSetupLink("Explore Hardcover", "https://hardcover.app/"),
+                    new ProviderSetupLink(
+                        "API documentation",
+                        "https://docs.hardcover.app/api/getting-started/"),
+                    new ProviderSetupLink(
+                        "Create an API key",
+                        "https://hardcover.app/account/api")
                 ]),
             new ProviderDescriptor(
                 GutenbergProviderId,

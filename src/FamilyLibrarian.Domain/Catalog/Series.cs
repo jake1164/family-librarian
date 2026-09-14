@@ -32,4 +32,19 @@ public sealed class Series
     public uint Version { get; private set; }
 
     public ICollection<SeriesEntry> Entries { get; } = new List<SeriesEntry>();
+
+    // One-directional on purpose: a provider that has since stopped reporting
+    // the series as complete does not un-complete it here. Nothing in this
+    // codebase supplies a signal for "reopened", so there is nothing correct
+    // to do with one yet.
+    public void MarkCompleted(DateTimeOffset updatedAtUtc)
+    {
+        if (Status == SeriesStatus.Completed)
+        {
+            return;
+        }
+
+        Status = SeriesStatus.Completed;
+        UpdatedAtUtc = updatedAtUtc;
+    }
 }

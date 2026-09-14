@@ -8,12 +8,12 @@
 else if (Badges.Count > 0)
 {
     <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
-        @foreach (var (option, mediaType) in Badges)
+        @foreach (var badge in Badges)
         {
-            <MudTooltip Text="@($"{MediaTypeVisuals.OptionKindLabel(option.OptionKind)} ({option.ProviderId})")">
-                <MudChip T="string" Size="Size.Small" Color="@MediaTypeVisuals.OptionKindColor(option.OptionKind)"
-                         Icon="@MediaTypeVisuals.Icon(mediaType)">
-                    @MediaTypeVisuals.OptionKindLabel(option.OptionKind)
+            <MudTooltip Text="@($"{MediaTypeVisuals.OptionKindLabel(badge.OptionKind)} ({string.Join(", ", badge.ProviderIds)})")">
+                <MudChip T="string" Size="Size.Small" Color="@MediaTypeVisuals.OptionKindColor(badge.OptionKind)"
+                         Icon="@MediaTypeVisuals.Icon(badge.MediaType)">
+                    @MediaTypeVisuals.OptionKindLabel(badge.OptionKind)
                 </MudChip>
             </MudTooltip>
         }
@@ -25,11 +25,25 @@ else if (Badges.Count > 0)
     [Parameter]
     public CandidateAvailabilityResponse? Availability { get; set; }
 
-    private List<(FulfillmentOptionResponse Option, string MediaType)> Badges =>
+    /// <summary>
+    /// One badge per distinct (kind, media type) combination, not one per raw
+    /// FulfillmentOption -- a public-domain title like "Moby Dick" can match
+    /// several Gutenberg editions, each independently confirming the same
+    /// "free ebook" fact, and rendering one identical-looking chip per match
+    /// is clutter, not information. Every matching provider is still named
+    /// in the tooltip.
+    /// </summary>
+    private List<BadgeGroup> Badges =>
         Availability is null
             ? []
-            : [
-                .. Availability.Ebook.Select(option => (option, "Ebook")),
-                .. Availability.Audiobook.Select(option => (option, "Audiobook"))
-              ];
+            : Availability.Ebook.Select(option => (option, MediaType: "Ebook"))
+                .Concat(Availability.Audiobook.Select(option => (option, MediaType: "Audiobook")))
+                .GroupBy(entry => (entry.option.OptionKind, entry.MediaType))
+                .Select(group => new BadgeGroup(
+                    group.Key.OptionKind,
+                    group.Key.MediaType,
+                    group.Select(entry => entry.option.ProviderId).Distinct().ToArray()))
+                .ToList();
+
+    private sealed record BadgeGroup(string OptionKind, string MediaType, IReadOnlyList<string> ProviderIds);
 }

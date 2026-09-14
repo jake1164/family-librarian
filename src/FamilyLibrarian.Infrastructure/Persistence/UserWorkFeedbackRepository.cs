@@ -57,6 +57,5 @@ public sealed class UserWorkFeedbackRepository(AppDbContext database) : IUserWor
                 .ToList(),
             work.CoverUrl,
             item.CompletedOn,
-            item.Rating,
             item.Version);
 }

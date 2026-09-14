@@ -725,6 +725,12 @@ public sealed class CwaPublishingServiceTests
             string normalizedName, CancellationToken cancellationToken) =>
             Task.FromResult<Series?>(null);
 
+        public Task<Series?> GetSeriesAsync(Guid seriesId, CancellationToken cancellationToken) =>
+            Task.FromResult<Series?>(null);
+
+        public Task<Author?> GetAuthorAsync(Guid authorId, CancellationToken cancellationToken) =>
+            Task.FromResult<Author?>(null);
+
         public void AddWork(Work work)
         {
         }

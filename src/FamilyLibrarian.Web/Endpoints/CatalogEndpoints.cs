@@ -64,7 +64,7 @@ internal static class CatalogEndpoints
         var providerResults = await Task.WhenAll(searches);
 
         return Results.Ok(new CatalogSearchResponse(
-            BookCandidateGrouper.GroupExactIsbnMatches(providerResults
+            BookCandidateGrouper.GroupMatchingCandidates(providerResults
                 .Where(result => result.Succeeded)
                 .SelectMany(result => result.Candidates)
                 .ToArray(), searchText)
@@ -367,7 +367,12 @@ internal static class CatalogEndpoints
         candidate.PageCount,
         candidate.Subjects,
         candidate.SourceUrl,
-        BookCandidateGrouper.GetMatchKind(candidate, searchText).ToString());
+        BookCandidateGrouper.GetMatchKind(candidate, searchText).ToString(),
+        candidate.MergedSources.Select(source => new CatalogCandidateSourceResponse(
+            source.ProviderId,
+            source.ProviderName,
+            source.ExternalId,
+            source.SourceUrl)).ToArray());
 
     private static async Task<CatalogWorkResponse> ToWorkResponseAsync(
         Domain.Catalog.Work work,
@@ -380,7 +385,7 @@ internal static class CatalogEndpoints
             work.CanonicalTitle,
             work.Authors
                 .OrderBy(author => author.Ordinal)
-                .Select(author => author.Author.CanonicalName)
+                .Select(author => new CatalogWorkAuthorResponse(author.Author.Id, author.Author.CanonicalName))
                 .ToArray(),
             work.Description,
             work.CoverUrl,
@@ -401,7 +406,8 @@ internal static class CatalogEndpoints
                 .Select(entry => new CatalogSeriesResponse(
                     entry.Series.Name,
                     entry.PositionLabel,
-                    entry.IsPrimary))
+                    entry.IsPrimary,
+                    entry.SeriesId))
                 .ToArray(),
             sources.Select(source => new CatalogWorkSourceResponse(
                 source.ProviderId,

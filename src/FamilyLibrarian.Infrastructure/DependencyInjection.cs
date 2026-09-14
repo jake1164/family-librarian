@@ -5,6 +5,7 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Feedback;
+using FamilyLibrarian.Application.Following;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
@@ -195,6 +196,9 @@ public static class DependencyInjection
 
         services.AddScoped<IUserWorkFeedbackRepository, UserWorkFeedbackRepository>();
         services.AddScoped<UserWorkFeedbackService>();
+
+        services.AddScoped<IFollowRepository, FollowRepository>();
+        services.AddScoped<FollowService>();
         services.AddScoped<DeliveryTargetService>();
         services.AddScoped<DeliveryAttemptService>();
 
@@ -384,6 +388,64 @@ public static class DependencyInjection
             .AddLogger<QueryRedactingHttpClientLogger>();
         services.AddTransient<IBookMetadataProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<GoogleBooksBookMetadataProvider>());
+
+        services.AddOptions<HardcoverMetadataOptions>()
+            .Bind(configuration.GetSection(HardcoverMetadataOptions.SectionName))
+            .Validate(options => options.MaxResults is >= 1 and <= 40,
+                "Hardcover MaxResults must be between 1 and 40.")
+            .Validate(options => options.TimeoutSeconds is >= 1 and <= 60,
+                "Hardcover TimeoutSeconds must be between 1 and 60.")
+            .Validate(options => options.MaxRetryAttempts is >= 0 and <= 5,
+                "Hardcover MaxRetryAttempts must be between 0 and 5.")
+            .Validate(options => options.MaxRetryDelaySeconds is >= 1 and <= 120,
+                "Hardcover MaxRetryDelaySeconds must be between 1 and 120.")
+            .ValidateOnStart();
+
+        services.AddTransient<HardcoverAuthorizationHandler>();
+        services.AddTransient<HardcoverRateLimitHandler>();
+
+        // Hardcover has no app-level key: the request-scoped admin's own
+        // token (or no key at all) is resolved per request the same way
+        // GoogleBooksApiKeyHandler resolves its key, so no configuration
+        // override path is wired here — see MetadataCredentialSource.
+        services.AddHttpClient<HardcoverBookMetadataProvider>((serviceProvider, client) =>
+            {
+                var options = serviceProvider
+                    .GetRequiredService<IOptions<HardcoverMetadataOptions>>()
+                    .Value;
+
+                client.BaseAddress = new Uri("https://api.hardcover.app/v1/graphql");
+                client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+                client.DefaultRequestHeaders.Accept.Add(
+                    new MediaTypeWithQualityHeaderValue("application/json"));
+                client.DefaultRequestHeaders.UserAgent.Add(
+                    new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+            })
+            .AddHttpMessageHandler<HardcoverAuthorizationHandler>()
+            .AddHttpMessageHandler<HardcoverRateLimitHandler>();
+        services.AddTransient<IBookMetadataProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<HardcoverBookMetadataProvider>());
+
+        // A named (not typed) client: HardcoverLanguageLookupCache must be a
+        // true singleton to cache anything, and AddHttpClient<TClient>()
+        // always registers TClient as transient, which would silently
+        // re-fetch the lookup table on every call. See its own remarks.
+        services.AddHttpClient(HardcoverLanguageLookupCache.HttpClientName, (serviceProvider, client) =>
+            {
+                var options = serviceProvider
+                    .GetRequiredService<IOptions<HardcoverMetadataOptions>>()
+                    .Value;
+
+                client.BaseAddress = new Uri("https://api.hardcover.app/v1/graphql");
+                client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+                client.DefaultRequestHeaders.Accept.Add(
+                    new MediaTypeWithQualityHeaderValue("application/json"));
+                client.DefaultRequestHeaders.UserAgent.Add(
+                    new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+            })
+            .AddHttpMessageHandler<HardcoverAuthorizationHandler>()
+            .AddHttpMessageHandler<HardcoverRateLimitHandler>();
+        services.AddSingleton<HardcoverLanguageLookupCache>();
 
         services.AddOptions<GutenbergCatalogOptions>()
             .Bind(configuration.GetSection(GutenbergCatalogOptions.SectionName))

@@ -3,9 +3,11 @@
 @inherits LiveComponentBase
 @using FamilyLibrarian.Contracts.Delivery
 @using FamilyLibrarian.Web.Client.Delivery
+@using FamilyLibrarian.Web.Client.Following
 @inject CatalogApiClient Catalog
 @inject RequestsApiClient Requests
 @inject DeliveryTargetApiClient DeliveryTargets
+@inject FollowApiClient Follows
 
 <PageTitle>@(work?.Title ?? "Book") · Family Librarian</PageTitle>
 
@@ -23,7 +25,21 @@
     else
     {
         <MudText Typo="Typo.h3">@work.Title</MudText>
-        <MudText Typo="Typo.h6">@string.Join(", ", work.Authors)</MudText>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-2">
+            @foreach (var author in work.Authors)
+            {
+                <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                    <MudText Typo="Typo.h6">@author.Name</MudText>
+                    <MudButton Variant="Variant.Text"
+                               Size="Size.Small"
+                               Color="@(followedAuthorIds.Contains(author.Id) ? Color.Primary : Color.Default)"
+                               Disabled="@(busySubjectId == author.Id)"
+                               OnClick="() => ToggleAuthorFollowAsync(author.Id)">
+                        @(followedAuthorIds.Contains(author.Id) ? "Following" : "Follow this author")
+                    </MudButton>
+                </MudStack>
+            }
+        </MudStack>
 
         @if (!string.IsNullOrWhiteSpace(work.Description))
         {
@@ -36,9 +52,21 @@
                 <MudText Typo="Typo.h6">Known series context</MudText>
                 @foreach (var series in work.Series)
                 {
-                    <MudText Typo="Typo.body2">
-                        @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
-                    </MudText>
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                        <MudText Typo="Typo.body2">
+                            @series.Name@(string.IsNullOrWhiteSpace(series.PositionLabel) ? string.Empty : $" · position {series.PositionLabel}")
+                        </MudText>
+                        @if (series.Id is { } seriesId)
+                        {
+                            <MudButton Variant="Variant.Text"
+                                       Size="Size.Small"
+                                       Color="@(followedSeriesIds.Contains(seriesId) ? Color.Primary : Color.Default)"
+                                       Disabled="@(busySubjectId == seriesId)"
+                                       OnClick="() => ToggleSeriesFollowAsync(seriesId)">
+                                @(followedSeriesIds.Contains(seriesId) ? "Following" : "Follow this series")
+                            </MudButton>
+                        }
+                    </MudStack>
                 }
             </MudPaper>
         }
@@ -280,6 +308,9 @@
     private BookRequestOwnedResponse? owned;
     private BookRequestResponse? createdRequest;
     private CancellationTokenSource? fulfillmentLoadCancellation;
+    private HashSet<Guid> followedSeriesIds = [];
+    private HashSet<Guid> followedAuthorIds = [];
+    private Guid busySubjectId;
 
     private bool HasFormatSelected => wantsEbook || wantsAudiobook;
 
@@ -299,6 +330,81 @@
         {
             // Informational only -- a failed lookup just hides the Kindle
             // checkbox rather than failing the page.
+        }
+
+        await LoadFollowingStateAsync();
+    }
+
+    private async Task LoadFollowingStateAsync()
+    {
+        try
+        {
+            var mine = await Follows.GetMineAsync();
+            followedSeriesIds = mine.Series.Select(series => series.SeriesId).ToHashSet();
+            followedAuthorIds = mine.Authors.Select(author => author.AuthorId).ToHashSet();
+        }
+        catch (HttpRequestException)
+        {
+            // Informational only -- a failed lookup just shows every follow
+            // button as "not yet following" rather than failing the page.
+        }
+    }
+
+    private async Task ToggleSeriesFollowAsync(Guid seriesId)
+    {
+        busySubjectId = seriesId;
+
+        try
+        {
+            var succeeded = followedSeriesIds.Contains(seriesId)
+                ? await Follows.UnfollowSeriesAsync(seriesId)
+                : await Follows.FollowSeriesAsync(seriesId);
+
+            if (succeeded)
+            {
+                if (!followedSeriesIds.Remove(seriesId))
+                {
+                    followedSeriesIds.Add(seriesId);
+                }
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: the button simply reflects whatever the last
+            // successful toggle left it as.
+        }
+        finally
+        {
+            busySubjectId = Guid.Empty;
+        }
+    }
+
+    private async Task ToggleAuthorFollowAsync(Guid authorId)
+    {
+        busySubjectId = authorId;
+
+        try
+        {
+            var succeeded = followedAuthorIds.Contains(authorId)
+                ? await Follows.UnfollowAuthorAsync(authorId)
+                : await Follows.FollowAuthorAsync(authorId);
+
+            if (succeeded)
+            {
+                if (!followedAuthorIds.Remove(authorId))
+                {
+                    followedAuthorIds.Add(authorId);
+                }
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: the button simply reflects whatever the last
+            // successful toggle left it as.
+        }
+        finally
+        {
+            busySubjectId = Guid.Empty;
         }
     }
 

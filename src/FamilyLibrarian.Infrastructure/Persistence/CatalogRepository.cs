@@ -55,6 +55,18 @@ public sealed class CatalogRepository(AppDbContext database) : ICatalogRepositor
             series => series.NormalizedName == normalizedName,
             cancellationToken);
 
+    public Task<Series?> GetSeriesAsync(Guid seriesId, CancellationToken cancellationToken) =>
+        database.Series
+            .Include(series => series.Entries)
+                .ThenInclude(entry => entry.Work)
+            .SingleOrDefaultAsync(series => series.Id == seriesId, cancellationToken);
+
+    public Task<Author?> GetAuthorAsync(Guid authorId, CancellationToken cancellationToken) =>
+        database.Authors
+            .Include(author => author.WorkAuthors)
+                .ThenInclude(workAuthor => workAuthor.Work)
+            .SingleOrDefaultAsync(author => author.Id == authorId, cancellationToken);
+
     public void AddWork(Work work) => database.Works.Add(work);
 
     public void AddAuthor(Author author) => database.Authors.Add(author);

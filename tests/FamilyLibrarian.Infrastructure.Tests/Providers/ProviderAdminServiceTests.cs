@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Providers;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Providers;
@@ -157,6 +158,51 @@ public sealed class ProviderAdminServiceTests
                 serialized,
                 new System.Text.RegularExpressions.Regex("super-secret-key-value"));
         }
+    }
+
+    [TestMethod]
+    public async Task SavingAWorkingCredentialAutomaticallyEnablesTheProvider()
+    {
+        // Reproduces a real gap found live: the setup card's own text says
+        // "Save a working API key above to enable this provider", but
+        // nothing enforced that -- an admin who saved and tested a key was
+        // left with it silently disabled, with no further prompt that a
+        // second, separate "enable" click was still required.
+        var context = new TestContext();
+
+        var result = await context.Service.SetCredentialAsync(
+            CredentialedProviderId, "a-working-key", CancellationToken.None);
+
+        Assert.AreEqual(ProviderCommandOutcome.Success, result.Outcome);
+        Assert.IsTrue(result.Status!.IsEnabled);
+
+        var reread = await context.Service.GetStatusAsync(CredentialedProviderId, CancellationToken.None);
+        Assert.IsTrue(reread!.IsEnabled);
+    }
+
+    [TestMethod]
+    public async Task SavingAWorkingCredentialWritesAnEnabledAuditEntry()
+    {
+        var context = new TestContext();
+
+        await context.Service.SetCredentialAsync(CredentialedProviderId, "a-working-key", CancellationToken.None);
+
+        Assert.IsTrue(context.Audit.Entries.Any(entry => entry.Action == AuditActions.ProviderEnabled));
+    }
+
+    [TestMethod]
+    public async Task ReplacingAnAlreadyEnabledCredentialDoesNotDuplicateTheEnabledAuditEntry()
+    {
+        // Rotating a key for a provider that's already enabled should not
+        // look, in the audit trail, like it was freshly enabled again.
+        var context = new TestContext();
+        await context.Service.SetCredentialAsync(CredentialedProviderId, "first-key-value", CancellationToken.None);
+
+        await context.Service.SetCredentialAsync(CredentialedProviderId, "second-key-value", CancellationToken.None);
+
+        Assert.AreEqual(
+            1,
+            context.Audit.Entries.Count(entry => entry.Action == AuditActions.ProviderEnabled));
     }
 
     [TestMethod]
