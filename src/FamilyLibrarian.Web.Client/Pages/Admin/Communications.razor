@@ -4,14 +4,16 @@
 @using FamilyLibrarian.Web.Client.Communications
 @using Microsoft.AspNetCore.Authorization
 @inject SmtpSettingsApiClient SmtpApi
+@inject MatrixSettingsApiClient MatrixApi
 @inject ISnackbar Snackbar
 
 <PageTitle>Communications settings | Family Librarian</PageTitle>
 
 <MudText Typo="Typo.h4" GutterBottom="true">Communications settings</MudText>
 <MudText Typo="Typo.body1" Class="mb-4">
-    Configure optional outbound providers. SMTP is currently used only for an
-    administrator test email; operational alert routing will be added separately.
+    Configure optional outbound providers. A notification is sent through every
+    provider a household member has enabled and linked -- SMTP by their account
+    email, Matrix once they link their own Matrix ID under their personal settings.
 </MudText>
 
 @if (loadFailed)
@@ -107,6 +109,87 @@ else
     </MudPaper>
 }
 
+@if (matrixLoadFailed)
+{
+    <MudAlert Severity="Severity.Error" Class="mt-4">We could not load Matrix settings.</MudAlert>
+}
+else if (matrix is null)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading Matrix settings" Class="mt-4" />
+}
+else
+{
+    <MudPaper Class="pa-4 mt-4" Elevation="1">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudText Typo="Typo.h6">Matrix (outbound chat)</MudText>
+            @if (MatrixNeedsSetup)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Needs setup</MudChip>
+            }
+            <MudSpacer />
+            <MudSwitch T="bool" Value="matrix.IsEnabled" ValueChanged="SetMatrixEnabledAsync" Color="Color.Primary"
+                       Disabled="@matrixBusy" Label="@(matrix.IsEnabled ? "Enabled" : "Disabled")" />
+        </MudStack>
+
+        <MudText Typo="Typo.body2" Class="mt-3 mb-3">
+            A dedicated Matrix account for the bot, with an access token (Settings ->
+            Help &amp; About -> Advanced in Element, or your homeserver's admin API).
+            A saved configuration must successfully connect before it can be enabled.
+        </MudText>
+
+        <MudStack Spacing="3">
+            <MudTextField T="string" Label="Homeserver URL" @bind-Value="homeserverUrl" Disabled="@matrixBusy"
+                          Placeholder="https://matrix.example.org" />
+            <MudTextField T="string" Label="Bot Matrix ID" @bind-Value="botUserId" Disabled="@matrixBusy"
+                          Placeholder="@("@family-librarian:example.org")" />
+
+            <MudText Typo="Typo.subtitle2">Bot access token</MudText>
+            <MudText Typo="Typo.body2">
+                @(matrix.HasAccessToken
+                    ? $"A token is stored (saved {matrix.AccessTokenSetAtUtc?.ToLocalTime().ToString("g")}). Leave this blank to keep it."
+                    : "No access token is stored.")
+            </MudText>
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                <MudTextField T="string" Label="Replace access token" @bind-Value="accessTokenDraft"
+                              InputType="InputType.Password" autocomplete="new-password" Disabled="@matrixBusy" Class="flex-grow-1" />
+                <MudButton Variant="Variant.Filled" Disabled="@(matrixBusy || string.IsNullOrWhiteSpace(accessTokenDraft))"
+                           OnClick="SaveMatrixAccessTokenAsync">Save token</MudButton>
+                @if (matrix.HasAccessToken)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@matrixBusy"
+                               OnClick="ClearMatrixAccessTokenAsync">Remove</MudButton>
+                }
+            </MudStack>
+        </MudStack>
+
+        <MudStack Row="true" Spacing="2" Class="mt-4">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@matrixBusy" OnClick="SaveMatrixSettingsAsync">Save settings</MudButton>
+        </MudStack>
+
+        <MudDivider Class="my-4" />
+        <MudText Typo="Typo.h6" GutterBottom="true">Test Matrix connection</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Uses the values currently in the form above (a blank token falls back to the stored one) and confirms the bot can authenticate -- it does not send a message to anyone.
+        </MudText>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudButton Variant="Variant.Outlined" Disabled="@matrixBusy" OnClick="SendMatrixTestAsync">Test Matrix connection</MudButton>
+        </MudStack>
+        @if (matrixTestResult is not null)
+        {
+            <MudAlert Severity="@(matrixTestResult.Succeeded ? Severity.Success : Severity.Warning)" Class="mt-3">
+                @matrixTestResult.Message
+            </MudAlert>
+        }
+        else if (matrix.LastTestedAtUtc is { } matrixLastTested)
+        {
+            <MudText Typo="Typo.caption" Class="mt-3">
+                Last tested @matrixLastTested.ToLocalTime().ToString("g") —
+                @(matrix.LastTestSucceeded == true ? "succeeded." : "failed.") @matrix.LastTestMessage
+            </MudText>
+        }
+    </MudPaper>
+}
+
 @code {
     private SmtpSettingsResponse? smtp;
     private bool loadFailed, busy;
@@ -115,8 +198,15 @@ else
     private int? port;
     private SmtpTestResponse? testResult;
 
+    private MatrixSettingsResponse? matrix;
+    private bool matrixLoadFailed, matrixBusy;
+    private string? homeserverUrl, botUserId, accessTokenDraft;
+    private MatrixTestResponse? matrixTestResult;
+
     private bool NeedsSetup => string.IsNullOrWhiteSpace(smtp?.Host) || smtp?.Port is null ||
         string.IsNullOrWhiteSpace(smtp?.FromAddress);
+
+    private bool MatrixNeedsSetup => string.IsNullOrWhiteSpace(matrix?.HomeserverUrl) || matrix?.HasAccessToken != true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -128,6 +218,16 @@ else
         catch (HttpRequestException)
         {
             loadFailed = true;
+        }
+
+        try
+        {
+            matrix = await MatrixApi.GetAsync();
+            ApplyMatrixFields(matrix);
+        }
+        catch (HttpRequestException)
+        {
+            matrixLoadFailed = true;
         }
     }
 
@@ -235,5 +335,101 @@ else
         username = settings.Username;
         fromAddress = settings.FromAddress;
         fromName = settings.FromName;
+    }
+
+    private async Task SaveMatrixSettingsAsync()
+    {
+        matrixBusy = true;
+        try
+        {
+            var result = await MatrixApi.SetSettingsAsync(new SetMatrixSettingsRequest(homeserverUrl, botUserId));
+            ApplyMatrixResult(result, "Matrix settings saved.", applyFields: true);
+        }
+        finally
+        {
+            matrixBusy = false;
+        }
+    }
+
+    private async Task SetMatrixEnabledAsync(bool enabled)
+    {
+        matrixBusy = true;
+        try
+        {
+            ApplyMatrixResult(await MatrixApi.SetEnabledAsync(enabled), enabled ? "Matrix enabled." : "Matrix disabled.");
+        }
+        finally
+        {
+            matrixBusy = false;
+        }
+    }
+
+    private async Task SaveMatrixAccessTokenAsync()
+    {
+        matrixBusy = true;
+        try
+        {
+            var result = await MatrixApi.SetAccessTokenAsync(accessTokenDraft!);
+            if (result.Succeeded)
+            {
+                accessTokenDraft = null;
+            }
+            ApplyMatrixResult(result, "Matrix access token saved.");
+        }
+        finally
+        {
+            matrixBusy = false;
+        }
+    }
+
+    private async Task ClearMatrixAccessTokenAsync()
+    {
+        matrixBusy = true;
+        try
+        {
+            ApplyMatrixResult(await MatrixApi.ClearAccessTokenAsync(), "Matrix access token removed.");
+        }
+        finally
+        {
+            matrixBusy = false;
+        }
+    }
+
+    private async Task SendMatrixTestAsync()
+    {
+        matrixBusy = true;
+        try
+        {
+            matrixTestResult = await MatrixApi.SendTestAsync(new SendMatrixTestRequest(homeserverUrl, botUserId, accessTokenDraft))
+                ?? new MatrixTestResponse(false, "The Matrix test could not be completed.");
+        }
+        finally
+        {
+            matrixBusy = false;
+        }
+    }
+
+    private void ApplyMatrixResult(MatrixSettingsResult result, string successMessage, bool applyFields = false)
+    {
+        if (!result.Succeeded)
+        {
+            Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+            return;
+        }
+
+        matrix = result.Settings;
+        if (applyFields)
+        {
+            ApplyMatrixFields(matrix);
+        }
+
+        Snackbar.Add(successMessage, Severity.Success);
+    }
+
+    private void ApplyMatrixFields(MatrixSettingsResponse? settings)
+    {
+        if (settings is null) return;
+        homeserverUrl = settings.HomeserverUrl;
+        botUserId = settings.BotUserId;
     }
 }

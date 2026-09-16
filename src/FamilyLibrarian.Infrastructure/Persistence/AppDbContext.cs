@@ -67,6 +67,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<OutboundCommunicationDelivery> OutboundCommunicationDeliveries => Set<OutboundCommunicationDelivery>();
 
+    public DbSet<MatrixSettings> MatrixSettings => Set<MatrixSettings>();
+
+    public DbSet<UserMatrixDestination> UserMatrixDestinations => Set<UserMatrixDestination>();
+
     public DbSet<UserWorkFeedback> UserWorkFeedback => Set<UserWorkFeedback>();
 
     public DbSet<Follow> Follows => Set<Follow>();
@@ -265,6 +269,61 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(delivery => delivery.AttemptedAtUtc).HasColumnName("attempted_at_utc").HasColumnType("timestamp with time zone");
 
             entity.HasIndex(delivery => new { delivery.OutboundCommunicationId, delivery.ProviderId });
+        });
+
+        builder.Entity<MatrixSettings>(entity =>
+        {
+            entity.ToTable("matrix_settings", "communications");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(settings => settings.HomeserverUrl).HasColumnName("homeserver_url").HasMaxLength(512);
+            entity.Property(settings => settings.BotUserId).HasColumnName("bot_user_id").HasMaxLength(256);
+            entity.Property(settings => settings.ProtectedAccessToken).HasColumnName("protected_access_token").HasMaxLength(2_048);
+            entity.Property(settings => settings.AccessTokenFormatVersion).HasColumnName("access_token_format_version");
+            entity.Property(settings => settings.AccessTokenSetAtUtc).HasColumnName("access_token_set_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
+            entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
+            entity.Property(settings => settings.LastSyncToken).HasColumnName("last_sync_token").HasMaxLength(1_024);
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
+
+        builder.Entity<UserMatrixDestination>(entity =>
+        {
+            entity.ToTable("user_matrix_destinations", "communications");
+            entity.HasKey(destination => destination.Id);
+            entity.Property(destination => destination.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(destination => destination.UserId).HasColumnName("user_id");
+            entity.Property(destination => destination.MatrixUserId).HasColumnName("matrix_user_id").HasMaxLength(256);
+            entity.Property(destination => destination.RoomId).HasColumnName("room_id").HasMaxLength(256);
+            entity.Property(destination => destination.VerificationCode).HasColumnName("verification_code").HasMaxLength(16);
+            entity.Property(destination => destination.VerificationRequestedAtUtc).HasColumnName("verification_requested_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(destination => destination.VerifiedAtUtc).HasColumnName("verified_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(destination => destination.CreatedAtUtc).HasColumnName("created_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(destination => destination.UpdatedAtUtc).HasColumnName("updated_at_utc")
+                .HasColumnType("timestamp with time zone");
+            entity.Property(destination => destination.Version).HasColumnName("xmin").IsRowVersion();
+
+            entity.HasIndex(destination => destination.UserId).IsUnique();
+            // The inbound router's per-message lookup key -- a room can only ever
+            // belong to one destination, since the bot creates one DM room per link.
+            entity.HasIndex(destination => destination.RoomId).IsUnique().HasFilter("room_id IS NOT NULL");
+
+            entity.HasOne<AppUser>()
+                .WithMany()
+                .HasForeignKey(destination => destination.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 

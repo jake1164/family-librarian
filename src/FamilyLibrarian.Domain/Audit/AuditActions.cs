@@ -53,6 +53,11 @@ public static class AuditActions
     public const string CommunicationProviderSecretCleared = "communication_provider.secret_cleared";
     public const string CommunicationProviderTested = "communication_provider.tested";
 
+    /// <summary>COMM-1 §C: a household member's own Matrix identity link, distinct from admin provider config above.</summary>
+    public const string MatrixIdentityLinkRequested = "matrix_identity_link.requested";
+    public const string MatrixIdentityLinkVerified = "matrix_identity_link.verified";
+    public const string MatrixIdentityLinkRemoved = "matrix_identity_link.removed";
+
     public const string AcquisitionPolicyDefaultChanged = "acquisition_policy.default_changed";
 
     public const string OidcEnabled = "oidc.enabled";
@@ -105,6 +110,7 @@ public static class AuditSubjectTypes
     public const string MediaAsset = "media_asset";
     public const string PublishingDestination = "publishing_destination";
     public const string CommunicationProvider = "communication_provider";
+    public const string MatrixIdentityLink = "matrix_identity_link";
     public const string AcquisitionPolicy = "acquisition_policy";
     public const string Oidc = "oidc";
     public const string ExternalProvider = "external_provider";

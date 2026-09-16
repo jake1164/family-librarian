@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
@@ -10,6 +11,7 @@ using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Publishing;
@@ -386,7 +388,8 @@ public sealed class CwaPublishingServiceTests
                 new DeliveryAttemptService(
                     DeliveryAttempts, DeliveryTargets, [], [], new StubCurrentUser(), Audit, new FixedClock(),
                     new NullCatalogRepository(),
-                    new NotificationService(NotificationRepository, new StubCurrentUser(), new FixedClock())));
+                    new NotificationService(NotificationRepository, new StubCurrentUser(), new FixedClock()),
+                    new OutboundCommunicationService(new NullOutboundCommunicationStore(), new FixedClock())));
         }
 
         public CwaSettings Settings { get; } = new(Now);
@@ -746,6 +749,22 @@ public sealed class CwaPublishingServiceTests
         public void AddExternalReference(ExternalReference externalReference)
         {
         }
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class NullOutboundCommunicationStore : IOutboundCommunicationStore
+    {
+        public Task EnqueueAsync(OutboundCommunication communication, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<IReadOnlyList<OutboundCommunication>> GetUnprocessedBatchAsync(
+            int maxCount, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<OutboundCommunication>>([]);
+
+        public Task<OutboundCommunication?> FindMostRecentByTypeAsync(
+            Guid recipientUserId, string communicationType, CancellationToken cancellationToken) =>
+            Task.FromResult<OutboundCommunication?>(null);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
