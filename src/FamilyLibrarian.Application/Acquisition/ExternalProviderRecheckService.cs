@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using FamilyLibrarian.Application.Abstractions;
-using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
@@ -13,15 +14,20 @@ namespace FamilyLibrarian.Application.Acquisition;
 
 /// <summary>
 /// Rechecks administrator-approved external providers on their configured
-/// cadence. A result is evidence for a librarian, never permission to fetch a
-/// third-party file without review.
+/// cadence. A single ISBN-corroborated ("Identifier"-basis) candidate is
+/// trusted and acquired automatically, exactly like the manual acquire flow
+/// already trusts one (docs/04-external-provider-http-protocol.md §7,
+/// <see cref="ExternalCandidateAvailabilityChecker"/>). Anything weaker --
+/// title/author only, unconfirmed, language-excluded, or more than one
+/// equally plausible candidate -- is evidence for a librarian, never
+/// permission to fetch a third-party file without review.
 /// </summary>
 public sealed class ExternalProviderRecheckService(
     IRequestRepository requests,
     IProviderAttemptRepository attempts,
     IExternalProviderStore providers,
-    IExternalProviderClient client,
-    ICredentialProtector protector,
+    ExternalCandidateAvailabilityChecker candidateChecker,
+    DirectAcquisitionSecurityService security,
     PrivateEgressRouteResolver routeResolver,
     IWorkLookup workLookup,
     IClock clock,
@@ -78,28 +84,49 @@ public sealed class ExternalProviderRecheckService(
 
                     try
                     {
-                        var apiKey = provider.HasApiKey
-                            ? protector.Unprotect(
-                                ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
-                            : null;
-                        var candidates = await client.SearchAsync(
-                            provider.BaseUrl,
-                            apiKey,
-                            new ExternalProviderSearchRequest(
-                                request.Id, format.MediaType, work.Title,
-                                work.PrimaryAuthor is null ? [] : [work.PrimaryAuthor], Isbn13: null),
-                            resolution.Route!,
-                            cancellationToken);
+                        var identity = new BookIdentity(work.Title, work.PrimaryAuthor, work.Isbn13s);
+                        var options = await candidateChecker.FindForProviderAsync(
+                            provider, resolution.Route!, identity, format.MediaType, cancellationToken);
 
-                        if (candidates.Count == 0)
+                        if (options.Count == 0)
                         {
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.NoMatch,
                                 "No matching candidate was reported by this provider.", nextCheck);
                             continue;
                         }
 
+                        // A single ISBN-corroborated candidate is trusted the same way the
+                        // manual acquire flow already trusts one (docs/04 §7) -- fetch, scan,
+                        // and evaluate it automatically instead of waiting on a librarian.
+                        // Anything weaker (title/author only, unconfirmed, language-excluded,
+                        // or more than one such candidate) still requires review, unchanged.
+                        var identifierMatches = options
+                            .Where(option => option.MatchBasis == BookMatchBasis.Identifier && !option.RequiresLanguageConfirmation)
+                            .ToArray();
+
+                        if (identifierMatches.Length == 1)
+                        {
+                            var acquireResult = await security.AcquireAndEvaluateAsync(
+                                request.Id, format.Id, provider.ProviderId, identifierMatches[0].ProviderResultId, cancellationToken);
+
+                            if (acquireResult.Outcome == ManualImportOutcome.Success)
+                            {
+                                AddAttempt(request, format, provider, ProviderAttemptOutcome.Acquired,
+                                    "A high-confidence copy was acquired and sent through the security pipeline.",
+                                    nextEligibleCheckAtUtc: null);
+                                break;
+                            }
+
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                                acquireResult.Error ?? "The automatic copy could not be acquired.", nextEligibleCheckAtUtc: null);
+                            await MarkForReviewAsync(
+                                request, work.Title, acquireResult.Error ?? "The automatic copy could not be acquired.",
+                                cancellationToken);
+                            break;
+                        }
+
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
-                            $"Found {candidates.Count} candidate(s); librarian review is required before acquisition.",
+                            $"Found {options.Count} candidate(s); librarian review is required before acquisition.",
                             nextEligibleCheckAtUtc: null);
                         await MarkForReviewAsync(
                             request, work.Title, $"{provider.DisplayName} found a candidate that needs librarian review.",
