@@ -91,8 +91,16 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var option = fulfillment.Ebook.SingleOrDefault(candidate => candidate.ProviderId == "fake-external");
         Assert.IsNotNull(option, "The fake external provider's search result should appear in fulfillment options.");
 
+        // "the-hobbit" is the shared canonical Work every test in this class
+        // resolves to, so whether IWorkLookup already has an ISBN for it
+        // (from an earlier test's own acquisition) depends on execution
+        // order -- MatchBasis can legitimately be Identifier or TitleAuthor
+        // here. Always confirming is safe either way (a no-op for an
+        // Identifier-tier match); APlausibleButWrongTitleRequiresConfirmationBeforeFetching
+        // below is what actually proves the confidence gate itself.
         var acquire = await admin.PostAsync(
-            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/fake-external/{option.ProviderResultId}",
+            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/fake-external/{option.ProviderResultId}" +
+            "?confirmLowConfidenceMatch=true",
             content: null);
         Assert.AreEqual(HttpStatusCode.OK, acquire.StatusCode);
         var result = await acquire.Content.ReadFromJsonAsync<ManualImportResultResponse>();
@@ -270,7 +278,8 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         Assert.IsNotNull(option, "An overridden-to-Normal provider should still surface options with no gateway configured.");
 
         var acquire = await admin.PostAsync(
-            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/override-down-external/{option.ProviderResultId}",
+            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/override-down-external/{option.ProviderResultId}" +
+            "?confirmLowConfidenceMatch=true",
             content: null);
         Assert.AreEqual(HttpStatusCode.OK, acquire.StatusCode);
         var result = await acquire.Content.ReadFromJsonAsync<ManualImportResultResponse>();
@@ -335,6 +344,73 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         Assert.AreEqual(HttpStatusCode.BadRequest, acquire.StatusCode);
     }
 
+    [TestMethod]
+    public async Task APlausibleButWrongTitleRequiresConfirmationBeforeFetching()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(new WrongTitleExternalProviderClient());
+            });
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(admin);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+
+        var create = await admin.PostAsJsonAsync(
+            "/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest("wrong-title-external", "Wrong Title External", "http://fake-external.test"));
+        create.EnsureSuccessStatusCode();
+        var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(provider);
+
+        var enable = await admin.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true));
+        enable.EnsureSuccessStatusCode();
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/a-wrinkle-in-time/resolve", content: null);
+        resolve.EnsureSuccessStatusCode();
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
+        Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+        var format = request.Formats.Single(candidate => candidate.MediaType == "Ebook");
+
+        var fulfillment = await admin.GetFromJsonAsync<WorkFulfillmentOptionsResponse>(
+            $"/api/v1/catalog/works/{work.Id}/fulfillment-options");
+        Assert.IsNotNull(fulfillment);
+        var option = fulfillment.Ebook.SingleOrDefault(candidate => candidate.ProviderId == "wrong-title-external");
+        Assert.IsNotNull(option, "The wrong-title external provider's search result should still appear as an option.");
+
+        var acquire = await admin.PostAsync(
+            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/wrong-title-external/{option.ProviderResultId}",
+            content: null);
+        Assert.AreEqual(HttpStatusCode.Conflict, acquire.StatusCode, "An unverified title/author match must never be fetched silently.");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.AreEqual(0, await database.MediaAssets.CountAsync(
+                asset => asset.AssociatedRequestFormatId == format.FormatId));
+        }
+
+        var confirmed = await admin.PostAsync(
+            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/wrong-title-external/{option.ProviderResultId}" +
+            "?confirmLowConfidenceMatch=true",
+            content: null);
+        Assert.AreEqual(HttpStatusCode.OK, confirmed.StatusCode, "Confirming the low-confidence match should let it proceed.");
+        var confirmedResult = await confirmed.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        Assert.IsNotNull(confirmedResult);
+    }
+
     private static async Task SignInAsync(HttpClient client, string email, string password)
     {
         var response = await client.PostAsJsonAsync(
@@ -369,5 +445,40 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             Task.FromResult(new ExternalProviderArtifact(
                 new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
                 "the-hobbit.epub"));
+    }
+
+    /// <summary>
+    /// Always returns a plausible-looking but unrelated title/author, no
+    /// matter what it was actually searched for -- the exact shape PROVIDER-1
+    /// §F2 exists to catch (e.g. a loosely-indexed source matched by
+    /// keyword). Reproduces exit criterion 5a: FL must never fetch this
+    /// without explicit confirmation, regardless of the request's own ISBN.
+    /// </summary>
+    private sealed class WrongTitleExternalProviderClient : IExternalProviderClient
+    {
+        public Task<ExternalProviderManifest> GetManifestAsync(
+            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderManifest("1", "wrong-title-external", "Wrong Title External", "1.0.0", ["ebook"], "NORMAL"));
+
+        public Task<bool> GetHealthAsync(
+            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            Task.FromResult(true);
+
+        public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+            CancellationToken cancellationToken)
+        {
+            IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
+                ? [new ExternalProviderCandidate("wrong-title-1", "Dim Sum of Fears", "Someone Unrelated", "epub", null, null)]
+                : [];
+            return Task.FromResult(candidates);
+        }
+
+        public Task<ExternalProviderArtifact> AcquireAsync(
+            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderArtifact(
+                new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
+                "wrong-title.epub"));
     }
 }

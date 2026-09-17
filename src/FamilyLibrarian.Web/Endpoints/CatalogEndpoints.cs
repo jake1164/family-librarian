@@ -288,7 +288,9 @@ internal static class CatalogEndpoints
         option.ProviderResultId,
         option.OptionKind.ToString(),
         option.AcquisitionMethod.ToString(),
-        option.ExternalActionUri?.ToString());
+        option.ExternalActionUri?.ToString(),
+        option.MatchBasis?.ToString(),
+        option.RequiresLanguageConfirmation);
 
     private static RecommendationResponse? ToRecommendationResponse(FulfillmentRecommendation? recommendation) =>
         recommendation is null

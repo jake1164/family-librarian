@@ -15,14 +15,16 @@ public sealed class DirectAcquisitionSecurityService(
         Guid requestFormatId,
         string providerId,
         string providerResultId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool confirmLowConfidenceMatch = false)
     {
         var result = await acquisitions.AcquireAsync(
             requestId,
             requestFormatId,
             providerId,
             providerResultId,
-            cancellationToken);
+            cancellationToken,
+            confirmLowConfidenceMatch);
 
         if (result.Outcome == ManualImportOutcome.Success)
         {

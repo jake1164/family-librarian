@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
@@ -73,6 +74,71 @@ public sealed class DirectAcquisitionServiceTests
     }
 
     [TestMethod]
+    public async Task AnExternalProviderTitleAuthorMatchRequiresConfirmationBeforeFetching()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            new ExternalProviderCandidate("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000, null)
+        ];
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.LowConfidenceMatchConfirmationRequired, result.Outcome);
+        Assert.AreEqual(0, context.StagingStore.WriteCount);
+
+        var confirmed = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None, confirmLowConfidenceMatch: true);
+
+        Assert.AreEqual(ManualImportOutcome.Success, confirmed.Outcome);
+    }
+
+    [TestMethod]
+    public async Task AnExternalProviderIsbnCorroboratedMatchProceedsWithoutConfirmation()
+    {
+        var context = new TestContext();
+        context.WorkLookup.Isbn13s = ["9780618260300"];
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            new ExternalProviderCandidate("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000, null)
+        ];
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
+    }
+
+    [TestMethod]
+    public async Task AnExternalProviderPlausibleButWrongTitleIsNeverFetchedWithoutConfirmation()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            new ExternalProviderCandidate("ref-1", "Dim Sum of Fears", "Some Other Author", "epub", 500_000, null)
+        ];
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.LowConfidenceMatchConfirmationRequired, result.Outcome);
+        Assert.AreEqual(0, context.StagingStore.WriteCount);
+    }
+
+    [TestMethod]
     public async Task ADuplicateChecksumIsDetectedThroughTheSharedStagingPath()
     {
         var context = new TestContext();
@@ -97,6 +163,8 @@ public sealed class DirectAcquisitionServiceTests
             Audit = new RecordingAuditWriter();
             Provider = new FakeDirectAcquisitionProvider();
             WorkLookup = new FakeWorkLookup();
+            ExternalProviderStore = new FakeExternalProviderStore();
+            ExternalProviderClient = new FakeExternalProviderClient();
 
             var staging = new AcquisitionStagingService(
                 Repository,
@@ -106,15 +174,27 @@ public sealed class DirectAcquisitionServiceTests
                 Audit,
                 new FixedClock());
 
-            // No external providers are registered in these tests — only the
-            // DI-registered (Gutendex-style) provider path is under test here;
-            // see ExternalProviderClientTests/ExternalProviderEndpointTests for
-            // the external-provider path.
+            var checker = new ExternalCandidateAvailabilityChecker(
+                ExternalProviderStore,
+                ExternalProviderClient,
+                new PrivateEgressRouteResolver(new AlwaysDisabledGatewayCache()),
+                new ExternalProviderMatchVerifier(
+                    new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver()),
+                    new DeterministicBookMatcher()),
+                new NoOpCredentialProtector());
+
+            // No external providers are registered by default — only the
+            // DI-registered (Gutendex-style) provider path is under test in
+            // the cases above; ExternalProviderStore/ExternalProviderClient
+            // are populated per-test below for the external-provider gate
+            // cases, and ExternalProviderClientTests/ExternalProviderEndpointTests
+            // cover the wire client itself.
             Service = new DirectAcquisitionService(
                 RequestRepository,
                 [Provider],
-                new NoExternalProviders(),
-                new UnusedExternalProviderClient(),
+                ExternalProviderStore,
+                ExternalProviderClient,
+                checker,
                 new PrivateEgressRouteResolver(new AlwaysDisabledGatewayCache()),
                 new NoOpCredentialProtector(),
                 WorkLookup,
@@ -132,6 +212,10 @@ public sealed class DirectAcquisitionServiceTests
         public FakeDirectAcquisitionProvider Provider { get; }
 
         public FakeWorkLookup WorkLookup { get; }
+
+        public FakeExternalProviderStore ExternalProviderStore { get; }
+
+        public FakeExternalProviderClient ExternalProviderClient { get; }
 
         public DirectAcquisitionService Service { get; }
 
@@ -334,33 +418,39 @@ public sealed class DirectAcquisitionServiceTests
 
     private sealed class FakeWorkLookup : IWorkLookup
     {
+        public IReadOnlyList<string> Isbn13s { get; set; } = [];
+
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien", []));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien", Isbn13s));
     }
 
-    private sealed class NoExternalProviders : IExternalProviderStore
+    private sealed class FakeExternalProviderStore : IExternalProviderStore
     {
+        public List<ExternalProvider> Providers { get; } = [];
+
         public Task<IReadOnlyList<ExternalProvider>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<ExternalProvider>>([]);
+            Task.FromResult<IReadOnlyList<ExternalProvider>>(Providers);
 
         public Task<IReadOnlyList<ExternalProvider>> ListEnabledAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<ExternalProvider>>([]);
+            Task.FromResult<IReadOnlyList<ExternalProvider>>(Providers.Where(provider => provider.IsEnabled).ToArray());
 
         public Task<ExternalProvider?> FindAsync(Guid id, CancellationToken cancellationToken) =>
-            Task.FromResult<ExternalProvider?>(null);
+            Task.FromResult(Providers.FirstOrDefault(provider => provider.Id == id));
 
         public Task<ExternalProvider?> FindByProviderIdAsync(string providerId, CancellationToken cancellationToken) =>
-            Task.FromResult<ExternalProvider?>(null);
+            Task.FromResult(Providers.FirstOrDefault(provider => provider.ProviderId == providerId));
 
-        public void Add(ExternalProvider provider) => throw new NotSupportedException();
+        public void Add(ExternalProvider provider) => Providers.Add(provider);
 
-        public void Remove(ExternalProvider provider) => throw new NotSupportedException();
+        public void Remove(ExternalProvider provider) => Providers.Remove(provider);
 
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    private sealed class UnusedExternalProviderClient : IExternalProviderClient
+    private sealed class FakeExternalProviderClient : IExternalProviderClient
     {
+        public IReadOnlyList<ExternalProviderCandidate> Candidates { get; set; } = [];
+
         public Task<ExternalProviderManifest> GetManifestAsync(
             string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -372,12 +462,12 @@ public sealed class DirectAcquisitionServiceTests
         public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
             string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
             CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult(Candidates);
 
         public Task<ExternalProviderArtifact> AcquireAsync(
             string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
             CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult(new ExternalProviderArtifact(new MemoryStream(Encoding.UTF8.GetBytes("epub bytes")), "book.epub"));
     }
 
     private sealed class AlwaysDisabledGatewayCache : IPrivateEgressGatewayRuntimeCache

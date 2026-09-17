@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Providers;
@@ -92,6 +93,9 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
                 Store,
                 Client,
                 new PrivateEgressRouteResolver(new FakeGatewayRuntimeCache()),
+                new ExternalProviderMatchVerifier(
+                    new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver()),
+                    new DeterministicBookMatcher()),
                 new NoOpCredentialProtector());
         }
 

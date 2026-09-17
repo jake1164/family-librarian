@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
@@ -27,17 +28,28 @@ public sealed class DirectAcquisitionService(
     IEnumerable<IDirectAcquisitionProvider> providers,
     IExternalProviderStore externalProviders,
     IExternalProviderClient externalProviderClient,
+    ExternalCandidateAvailabilityChecker externalCandidateChecker,
     PrivateEgressRouteResolver routeResolver,
     ICredentialProtector protector,
     IWorkLookup workLookup,
     AcquisitionStagingService staging)
 {
+    /// <param name="confirmLowConfidenceMatch">
+    /// Required once an external provider's result is only
+    /// <see cref="BookMatchBasis.TitleAuthor"/> (or unconfirmed/language-excluded)
+    /// -- a reviewable fallback, not a verified identifier -- see
+    /// <see cref="ExternalProviderMatchVerifier"/>. No file is fetched until
+    /// the caller confirms. Never checked for a compile-time
+    /// (DI-registered) <see cref="IDirectAcquisitionProvider"/> such as
+    /// Gutenberg -- those are FL-vetted, not arbitrary third-party code.
+    /// </param>
     public async Task<ManualImportResult> AcquireAsync(
         Guid requestId,
         Guid requestFormatId,
         string providerId,
         string providerResultId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool confirmLowConfidenceMatch = false)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
@@ -125,40 +137,40 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.Invalid(resolution.BlockedReason!);
         }
 
-        var apiKey = externalProvider.HasApiKey
-            ? protector.Unprotect(
-                ExternalProviderSecretPurposes.ApiKey, externalProvider.ProtectedApiKey!, externalProvider.ApiKeyFormatVersion)
-            : null;
-
-        IReadOnlyList<ExternalProviderCandidate> candidates;
+        var identity = new BookIdentity(work?.Title ?? string.Empty, work?.PrimaryAuthor, work?.Isbn13s ?? []);
+        IReadOnlyList<FulfillmentOption> externalOptions;
         try
         {
-            candidates = await externalProviderClient.SearchAsync(
-                externalProvider.BaseUrl,
-                apiKey,
-                new ExternalProviderSearchRequest(
-                    requestId, format.MediaType, work?.Title ?? string.Empty,
-                    work?.PrimaryAuthor is null ? [] : [work.PrimaryAuthor], Isbn13: null),
-                resolution.Route!,
-                cancellationToken);
+            externalOptions = await externalCandidateChecker.FindForProviderAsync(
+                externalProvider, resolution.Route!, identity, format.MediaType, cancellationToken);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
             return ManualImportResult.Invalid($"The provider could not be reached: {exception.Message}");
         }
 
-        var candidate = candidates.FirstOrDefault(
-            candidate => string.Equals(candidate.ProviderReference, providerResultId, StringComparison.Ordinal));
-        if (candidate is null)
+        var externalOption = externalOptions.FirstOrDefault(
+            candidateOption => string.Equals(candidateOption.ProviderResultId, providerResultId, StringComparison.Ordinal));
+        if (externalOption is null)
         {
             return ManualImportResult.Invalid("That option is no longer available.");
         }
+
+        if (externalOption.MatchBasis != BookMatchBasis.Identifier && !confirmLowConfidenceMatch)
+        {
+            return ManualImportResult.LowConfidenceMatchConfirmationRequired();
+        }
+
+        var apiKey = externalProvider.HasApiKey
+            ? protector.Unprotect(
+                ExternalProviderSecretPurposes.ApiKey, externalProvider.ProtectedApiKey!, externalProvider.ApiKeyFormatVersion)
+            : null;
 
         ExternalProviderArtifact artifact;
         try
         {
             artifact = await externalProviderClient.AcquireAsync(
-                externalProvider.BaseUrl, apiKey, candidate.ProviderReference, format.MediaType, resolution.Route!,
+                externalProvider.BaseUrl, apiKey, externalOption.ProviderResultId, format.MediaType, resolution.Route!,
                 cancellationToken);
         }
         catch (Exception exception) when (exception is HttpRequestException or TimeoutException or TaskCanceledException)

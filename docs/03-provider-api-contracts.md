@@ -340,6 +340,13 @@ own import, verification, format, and deep-link behavior.
 
 Long-term recommendation: external HTTP provider protocol.
 
+> **This section is a design draft written before the protocol below was
+> implemented, and has drifted from what actually shipped** (e.g. the
+> `/search` request never includes `series`/`seriesPosition`). For the
+> precise, implementer-facing wire contract, use
+> [04-external-provider-http-protocol.md](04-external-provider-http-protocol.md)
+> instead — this section remains only for the design rationale.
+
 ### Provider Manifest
 
 ```http

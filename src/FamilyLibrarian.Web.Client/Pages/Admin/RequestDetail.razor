@@ -224,6 +224,20 @@
                                     <MudChip T="string" Size="Size.Small" Color="Color.Primary">Recommended</MudChip>
                                     <MudText Typo="Typo.caption">@recommendation.Reason</MudText>
                                 }
+                                @if (pendingConfirmFormatId == format.FormatId &&
+                                     pendingConfirmOption is { } pendingOption)
+                                {
+                                    <MudAlert Severity="Severity.Warning" Class="mt-2" Dense="true">
+                                        @pendingConfirmMessage
+                                        <div class="mt-2">
+                                            <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Warning"
+                                                       Disabled="@isBusy"
+                                                       OnClick="@(() => AcquireDirectAsync(format.FormatId, pendingOption, confirmLowConfidenceMatch: true))">
+                                                Fetch anyway
+                                            </MudButton>
+                                        </div>
+                                    </MudAlert>
+                                }
                             }
                         </MudStack>
                     }
@@ -268,6 +282,9 @@
     private string? errorMessage;
     private string? providerActivityError;
     private CancellationTokenSource? fulfillmentLoadCancellation;
+    private Guid? pendingConfirmFormatId;
+    private FulfillmentOptionResponse? pendingConfirmOption;
+    private string? pendingConfirmMessage;
 
     protected override void OnInitialized() =>
         Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.Security | LiveUpdateTopics.Publishing,
@@ -385,19 +402,27 @@
         _ => null
     };
 
-    private async Task AcquireDirectAsync(Guid formatId, FulfillmentOptionResponse option)
+    private async Task AcquireDirectAsync(Guid formatId, FulfillmentOptionResponse option, bool confirmLowConfidenceMatch = false)
     {
         isBusy = true;
         errorMessage = null;
+        pendingConfirmFormatId = null;
+        pendingConfirmOption = null;
         try
         {
             var outcome = await MediaAssets.AcquireDirectAsync(
-                RequestId, formatId, option.ProviderId, option.ProviderResultId);
+                RequestId, formatId, option.ProviderId, option.ProviderResultId, confirmLowConfidenceMatch);
             if (outcome.Succeeded)
             {
                 Snackbar.Add(
                     $"Fetched from {option.ProviderId}. It is being scanned, verified, and published automatically when it passes.",
                     Severity.Success);
+            }
+            else if (outcome.RequiresConfirmation)
+            {
+                pendingConfirmFormatId = formatId;
+                pendingConfirmOption = option;
+                pendingConfirmMessage = outcome.Error;
             }
             else
             {

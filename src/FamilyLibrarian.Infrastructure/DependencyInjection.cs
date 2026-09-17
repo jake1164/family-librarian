@@ -561,6 +561,10 @@ public static class DependencyInjection
         // -acquisition providers above, plus external providers, checked
         // directly from a raw catalog candidate's title/author/ISBNs instead
         // of a persisted Work.
+        // Re-verifies an external provider's own claimed title/author against
+        // the request's identity via the same IBookMatchService/IBookMatcher
+        // singletons above -- stateless itself, so a singleton too.
+        services.AddSingleton<ExternalProviderMatchVerifier>();
         services.AddScoped<ExternalCandidateAvailabilityChecker>();
         services.AddScoped<ICandidateAvailabilityService, CandidateAvailabilityService>();
 

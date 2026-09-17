@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Catalog;
@@ -122,6 +123,8 @@ public sealed class CandidateAvailabilityServiceTests
         services.AddSingleton<IPrivateEgressGatewayRuntimeCache>(new DisabledGatewayCache());
         services.AddScoped<PrivateEgressRouteResolver>();
         services.AddScoped(_ => (ICredentialProtector)new NoOpCredentialProtector());
+        services.AddSingleton(new ExternalProviderMatchVerifier(
+            new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver()), new DeterministicBookMatcher()));
         services.AddScoped<ExternalCandidateAvailabilityChecker>();
         services.AddScoped<ICandidateAvailabilityService, CandidateAvailabilityService>();
 

@@ -35,20 +35,28 @@ public sealed record FulfillmentOption(
     string? DrmStatus,
     Uri? ExternalActionUri,
     string? ProviderData,
-    // Meaningful only when OptionKind is Owned -- how confidently the owning
-    // provider matched this artifact to the requested Work. Null for every
-    // other OptionKind, and for an Owned option from a provider that doesn't
-    // go through the shared matcher. See BookMatchBasis for why this exists:
-    // a title/author fallback match is a reviewable guess, not a verified
-    // identity, and a consumer that acts on Owned automatically (e.g. the
-    // Kindle existing-book send) must not treat the two the same way.
+    // Meaningful for OptionKind.Owned (how confidently the owning provider
+    // matched this artifact to the requested Work) and for a
+    // DirectAcquisition option from an admin-registered external provider
+    // (how confidently ExternalProviderMatchVerifier confirmed the result
+    // against the requested title/author/ISBN -- an external provider is
+    // unvetted third-party code, so its own claimed title/author is never
+    // trusted alone). Null for every other OptionKind, and for an Owned or
+    // DirectAcquisition option from a provider that doesn't go through the
+    // shared matcher (e.g. Gutenberg, which uses its own IBookMatcher calls
+    // directly). See BookMatchBasis for why this exists: a title/author
+    // fallback match is a reviewable guess, not a verified identity, and a
+    // consumer that acts on a match automatically (e.g. the Kindle
+    // existing-book send, or fetching a DirectAcquisition file) must not
+    // treat the two the same way.
     BookMatchBasis? MatchBasis = null,
-    // True when this is the only kind of match an IAutomaticDirectAcquisitionProvider
-    // found -- title/author matched, but every result was excluded by
-    // LanguageAcceptance (ACCURACY-1). Such an option must never be
-    // auto-acquired; AutomaticRequestFulfillmentService instead offers it to
-    // the requester as a SELFSERV-1 preference decision ("get it anyway, or
-    // keep looking?").
+    // True when the only kind of match found was excluded by
+    // LanguageAcceptance (ACCURACY-1) -- either an IAutomaticDirectAcquisitionProvider's
+    // title/author match, or an external provider's result via
+    // ExternalProviderMatchVerifier. Such an option must never be
+    // auto-acquired or fetched without confirmation; a caller instead offers
+    // it as a SELFSERV-1-style preference decision ("get it anyway, or keep
+    // looking?").
     bool RequiresLanguageConfirmation = false,
     // This specific candidate's own title/author, when the provider can
     // supply one distinct from the canonical Work title -- e.g. a specific
@@ -291,7 +299,19 @@ public sealed class WorkFulfillmentOptionsService(
             }
         }
 
-        options.AddRange(await FindExternalProviderOptionsAsync(workId, mediaType, cancellationToken));
+        try
+        {
+            options.AddRange(await FindExternalProviderOptionsAsync(workId, mediaType, cancellationToken));
+        }
+        catch (HttpRequestException)
+        {
+            // An external provider's own search failure degrades to no
+            // options from it, same as the four loops above.
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // A provider timeout must not fail the containing page.
+        }
 
         return options;
     }

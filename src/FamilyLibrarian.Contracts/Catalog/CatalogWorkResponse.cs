@@ -28,7 +28,9 @@ public sealed record FulfillmentOptionResponse(
     string ProviderResultId,
     string OptionKind,
     string AcquisitionMethod,
-    string? ExternalActionUri);
+    string? ExternalActionUri,
+    string? MatchBasis = null,
+    bool RequiresLanguageConfirmation = false);
 
 public sealed record WorkFulfillmentOptionsResponse(
     IReadOnlyList<FulfillmentOptionResponse> Ebook,

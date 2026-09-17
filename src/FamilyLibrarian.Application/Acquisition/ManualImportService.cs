@@ -89,6 +89,14 @@ public sealed record ManualImportResult(
             null,
             null,
             "A required security scanner is unavailable. Try again once it has recovered.");
+
+    public static ManualImportResult LowConfidenceMatchConfirmationRequired() =>
+        new(
+            ManualImportOutcome.LowConfidenceMatchConfirmationRequired,
+            null,
+            null,
+            "We found a likely match by title and author, not a verified identifier. " +
+            "Confirm you want to fetch this copy, or try a different source instead.");
 }
 
 public enum ManualImportOutcome
@@ -96,5 +104,6 @@ public enum ManualImportOutcome
     Success,
     Invalid,
     DuplicateDetected,
-    WaitingForSecurityScanner
+    WaitingForSecurityScanner,
+    LowConfidenceMatchConfirmationRequired
 }

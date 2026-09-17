@@ -322,10 +322,11 @@ internal static class AdminRequestEndpoints
         DirectAcquisitionSecurityService acquisitions,
         IProviderAttemptRepository providerAttempts,
         IClock clock,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool confirmLowConfidenceMatch = false)
     {
         var result = await acquisitions.AcquireAndEvaluateAsync(
-            requestId, formatId, providerId, providerResultId, cancellationToken);
+            requestId, formatId, providerId, providerResultId, cancellationToken, confirmLowConfidenceMatch);
 
         // A librarian's manual "get free copy" click is still a provider
         // lookup; record it in the same ledger the automatic poller uses so
@@ -352,6 +353,8 @@ internal static class AdminRequestEndpoints
         ManualImportOutcome.Success => Results.Ok(
             new ManualImportResultResponse(result.AcquisitionJobId!.Value, result.MediaAssetId!.Value)),
         ManualImportOutcome.DuplicateDetected => Results.Conflict(new { message = result.Error }),
+        ManualImportOutcome.LowConfidenceMatchConfirmationRequired => Results.Conflict(
+            new { message = result.Error, requiresConfirmation = true }),
         ManualImportOutcome.WaitingForSecurityScanner => Results.Problem(
             detail: result.Error,
             statusCode: StatusCodes.Status503ServiceUnavailable,

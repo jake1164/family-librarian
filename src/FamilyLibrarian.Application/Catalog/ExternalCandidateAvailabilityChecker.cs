@@ -19,6 +19,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
     Providers.IExternalProviderStore externalProviders,
     Providers.IExternalProviderClient externalProviderClient,
     Providers.PrivateEgressRouteResolver routeResolver,
+    Providers.ExternalProviderMatchVerifier matchVerifier,
     ICredentialProtector protector)
 {
     /// <summary>
@@ -47,33 +48,64 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 continue;
             }
 
-            var apiKey = provider.HasApiKey
-                ? protector.Unprotect(
-                    Providers.ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
-                : null;
-
-            IReadOnlyList<Providers.ExternalProviderCandidate> candidates;
             try
             {
-                candidates = await externalProviderClient.SearchAsync(
-                    provider.BaseUrl,
-                    apiKey,
-                    new Providers.ExternalProviderSearchRequest(
-                        Guid.NewGuid(), mediaType, identity.Title,
-                        identity.Author is null ? [] : [identity.Author], Isbn13: null),
-                    resolution.Route!,
-                    cancellationToken);
+                found.AddRange(await FindForProviderAsync(provider, resolution.Route!, identity, mediaType, cancellationToken));
             }
             catch (HttpRequestException)
             {
-                continue;
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                continue;
             }
+        }
 
-            found.AddRange(candidates.Select(candidate => new FulfillmentOption(
+        return found;
+    }
+
+    /// <summary>
+    /// Searches one already-enabled provider and independently re-verifies
+    /// every result against <paramref name="identity"/> via
+    /// <see cref="Providers.ExternalProviderMatchVerifier"/> before stamping
+    /// <see cref="FulfillmentOption.MatchBasis"/>/<see cref="FulfillmentOption.RequiresLanguageConfirmation"/>
+    /// — the single place that confidence is computed, so every caller
+    /// (this class's own <see cref="FindAsync"/> and a caller re-deriving one
+    /// specific option before fetching it, e.g. <c>DirectAcquisitionService</c>)
+    /// sees the same stamp with no duplicate match calls. Does not itself
+    /// catch <see cref="HttpRequestException"/>/<see cref="OperationCanceledException"/>
+    /// — a caller re-deriving a single option to fetch needs the real error,
+    /// while <see cref="FindAsync"/>'s own aggregation loop degrades it.
+    /// </summary>
+    public async Task<IReadOnlyList<FulfillmentOption>> FindForProviderAsync(
+        Domain.Providers.ExternalProvider provider, Providers.EgressRoute route, BookIdentity identity,
+        RequestMediaType mediaType, CancellationToken cancellationToken)
+    {
+        var apiKey = provider.HasApiKey
+            ? protector.Unprotect(
+                Providers.ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
+            : null;
+
+        var isbn13 = identity.Isbn13Candidates.FirstOrDefault();
+        var candidates = await externalProviderClient.SearchAsync(
+            provider.BaseUrl,
+            apiKey,
+            new Providers.ExternalProviderSearchRequest(
+                Guid.NewGuid(), mediaType, identity.Title,
+                identity.Author is null ? [] : [identity.Author], isbn13),
+            route,
+            cancellationToken);
+
+        if (candidates.Count == 0)
+        {
+            return [];
+        }
+
+        var verdicts = await matchVerifier.VerifyAsync(identity.Title, identity.Author, isbn13, candidates, cancellationToken);
+
+        return candidates.Select(candidate =>
+        {
+            var verdict = verdicts.GetValueOrDefault(candidate.ProviderReference, Providers.ExternalProviderMatchVerdict.Unconfirmed);
+            return new FulfillmentOption(
                 ProviderId: provider.ProviderId,
                 ProviderResultId: candidate.ProviderReference,
                 WorkId: Guid.Empty,
@@ -90,9 +122,9 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 LicenseOrUsageStatus: null,
                 DrmStatus: null,
                 ExternalActionUri: null,
-                ProviderData: candidate.ProviderReference)));
-        }
-
-        return found;
+                ProviderData: candidate.ProviderReference,
+                MatchBasis: verdict.Basis,
+                RequiresLanguageConfirmation: verdict.RequiresLanguageConfirmation);
+        }).ToArray();
     }
 }

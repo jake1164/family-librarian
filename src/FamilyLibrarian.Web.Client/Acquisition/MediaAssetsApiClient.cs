@@ -48,7 +48,8 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
             return new ManualImportOutcome(true, result, null);
         }
 
-        return new ManualImportOutcome(false, null, await ReadImportErrorAsync(response, cancellationToken));
+        var (error, requiresConfirmation) = await ReadImportErrorAsync(response, cancellationToken);
+        return new ManualImportOutcome(false, null, error, requiresConfirmation);
     }
 
     public async Task<ManualImportOutcome> AcquireDirectAsync(
@@ -56,12 +57,14 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
         Guid formatId,
         string providerId,
         string providerResultId,
+        bool confirmLowConfidenceMatch = false,
         CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"api/v1/admin/requests/{requestId}/formats/{formatId}/direct-acquisitions/" +
-            $"{Uri.EscapeDataString(providerId)}/{Uri.EscapeDataString(providerResultId)}");
+            $"{Uri.EscapeDataString(providerId)}/{Uri.EscapeDataString(providerResultId)}" +
+            $"?confirmLowConfidenceMatch={confirmLowConfidenceMatch}");
         await antiforgery.AttachAsync(request, cancellationToken);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
@@ -71,7 +74,8 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
             return new ManualImportOutcome(true, result, null);
         }
 
-        return new ManualImportOutcome(false, null, await ReadImportErrorAsync(response, cancellationToken));
+        var (error, requiresConfirmation) = await ReadImportErrorAsync(response, cancellationToken);
+        return new ManualImportOutcome(false, null, error, requiresConfirmation);
     }
 
     public Task<MediaAssetActionOutcome> EvaluateAsync(Guid assetId, CancellationToken cancellationToken = default) =>
@@ -124,25 +128,25 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
             false, problem ?? "That action could not be completed. Please try again.");
     }
 
-    private static async Task<string> ReadImportErrorAsync(
+    private static async Task<(string Error, bool RequiresConfirmation)> ReadImportErrorAsync(
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
         if (response.StatusCode == HttpStatusCode.Conflict)
         {
             var conflict = await TryReadAsync<ConflictPayload>(response, cancellationToken);
-            return conflict?.Message ?? "A file already exists for this format.";
+            return (conflict?.Message ?? "A file already exists for this format.", conflict?.RequiresConfirmation ?? false);
         }
 
         if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
         {
             var problem = await TryReadAsync<ProblemPayload>(response, cancellationToken);
-            return problem?.Detail
-                ?? "The security scanner is unavailable, so no file can be accepted right now.";
+            return (problem?.Detail
+                ?? "The security scanner is unavailable, so no file can be accepted right now.", false);
         }
 
         var validation = await TryReadValidationProblemAsync(response, cancellationToken);
-        return validation ?? "That file could not be imported. Please try again.";
+        return (validation ?? "That file could not be imported. Please try again.", false);
     }
 
     private static async Task<string?> TryReadValidationProblemAsync(
@@ -170,11 +174,12 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
 
     private sealed record ValidationProblemPayload(Dictionary<string, string[]>? Errors);
 
-    private sealed record ConflictPayload(string? Message);
+    private sealed record ConflictPayload(string? Message, bool RequiresConfirmation = false);
 
     private sealed record ProblemPayload(string? Detail);
 }
 
-public sealed record ManualImportOutcome(bool Succeeded, ManualImportResultResponse? Result, string? Error);
+public sealed record ManualImportOutcome(
+    bool Succeeded, ManualImportResultResponse? Result, string? Error, bool RequiresConfirmation = false);
 
 public sealed record MediaAssetActionOutcome(bool Succeeded, string? Error);
