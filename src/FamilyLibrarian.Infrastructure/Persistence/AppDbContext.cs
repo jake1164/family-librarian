@@ -682,6 +682,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(provider => provider.BaseUrl).HasColumnName("base_url").HasMaxLength(1_024).IsRequired();
             entity.Property(provider => provider.IsEnabled).HasColumnName("is_enabled");
             entity.Property(provider => provider.RecheckSchedule).HasColumnName("recheck_schedule").HasConversion<string>().HasMaxLength(32);
+            entity.Property(provider => provider.AutoAcquireEnabled).HasColumnName("auto_acquire_enabled");
             entity.Property(provider => provider.ProtectedApiKey).HasColumnName("protected_api_key").HasMaxLength(4_096);
             entity.Property(provider => provider.ApiKeyFormatVersion).HasColumnName("api_key_format_version");
             entity.Property(provider => provider.ApiKeyHint).HasColumnName("api_key_hint").HasMaxLength(8);

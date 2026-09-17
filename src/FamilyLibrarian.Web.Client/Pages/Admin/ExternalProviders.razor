@@ -428,7 +428,8 @@
                 <MudText Typo="Typo.subtitle2">Automatic rechecks</MudText>
                 <MudText Typo="Typo.body2" Class="mb-2">
                     Choose whether this source should look again for requests that did not have a high-confidence
-                    automatic copy. A found candidate is recorded for review; no external file is downloaded automatically.
+                    automatic copy. This only controls how often FL looks — whether a found candidate is downloaded
+                    without review is a separate setting below.
                 </MudText>
                 <MudSelect T="string" Label="Recheck schedule" Value="provider.RecheckSchedule"
                            ValueChanged="@(value => SetProviderRecheckScheduleAsync(provider.Id, value))"
@@ -441,6 +442,16 @@
                 {
                     <MudText Typo="Typo.caption">Enable this source to allow its selected recheck schedule to run.</MudText>
                 }
+
+                <MudSwitch T="bool" Value="provider.AutoAcquireEnabled" Disabled="@providersBusy"
+                           ValueChanged="@(enabled => SetProviderAutoAcquireEnabledAsync(provider.Id, enabled))"
+                           Label="Automatically download a high-confidence match found on a scheduled recheck" />
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    Off by default for every provider. When off, a candidate this source finds — even one FL can
+                    confirm by ISBN — is only ever recorded for librarian review, never downloaded automatically.
+                    When on, an ISBN-confirmed candidate is fetched and security-scanned without review; a
+                    title/author-only match still always requires review regardless of this setting.
+                </MudText>
 
                 <MudStack Row="true" Spacing="2" Class="mt-2">
                     <MudTextField T="string" Label="Base URL" Value="@provider.BaseUrl" Disabled="@providersBusy" Class="flex-grow-1"
@@ -1101,6 +1112,26 @@
         try
         {
             var result = await Api.SetProviderRecheckScheduleAsync(id, schedule);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task SetProviderAutoAcquireEnabledAsync(Guid id, bool enabled)
+    {
+        providersBusy = true;
+        try
+        {
+            var result = await Api.SetProviderAutoAcquireEnabledAsync(id, enabled);
             if (!result.Succeeded)
             {
                 Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);

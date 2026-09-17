@@ -91,6 +91,10 @@ public sealed class ExternalProviderAutomaticAcquisitionEndpointTests
             $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule",
             new SetExternalProviderRecheckScheduleRequest("Daily")))
             .EnsureSuccessStatusCode();
+        (await admin.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/auto-acquire",
+            new SetExternalProviderAutoAcquireEnabledRequest(true)))
+            .EnsureSuccessStatusCode();
 
         // The raw resolved demo Work is used directly (not
         // WebTestFixture.CopyWorkForTestAsync's per-test copy) because that
@@ -146,6 +150,96 @@ public sealed class ExternalProviderAutomaticAcquisitionEndpointTests
 
     private static Task SignInAsync(HttpClient client, string email, string password) =>
         ExternalProviderAutomaticFixtureSupport.SignInAsync(client, email, password);
+}
+
+/// <summary>
+/// The AutoAcquireEnabled toggle (plan §B) is a separate, explicit opt-in --
+/// a provider with a Daily/Weekly recheck schedule but the toggle left at its
+/// default (off) must still route even a single ISBN-corroborated candidate
+/// to librarian review, never fetch it unattended.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderAutoAcquireDisabledByDefaultEndpointTests
+{
+    private static WebTestFixture? _fixture;
+
+    [ClassInitialize]
+    public static async Task InitializeAsync(TestContext testContext)
+    {
+        ArgumentNullException.ThrowIfNull(testContext);
+        _fixture = await WebTestFixture.CreateAsync();
+    }
+
+    [ClassCleanup]
+    public static async Task CleanupAsync()
+    {
+        if (_fixture is not null)
+        {
+            await _fixture.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task AScheduledExternalLookupWithAnIdentifierMatchStillRequiresReviewWhenAutoAcquireIsNotEnabled()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(new FakeHobbitExternalProviderClient());
+            });
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await ExternalProviderAutomaticFixtureSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(admin);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+
+        var create = await admin.PostAsJsonAsync(
+            "/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest("identifier-match-external", "Identifier Match External", "http://fake-external.test"));
+        var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(provider);
+        Assert.IsFalse(provider.AutoAcquireEnabled, "A newly registered provider must default to automatic-acquire disabled.");
+        (await admin.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true)))
+            .EnsureSuccessStatusCode();
+        (await admin.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule",
+            new SetExternalProviderRecheckScheduleRequest("Daily")))
+            .EnsureSuccessStatusCode();
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+        var format = request.Formats.Single(candidate => candidate.MediaType == "Ebook");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var rechecks = scope.ServiceProvider.GetRequiredService<ExternalProviderRecheckService>();
+            Assert.IsTrue(await rechecks.ProcessDueAsync(CancellationToken.None) >= 1);
+        }
+
+        var attempts = await admin.GetFromJsonAsync<ProviderAttemptResponse[]>(
+            $"/api/v1/admin/requests/{request.Id}/provider-attempts");
+        Assert.IsNotNull(attempts);
+        var attempt = attempts.Single();
+        Assert.AreEqual("identifier-match-external", attempt.ProviderId);
+        Assert.AreEqual("CandidatesFound", attempt.Outcome,
+            "An ISBN-corroborated candidate must still require review when AutoAcquireEnabled is off.");
+
+        await using var verificationScope = factory.Services.CreateAsyncScope();
+        var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var persisted = await database.BookRequests.SingleAsync(bookRequest => bookRequest.Id == request.Id);
+        Assert.AreEqual(RequestStatus.NeedsReview, persisted.Status);
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == format.FormatId));
+    }
 }
 
 /// <summary>
@@ -290,6 +384,10 @@ public sealed class ExternalProviderAutomaticAcquisitionFailureEndpointTests
         (await admin.PutAsJsonAsync(
             $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule",
             new SetExternalProviderRecheckScheduleRequest("Daily")))
+            .EnsureSuccessStatusCode();
+        (await admin.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/auto-acquire",
+            new SetExternalProviderAutoAcquireEnabledRequest(true)))
             .EnsureSuccessStatusCode();
 
         var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/project-hail-mary/resolve", content: null);

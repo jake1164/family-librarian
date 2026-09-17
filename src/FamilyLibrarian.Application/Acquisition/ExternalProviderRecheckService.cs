@@ -17,10 +17,13 @@ namespace FamilyLibrarian.Application.Acquisition;
 /// cadence. A single ISBN-corroborated ("Identifier"-basis) candidate is
 /// trusted and acquired automatically, exactly like the manual acquire flow
 /// already trusts one (docs/04-external-provider-http-protocol.md §7,
-/// <see cref="ExternalCandidateAvailabilityChecker"/>). Anything weaker --
-/// title/author only, unconfirmed, language-excluded, or more than one
-/// equally plausible candidate -- is evidence for a librarian, never
-/// permission to fetch a third-party file without review.
+/// <see cref="ExternalCandidateAvailabilityChecker"/>) -- but only for a
+/// provider with <see cref="ExternalProvider.AutoAcquireEnabled"/> separately
+/// turned on; the recheck schedule alone only controls how often this
+/// service looks, never whether it may fetch. Anything weaker -- title/author
+/// only, unconfirmed, language-excluded, or more than one equally plausible
+/// candidate -- is evidence for a librarian, never permission to fetch a
+/// third-party file without review, regardless of that toggle.
 /// </summary>
 public sealed class ExternalProviderRecheckService(
     IRequestRepository requests,
@@ -99,14 +102,18 @@ public sealed class ExternalProviderRecheckService(
 
                         // A single ISBN-corroborated candidate is trusted the same way the
                         // manual acquire flow already trusts one (docs/04 §7) -- fetch, scan,
-                        // and evaluate it automatically instead of waiting on a librarian.
-                        // Anything weaker (title/author only, unconfirmed, language-excluded,
-                        // or more than one such candidate) still requires review, unchanged.
-                        // A release concern (docs/04 §7/§10/§16 -- a collection, a sample, an
-                        // abridged mismatch) disqualifies a candidate from automatic acquisition
-                        // even with a verified identifier match: a correct ISBN on an omnibus
-                        // edition is still an omnibus, and that always needs a librarian's eyes,
-                        // never a silent automatic fetch.
+                        // and evaluate it automatically instead of waiting on a librarian --
+                        // but only once the admin has separately opted this provider into
+                        // automatic acquisition (AutoAcquireEnabled, plan §B): RecheckSchedule
+                        // controls retry cadence for discovery only and never by itself
+                        // authorizes an unattended fetch. Anything weaker (title/author only,
+                        // unconfirmed, language-excluded, or more than one such candidate)
+                        // still requires review regardless of that toggle. A release concern
+                        // (docs/04 §7/§10/§16 -- a collection, a sample, an abridged mismatch)
+                        // disqualifies a candidate from automatic acquisition even with a
+                        // verified identifier match: a correct ISBN on an omnibus edition is
+                        // still an omnibus, and that always needs a librarian's eyes, never a
+                        // silent automatic fetch.
                         var identifierMatches = options
                             .Where(option =>
                                 option.MatchBasis == BookMatchBasis.Identifier &&
@@ -114,7 +121,7 @@ public sealed class ExternalProviderRecheckService(
                                 !option.RequiresReleaseConfirmation)
                             .ToArray();
 
-                        if (identifierMatches.Length == 1)
+                        if (identifierMatches.Length == 1 && provider.AutoAcquireEnabled)
                         {
                             var acquireResult = await security.AcquireAndEvaluateAsync(
                                 request.Id, format.Id, provider.ProviderId, identifierMatches[0].ProviderResultId, cancellationToken);

@@ -7,6 +7,7 @@ public sealed record ExternalProviderResponse(
     string BaseUrl,
     bool IsEnabled,
     string RecheckSchedule,
+    bool AutoAcquireEnabled,
     bool HasApiKey,
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,
@@ -34,6 +35,15 @@ public sealed record SetExternalProviderEnabledRequest(bool Enabled);
 
 /// <summary>One of <c>Manual</c>, <c>Daily</c>, or <c>Weekly</c>.</summary>
 public sealed record SetExternalProviderRecheckScheduleRequest(string RecheckSchedule);
+
+/// <summary>
+/// A separate, explicit opt-in for unattended acquisition of a
+/// high-confidence candidate found on a scheduled recheck — independent of
+/// <see cref="SetExternalProviderRecheckScheduleRequest"/>, which only
+/// controls how often this provider is checked, never whether a match found
+/// that way may be fetched without review.
+/// </summary>
+public sealed record SetExternalProviderAutoAcquireEnabledRequest(bool Enabled);
 
 public sealed record SetExternalProviderApiKeyRequest(string ApiKey);
 

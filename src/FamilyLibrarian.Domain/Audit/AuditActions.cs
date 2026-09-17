@@ -81,6 +81,8 @@ public static class AuditActions
     public const string ExternalProviderRemoved = "external_provider.removed";
     public const string ExternalProviderEgressPolicyOverrideChanged = "external_provider.egress_policy_override_changed";
     public const string ExternalProviderRecheckScheduleChanged = "external_provider.recheck_schedule_changed";
+    public const string ExternalProviderAutoAcquireEnabled = "external_provider.auto_acquire_enabled";
+    public const string ExternalProviderAutoAcquireDisabled = "external_provider.auto_acquire_disabled";
     public const string ExternalProviderAcquisitionStaged = "external_provider_acquisition.staged";
 
     public const string PrivateEgressGatewayChanged = "private_egress_gateway.changed";

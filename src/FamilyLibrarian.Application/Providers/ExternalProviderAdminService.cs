@@ -87,6 +87,25 @@ public sealed class ExternalProviderAdminService(
         return ExternalProviderCommandResult.Success(ToStatus(provider));
     }
 
+    public async Task<ExternalProviderCommandResult> SetAutoAcquireEnabledAsync(
+        Guid id, bool isEnabled, CancellationToken cancellationToken)
+    {
+        var provider = await store.FindAsync(id, cancellationToken);
+        if (provider is null)
+        {
+            return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
+        }
+
+        provider.SetAutoAcquireEnabled(isEnabled, currentUser.UserId, clock.UtcNow);
+        await store.SaveChangesAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            isEnabled ? AuditActions.ExternalProviderAutoAcquireEnabled : AuditActions.ExternalProviderAutoAcquireDisabled,
+            AuditSubjectTypes.ExternalProvider, id.ToString(), new { provider.ProviderId }, cancellationToken);
+
+        return ExternalProviderCommandResult.Success(ToStatus(provider));
+    }
+
     public async Task<ExternalProviderCommandResult> SetDetailsAsync(
         Guid id, string displayName, string baseUrl, CancellationToken cancellationToken)
     {
@@ -336,6 +355,7 @@ public sealed class ExternalProviderAdminService(
         provider.BaseUrl,
         provider.IsEnabled,
         provider.RecheckSchedule.ToString(),
+        provider.AutoAcquireEnabled,
         provider.HasApiKey,
         provider.ApiKeyHint,
         provider.ApiKeySetAtUtc,
@@ -363,6 +383,7 @@ public sealed record ExternalProviderStatus(
     string BaseUrl,
     bool IsEnabled,
     string RecheckSchedule,
+    bool AutoAcquireEnabled,
     bool HasApiKey,
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,

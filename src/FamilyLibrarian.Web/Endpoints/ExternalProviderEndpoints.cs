@@ -23,6 +23,7 @@ internal static class ExternalProviderEndpoints
         adminExternalProviders.MapPut("/{id:guid}/details", SetExternalProviderDetailsAsync);
         adminExternalProviders.MapPut("/{id:guid}/enabled", SetExternalProviderEnabledAsync);
         adminExternalProviders.MapPut("/{id:guid}/recheck-schedule", SetExternalProviderRecheckScheduleAsync);
+        adminExternalProviders.MapPut("/{id:guid}/auto-acquire", SetExternalProviderAutoAcquireEnabledAsync);
         adminExternalProviders.MapPut("/{id:guid}/api-key", SetExternalProviderApiKeyAsync);
         adminExternalProviders.MapDelete("/{id:guid}/api-key", ClearExternalProviderApiKeyAsync);
         adminExternalProviders.MapPost("/{id:guid}/test", TestExternalProviderAsync);
@@ -64,6 +65,11 @@ internal static class ExternalProviderEndpoints
 
         return ToExternalProviderResult(await service.SetRecheckScheduleAsync(id, schedule, cancellationToken));
     }
+
+    private static async Task<IResult> SetExternalProviderAutoAcquireEnabledAsync(
+        Guid id, SetExternalProviderAutoAcquireEnabledRequest request, ExternalProviderAdminService service,
+        CancellationToken cancellationToken) =>
+        ToExternalProviderResult(await service.SetAutoAcquireEnabledAsync(id, request.Enabled, cancellationToken));
 
     private static async Task<IResult> SetExternalProviderApiKeyAsync(
         Guid id, SetExternalProviderApiKeyRequest request, ExternalProviderAdminService service,
@@ -124,6 +130,7 @@ internal static class ExternalProviderEndpoints
         status.BaseUrl,
         status.IsEnabled,
         status.RecheckSchedule,
+        status.AutoAcquireEnabled,
         status.HasApiKey,
         status.ApiKeyHint,
         status.ApiKeySetAtUtc,

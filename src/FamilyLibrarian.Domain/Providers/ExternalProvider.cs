@@ -29,6 +29,7 @@ public sealed class ExternalProvider
         IsEnabled = false;
         CachedEgressPolicy = EgressPolicy.Normal;
         RecheckSchedule = ProviderRecheckSchedule.Manual;
+        AutoAcquireEnabled = false;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
     }
@@ -45,10 +46,27 @@ public sealed class ExternalProvider
     public bool IsEnabled { get; private set; }
 
     /// <summary>
-    /// Administrator-controlled retry cadence for discovery only. It never
-    /// authorizes unattended acquisition from this external provider.
+    /// Administrator-controlled retry cadence for discovery only. On its own
+    /// it never authorizes unattended acquisition from this external
+    /// provider — a due recheck that finds a high-confidence candidate is
+    /// still just recorded for review unless <see cref="AutoAcquireEnabled"/>
+    /// is separately turned on for this provider.
     /// </summary>
     public ProviderRecheckSchedule RecheckSchedule { get; private set; }
+
+    /// <summary>
+    /// A separate, explicit admin toggle authorizing unattended acquisition
+    /// of a high-confidence (<c>Identifier</c>-basis) candidate found on a
+    /// scheduled recheck. Defaults to <c>false</c> for every newly registered
+    /// provider, regardless of what its manifest claims to support or
+    /// whether <see cref="RecheckSchedule"/> is set — never inferred from
+    /// either, and freely settable at any time
+    /// (family-librarian-provider-alpha5-plan.md §B). A
+    /// <c>TitleAuthor</c>-basis candidate is never eligible for automatic
+    /// acquisition regardless of this setting (§F2) — that gate lives in
+    /// <c>ExternalProviderRecheckService</c>, not here.
+    /// </summary>
+    public bool AutoAcquireEnabled { get; private set; }
 
     public string? ProtectedApiKey { get; private set; }
 
@@ -147,6 +165,12 @@ public sealed class ExternalProvider
     public void SetEgressPolicyOverride(EgressPolicy? policy, Guid? actorUserId, DateTimeOffset updatedAtUtc)
     {
         EgressPolicyOverride = policy;
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void SetAutoAcquireEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        AutoAcquireEnabled = isEnabled;
         Touch(actorUserId, updatedAtUtc);
     }
 
