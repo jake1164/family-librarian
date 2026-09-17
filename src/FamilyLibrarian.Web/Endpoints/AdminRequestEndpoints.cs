@@ -333,14 +333,24 @@ internal static class AdminRequestEndpoints
         // "Provider activity" and the Tasks dashboard's "Source and download
         // activity" don't go stale the moment an admin works around an
         // automatic failure by retrying manually — see ProviderAttempt.
+        var attemptOutcome = result.Outcome switch
+        {
+            ManualImportOutcome.Success => ProviderAttemptOutcome.Acquired,
+            ManualImportOutcome.AcquisitionInProgress => ProviderAttemptOutcome.Submitted,
+            _ => ProviderAttemptOutcome.Failed
+        };
+        var attemptSummary = result.Outcome switch
+        {
+            ManualImportOutcome.Success => "A copy was manually fetched by a librarian and sent through the security pipeline.",
+            ManualImportOutcome.AcquisitionInProgress => "A librarian started an acquisition; it is being tracked to completion.",
+            _ => result.Error ?? "The manual fetch could not be completed."
+        };
         providerAttempts.Add(new ProviderAttempt(
             requestId,
             formatId,
             providerId,
-            result.Outcome == ManualImportOutcome.Success ? ProviderAttemptOutcome.Acquired : ProviderAttemptOutcome.Failed,
-            result.Outcome == ManualImportOutcome.Success
-                ? "A copy was manually fetched by a librarian and sent through the security pipeline."
-                : result.Error ?? "The manual fetch could not be completed.",
+            attemptOutcome,
+            attemptSummary,
             clock.UtcNow,
             nextEligibleCheckAtUtc: null));
         await providerAttempts.SaveChangesAsync(cancellationToken);
@@ -352,6 +362,8 @@ internal static class AdminRequestEndpoints
     {
         ManualImportOutcome.Success => Results.Ok(
             new ManualImportResultResponse(result.AcquisitionJobId!.Value, result.MediaAssetId!.Value)),
+        ManualImportOutcome.AcquisitionInProgress => Results.Accepted(
+            value: new ManualAcquisitionInProgressResponse(result.ProviderAcquisitionJobId!.Value)),
         ManualImportOutcome.DuplicateDetected => Results.Conflict(new { message = result.Error }),
         ManualImportOutcome.LowConfidenceMatchConfirmationRequired => Results.Conflict(
             new { message = result.Error, requiresConfirmation = true }),

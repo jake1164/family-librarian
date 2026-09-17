@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Providers;
@@ -32,29 +33,117 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))
             ?? throw new HttpRequestException("The manifest response was not valid JSON.");
 
+        var protocolVersions = json["protocolVersions"]?.AsArray()
+            .Select(node => node?.GetValue<string>() ?? string.Empty)
+            .Where(version => version.Length > 0)
+            .ToArray();
+        var protocolVersion = json["protocolVersion"]?.GetValue<string>()
+            ?? protocolVersions?.FirstOrDefault()
+            ?? "1";
+        // A v1 manifest declares neither field — treat it as speaking only v1.
+        protocolVersions ??= [protocolVersion];
+
         return new ExternalProviderManifest(
-            json["protocolVersion"]?.GetValue<string>() ?? "1",
+            protocolVersions,
+            protocolVersion,
+            json["instanceId"]?.GetValue<string>(),
             json["id"]?.GetValue<string>() ?? string.Empty,
             json["name"]?.GetValue<string>() ?? string.Empty,
             json["version"]?.GetValue<string>() ?? string.Empty,
-            json["capabilities"]?.AsArray().Select(node => node?.GetValue<string>() ?? string.Empty).ToArray() ?? [],
+            ParseCapabilities(json["capabilities"]),
+            json["outputRetentionSeconds"]?.GetValue<int?>(),
+            json["managementUrl"]?.GetValue<string>(),
+            json["documentationUrl"]?.GetValue<string>(),
             json["egressPolicy"]?.GetValue<string>() ?? "NORMAL");
     }
 
-    public async Task<bool> GetHealthAsync(
+    /// <summary>
+    /// Accepts both the v2 structured object and the v1 flat capability-string
+    /// array, per §4's tolerance note — a legacy array is parsed as
+    /// best-effort <c>mediaTypes</c>/<c>operations</c> (ebook/audiobook go to
+    /// media types, search/acquire go to operations, anything else is
+    /// dropped rather than guessed at).
+    /// </summary>
+    private static ProviderCapabilities ParseCapabilities(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return ProviderCapabilities.Empty;
+        }
+
+        if (node is JsonArray legacyArray)
+        {
+            var values = legacyArray.Select(item => item?.GetValue<string>() ?? string.Empty).ToArray();
+            var mediaTypes = values.Where(value => value is "ebook" or "audiobook").ToArray();
+            var operations = values.Where(value => value is "search" or "acquire").ToArray();
+            return new ProviderCapabilities(mediaTypes, operations, []);
+        }
+
+        return new ProviderCapabilities(
+            node["mediaTypes"]?.AsArray().Select(item => item?.GetValue<string>() ?? string.Empty).ToArray() ?? [],
+            node["operations"]?.AsArray().Select(item => item?.GetValue<string>() ?? string.Empty).ToArray() ?? [],
+            node["features"]?.AsArray().Select(item => item?.GetValue<string>() ?? string.Empty).ToArray() ?? []);
+    }
+
+    public async Task<ExternalProviderHealth> GetHealthAsync(
         string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken)
     {
         using var client = CreateClient(baseUrl, apiKey, route);
         try
         {
             using var response = await client.GetAsync("health", cancellationToken);
-            return response.IsSuccessStatusCode;
+            if (!response.IsSuccessStatusCode)
+            {
+                // Per §5: a non-2xx (or a connection failure, below) means
+                // Family Librarian could not obtain usable health
+                // information at all — distinct from a deliberately
+                // reported degraded/unhealthy body.
+                return ExternalProviderHealth.Unreachable;
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                // Bare 2xx with no body is the v1 shape — treat as healthy.
+                return new ExternalProviderHealth(
+                    ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available);
+            }
+
+            var json = JsonNode.Parse(body);
+            var status = ParseHealthStatus(json?["status"]?.GetValue<string>());
+            var inherited = status switch
+            {
+                ProviderHealthStatus.Healthy => ProviderOperationalStatus.Available,
+                ProviderHealthStatus.Degraded => ProviderOperationalStatus.Degraded,
+                _ => ProviderOperationalStatus.Unavailable
+            };
+
+            return new ExternalProviderHealth(
+                status,
+                ParseOperationalStatus(json?["operations"]?["search"]?.GetValue<string>(), inherited),
+                ParseOperationalStatus(json?["operations"]?["acquire"]?.GetValue<string>(), inherited));
         }
         catch (HttpRequestException)
         {
-            return false;
+            return ExternalProviderHealth.Unreachable;
         }
     }
+
+    private static ProviderHealthStatus ParseHealthStatus(string? value) => value?.ToLowerInvariant() switch
+    {
+        "degraded" => ProviderHealthStatus.Degraded,
+        "unhealthy" => ProviderHealthStatus.Unhealthy,
+        _ => ProviderHealthStatus.Healthy
+    };
+
+    private static ProviderOperationalStatus ParseOperationalStatus(string? value, ProviderOperationalStatus fallback) =>
+        value?.ToLowerInvariant() switch
+        {
+            "available" => ProviderOperationalStatus.Available,
+            "degraded" => ProviderOperationalStatus.Degraded,
+            "unavailable" => ProviderOperationalStatus.Unavailable,
+            _ => fallback
+        };
 
     public async Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
         string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
@@ -148,6 +237,215 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
             throw;
         }
     }
+
+    public async Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+        CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey, route);
+        var payload = new JsonObject
+        {
+            ["requestId"] = request.RequestId.ToString(),
+            ["candidateReference"] = request.CandidateReference,
+            ["candidateRevision"] = request.CandidateRevision,
+            ["acquireToken"] = request.AcquireToken,
+            ["mediaType"] = request.MediaType.ToString().ToLowerInvariant()
+        };
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "acquire")
+        {
+            Content = JsonContent.Create(payload)
+        };
+        httpRequest.Headers.Add("Idempotency-Key", idempotencyKey);
+
+        using var response = await client.SendAsync(httpRequest, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            var conflictJson = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var code = conflictJson?["code"]?.GetValue<string>();
+            if (string.Equals(code, "CANDIDATE_CHANGED", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExternalProviderAcquireSubmission.CandidateChanged;
+            }
+        }
+
+        response.EnsureSuccessStatusCode();
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))
+            ?? throw new HttpRequestException("The acquire response was not valid JSON.");
+        var jobId = json["jobId"]?.GetValue<string>()
+            ?? throw new HttpRequestException("The acquire response did not include a jobId.");
+
+        return ExternalProviderAcquireSubmission.Accepted(
+            jobId,
+            ParseLifecycleState(json["state"]?.GetValue<string>()),
+            json["phase"]?.GetValue<string>(),
+            ParsePollAfterSeconds(response, json));
+    }
+
+    public async Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey, route);
+        using var response = await client.GetAsync($"acquire/{Uri.EscapeDataString(jobId)}", cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))
+            ?? throw new HttpRequestException("The job status response was not valid JSON.");
+
+        var state = ParseLifecycleState(json["state"]?.GetValue<string>());
+        var interactionNode = json["interaction"];
+        var interaction = interactionNode is null
+            ? null
+            : new ProviderInteraction(
+                interactionNode["type"]?.GetValue<string>(),
+                interactionNode["message"]?.GetValue<string>(),
+                interactionNode["expiresAt"]?.GetValue<DateTimeOffset?>(),
+                interactionNode["resumeSupported"]?.GetValue<bool?>(),
+                interactionNode["actionUrl"]?.GetValue<string>());
+
+        var progressNode = json["progress"];
+        var progress = progressNode is null
+            ? null
+            : new ProviderProgress(
+                progressNode["percent"]?.GetValue<double?>(),
+                progressNode["bytesCompleted"]?.GetValue<long?>(),
+                progressNode["bytesTotal"]?.GetValue<long?>(),
+                progressNode["message"]?.GetValue<string>());
+
+        var errorNode = json["error"];
+        var error = errorNode is null
+            ? null
+            : new ProviderJobError(
+                errorNode["code"]?.GetValue<string>(),
+                errorNode["message"]?.GetValue<string>(),
+                errorNode["retryable"]?.GetValue<bool?>(),
+                errorNode["retryAfterSeconds"]?.GetValue<int?>(),
+                errorNode["details"]?.ToJsonString());
+
+        return new ExternalProviderJobStatus(
+            jobId, state, json["phase"]?.GetValue<string>(), interaction, progress, error,
+            ParsePollAfterSeconds(response, json));
+    }
+
+    public async Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey, route);
+        using var response = await client.GetAsync($"acquire/{Uri.EscapeDataString(jobId)}/outputs", cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        var outputsNode = json?["outputs"]?.AsArray();
+        if (outputsNode is null)
+        {
+            return [];
+        }
+
+        var results = new List<ExternalProviderOutput>();
+        foreach (var node in outputsNode)
+        {
+            var outputId = node?["id"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(outputId))
+            {
+                continue;
+            }
+
+            results.Add(new ExternalProviderOutput(
+                outputId,
+                ParseOutputKind(node!["kind"]?.GetValue<string>()),
+                node["role"]?.GetValue<string>(),
+                node["filename"]?.GetValue<string>(),
+                node["contentType"]?.GetValue<string>(),
+                node["sizeBytes"]?.GetValue<long?>(),
+                node["uri"]?.GetValue<string>(),
+                node["uriScheme"]?.GetValue<string>(),
+                node["checksums"]?.ToJsonString(),
+                node["retention"]?["expiresAt"]?.GetValue<DateTimeOffset?>()));
+        }
+
+        return results;
+    }
+
+    public async Task<ExternalProviderArtifact> GetOutputAsync(
+        string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+        CancellationToken cancellationToken)
+    {
+        var client = CreateClient(baseUrl, apiKey, route);
+        try
+        {
+            var response = await client.GetAsync(
+                $"acquire/{Uri.EscapeDataString(jobId)}/outputs/{Uri.EscapeDataString(outputId)}",
+                HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var filename = response.Content.Headers.ContentDisposition?.FileNameStar?.Trim('"')
+                ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"')
+                ?? $"{outputId}.bin";
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+
+            return new ExternalProviderArtifact(new HttpResponseOwnedStream(stream, response, client), filename);
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
+    }
+
+    public async Task CancelAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey, route);
+        try
+        {
+            using var response = await client.PostAsync(
+                $"acquire/{Uri.EscapeDataString(jobId)}/cancel", content: null, cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort per §8b — the job may still complete or fail on its own.
+        }
+    }
+
+    public async Task DeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey, route);
+        try
+        {
+            using var response = await client.DeleteAsync($"acquire/{Uri.EscapeDataString(jobId)}", cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort per §8b.
+        }
+    }
+
+    private static ProviderAcquisitionJobLifecycleState ParseLifecycleState(string? value) =>
+        value?.ToLowerInvariant() switch
+        {
+            "queued" => ProviderAcquisitionJobLifecycleState.Queued,
+            "running" => ProviderAcquisitionJobLifecycleState.Running,
+            "waiting" => ProviderAcquisitionJobLifecycleState.Waiting,
+            "completed" => ProviderAcquisitionJobLifecycleState.Completed,
+            "failed" => ProviderAcquisitionJobLifecycleState.Failed,
+            "cancelled" => ProviderAcquisitionJobLifecycleState.Cancelled,
+            // A v1 provider's InProgress/Completed/Failed vocabulary — tolerated
+            // rather than rejected while both protocol versions are in play.
+            "inprogress" => ProviderAcquisitionJobLifecycleState.Running,
+            _ => ProviderAcquisitionJobLifecycleState.Running
+        };
+
+    private static ProviderOutputKind ParseOutputKind(string? value) => value?.ToLowerInvariant() switch
+    {
+        "uri" => ProviderOutputKind.Uri,
+        "descriptor" => ProviderOutputKind.Descriptor,
+        _ => ProviderOutputKind.File
+    };
+
+    /// <summary>Prefers the standard <c>Retry-After</c> header; falls back to the body-level <c>pollAfterSeconds</c> hint (protocol v2 §8).</summary>
+    private static int? ParsePollAfterSeconds(HttpResponseMessage response, JsonNode json) =>
+        (int?)response.Headers.RetryAfter?.Delta?.TotalSeconds ?? json["pollAfterSeconds"]?.GetValue<int?>();
 
     private static async Task PollUntilCompletedAsync(HttpClient client, string jobPath, CancellationToken cancellationToken)
     {

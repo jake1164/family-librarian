@@ -185,19 +185,54 @@ public sealed class ExternalProviderAdminService(
         try
         {
             var manifest = await client.GetManifestAsync(provider.BaseUrl, apiKey, resolution.Route!, cancellationToken);
-            var healthy = await client.GetHealthAsync(provider.BaseUrl, apiKey, resolution.Route!, cancellationToken);
-
+            var negotiatedVersion = ProtocolVersionNegotiation.Negotiate(manifest.ProtocolVersions);
             var egressPolicy = ParseEgressPolicy(manifest.EgressPolicy);
+
+            if (negotiatedVersion is null)
+            {
+                // No mutually supported protocol version — refuse to guess
+                // (protocol v2 §0). The manifest was still reachable, so
+                // record that much, but never proceed as if a version had
+                // been agreed on.
+                provider.RecordTestResult(
+                    false,
+                    $"{manifest.Name} declares protocol version(s) [{string.Join(", ", manifest.ProtocolVersions)}], " +
+                        "none of which Family Librarian supports.",
+                    protocolVersion: null,
+                    capabilities: SerializeCapabilities(manifest.Capabilities),
+                    egressPolicy,
+                    currentUser.UserId,
+                    clock.UtcNow,
+                    manifest.InstanceId,
+                    healthStatus: null,
+                    searchOperationStatus: null,
+                    acquireOperationStatus: null,
+                    manifest.ManagementUrl,
+                    manifest.DocumentationUrl);
+                await store.SaveChangesAsync(cancellationToken);
+                await audit.WriteAsync(
+                    AuditActions.ExternalProviderTested, AuditSubjectTypes.ExternalProvider, id.ToString(),
+                    new { provider.ProviderId, provider.LastTestSucceeded }, cancellationToken);
+                return ExternalProviderCommandResult.Success(ToStatus(provider));
+            }
+
+            var health = await client.GetHealthAsync(provider.BaseUrl, apiKey, resolution.Route!, cancellationToken);
             provider.RecordTestResult(
-                healthy,
-                healthy
-                    ? $"Reached {manifest.Name} (protocol v{manifest.ProtocolVersion})."
+                health.IsHealthy,
+                health.IsHealthy
+                    ? $"Reached {manifest.Name} (protocol v{negotiatedVersion})."
                     : "The manifest was reachable, but the health check did not report healthy.",
-                manifest.ProtocolVersion,
-                string.Join(',', manifest.Capabilities),
+                negotiatedVersion,
+                SerializeCapabilities(manifest.Capabilities),
                 egressPolicy,
                 currentUser.UserId,
-                clock.UtcNow);
+                clock.UtcNow,
+                manifest.InstanceId,
+                health.Status.ToString(),
+                health.Search.ToString(),
+                health.Acquire.ToString(),
+                manifest.ManagementUrl,
+                manifest.DocumentationUrl);
         }
         catch (HttpRequestException exception)
         {
@@ -266,6 +301,34 @@ public sealed class ExternalProviderAdminService(
         _ => EgressPolicy.Normal
     };
 
+    /// <summary>
+    /// A stable, human-legible flattening of the structured v2 capabilities
+    /// object for the existing <c>Cached*</c>-string storage slot — e.g.
+    /// <c>"mediaTypes:ebook;operations:search,acquire;features:pagination"</c>.
+    /// Not machine-parsed anywhere else today; just what "Test Connection"
+    /// displays.
+    /// </summary>
+    private static string SerializeCapabilities(ProviderCapabilities capabilities)
+    {
+        var parts = new List<string>();
+        if (capabilities.MediaTypes.Count > 0)
+        {
+            parts.Add($"mediaTypes:{string.Join(',', capabilities.MediaTypes)}");
+        }
+
+        if (capabilities.Operations.Count > 0)
+        {
+            parts.Add($"operations:{string.Join(',', capabilities.Operations)}");
+        }
+
+        if (capabilities.Features.Count > 0)
+        {
+            parts.Add($"features:{string.Join(',', capabilities.Features)}");
+        }
+
+        return string.Join(';', parts);
+    }
+
     private static ExternalProviderStatus ToStatus(ExternalProvider provider) => new(
         provider.Id,
         provider.ProviderId,
@@ -278,6 +341,13 @@ public sealed class ExternalProviderAdminService(
         provider.ApiKeySetAtUtc,
         provider.CachedProtocolVersion,
         provider.CachedCapabilities,
+        provider.CachedInstanceId,
+        provider.InstanceReplacedSincePreviousTest,
+        provider.CachedHealthStatus,
+        provider.CachedSearchOperationStatus,
+        provider.CachedAcquireOperationStatus,
+        provider.CachedManagementUrl,
+        provider.CachedDocumentationUrl,
         provider.CachedEgressPolicy.ToString(),
         provider.EgressPolicyOverride?.ToString(),
         provider.EffectiveEgressPolicy.ToString(),
@@ -298,6 +368,13 @@ public sealed record ExternalProviderStatus(
     DateTimeOffset? ApiKeySetAtUtc,
     string? CachedProtocolVersion,
     string? CachedCapabilities,
+    string? CachedInstanceId,
+    bool InstanceReplacedSincePreviousTest,
+    string? CachedHealthStatus,
+    string? CachedSearchOperationStatus,
+    string? CachedAcquireOperationStatus,
+    string? CachedManagementUrl,
+    string? CachedDocumentationUrl,
     string CachedEgressPolicy,
     string? EgressPolicyOverride,
     string EffectiveEgressPolicy,

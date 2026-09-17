@@ -39,6 +39,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AudiobookshelfVerificationHostedService>();
     builder.Services.AddHostedService<PublishingDestinationHealthHostedService>();
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
+    builder.Services.AddHostedService<AcquisitionJobPollingHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
     builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();
     builder.Services.AddHostedService<MatrixInboundSyncHostedService>();

@@ -249,6 +249,27 @@ public sealed class RequestRepository(
             return ApplyKindleDeliveries(requests, kindleDeliveries);
         }
 
+        // No MediaAsset exists yet for a format still tracked by a durable
+        // provider job (protocol v2 §8) -- it hasn't completed, so none of
+        // the asset/security/publishing lookups below apply to it. Loaded
+        // independently of assetIds precisely because it must still surface
+        // for a format that has never had one.
+        var providerJobs = await database.ProviderAcquisitionJobs
+            .AsNoTracking()
+            .Where(job =>
+                formatIds.Contains(job.RequestFormatId) &&
+                job.LifecycleState != ProviderAcquisitionJobLifecycleState.Completed &&
+                job.LifecycleState != ProviderAcquisitionJobLifecycleState.Failed &&
+                job.LifecycleState != ProviderAcquisitionJobLifecycleState.Cancelled)
+            .Select(job => new ProviderJobProgressRow(
+                job.RequestFormatId, job.LifecycleState, job.Phase, job.InteractionActionUrl, job.CreatedAtUtc))
+            .ToArrayAsync(cancellationToken);
+        var latestProviderJobs = providerJobs
+            .GroupBy(job => job.RequestFormatId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(job => job.CreatedAtUtc).First());
+
         // These are separate, bounded projections rather than a large join of
         // collections. That avoids duplicating request rows and keeps each query
         // to the facts used in the requester-facing progress message.
@@ -271,7 +292,7 @@ public sealed class RequestRepository(
         var assetIds = latestAssets.Values.Select(asset => asset.AssetId).ToArray();
         if (assetIds.Length == 0)
         {
-            return ApplyKindleDeliveries(requests, kindleDeliveries);
+            return ApplyKindleDeliveries(ApplyProviderJobProgress(requests, latestProviderJobs), kindleDeliveries);
         }
 
         var evaluations = await database.SecurityEvaluations
@@ -344,7 +365,9 @@ public sealed class RequestRepository(
                     {
                         if (!latestAssets.TryGetValue(format.Id, out var asset))
                         {
-                            return format;
+                            return latestProviderJobs.TryGetValue(format.Id, out var providerJob)
+                                ? WithProviderJobProgress(format, providerJob)
+                                : format;
                         }
 
                         SecurityEvaluationStatus? securityStatus =
@@ -431,6 +454,43 @@ public sealed class RequestRepository(
                     group.First().AttemptId, group.First().Status, group.First().FailureReason,
                     group.First().AttemptNumber, group.First().ConfirmationStatus));
     }
+
+    /// <summary>
+    /// Every format that has no <see cref="MediaAssetProgressRow"/> at all
+    /// still needs a chance to show a durable provider job's progress --
+    /// this is the path taken when nothing in the whole batch has ever
+    /// produced an asset.
+    /// </summary>
+    private static IReadOnlyList<BookRequestView> ApplyProviderJobProgress(
+        IReadOnlyList<BookRequestView> requests,
+        IReadOnlyDictionary<Guid, ProviderJobProgressRow> latestProviderJobs) =>
+        latestProviderJobs.Count == 0
+            ? requests
+            : requests
+                .Select(request => request with
+                {
+                    Formats = request.Formats
+                        .Select(format => latestProviderJobs.TryGetValue(format.Id, out var providerJob)
+                            ? WithProviderJobProgress(format, providerJob)
+                            : format)
+                        .ToArray()
+                })
+                .ToArray();
+
+    private static RequestFormatView WithProviderJobProgress(RequestFormatView format, ProviderJobProgressRow providerJob) =>
+        format with
+        {
+            Progress = RequestFormatProgress.Describe(
+                assetState: null,
+                securityStatus: null,
+                libraryImportStatus: null,
+                deliveryStatus: null,
+                providerJobState: providerJob.LifecycleState,
+                providerJobPhase: providerJob.Phase),
+            ExternalActionUri = Uri.TryCreate(providerJob.InteractionActionUrl, UriKind.Absolute, out var actionUri)
+                ? actionUri
+                : null
+        };
 
     private static IReadOnlyList<BookRequestView> ApplyKindleDeliveries(
         IReadOnlyList<BookRequestView> requests, IReadOnlyDictionary<Guid, RequestKindleDeliveryView> deliveries) =>
@@ -619,6 +679,13 @@ public sealed class RequestRepository(
                 database.Users.Where(member => member.Id == participant.UserId).Select(member => member.Email!).First(),
                 participant.Note,
                 participant.WithdrawnAtUtc != null)).ToList());
+
+    private sealed record ProviderJobProgressRow(
+        Guid RequestFormatId,
+        ProviderAcquisitionJobLifecycleState LifecycleState,
+        string? Phase,
+        string? InteractionActionUrl,
+        DateTimeOffset CreatedAtUtc);
 
     private sealed record MediaAssetProgressRow(
         Guid AssetId,

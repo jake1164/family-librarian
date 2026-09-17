@@ -79,6 +79,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<AcquisitionCandidate> AcquisitionCandidates => Set<AcquisitionCandidate>();
 
+    public DbSet<ProviderAcquisitionJob> ProviderAcquisitionJobs => Set<ProviderAcquisitionJob>();
+
+    public DbSet<ProviderAcquisitionJobOutput> ProviderAcquisitionJobOutputs => Set<ProviderAcquisitionJobOutput>();
+
     public DbSet<ProviderAttempt> ProviderAttempts => Set<ProviderAttempt>();
 
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
@@ -684,6 +688,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(provider => provider.ApiKeySetAtUtc).HasColumnName("api_key_set_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(provider => provider.CachedProtocolVersion).HasColumnName("cached_protocol_version").HasMaxLength(32);
             entity.Property(provider => provider.CachedCapabilities).HasColumnName("cached_capabilities").HasMaxLength(512);
+            entity.Property(provider => provider.CachedInstanceId).HasColumnName("cached_instance_id").HasMaxLength(256);
+            entity.Property(provider => provider.InstanceReplacedSincePreviousTest).HasColumnName("instance_replaced_since_previous_test");
+            entity.Property(provider => provider.CachedHealthStatus).HasColumnName("cached_health_status").HasMaxLength(32);
+            entity.Property(provider => provider.CachedSearchOperationStatus).HasColumnName("cached_search_operation_status").HasMaxLength(32);
+            entity.Property(provider => provider.CachedAcquireOperationStatus).HasColumnName("cached_acquire_operation_status").HasMaxLength(32);
+            entity.Property(provider => provider.CachedManagementUrl).HasColumnName("cached_management_url").HasMaxLength(1_024);
+            entity.Property(provider => provider.CachedDocumentationUrl).HasColumnName("cached_documentation_url").HasMaxLength(1_024);
             entity.Property(provider => provider.CachedEgressPolicy).HasColumnName("cached_egress_policy").HasConversion<string>().HasMaxLength(32);
             entity.Property(provider => provider.EgressPolicyOverride).HasColumnName("overridden_egress_policy").HasConversion<string>().HasMaxLength(32);
             entity.Property(provider => provider.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
@@ -785,6 +796,90 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(candidate => candidate.ConfidenceScore).HasColumnName("confidence_score");
             entity.Property(candidate => candidate.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
             ConfigureTimestamps(entity);
+        });
+
+        builder.Entity<ProviderAcquisitionJob>(entity =>
+        {
+            entity.ToTable("provider_acquisition_jobs", "acquisition");
+            entity.HasKey(job => job.Id);
+            entity.Property(job => job.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(job => job.RequestId).HasColumnName("request_id");
+            entity.Property(job => job.RequestFormatId).HasColumnName("request_format_id");
+            entity.Property(job => job.ExternalProviderId).HasColumnName("external_provider_id");
+            entity.Property(job => job.ProviderId).HasColumnName("provider_id").HasMaxLength(128).IsRequired();
+            entity.Property(job => job.ProviderInstanceId).HasColumnName("provider_instance_id").HasMaxLength(256);
+            entity.Property(job => job.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(256).IsRequired();
+            entity.Property(job => job.ProviderJobId).HasColumnName("provider_job_id").HasMaxLength(512);
+            entity.Property(job => job.CandidateReference).HasColumnName("candidate_reference").HasMaxLength(512).IsRequired();
+            entity.Property(job => job.CandidateRevision).HasColumnName("candidate_revision").HasMaxLength(512);
+            entity.Property(job => job.AcquireToken).HasColumnName("acquire_token").HasColumnType("text");
+            entity.Property(job => job.LifecycleState).HasColumnName("lifecycle_state").HasConversion<string>().HasMaxLength(32);
+            entity.Property(job => job.Phase).HasColumnName("phase").HasMaxLength(64);
+            entity.Property(job => job.InteractionType).HasColumnName("interaction_type").HasMaxLength(64);
+            entity.Property(job => job.InteractionMessage).HasColumnName("interaction_message").HasMaxLength(1_024);
+            entity.Property(job => job.InteractionExpiresAtUtc).HasColumnName("interaction_expires_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(job => job.InteractionResumeSupported).HasColumnName("interaction_resume_supported");
+            entity.Property(job => job.InteractionActionUrl).HasColumnName("interaction_action_url").HasMaxLength(2_048);
+            entity.Property(job => job.ProgressPercent).HasColumnName("progress_percent");
+            entity.Property(job => job.ProgressBytesCompleted).HasColumnName("progress_bytes_completed");
+            entity.Property(job => job.ProgressBytesTotal).HasColumnName("progress_bytes_total");
+            entity.Property(job => job.ProgressMessage).HasColumnName("progress_message").HasMaxLength(512);
+            entity.Property(job => job.ErrorCode).HasColumnName("error_code").HasMaxLength(64);
+            entity.Property(job => job.ErrorMessage).HasColumnName("error_message").HasMaxLength(1_024);
+            entity.Property(job => job.ErrorRetryable).HasColumnName("error_retryable");
+            entity.Property(job => job.ErrorRetryAfterSeconds).HasColumnName("error_retry_after_seconds");
+            entity.Property(job => job.ErrorDetailsJson).HasColumnName("error_details_json").HasColumnType("jsonb");
+            entity.Property(job => job.RetentionExpiresAtUtc).HasColumnName("retention_expires_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(job => job.NextPollAtUtc).HasColumnName("next_poll_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(job => job.ExtensionsJson).HasColumnName("extensions_json").HasColumnType("jsonb");
+            entity.Property(job => job.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(job => job.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(job => job.Version).HasColumnName("xmin").IsRowVersion();
+
+            // The background poller's due-work query; the restart-recovery
+            // lookup by idempotency key; the admin "jobs waiting on me" view.
+            entity.HasIndex(job => job.NextPollAtUtc);
+            entity.HasIndex(job => new { job.ExternalProviderId, job.IdempotencyKey }).IsUnique();
+            entity.HasIndex(job => new { job.RequestFormatId, job.LifecycleState });
+
+            entity.HasOne<BookRequest>()
+                .WithMany()
+                .HasForeignKey(job => job.RequestId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<RequestFormat>()
+                .WithMany()
+                .HasForeignKey(job => job.RequestFormatId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ExternalProvider>()
+                .WithMany()
+                .HasForeignKey(job => job.ExternalProviderId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(job => job.Outputs)
+                .WithOne(output => output.ProviderAcquisitionJob)
+                .HasForeignKey(output => output.ProviderAcquisitionJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.Navigation(job => job.Outputs).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        builder.Entity<ProviderAcquisitionJobOutput>(entity =>
+        {
+            entity.ToTable("provider_acquisition_job_outputs", "acquisition");
+            entity.HasKey(output => output.Id);
+            entity.Property(output => output.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(output => output.ProviderAcquisitionJobId).HasColumnName("provider_acquisition_job_id");
+            entity.Property(output => output.OutputId).HasColumnName("output_id").HasMaxLength(512).IsRequired();
+            entity.Property(output => output.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(32);
+            entity.Property(output => output.Role).HasColumnName("role").HasMaxLength(64);
+            entity.Property(output => output.Filename).HasColumnName("filename").HasMaxLength(1_024);
+            entity.Property(output => output.ContentType).HasColumnName("content_type").HasMaxLength(256);
+            entity.Property(output => output.SizeBytes).HasColumnName("size_bytes");
+            entity.Property(output => output.Uri).HasColumnName("uri").HasColumnType("text");
+            entity.Property(output => output.UriScheme).HasColumnName("uri_scheme").HasMaxLength(32);
+            entity.Property(output => output.ChecksumsJson).HasColumnName("checksums_json").HasColumnType("jsonb");
+            entity.Property(output => output.RetentionExpiresAtUtc).HasColumnName("retention_expires_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(output => output.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
         });
 
         builder.Entity<ProviderAttempt>(entity =>

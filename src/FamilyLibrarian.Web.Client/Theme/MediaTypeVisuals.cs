@@ -76,7 +76,7 @@ public static class MediaTypeVisuals
     public static Color ProgressColor(string? progressCode) => progressCode switch
     {
         "SecurityCheckFailed" or "PublishingNeedsAttention" => Color.Error,
-        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" => Color.Warning,
+        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" or "AwaitingProviderAction" => Color.Warning,
         "Available" => Color.Success,
         _ => Color.Info
     };

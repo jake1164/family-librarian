@@ -63,7 +63,44 @@ public sealed class ExternalProvider
     /// <summary>Comma-separated, as declared by the provider's own manifest.</summary>
     public string? CachedCapabilities { get; private set; }
 
+    /// <summary>
+    /// This deployed instance's own identity, as declared by its manifest
+    /// (protocol v2 §4/§20) — distinct from <see cref="ProviderId"/>, which
+    /// identifies the provider software, not this specific running copy of
+    /// it. <c>null</c> when the provider never declares one (tolerated) or
+    /// hasn't been successfully tested yet.
+    /// </summary>
+    public string? CachedInstanceId { get; private set; }
+
+    /// <summary>
+    /// True once a successful test observes an <see cref="CachedInstanceId"/>
+    /// different from the previous successful test's — a container/instance
+    /// swap mid-job is exactly the signal protocol v2 §20's provider-replacement
+    /// detection needs. Reset to false whenever the instance id matches (or
+    /// is newly recorded for the first time).
+    /// </summary>
+    public bool InstanceReplacedSincePreviousTest { get; private set; }
+
     public EgressPolicy CachedEgressPolicy { get; private set; }
+
+    /// <summary>
+    /// Coarse overall health from the provider's last successful test, per
+    /// protocol v2 §5 — one of <c>Healthy</c>/<c>Degraded</c>/<c>Unhealthy</c>.
+    /// A raw string, like <see cref="CachedCapabilities"/>: the wire
+    /// vocabulary is Application/Infrastructure's concern to parse, not
+    /// Domain's to model as its own enum.
+    /// </summary>
+    public string? CachedHealthStatus { get; private set; }
+
+    /// <summary>One of <c>Available</c>/<c>Degraded</c>/<c>Unavailable</c>.</summary>
+    public string? CachedSearchOperationStatus { get; private set; }
+
+    /// <summary>One of <c>Available</c>/<c>Degraded</c>/<c>Unavailable</c>.</summary>
+    public string? CachedAcquireOperationStatus { get; private set; }
+
+    public string? CachedManagementUrl { get; private set; }
+
+    public string? CachedDocumentationUrl { get; private set; }
 
     public DateTimeOffset? LastTestedAtUtc { get; private set; }
 
@@ -154,7 +191,13 @@ public sealed class ExternalProvider
         string? capabilities,
         EgressPolicy egressPolicy,
         Guid? actorUserId,
-        DateTimeOffset testedAtUtc)
+        DateTimeOffset testedAtUtc,
+        string? instanceId = null,
+        string? healthStatus = null,
+        string? searchOperationStatus = null,
+        string? acquireOperationStatus = null,
+        string? managementUrl = null,
+        string? documentationUrl = null)
     {
         LastTestedAtUtc = testedAtUtc;
         LastTestSucceeded = succeeded;
@@ -165,6 +208,21 @@ public sealed class ExternalProvider
             CachedProtocolVersion = protocolVersion;
             CachedCapabilities = capabilities;
             CachedEgressPolicy = egressPolicy;
+            CachedHealthStatus = healthStatus;
+            CachedSearchOperationStatus = searchOperationStatus;
+            CachedAcquireOperationStatus = acquireOperationStatus;
+            CachedManagementUrl = managementUrl;
+            CachedDocumentationUrl = documentationUrl;
+
+            // A previously-observed instance id that changes to a different
+            // (non-empty) one is exactly the container-replacement signal
+            // protocol v2 §20 asks for. A provider that has never declared
+            // one, or declares the same one again, is not a replacement.
+            InstanceReplacedSincePreviousTest =
+                !string.IsNullOrWhiteSpace(CachedInstanceId) &&
+                !string.IsNullOrWhiteSpace(instanceId) &&
+                !string.Equals(CachedInstanceId, instanceId, StringComparison.Ordinal);
+            CachedInstanceId = instanceId ?? CachedInstanceId;
         }
 
         Touch(actorUserId, testedAtUtc);

@@ -14,7 +14,7 @@ public interface IExternalProviderClient
     Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken);
 
-    Task<bool> GetHealthAsync(
+    Task<ExternalProviderHealth> GetHealthAsync(
         string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
@@ -28,18 +28,102 @@ public interface IExternalProviderClient
     /// failure. Cancelling <paramref name="cancellationToken"/> best-effort
     /// cancels the remote job too.
     /// </summary>
+    /// <remarks>
+    /// This is the protocol-version-1 call shape, kept as a convenience for
+    /// existing callers. It does not use durable jobs, idempotency, or the
+    /// generalized outputs model from protocol version 2
+    /// (<c>docs/04-external-provider-http-protocol.md</c>) — those land with
+    /// the durable-job/background-poller work. A v2-negotiated provider is
+    /// still reachable through this method; the implementation just doesn't
+    /// yet exercise v2's richer job lifecycle.
+    /// </remarks>
     Task<ExternalProviderArtifact> AcquireAsync(
         string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Protocol v2 §8: submits <c>POST /acquire</c> and returns immediately
+    /// with the job's initial representation — no polling loop inside this
+    /// call. <paramref name="idempotencyKey"/> is sent as the
+    /// <c>Idempotency-Key</c> header; a retried submission with the same key
+    /// must resolve to the same logical job, never a duplicate.
+    /// </summary>
+    Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+        CancellationToken cancellationToken);
+
+    /// <summary>One <c>GET /acquire/{jobId}</c> poll tick — the caller decides cadence from <see cref="ExternalProviderJobStatus.PollAfterSeconds"/>.</summary>
+    Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken);
+
+    /// <summary><c>GET /acquire/{jobId}/outputs</c> — call once <c>state = completed</c>.</summary>
+    Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken);
+
+    /// <summary><c>GET /acquire/{jobId}/outputs/{outputId}</c> — not valid for a <c>uri</c>-kind output, which has no bytes to fetch.</summary>
+    Task<ExternalProviderArtifact> GetOutputAsync(
+        string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+        CancellationToken cancellationToken);
+
+    /// <summary><c>POST /acquire/{jobId}/cancel</c> — try to stop active work; best-effort.</summary>
+    Task CancelAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken);
+
+    /// <summary><c>DELETE /acquire/{jobId}</c> — release retained resources; best-effort.</summary>
+    Task DeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// <c>mediaTypes</c>/<c>operations</c>/<c>features</c> per protocol v2
+/// §4 — all open string lists; unrecognized values are simply carried
+/// through, never rejected.
+/// </summary>
+public sealed record ProviderCapabilities(
+    IReadOnlyList<string> MediaTypes,
+    IReadOnlyList<string> Operations,
+    IReadOnlyList<string> Features)
+{
+    public static readonly ProviderCapabilities Empty = new([], [], []);
 }
 
 public sealed record ExternalProviderManifest(
+    IReadOnlyList<string> ProtocolVersions,
     string ProtocolVersion,
+    string? InstanceId,
     string Id,
     string Name,
     string Version,
-    IReadOnlyList<string> Capabilities,
+    ProviderCapabilities Capabilities,
+    int? OutputRetentionSeconds,
+    string? ManagementUrl,
+    string? DocumentationUrl,
     string EgressPolicy);
+
+public enum ProviderHealthStatus
+{
+    Healthy,
+    Degraded,
+    Unhealthy
+}
+
+public enum ProviderOperationalStatus
+{
+    Available,
+    Degraded,
+    Unavailable
+}
+
+/// <summary>Protocol v2 §5's structured health body, with the search/acquire operations split.</summary>
+public sealed record ExternalProviderHealth(
+    ProviderHealthStatus Status, ProviderOperationalStatus Search, ProviderOperationalStatus Acquire)
+{
+    public static readonly ExternalProviderHealth Unreachable =
+        new(ProviderHealthStatus.Unhealthy, ProviderOperationalStatus.Unavailable, ProviderOperationalStatus.Unavailable);
+
+    /// <summary>True when the provider is not reporting itself fully unhealthy — the old v1 binary signal.</summary>
+    public bool IsHealthy => Status != ProviderHealthStatus.Unhealthy;
+}
 
 public sealed record ExternalProviderSearchRequest(
     Guid RequestId,

@@ -118,7 +118,18 @@ public sealed class ExternalProviderAutomaticAcquisitionEndpointTests
         Assert.IsNotNull(attempts);
         var attempt = attempts.Single();
         Assert.AreEqual("identifier-match-external", attempt.ProviderId);
-        Assert.AreEqual("Acquired", attempt.Outcome, "A single ISBN-corroborated candidate must be acquired automatically, not left for review.");
+        // Protocol v2: a single ISBN-corroborated candidate is still
+        // acquired automatically, not left for review -- but "automatic"
+        // now means "a durable job was submitted", not "bytes landed
+        // synchronously". AcquisitionJobPollingService drives it the rest
+        // of the way below.
+        Assert.AreEqual("Submitted", attempt.Outcome, "A single ISBN-corroborated candidate must be acquired automatically, not left for review.");
+
+        await using (var pollScope = factory.Services.CreateAsyncScope())
+        {
+            var polling = pollScope.ServiceProvider.GetRequiredService<AcquisitionJobPollingService>();
+            Assert.AreEqual(1, await polling.ProcessDueAsync(CancellationToken.None));
+        }
 
         await using var verificationScope = factory.Services.CreateAsyncScope();
         var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -327,11 +338,14 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
 {
     public Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
-        Task.FromResult(new ExternalProviderManifest("1", "identifier-match-external", "Identifier Match External", "1.0.0", ["ebook"], "NORMAL"));
+        Task.FromResult(new ExternalProviderManifest(
+            ["2"], "2", null, "identifier-match-external", "Identifier Match External", "1.0.0",
+            new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null, "NORMAL"));
 
-    public Task<bool> GetHealthAsync(
+    public Task<ExternalProviderHealth> GetHealthAsync(
         string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
-        Task.FromResult(true);
+        Task.FromResult(new ExternalProviderHealth(
+            ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available));
 
     public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
         string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
@@ -349,6 +363,41 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
         Task.FromResult(new ExternalProviderArtifact(
             new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
             "the-hobbit.epub"));
+
+    public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
+            "fake-job-1", ProviderAcquisitionJobLifecycleState.Completed, phase: null, pollAfterSeconds: 0));
+
+    public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        Task.FromResult(new ExternalProviderJobStatus(
+            jobId, ProviderAcquisitionJobLifecycleState.Completed, Phase: null, Interaction: null, Progress: null,
+            Error: null, PollAfterSeconds: null));
+
+    public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ExternalProviderOutput>>(
+        [
+            new ExternalProviderOutput(
+                "primary", ProviderOutputKind.File, "primary", "the-hobbit.epub", "application/epub+zip",
+                null, null, null, null, null)
+        ]);
+
+    public Task<ExternalProviderArtifact> GetOutputAsync(
+        string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new ExternalProviderArtifact(
+            new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()), "the-hobbit.epub"));
+
+    public Task CancelAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    public Task DeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 }
 
 /// <summary>
@@ -360,11 +409,14 @@ file sealed class WrongTitleExternalProviderClient : IExternalProviderClient
 {
     public Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
-        Task.FromResult(new ExternalProviderManifest("1", "scheduled-external", "Scheduled External", "1.0.0", ["ebook"], "NORMAL"));
+        Task.FromResult(new ExternalProviderManifest(
+            ["2"], "2", null, "scheduled-external", "Scheduled External", "1.0.0",
+            new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null, "NORMAL"));
 
-    public Task<bool> GetHealthAsync(
+    public Task<ExternalProviderHealth> GetHealthAsync(
         string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
-        Task.FromResult(true);
+        Task.FromResult(new ExternalProviderHealth(
+            ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available));
 
     public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
         string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
@@ -382,6 +434,32 @@ file sealed class WrongTitleExternalProviderClient : IExternalProviderClient
         Task.FromResult(new ExternalProviderArtifact(
             new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
             "wrong-title.epub"));
+
+    public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ExternalProviderArtifact> GetOutputAsync(
+        string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task CancelAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task DeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>
@@ -393,11 +471,14 @@ file sealed class FailingFetchExternalProviderClient : IExternalProviderClient
 {
     public Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
-        Task.FromResult(new ExternalProviderManifest("1", "failing-fetch-external", "Failing Fetch External", "1.0.0", ["ebook"], "NORMAL"));
+        Task.FromResult(new ExternalProviderManifest(
+            ["2"], "2", null, "failing-fetch-external", "Failing Fetch External", "1.0.0",
+            new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null, "NORMAL"));
 
-    public Task<bool> GetHealthAsync(
+    public Task<ExternalProviderHealth> GetHealthAsync(
         string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
-        Task.FromResult(true);
+        Task.FromResult(new ExternalProviderHealth(
+            ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available));
 
     public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
         string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
@@ -413,4 +494,30 @@ file sealed class FailingFetchExternalProviderClient : IExternalProviderClient
         string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
         CancellationToken cancellationToken) =>
         throw new HttpRequestException("Simulated upstream failure while fetching the artifact.");
+
+    public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+        CancellationToken cancellationToken) =>
+        throw new HttpRequestException("Simulated upstream failure while starting the acquisition.");
+
+    public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ExternalProviderArtifact> GetOutputAsync(
+        string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task CancelAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task DeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }

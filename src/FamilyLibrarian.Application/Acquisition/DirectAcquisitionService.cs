@@ -1,9 +1,11 @@
+using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 
 namespace FamilyLibrarian.Application.Acquisition;
@@ -28,11 +30,13 @@ public sealed class DirectAcquisitionService(
     IEnumerable<IDirectAcquisitionProvider> providers,
     IExternalProviderStore externalProviders,
     IExternalProviderClient externalProviderClient,
+    IProviderAcquisitionJobStore providerAcquisitionJobs,
     ExternalCandidateAvailabilityChecker externalCandidateChecker,
     PrivateEgressRouteResolver routeResolver,
     ICredentialProtector protector,
     IWorkLookup workLookup,
-    AcquisitionStagingService staging)
+    AcquisitionStagingService staging,
+    IClock clock)
 {
     /// <param name="confirmLowConfidenceMatch">
     /// Required once an external provider's result is only
@@ -166,23 +170,53 @@ public sealed class DirectAcquisitionService(
                 ExternalProviderSecretPurposes.ApiKey, externalProvider.ProtectedApiKey!, externalProvider.ApiKeyFormatVersion)
             : null;
 
-        ExternalProviderArtifact artifact;
+        // Protocol v2 (docs/04-external-provider-http-protocol.md §8): submit
+        // and return immediately with a durable job, rather than blocking
+        // this request on however long the provider's acquisition actually
+        // takes. AcquisitionJobPollingService drives the job to completion
+        // and stages it once the provider reports "completed".
+        var idempotencyKey = Guid.NewGuid().ToString("N");
+        var acquireRequest = new ExternalAcquireRequest(
+            Guid.NewGuid(), externalOption.ProviderResultId, CandidateRevision: null, AcquireToken: null, format.MediaType);
+
+        ExternalProviderAcquireSubmission submission;
         try
         {
-            artifact = await externalProviderClient.AcquireAsync(
-                externalProvider.BaseUrl, apiKey, externalOption.ProviderResultId, format.MediaType, resolution.Route!,
-                cancellationToken);
+            submission = await externalProviderClient.SubmitAcquireAsync(
+                externalProvider.BaseUrl, apiKey, acquireRequest, idempotencyKey, resolution.Route!, cancellationToken);
         }
         catch (Exception exception) when (exception is HttpRequestException or TimeoutException or TaskCanceledException)
         {
-            return ManualImportResult.Invalid($"The file could not be fetched: {exception.Message}");
+            return ManualImportResult.Invalid($"The acquisition could not be started: {exception.Message}");
         }
 
-        await using var artifactContent = artifact.Content;
-        return await staging.StageAsync(
-            request, format, artifactContent, artifact.Filename, providerId,
-            AuditActions.ExternalProviderAcquisitionStaged,
-            candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken,
-            egressPolicy: externalProvider.EffectiveEgressPolicy);
+        if (submission.Outcome == ProviderAcquireOutcome.CandidateChanged)
+        {
+            return ManualImportResult.Invalid(
+                "That candidate has changed upstream since it was found. Search again for a fresh result.");
+        }
+
+        var now = clock.UtcNow;
+        var job = new ProviderAcquisitionJob(
+            request.Id,
+            format.Id,
+            externalProvider.Id,
+            externalProvider.ProviderId,
+            externalProvider.CachedInstanceId,
+            idempotencyKey,
+            externalOption.ProviderResultId,
+            candidateRevision: null,
+            acquireToken: null,
+            now);
+        job.RecordSubmission(
+            submission.JobId!,
+            submission.State!.Value,
+            now.AddSeconds(submission.PollAfterSeconds ?? 2),
+            now);
+
+        providerAcquisitionJobs.Add(job);
+        await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
+
+        return ManualImportResult.AcquisitionInProgress(job.Id);
     }
 }

@@ -3,6 +3,7 @@ using System;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260917134950_AddExternalProviderV2Fields")]
+    partial class AddExternalProviderV2Fields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -464,243 +467,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasIndex("WorkId");
 
                     b.ToTable("media_assets", "acquisition");
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("AcquireToken")
-                        .HasColumnType("text")
-                        .HasColumnName("acquire_token");
-
-                    b.Property<string>("CandidateReference")
-                        .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("candidate_reference");
-
-                    b.Property<string>("CandidateRevision")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("candidate_revision");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<string>("ErrorCode")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("error_code");
-
-                    b.Property<string>("ErrorDetailsJson")
-                        .HasColumnType("jsonb")
-                        .HasColumnName("error_details_json");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)")
-                        .HasColumnName("error_message");
-
-                    b.Property<int?>("ErrorRetryAfterSeconds")
-                        .HasColumnType("integer")
-                        .HasColumnName("error_retry_after_seconds");
-
-                    b.Property<bool?>("ErrorRetryable")
-                        .HasColumnType("boolean")
-                        .HasColumnName("error_retryable");
-
-                    b.Property<string>("ExtensionsJson")
-                        .HasColumnType("jsonb")
-                        .HasColumnName("extensions_json");
-
-                    b.Property<Guid>("ExternalProviderId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("external_provider_id");
-
-                    b.Property<string>("IdempotencyKey")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
-                        .HasColumnName("idempotency_key");
-
-                    b.Property<string>("InteractionActionUrl")
-                        .HasMaxLength(2048)
-                        .HasColumnType("character varying(2048)")
-                        .HasColumnName("interaction_action_url");
-
-                    b.Property<DateTimeOffset?>("InteractionExpiresAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("interaction_expires_at_utc");
-
-                    b.Property<string>("InteractionMessage")
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)")
-                        .HasColumnName("interaction_message");
-
-                    b.Property<bool?>("InteractionResumeSupported")
-                        .HasColumnType("boolean")
-                        .HasColumnName("interaction_resume_supported");
-
-                    b.Property<string>("InteractionType")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("interaction_type");
-
-                    b.Property<string>("LifecycleState")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("lifecycle_state");
-
-                    b.Property<DateTimeOffset?>("NextPollAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("next_poll_at_utc");
-
-                    b.Property<string>("Phase")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("phase");
-
-                    b.Property<long?>("ProgressBytesCompleted")
-                        .HasColumnType("bigint")
-                        .HasColumnName("progress_bytes_completed");
-
-                    b.Property<long?>("ProgressBytesTotal")
-                        .HasColumnType("bigint")
-                        .HasColumnName("progress_bytes_total");
-
-                    b.Property<string>("ProgressMessage")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("progress_message");
-
-                    b.Property<double?>("ProgressPercent")
-                        .HasColumnType("double precision")
-                        .HasColumnName("progress_percent");
-
-                    b.Property<string>("ProviderId")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("provider_id");
-
-                    b.Property<string>("ProviderInstanceId")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
-                        .HasColumnName("provider_instance_id");
-
-                    b.Property<string>("ProviderJobId")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("provider_job_id");
-
-                    b.Property<Guid>("RequestFormatId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("request_format_id");
-
-                    b.Property<Guid>("RequestId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("request_id");
-
-                    b.Property<DateTimeOffset?>("RetentionExpiresAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("retention_expires_at_utc");
-
-                    b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at_utc");
-
-                    b.Property<uint>("Version")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("NextPollAtUtc");
-
-                    b.HasIndex("RequestId");
-
-                    b.HasIndex("ExternalProviderId", "IdempotencyKey")
-                        .IsUnique();
-
-                    b.HasIndex("RequestFormatId", "LifecycleState");
-
-                    b.ToTable("provider_acquisition_jobs", "acquisition");
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJobOutput", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("ChecksumsJson")
-                        .HasColumnType("jsonb")
-                        .HasColumnName("checksums_json");
-
-                    b.Property<string>("ContentType")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
-                        .HasColumnName("content_type");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<string>("Filename")
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)")
-                        .HasColumnName("filename");
-
-                    b.Property<string>("Kind")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("kind");
-
-                    b.Property<string>("OutputId")
-                        .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("output_id");
-
-                    b.Property<Guid>("ProviderAcquisitionJobId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("provider_acquisition_job_id");
-
-                    b.Property<DateTimeOffset?>("RetentionExpiresAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("retention_expires_at_utc");
-
-                    b.Property<string>("Role")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("role");
-
-                    b.Property<long?>("SizeBytes")
-                        .HasColumnType("bigint")
-                        .HasColumnName("size_bytes");
-
-                    b.Property<string>("Uri")
-                        .HasColumnType("text")
-                        .HasColumnName("uri");
-
-                    b.Property<string>("UriScheme")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("uri_scheme");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ProviderAcquisitionJobId");
-
-                    b.ToTable("provider_acquisition_job_outputs", "acquisition");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAttempt", b =>
@@ -3667,38 +3433,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", b =>
-                {
-                    b.HasOne("FamilyLibrarian.Domain.Providers.ExternalProvider", null)
-                        .WithMany()
-                        .HasForeignKey("ExternalProviderId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
-                        .WithMany()
-                        .HasForeignKey("RequestFormatId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
-                        .WithMany()
-                        .HasForeignKey("RequestId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJobOutput", b =>
-                {
-                    b.HasOne("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", "ProviderAcquisitionJob")
-                        .WithMany("Outputs")
-                        .HasForeignKey("ProviderAcquisitionJobId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("ProviderAcquisitionJob");
-                });
-
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAttempt", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
@@ -4080,11 +3814,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.AcquisitionJob", b =>
                 {
                     b.Navigation("Candidates");
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", b =>
-                {
-                    b.Navigation("Outputs");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.Author", b =>

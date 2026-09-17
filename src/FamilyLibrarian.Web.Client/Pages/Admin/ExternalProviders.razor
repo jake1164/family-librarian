@@ -522,11 +522,60 @@
                         <MudStack Row="true" Spacing="1" Class="mt-1" Wrap="Wrap.Wrap">
                             <MudChip T="string" Size="Size.Small">Protocol v@(provider.CachedProtocolVersion)</MudChip>
                             <MudChip T="string" Size="Size.Small">Egress: @provider.CachedEgressPolicy</MudChip>
+                            @if (provider.CachedHealthStatus is not null)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedHealthStatus)">
+                                    Health: @provider.CachedHealthStatus
+                                </MudChip>
+                            }
+                            @if (provider.CachedSearchOperationStatus is not null)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedSearchOperationStatus)">
+                                    Search: @provider.CachedSearchOperationStatus
+                                </MudChip>
+                            }
+                            @if (provider.CachedAcquireOperationStatus is not null)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedAcquireOperationStatus)">
+                                    Acquire: @provider.CachedAcquireOperationStatus
+                                </MudChip>
+                            }
                             @foreach (var capability in (provider.CachedCapabilities ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries))
                             {
                                 <MudChip T="string" Size="Size.Small" Color="Color.Info">@capability</MudChip>
                             }
                         </MudStack>
+                        @if (!string.IsNullOrWhiteSpace(provider.CachedInstanceId))
+                        {
+                            <MudText Typo="Typo.caption" Class="mt-1">
+                                Instance: @provider.CachedInstanceId
+                            </MudText>
+                        }
+                        @if (provider.InstanceReplacedSincePreviousTest)
+                        {
+                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-2" Dense="true">
+                                This provider reported a different instance id than its previous test — the
+                                underlying deployment was likely replaced. Any acquisition job already tracked
+                                against the old instance may no longer resolve.
+                            </MudAlert>
+                        }
+                        @if (IsSafeExternalUrl(provider.CachedManagementUrl) || IsSafeExternalUrl(provider.CachedDocumentationUrl))
+                        {
+                            <MudStack Row="true" Spacing="3" Class="mt-1" Wrap="Wrap.Wrap">
+                                @if (IsSafeExternalUrl(provider.CachedManagementUrl))
+                                {
+                                    <MudLink Href="@provider.CachedManagementUrl" Target="_blank" rel="noopener noreferrer">
+                                        Configure provider
+                                    </MudLink>
+                                }
+                                @if (IsSafeExternalUrl(provider.CachedDocumentationUrl))
+                                {
+                                    <MudLink Href="@provider.CachedDocumentationUrl" Target="_blank" rel="noopener noreferrer">
+                                        Documentation
+                                    </MudLink>
+                                }
+                            </MudStack>
+                        }
                     }
                 }
             </MudPaper>
@@ -595,6 +644,18 @@
     private static bool IsSafeExternalUrl(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Shared coloring for the health/operations chips (protocol v2 §5):
+    /// healthy/available -> success, degraded -> warning, unhealthy/unavailable -> error.
+    /// </summary>
+    private static Color HealthColor(string? status) => status switch
+    {
+        "Healthy" or "Available" => Color.Success,
+        "Degraded" => Color.Warning,
+        "Unhealthy" or "Unavailable" => Color.Error,
+        _ => Color.Default
+    };
 
     private async Task LoadBuiltInSourcesAsync()
     {

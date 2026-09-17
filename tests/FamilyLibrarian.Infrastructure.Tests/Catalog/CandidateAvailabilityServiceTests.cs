@@ -221,7 +221,7 @@ public sealed class CandidateAvailabilityServiceTests
             string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<bool> GetHealthAsync(string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+        public Task<ExternalProviderHealth> GetHealthAsync(string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
@@ -232,6 +232,32 @@ public sealed class CandidateAvailabilityServiceTests
         public Task<ExternalProviderArtifact> AcquireAsync(
             string baseUrl, string? apiKey, string providerReference, RequestMediaType mediaType, EgressRoute route,
             CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExternalProviderArtifact> GetOutputAsync(
+            string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task CancelAcquireAsync(
+            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task DeleteAcquireAsync(
+            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 

@@ -20,13 +20,31 @@ public sealed record RequestFormatProgressView(string Code, string Description);
 /// </summary>
 public static class RequestFormatProgress
 {
+    /// <param name="providerJobState">
+    /// The active <see cref="ProviderAcquisitionJob"/>'s lifecycle
+    /// state, when one exists for this format and <paramref name="assetState"/>
+    /// is still <c>null</c> -- no file exists yet, so none of the
+    /// asset/security/publishing states below apply. Checked before
+    /// <paramref name="assetState"/>'s own switch so a job that is
+    /// <c>waiting</c>/<c>user-interaction</c> or simply still running shows
+    /// real progress instead of the bare "Requested" state.
+    /// </param>
     public static RequestFormatProgressView? Describe(
         MediaAssetStorageState? assetState,
         SecurityEvaluationStatus? securityStatus,
         LibraryImportStatus? libraryImportStatus,
-        AudiobookshelfDeliveryStatus? deliveryStatus) => assetState switch
+        AudiobookshelfDeliveryStatus? deliveryStatus,
+        ProviderAcquisitionJobLifecycleState? providerJobState = null,
+        string? providerJobPhase = null)
     {
-        null => null,
+        if (assetState is null && providerJobState is not null)
+        {
+            return DescribeProviderJob(providerJobState.Value, providerJobPhase);
+        }
+
+        return assetState switch
+        {
+            null => null,
         MediaAssetStorageState.Quarantine => Stage(
             "AwaitingSecurityScan",
             "File received — awaiting security scan."),
@@ -44,7 +62,26 @@ public static class RequestFormatProgress
         MediaAssetStorageState.Destroyed => Stage(
             "FileRemoved",
             "The submitted file was removed before delivery."),
-        _ => null
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// A durable job is <c>waiting</c> whenever it needs something external
+    /// to proceed (protocol v2 §8) -- most concretely user interaction, but
+    /// the state alone is enough to warrant the "action needed" treatment
+    /// regardless of the exact open-string phase. Any other non-terminal
+    /// state (<c>queued</c>/<c>running</c>) is ordinary in-progress work.
+    /// </summary>
+    private static RequestFormatProgressView DescribeProviderJob(
+        ProviderAcquisitionJobLifecycleState state, string? phase) => state switch
+    {
+        ProviderAcquisitionJobLifecycleState.Waiting => Stage(
+            "AwaitingProviderAction",
+            "Action is needed to continue fetching this from the provider."),
+        _ => Stage(
+            "AcquisitionInProgress",
+            "Fetching from the external provider.")
     };
 
     private static RequestFormatProgressView DescribeProcessing(SecurityEvaluationStatus? securityStatus) =>

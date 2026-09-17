@@ -95,7 +95,10 @@ public sealed class DirectAcquisitionServiceTests
         var confirmed = await context.Service.AcquireAsync(
             request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None, confirmLowConfidenceMatch: true);
 
-        Assert.AreEqual(ManualImportOutcome.Success, confirmed.Outcome);
+        // Protocol v2: the external-provider path now submits a durable job
+        // rather than blocking on the fetch — see DirectAcquisitionService.
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, confirmed.Outcome);
+        Assert.AreEqual(1, context.ProviderAcquisitionJobs.Jobs.Count);
     }
 
     [TestMethod]
@@ -115,7 +118,9 @@ public sealed class DirectAcquisitionServiceTests
         var result = await context.Service.AcquireAsync(
             request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
 
-        Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, result.Outcome);
+        Assert.AreEqual(1, context.ProviderAcquisitionJobs.Jobs.Count);
+        Assert.AreEqual("ref-1", context.ProviderAcquisitionJobs.Jobs[0].CandidateReference);
     }
 
     [TestMethod]
@@ -165,6 +170,7 @@ public sealed class DirectAcquisitionServiceTests
             WorkLookup = new FakeWorkLookup();
             ExternalProviderStore = new FakeExternalProviderStore();
             ExternalProviderClient = new FakeExternalProviderClient();
+            ProviderAcquisitionJobs = new FakeProviderAcquisitionJobStore();
 
             var staging = new AcquisitionStagingService(
                 Repository,
@@ -194,12 +200,16 @@ public sealed class DirectAcquisitionServiceTests
                 [Provider],
                 ExternalProviderStore,
                 ExternalProviderClient,
+                ProviderAcquisitionJobs,
                 checker,
                 new PrivateEgressRouteResolver(new AlwaysDisabledGatewayCache()),
                 new NoOpCredentialProtector(),
                 WorkLookup,
-                staging);
+                staging,
+                new FixedClock());
         }
+
+        public FakeProviderAcquisitionJobStore ProviderAcquisitionJobs { get; }
 
         public FakeAcquisitionRepository Repository { get; }
 
@@ -349,6 +359,28 @@ public sealed class DirectAcquisitionServiceTests
         public Task<bool> CanAcceptNewArtifactAsync(CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
+    private sealed class FakeProviderAcquisitionJobStore : IProviderAcquisitionJobStore
+    {
+        public List<ProviderAcquisitionJob> Jobs { get; } = [];
+
+        public Task<ProviderAcquisitionJob?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(Jobs.FirstOrDefault(job => job.Id == id));
+
+        public Task<ProviderAcquisitionJob?> FindByIdempotencyKeyAsync(
+            Guid externalProviderId, string idempotencyKey, CancellationToken cancellationToken) =>
+            Task.FromResult(Jobs.FirstOrDefault(
+                job => job.ExternalProviderId == externalProviderId && job.IdempotencyKey == idempotencyKey));
+
+        public Task<IReadOnlyList<ProviderAcquisitionJob>> ListDueForPollAsync(
+            DateTimeOffset asOfUtc, int maximumCount, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>(
+                Jobs.Where(job => job.NextPollAtUtc is not null && job.NextPollAtUtc <= asOfUtc).ToArray());
+
+        public void Add(ProviderAcquisitionJob job) => Jobs.Add(job);
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
     private sealed class RecordingAuditWriter : IAuditWriter
     {
         public List<(string Action, string SubjectType, string? SubjectId, object? Detail)> Entries { get; } = [];
@@ -455,7 +487,7 @@ public sealed class DirectAcquisitionServiceTests
             string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<bool> GetHealthAsync(
+        public Task<ExternalProviderHealth> GetHealthAsync(
             string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -468,6 +500,33 @@ public sealed class DirectAcquisitionServiceTests
             string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
             CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderArtifact(new MemoryStream(Encoding.UTF8.GetBytes("epub bytes")), "book.epub"));
+
+        public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
+                "fake-job-1", ProviderAcquisitionJobLifecycleState.Queued, phase: null, pollAfterSeconds: null));
+
+        public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExternalProviderArtifact> GetOutputAsync(
+            string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task CancelAcquireAsync(
+            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task DeleteAcquireAsync(
+            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class AlwaysDisabledGatewayCache : IPrivateEgressGatewayRuntimeCache

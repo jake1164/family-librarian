@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -12,6 +13,11 @@ namespace FamilyLibrarian.SampleProvider;
 /// </summary>
 public static class SampleProviderHost
 {
+    private static readonly string[] SupportedProtocolVersions = ["1", "2"];
+    private static readonly string[] MediaTypes = ["ebook"];
+    private static readonly string[] Operations = ["search", "acquire"];
+    private static readonly string[] Features = ["checksums", "waiting-interaction"];
+
     public static WebApplication Build(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
@@ -20,11 +26,21 @@ public static class SampleProviderHost
         var apiKey = Environment.GetEnvironmentVariable("SAMPLE_PROVIDER_API_KEY");
         var catalog = new[]
         {
-            new SampleCandidate("pride-and-prejudice", "Pride and Prejudice", "Jane Austen", "epub"),
-            new SampleCandidate("frankenstein", "Frankenstein", "Mary Wollstonecraft Shelley", "epub")
+            new SampleCandidate("pride-and-prejudice", "Pride and Prejudice", "Jane Austen", "epub", RequiresInteraction: false),
+            new SampleCandidate("frankenstein", "Frankenstein", "Mary Wollstonecraft Shelley", "epub", RequiresInteraction: false),
+            // Exercises protocol v2's waiting/user-interaction state end to
+            // end: a real client sees state=waiting, phase=user-interaction
+            // for a few seconds before the job resumes on its own
+            // (resumeSupported=true) and completes — standing in for a
+            // browser-gated acquisition like Anna's Archive's.
+            new SampleCandidate("the-time-machine", "The Time Machine", "H. G. Wells", "epub", RequiresInteraction: true)
         };
         var jobs = new ConcurrentDictionary<string, SampleJob>();
-        var manifestCapabilities = new[] { "ebook", "search", "acquire" };
+        var idempotencyKeys = new ConcurrentDictionary<string, string>();
+        // Generated once per process start, held for the process's lifetime —
+        // stands in for "persist to disk/env across restarts" (protocol v2
+        // §4), which a short-lived test process has no meaningful analogue for.
+        var instanceId = Guid.NewGuid().ToString("N");
 
         app.Use(async (context, next) =>
         {
@@ -41,17 +57,31 @@ public static class SampleProviderHost
             await next();
         });
 
+        // Speaks both protocol versions so the same process can back both the
+        // legacy conformance tests and new protocol-v2 negotiation tests —
+        // see docs/04-external-provider-http-protocol.md.
         app.MapGet("/manifest", () => Results.Ok(new
         {
-            protocolVersion = "1",
+            protocolVersions = SupportedProtocolVersions,
+            protocolVersion = "2",
+            instanceId,
             id = "sample-provider",
             name = "Family Librarian Sample Provider",
             version = "1.0.0",
-            capabilities = manifestCapabilities,
+            capabilities = new
+            {
+                mediaTypes = MediaTypes,
+                operations = Operations,
+                features = Features
+            },
             egressPolicy = "NORMAL"
         }));
 
-        app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+        app.MapGet("/health", () => Results.Ok(new
+        {
+            status = "healthy",
+            operations = new { search = "available", acquire = "available" }
+        }));
 
         app.MapPost("/search", async (HttpRequest request) =>
         {
@@ -84,13 +114,29 @@ public static class SampleProviderHost
                 return Results.NotFound(new { message = "Unknown candidateReference." });
             }
 
-            var jobId = Guid.NewGuid().ToString("N");
-            // Ready after a short, genuine delay — not synchronous — so a real
-            // client exercises real polling, not a stub that completes on the
-            // first check.
-            jobs[jobId] = new SampleJob(candidate, DateTimeOffset.UtcNow.AddSeconds(3));
+            // Idempotency-Key replay (protocol v2 §8): a resubmission with a
+            // key already seen resolves to the same job, never a duplicate.
+            var idempotencyKey = request.Headers["Idempotency-Key"].ToString();
+            if (!string.IsNullOrEmpty(idempotencyKey) &&
+                idempotencyKeys.TryGetValue(idempotencyKey, out var existingJobId) &&
+                jobs.TryGetValue(existingJobId, out var existingJob))
+            {
+                return Results.Json(
+                    new { jobId = existingJobId, status = "InProgress", state = existingJob.State(DateTimeOffset.UtcNow) },
+                    statusCode: StatusCodes.Status202Accepted);
+            }
 
-            return Results.Json(new { jobId, status = "InProgress" }, statusCode: StatusCodes.Status202Accepted);
+            var jobId = Guid.NewGuid().ToString("N");
+            var job = new SampleJob(candidate, DateTimeOffset.UtcNow);
+            jobs[jobId] = job;
+            if (!string.IsNullOrEmpty(idempotencyKey))
+            {
+                idempotencyKeys[idempotencyKey] = jobId;
+            }
+
+            return Results.Json(
+                new { jobId, status = "InProgress", state = job.State(DateTimeOffset.UtcNow), pollAfterSeconds = 1 },
+                statusCode: StatusCodes.Status202Accepted);
         });
 
         app.MapGet("/acquire/{jobId}", (string jobId) =>
@@ -100,19 +146,82 @@ public static class SampleProviderHost
                 return Results.NotFound();
             }
 
-            var status = DateTimeOffset.UtcNow >= job.ReadyAtUtc ? "Completed" : "InProgress";
-            return Results.Ok(new { jobId, status });
+            var now = DateTimeOffset.UtcNow;
+            var state = job.State(now);
+            var legacyStatus = state switch
+            {
+                "completed" => "Completed",
+                "failed" => "Failed",
+                _ => "InProgress"
+            };
+
+            object? interaction = state == "waiting"
+                ? new
+                {
+                    type = "browser",
+                    message = "Simulated browser verification — resumes automatically in this sample.",
+                    expiresAt = (DateTimeOffset?)null,
+                    resumeSupported = true,
+                    actionUrl = $"http://sample-provider.invalid/interaction/{jobId}"
+                }
+                : null;
+
+            return Results.Ok(new
+            {
+                jobId,
+                status = legacyStatus,
+                state,
+                phase = job.Phase(now),
+                interaction,
+                pollAfterSeconds = state is "completed" or "failed" or "cancelled" ? (int?)null : 1
+            });
         });
 
-        app.MapGet("/acquire/{jobId}/artifact", (string jobId) =>
+        app.MapGet("/acquire/{jobId}/outputs", (string jobId) =>
         {
-            if (!jobs.TryGetValue(jobId, out var job) || DateTimeOffset.UtcNow < job.ReadyAtUtc)
+            if (!jobs.TryGetValue(jobId, out var job) || job.State(DateTimeOffset.UtcNow) != "completed")
             {
                 return Results.NotFound();
             }
 
-            var bytes = SampleEpub.Build(job.Candidate.Title, job.Candidate.Author);
-            return Results.File(bytes, "application/epub+zip", $"{job.Candidate.Reference}.epub");
+            return Results.Ok(new { outputs = job.BuildOutputs().Select(output => output.ToWire()) });
+        });
+
+        app.MapGet("/acquire/{jobId}/outputs/{outputId}", (string jobId, string outputId) =>
+        {
+            if (!jobs.TryGetValue(jobId, out var job) || job.State(DateTimeOffset.UtcNow) != "completed")
+            {
+                return Results.NotFound();
+            }
+
+            var output = job.BuildOutputs().FirstOrDefault(candidate => candidate.Id == outputId);
+            if (output is null)
+            {
+                return Results.NotFound();
+            }
+
+            return Results.File(output.Bytes, output.ContentType, output.Filename);
+        });
+
+        app.MapGet("/acquire/{jobId}/artifact", (string jobId) =>
+        {
+            if (!jobs.TryGetValue(jobId, out var job) || job.State(DateTimeOffset.UtcNow) != "completed")
+            {
+                return Results.NotFound();
+            }
+
+            var primary = job.BuildOutputs().First(output => output.Id == "primary");
+            return Results.File(primary.Bytes, primary.ContentType, primary.Filename);
+        });
+
+        app.MapPost("/acquire/{jobId}/cancel", (string jobId) =>
+        {
+            if (jobs.TryGetValue(jobId, out var job))
+            {
+                job.Cancelled = true;
+            }
+
+            return Results.NoContent();
         });
 
         app.MapDelete("/acquire/{jobId}", (string jobId) =>
@@ -125,9 +234,85 @@ public static class SampleProviderHost
     }
 }
 
-internal sealed record SampleCandidate(string Reference, string Title, string Author, string Format);
+internal sealed record SampleCandidate(string Reference, string Title, string Author, string Format, bool RequiresInteraction);
 
-internal sealed record SampleJob(SampleCandidate Candidate, DateTimeOffset ReadyAtUtc);
+/// <summary>
+/// In-memory job state. Not thread-contended in any meaningful way for a
+/// sample/conformance-test process — <see cref="Cancelled"/> is the only
+/// field mutated after construction.
+/// </summary>
+internal sealed class SampleJob(SampleCandidate candidate, DateTimeOffset createdAtUtc)
+{
+    public SampleCandidate Candidate { get; } = candidate;
+
+    public bool Cancelled { get; set; }
+
+    public string State(DateTimeOffset now)
+    {
+        if (Cancelled)
+        {
+            return "cancelled";
+        }
+
+        var elapsed = now - createdAtUtc;
+        if (Candidate.RequiresInteraction)
+        {
+            return elapsed switch
+            {
+                _ when elapsed < TimeSpan.FromSeconds(2) => "waiting",
+                _ when elapsed < TimeSpan.FromSeconds(4) => "running",
+                _ => "completed"
+            };
+        }
+
+        // Ready after a short, genuine delay -- not synchronous -- so a real
+        // client exercises real polling, not a stub that completes on the
+        // first check.
+        return elapsed < TimeSpan.FromSeconds(3) ? "running" : "completed";
+    }
+
+    public string? Phase(DateTimeOffset now) => State(now) switch
+    {
+        "waiting" => "user-interaction",
+        "running" => "downloading",
+        _ => null
+    };
+
+    public IReadOnlyList<SampleOutput> BuildOutputs()
+    {
+        var epubBytes = SampleEpub.Build(Candidate.Title, Candidate.Author);
+        var outputs = new List<SampleOutput>
+        {
+            new("primary", "ebook", $"{Candidate.Reference}.epub", "application/epub+zip", epubBytes)
+        };
+
+        // One candidate demonstrates a multi-output job (protocol v2 §8a) --
+        // an ebook plus a separate cover -- rather than every job assuming
+        // exactly one file.
+        if (Candidate.Reference == "pride-and-prejudice")
+        {
+            var coverBytes = Encoding.UTF8.GetBytes($"Cover placeholder for {Candidate.Title}.\n");
+            outputs.Add(new SampleOutput("cover", "cover", "cover.txt", "text/plain", coverBytes));
+        }
+
+        return outputs;
+    }
+}
+
+internal sealed record SampleOutput(string Id, string Role, string Filename, string ContentType, byte[] Bytes)
+{
+    public object ToWire() => new
+    {
+        id = Id,
+        kind = "file",
+        role = Role,
+        filename = Filename,
+        contentType = ContentType,
+        sizeBytes = (long)Bytes.Length,
+        checksums = new[] { new { algorithm = "sha256", value = Convert.ToHexString(SHA256.HashData(Bytes)).ToLowerInvariant() } },
+        retention = new { expiresAt = (DateTimeOffset?)null }
+    };
+}
 
 /// <summary>
 /// Builds a minimal, genuinely valid EPUB (a ZIP archive whose first entry is an

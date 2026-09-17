@@ -97,6 +97,23 @@ public sealed record ManualImportResult(
             null,
             "We found a likely match by title and author, not a verified identifier. " +
             "Confirm you want to fetch this copy, or try a different source instead.");
+
+    /// <summary>
+    /// A protocol-v2 external-provider acquisition was durably submitted and
+    /// is now tracked by <see cref="ProviderAcquisitionJobId"/> — no file
+    /// exists yet, and none of the usual staging/security-pipeline steps
+    /// have run. The background poller (<c>AcquisitionJobPollingService</c>)
+    /// drives the job to completion and stages it once the provider reports
+    /// <c>completed</c>.
+    /// </summary>
+    public static ManualImportResult AcquisitionInProgress(Guid providerAcquisitionJobId) =>
+        new(ManualImportOutcome.AcquisitionInProgress, null, null, null)
+        {
+            ProviderAcquisitionJobId = providerAcquisitionJobId
+        };
+
+    /// <summary>Set only for <see cref="ManualImportOutcome.AcquisitionInProgress"/> — see <see cref="AcquisitionInProgress"/>.</summary>
+    public Guid? ProviderAcquisitionJobId { get; init; }
 }
 
 public enum ManualImportOutcome
@@ -105,5 +122,6 @@ public enum ManualImportOutcome
     Invalid,
     DuplicateDetected,
     WaitingForSecurityScanner,
-    LowConfidenceMatchConfirmationRequired
+    LowConfidenceMatchConfirmationRequired,
+    AcquisitionInProgress
 }

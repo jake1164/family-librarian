@@ -117,6 +117,19 @@ public sealed class ExternalProviderRecheckService(
                                 break;
                             }
 
+                            if (acquireResult.Outcome == ManualImportOutcome.AcquisitionInProgress)
+                            {
+                                // Protocol v2: the provider accepted a durable
+                                // job rather than returning bytes immediately.
+                                // AcquisitionJobPollingService drives it to
+                                // completion -- this is progress, not a
+                                // failure, so it must not route to review.
+                                AddAttempt(request, format, provider, ProviderAttemptOutcome.Submitted,
+                                    "A high-confidence copy acquisition was submitted and is being tracked to completion.",
+                                    nextEligibleCheckAtUtc: null);
+                                break;
+                            }
+
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
                                 acquireResult.Error ?? "The automatic copy could not be acquired.", nextEligibleCheckAtUtc: null);
                             await MarkForReviewAsync(

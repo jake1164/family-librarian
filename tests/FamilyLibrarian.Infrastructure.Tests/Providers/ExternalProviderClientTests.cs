@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.SampleProvider;
@@ -49,20 +50,24 @@ public sealed class ExternalProviderClientTests
 
         var manifest = await client.GetManifestAsync(_baseUrl, apiKey: null, EgressRoute.Direct, CancellationToken.None);
 
-        Assert.AreEqual("1", manifest.ProtocolVersion);
+        CollectionAssert.Contains(manifest.ProtocolVersions.ToArray(), "2");
+        Assert.AreEqual("2", ProtocolVersionNegotiation.Negotiate(manifest.ProtocolVersions));
+        Assert.IsFalse(string.IsNullOrEmpty(manifest.InstanceId));
         Assert.AreEqual("sample-provider", manifest.Id);
-        CollectionAssert.Contains(manifest.Capabilities.ToArray(), "acquire");
+        CollectionAssert.Contains(manifest.Capabilities.Operations.ToArray(), "acquire");
         Assert.AreEqual("NORMAL", manifest.EgressPolicy);
     }
 
     [TestMethod]
-    public async Task HealthReportsTrue()
+    public async Task HealthReportsAvailableOperations()
     {
         var client = CreateClient();
 
-        var healthy = await client.GetHealthAsync(_baseUrl, apiKey: null, EgressRoute.Direct, CancellationToken.None);
+        var health = await client.GetHealthAsync(_baseUrl, apiKey: null, EgressRoute.Direct, CancellationToken.None);
 
-        Assert.IsTrue(healthy);
+        Assert.IsTrue(health.IsHealthy);
+        Assert.AreEqual(ProviderOperationalStatus.Available, health.Search);
+        Assert.AreEqual(ProviderOperationalStatus.Available, health.Acquire);
     }
 
     [TestMethod]
@@ -122,6 +127,116 @@ public sealed class ExternalProviderClientTests
 
         await Assert.ThrowsExactlyAsync<HttpRequestException>(() => client.AcquireAsync(
             _baseUrl, apiKey: null, "not-a-real-candidate", RequestMediaType.Ebook, EgressRoute.Direct, CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task SubmitAcquireWithTheSameIdempotencyKeyReturnsTheSameJob()
+    {
+        var client = CreateClient();
+        var request = new ExternalAcquireRequest(Guid.NewGuid(), "frankenstein", null, null, RequestMediaType.Ebook);
+        var idempotencyKey = Guid.NewGuid().ToString("N");
+
+        var first = await client.SubmitAcquireAsync(_baseUrl, null, request, idempotencyKey, EgressRoute.Direct, CancellationToken.None);
+        var second = await client.SubmitAcquireAsync(_baseUrl, null, request, idempotencyKey, EgressRoute.Direct, CancellationToken.None);
+
+        Assert.AreEqual(ProviderAcquireOutcome.Accepted, first.Outcome);
+        Assert.AreEqual(first.JobId, second.JobId);
+    }
+
+    [TestMethod]
+    public async Task AcquireJobReachesWaitingUserInteractionBeforeCompleting()
+    {
+        var client = CreateClient();
+        var request = new ExternalAcquireRequest(
+            Guid.NewGuid(), "the-time-machine", null, null, RequestMediaType.Ebook);
+
+        var submission = await client.SubmitAcquireAsync(
+            _baseUrl, null, request, Guid.NewGuid().ToString("N"), EgressRoute.Direct, CancellationToken.None);
+        Assert.AreEqual(ProviderAcquireOutcome.Accepted, submission.Outcome);
+
+        ExternalProviderJobStatus? sawWaiting = null;
+        ExternalProviderJobStatus status;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        do
+        {
+            status = await client.GetAcquireStatusAsync(
+                _baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+            if (status.State == ProviderAcquisitionJobLifecycleState.Waiting)
+            {
+                sawWaiting = status;
+            }
+
+            if (status.State is not (ProviderAcquisitionJobLifecycleState.Completed or ProviderAcquisitionJobLifecycleState.Failed))
+            {
+                await Task.Delay(200);
+            }
+        }
+        while (status.State is not (ProviderAcquisitionJobLifecycleState.Completed or ProviderAcquisitionJobLifecycleState.Failed)
+            && DateTimeOffset.UtcNow < deadline);
+
+        Assert.IsNotNull(sawWaiting, "The job never reported state=waiting.");
+        Assert.AreEqual("user-interaction", sawWaiting!.Phase);
+        Assert.IsNotNull(sawWaiting.Interaction);
+        Assert.AreEqual("browser", sawWaiting.Interaction!.Type);
+        Assert.AreEqual(true, sawWaiting.Interaction.ResumeSupported);
+        Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Completed, status.State);
+    }
+
+    [TestMethod]
+    public async Task CompletedJobExposesMultipleOutputsWithChecksums()
+    {
+        var client = CreateClient();
+        var request = new ExternalAcquireRequest(
+            Guid.NewGuid(), "pride-and-prejudice", null, null, RequestMediaType.Ebook);
+
+        var submission = await client.SubmitAcquireAsync(
+            _baseUrl, null, request, Guid.NewGuid().ToString("N"), EgressRoute.Direct, CancellationToken.None);
+
+        ExternalProviderJobStatus status;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        do
+        {
+            status = await client.GetAcquireStatusAsync(
+                _baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+            if (status.State != ProviderAcquisitionJobLifecycleState.Completed)
+            {
+                await Task.Delay(200);
+            }
+        }
+        while (status.State != ProviderAcquisitionJobLifecycleState.Completed && DateTimeOffset.UtcNow < deadline);
+
+        Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Completed, status.State);
+
+        var outputs = await client.ListOutputsAsync(_baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+        Assert.AreEqual(2, outputs.Count);
+
+        var primary = outputs.Single(output => output.OutputId == "primary");
+        Assert.AreEqual(ProviderOutputKind.File, primary.Kind);
+        Assert.IsFalse(string.IsNullOrEmpty(primary.ChecksumsJson));
+
+        var artifact = await client.GetOutputAsync(
+            _baseUrl, null, submission.JobId!, "primary", EgressRoute.Direct, CancellationToken.None);
+        await using var content = artifact.Content;
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer);
+        var bytes = buffer.ToArray();
+        Assert.AreEqual(0x50, bytes[0]);
+        Assert.AreEqual(0x4B, bytes[1]);
+    }
+
+    [TestMethod]
+    public async Task CancelThenDeleteAreBothAcceptedForAnInFlightJob()
+    {
+        var client = CreateClient();
+        var request = new ExternalAcquireRequest(Guid.NewGuid(), "frankenstein", null, null, RequestMediaType.Ebook);
+        var submission = await client.SubmitAcquireAsync(
+            _baseUrl, null, request, Guid.NewGuid().ToString("N"), EgressRoute.Direct, CancellationToken.None);
+
+        await client.CancelAcquireAsync(_baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+        var status = await client.GetAcquireStatusAsync(_baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+        Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Cancelled, status.State);
+
+        await client.DeleteAcquireAsync(_baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
     }
 
     [TestMethod]

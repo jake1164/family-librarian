@@ -88,6 +88,14 @@ public enum ProviderAttemptOutcome
     NoMatch,
     CandidatesFound,
     Acquired,
+
+    /// <summary>
+    /// A protocol-v2 external-provider job was durably submitted and is
+    /// being tracked by the background poller — not yet acquired, not
+    /// failed. Distinct from <see cref="Acquired"/> because no file exists
+    /// yet.
+    /// </summary>
+    Submitted,
     Failed,
     Blocked
 }

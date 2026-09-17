@@ -225,6 +225,7 @@ public static class DependencyInjection
             .ValidateOnStart();
         services.AddScoped<IAssetStagingStore, FileSystemAssetStagingStore>();
         services.AddScoped<IAcquisitionRepository, AcquisitionRepository>();
+        services.AddScoped<IProviderAcquisitionJobStore, ProviderAcquisitionJobStore>();
         services.AddScoped<IProviderAttemptRepository, ProviderAttemptRepository>();
 
         // Mirrors InvitationPolicy above: a plain settings object, since the
@@ -247,6 +248,7 @@ public static class DependencyInjection
         services.AddScoped<DirectAcquisitionSecurityService>();
         services.AddScoped<AutomaticRequestFulfillmentService>();
         services.AddScoped<ExternalProviderRecheckService>();
+        services.AddScoped<AcquisitionJobPollingService>();
 
         services.AddOptions<ClamAvScannerOptions>()
             .Bind(configuration.GetSection(ClamAvScannerOptions.SectionName))
