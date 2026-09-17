@@ -9,8 +9,12 @@ public sealed class WorkLookup(AppDbContext database) : IWorkLookup
 {
     public async Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken)
     {
+        // Three independent collection navigations on one root -- split into
+        // separate queries rather than one Cartesian-join SingleQuery (EF
+        // Core warns on exactly this shape).
         var work = await database.Works
             .AsNoTracking()
+            .AsSplitQuery()
             .Include(work => work.Authors).ThenInclude(workAuthor => workAuthor.Author)
             .Include(work => work.Editions)
             .Include(work => work.SeriesEntries).ThenInclude(seriesEntry => seriesEntry.Series)
