@@ -97,22 +97,37 @@ Response:
   "capabilities": {
     "mediaTypes": ["ebook"],
     "operations": ["search", "acquire"],
-    "features": ["pagination", "checksums", "outputs", "waiting-interaction", "idempotency"]
+    "features": ["pagination", "checksums", "waiting-interaction"]
   },
   "outputRetentionSeconds": 86400,
+  "managementUrl": "http://provider.local/admin",
+  "documentationUrl": "https://example.invalid/docs",
   "egressPolicy": "NORMAL"
 }
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| `protocolVersions` | **yes** | Array of version strings you support, e.g. `["2"]` or `["1", "2"]` during a transition. Family Librarian computes the highest value present in both its own supported set and yours. If there is no overlap, Family Librarian refuses to call `/search` or `/acquire` at all — it will not silently guess a version — but will still call `/manifest`/`/health` for diagnostics and surface the mismatch to the admin. |
+| `protocolVersions` | **yes** | Array of version strings you support, e.g. `["2"]` or `["1", "2"]` during a transition. Version strings are positive base-10 integer major versions (`"1"`, `"2"`, ..., `"10"`) compared **numerically**, never lexicographically — `"10"` is higher than `"2"`. Family Librarian computes the highest value present in both its own supported set and yours. If there is no overlap, Family Librarian refuses to call `/search` or `/acquire` at all — it will not silently guess a version — but will still call `/manifest`/`/health` for diagnostics and surface the mismatch to the admin. |
 | `protocolVersion` | no | Deprecated single-string form, kept for a transitional read by older clients. Set it equal to the highest value in `protocolVersions`. Defaults to `"1"` if both fields are omitted, for backward compatibility with a v1 manifest. |
 | `instanceId` | recommended | A string identifying *this deployed instance*, stable across ordinary restarts (persist it to disk/env, don't regenerate it per process start). Distinct from `id`/`providerId`, which identifies the provider *software*. Lets Family Librarian detect that a container has been replaced mid-job (a new `instanceId` under the same `id`) rather than assuming an old job reference is still valid. Omitting it is tolerated — Family Librarian just can't detect instance replacement for you. |
 | `id`, `name`, `version` | no | `id` is the provider software/type identity (e.g. `anna`, `newznab-generic`), not this specific deployment. Default to empty string if omitted. Purely informational (shown in the admin UI). |
-| `capabilities` | no | A structured object: `mediaTypes` (open list, e.g. `ebook`/`audiobook`), `operations` (open list, e.g. `search`/`acquire`), `features` (open list — declare the ones from the example that you actually support: `pagination`, `checksums`, `outputs`, `waiting-interaction`, `idempotency`; unrecognized feature strings are tolerated and ignored). All three lists may be empty or omitted; Family Librarian does not gate which endpoints it calls based on this today, but declare accurately anyway — that is expected to matter more as capability-based gating lands. A legacy flat array (`["ebook", "search", "acquire"]`, the v1 shape) is also tolerated and parsed as best-effort `mediaTypes`/`operations`. |
+| `capabilities` | no | A structured object: `mediaTypes` (open list, e.g. `ebook`/`audiobook`), `operations` (open list, e.g. `search`/`acquire`), `features` (open list of *optional* behavior — see the baseline-vs-optional note below). All three lists may be empty or omitted; Family Librarian does not gate which endpoints it calls based on this today, but declare accurately anyway — that is expected to matter more as capability-based gating lands. A legacy flat array (`["ebook", "search", "acquire"]`, the v1 shape) is also tolerated and parsed as best-effort `mediaTypes`/`operations`. |
 | `outputRetentionSeconds` | no | How long you guarantee a completed job's outputs remain fetchable after completion, if you don't specify a per-job `retention.expiresAt` (§8a). Omit if you have no fixed policy. |
+| `managementUrl` | no | Link to your own admin/configuration UI, if you have one — Family Librarian shows it as a link rather than modeling your configuration itself (§12). This is often *not* the same address Family Librarian uses to reach you (e.g. a Docker-internal hostname isn't browser-reachable by the admin) — if that's the case for you, set this to a separately browser-reachable address, even if it points at the same service. |
+| `documentationUrl` | no | Link to your own documentation, shown the same way. |
 | `egressPolicy` | no | Unchanged from v1: one of `NORMAL` (default), `PRIVATE_REQUIRED`, `CUSTOM_PROXY`. |
+
+**Baseline vs. optional features.** Everything else in this document —
+`Idempotency-Key` handling, the `/outputs` endpoints, the `state`/`phase`
+job model, structured errors, and `/cancel`+`DELETE` — is v2 baseline: any
+provider declaring `protocolVersions: ["2"]` is expected to support all of
+it (cancel/cleanup are cheap to support trivially, since a no-op `204` is a
+valid response for a provider with nothing to actually cancel). `features`
+in `capabilities` is for behavior a provider may or may not implement on
+top of that baseline: `pagination`, `checksums`, and `waiting-interaction`
+today. Don't declare `idempotency` or `outputs` as features — they aren't
+optional.
 
 Once a version is negotiated, every subsequent call (health, search, every
 acquire step) carries:
@@ -145,11 +160,17 @@ code alone:
 | Field | Required | Notes |
 |---|---|---|
 | `status` | no (defaults to `healthy` if body omitted and status is `2xx`) | One of `healthy`, `degraded`, `unhealthy`. Coarse overall judgment — a provider is free to report this loosely; Family Librarian treats `operations` as the more specific signal when the two disagree. |
-| `operations.search` / `operations.acquire` | no | One of `available`, `degraded`, `unavailable`. Missing keys are treated as inheriting `status`. This split exists because a provider's local search can keep working while its upstream acquisition path is down — for example, a metadata-index provider (Anna's Archive-shaped) whose local database answers searches fine while the upstream member/download path is rate-limited or offline. Report it accurately; don't collapse to a single boolean. |
+| `operations.search` / `operations.acquire` | no | One of `available`, `degraded`, `unavailable`. A missing key inherits from `status` under this fixed mapping: `healthy` → `available`, `degraded` → `degraded`, `unhealthy` → `unavailable`. This split exists because a provider's local search can keep working while its upstream acquisition path is down — for example, a metadata-index provider (Anna's Archive-shaped) whose local database answers searches fine while the upstream member/download path is rate-limited or offline. Report it accurately; don't collapse to a single boolean. |
 
-A bare `2xx` with no body (the v1 shape) is still accepted and treated as
-`{"status": "healthy"}`. Called as part of "Test Connection" and on the
-registration's recheck schedule — not polled continuously in the background.
+Respond `2xx` whenever you can meaningfully answer the question at all —
+including `{"status": "degraded", ...}` — and describe the actual trouble in
+the body. Reserve a non-`2xx` response (or a connection failure) for "I could
+not produce usable health information," which Family Librarian treats as
+unhealthy/unknown, distinct from a deliberately reported `degraded`/
+`unhealthy` body. A bare `2xx` with no body (the v1 shape) is still accepted
+and treated as `{"status": "healthy"}`. Called as part of "Test Connection"
+and on the registration's recheck schedule — not polled continuously in the
+background.
 
 ---
 
@@ -170,7 +191,14 @@ Request:
     "series": [
       { "name": "Jack Ryan", "position": "6" }
     ],
+    "identifiers": [
+      { "scheme": "openlibrary-work", "value": "OL...W" }
+    ]
+  },
+  "edition": {
     "language": "en",
+    "publicationYear": 1994,
+    "publisher": null,
     "identifiers": [
       { "scheme": "isbn13", "value": "9780000000000" }
     ]
@@ -193,8 +221,10 @@ Request:
 | `work.title` | yes | |
 | `work.authors` | no (array, possibly empty) | Each entry `{name, role}`. `role` is an open string (`author`, `editor`, `narrator`, `translator`, `contributor`, `other`, ...) — an unrecognized role must not break your parsing. Do not assume exactly one author. |
 | `work.series` | no (array, possibly empty) | Each entry `{name, position}`. `position` is a flexible string — expect `"6"`, `"1.5"`, `"0"`, `"prequel"`, `"novella"`, etc., never a constrained numeric. A book may belong to more than one series. |
-| `work.language` | no | A BCP-47-style tag (`en`, `en-US`, `fr`, ...) when known. |
-| `work.identifiers` | no (array, possibly empty) | Each entry `{scheme, value}`. `scheme` is an open string — recognized examples include `isbn13`, `isbn10`, `asin`, `md5`, `openlibrary`, `hardcover`, `goodreads`, but treat it as extensible; an unrecognized scheme must be safely ignored, not rejected. Replaces v1's fixed `identifiers.isbn13` field — a request with no known identifiers omits the array or sends it empty. |
+| `work.identifiers` | no (array, possibly empty) | Each entry `{scheme, value}` for identifiers of the *canonical work*, independent of any specific edition — e.g. an Open Library work id or a series-level identifier. `scheme` is an open string and extensible; an unrecognized scheme must be safely ignored, not rejected. |
+| `edition.language` | no | A BCP-47-style tag (`en`, `en-US`, `fr`, ...) when known. |
+| `edition.publicationYear` / `edition.publisher` | no | |
+| `edition.identifiers` | no (array, possibly empty) | Each entry `{scheme, value}` for identifiers of a *specific edition* — `isbn13`/`isbn10`/`asin` and similar belong here, not under `work.identifiers`, since an ISBN identifies one particular published edition, not the work in the abstract. Replaces v1's fixed `identifiers.isbn13` field — a request with no known identifiers omits the array or sends it empty. **Content hashes (e.g. an Anna's Archive-style MD5) are not a work or edition identifier at all** — they identify a specific *file/release*, not the book; a provider keying by content hash should use it as its `providerReference` (below) and, once a file is actually downloaded, as an output checksum (§8a), never as an `edition.identifiers` scheme. |
 | `constraints` | no | Provider-side filtering hints (`languages`, `formats`, `excludeCollections`, etc.) — entirely optional to honor. Family Librarian validates results independently regardless of what you filter. You may report which you actually applied via a top-level `appliedConstraints: ["language", "format"]` in the response; omitting it is fine. |
 | `pagination.limit` / `pagination.cursor` | no | Cursor-based. Omit `pagination` entirely (or support only `limit`) if you don't implement paging — see the response shape below for what that looks like. |
 
@@ -355,6 +385,7 @@ Any `2xx` status containing a `jobId`:
   "jobId": "a1b2c3",
   "state": "running",
   "phase": "downloading",
+  "pollAfterSeconds": 5,
 
   "progress": {
     "percent": 62.4,
@@ -371,6 +402,7 @@ Any `2xx` status containing a `jobId`:
 | `phase` | no | An **open string** describing what's actually happening — `resolving`, `downloading`, `repairing`, `extracting`, `user-interaction`, or anything else meaningful to you. Never validated against a fixed list on either side; an unrecognized phase is simply displayed as-is. This is how a torrent provider can expose `checking`, a Usenet provider can expose `repairing`/`extracting`, and a browser-automation provider can expose `browser-queue`, all without changing the protocol. |
 | `interaction` | required when `state = waiting` and the wait is on the user | `{type, message, expiresAt, resumeSupported, actionUrl}`. `type` is an open string (`browser`, `login`, `mfa`, `captcha`, `approval`, `device-code`, `other`, ...). `actionUrl` is where a human completes the step; `resumeSupported: true` means you'll pick the job back up automatically once they do — Family Librarian does not send you a separate "resume" call. Never put a provider cookie or authenticated session token in this object; you own your own session state. |
 | `progress` | no | `percent`/`bytesCompleted`/`bytesTotal`/`message`, any or all of which may be omitted if you don't know them. |
+| `pollAfterSeconds` | no | The body-level form of the polling-cadence hint described just below — equivalent to a `Retry-After` header when you'd rather put it in the JSON. Provide either, both, or neither. |
 | `error` | present when `state = failed` | See below. |
 
 There is no fixed end-to-end time budget. A job may legitimately run for
@@ -393,7 +425,7 @@ ask for less, and will not wait indefinitely even if you ask for more.
 {
   "state": "failed",
   "error": {
-    "code": "UPSTREAM_RATE_LIMITED",
+    "code": "RATE_LIMITED",
     "message": "Provider temporarily rate limited the request.",
     "retryable": true,
     "retryAfterSeconds": 300,
@@ -404,11 +436,18 @@ ask for less, and will not wait indefinitely even if you ask for more.
 
 `code` is an open string on the wire — Family Librarian recognizes at least:
 `NOT_FOUND`, `AUTH_REQUIRED`, `AUTH_FAILED`, `RATE_LIMITED`,
-`UPSTREAM_UNAVAILABLE`, `NETWORK_FAILURE`, `DOWNLOAD_FAILED`,
-`HASH_MISMATCH`, `UNSUPPORTED_FORMAT`, `CONTENT_UNAVAILABLE`, `TIMEOUT`,
-`CANCELLED`, `CANDIDATE_CHANGED`, `PROVIDER_INTERNAL_ERROR` — but an
-unrecognized code must still parse cleanly; treat the vocabulary above as
-the currently-understood subset, not a closed enum. `retryable` and
+`UPSTREAM_UNAVAILABLE`, `NETWORK_FAILURE`, `VPN_UNAVAILABLE`,
+`DOWNLOAD_FAILED`, `HASH_MISMATCH`, `UNSUPPORTED_FORMAT`,
+`CONTENT_UNAVAILABLE`, `TIMEOUT`, `CANCELLED`, `CANDIDATE_CHANGED`,
+`PROVIDER_INTERNAL_ERROR` — but an unrecognized code must still parse
+cleanly; treat the vocabulary above as the currently-understood subset, not
+a closed enum. `VPN_UNAVAILABLE` is deliberately distinct from the more
+generic `UPSTREAM_UNAVAILABLE`/`NETWORK_FAILURE` — use it for a
+fail-closed deployment (e.g. Anna's Archive-shaped, where all outbound
+acquisition traffic is required to traverse a VPN) when the VPN itself, not
+the upstream source, is the reason acquisition can't proceed; this is a
+first-class, expected operational state for such a provider, not an
+arbitrary network error. `retryable` and
 `retryAfterSeconds` tell Family Librarian whether and when retrying the
 *same* acquisition attempt is worth it; they say nothing about the
 underlying book request's viability beyond that one attempt.
@@ -465,10 +504,11 @@ GET /acquire/{jobId}/outputs/{outputId}
 
 | Field | Required | Notes |
 |---|---|---|
-| `kind` | yes | `file` (bytes you serve directly via `GET .../outputs/{outputId}`), `uri` (e.g. a magnet link — set `uriScheme`, no bytes to fetch from you), or `descriptor` (bytes representing a pointer for another system to act on, e.g. a `.nzb` or `.torrent` file — served the same way as `file`). Prefer returning descriptor/file bytes over an arbitrary external URL where you reasonably can; it keeps the trust boundary simple and avoids handing Family Librarian a URL to blindly fetch. |
+| `kind` | yes | `file` (bytes you serve directly via `GET .../outputs/{outputId}`), `uri` (a URI Family Librarian does not fetch bytes from you for — see `uri` below), or `descriptor` (bytes representing a pointer for another system to act on, e.g. a `.nzb` or `.torrent` file — served the same way as `file`, via `GET .../outputs/{outputId}`). Prefer returning descriptor/file bytes over an arbitrary external URL where you reasonably can; it keeps the trust boundary simple and avoids handing Family Librarian a URL to blindly fetch. |
+| `uri` | **yes when `kind = uri`** | The actual URI, e.g. `"magnet:?xt=urn:btih:..."`. There is no `GET .../outputs/{outputId}` call for a `uri`-kind output — nothing to fetch from you; the value lives entirely in this field. |
+| `uriScheme` | **yes when `kind = uri`** | e.g. `magnet`. Family Librarian dispatches a `uri` output only to a handler it has explicitly registered for that scheme — there is no generic "fetch whatever URI the provider gives us" behavior, deliberately, to avoid handing an SSRF-shaped fetch primitive to a third-party provider. An unregistered/unrecognized scheme means the output is surfaced but not automatically acted on. |
 | `role` | no | An open string — `primary`, `ebook`, `audio-part`, `cover`, `metadata`, `checksum`, `archive`, `supplementary`, `torrent`, `usenet-descriptor`, `other`, or anything else meaningful. An unrecognized role must not break the client. |
 | `filename` / `contentType` / `sizeBytes` | no, but populate for `file`/`descriptor` kinds | |
-| `uriScheme` | no, required in practice for `uri` kind | e.g. `magnet` |
 | `checksums` | no (array, possibly empty) | `{algorithm, value}` pairs, extensible — not a fixed field per hash type. Family Librarian independently computes its own checksum of whatever it actually downloads; yours is a cross-check, not a substitute. Checksums prove file identity/integrity, not book identity. |
 | `retention` | no | `expiresAt`, if this specific output has a different retention window than the manifest-level `outputRetentionSeconds`. |
 
@@ -478,6 +518,15 @@ descriptor alongside nothing else. This replaces v1's assumption of exactly
 one file per job. A legacy single-artifact `GET /acquire/{jobId}/artifact`
 endpoint may still be exposed for a transitional period if convenient, but a
 v2-negotiated client always prefers `/outputs`.
+
+**Fetching a `file`/`descriptor` output's bytes:**
+`GET /acquire/{jobId}/outputs/{outputId}` responds `200 OK` with the real
+`Content-Type`, `Content-Disposition: attachment; filename="..."`, and
+`Content-Length` when known — the same header contract as v1's `/artifact`
+endpoint (Appendix A.4). An unknown `outputId` (or one that names a `uri`
+output, which has no bytes to fetch) returns `404`. This call is exempt from
+the 20-second transport timeout that applies to every other call in this
+protocol — see §9.
 
 ---
 
@@ -512,12 +561,12 @@ there was anything to actually do, and expect repeat calls.
 
 | What | Limit |
 |---|---|
-| Any single HTTP call (manifest/health/search/acquire-POST/job-status GET/outputs GET/cancel/delete) | 20 seconds |
-| Manifest/search/job-status/outputs JSON response body | 10 MB |
+| Any single JSON-returning HTTP call (manifest, health, search, acquire-POST, job-status GET, `GET .../outputs` listing, cancel, delete) | 20 seconds total, connect through full response body |
+| Manifest/search/job-status/outputs-listing JSON response body | 10 MB |
+| `GET .../outputs/{outputId}` (the actual binary file/descriptor bytes) | **Not** subject to the 20-second total-call timeout above — a multi-gigabyte audiobook cannot complete in 20 seconds. Connect and response-header timeouts still apply (20 seconds to start responding); once streaming begins, only an inactivity timeout applies (no data for an extended period is treated as a stalled transfer), not a wall-clock cap on the whole transfer. No overall size cap in the HTTP client itself (downstream validation/quarantine steps apply their own limits). |
 | Acquire job, end to end | No fixed budget — bounded only by your own declared/implied retention. Design for jobs that may run minutes to hours. |
 | Poll cadence | Driven by your `Retry-After`/`pollAfterSeconds` hint, within Family Librarian's own sane floor/ceiling |
 | Idempotency-Key retention | Remember a key at least as long as you retain the job/outputs it produced |
-| Artifact/output download | No size cap in the HTTP client itself (downstream validation/quarantine steps apply their own limits) |
 
 ---
 
@@ -589,8 +638,8 @@ risks guessing wrong:
   that a release is a collection via `release.isCollection`/`partCount` —
   just not required to list every member's own title/author).
 - **A generic provider-configuration-schema or administrative-actions API.**
-  Expose your own `managementUrl`/`documentationUrl` if you have an admin
-  surface; Family Librarian will link to it rather than modeling it.
+  Expose your own `managementUrl`/`documentationUrl` (§4) if you have an
+  admin surface; Family Librarian will link to it rather than modeling it.
 - **Provider concurrency-limit negotiation.**
 
 Each of these has a reachable path in later via the `extensions` namespace
