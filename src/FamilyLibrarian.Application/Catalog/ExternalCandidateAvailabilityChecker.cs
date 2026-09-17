@@ -86,12 +86,24 @@ public sealed class ExternalCandidateAvailabilityChecker(
             : null;
 
         var isbn13 = identity.Isbn13Candidates.FirstOrDefault();
+        var work = new Providers.ExternalProviderWorkEvidence(
+            identity.Title,
+            Subtitle: null,
+            Authors: identity.Authors ?? (identity.Author is null
+                ? []
+                : [new Providers.BookAuthor(identity.Author, "author")]),
+            Series: identity.Series ?? [],
+            Identifiers: []);
+        var edition = new Providers.ExternalProviderEditionEvidence(
+            identity.Language,
+            identity.PublicationYear,
+            identity.Publisher,
+            Identifiers: isbn13 is null ? [] : [new Providers.BookIdentifier("isbn13", isbn13)]);
+
         var candidates = await externalProviderClient.SearchAsync(
             provider.BaseUrl,
             apiKey,
-            new Providers.ExternalProviderSearchRequest(
-                Guid.NewGuid(), mediaType, identity.Title,
-                identity.Author is null ? [] : [identity.Author], isbn13),
+            new Providers.ExternalProviderSearchRequest(Guid.NewGuid(), mediaType, work, edition),
             route,
             cancellationToken);
 
@@ -105,6 +117,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
         return candidates.Select(candidate =>
         {
             var verdict = verdicts.GetValueOrDefault(candidate.ProviderReference, Providers.ExternalProviderMatchVerdict.Unconfirmed);
+            var releaseVerdict = Providers.ExternalReleasePolicy.Evaluate(candidate.Release, mediaType);
             return new FulfillmentOption(
                 ProviderId: provider.ProviderId,
                 ProviderResultId: candidate.ProviderReference,
@@ -114,7 +127,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 OptionKind: OptionKind.DirectAcquisition,
                 AcquisitionMethod: AcquisitionMethod.DirectDownload,
                 Format: candidate.Format,
-                Language: null,
+                Language: candidate.Edition?.Language,
                 Quality: null,
                 Availability: null,
                 Cost: 0m,
@@ -124,7 +137,11 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 ExternalActionUri: null,
                 ProviderData: candidate.ProviderReference,
                 MatchBasis: verdict.Basis,
-                RequiresLanguageConfirmation: verdict.RequiresLanguageConfirmation);
+                RequiresLanguageConfirmation: verdict.RequiresLanguageConfirmation,
+                CandidateRevision: candidate.CandidateRevision,
+                AcquireToken: candidate.AcquireToken,
+                RequiresReleaseConfirmation: releaseVerdict.RequiresConfirmation,
+                ReleaseConcern: releaseVerdict.Reason);
         }).ToArray();
     }
 }

@@ -83,7 +83,7 @@ public sealed class DirectAcquisitionServiceTests
         context.ExternalProviderStore.Add(provider);
         context.ExternalProviderClient.Candidates =
         [
-            new ExternalProviderCandidate("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000, null)
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000)
         ];
 
         var result = await context.Service.AcquireAsync(
@@ -112,7 +112,7 @@ public sealed class DirectAcquisitionServiceTests
         context.ExternalProviderStore.Add(provider);
         context.ExternalProviderClient.Candidates =
         [
-            new ExternalProviderCandidate("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000, null)
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000)
         ];
 
         var result = await context.Service.AcquireAsync(
@@ -121,6 +121,41 @@ public sealed class DirectAcquisitionServiceTests
         Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, result.Outcome);
         Assert.AreEqual(1, context.ProviderAcquisitionJobs.Jobs.Count);
         Assert.AreEqual("ref-1", context.ProviderAcquisitionJobs.Jobs[0].CandidateReference);
+    }
+
+    [TestMethod]
+    public async Task AnIsbnCorroboratedMatchThatIsACollectionStillRequiresConfirmation()
+    {
+        var context = new TestContext();
+        context.WorkLookup.Isbn13s = ["9780618260300"];
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            new ExternalProviderCandidate(
+                "ref-1",
+                new ExternalProviderWorkEvidence(
+                    "The Hobbit", null, [new BookAuthor("J. R. R. Tolkien", "author")], [], []),
+                Release: new ExternalProviderReleaseEvidence(
+                    "The-Middle-Earth-Omnibus", "epub", 500_000, IsCollection: true, PartCount: 4,
+                    IsSample: false, IsAbridged: null, IsUnabridged: null, QualityTags: [], AgeDays: null))
+        ];
+
+        // A verified identifier match alone is not enough -- the release
+        // itself is a collection, so this must still require confirmation,
+        // never proceed straight to AcquisitionInProgress.
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.ReleaseConfirmationRequired, result.Outcome);
+        Assert.AreEqual(0, context.ProviderAcquisitionJobs.Jobs.Count);
+
+        var confirmed = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None, confirmLowConfidenceMatch: true);
+
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, confirmed.Outcome);
     }
 
     [TestMethod]
@@ -133,7 +168,7 @@ public sealed class DirectAcquisitionServiceTests
         context.ExternalProviderStore.Add(provider);
         context.ExternalProviderClient.Candidates =
         [
-            new ExternalProviderCandidate("ref-1", "Dim Sum of Fears", "Some Other Author", "epub", 500_000, null)
+            ExternalProviderCandidate.FromSimple("ref-1", "Dim Sum of Fears", "Some Other Author", "epub", 500_000)
         ];
 
         var result = await context.Service.AcquireAsync(

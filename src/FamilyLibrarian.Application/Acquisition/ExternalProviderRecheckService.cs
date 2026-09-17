@@ -84,7 +84,9 @@ public sealed class ExternalProviderRecheckService(
 
                     try
                     {
-                        var identity = new BookIdentity(work.Title, work.PrimaryAuthor, work.Isbn13s);
+                        var identity = new BookIdentity(
+                            work.Title, work.PrimaryAuthor, work.Isbn13s,
+                            work.Authors, work.Series, work.Language, work.PublicationYear, work.Publisher);
                         var options = await candidateChecker.FindForProviderAsync(
                             provider, resolution.Route!, identity, format.MediaType, cancellationToken);
 
@@ -100,8 +102,16 @@ public sealed class ExternalProviderRecheckService(
                         // and evaluate it automatically instead of waiting on a librarian.
                         // Anything weaker (title/author only, unconfirmed, language-excluded,
                         // or more than one such candidate) still requires review, unchanged.
+                        // A release concern (docs/04 §7/§10/§16 -- a collection, a sample, an
+                        // abridged mismatch) disqualifies a candidate from automatic acquisition
+                        // even with a verified identifier match: a correct ISBN on an omnibus
+                        // edition is still an omnibus, and that always needs a librarian's eyes,
+                        // never a silent automatic fetch.
                         var identifierMatches = options
-                            .Where(option => option.MatchBasis == BookMatchBasis.Identifier && !option.RequiresLanguageConfirmation)
+                            .Where(option =>
+                                option.MatchBasis == BookMatchBasis.Identifier &&
+                                !option.RequiresLanguageConfirmation &&
+                                !option.RequiresReleaseConfirmation)
                             .ToArray();
 
                         if (identifierMatches.Length == 1)

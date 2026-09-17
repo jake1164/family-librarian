@@ -15,7 +15,7 @@ public sealed class ExternalProviderMatchVerifierTests
         var verifier = NewVerifier();
         IReadOnlyList<ExternalProviderCandidate> candidates =
         [
-            new ExternalProviderCandidate("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000, null)
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000)
         ];
 
         var verdicts = await verifier.VerifyAsync(
@@ -31,7 +31,7 @@ public sealed class ExternalProviderMatchVerifierTests
         var verifier = NewVerifier();
         IReadOnlyList<ExternalProviderCandidate> candidates =
         [
-            new ExternalProviderCandidate("ref-1", "Dim Sum of Fears", "Some Other Author", "epub", 500_000, null)
+            ExternalProviderCandidate.FromSimple("ref-1", "Dim Sum of Fears", "Some Other Author", "epub", 500_000)
         ];
 
         var verdicts = await verifier.VerifyAsync(
@@ -46,7 +46,7 @@ public sealed class ExternalProviderMatchVerifierTests
         var verifier = NewVerifier();
         IReadOnlyList<ExternalProviderCandidate> candidates =
         [
-            new ExternalProviderCandidate("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000, null)
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000)
         ];
 
         var verdicts = await verifier.VerifyAsync("The Hobbit", "J. R. R. Tolkien", null, candidates, CancellationToken.None);
@@ -60,8 +60,8 @@ public sealed class ExternalProviderMatchVerifierTests
         var verifier = NewVerifier();
         IReadOnlyList<ExternalProviderCandidate> candidates =
         [
-            new ExternalProviderCandidate("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000, null),
-            new ExternalProviderCandidate("ref-2", "The Hobbit", "J. R. R. Tolkien", "pdf", 500_000, null)
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000),
+            ExternalProviderCandidate.FromSimple("ref-2", "The Hobbit", "J. R. R. Tolkien", "pdf", 500_000)
         ];
 
         var verdicts = await verifier.VerifyAsync("The Hobbit", "J. R. R. Tolkien", null, candidates, CancellationToken.None);
@@ -76,7 +76,7 @@ public sealed class ExternalProviderMatchVerifierTests
         var verifier = NewVerifier();
         IReadOnlyList<ExternalProviderCandidate> candidates =
         [
-            new ExternalProviderCandidate("ref-1", "An Unrelated Title", "Someone Else", "epub", 500_000, null)
+            ExternalProviderCandidate.FromSimple("ref-1", "An Unrelated Title", "Someone Else", "epub", 500_000)
         ];
 
         var verdicts = await verifier.VerifyAsync("The Hobbit", "J. R. R. Tolkien", null, candidates, CancellationToken.None);

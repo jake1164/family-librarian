@@ -352,7 +352,7 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
         CancellationToken cancellationToken)
     {
         IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-            ? [new ExternalProviderCandidate("fake-hobbit-1", "The Hobbit", "J. R. R. Tolkien", "epub", null, null)]
+            ? [ExternalProviderCandidate.FromSimple("fake-hobbit-1", "The Hobbit", "J. R. R. Tolkien", "epub", null)]
             : [];
         return Task.FromResult(candidates);
     }
@@ -423,7 +423,7 @@ file sealed class WrongTitleExternalProviderClient : IExternalProviderClient
         CancellationToken cancellationToken)
     {
         IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-            ? [new ExternalProviderCandidate("wrong-title-1", "Dim Sum of Fears", "Someone Unrelated", "epub", null, null)]
+            ? [ExternalProviderCandidate.FromSimple("wrong-title-1", "Dim Sum of Fears", "Someone Unrelated", "epub", null)]
             : [];
         return Task.FromResult(candidates);
     }
@@ -485,7 +485,7 @@ file sealed class FailingFetchExternalProviderClient : IExternalProviderClient
         CancellationToken cancellationToken)
     {
         IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-            ? [new ExternalProviderCandidate("hail-mary-1", "Project Hail Mary", "Andy Weir", "epub", null, null)]
+            ? [ExternalProviderCandidate.FromSimple("hail-mary-1", "Project Hail Mary", "Andy Weir", "epub", null)]
             : [];
         return Task.FromResult(candidates);
     }

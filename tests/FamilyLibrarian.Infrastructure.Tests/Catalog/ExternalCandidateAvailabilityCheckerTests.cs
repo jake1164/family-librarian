@@ -66,7 +66,7 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         context.Store.Providers.Add(provider);
         context.Client.Candidates =
         [
-            new ExternalProviderCandidate("ref-1", "Moby Dick", "Herman Melville", "epub", 500_000, null)
+            ExternalProviderCandidate.FromSimple("ref-1", "Moby Dick", "Herman Melville", "epub", 500_000)
         ];
 
         var options = await context.Checker.FindAsync(
@@ -78,6 +78,32 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         Assert.AreEqual("ref-1", option.ProviderResultId);
         Assert.AreEqual(Guid.Empty, option.WorkId);
         Assert.AreEqual(OptionKind.DirectAcquisition, option.OptionKind);
+        Assert.IsFalse(option.RequiresReleaseConfirmation);
+    }
+
+    [TestMethod]
+    public async Task ACollectionCandidateIsFlaggedForReleaseConfirmation()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("collection-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        context.Client.Candidates =
+        [
+            new ExternalProviderCandidate(
+                "ref-1",
+                new ExternalProviderWorkEvidence("Moby Dick", null, [new BookAuthor("Herman Melville", "author")], [], []),
+                Release: new ExternalProviderReleaseEvidence(
+                    "Melville-Omnibus", "epub", null, IsCollection: true, PartCount: 3,
+                    IsSample: false, IsAbridged: null, IsUnabridged: null, QualityTags: [], AgeDays: null))
+        ];
+
+        var options = await context.Checker.FindAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        var option = options.Single();
+        Assert.IsTrue(option.RequiresReleaseConfirmation);
+        Assert.Contains("collection", option.ReleaseConcern!, StringComparison.OrdinalIgnoreCase);
     }
 
     private static ExternalProvider NewProvider(string providerId) =>

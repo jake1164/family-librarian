@@ -154,13 +154,28 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         {
             ["requestId"] = request.RequestId.ToString(),
             ["mediaType"] = request.MediaType.ToString().ToLowerInvariant(),
-            ["work"] = new JsonObject
-            {
-                ["title"] = request.Title,
-                ["authors"] = new JsonArray(request.Authors.Select(author => (JsonNode)JsonValue.Create(author)).ToArray()),
-                ["identifiers"] = new JsonObject { ["isbn13"] = request.Isbn13 }
-            }
+            ["work"] = SerializeWork(request.Work),
+            ["edition"] = request.Edition is null ? null : SerializeEdition(request.Edition)
         };
+
+        if (request.Constraints is not null)
+        {
+            payload["constraints"] = new JsonObject
+            {
+                ["languages"] = ToJsonArrayOrNull(request.Constraints.Languages),
+                ["formats"] = ToJsonArrayOrNull(request.Constraints.Formats),
+                ["excludeCollections"] = request.Constraints.ExcludeCollections
+            };
+        }
+
+        if (request.Pagination is not null)
+        {
+            payload["pagination"] = new JsonObject
+            {
+                ["limit"] = request.Pagination.Limit,
+                ["cursor"] = request.Pagination.Cursor
+            };
+        }
 
         using var response = await client.PostAsync("search", JsonContent.Create(payload), cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -176,21 +191,184 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         foreach (var node in candidatesNode)
         {
             var reference = node?["providerReference"]?.GetValue<string>();
-            if (string.IsNullOrWhiteSpace(reference))
+            if (string.IsNullOrWhiteSpace(reference) || node is null)
             {
                 continue;
             }
 
             results.Add(new ExternalProviderCandidate(
                 reference,
-                node!["title"]?.GetValue<string>() ?? string.Empty,
-                node["author"]?.GetValue<string>(),
-                node["format"]?.GetValue<string>(),
-                node["sizeBytes"]?.GetValue<long?>(),
-                node["metadata"]?.ToJsonString()));
+                ParseWork(node),
+                ParseEdition(node["edition"]),
+                ParseRelease(node["release"]),
+                node["candidateRevision"]?.GetValue<string>(),
+                node["acquireToken"]?.GetValue<string>(),
+                node["extensions"]?.ToJsonString()));
         }
 
         return results;
+    }
+
+    private static JsonObject SerializeWork(ExternalProviderWorkEvidence work) => new()
+    {
+        ["title"] = work.Title,
+        ["subtitle"] = work.Subtitle,
+        ["authors"] = new JsonArray(work.Authors
+            .Select(author => (JsonNode)new JsonObject { ["name"] = author.Name, ["role"] = author.Role })
+            .ToArray()),
+        ["series"] = new JsonArray(work.Series
+            .Select(series => (JsonNode)new JsonObject { ["name"] = series.Name, ["position"] = series.Position })
+            .ToArray()),
+        ["identifiers"] = SerializeIdentifiers(work.Identifiers)
+    };
+
+    private static JsonObject SerializeEdition(ExternalProviderEditionEvidence edition) => new()
+    {
+        ["language"] = edition.Language,
+        ["publicationYear"] = edition.PublicationYear,
+        ["publisher"] = edition.Publisher,
+        ["identifiers"] = SerializeIdentifiers(edition.Identifiers)
+    };
+
+    private static JsonArray SerializeIdentifiers(IReadOnlyList<BookIdentifier> identifiers) => new(identifiers
+        .Select(identifier => (JsonNode)new JsonObject { ["scheme"] = identifier.Scheme, ["value"] = identifier.Value })
+        .ToArray());
+
+    private static JsonArray? ToJsonArrayOrNull(IReadOnlyList<string>? values) =>
+        values is null ? null : new JsonArray(values.Select(value => (JsonNode)JsonValue.Create(value)).ToArray());
+
+    /// <summary>
+    /// Tolerant of both the v2 nested <c>work</c> object and a legacy flat
+    /// <c>title</c>/<c>author</c> candidate (protocol v1, Appendix A) — a
+    /// provider that has not upgraded still parses cleanly.
+    /// </summary>
+    private static ExternalProviderWorkEvidence ParseWork(JsonNode node)
+    {
+        var workNode = node["work"];
+        if (workNode is null)
+        {
+            return new ExternalProviderWorkEvidence(
+                node["title"]?.GetValue<string>() ?? string.Empty,
+                null,
+                node["author"]?.GetValue<string>() is { } legacyAuthor ? [new BookAuthor(legacyAuthor, "author")] : [],
+                [],
+                []);
+        }
+
+        return new ExternalProviderWorkEvidence(
+            workNode["title"]?.GetValue<string>() ?? string.Empty,
+            workNode["subtitle"]?.GetValue<string>(),
+            ParseAuthors(workNode["authors"]),
+            ParseSeries(workNode["series"]),
+            ParseIdentifiers(workNode["identifiers"]));
+    }
+
+    private static ExternalProviderEditionEvidence? ParseEdition(JsonNode? editionNode) => editionNode is null
+        ? null
+        : new ExternalProviderEditionEvidence(
+            editionNode["language"]?.GetValue<string>(),
+            editionNode["publicationYear"]?.GetValue<int?>(),
+            editionNode["publisher"]?.GetValue<string>(),
+            ParseIdentifiers(editionNode["identifiers"]));
+
+    private static ExternalProviderReleaseEvidence? ParseRelease(JsonNode? releaseNode) => releaseNode is null
+        ? null
+        : new ExternalProviderReleaseEvidence(
+            releaseNode["name"]?.GetValue<string>(),
+            releaseNode["format"]?.GetValue<string>(),
+            releaseNode["sizeBytes"]?.GetValue<long?>(),
+            releaseNode["isCollection"]?.GetValue<bool?>(),
+            releaseNode["partCount"]?.GetValue<int?>(),
+            releaseNode["isSample"]?.GetValue<bool?>(),
+            releaseNode["isAbridged"]?.GetValue<bool?>(),
+            releaseNode["isUnabridged"]?.GetValue<bool?>(),
+            releaseNode["qualityTags"]?.AsArray().Select(tag => tag?.GetValue<string>() ?? string.Empty).ToArray() ?? [],
+            releaseNode["ageDays"]?.GetValue<int?>());
+
+    private static List<BookAuthor> ParseAuthors(JsonNode? authorsNode)
+    {
+        if (authorsNode is not JsonArray array)
+        {
+            return [];
+        }
+
+        var results = new List<BookAuthor>();
+        foreach (var node in array)
+        {
+            // Tolerates a legacy flat array of plain author-name strings
+            // alongside the v2 {name, role} object shape.
+            if (node is JsonValue value && value.TryGetValue(out string? name))
+            {
+                results.Add(new BookAuthor(name, "author"));
+            }
+            else if (node is not null)
+            {
+                var authorName = node["name"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(authorName))
+                {
+                    results.Add(new BookAuthor(authorName, node["role"]?.GetValue<string>()));
+                }
+            }
+        }
+
+        return results;
+    }
+
+    private static List<BookSeries> ParseSeries(JsonNode? seriesNode)
+    {
+        if (seriesNode is not JsonArray array)
+        {
+            return [];
+        }
+
+        var results = new List<BookSeries>();
+        foreach (var node in array)
+        {
+            var name = node?["name"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                results.Add(new BookSeries(name, node!["position"]?.GetValue<string>()));
+            }
+        }
+
+        return results;
+    }
+
+    private static List<BookIdentifier> ParseIdentifiers(JsonNode? identifiersNode)
+    {
+        if (identifiersNode is JsonObject legacyObject)
+        {
+            // Tolerates v1's fixed {isbn13: "..."} shape.
+            var results = new List<BookIdentifier>();
+            foreach (var (scheme, valueNode) in legacyObject)
+            {
+                var value = valueNode?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    results.Add(new BookIdentifier(scheme, value));
+                }
+            }
+
+            return results;
+        }
+
+        if (identifiersNode is not JsonArray array)
+        {
+            return [];
+        }
+
+        var identifiers = new List<BookIdentifier>();
+        foreach (var node in array)
+        {
+            var scheme = node?["scheme"]?.GetValue<string>();
+            var value = node?["value"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(scheme) && !string.IsNullOrWhiteSpace(value))
+            {
+                identifiers.Add(new BookIdentifier(scheme, value));
+            }
+        }
+
+        return identifiers;
     }
 
     public async Task<ExternalProviderArtifact> AcquireAsync(

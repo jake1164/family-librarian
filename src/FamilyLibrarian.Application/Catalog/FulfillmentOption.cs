@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Matching;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Requests;
 
@@ -66,7 +67,21 @@ public sealed record FulfillmentOption(
     // a RequestReviewCandidate distinctly (SELFSERV-1); never persisted
     // beyond that review.
     string? Title = null,
-    string? Author = null);
+    string? Author = null,
+    // Carried unchanged from the search candidate that produced this option
+    // (protocol v2 §8/§9) so a later /acquire call can detect staleness or
+    // resolve efficiently -- never inspected or modified, and null for
+    // every provider that doesn't return one.
+    string? CandidateRevision = null,
+    string? AcquireToken = null,
+    // ExternalReleasePolicy's verdict on this option's release evidence
+    // (protocol v2 §7/§10/§16) -- independent of MatchBasis. A release
+    // problem (a collection, a sample, an abridged mismatch) must block
+    // automatic acquisition and require the same explicit confirmation as a
+    // low-confidence match, even when MatchBasis is Identifier: a correct
+    // ISBN on an omnibus edition is still an omnibus.
+    bool RequiresReleaseConfirmation = false,
+    string? ReleaseConcern = null);
 
 public enum OptionKind
 {
@@ -88,11 +103,29 @@ public enum AcquisitionMethod
 }
 
 /// <summary>
-/// The minimal identity a provider needs to check for a match, independent
-/// of whether the book has been resolved into a persisted Work yet -- lets a
+/// The identity a provider needs to check for a match, independent of
+/// whether the book has been resolved into a persisted Work yet -- lets a
 /// raw catalog search result be checked the same way a Work is.
 /// </summary>
-public sealed record BookIdentity(string Title, string? Author, IReadOnlyCollection<string> Isbn13Candidates);
+/// <remarks>
+/// <see cref="Title"/>/<see cref="Author"/>/<see cref="Isbn13Candidates"/>
+/// remain the fields every existing matcher (Gutenberg, CWA, Audiobookshelf)
+/// actually reads -- they stay simple on purpose. <see cref="Authors"/>/
+/// <see cref="Series"/>/<see cref="Language"/>/<see cref="PublicationYear"/>/
+/// <see cref="Publisher"/> exist only to build a protocol v2 §6 search
+/// request's richer <c>work</c>/<c>edition</c> evidence for an admin-registered
+/// external provider -- optional, and <c>null</c>/empty for a caller that has
+/// nothing richer to offer.
+/// </remarks>
+public sealed record BookIdentity(
+    string Title,
+    string? Author,
+    IReadOnlyCollection<string> Isbn13Candidates,
+    IReadOnlyList<BookAuthor>? Authors = null,
+    IReadOnlyList<BookSeries>? Series = null,
+    string? Language = null,
+    int? PublicationYear = null,
+    string? Publisher = null);
 
 /// <summary>Advertises store-offer discovery. No concrete implementation ships in M8.</summary>
 public interface IStoreOfferProvider

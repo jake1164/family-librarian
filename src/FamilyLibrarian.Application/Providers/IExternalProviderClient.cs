@@ -125,20 +125,56 @@ public sealed record ExternalProviderHealth(
     public bool IsHealthy => Status != ProviderHealthStatus.Unhealthy;
 }
 
+/// <summary>Protocol v2 §6's <c>POST /search</c> request body.</summary>
 public sealed record ExternalProviderSearchRequest(
     Guid RequestId,
     RequestMediaType MediaType,
-    string Title,
-    IReadOnlyList<string> Authors,
-    string? Isbn13);
+    ExternalProviderWorkEvidence Work,
+    ExternalProviderEditionEvidence? Edition = null,
+    ExternalProviderSearchConstraints? Constraints = null,
+    ExternalProviderSearchPagination? Pagination = null);
 
+/// <summary>
+/// Protocol v2 §6/§7 candidate evidence — a provider supplies this, Family
+/// Librarian decides identity from it (never the reverse). <see cref="Title"/>/
+/// <see cref="Author"/>/<see cref="Format"/>/<see cref="SizeBytes"/> are
+/// convenience projections of <see cref="Work"/>/<see cref="Release"/> for
+/// callers that only need the simple case (e.g. <c>ExternalProviderMatchVerifier</c>'s
+/// title/author corroboration) — they do not carry independent information.
+/// </summary>
 public sealed record ExternalProviderCandidate(
     string ProviderReference,
-    string Title,
-    string? Author,
-    string? Format,
-    long? SizeBytes,
-    string? MetadataJson);
+    ExternalProviderWorkEvidence Work,
+    ExternalProviderEditionEvidence? Edition = null,
+    ExternalProviderReleaseEvidence? Release = null,
+    string? CandidateRevision = null,
+    string? AcquireToken = null,
+    string? ExtensionsJson = null)
+{
+    public string Title => Work.Title;
+
+    public string? Author => Work.Authors.Count > 0 ? Work.Authors[0].Name : null;
+
+    public string? Format => Release?.Format;
+
+    public long? SizeBytes => Release?.SizeBytes;
+
+    /// <summary>
+    /// Convenience for a provider (or test double) with nothing richer than
+    /// the old flat title/author/format/size shape to offer — a simple
+    /// provider is never forced to populate work/edition/release evidence
+    /// it doesn't have (protocol v2 Rule 7).
+    /// </summary>
+    public static ExternalProviderCandidate FromSimple(
+        string providerReference, string title, string? author, string? format, long? sizeBytes) =>
+        new(
+            providerReference,
+            new ExternalProviderWorkEvidence(
+                title, null, author is null ? [] : [new BookAuthor(author, "author")], [], []),
+            Release: format is null && sizeBytes is null
+                ? null
+                : new ExternalProviderReleaseEvidence(null, format, sizeBytes, null, null, null, null, null, [], null));
+}
 
 public sealed record ExternalProviderArtifact(Stream Content, string Filename);
 

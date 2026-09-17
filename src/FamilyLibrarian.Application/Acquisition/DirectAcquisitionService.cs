@@ -141,7 +141,9 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.Invalid(resolution.BlockedReason!);
         }
 
-        var identity = new BookIdentity(work?.Title ?? string.Empty, work?.PrimaryAuthor, work?.Isbn13s ?? []);
+        var identity = new BookIdentity(
+            work?.Title ?? string.Empty, work?.PrimaryAuthor, work?.Isbn13s ?? [],
+            work?.Authors, work?.Series, work?.Language, work?.PublicationYear, work?.Publisher);
         IReadOnlyList<FulfillmentOption> externalOptions;
         try
         {
@@ -165,6 +167,16 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.LowConfidenceMatchConfirmationRequired();
         }
 
+        // Independent of match confidence -- a verified identifier match can
+        // still point at the wrong release (a collection, a sample, an
+        // abridged edition). Checked separately so the message tells the
+        // admin what's actually wrong rather than reusing the identity-match
+        // explanation for an unrelated concern.
+        if (externalOption.RequiresReleaseConfirmation && !confirmLowConfidenceMatch)
+        {
+            return ManualImportResult.ReleaseConfirmationRequired(externalOption.ReleaseConcern);
+        }
+
         var apiKey = externalProvider.HasApiKey
             ? protector.Unprotect(
                 ExternalProviderSecretPurposes.ApiKey, externalProvider.ProtectedApiKey!, externalProvider.ApiKeyFormatVersion)
@@ -177,7 +189,8 @@ public sealed class DirectAcquisitionService(
         // and stages it once the provider reports "completed".
         var idempotencyKey = Guid.NewGuid().ToString("N");
         var acquireRequest = new ExternalAcquireRequest(
-            Guid.NewGuid(), externalOption.ProviderResultId, CandidateRevision: null, AcquireToken: null, format.MediaType);
+            Guid.NewGuid(), externalOption.ProviderResultId, externalOption.CandidateRevision, externalOption.AcquireToken,
+            format.MediaType);
 
         ExternalProviderAcquireSubmission submission;
         try
@@ -205,8 +218,8 @@ public sealed class DirectAcquisitionService(
             externalProvider.CachedInstanceId,
             idempotencyKey,
             externalOption.ProviderResultId,
-            candidateRevision: null,
-            acquireToken: null,
+            externalOption.CandidateRevision,
+            externalOption.AcquireToken,
             now);
         job.RecordSubmission(
             submission.JobId!,

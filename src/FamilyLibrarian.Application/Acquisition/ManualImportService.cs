@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Audit;
 
@@ -99,6 +100,21 @@ public sealed record ManualImportResult(
             "Confirm you want to fetch this copy, or try a different source instead.");
 
     /// <summary>
+    /// <see cref="ExternalReleasePolicy"/> flagged this candidate's release
+    /// evidence (a collection, a sample, an abridged mismatch) — independent
+    /// of match confidence, since even a verified identifier match can point
+    /// at the wrong release. <paramref name="reason"/> is
+    /// <see cref="ExternalReleaseVerdict.Reason"/>.
+    /// </summary>
+    public static ManualImportResult ReleaseConfirmationRequired(string? reason) =>
+        new(
+            ManualImportOutcome.ReleaseConfirmationRequired,
+            null,
+            null,
+            (reason ?? "This release may not be what you expect.") +
+            " Confirm you want to fetch it anyway, or try a different source instead.");
+
+    /// <summary>
     /// A protocol-v2 external-provider acquisition was durably submitted and
     /// is now tracked by <see cref="ProviderAcquisitionJobId"/> — no file
     /// exists yet, and none of the usual staging/security-pipeline steps
@@ -123,5 +139,6 @@ public enum ManualImportOutcome
     DuplicateDetected,
     WaitingForSecurityScanner,
     LowConfidenceMatchConfirmationRequired,
-    AcquisitionInProgress
+    AcquisitionInProgress,
+    ReleaseConfirmationRequired
 }

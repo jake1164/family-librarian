@@ -77,11 +77,15 @@ public sealed class ExternalProviderClientTests
 
         var results = await client.SearchAsync(
             _baseUrl, apiKey: null,
-            new ExternalProviderSearchRequest(Guid.NewGuid(), RequestMediaType.Ebook, "Pride and Prejudice", [], null),
+            new ExternalProviderSearchRequest(
+                Guid.NewGuid(), RequestMediaType.Ebook,
+                new ExternalProviderWorkEvidence("Pride and Prejudice", null, [], [], [])),
             EgressRoute.Direct, CancellationToken.None);
 
         Assert.AreEqual(1, results.Count);
         Assert.AreEqual("pride-and-prejudice", results[0].ProviderReference);
+        Assert.AreEqual("Jane Austen", results[0].Work.Authors[0].Name);
+        Assert.IsNotNull(results[0].Edition);
     }
 
     [TestMethod]
@@ -91,7 +95,9 @@ public sealed class ExternalProviderClientTests
 
         var results = await client.SearchAsync(
             _baseUrl, apiKey: null,
-            new ExternalProviderSearchRequest(Guid.NewGuid(), RequestMediaType.Ebook, "Not A Real Book Title Xyz", [], null),
+            new ExternalProviderSearchRequest(
+                Guid.NewGuid(), RequestMediaType.Ebook,
+                new ExternalProviderWorkEvidence("Not A Real Book Title Xyz", null, [], [], [])),
             EgressRoute.Direct, CancellationToken.None);
 
         Assert.AreEqual(0, results.Count);
@@ -237,6 +243,63 @@ public sealed class ExternalProviderClientTests
         Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Cancelled, status.State);
 
         await client.DeleteAcquireAsync(_baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+    }
+
+    [TestMethod]
+    public async Task SearchReturnsRichWorkEditionAndSeriesEvidence()
+    {
+        var client = CreateClient();
+
+        var results = await client.SearchAsync(
+            _baseUrl, apiKey: null,
+            new ExternalProviderSearchRequest(
+                Guid.NewGuid(), RequestMediaType.Ebook,
+                new ExternalProviderWorkEvidence("Debt of Honor", null, [], [], [])),
+            EgressRoute.Direct, CancellationToken.None);
+
+        var candidate = results.Single();
+        Assert.AreEqual("Tom Clancy", candidate.Work.Authors[0].Name);
+        Assert.AreEqual("Jack Ryan", candidate.Work.Series[0].Name);
+        Assert.AreEqual("6", candidate.Work.Series[0].Position);
+        Assert.AreEqual("Putnam", candidate.Edition!.Publisher);
+        Assert.AreEqual(1994, candidate.Edition.PublicationYear);
+        Assert.AreEqual("rev-1", candidate.CandidateRevision);
+    }
+
+    [TestMethod]
+    public async Task SearchReturnsAnIsCollectionFlagThatExternalReleasePolicyRejects()
+    {
+        var client = CreateClient();
+
+        var results = await client.SearchAsync(
+            _baseUrl, apiKey: null,
+            new ExternalProviderSearchRequest(
+                Guid.NewGuid(), RequestMediaType.Ebook,
+                new ExternalProviderWorkEvidence("Jack Ryan Omnibus", null, [], [], [])),
+            EgressRoute.Direct, CancellationToken.None);
+
+        var candidate = results.Single();
+        Assert.AreEqual(true, candidate.Release!.IsCollection);
+
+        var verdict = ExternalReleasePolicy.Evaluate(candidate.Release, RequestMediaType.Ebook);
+        Assert.IsTrue(verdict.RequiresConfirmation);
+    }
+
+    [TestMethod]
+    public async Task SubmitAcquireWithAStaleCandidateRevisionReturnsCandidateChanged()
+    {
+        var client = CreateClient();
+        var request = new ExternalAcquireRequest(
+            Guid.NewGuid(), "debt-of-honor", CandidateRevision: "rev-1", AcquireToken: null, RequestMediaType.Ebook);
+
+        var submission = await client.SubmitAcquireAsync(
+            _baseUrl, apiKey: null, request, Guid.NewGuid().ToString("N"), EgressRoute.Direct, CancellationToken.None);
+
+        // retryable:false scopes to "don't retry this exact call with this
+        // stale revision" -- not "the book request is dead"; that
+        // distinction lives in the caller (DirectAcquisitionService invalidates
+        // and re-searches rather than giving up), not in this outcome itself.
+        Assert.AreEqual(ProviderAcquireOutcome.CandidateChanged, submission.Outcome);
     }
 
     [TestMethod]

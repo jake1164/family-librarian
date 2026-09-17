@@ -26,14 +26,36 @@ public static class SampleProviderHost
         var apiKey = Environment.GetEnvironmentVariable("SAMPLE_PROVIDER_API_KEY");
         var catalog = new[]
         {
-            new SampleCandidate("pride-and-prejudice", "Pride and Prejudice", "Jane Austen", "epub", RequiresInteraction: false),
-            new SampleCandidate("frankenstein", "Frankenstein", "Mary Wollstonecraft Shelley", "epub", RequiresInteraction: false),
+            new SampleCandidate(
+                "pride-and-prejudice", "Pride and Prejudice", "Jane Austen", "epub", RequiresInteraction: false,
+                Publisher: "T. Egerton", PublicationYear: 1813),
+            new SampleCandidate(
+                "frankenstein", "Frankenstein", "Mary Wollstonecraft Shelley", "epub", RequiresInteraction: false,
+                Publisher: "Lackington, Hughes, Harding, Mavor & Jones", PublicationYear: 1818),
             // Exercises protocol v2's waiting/user-interaction state end to
             // end: a real client sees state=waiting, phase=user-interaction
             // for a few seconds before the job resumes on its own
             // (resumeSupported=true) and completes — standing in for a
             // browser-gated acquisition like Anna's Archive's.
-            new SampleCandidate("the-time-machine", "The Time Machine", "H. G. Wells", "epub", RequiresInteraction: true)
+            new SampleCandidate(
+                "the-time-machine", "The Time Machine", "H. G. Wells", "epub", RequiresInteraction: true,
+                PublicationYear: 1895),
+            // Exercises protocol v2 §8/§9's CANDIDATE_CHANGED staleness
+            // conflict end to end: always declares candidateRevision "rev-1"
+            // from /search, but /acquire always rejects it with 409 --
+            // standing in for an upstream record that changed between
+            // search and acquire.
+            new SampleCandidate(
+                "debt-of-honor", "Debt of Honor", "Tom Clancy", "epub", RequiresInteraction: false,
+                Publisher: "Putnam", PublicationYear: 1994, SeriesName: "Jack Ryan", SeriesPosition: "6",
+                CurrentRevision: "rev-1", AlwaysStaleOnAcquire: true),
+            // Exercises protocol v2 §7/§10/§16's release-policy rejection
+            // end to end: a real client must see isCollection=true and FL's
+            // own ExternalReleasePolicy must flag it, never auto-acquire it,
+            // regardless of how well title/author/ISBN otherwise match.
+            new SampleCandidate(
+                "jack-ryan-omnibus", "Jack Ryan Omnibus", "Tom Clancy", "epub", RequiresInteraction: false,
+                Publisher: "Putnam", IsCollection: true)
         };
         var jobs = new ConcurrentDictionary<string, SampleJob>();
         var idempotencyKeys = new ConcurrentDictionary<string, string>();
@@ -95,10 +117,34 @@ public static class SampleProviderHost
                 .Select(candidate => new
                 {
                     providerReference = candidate.Reference,
-                    title = candidate.Title,
-                    author = candidate.Author,
-                    format = candidate.Format,
-                    sizeBytes = (long?)null
+                    candidateRevision = candidate.CurrentRevision,
+                    acquireToken = (string?)null,
+                    work = new
+                    {
+                        title = candidate.Title,
+                        subtitle = (string?)null,
+                        authors = new[] { new { name = candidate.Author, role = "author" } },
+                        series = candidate.SeriesName is null
+                            ? Array.Empty<object>()
+                            : [new { name = candidate.SeriesName, position = candidate.SeriesPosition }],
+                        identifiers = Array.Empty<object>()
+                    },
+                    edition = new
+                    {
+                        language = "en",
+                        publicationYear = candidate.PublicationYear,
+                        publisher = candidate.Publisher,
+                        identifiers = Array.Empty<object>()
+                    },
+                    release = new
+                    {
+                        name = $"{candidate.Reference}.{candidate.Format}",
+                        format = candidate.Format,
+                        sizeBytes = (long?)null,
+                        isCollection = candidate.IsCollection,
+                        isSample = false
+                    },
+                    extensions = new { }
                 });
 
             return Results.Ok(new { candidates = matches });
@@ -112,6 +158,19 @@ public static class SampleProviderHost
             if (candidate is null)
             {
                 return Results.NotFound(new { message = "Unknown candidateReference." });
+            }
+
+            if (candidate.AlwaysStaleOnAcquire)
+            {
+                return Results.Json(
+                    new
+                    {
+                        code = "CANDIDATE_CHANGED",
+                        message = "The candidate has changed since it was returned by search.",
+                        retryable = false
+                    },
+                    statusCode: StatusCodes.Status409Conflict,
+                    contentType: "application/problem+json");
             }
 
             // Idempotency-Key replay (protocol v2 §8): a resubmission with a
@@ -234,7 +293,19 @@ public static class SampleProviderHost
     }
 }
 
-internal sealed record SampleCandidate(string Reference, string Title, string Author, string Format, bool RequiresInteraction);
+internal sealed record SampleCandidate(
+    string Reference,
+    string Title,
+    string Author,
+    string Format,
+    bool RequiresInteraction,
+    string? Publisher = null,
+    int? PublicationYear = null,
+    string? SeriesName = null,
+    string? SeriesPosition = null,
+    string? CurrentRevision = null,
+    bool AlwaysStaleOnAcquire = false,
+    bool IsCollection = false);
 
 /// <summary>
 /// In-memory job state. Not thread-contended in any meaningful way for a

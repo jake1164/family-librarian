@@ -468,7 +468,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             CancellationToken cancellationToken)
         {
             IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-                ? [new ExternalProviderCandidate("fake-hobbit-1", "The Hobbit", "J. R. R. Tolkien", "epub", null, null)]
+                ? [ExternalProviderCandidate.FromSimple("fake-hobbit-1", "The Hobbit", "J. R. R. Tolkien", "epub", null)]
                 : [];
             return Task.FromResult(candidates);
         }
@@ -541,7 +541,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             CancellationToken cancellationToken)
         {
             IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-                ? [new ExternalProviderCandidate("wrong-title-1", "Dim Sum of Fears", "Someone Unrelated", "epub", null, null)]
+                ? [ExternalProviderCandidate.FromSimple("wrong-title-1", "Dim Sum of Fears", "Someone Unrelated", "epub", null)]
                 : [];
             return Task.FromResult(candidates);
         }

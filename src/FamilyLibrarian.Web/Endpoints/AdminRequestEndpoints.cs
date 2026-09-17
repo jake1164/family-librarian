@@ -367,6 +367,8 @@ internal static class AdminRequestEndpoints
         ManualImportOutcome.DuplicateDetected => Results.Conflict(new { message = result.Error }),
         ManualImportOutcome.LowConfidenceMatchConfirmationRequired => Results.Conflict(
             new { message = result.Error, requiresConfirmation = true }),
+        ManualImportOutcome.ReleaseConfirmationRequired => Results.Conflict(
+            new { message = result.Error, requiresConfirmation = true }),
         ManualImportOutcome.WaitingForSecurityScanner => Results.Problem(
             detail: result.Error,
             statusCode: StatusCodes.Status503ServiceUnavailable,
