@@ -640,7 +640,7 @@
     protected override async Task OnInitializedAsync()
     {
         Observe(LiveUpdateTopics.Sources | LiveUpdateTopics.Requests,
-            () => Task.WhenAll(LoadAttentionAsync(), LoadGutenbergCatalogStatusAsync()));
+            () => Task.WhenAll(LoadProvidersAsync(), LoadAttentionAsync(), LoadGutenbergCatalogStatusAsync()));
         await Task.WhenAll(
             LoadGatewayAsync(),
             LoadCatalogsAsync(),

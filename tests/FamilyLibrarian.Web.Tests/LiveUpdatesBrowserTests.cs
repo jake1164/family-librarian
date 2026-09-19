@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Delivery;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Contracts.Realtime;
 using Microsoft.EntityFrameworkCore;
 using FamilyLibrarian.Infrastructure.Persistence;
@@ -198,6 +200,92 @@ public sealed class LiveUpdatesBrowserTests
         await page.GetByLabel("Notifications", new() { Exact = true }).ClickAsync();
         await Assertions.Expect(page.GetByText(title, new() { Exact = true })).ToBeVisibleAsync();
         Assert.HasCount(1, connections.Snapshot());
+        Assert.IsTrue(pageErrors.IsEmpty, string.Join(Environment.NewLine, pageErrors));
+    }
+
+    /// <summary>
+    /// Regression for the External Providers admin panel's health/search/acquire
+    /// chips only ever refreshing on an explicit "Test Connection" click: an
+    /// out-of-band write to an <see cref="ExternalProvider"/> row -- exactly
+    /// what ExternalProviderRecheckService's own scheduled probe does -- must
+    /// push the updated chips to an already-open admin tab without a reload or
+    /// a button press.
+    /// </summary>
+    [TestMethod]
+    public async Task ExternalProviderHealthChipsUpdateLiveWithoutPressingTestConnection()
+    {
+        if (Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS") != "1")
+            Assert.Inconclusive("Set FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS=1 to run the isolated Chromium live-update regression.");
+
+        await using var fixture = await WebTestFixture.CreateAsync();
+        var available = WebTestFixture.Require(fixture);
+        await using var original = new FamilyLibrarianAppFactory(available.ConnectionString);
+        await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
+        factory.UseKestrel(0);
+        using var client = factory.CreateClient();
+
+        Guid providerId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var provider = new ExternalProvider(
+                "browser-live-chips", "Browser Live Chips Provider", "http://provider.test", DateTimeOffset.UtcNow);
+            provider.SetEnabled(true, actorUserId: null, DateTimeOffset.UtcNow);
+            provider.RecordTestResult(
+                succeeded: true,
+                message: "Reached Browser Live Chips Provider (protocol v2).",
+                protocolVersion: "2",
+                capabilities: "operations:search,acquire",
+                egressPolicy: EgressPolicy.Normal,
+                actorUserId: null,
+                testedAtUtc: DateTimeOffset.UtcNow,
+                instanceId: "instance-1",
+                healthStatus: "Healthy",
+                searchOperationStatus: "Available",
+                acquireOperationStatus: "Available",
+                manifestReached: true);
+            db.ExternalProviders.Add(provider);
+            await db.SaveChangesAsync();
+            providerId = provider.Id;
+        }
+
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new()
+        {
+            Headless = true,
+            ExecutablePath = Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_E2E_CHROMIUM_EXECUTABLE")
+        });
+        await using var context = await browser.NewContextAsync();
+        var page = await context.NewPageAsync();
+        var pageErrors = new ConcurrentQueue<string>();
+        page.PageError += (_, error) => pageErrors.Enqueue(error);
+        await LoginAsync(page, client.BaseAddress!, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/settings/sources").ToString());
+        await WaitForConnectionsAsync(factory.Services.GetRequiredService<LiveConnections>(), 1);
+
+        await Assertions.Expect(page.GetByText("Health: Healthy", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(page.GetByText("Search: Available", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(page.GetByText("Acquire: Available", new() { Exact = true })).ToBeVisibleAsync();
+
+        // Simulates ExternalProviderRecheckService's own scheduled /health probe
+        // finding the provider degraded -- not a click on "Test connection".
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var provider = await db.ExternalProviders.SingleAsync(p => p.Id == providerId);
+            provider.RecordHealthCheck(
+                succeeded: false,
+                message: "The manifest was reachable, but Browser Live Chips Provider reported its search or acquire capability as unavailable.",
+                healthStatus: "Degraded",
+                searchOperationStatus: "Unavailable",
+                acquireOperationStatus: "Available",
+                checkedAtUtc: DateTimeOffset.UtcNow);
+            await db.SaveChangesAsync();
+        }
+
+        await Assertions.Expect(page.GetByText("Health: Degraded", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(page.GetByText("Search: Unavailable", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(page.GetByText("Acquire: Available", new() { Exact = true })).ToBeVisibleAsync();
         Assert.IsTrue(pageErrors.IsEmpty, string.Join(Environment.NewLine, pageErrors));
     }
 }

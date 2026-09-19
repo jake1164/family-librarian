@@ -26,6 +26,7 @@ public sealed class SystemReadinessService(
     IProviderRegistry providerRegistry,
     IProviderSettingsStore providerSettings,
     IGutenbergCatalog gutenbergCatalog,
+    IExternalProviderStore externalProviders,
     ICwaSettingsStore cwaSettings,
     IAudiobookshelfSettingsStore audiobookshelfSettings)
 {
@@ -45,6 +46,16 @@ public sealed class SystemReadinessService(
                     degraded.Add(new DegradedSystemComponentResponse(
                         SystemReadinessCategories.Source, "Project Gutenberg catalogue", status.FailureMessage));
                 }
+            }
+        }
+
+        var enabledExternalProviders = await externalProviders.ListEnabledAsync(cancellationToken);
+        foreach (var provider in enabledExternalProviders)
+        {
+            if (provider.LastTestSucceeded == false)
+            {
+                degraded.Add(new DegradedSystemComponentResponse(
+                    SystemReadinessCategories.Source, provider.DisplayName, provider.LastTestMessage));
             }
         }
 
