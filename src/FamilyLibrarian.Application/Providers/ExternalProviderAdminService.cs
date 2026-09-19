@@ -254,7 +254,8 @@ public sealed class ExternalProviderAdminService(
                 health.Search.ToString(),
                 health.Acquire.ToString(),
                 manifest.ManagementUrl,
-                manifest.DocumentationUrl);
+                manifest.DocumentationUrl,
+                manifestReached: true);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {

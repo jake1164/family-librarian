@@ -230,13 +230,22 @@ public sealed class ExternalProvider
         string? searchOperationStatus = null,
         string? acquireOperationStatus = null,
         string? managementUrl = null,
-        string? documentationUrl = null)
+        string? documentationUrl = null,
+        bool manifestReached = false)
     {
         LastTestedAtUtc = testedAtUtc;
         LastTestSucceeded = succeeded;
         LastTestMessage = Truncate(message, 512);
 
-        if (succeeded)
+        // Deliberately gated on manifestReached, not succeeded: succeeded
+        // reflects whether /health came back fully operational, but a
+        // degraded/unhealthy result is still a real, freshly observed
+        // response that the Test Connection UI's health/search/acquire
+        // chips must reflect -- otherwise they keep showing whatever the
+        // previous (possibly healthy) test cached while the banner text
+        // above them, built from the same probe, already reports the
+        // degradation.
+        if (manifestReached)
         {
             CachedProtocolVersion = protocolVersion;
             CachedCapabilities = capabilities;
