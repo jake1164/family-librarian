@@ -11,9 +11,18 @@ namespace FamilyLibrarian.Domain.Providers;
 /// so no configuration or request body can introduce a new provider — this is
 /// a multi-row table by design: an external provider only exists because an
 /// administrator explicitly registered one. <see cref="CachedEgressPolicy"/>
-/// and the other <c>Cached*</c> fields come only from the provider's own
-/// <c>/manifest</c> response at registration/Test Connection time; they are
-/// never admin-typed, since the provider is the one declaring what it needs.
+/// and the other manifest-derived <c>Cached*</c> fields (protocol version,
+/// capabilities, instance id, egress policy) come only from the provider's
+/// own <c>/manifest</c> response at registration/Test Connection time; they
+/// are never admin-typed, since the provider is the one declaring what it
+/// needs. <see cref="CachedHealthStatus"/>/<see cref="CachedSearchOperationStatus"/>/
+/// <see cref="CachedAcquireOperationStatus"/> are the exception: per
+/// docs/04-external-provider-http-protocol.md §5, <c>/health</c> is called
+/// both at Test Connection and on the registration's own recheck schedule
+/// (see <see cref="RecordHealthCheck"/>), so those three fields — and
+/// <see cref="LastTestedAtUtc"/>/<see cref="LastTestSucceeded"/>/
+/// <see cref="LastTestMessage"/> alongside them — reflect whichever probe ran
+/// most recently, not only an admin's explicit click.
 /// </remarks>
 public sealed class ExternalProvider
 {
@@ -250,6 +259,34 @@ public sealed class ExternalProvider
         }
 
         Touch(actorUserId, testedAtUtc);
+    }
+
+    /// <summary>
+    /// Records a live <c>/health</c> probe made outside an admin's "Test
+    /// Connection" click — currently <c>ExternalProviderRecheckService</c>'s
+    /// own probe on this provider's <see cref="RecheckSchedule"/> cadence
+    /// (docs/04 §5). Deliberately narrower than <see cref="RecordTestResult"/>:
+    /// a recheck never calls <c>/manifest</c>, so this must not touch protocol
+    /// version, capabilities, instance id, or egress policy — those stay
+    /// exactly what the last real Test Connection observed. Also does not
+    /// call <see cref="Touch"/>: <see cref="UpdatedByUserId"/>/
+    /// <see cref="UpdatedAtUtc"/> record an administrator's own edits, and an
+    /// unattended background probe is not one.
+    /// </summary>
+    public void RecordHealthCheck(
+        bool succeeded,
+        string? message,
+        string? healthStatus,
+        string? searchOperationStatus,
+        string? acquireOperationStatus,
+        DateTimeOffset checkedAtUtc)
+    {
+        LastTestedAtUtc = checkedAtUtc;
+        LastTestSucceeded = succeeded;
+        LastTestMessage = Truncate(message, 512);
+        CachedHealthStatus = healthStatus;
+        CachedSearchOperationStatus = searchOperationStatus;
+        CachedAcquireOperationStatus = acquireOperationStatus;
     }
 
     private void ResetTestResult()

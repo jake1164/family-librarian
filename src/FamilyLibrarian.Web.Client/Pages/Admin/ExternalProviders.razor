@@ -528,11 +528,20 @@
                                  Size="Size.Small" />
                         @provider.LastTestMessage
                     </MudText>
-                    @if (provider.LastTestSucceeded == true)
+                    @if (provider.CachedProtocolVersion is not null || provider.CachedHealthStatus is not null)
                     {
+                        @* Health/Search/Acquire can now refresh independently of a full
+                           Test Connection (ExternalProviderRecheckService's own scheduled
+                           probe), so this no longer gates on LastTestSucceeded -- a
+                           provider whose last check found it degraded must still show
+                           these chips, not just the summary line above. Each chip already
+                           guards on its own underlying cached value being present. *@
                         <MudStack Row="true" Spacing="1" Class="mt-1" Wrap="Wrap.Wrap">
-                            <MudChip T="string" Size="Size.Small">Protocol v@(provider.CachedProtocolVersion)</MudChip>
-                            <MudChip T="string" Size="Size.Small">Egress: @provider.CachedEgressPolicy</MudChip>
+                            @if (provider.CachedProtocolVersion is not null)
+                            {
+                                <MudChip T="string" Size="Size.Small">Protocol v@(provider.CachedProtocolVersion)</MudChip>
+                                <MudChip T="string" Size="Size.Small">Egress: @provider.CachedEgressPolicy</MudChip>
+                            }
                             @if (provider.CachedHealthStatus is not null)
                             {
                                 <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedHealthStatus)">

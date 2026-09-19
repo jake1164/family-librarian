@@ -123,8 +123,12 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
                 ParseOperationalStatus(json?["operations"]?["search"]?.GetValue<string>(), inherited),
                 ParseOperationalStatus(json?["operations"]?["acquire"]?.GetValue<string>(), inherited));
         }
-        catch (HttpRequestException)
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
+            // A timeout throws TaskCanceledException, not HttpRequestException —
+            // this method's whole point is to never let a connectivity problem
+            // escape as an exception, so both must degrade to Unreachable the
+            // same way a non-2xx response already does above.
             return ExternalProviderHealth.Unreachable;
         }
     }

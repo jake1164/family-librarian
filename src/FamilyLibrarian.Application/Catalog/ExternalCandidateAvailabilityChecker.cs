@@ -48,6 +48,17 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 continue;
             }
 
+            // Skip a provider its own last health probe (Test Connection, or
+            // ExternalProviderRecheckService's periodic recheck) reported as
+            // unable to search at all -- same "degrade to no results" posture
+            // as every other failure this loop already tolerates, but without
+            // spending a network round trip on a provider already known to be
+            // down for this operation.
+            if (IsKnownSearchUnavailable(provider))
+            {
+                continue;
+            }
+
             try
             {
                 found.AddRange(await FindForProviderAsync(provider, resolution.Route!, identity, mediaType, cancellationToken));
@@ -144,4 +155,49 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 ReleaseConcern: releaseVerdict.Reason);
         }).ToArray();
     }
+
+    /// <summary>
+    /// One live <c>GET /health</c> probe for <paramref name="provider"/>
+    /// (protocol v2 §5), used by <c>ExternalProviderRecheckService</c>'s own
+    /// periodic refresh. Kept here rather than duplicated at that call site
+    /// since it needs the same API-key unprotect step <see cref="FindForProviderAsync"/>
+    /// already does.
+    /// </summary>
+    public async Task<Providers.ExternalProviderHealth> CheckHealthAsync(
+        Domain.Providers.ExternalProvider provider, Providers.EgressRoute route, CancellationToken cancellationToken)
+    {
+        var apiKey = provider.HasApiKey
+            ? protector.Unprotect(
+                Providers.ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
+            : null;
+
+        return await externalProviderClient.GetHealthAsync(provider.BaseUrl, apiKey, route, cancellationToken);
+    }
+
+    /// <summary>
+    /// True when <paramref name="provider"/>'s own last-observed health
+    /// explicitly reported its search capability as unavailable (protocol v2
+    /// §5's <c>operations.search</c>) — the admin-registered-provider
+    /// equivalent of <see cref="IDirectAcquisitionProvider.IsReadyAsync"/>'s
+    /// "not ready, don't bother" signal. Reads the cached result of the last
+    /// live probe (Test Connection, or <see cref="CheckHealthAsync"/>'s own
+    /// periodic refresh) rather than making a fresh call: a broken provider's
+    /// own search call already fails cheaply on its own, so the point of
+    /// gating here is not to save that call — it's so the reason is recorded
+    /// as "known unavailable" instead of looking identical to "no candidates."
+    /// A provider that has never been tested (both fields still <see langword="null"/>)
+    /// is never treated as unavailable by this check.
+    /// </summary>
+    public static bool IsKnownSearchUnavailable(Domain.Providers.ExternalProvider provider) =>
+        string.Equals(
+            provider.CachedSearchOperationStatus,
+            nameof(Providers.ProviderOperationalStatus.Unavailable),
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Same as <see cref="IsKnownSearchUnavailable"/>, for <c>operations.acquire</c>.</summary>
+    public static bool IsKnownAcquireUnavailable(Domain.Providers.ExternalProvider provider) =>
+        string.Equals(
+            provider.CachedAcquireOperationStatus,
+            nameof(Providers.ProviderOperationalStatus.Unavailable),
+            StringComparison.OrdinalIgnoreCase);
 }

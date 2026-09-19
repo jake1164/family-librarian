@@ -237,10 +237,13 @@ public sealed class ExternalProviderAdminService(
 
             var health = await client.GetHealthAsync(provider.BaseUrl, apiKey, resolution.Route!, cancellationToken);
             provider.RecordTestResult(
-                health.IsHealthy,
-                health.IsHealthy
+                health.IsFullyOperational,
+                health.IsFullyOperational
                     ? $"Reached {manifest.Name} (protocol v{negotiatedVersion})."
-                    : "The manifest was reachable, but the health check did not report healthy.",
+                    : health.IsHealthy
+                        ? $"The manifest was reachable, but {manifest.Name} reported its search or acquire " +
+                            "capability as unavailable — see the health/search/acquire chips below."
+                        : "The manifest was reachable, but the health check did not report healthy.",
                 negotiatedVersion,
                 SerializeCapabilities(manifest.Capabilities),
                 egressPolicy,
@@ -253,7 +256,7 @@ public sealed class ExternalProviderAdminService(
                 manifest.ManagementUrl,
                 manifest.DocumentationUrl);
         }
-        catch (HttpRequestException exception)
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
             provider.RecordTestResult(
                 false, $"The provider is unreachable: {exception.Message}", provider.CachedProtocolVersion,

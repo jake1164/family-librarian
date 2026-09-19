@@ -123,6 +123,22 @@ public sealed record ExternalProviderHealth(
 
     /// <summary>True when the provider is not reporting itself fully unhealthy — the old v1 binary signal.</summary>
     public bool IsHealthy => Status != ProviderHealthStatus.Unhealthy;
+
+    /// <summary>
+    /// True when this provider can currently do the two things Family
+    /// Librarian actually depends on it for. Protocol v2 §5: "Family
+    /// Librarian treats operations as the more specific signal when [status
+    /// and operations] disagree" — so this looks at <see cref="Search"/>/
+    /// <see cref="Acquire"/>, not the coarse <see cref="Status"/> alone. A
+    /// provider can legitimately report <c>status: degraded</c> while both
+    /// operations are still <c>available</c> (e.g. elevated latency) — that
+    /// is still fully operational. Prefer this over <see cref="IsHealthy"/>
+    /// for any decision that gates an actual search or acquire attempt;
+    /// <see cref="IsHealthy"/> alone is too loose for that (a provider can be
+    /// merely "not unhealthy" while unable to search or acquire anything).
+    /// </summary>
+    public bool IsFullyOperational =>
+        Search != ProviderOperationalStatus.Unavailable && Acquire != ProviderOperationalStatus.Unavailable;
 }
 
 /// <summary>Protocol v2 §6's <c>POST /search</c> request body.</summary>

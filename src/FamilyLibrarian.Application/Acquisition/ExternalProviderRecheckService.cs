@@ -49,6 +49,13 @@ public sealed class ExternalProviderRecheckService(
         }
 
         var pending = await requests.ListPendingForAutomaticFulfillmentAsync(BatchSize, cancellationToken);
+        if (pending.Count == 0)
+        {
+            return 0;
+        }
+
+        var healthByProvider = await RefreshDueHealthAsync(scheduledProviders, cancellationToken);
+
         var checks = 0;
         foreach (var request in pending)
         {
@@ -75,6 +82,21 @@ public sealed class ExternalProviderRecheckService(
                     {
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.Blocked,
                             resolution.BlockedReason ?? "The provider's egress policy could not be satisfied.", nextCheck);
+                        continue;
+                    }
+
+                    // Protocol v2 §5: operations.search/operations.acquire is
+                    // the specific signal, over the coarse overall status --
+                    // a provider already known (from this cycle's own health
+                    // refresh, below) to be unable to search or acquire is
+                    // skipped without a live search call, and the reason is
+                    // recorded explicitly rather than left indistinguishable
+                    // from "no candidates" or a generic connection failure.
+                    if (healthByProvider.TryGetValue(provider.ProviderId, out var health) && !health.IsFullyOperational)
+                    {
+                        AddAttempt(request, format, provider, ProviderAttemptOutcome.Blocked,
+                            $"{provider.DisplayName}'s scheduled health check reported search: {health.Search}, " +
+                            $"acquire: {health.Acquire} — skipped without a live search call.", nextCheck);
                         continue;
                     }
 
@@ -177,6 +199,67 @@ public sealed class ExternalProviderRecheckService(
 
         return checks;
     }
+
+    /// <summary>
+    /// Refreshes <see cref="ExternalProvider.CachedHealthStatus"/> and its
+    /// search/acquire siblings for every provider in <paramref name="scheduledProviders"/>
+    /// whose own <see cref="ExternalProvider.RecheckSchedule"/> cadence has
+    /// elapsed since it was last checked (docs/04 §5: "/health is called as
+    /// part of Test Connection and on the registration's recheck schedule" —
+    /// never more often than that, matching the same cadence this service
+    /// already uses for candidate lookups). A provider whose egress policy
+    /// cannot currently be satisfied is left alone here; the per-attempt loop
+    /// already records that specific reason.
+    /// </summary>
+    private async Task<Dictionary<string, ExternalProviderHealth>> RefreshDueHealthAsync(
+        IReadOnlyList<ExternalProvider> scheduledProviders, CancellationToken cancellationToken)
+    {
+        var healthByProvider = new Dictionary<string, ExternalProviderHealth>(StringComparer.OrdinalIgnoreCase);
+        var refreshed = false;
+        foreach (var provider in scheduledProviders)
+        {
+            if (!IsHealthCheckDue(provider, clock.UtcNow))
+            {
+                continue;
+            }
+
+            var resolution = routeResolver.Resolve(provider.EffectiveEgressPolicy);
+            if (!resolution.IsAllowed)
+            {
+                continue;
+            }
+
+            try
+            {
+                var health = await candidateChecker.CheckHealthAsync(provider, resolution.Route!, cancellationToken);
+                provider.RecordHealthCheck(
+                    health.IsFullyOperational,
+                    health.IsFullyOperational
+                        ? "Reachable on scheduled recheck."
+                        : "Reachable on scheduled recheck, but search or acquire was reported unavailable.",
+                    health.Status.ToString(), health.Search.ToString(), health.Acquire.ToString(), clock.UtcNow);
+                healthByProvider[provider.ProviderId] = health;
+                refreshed = true;
+            }
+            catch (CryptographicException)
+            {
+                // The stored API key could not be unprotected (e.g. the data
+                // protection key ring rotated) -- leave this provider's cached
+                // health untouched rather than aborting every other
+                // provider's refresh in the same pass.
+            }
+        }
+
+        if (refreshed)
+        {
+            await providers.SaveChangesAsync(cancellationToken);
+        }
+
+        return healthByProvider;
+    }
+
+    private static bool IsHealthCheckDue(ExternalProvider provider, DateTimeOffset now) =>
+        provider.LastTestedAtUtc is null || provider.LastTestedAtUtc + ToInterval(provider.RecheckSchedule) <= now;
 
     private static bool IsDue(ProviderAttempt? latest, BookRequest request, DateTimeOffset now) =>
         // A cancellation followed by "Ask again" begins a new request cycle.

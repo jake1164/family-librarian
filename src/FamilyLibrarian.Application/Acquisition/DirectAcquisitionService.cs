@@ -141,6 +141,14 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.Invalid(resolution.BlockedReason!);
         }
 
+        if (ExternalCandidateAvailabilityChecker.IsKnownSearchUnavailable(externalProvider))
+        {
+            return ManualImportResult.Invalid(
+                $"{externalProvider.DisplayName}'s search capability was last reported unavailable " +
+                $"(checked {externalProvider.LastTestedAtUtc:u}). Re-test the provider in Admin → External " +
+                "Providers, or wait for its next scheduled recheck.");
+        }
+
         var identity = new BookIdentity(
             work?.Title ?? string.Empty, work?.PrimaryAuthor, work?.Isbn13s ?? [],
             work?.Authors, work?.Series, work?.Language, work?.PublicationYear, work?.Publisher);
@@ -187,6 +195,14 @@ public sealed class DirectAcquisitionService(
         // this request on however long the provider's acquisition actually
         // takes. AcquisitionJobPollingService drives the job to completion
         // and stages it once the provider reports "completed".
+        if (ExternalCandidateAvailabilityChecker.IsKnownAcquireUnavailable(externalProvider))
+        {
+            return ManualImportResult.Invalid(
+                $"{externalProvider.DisplayName}'s acquire capability was last reported unavailable " +
+                $"(checked {externalProvider.LastTestedAtUtc:u}), even though search found this candidate. " +
+                "Re-test the provider in Admin → External Providers, or wait for its next scheduled recheck.");
+        }
+
         var idempotencyKey = Guid.NewGuid().ToString("N");
         var acquireRequest = new ExternalAcquireRequest(
             Guid.NewGuid(), externalOption.ProviderResultId, externalOption.CandidateRevision, externalOption.AcquireToken,
