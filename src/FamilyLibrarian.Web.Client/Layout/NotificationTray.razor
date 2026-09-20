@@ -223,6 +223,8 @@
     private const string SeriesNewEntryDetectedCategory = "following.series_entry_added";
     // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.AuthorNewWorkDetected.
     private const string AuthorNewWorkDetectedCategory = "following.author_work_added";
+    // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.ProviderHealthDegraded.
+    private const string ProviderHealthDegradedCategory = "provider.health_degraded";
 
     private static string? LinkFor(string category, string? subjectType, string? subjectId) => (category, subjectType, subjectId) switch
     {
@@ -242,6 +244,10 @@
         // it rather than the Following list it was found through.
         (SeriesNewEntryDetectedCategory, "work", { } id) => $"works/{id}",
         (AuthorNewWorkDetectedCategory, "work", { } id) => $"works/{id}",
+        // Keyed on the provider's own stable id, which has no per-provider
+        // route on the Sources page -- just get the admin to the page where
+        // the health/search/acquire chips and Test Connection live.
+        (ProviderHealthDegradedCategory, "external_provider", not null) => "settings/sources",
         _ => null
     };
 
@@ -252,6 +258,7 @@
         SourceIssueCategory => Icons.Material.Filled.Source,
         PublishingIssueCategory => Icons.Material.Filled.CloudUpload,
         SeriesNewEntryDetectedCategory or AuthorNewWorkDetectedCategory => Icons.Material.Filled.NewReleases,
+        ProviderHealthDegradedCategory => Icons.Material.Filled.Source,
         _ => SeverityIcon(entry.Severity)
     };
 

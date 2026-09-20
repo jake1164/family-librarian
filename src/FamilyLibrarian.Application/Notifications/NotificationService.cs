@@ -162,6 +162,29 @@ public sealed class NotificationService(
             subjectId: newWorkId.ToString(),
             cancellationToken);
 
+    /// <summary>
+    /// Admin-facing alert raised by <c>ExternalProviderHealthPollService</c>'s
+    /// independent background probe on a transition into non-operational --
+    /// the passive Sources-page chip alone only helps an admin already
+    /// looking at it. Keyed on the provider's own stable id so a later
+    /// still-down poll tick recurs (never duplicates) this same event; the
+    /// caller only invokes this on an actual transition, not every tick, so
+    /// a persistently broken provider doesn't un-dismiss its own
+    /// notification every cycle.
+    /// </summary>
+    public Task RecordProviderHealthDegradedAsync(
+        Guid providerId, string providerName, string reason, CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.AdminBroadcast,
+            recipientUserId: null,
+            NotificationCategories.ProviderHealthDegraded,
+            NotificationSeverity.Warning,
+            title: $"{providerName} needs attention",
+            detail: reason,
+            subjectType: NotificationSubjectTypes.ExternalProvider,
+            subjectId: providerId.ToString(),
+            cancellationToken);
+
     public async Task<IReadOnlyList<NotificationView>> ListForViewerAsync(
         bool isAdmin, CancellationToken cancellationToken)
     {

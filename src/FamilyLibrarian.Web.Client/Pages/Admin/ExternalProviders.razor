@@ -431,6 +431,11 @@
                     automatic copy. This only controls how often FL looks — whether a found candidate is downloaded
                     without review is a separate setting below.
                 </MudText>
+                <MudText Typo="Typo.caption" Class="mb-2">
+                    This does not affect the health/search/acquire chips below — Family Librarian checks this
+                    provider's reachability on its own fixed interval regardless of this setting, including when
+                    set to Manual.
+                </MudText>
                 <MudSelect T="string" Label="Recheck schedule" Value="provider.RecheckSchedule"
                            ValueChanged="@(value => SetProviderRecheckScheduleAsync(provider.Id, value))"
                            Disabled="@(providersBusy || !provider.IsEnabled)" Class="mb-2">

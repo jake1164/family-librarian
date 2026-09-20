@@ -169,8 +169,11 @@ not produce usable health information," which Family Librarian treats as
 unhealthy/unknown, distinct from a deliberately reported `degraded`/
 `unhealthy` body. A bare `2xx` with no body (the v1 shape) is still accepted
 and treated as `{"status": "healthy"}`. Called as part of "Test Connection"
-and on the registration's recheck schedule — not polled continuously in the
-background.
+and, independently of that registration's recheck schedule (which governs
+candidate-lookup retries only), on Family Librarian's own fixed background
+interval (currently 15 minutes) for every enabled provider — bounded and
+predictable, not continuous, but no longer gated on whether a request
+happens to be pending or on that provider's own recheck cadence.
 
 ---
 

@@ -45,6 +45,16 @@ public static class NotificationCategories
     /// raised for every active follower of an Author when a newly resolved
     /// Work is credited to them.</summary>
     public const string AuthorNewWorkDetected = "following.author_work_added";
+
+    /// <summary>
+    /// Raised by <c>ExternalProviderHealthPollService</c>'s independent
+    /// background probe when a registered external provider transitions
+    /// from operational to not (unreachable, egress-blocked, or an
+    /// undecryptable stored credential) -- not fired again on every
+    /// still-down poll tick, only the transition, so recurring never
+    /// un-dismisses a still-broken provider's notification every cycle.
+    /// </summary>
+    public const string ProviderHealthDegraded = "provider.health_degraded";
 }
 
 public static class NotificationSubjectTypes
@@ -52,4 +62,5 @@ public static class NotificationSubjectTypes
     public const string BookRequest = "book_request";
     public const string DeliveryAttempt = "delivery_attempt";
     public const string Work = "work";
+    public const string ExternalProvider = "external_provider";
 }

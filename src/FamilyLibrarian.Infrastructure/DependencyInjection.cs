@@ -248,6 +248,7 @@ public static class DependencyInjection
         services.AddScoped<DirectAcquisitionSecurityService>();
         services.AddScoped<AutomaticRequestFulfillmentService>();
         services.AddScoped<ExternalProviderRecheckService>();
+        services.AddScoped<ExternalProviderHealthPollService>();
         services.AddScoped<AcquisitionJobPollingService>();
 
         services.AddOptions<ClamAvScannerOptions>()

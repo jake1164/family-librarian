@@ -11,6 +11,7 @@ using FamilyLibrarian.Web.Communications;
 using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
 using FamilyLibrarian.Web.Gutenberg;
+using FamilyLibrarian.Web.Providers;
 using FamilyLibrarian.Web.Publishing;
 using FamilyLibrarian.Web.Readiness;
 using FamilyLibrarian.Web.Realtime;
@@ -38,6 +39,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<DeliveryRetryHostedService>();
     builder.Services.AddHostedService<AudiobookshelfVerificationHostedService>();
     builder.Services.AddHostedService<PublishingDestinationHealthHostedService>();
+    builder.Services.AddHostedService<ExternalProviderHealthHostedService>();
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
     builder.Services.AddHostedService<AcquisitionJobPollingHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();

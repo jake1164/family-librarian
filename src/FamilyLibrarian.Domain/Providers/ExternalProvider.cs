@@ -18,8 +18,12 @@ namespace FamilyLibrarian.Domain.Providers;
 /// needs. <see cref="CachedHealthStatus"/>/<see cref="CachedSearchOperationStatus"/>/
 /// <see cref="CachedAcquireOperationStatus"/> are the exception: per
 /// docs/04-external-provider-http-protocol.md §5, <c>/health</c> is called
-/// both at Test Connection and on the registration's own recheck schedule
-/// (see <see cref="RecordHealthCheck"/>), so those three fields — and
+/// both at Test Connection and periodically by Family Librarian's own
+/// independent background poll (<c>ExternalProviderHealthPollService</c>),
+/// deliberately decoupled from <see cref="RecheckSchedule"/> — that field
+/// governs candidate-lookup cadence only, never whether the provider itself
+/// gets probed for reachability (see <see cref="RecordHealthCheck"/>), so
+/// those three fields — and
 /// <see cref="LastTestedAtUtc"/>/<see cref="LastTestSucceeded"/>/
 /// <see cref="LastTestMessage"/> alongside them — reflect whichever probe ran
 /// most recently, not only an admin's explicit click.
@@ -272,10 +276,11 @@ public sealed class ExternalProvider
 
     /// <summary>
     /// Records a live <c>/health</c> probe made outside an admin's "Test
-    /// Connection" click — currently <c>ExternalProviderRecheckService</c>'s
-    /// own probe on this provider's <see cref="RecheckSchedule"/> cadence
-    /// (docs/04 §5). Deliberately narrower than <see cref="RecordTestResult"/>:
-    /// a recheck never calls <c>/manifest</c>, so this must not touch protocol
+    /// Connection" click — <c>ExternalProviderHealthPollService</c>'s own
+    /// independent background probe, on a fixed interval for every enabled
+    /// provider regardless of <see cref="RecheckSchedule"/> (docs/04 §5).
+    /// Deliberately narrower than <see cref="RecordTestResult"/>:
+    /// a probe never calls <c>/manifest</c>, so this must not touch protocol
     /// version, capabilities, instance id, or egress policy — those stay
     /// exactly what the last real Test Connection observed. Also does not
     /// call <see cref="Touch"/>: <see cref="UpdatedByUserId"/>/
