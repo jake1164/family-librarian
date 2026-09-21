@@ -182,11 +182,10 @@ public sealed class ExternalProviderRecheckService(
                         }
 
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
-                            $"Found {options.Count} candidate(s); librarian review is required before acquisition.",
+                            $"Found {options.Count} candidate(s); choose a reviewed candidate before acquisition.",
                             nextEligibleCheckAtUtc: null);
-                        await MarkForReviewAsync(
-                            request, work.Title, $"{provider.DisplayName} found a candidate that needs librarian review.",
-                            cancellationToken);
+                        await MarkForCandidateReviewAsync(
+                            request, format, provider, work.Title, options, cancellationToken);
                         break;
                     }
                     catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or CryptographicException)
@@ -238,5 +237,45 @@ public sealed class ExternalProviderRecheckService(
 
         request.TransitionTo(RequestStatus.NeedsReview, actorUserId: null, reason, clock.UtcNow);
         await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
+    }
+
+    /// <summary>
+    /// A provider search that yields reviewable evidence must carry its
+    /// candidate list into the same requester/admin preference flow used by
+    /// built-in providers. A generic NeedsReview state without selections is
+    /// a dead end: the user can see that a provider found something but FL has
+    /// discarded the only references that could be safely sent back to it.
+    /// </summary>
+    private async Task MarkForCandidateReviewAsync(
+        BookRequest request,
+        RequestFormat format,
+        ExternalProvider provider,
+        string workTitle,
+        IReadOnlyList<FulfillmentOption> options,
+        CancellationToken cancellationToken)
+    {
+        if (request.Status != RequestStatus.PendingAcquisition)
+        {
+            return;
+        }
+
+        var reason = $"{provider.DisplayName} found {options.Count} candidate(s) that need a choice before acquisition.";
+        request.MarkNeedsReview(
+            RequestReviewCategory.PreferenceAmbiguity,
+            reason,
+            clock.UtcNow,
+            options.Select(option => (
+                format.Id,
+                option.ProviderId,
+                option.ProviderResultId,
+                option.Title ?? workTitle,
+                option.Author,
+                option.Language)).ToArray());
+        await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
+        foreach (var requesterId in request.ActiveRequesterIds)
+        {
+            await notifications.RecordPreferenceAmbiguityAsync(
+                requesterId, request.Id, workTitle, reason, cancellationToken);
+        }
     }
 }

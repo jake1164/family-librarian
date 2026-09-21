@@ -1,12 +1,10 @@
 # External Provider HTTP Protocol Reference
 
-**Status:** Protocol version **2** — the target wire contract for new
-external providers (Anna's Archive, Usenet/Newznab, and any future
-provider). This document is the spec to build against; it has no dependency
-on the corresponding Family Librarian code existing yet. Protocol version 1
-— the contract actually shipped as of `feature/alpha-5` — is preserved
-verbatim in **Appendix A** below for the existing sample provider and until
-the client/server code here is upgraded to match this document.
+**Status:** Protocol version **2** — the implemented wire contract for new
+external providers of any kind.
+Family Librarian's HTTP client and the reference sample provider negotiate and
+speak v2. Protocol version 1 is preserved verbatim in **Appendix A** only for
+legacy-provider compatibility.
 
 **What changed from v1, in one paragraph:** v1 modeled a single author, a
 single ISBN, a binary health check, and a hard 90-second acquisition budget
@@ -28,9 +26,7 @@ A complete, working, cross-checked reference implementation lives at
 [`samples/FamilyLibrarian.SampleProvider`](../samples/FamilyLibrarian.SampleProvider) —
 read its source if anything here is ambiguous; that project's own conformance
 tests (`ExternalProviderClientTests`) run the real client in this repository
-against it. **As of this writing the sample provider and the real client
-still speak protocol version 1** (Appendix A) — this document describes the
-target they are being upgraded to, not their current behavior.
+against it.
 
 ---
 
@@ -111,7 +107,7 @@ Response:
 | `protocolVersions` | **yes** | Array of version strings you support, e.g. `["2"]` or `["1", "2"]` during a transition. Version strings are positive base-10 integer major versions (`"1"`, `"2"`, ..., `"10"`) compared **numerically**, never lexicographically — `"10"` is higher than `"2"`. Family Librarian computes the highest value present in both its own supported set and yours. If there is no overlap, Family Librarian refuses to call `/search` or `/acquire` at all — it will not silently guess a version — but will still call `/manifest`/`/health` for diagnostics and surface the mismatch to the admin. |
 | `protocolVersion` | no | Deprecated single-string form, kept for a transitional read by older clients. Set it equal to the highest value in `protocolVersions`. Defaults to `"1"` if both fields are omitted, for backward compatibility with a v1 manifest. |
 | `instanceId` | recommended | A string identifying *this deployed instance*, stable across ordinary restarts (persist it to disk/env, don't regenerate it per process start). Distinct from `id`/`providerId`, which identifies the provider *software*. Lets Family Librarian detect that a container has been replaced mid-job (a new `instanceId` under the same `id`) rather than assuming an old job reference is still valid. Omitting it is tolerated — Family Librarian just can't detect instance replacement for you. |
-| `id`, `name`, `version` | no | `id` is the provider software/type identity (e.g. `anna`, `newznab-generic`), not this specific deployment. Default to empty string if omitted. Purely informational (shown in the admin UI). |
+| `id`, `name`, `version` | no | `id` is the provider software/type identity (e.g. `example-source`), not this specific deployment. Default to empty string if omitted. Purely informational (shown in the admin UI). |
 | `capabilities` | no | A structured object: `mediaTypes` (open list, e.g. `ebook`/`audiobook`), `operations` (open list, e.g. `search`/`acquire`), `features` (open list of *optional* behavior — see the baseline-vs-optional note below). All three lists may be empty or omitted; Family Librarian does not gate which endpoints it calls based on this today, but declare accurately anyway — that is expected to matter more as capability-based gating lands. A legacy flat array (`["ebook", "search", "acquire"]`, the v1 shape) is also tolerated and parsed as best-effort `mediaTypes`/`operations`. |
 | `outputRetentionSeconds` | no | How long you guarantee a completed job's outputs remain fetchable after completion, if you don't specify a per-job `retention.expiresAt` (§8a). Omit if you have no fixed policy. |
 | `managementUrl` | no | Link to your own admin/configuration UI, if you have one — Family Librarian shows it as a link rather than modeling your configuration itself (§12). This is often *not* the same address Family Librarian uses to reach you (e.g. a Docker-internal hostname isn't browser-reachable by the admin) — if that's the case for you, set this to a separately browser-reachable address, even if it points at the same service. |
@@ -160,7 +156,7 @@ code alone:
 | Field | Required | Notes |
 |---|---|---|
 | `status` | no (defaults to `healthy` if body omitted and status is `2xx`) | One of `healthy`, `degraded`, `unhealthy`. Coarse overall judgment — a provider is free to report this loosely; Family Librarian treats `operations` as the more specific signal when the two disagree. |
-| `operations.search` / `operations.acquire` | no | One of `available`, `degraded`, `unavailable`. A missing key inherits from `status` under this fixed mapping: `healthy` → `available`, `degraded` → `degraded`, `unhealthy` → `unavailable`. This split exists because a provider's local search can keep working while its upstream acquisition path is down — for example, a metadata-index provider (Anna's Archive-shaped) whose local database answers searches fine while the upstream member/download path is rate-limited or offline. Report it accurately; don't collapse to a single boolean. |
+| `operations.search` / `operations.acquire` | no | One of `available`, `degraded`, `unavailable`. A missing key inherits from `status` under this fixed mapping: `healthy` → `available`, `degraded` → `degraded`, `unhealthy` → `unavailable`. This split exists because a provider's local search can keep working while its upstream acquisition path is down — for example, a metadata-index provider whose local database answers searches while its upstream retrieval path is rate-limited or offline. Report it accurately; don't collapse to a single boolean. |
 
 Respond `2xx` whenever you can meaningfully answer the question at all —
 including `{"status": "degraded", ...}` — and describe the actual trouble in
@@ -227,7 +223,7 @@ Request:
 | `work.identifiers` | no (array, possibly empty) | Each entry `{scheme, value}` for identifiers of the *canonical work*, independent of any specific edition — e.g. an Open Library work id or a series-level identifier. `scheme` is an open string and extensible; an unrecognized scheme must be safely ignored, not rejected. |
 | `edition.language` | no | A BCP-47-style tag (`en`, `en-US`, `fr`, ...) when known. |
 | `edition.publicationYear` / `edition.publisher` | no | |
-| `edition.identifiers` | no (array, possibly empty) | Each entry `{scheme, value}` for identifiers of a *specific edition* — `isbn13`/`isbn10`/`asin` and similar belong here, not under `work.identifiers`, since an ISBN identifies one particular published edition, not the work in the abstract. Replaces v1's fixed `identifiers.isbn13` field — a request with no known identifiers omits the array or sends it empty. **Content hashes (e.g. an Anna's Archive-style MD5) are not a work or edition identifier at all** — they identify a specific *file/release*, not the book; a provider keying by content hash should use it as its `providerReference` (below) and, once a file is actually downloaded, as an output checksum (§8a), never as an `edition.identifiers` scheme. |
+| `edition.identifiers` | no (array, possibly empty) | Each entry `{scheme, value}` for identifiers of a *specific edition* — `isbn13`/`isbn10`/`asin` and similar belong here, not under `work.identifiers`, since an ISBN identifies one particular published edition, not the work in the abstract. Replaces v1's fixed `identifiers.isbn13` field — a request with no known identifiers omits the array or sends it empty. **Content hashes are not a work or edition identifier** — they identify a specific *file/release*, not the book; a provider keying by content hash should use it as its `providerReference` (below) and, once a file is actually downloaded, as an output checksum (§8a), never as an `edition.identifiers` scheme. |
 | `constraints` | no | Provider-side filtering hints (`languages`, `formats`, `excludeCollections`, etc.) — entirely optional to honor. Family Librarian validates results independently regardless of what you filter. You may report which you actually applied via a top-level `appliedConstraints: ["language", "format"]` in the response; omitting it is fine. |
 | `pagination.limit` / `pagination.cursor` | no | Cursor-based. Omit `pagination` entirely (or support only `limit`) if you don't implement paging — see the response shape below for what that looks like. |
 
@@ -276,9 +272,9 @@ Response:
 
 | Field | Required | Notes |
 |---|---|---|
-| `providerReference` | **yes** | A candidate missing this is silently dropped by the client. Must be an opaque, stable string you can resolve again in `/acquire` — it does not need to mean anything to Family Librarian, and it does **not** need to be a download URL. It is fine for it to be a content hash (Anna's Archive: MD5), a release GUID (Newznab), or any other stable identifier you can look up later. |
+| `providerReference` | **yes** | A candidate missing this is silently dropped by the client. Must be an opaque, stable string you can resolve again in `/acquire` — it does not need to mean anything to Family Librarian, and it does **not** need to be a download URL. It can be a content hash, a release GUID, or any other stable identifier you can look up later. |
 | `candidateRevision` | no | Opaque version marker for this candidate's underlying record. See §8's staleness-conflict behavior. Most providers can omit this — see the note there. |
-| `acquireToken` | no | Opaque state you want carried forward unchanged to `/acquire`, for a provider that cannot cheaply re-derive everything from `providerReference` alone at acquire time (e.g. a stateless scraper that captured ephemeral session data during search). A provider backed by its own local index (Anna's Archive-shaped) or a queryable-by-GUID indexer (Newznab-shaped) typically does not need this — it can simply re-resolve by `providerReference` when `/acquire` is called. Family Librarian stores and returns this value unchanged, never inspects or logs it. |
+| `acquireToken` | no | Opaque state you want carried forward unchanged to `/acquire`, for a provider that cannot cheaply re-derive everything from `providerReference` alone at acquire time (e.g. a stateless scraper that captured ephemeral session data during search). A provider backed by a local index or a queryable GUID index typically does not need this — it can simply re-resolve by `providerReference` when `/acquire` is called. Family Librarian stores and returns this value unchanged, never inspects or logs it. |
 | `work`, `edition`, `release` | no, but populate what you have | Structured evidence, not a trusted verdict — Family Librarian performs its own match decision using this evidence (§7). `work`/`edition` mirror the request shape (structured authors/series/identifiers). `release` carries release-level facts distinct from the canonical book: original release/file name, format, size, whether it's a multi-book collection or a sample, part count, abridged/unabridged status, free-form quality tags, and age. This is what lets Family Librarian reject a 20-book collection when one book was requested, a sample, or a mismatched abridgement, without you having to make that judgment yourself. |
 | `extensions` | no | Namespaced provider-specific data — see §11. |
 
@@ -305,6 +301,36 @@ Implication for you: the more accurately and completely you populate
 `work`/`edition`/`release` evidence, the more often a correct result can be
 used without friction. There's no benefit to guessing a single "best" result
 when you're unsure — return everything plausible (§6's ambiguity note).
+
+### 7.1 Candidate evidence and selection loop
+
+This is deliberately a conversation, not a provider-side verdict:
+
+1. FL sends the requested work/edition evidence and optional search
+   constraints.
+2. The provider returns every plausible candidate with candidate-specific
+   `work`, `edition`, and `release` evidence, plus its opaque selection
+   handles (`providerReference`, and optionally `candidateRevision` and
+   `acquireToken`).
+3. FL evaluates every candidate independently. A unique corroborated
+   identifier match can be auto-acquired only when the administrator has
+   explicitly enabled auto-acquisition and FL finds no language or release
+   concern. A title/author match, conflicting identifier matches, incomplete
+   evidence, samples, collections, and other policy concerns remain
+   reviewable.
+4. For reviewable candidates, FL presents the candidate labels to the
+   requester or librarian. It does not ask a provider to repair FL's title
+   normalization or to choose a winner.
+5. Once a candidate is chosen, FL re-searches/revalidates it if necessary and
+   calls `/acquire` with that exact `providerReference` and its current
+   opaque revision/token. The provider must acquire that selection or return
+   `CANDIDATE_CHANGED`/`404`; it must never silently substitute a different
+   release.
+
+Provider ranking may order a response for usability, but it is discovery
+information only. It never changes FL's evidence decision. Conversely, FL
+does not require a provider to duplicate its validators: provider metadata is
+search evidence, while file safety and identity checks occur after download.
 
 ---
 
@@ -402,14 +428,14 @@ Any `2xx` status containing a `jobId`:
 | Field | Required | Notes |
 |---|---|---|
 | `state` | yes | One of exactly six values: `queued`, `running`, `waiting`, `completed`, `failed`, `cancelled`. Small and closed on purpose — Family Librarian validates this set strictly. Case-insensitive. |
-| `phase` | no | An **open string** describing what's actually happening — `resolving`, `downloading`, `repairing`, `extracting`, `user-interaction`, or anything else meaningful to you. Never validated against a fixed list on either side; an unrecognized phase is simply displayed as-is. This is how a torrent provider can expose `checking`, a Usenet provider can expose `repairing`/`extracting`, and a browser-automation provider can expose `browser-queue`, all without changing the protocol. |
+| `phase` | no | An **open string** describing what's actually happening — `resolving`, `downloading`, `repairing`, `extracting`, `user-interaction`, or anything else meaningful to you. Never validated against a fixed list on either side; an unrecognized phase is simply displayed as-is. A provider can expose source-specific work such as `checking` or `browser-queue` without changing the protocol. |
 | `interaction` | required when `state = waiting` and the wait is on the user | `{type, message, expiresAt, resumeSupported, actionUrl}`. `type` is an open string (`browser`, `login`, `mfa`, `captcha`, `approval`, `device-code`, `other`, ...). `actionUrl` is where a human completes the step; `resumeSupported: true` means you'll pick the job back up automatically once they do — Family Librarian does not send you a separate "resume" call. Never put a provider cookie or authenticated session token in this object; you own your own session state. |
 | `progress` | no | `percent`/`bytesCompleted`/`bytesTotal`/`message`, any or all of which may be omitted if you don't know them. |
 | `pollAfterSeconds` | no | The body-level form of the polling-cadence hint described just below — equivalent to a `Retry-After` header when you'd rather put it in the JSON. Provide either, both, or neither. |
 | `error` | present when `state = failed` | See below. |
 
 There is no fixed end-to-end time budget. A job may legitimately run for
-minutes or hours (torrent, Usenet repair/extract, a slow browser-gated
+minutes or hours (large transfers, repair/extract work, a slow browser-gated
 download, a large audiobook) — design for that rather than assuming a short
 window. Each individual HTTP call (including this one) still has its own
 short transport timeout (§9) independent of how long the *job* takes overall.
@@ -446,7 +472,7 @@ ask for less, and will not wait indefinitely even if you ask for more.
 cleanly; treat the vocabulary above as the currently-understood subset, not
 a closed enum. `VPN_UNAVAILABLE` is deliberately distinct from the more
 generic `UPSTREAM_UNAVAILABLE`/`NETWORK_FAILURE` — use it for a
-fail-closed deployment (e.g. Anna's Archive-shaped, where all outbound
+fail-closed deployment (e.g. a source where all outbound
 acquisition traffic is required to traverse a VPN) when the VPN itself, not
 the upstream source, is the reason acquisition can't proceed; this is a
 first-class, expected operational state for such a provider, not an
@@ -507,16 +533,16 @@ GET /acquire/{jobId}/outputs/{outputId}
 
 | Field | Required | Notes |
 |---|---|---|
-| `kind` | yes | `file` (bytes you serve directly via `GET .../outputs/{outputId}`), `uri` (a URI Family Librarian does not fetch bytes from you for — see `uri` below), or `descriptor` (bytes representing a pointer for another system to act on, e.g. a `.nzb` or `.torrent` file — served the same way as `file`, via `GET .../outputs/{outputId}`). Prefer returning descriptor/file bytes over an arbitrary external URL where you reasonably can; it keeps the trust boundary simple and avoids handing Family Librarian a URL to blindly fetch. |
-| `uri` | **yes when `kind = uri`** | The actual URI, e.g. `"magnet:?xt=urn:btih:..."`. There is no `GET .../outputs/{outputId}` call for a `uri`-kind output — nothing to fetch from you; the value lives entirely in this field. |
-| `uriScheme` | **yes when `kind = uri`** | e.g. `magnet`. Family Librarian dispatches a `uri` output only to a handler it has explicitly registered for that scheme — there is no generic "fetch whatever URI the provider gives us" behavior, deliberately, to avoid handing an SSRF-shaped fetch primitive to a third-party provider. An unregistered/unrecognized scheme means the output is surfaced but not automatically acted on. |
-| `role` | no | An open string — `primary`, `ebook`, `audio-part`, `cover`, `metadata`, `checksum`, `archive`, `supplementary`, `torrent`, `usenet-descriptor`, `other`, or anything else meaningful. An unrecognized role must not break the client. |
+| `kind` | yes | `file` (bytes you serve directly via `GET .../outputs/{outputId}`), `uri` (a URI Family Librarian does not fetch bytes from you for — see `uri` below), or `descriptor` (bytes representing a pointer for another system to act on, e.g. a provider-specific descriptor file — served the same way as `file`, via `GET .../outputs/{outputId}`). Prefer returning descriptor/file bytes over an arbitrary external URL where you reasonably can; it keeps the trust boundary simple and avoids handing Family Librarian a URL to blindly fetch. |
+| `uri` | **yes when `kind = uri`** | The actual provider-specific URI, e.g. `"custom-scheme:opaque-reference"`. There is no `GET .../outputs/{outputId}` call for a `uri`-kind output — nothing to fetch from you; the value lives entirely in this field. |
+| `uriScheme` | **yes when `kind = uri`** | e.g. `custom-scheme`. Family Librarian dispatches a `uri` output only to a handler it has explicitly registered for that scheme — there is no generic "fetch whatever URI the provider gives us" behavior, deliberately, to avoid handing an SSRF-shaped fetch primitive to a third-party provider. An unregistered/unrecognized scheme means the output is surfaced but not automatically acted on. |
+| `role` | no | An open string — `primary`, `ebook`, `audio-part`, `cover`, `metadata`, `checksum`, `archive`, `supplementary`, `descriptor`, `other`, or anything else meaningful. An unrecognized role must not break the client. |
 | `filename` / `contentType` / `sizeBytes` | no, but populate for `file`/`descriptor` kinds | |
 | `checksums` | no (array, possibly empty) | `{algorithm, value}` pairs, extensible — not a fixed field per hash type. Family Librarian independently computes its own checksum of whatever it actually downloads; yours is a cross-check, not a substitute. Checksums prove file identity/integrity, not book identity. |
 | `retention` | no | `expiresAt`, if this specific output has a different retention window than the manifest-level `outputRetentionSeconds`. |
 
 A job may report more than one output — an ebook plus a cover plus a
-metadata sidecar, or the individual tracks of an audiobook, or a `.torrent`
+metadata sidecar, or the individual tracks of an audiobook, or a descriptor
 descriptor alongside nothing else. This replaces v1's assumption of exactly
 one file per job. A legacy single-artifact `GET /acquire/{jobId}/artifact`
 endpoint may still be exposed for a transitional period if convenient, but a
@@ -595,8 +621,8 @@ status — rather than as a new top-level field or an unstructured shared
 ```json
 {
   "extensions": {
-    "net.familylibrarian.anna": { "collection": "example", "originalPath": "..." },
-    "org.newznab": { "categoryIds": [7020] }
+    "com.example.source": { "collection": "example", "originalPath": "..." },
+    "org.example.indexer": { "categoryIds": [7020] }
   }
 }
 ```
@@ -624,8 +650,7 @@ major protocol version bump.
 ## 12. What's intentionally not covered here
 
 Deferred, not because they're unimportant forever, but because nothing in
-the two providers this revision was designed against (Anna's Archive,
-Usenet/Newznab) actually requires them yet, and building them speculatively
+any currently deployed provider actually requires them yet, and building them speculatively
 risks guessing wrong:
 
 - **A public `/metrics` endpoint or a protocol-specific distributed-tracing

@@ -221,7 +221,11 @@ public sealed class AutomaticRequestFulfillmentService(
     /// automatically-selected one.
     /// </summary>
     private async Task<bool> AcquireOptionAsync(
-        BookRequest request, RequestFormat format, FulfillmentOption option, CancellationToken cancellationToken)
+        BookRequest request,
+        RequestFormat format,
+        FulfillmentOption option,
+        CancellationToken cancellationToken,
+        bool confirmLowConfidenceMatch = false)
     {
         ManualImportResult result;
         try
@@ -231,7 +235,8 @@ public sealed class AutomaticRequestFulfillmentService(
                 format.Id,
                 option.ProviderId,
                 option.ProviderResultId,
-                cancellationToken);
+                cancellationToken,
+                confirmLowConfidenceMatch);
         }
         catch (Exception exception) when (exception is IOException or HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
@@ -420,7 +425,7 @@ public sealed class AutomaticRequestFulfillmentService(
         // has been resolved -- a failure already re-flags the request as
         // SecurityOrIdentityFailure via AcquireOptionAsync, which the caller
         // will see on its next load.
-        await AcquireOptionAsync(request, format, option, cancellationToken);
+        await AcquireOptionAsync(request, format, option, cancellationToken, confirmLowConfidenceMatch: true);
         return PreferenceAmbiguityResolutionOutcome.Resolved;
     }
 

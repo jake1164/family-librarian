@@ -112,7 +112,7 @@ public sealed class DirectAcquisitionServiceTests
         context.ExternalProviderStore.Add(provider);
         context.ExternalProviderClient.Candidates =
         [
-            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000)
+            CandidateWithIsbn("ref-1", "The Hobbit", "J. R. R. Tolkien", "9780618260300")
         ];
 
         var result = await context.Service.AcquireAsync(
@@ -138,6 +138,8 @@ public sealed class DirectAcquisitionServiceTests
                 "ref-1",
                 new ExternalProviderWorkEvidence(
                     "The Hobbit", null, [new BookAuthor("J. R. R. Tolkien", "author")], [], []),
+                new ExternalProviderEditionEvidence(
+                    "en", null, null, [new BookIdentifier("isbn13", "9780618260300")]),
                 Release: new ExternalProviderReleaseEvidence(
                     "The-Middle-Earth-Omnibus", "epub", 500_000, IsCollection: true, PartCount: 4,
                     IsSample: false, IsAbridged: null, IsUnabridged: null, QualityTags: [], AgeDays: null))
@@ -192,6 +194,17 @@ public sealed class DirectAcquisitionServiceTests
         Assert.AreEqual(0, context.Repository.Assets.Count);
         Assert.AreEqual(1, context.StagingStore.DeleteCount);
     }
+
+    private static ExternalProviderCandidate CandidateWithIsbn(
+        string providerReference, string title, string author, string isbn13) =>
+        new(
+            providerReference,
+            new ExternalProviderWorkEvidence(
+                title, null, [new BookAuthor(author, "author")], [], []),
+            new ExternalProviderEditionEvidence(
+                "en", null, null, [new BookIdentifier("isbn13", isbn13)]),
+            new ExternalProviderReleaseEvidence(
+                null, "epub", 500_000, false, 1, false, null, null, [], null));
 
     private sealed class TestContext
     {

@@ -68,7 +68,7 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
         await antiforgery.AttachAsync(request, cancellationToken);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
-        // A protocol-v2 provider (e.g. Anna's Archive) answers 202 Accepted
+        // A protocol-v2 provider can answer 202 Accepted
         // when it has only durably submitted a job, not delivered bytes --
         // that must not be reported to the librarian as "fetched" the same
         // way a 200 OK immediate copy is (see AdminRequestEndpoints.ToManualImportResult).

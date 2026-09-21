@@ -1,7 +1,7 @@
-# Family Librarian — Provider & API Contract Design
+# Family Librarian — Provider Architecture & Internal Contracts
 
-**Status:** Draft v0.1  
-**Date:** 2026-08-08
+**Status:** Maintained architecture and policy reference  
+**Last reviewed:** 2026-09-21
 
 ---
 
@@ -10,6 +10,11 @@
 Family Librarian should remain useful as external services change.
 
 The application should define stable contracts for capabilities while allowing implementations to be replaced, added, or disabled.
+
+This document defines Family Librarian's internal provider boundaries, safety
+policy, and integration responsibilities. The external-provider HTTP wire
+contract is exclusively [04-external-provider-http-protocol.md](04-external-provider-http-protocol.md).
+This document does not define its fields, endpoints, or version negotiation.
 
 The initial contract families are:
 
@@ -25,7 +30,9 @@ INotificationProvider
 IDeliveryProvider
 ```
 
-Not every contract must support third-party dynamic loading in V1. The important requirement is that core workflow code depends on the contract rather than a specific vendor.
+Not every contract must support third-party dynamic loading in the initial
+release. The important requirement is that core workflow code depends on the
+contract rather than a specific vendor.
 
 ---
 
@@ -338,121 +345,28 @@ own import, verification, format, and deep-link behavior.
 
 ## 5. Acquisition Provider
 
-Long-term recommendation: external HTTP provider protocol.
+External acquisition providers are standalone HTTP services. The complete,
+implementer-facing versioned wire contract is
+[04-external-provider-http-protocol.md](04-external-provider-http-protocol.md);
+that document, not this architectural overview, is authoritative for fields,
+endpoints, error codes, and version negotiation.
 
-> **This section is a design draft written before the protocol below was
-> implemented, and has drifted from what actually shipped** (e.g. the
-> `/search` request never includes `series`/`seriesPosition`). For the
-> precise, implementer-facing wire contract, use
-> [04-external-provider-http-protocol.md](04-external-provider-http-protocol.md)
-> instead — this section remains only for the design rationale.
+The boundary is intentionally asymmetric:
 
-### Provider Manifest
-
-```http
-GET /manifest
-```
-
-Example:
-
-```json
-{
-  "protocolVersion": "1",
-  "id": "example-provider",
-  "name": "Example Provider",
-  "version": "1.2.0",
-  "capabilities": [
-    "ebook",
-    "audiobook",
-    "search",
-    "availability",
-    "acquire"
-  ],
-  "egressPolicy": "PRIVATE_REQUIRED"
-}
-```
-
-`egressPolicy` is optional for backward compatibility; if omitted, the default
-is `NORMAL`. It describes the required egress class, not a commercial VPN
-provider. Valid initial policy values are:
-
-```text
-NORMAL
-PRIVATE_REQUIRED
-CUSTOM_PROXY
-```
-
-### Health
-
-```http
-GET /health
-```
-
-### Search
-
-```http
-POST /search
-```
-
-Request:
-
-```json
-{
-  "requestId": "req_123",
-  "mediaType": "audiobook",
-  "work": {
-    "title": "Example Book",
-    "authors": ["Example Author"],
-    "series": "Example Series",
-    "seriesPosition": "3",
-    "identifiers": {
-      "isbn13": "..."
-    }
-  }
-}
-```
-
-Response:
-
-```json
-{
-  "candidates": [
-    {
-      "providerReference": "abc123",
-      "title": "Example Book",
-      "author": "Example Author",
-      "format": "m4b",
-      "sizeBytes": 123456789,
-      "durationSeconds": 28800,
-      "metadata": {}
-    }
-  ]
-}
-```
-
-### Acquire
-
-```http
-POST /acquire
-```
-
-The provider should return or stage an asset through a controlled mechanism defined by the acquisition engine.
-
-The provider must not place files directly into a destination library; it returns
-them only to Family Librarian-controlled staging.
-
-### Capability Examples
-
-```text
-ebook
-audiobook
-search
-availability
-acquire
-requires-account
-requires-api-key
-manual
-```
+- Providers discover and return all plausible candidates with structured
+  work/edition/release evidence and opaque selection handles. They can rank
+  candidates for usability, but never make FL's trust decision.
+- Family Librarian evaluates that evidence centrally, applies its identity,
+  language, and release policies, and either auto-acquires one explicitly
+  eligible candidate or presents reviewable candidates for a requester or
+  librarian to choose.
+- The chosen provider reference (and, when supplied, its opaque
+  revision/token) travels back to the provider for acquisition. A provider
+  must acquire that selection or report that it changed; it must not silently
+  substitute another release.
+- Every returned file then passes FL's independent safety, structural, and
+  asset-identity pipeline. Provider metadata is evidence, not a substitute
+  validator.
 
 ### Scheduled provider checks
 
@@ -517,11 +431,10 @@ Private Acquisition Network
   Health/status where available
 ```
 
-For example, an HTTP proxy endpoint can be `http://gluetun:8888`, but the
-provider never needs to know which VPN service, if any, backs that gateway.
-Gluetun is the documented reference implementation, not a hard dependency;
-custom WireGuard/OpenVPN gateways, router-level routing, and compatible proxy
-gateways remain valid.
+For example, an HTTP proxy endpoint can use a deployment-local hostname such
+as `http://egress-gateway:8080`. The provider never needs to know how that
+gateway is implemented; compatible proxy gateways and router-level routing are
+equally valid.
 
 When private egress is required, an unavailable or unhealthy gateway blocks the
 operation. The engine records a policy-blocked, waiting, or error state and can
@@ -529,15 +442,10 @@ retry or notify an administrator later; it must not silently fall back to normal
 Internet access. `CUSTOM_PROXY` similarly requires an explicitly configured
 proxy and must not imply an automatic fallback policy.
 
-### Future external sourcing providers
+### External provider boundary
 
-External sourcing is a planned extension of the acquisition-provider boundary,
-not part of the initial catalog/search slice. The application should leave room
-for an administrator to enable and configure additional **vetted** sourcing
-providers in the future, alongside built-in providers such as Manual, library
-availability, public-domain, or commercial integrations.
-
-The future integration model should preserve these boundaries:
+An administrator may enable and configure approved external providers alongside
+built-in providers. The integration model preserves these boundaries:
 
 - a provider has a stable ID, protocol version, declared capabilities, and a
   server-side configuration schema;
@@ -552,14 +460,12 @@ The future integration model should preserve these boundaries:
 - external implementations communicate over the versioned HTTP protocol or run in
   isolated containers. The main application does not load arbitrary provider code.
 
-Provider-source implementations remain independent of VPN-provider
-implementations. For example, a private source provider may require
-`PRIVATE_REQUIRED` and use the generic gateway; it must not embed Proton- or
-Mullvad-specific tunnel logic.
+Provider implementations remain independent of private-egress implementations.
+A provider may require `PRIVATE_REQUIRED` and use the generic gateway, but it
+must not embed tunnel-management logic.
 
-This creates a clear future administration/settings surface for source management
-without committing V1 to acquisition automation, a plugin marketplace, or support
-for unreviewed sources.
+This creates a clear administration/settings surface for source management
+without requiring a plugin marketplace or support for unreviewed sources.
 
 ---
 
@@ -587,10 +493,8 @@ A trusted built-in Manual Provider may exist in the acquisition engine.
 
 For an external component that actually contacts private services, prefer
 putting the entire component behind the private-egress gateway rather than
-relying only on its application-level proxy setting. A Docker/Gluetun reference
-deployment can use `network_mode: "service:gluetun"` for an isolated private
-provider. The gateway's firewall/kill switch then governs that component's
-outbound traffic.
+relying only on its application-level proxy setting. The gateway's firewall
+and fail-closed network policy should govern that component's outbound traffic.
 
 Family Librarian may call those components over internal APIs, but that does not
 protect the components' own outbound traffic: each provider's complete
@@ -606,7 +510,8 @@ Family Librarian --> provider API --> private provider container
                                   --> VPN/private-egress gateway --> Internet
 ```
 
-That is a future isolation option, not a V1 requirement solely for VPN support.
+That is an optional deployment architecture, not a baseline requirement solely
+for private-egress support.
 
 External providers receive only the minimum scoped configuration, credentials,
 network route, and temporary staging access they require. They never receive the
@@ -1081,21 +986,12 @@ delivery.report-status
 
 ## 16. Versioning
 
-HTTP plugin protocol:
-
-```text
-protocolVersion
-```
-
-Recommended compatibility policy:
-
-```text
-Major = breaking
-Minor = additive
-Patch = documentation/bug behavior
-```
-
-Provider manifest should advertise protocol support.
+External-provider HTTP protocol versioning, manifest negotiation, and
+compatibility rules are defined exclusively in
+[04-external-provider-http-protocol.md](04-external-provider-http-protocol.md).
+Internal contracts in this document evolve through normal application versioning
+and require implementation and conformance-test updates when their behavior
+changes.
 
 ---
 
@@ -1135,11 +1031,11 @@ Last Error
 Secrets must never be returned to the browser after storage.
 
 The Private Acquisition Network settings use the generic gateway fields above,
-not VPN-provider credentials or provider-selection controls. VPN tunnel
-configuration, DNS, kill-switch, IPv4/IPv6 leak prevention, reconnection, and
-WireGuard/OpenVPN details belong to the external gateway/deployment. Health
-status must distinguish an unavailable required gateway from a general provider
-failure, without exposing gateway credentials.
+not tunnel-service credentials or provider-selection controls. Tunnel
+configuration, DNS, fail-closed networking, leak prevention, and reconnection
+belong to the external gateway/deployment. Health status must distinguish an
+unavailable required gateway from a general provider failure, without exposing
+gateway credentials.
 
 ### Credential lifecycle
 
@@ -1183,54 +1079,7 @@ especially for Docker deployments.
 
 ---
 
-## 18. V1 Provider Implementation Targets
-
-### Required
-
-```text
-Metadata:
-  Google Books and/or Open Library
-
-Acquisition:
-  Manual
-
-Linked ebook libraries:
-  Calibre-Web (catalog/source via configured OPDS surface)
-  Calibre-Web Automated (CWA, opt-in ingest destination)
-
-Security:
-  ClamAV
-  File type validator
-  EPUB validator
-  Audio validator
-
-Notifications:
-  SMTP outbound email (optional)
-
-Delivery:
-  CWA (initial ebook library destination)
-  Audiobookshelf (initial audiobook library destination)
-  Authenticated download (optional, later)
-```
-
-### Strong Candidate for Early Addition
-
-```text
-Generic OIDC (implemented, optional)
-ntfy
-Hardcover metadata
-```
-
-### Prototype Only
-
-```text
-Browser filesystem Kindle/Kobo transfer
-WebUSB
-```
-
----
-
-## 19. Testing Strategy for Providers
+## 18. Testing Strategy for Providers
 
 Every contract should ship with a provider conformance test suite.
 
@@ -1246,13 +1095,16 @@ DeliveryProviderContractTests
 LinkedLibraryProviderContractTests
 ```
 
-A third-party provider author should be able to verify:
+A third-party external-provider author should be able to verify:
 
 ```text
-"My provider complies with protocol version 1."
+"My provider conforms to the supported version of the external-provider HTTP protocol."
 ```
 
 without requiring Family Librarian's internal source code or database.
+The protocol conformance surface is defined by
+[04-external-provider-http-protocol.md](04-external-provider-http-protocol.md);
+internal provider contracts require their corresponding application-level tests.
 
 Private-egress conformance tests must confirm that `PRIVATE_REQUIRED` blocks
 the whole provider interaction when its gateway is unavailable and that no

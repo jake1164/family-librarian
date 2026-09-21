@@ -237,6 +237,11 @@ public sealed class ExternalProviderAutoAcquireDisabledByDefaultEndpointTests
         var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
         var persisted = await database.BookRequests.SingleAsync(bookRequest => bookRequest.Id == request.Id);
         Assert.AreEqual(RequestStatus.NeedsReview, persisted.Status);
+        Assert.AreEqual(RequestReviewCategory.PreferenceAmbiguity, persisted.ReviewCategory);
+        var reviewCandidate = await database.RequestReviewCandidates.SingleAsync(
+            candidate => candidate.RequestId == request.Id);
+        Assert.AreEqual("The Hobbit", reviewCandidate.Title);
+        Assert.AreEqual("J. R. R. Tolkien", reviewCandidate.Author);
         Assert.AreEqual(0, await database.MediaAssets.CountAsync(
             asset => asset.AssociatedRequestFormatId == format.FormatId));
     }
@@ -450,7 +455,17 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
         CancellationToken cancellationToken)
     {
         IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-            ? [ExternalProviderCandidate.FromSimple("fake-hobbit-1", "The Hobbit", "J. R. R. Tolkien", "epub", null)]
+            ?
+            [
+                new ExternalProviderCandidate(
+                    "fake-hobbit-1",
+                    new ExternalProviderWorkEvidence(
+                        "The Hobbit", null, [new BookAuthor("J. R. R. Tolkien", "author")], [], []),
+                    new ExternalProviderEditionEvidence(
+                        "en", null, null, request.Edition?.Identifiers ?? []),
+                    new ExternalProviderReleaseEvidence(
+                        null, "epub", null, false, 1, false, null, null, [], null))
+            ]
             : [];
         return Task.FromResult(candidates);
     }
@@ -583,7 +598,17 @@ file sealed class FailingFetchExternalProviderClient : IExternalProviderClient
         CancellationToken cancellationToken)
     {
         IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-            ? [ExternalProviderCandidate.FromSimple("hail-mary-1", "Project Hail Mary", "Andy Weir", "epub", null)]
+            ?
+            [
+                new ExternalProviderCandidate(
+                    "hail-mary-1",
+                    new ExternalProviderWorkEvidence(
+                        "Project Hail Mary", null, [new BookAuthor("Andy Weir", "author")], [], []),
+                    new ExternalProviderEditionEvidence(
+                        "en", null, null, request.Edition?.Identifiers ?? []),
+                    new ExternalProviderReleaseEvidence(
+                        null, "epub", null, false, 1, false, null, null, [], null))
+            ]
             : [];
         return Task.FromResult(candidates);
     }

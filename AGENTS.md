@@ -19,6 +19,14 @@ file before proposing, changing, or reviewing code.
 - If Context7 is unavailable, say so in the work summary and use the library's official documentation as the fallback. Do not invent current APIs or version compatibility.
 - Prefer official Microsoft Learn documentation for .NET/C# framework behavior even when Context7 has a summary.
 - Pin production dependencies to reviewed compatible versions; do not use floating versions.
+- Public-project neutrality: do not name, link to, enumerate, advertise, or
+  provide source-specific examples for legally sensitive or potentially
+  controversial acquisition services or networks in Family Librarian's public
+  code, documentation, samples, comments, manifests, or other published
+  material. Use neutral provider-oriented examples such as `example-source`
+  and `custom-scheme`. A separately maintained provider project may identify
+  itself, but this public repository must not promote or link to it unless the
+  user explicitly directs otherwise.
 
 ## Architecture and security
 

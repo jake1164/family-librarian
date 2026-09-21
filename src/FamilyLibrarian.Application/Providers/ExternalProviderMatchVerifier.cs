@@ -18,16 +18,13 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
     /// Returns one verdict per candidate, keyed by <see cref="ExternalProviderCandidate.ProviderReference"/>.
     /// </summary>
     /// <remarks>
-    /// The wire protocol has no per-candidate identifier field and issues one
-    /// combined title+author+ISBN <c>/search</c> call -- unlike CWA/ABS, there
-    /// is no separately-scoped identifier-only query result to trust at face
-    /// value. When <paramref name="isbn13"/> was sent and exactly one
-    /// candidate came back, that is treated as a tentative identifier-tier
-    /// hit, but only proceeds as <see cref="BookMatchBasis.Identifier"/> once
-    /// its own title/author also plausibly corroborates the request -- a
-    /// provider ignoring the ISBN and returning one unrelated title must not
-    /// earn frictionless trust just because it happened to return a single
-    /// result. Every other case falls back to the ordinary title/author tier.
+    /// Identifier confidence comes from the candidate's own structured
+    /// <c>work.identifiers</c> or <c>edition.identifiers</c> evidence, never
+    /// from the fact that an ISBN happened to be included in the search query
+    /// or that a provider happened to return one result. A matching identifier
+    /// is still corroborated with title/author evidence so a bad provider
+    /// record cannot turn a query echo into an unattended download. Every
+    /// other result falls back to the ordinary title/author tier.
     /// </remarks>
     public async Task<IReadOnlyDictionary<string, ExternalProviderMatchVerdict>> VerifyAsync(
         string title, string? author, string? isbn13,
@@ -39,12 +36,18 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
         }
 
         var candidateBooks = candidates
-            .Select(candidate => new CandidateBook(candidate.ProviderReference, candidate.Title, candidate.Author))
+            .Select(candidate => new CandidateBook(
+                candidate.ProviderReference, candidate.Title, candidate.Author, candidate.Edition?.Language))
             .ToArray();
 
         if (!string.IsNullOrWhiteSpace(isbn13))
         {
-            var identifierResult = await matchService.ResolveUniqueAsync(title, author, candidateBooks, cancellationToken);
+            var identifierCandidates = candidates
+                .Where(candidate => HasIdentifier(candidate, "isbn13", isbn13))
+                .Select(candidate => new CandidateBook(
+                    candidate.ProviderReference, candidate.Title, candidate.Author, candidate.Edition?.Language))
+                .ToArray();
+            var identifierResult = await matchService.ResolveUniqueAsync(title, author, identifierCandidates, cancellationToken);
             if (identifierResult.Decision == BookMatchDecision.Match)
             {
                 var matched = candidates.First(
@@ -70,6 +73,18 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
             _ => BuildVerdicts(candidates, matchedId: null, basis: null, requiresLanguageConfirmation: false)
         };
     }
+
+    private static bool HasIdentifier(ExternalProviderCandidate candidate, string scheme, string expectedValue) =>
+        candidate.Work.Identifiers
+            .Concat(candidate.Edition?.Identifiers ?? [])
+            .Any(identifier =>
+                string.Equals(identifier.Scheme, scheme, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(NormalizeIdentifier(identifier.Value), NormalizeIdentifier(expectedValue), StringComparison.Ordinal));
+
+    private static string NormalizeIdentifier(string value) => new(value
+        .Where(char.IsLetterOrDigit)
+        .Select(char.ToUpperInvariant)
+        .ToArray());
 
     private static Dictionary<string, ExternalProviderMatchVerdict> BuildVerdicts(
         IReadOnlyList<ExternalProviderCandidate> candidates, string? matchedId, BookMatchBasis? basis,

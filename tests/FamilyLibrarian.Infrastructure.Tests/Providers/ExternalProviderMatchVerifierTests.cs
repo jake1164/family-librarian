@@ -10,12 +10,12 @@ public sealed class ExternalProviderMatchVerifierTests
         new(new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver()), new DeterministicBookMatcher());
 
     [TestMethod]
-    public async Task AnIsbnScopedSingleCandidateCorroboratedByTitleAuthorIsIdentifierBasis()
+    public async Task ACandidateWithTheRequestedIsbnAndCorroboratingTitleAuthorIsIdentifierBasis()
     {
         var verifier = NewVerifier();
         IReadOnlyList<ExternalProviderCandidate> candidates =
         [
-            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000)
+            CandidateWithIsbn("ref-1", "The Hobbit", "J. R. R. Tolkien", "9780618260300")
         ];
 
         var verdicts = await verifier.VerifyAsync(
@@ -26,12 +26,27 @@ public sealed class ExternalProviderMatchVerifierTests
     }
 
     [TestMethod]
-    public async Task AnIsbnScopedSingleCandidateWithAWrongTitleIsNotTrustedAsIdentifierBasis()
+    public async Task AQueryIsbnWithoutCandidateIdentifierDoesNotCreateIdentifierConfidence()
     {
         var verifier = NewVerifier();
         IReadOnlyList<ExternalProviderCandidate> candidates =
         [
-            ExternalProviderCandidate.FromSimple("ref-1", "Dim Sum of Fears", "Some Other Author", "epub", 500_000)
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000)
+        ];
+
+        var verdicts = await verifier.VerifyAsync(
+            "The Hobbit", "J. R. R. Tolkien", "9780618260300", candidates, CancellationToken.None);
+
+        Assert.AreEqual(BookMatchBasis.TitleAuthor, verdicts["ref-1"].Basis);
+    }
+
+    [TestMethod]
+    public async Task ACandidateWithMatchingIdentifierButWrongTitleIsNotTrustedAsIdentifierBasis()
+    {
+        var verifier = NewVerifier();
+        IReadOnlyList<ExternalProviderCandidate> candidates =
+        [
+            CandidateWithIsbn("ref-1", "Dim Sum of Fears", "Some Other Author", "9780002224988")
         ];
 
         var verdicts = await verifier.VerifyAsync(
@@ -94,4 +109,15 @@ public sealed class ExternalProviderMatchVerifierTests
 
         Assert.AreEqual(0, verdicts.Count);
     }
+
+    private static ExternalProviderCandidate CandidateWithIsbn(
+        string providerReference, string title, string author, string isbn13) =>
+        new(
+            providerReference,
+            new ExternalProviderWorkEvidence(
+                title, null, [new BookAuthor(author, "author")], [], []),
+            new ExternalProviderEditionEvidence(
+                "en", null, null, [new BookIdentifier("isbn13", isbn13)]),
+            new ExternalProviderReleaseEvidence(
+                null, "epub", 500_000, false, 1, false, null, null, [], null));
 }

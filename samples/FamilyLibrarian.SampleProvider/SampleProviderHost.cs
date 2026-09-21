@@ -36,7 +36,7 @@ public static class SampleProviderHost
             // end: a real client sees state=waiting, phase=user-interaction
             // for a few seconds before the job resumes on its own
             // (resumeSupported=true) and completes — standing in for a
-            // browser-gated acquisition like Anna's Archive's.
+            // a browser-gated acquisition source.
             new SampleCandidate(
                 "the-time-machine", "The Time Machine", "H. G. Wells", "epub", RequiresInteraction: true,
                 PublicationYear: 1895),

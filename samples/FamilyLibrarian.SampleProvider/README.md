@@ -16,12 +16,14 @@ real polling, not just call a synchronous stub.
 | Method & path                    | Purpose                                                  |
 |-----------------------------------|-----------------------------------------------------------|
 | `GET /manifest`                   | Identity, protocol version, declared capabilities, declared egress policy |
-| `GET /health`                     | 200 when usable                                            |
-| `POST /search`                    | `{ requestId, mediaType, work: { title, authors[], identifiers } }` → `{ candidates: [...] }` |
-| `POST /acquire`                   | `{ requestId, candidateReference, mediaType }` → `202 { jobId, status }` |
-| `GET /acquire/{jobId}`            | `{ jobId, status: InProgress\|Completed\|Failed, failureReason? }` |
-| `GET /acquire/{jobId}/artifact`   | Binary stream, once `status` is `Completed`                |
-| `DELETE /acquire/{jobId}`         | Best-effort cancellation                                    |
+| `GET /health`                     | v2 health plus per-operation availability                   |
+| `POST /search`                    | v2 work/edition evidence → structured candidate evidence    |
+| `POST /acquire`                   | Exact candidate reference/revision/token → durable v2 job   |
+| `GET /acquire/{jobId}`            | v2 state, phase, progress, interaction, or structured error |
+| `GET /acquire/{jobId}/outputs`    | Describes retained outputs after completion                  |
+| `GET /acquire/{jobId}/outputs/{outputId}` | Streams one file output                              |
+| `POST /acquire/{jobId}/cancel`    | Best-effort cancellation                                    |
+| `DELETE /acquire/{jobId}`         | Best-effort cleanup                                         |
 
 `egressPolicy` in the manifest is `NORMAL` (default), `PRIVATE_REQUIRED`, or
 `CUSTOM_PROXY` — the provider's own declared requirement for how Family Librarian

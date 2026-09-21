@@ -149,6 +149,8 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 ProviderData: candidate.ProviderReference,
                 MatchBasis: verdict.Basis,
                 RequiresLanguageConfirmation: verdict.RequiresLanguageConfirmation,
+                Title: candidate.Title,
+                Author: candidate.Author,
                 CandidateRevision: candidate.CandidateRevision,
                 AcquireToken: candidate.AcquireToken,
                 RequiresReleaseConfirmation: releaseVerdict.RequiresConfirmation,

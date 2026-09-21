@@ -4,7 +4,7 @@ namespace FamilyLibrarian.Domain.Acquisition;
 /// One entry from a completed <see cref="ProviderAcquisitionJob"/>'s
 /// <c>GET /acquire/{jobId}/outputs</c> listing (protocol v2 §8a) — a job may
 /// report more than one (an ebook plus a cover, the tracks of an audiobook,
-/// or a single torrent/NZB descriptor).
+/// or a single provider-specific descriptor).
 /// </summary>
 public sealed class ProviderAcquisitionJobOutput
 {
