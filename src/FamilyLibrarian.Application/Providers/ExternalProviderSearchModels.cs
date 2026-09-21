@@ -41,7 +41,20 @@ public sealed record ExternalProviderReleaseEvidence(
     bool? IsAbridged,
     bool? IsUnabridged,
     IReadOnlyList<string> QualityTags,
-    int? AgeDays);
+    int? AgeDays,
+    ExternalProviderDrmStatus DrmStatus = ExternalProviderDrmStatus.Unknown);
+
+/// <summary>
+/// Provider evidence about whether a release can be opened and converted.
+/// Missing or unrecognized wire values are deliberately <see cref="Unknown"/>
+/// and may never enable unattended acquisition.
+/// </summary>
+public enum ExternalProviderDrmStatus
+{
+    Unknown,
+    None,
+    Encrypted
+}
 
 /// <summary>Provider-side filtering hints (protocol v2 §14) — optional to honor; FL validates results independently regardless.</summary>
 public sealed record ExternalProviderSearchConstraints(

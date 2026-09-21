@@ -14,6 +14,54 @@ public static class ExternalReleasePolicy
 {
     public static ExternalReleaseVerdict Evaluate(ExternalProviderReleaseEvidence? release, RequestMediaType mediaType)
     {
+        if (mediaType == RequestMediaType.Ebook)
+        {
+            if (release is null)
+            {
+                return ExternalReleaseVerdict.Rejected(
+                    "The provider did not report a source ebook format or DRM state.");
+            }
+
+            if (release.DrmStatus == ExternalProviderDrmStatus.Encrypted)
+            {
+                return ExternalReleaseVerdict.Rejected(
+                    "This release is reported as encrypted or DRM-protected.");
+            }
+
+            var formatTier = ExternalEbookFormatPolicy.Classify(release.Format);
+            if (formatTier == ExternalEbookFormatTier.Reject)
+            {
+                return ExternalReleaseVerdict.Rejected(
+                    $"'{release.Format ?? "unknown"}' is not an accepted ebook source format.");
+            }
+
+            if (release.IsCollection == true)
+            {
+                return ExternalReleaseVerdict.ReviewRequired(
+                    "This release is reported as a multi-book collection, not the single title requested.");
+            }
+
+            if (release.IsSample == true)
+            {
+                return ExternalReleaseVerdict.ReviewRequired(
+                    "This release is reported as a sample/preview, not the complete work.");
+            }
+
+            if (formatTier == ExternalEbookFormatTier.Possible)
+            {
+                return ExternalReleaseVerdict.ReviewRequired(
+                    "This source format needs an explicit review before CWA conversion.");
+            }
+
+            if (release.DrmStatus == ExternalProviderDrmStatus.Unknown)
+            {
+                return ExternalReleaseVerdict.ReviewRequired(
+                    "The provider could not confirm that this ebook source is DRM-free.");
+            }
+
+            return ExternalReleaseVerdict.Acceptable;
+        }
+
         if (release is null)
         {
             return ExternalReleaseVerdict.Acceptable;
@@ -21,14 +69,14 @@ public static class ExternalReleasePolicy
 
         if (release.IsCollection == true)
         {
-            return new ExternalReleaseVerdict(
-                true, "This release is reported as a multi-book collection, not the single title requested.");
+            return ExternalReleaseVerdict.ReviewRequired(
+                "This release is reported as a multi-book collection, not the single title requested.");
         }
 
         if (release.IsSample == true)
         {
-            return new ExternalReleaseVerdict(
-                true, "This release is reported as a sample/preview, not the complete work.");
+            return ExternalReleaseVerdict.ReviewRequired(
+                "This release is reported as a sample/preview, not the complete work.");
         }
 
         // Only audiobooks have a meaningful abridged/unabridged distinction
@@ -39,14 +87,18 @@ public static class ExternalReleasePolicy
         // unabridged ebook editions yet).
         if (mediaType == RequestMediaType.Audiobook && release.IsAbridged == true && release.IsUnabridged != true)
         {
-            return new ExternalReleaseVerdict(true, "This release is reported as abridged.");
+            return ExternalReleaseVerdict.ReviewRequired("This release is reported as abridged.");
         }
 
         return ExternalReleaseVerdict.Acceptable;
     }
 }
 
-public sealed record ExternalReleaseVerdict(bool RequiresConfirmation, string? Reason)
+public sealed record ExternalReleaseVerdict(bool IsRejected, bool RequiresConfirmation, string? Reason)
 {
-    public static readonly ExternalReleaseVerdict Acceptable = new(false, null);
+    public static readonly ExternalReleaseVerdict Acceptable = new(false, false, null);
+
+    public static ExternalReleaseVerdict Rejected(string reason) => new(true, false, reason);
+
+    public static ExternalReleaseVerdict ReviewRequired(string reason) => new(false, true, reason);
 }

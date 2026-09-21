@@ -287,7 +287,15 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
             releaseNode["isAbridged"]?.GetValue<bool?>(),
             releaseNode["isUnabridged"]?.GetValue<bool?>(),
             releaseNode["qualityTags"]?.AsArray().Select(tag => tag?.GetValue<string>() ?? string.Empty).ToArray() ?? [],
-            releaseNode["ageDays"]?.GetValue<int?>());
+            releaseNode["ageDays"]?.GetValue<int?>(),
+            ParseDrmStatus(releaseNode["drm"]?.GetValue<string>()));
+
+    private static ExternalProviderDrmStatus ParseDrmStatus(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "none" => ExternalProviderDrmStatus.None,
+        "encrypted" => ExternalProviderDrmStatus.Encrypted,
+        _ => ExternalProviderDrmStatus.Unknown
+    };
 
     private static List<BookAuthor> ParseAuthors(JsonNode? authorsNode)
     {

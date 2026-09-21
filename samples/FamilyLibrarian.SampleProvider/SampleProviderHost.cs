@@ -142,7 +142,8 @@ public static class SampleProviderHost
                         format = candidate.Format,
                         sizeBytes = (long?)null,
                         isCollection = candidate.IsCollection,
-                        isSample = false
+                        isSample = false,
+                        drm = "none"
                     },
                     extensions = new { }
                 });

@@ -13,6 +13,8 @@ public sealed class BookRequestTests
 
     private static readonly Guid UserId = Guid.NewGuid();
     private static readonly Guid WorkId = Guid.NewGuid();
+    private static readonly string[] ExpectedReviewCandidateDetails =
+    ["EPUB · Published 2014 · Example Press", "EPUB · Published 2015 · Archive House"];
 
     [TestMethod]
     public void ANewRequestStartsPendingWithOneRowPerRequestedFormat()
@@ -245,7 +247,7 @@ public sealed class BookRequestTests
         Assert.HasCount(2, request.ReviewCandidates);
         Assert.AreEqual("opaque-a", request.ReviewCandidates.First().ProviderResultId);
         CollectionAssert.AreEquivalent(
-            ["EPUB · Published 2014 · Example Press", "EPUB · Published 2015 · Archive House"],
+            ExpectedReviewCandidateDetails,
             request.ReviewCandidates.Select(candidate => candidate.Details).ToArray());
     }
 

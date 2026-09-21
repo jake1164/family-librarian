@@ -114,7 +114,11 @@ public sealed class ExternalCandidateAvailabilityChecker(
         var candidates = await externalProviderClient.SearchAsync(
             provider.BaseUrl,
             apiKey,
-            new Providers.ExternalProviderSearchRequest(Guid.NewGuid(), mediaType, work, edition),
+            new Providers.ExternalProviderSearchRequest(
+                Guid.NewGuid(), mediaType, work, edition,
+                mediaType == RequestMediaType.Ebook
+                    ? new Providers.ExternalProviderSearchConstraints(Formats: Providers.ExternalEbookFormatPolicy.SearchFormats)
+                    : null),
             route,
             cancellationToken);
 
@@ -125,42 +129,68 @@ public sealed class ExternalCandidateAvailabilityChecker(
 
         var verdicts = await matchVerifier.VerifyAsync(identity.Title, identity.Author, isbn13, candidates, cancellationToken);
 
-        return candidates.Select(candidate =>
+        var candidatesWithVerdicts = candidates.Select(candidate =>
         {
             var verdict = verdicts.GetValueOrDefault(candidate.ProviderReference, Providers.ExternalProviderMatchVerdict.Unconfirmed);
             var releaseVerdict = Providers.ExternalReleasePolicy.Evaluate(candidate.Release, mediaType);
+            return (Candidate: candidate, MatchVerdict: verdict, ReleaseVerdict: releaseVerdict);
+        })
+            .Where(candidate => !candidate.ReleaseVerdict.IsRejected)
+            .ToArray();
+
+        // Possible conversion sources are intentionally a fallback. Once the
+        // same response supplies any Safe source, do not make the requester
+        // choose a weaker conversion path or spend a limited source download
+        // on it. The provider's own ordering never substitutes for this rule.
+        if (mediaType == RequestMediaType.Ebook && candidatesWithVerdicts.Any(candidate =>
+                Providers.ExternalEbookFormatPolicy.Classify(candidate.Candidate.Release?.Format) ==
+                Providers.ExternalEbookFormatTier.Safe))
+        {
+            candidatesWithVerdicts = candidatesWithVerdicts.Where(candidate =>
+                Providers.ExternalEbookFormatPolicy.Classify(candidate.Candidate.Release?.Format) !=
+                Providers.ExternalEbookFormatTier.Possible).ToArray();
+        }
+
+        return candidatesWithVerdicts.Select(candidate =>
+        {
+            var sourceCandidate = candidate.Candidate;
             return new FulfillmentOption(
                 ProviderId: provider.ProviderId,
-                ProviderResultId: candidate.ProviderReference,
+                ProviderResultId: sourceCandidate.ProviderReference,
                 WorkId: Guid.Empty,
                 EditionId: null,
                 MediaType: mediaType,
                 OptionKind: OptionKind.DirectAcquisition,
                 AcquisitionMethod: AcquisitionMethod.DirectDownload,
-                Format: candidate.Format,
-                Language: candidate.Edition?.Language,
+                Format: sourceCandidate.Format,
+                Language: sourceCandidate.Edition?.Language,
                 Quality: null,
                 Availability: null,
                 Cost: 0m,
                 Currency: null,
                 LicenseOrUsageStatus: null,
-                DrmStatus: null,
+                DrmStatus: sourceCandidate.Release?.DrmStatus switch
+                {
+                    Providers.ExternalProviderDrmStatus.None => "none",
+                    Providers.ExternalProviderDrmStatus.Encrypted => "encrypted",
+                    _ => "unknown"
+                },
                 ExternalActionUri: null,
-                ProviderData: candidate.ProviderReference,
-                MatchBasis: verdict.Basis,
-                RequiresLanguageConfirmation: verdict.RequiresLanguageConfirmation,
-                Title: candidate.Title,
-                Author: candidate.Author,
-                CandidateRevision: candidate.CandidateRevision,
-                AcquireToken: candidate.AcquireToken,
-                RequiresReleaseConfirmation: releaseVerdict.RequiresConfirmation,
-                ReleaseConcern: releaseVerdict.Reason,
-                PublicationYear: candidate.Edition?.PublicationYear,
-                Publisher: candidate.Edition?.Publisher,
-                SizeBytes: candidate.Release?.SizeBytes,
-                PartCount: candidate.Release?.PartCount,
-                IsAbridged: candidate.Release?.IsAbridged,
-                IsUnabridged: candidate.Release?.IsUnabridged);
+                ProviderData: sourceCandidate.ProviderReference,
+                MatchBasis: candidate.MatchVerdict.Basis,
+                RequiresLanguageConfirmation: candidate.MatchVerdict.RequiresLanguageConfirmation,
+                Title: sourceCandidate.Title,
+                Author: sourceCandidate.Author,
+                CandidateRevision: sourceCandidate.CandidateRevision,
+                AcquireToken: sourceCandidate.AcquireToken,
+                RequiresReleaseConfirmation: candidate.ReleaseVerdict.RequiresConfirmation,
+                ReleaseConcern: candidate.ReleaseVerdict.Reason,
+                PublicationYear: sourceCandidate.Edition?.PublicationYear,
+                Publisher: sourceCandidate.Edition?.Publisher,
+                SizeBytes: sourceCandidate.Release?.SizeBytes,
+                PartCount: sourceCandidate.Release?.PartCount,
+                IsAbridged: sourceCandidate.Release?.IsAbridged,
+                IsUnabridged: sourceCandidate.Release?.IsUnabridged);
         }).ToArray();
     }
 

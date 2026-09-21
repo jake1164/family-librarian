@@ -64,10 +64,7 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         var provider = NewProvider("free-source");
         provider.SetEnabled(true, null, Now);
         context.Store.Providers.Add(provider);
-        context.Client.Candidates =
-        [
-            ExternalProviderCandidate.FromSimple("ref-1", "Moby Dick", "Herman Melville", "epub", 500_000)
-        ];
+        context.Client.Candidates = [Candidate("ref-1", "epub", ExternalProviderDrmStatus.None)];
 
         var options = await context.Checker.FindAsync(
             new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
@@ -79,6 +76,9 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         Assert.AreEqual(Guid.Empty, option.WorkId);
         Assert.AreEqual(OptionKind.DirectAcquisition, option.OptionKind);
         Assert.IsFalse(option.RequiresReleaseConfirmation);
+        CollectionAssert.AreEquivalent(
+            ExternalEbookFormatPolicy.SearchFormats.ToArray(),
+            context.Client.LastSearchRequest!.Constraints!.Formats!.ToArray());
     }
 
     [TestMethod]
@@ -105,6 +105,72 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         Assert.IsTrue(option.RequiresReleaseConfirmation);
         Assert.Contains("collection", option.ReleaseConcern!, StringComparison.OrdinalIgnoreCase);
     }
+
+    [TestMethod]
+    public async Task RejectTierAndEncryptedCandidatesAreRemovedBeforeTheyCanBeAcquired()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("format-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        context.Client.Candidates =
+        [
+            Candidate("plain-text", "txt", ExternalProviderDrmStatus.None),
+            Candidate("encrypted-azw3", "azw3", ExternalProviderDrmStatus.Encrypted)
+        ];
+
+        var options = await context.Checker.FindAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
+    }
+
+    [TestMethod]
+    public async Task ADetectedSafeSourceSuppressesPossibleConversionSources()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("format-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        context.Client.Candidates =
+        [
+            Candidate("safe-azw3", "azw3", ExternalProviderDrmStatus.None),
+            Candidate("possible-docx", "docx", ExternalProviderDrmStatus.None)
+        ];
+
+        var options = await context.Checker.FindAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual("safe-azw3", options.Single().ProviderResultId);
+        Assert.IsFalse(options.Single().RequiresReleaseConfirmation);
+    }
+
+    [TestMethod]
+    public async Task UnknownDrmCanBeReviewedButNeverAutomaticallyAcquired()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("format-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        context.Client.Candidates = [Candidate("unknown-drm", "epub", ExternalProviderDrmStatus.Unknown)];
+
+        var options = await context.Checker.FindAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        Assert.IsTrue(options.Single().RequiresReleaseConfirmation);
+    }
+
+    private static ExternalProviderCandidate Candidate(
+        string providerReference, string sourceFormat, ExternalProviderDrmStatus drmStatus) =>
+        new(
+            providerReference,
+            new ExternalProviderWorkEvidence(
+                "Moby Dick", null, [new BookAuthor("Herman Melville", "author")], [], []),
+            Release: new ExternalProviderReleaseEvidence(
+                $"Moby-Dick.{sourceFormat}", sourceFormat, 500_000, false, 1, false, null, null, [], null,
+                drmStatus));
 
     private static ExternalProvider NewProvider(string providerId) =>
         new(providerId, providerId, "https://example.test", Now);
@@ -163,6 +229,8 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
 
         public int CallCount { get; private set; }
 
+        public ExternalProviderSearchRequest? LastSearchRequest { get; private set; }
+
         public Task<ExternalProviderManifest> GetManifestAsync(
             string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -207,6 +275,7 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
             CancellationToken cancellationToken)
         {
             CallCount++;
+            LastSearchRequest = request;
             return Throw
                 ? throw new HttpRequestException("The external provider is unavailable.")
                 : Task.FromResult(Candidates);

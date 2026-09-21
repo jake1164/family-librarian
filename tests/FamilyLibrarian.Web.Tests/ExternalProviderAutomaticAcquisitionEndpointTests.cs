@@ -435,6 +435,12 @@ public sealed class ExternalProviderAutomaticAcquisitionFailureEndpointTests
 [TestClass]
 public sealed class ExternalProviderReviewCandidatePresentationEndpointTests
 {
+    private static readonly string[] ExpectedPreferenceCandidateDetails =
+    [
+        "EPUB · Published 2014 · Example Press · 1.5 MB",
+        "EPUB · Published 2016 · Archive House · 2 MB"
+    ];
+
     private static WebTestFixture? _fixture;
 
     [ClassInitialize]
@@ -508,10 +514,7 @@ public sealed class ExternalProviderReviewCandidatePresentationEndpointTests
         Assert.AreEqual("PreferenceAmbiguity", review.NeedsReview.Category);
         Assert.HasCount(2, review.NeedsReview.Candidates);
         CollectionAssert.AreEquivalent(
-            [
-                "EPUB · Published 2014 · Example Press · 1.5 MB",
-                "EPUB · Published 2016 · Archive House · 2 MB"
-            ],
+            ExpectedPreferenceCandidateDetails,
             review.NeedsReview.Candidates.Select(candidate => candidate.Details).ToArray());
         Assert.IsFalse(rawResponse.Contains("presentation-external", StringComparison.OrdinalIgnoreCase));
         Assert.IsFalse(rawResponse.Contains("opaque-duplicate", StringComparison.OrdinalIgnoreCase));
@@ -568,7 +571,8 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
                     new ExternalProviderEditionEvidence(
                         "en", null, null, request.Edition?.Identifiers ?? []),
                     new ExternalProviderReleaseEvidence(
-                        null, "epub", null, false, 1, false, null, null, [], null))
+                        null, "epub", null, false, 1, false, null, null, [], null,
+                        ExternalProviderDrmStatus.None))
             ]
             : [];
         return Task.FromResult(candidates);
@@ -711,7 +715,8 @@ file sealed class FailingFetchExternalProviderClient : IExternalProviderClient
                     new ExternalProviderEditionEvidence(
                         "en", null, null, request.Edition?.Identifiers ?? []),
                     new ExternalProviderReleaseEvidence(
-                        null, "epub", null, false, 1, false, null, null, [], null))
+                        null, "epub", null, false, 1, false, null, null, [], null,
+                        ExternalProviderDrmStatus.None))
             ]
             : [];
         return Task.FromResult(candidates);
@@ -784,19 +789,23 @@ file sealed class PresentationExternalProviderClient : IExternalProviderClient
             new ExternalProviderCandidate(
                 "opaque-duplicate-a", work,
                 new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),
-                new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null)),
+                new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null,
+                    ExternalProviderDrmStatus.None)),
             new ExternalProviderCandidate(
                 "opaque-duplicate-b", work,
                 new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),
-                new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null)),
+                new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null,
+                    ExternalProviderDrmStatus.None)),
             new ExternalProviderCandidate(
                 "opaque-edition-c", work,
                 new ExternalProviderEditionEvidence("en", 2016, "Archive House", identifiers),
-                new ExternalProviderReleaseEvidence(null, "epub", 2_097_152, false, 1, false, null, null, [], null)),
+                new ExternalProviderReleaseEvidence(null, "epub", 2_097_152, false, 1, false, null, null, [], null,
+                    ExternalProviderDrmStatus.None)),
             new ExternalProviderCandidate(
                 "opaque-duplicate-d", work,
                 new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),
-                new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null))
+                new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null,
+                    ExternalProviderDrmStatus.None))
         ];
         return Task.FromResult(candidates);
     }

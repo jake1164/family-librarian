@@ -29,7 +29,8 @@ public sealed class EpubAssetIdentityVerifier(
     public string Id => "epub-package-metadata";
 
     public bool Supports(MediaAsset asset) =>
-        string.Equals(asset.Format, ".epub", StringComparison.OrdinalIgnoreCase);
+        string.Equals(asset.Format, ".epub", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(asset.Format, ".kepub", StringComparison.OrdinalIgnoreCase);
 
     public async Task<AssetIdentityVerificationResult> VerifyAsync(
         MediaAsset asset,

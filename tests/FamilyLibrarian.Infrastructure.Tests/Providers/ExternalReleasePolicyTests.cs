@@ -7,12 +7,11 @@ namespace FamilyLibrarian.Infrastructure.Tests.Providers;
 public sealed class ExternalReleasePolicyTests
 {
     [TestMethod]
-    public void NoReleaseEvidenceIsAcceptable()
+    public void EbookWithNoReleaseEvidenceIsRejectedBeforeDownload()
     {
         var verdict = ExternalReleasePolicy.Evaluate(release: null, RequestMediaType.Ebook);
 
-        Assert.IsFalse(verdict.RequiresConfirmation);
-        Assert.IsNull(verdict.Reason);
+        Assert.IsTrue(verdict.IsRejected);
     }
 
     [TestMethod]
@@ -20,7 +19,8 @@ public sealed class ExternalReleasePolicyTests
     {
         var release = new ExternalProviderReleaseEvidence(
             "Debt.of.Honor.RETAIL.EPUB", "epub", 1_452_821, IsCollection: false, PartCount: 1,
-            IsSample: false, IsAbridged: null, IsUnabridged: null, QualityTags: ["retail"], AgeDays: null);
+            IsSample: false, IsAbridged: null, IsUnabridged: null, QualityTags: ["retail"], AgeDays: null,
+            DrmStatus: ExternalProviderDrmStatus.None);
 
         var verdict = ExternalReleasePolicy.Evaluate(release, RequestMediaType.Ebook);
 
@@ -72,10 +72,50 @@ public sealed class ExternalReleasePolicyTests
         // Audiobook requests.
         var release = new ExternalProviderReleaseEvidence(
             "Book (Abridged)", "epub", null, IsCollection: false, PartCount: 1,
-            IsSample: false, IsAbridged: true, IsUnabridged: false, QualityTags: [], AgeDays: null);
+            IsSample: false, IsAbridged: true, IsUnabridged: false, QualityTags: [], AgeDays: null,
+            ExternalProviderDrmStatus.None);
 
         var verdict = ExternalReleasePolicy.Evaluate(release, RequestMediaType.Ebook);
 
         Assert.IsFalse(verdict.RequiresConfirmation);
+    }
+
+    [TestMethod]
+    public void AnEncryptedEbookIsRejectedBeforeDownload()
+    {
+        var release = new ExternalProviderReleaseEvidence(
+            "Book.azw3", "azw3", 500_000, false, 1, false, null, null, [], null,
+            ExternalProviderDrmStatus.Encrypted);
+
+        var verdict = ExternalReleasePolicy.Evaluate(release, RequestMediaType.Ebook);
+
+        Assert.IsTrue(verdict.IsRejected);
+        StringAssert.Contains(verdict.Reason!, "DRM");
+    }
+
+    [TestMethod]
+    public void UnknownDrmNeverEnablesAutomaticEbookAcquisition()
+    {
+        var release = new ExternalProviderReleaseEvidence(
+            "Book.epub", "epub", 500_000, false, 1, false, null, null, [], null);
+
+        var verdict = ExternalReleasePolicy.Evaluate(release, RequestMediaType.Ebook);
+
+        Assert.IsFalse(verdict.IsRejected);
+        Assert.IsTrue(verdict.RequiresConfirmation);
+        StringAssert.Contains(verdict.Reason!, "DRM-free");
+    }
+
+    [TestMethod]
+    public void PossibleEbookFormatsRequireReview()
+    {
+        var release = new ExternalProviderReleaseEvidence(
+            "Book.docx", "docx", 500_000, false, 1, false, null, null, [], null,
+            ExternalProviderDrmStatus.None);
+
+        var verdict = ExternalReleasePolicy.Evaluate(release, RequestMediaType.Ebook);
+
+        Assert.IsFalse(verdict.IsRejected);
+        Assert.IsTrue(verdict.RequiresConfirmation);
     }
 }

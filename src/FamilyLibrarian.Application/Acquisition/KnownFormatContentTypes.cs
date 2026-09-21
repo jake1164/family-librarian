@@ -15,6 +15,14 @@ public static class KnownFormatContentTypes
         {
             [".epub"] = "application/epub+zip",
             [".pdf"] = "application/pdf",
+            [".mobi"] = "application/x-mobipocket-ebook",
+            [".azw"] = "application/x-mobipocket-ebook",
+            [".azw3"] = "application/x-mobipocket-ebook",
+            [".prc"] = "application/x-mobipocket-ebook",
+            [".fb2"] = "application/xml",
+            [".fbz"] = "application/zip",
+            [".kepub"] = "application/epub+zip",
+            [".docx"] = "application/zip",
             [".mp3"] = "audio/mpeg",
             [".m4b"] = "audio/mp4"
         };

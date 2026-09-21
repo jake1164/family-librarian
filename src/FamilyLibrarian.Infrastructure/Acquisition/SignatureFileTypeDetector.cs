@@ -34,6 +34,20 @@ public static class SignatureFileTypeDetector
                 : "application/zip";
         }
 
+        // MOBI, AZW, AZW3 and the MOBI-family PRC files use a Palm Database
+        // header whose type/creator bytes are BOOKMOBI at offset 60. The
+        // separate MobiEncryptionValidator reads the first record's
+        // encryption flag after this coarse type check passes.
+        if (bytes.Length >= 68 && ContainsAsciiAt(bytes, "BOOKMOBI", 60))
+        {
+            return "application/x-mobipocket-ebook";
+        }
+
+        if (StartsWith(bytes, 0x3C, 0x3F, 0x78, 0x6D, 0x6C))
+        {
+            return "application/xml";
+        }
+
         if (StartsWith(bytes, 0x25, 0x50, 0x44, 0x46, 0x2D))
         {
             return "application/pdf";
@@ -66,5 +80,17 @@ public static class SignatureFileTypeDetector
         Span<byte> needleBytes = stackalloc byte[needle.Length];
         Encoding.ASCII.GetBytes(needle, needleBytes);
         return haystack.IndexOf(needleBytes) >= 0;
+    }
+
+    private static bool ContainsAsciiAt(ReadOnlySpan<byte> bytes, string value, int offset)
+    {
+        if (offset < 0 || bytes.Length < offset + value.Length)
+        {
+            return false;
+        }
+
+        Span<byte> expected = stackalloc byte[value.Length];
+        Encoding.ASCII.GetBytes(value, expected);
+        return bytes.Slice(offset, expected.Length).SequenceEqual(expected);
     }
 }

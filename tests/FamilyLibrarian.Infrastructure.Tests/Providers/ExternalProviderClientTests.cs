@@ -86,6 +86,7 @@ public sealed class ExternalProviderClientTests
         Assert.AreEqual("pride-and-prejudice", results[0].ProviderReference);
         Assert.AreEqual("Jane Austen", results[0].Work.Authors[0].Name);
         Assert.IsNotNull(results[0].Edition);
+        Assert.AreEqual(ExternalProviderDrmStatus.None, results[0].Release!.DrmStatus);
     }
 
     [TestMethod]

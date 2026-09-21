@@ -1155,6 +1155,24 @@ raw release names, provider-supplied title/author labels, and extension data
 remain administrator/server-only. The requester-facing title and author always
 come from Family Librarian's canonical catalog Work.
 
+### External ebook source formats and DRM
+
+External ebook candidates are classified before any source acquisition: Safe
+sources are EPUB, AZW3, MOBI, and AZW; Possible sources are FB2, FBZ, KEPUB,
+PRC, and DOCX; every other source format, including PDF and plain text, is
+rejected. Possible sources are offered only when the provider returned no Safe
+source and always require explicit review. A provider reports `none`,
+`encrypted`, or `unknown` DRM evidence: encrypted files are rejected; unknown
+DRM can never be auto-acquired. FL also inspects acquired MOBI-family files for
+their encryption flag and never decrypts or circumvents DRM. Provider format
+constraints are a quota-saving hint, not enforcement; FL independently applies
+this policy before it can submit `/acquire`.
+
+CWA receives the original approved source file and performs any library/device
+conversion later. FL does not yet receive CWA's converted EPUB as an artifact,
+so it cannot structurally validate that converted file; Possible formats remain
+review-required until that integration exists.
+
 There is still no general `CheckingLibrary`, `Searching`, `Acquiring`, or
 `Processing` request state machine; audiobook confirmation remains future work.
 Existing-ownership checks at request creation now produce a confirmable warning,

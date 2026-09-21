@@ -204,7 +204,8 @@ public sealed class DirectAcquisitionServiceTests
             new ExternalProviderEditionEvidence(
                 "en", null, null, [new BookIdentifier("isbn13", isbn13)]),
             new ExternalProviderReleaseEvidence(
-                null, "epub", 500_000, false, 1, false, null, null, [], null));
+                null, "epub", 500_000, false, 1, false, null, null, [], null,
+                ExternalProviderDrmStatus.None));
 
     private sealed class TestContext
     {
