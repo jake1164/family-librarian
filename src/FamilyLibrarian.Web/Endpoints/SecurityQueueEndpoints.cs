@@ -20,6 +20,7 @@ internal static class SecurityQueueEndpoints
         adminMediaAssets.MapGet("/recent", ListRecentMediaAssetsAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/evaluate", EvaluateMediaAssetAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/retry-identity", RetryIdentityAsync);
+        adminMediaAssets.MapPost("/{assetId:guid}/override-identity", OverrideIdentityAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/approve", ApproveMediaAssetAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/reject", RejectMediaAssetAsync);
         adminMediaAssets.MapDelete("/{assetId:guid}", DiscardMediaAssetAsync);
@@ -76,7 +77,8 @@ internal static class SecurityQueueEndpoints
                 .ToArray(),
             entry.LatestEvaluation.Approvals.Select(approval => new SecurityApprovalResponse(
                 approval.Decision.ToString(), approval.ActorType.ToString(), approval.Reason, approval.DecidedAtUtc))
-                .ToArray()));
+                .ToArray()),
+        entry.Asset.IdentityMismatchReason);
 
     private static async Task<IResult> EvaluateMediaAssetAsync(
         Guid assetId,
@@ -113,6 +115,24 @@ internal static class SecurityQueueEndpoints
         AutomatedSecurityPipeline securityPipeline,
         CancellationToken cancellationToken) =>
         ToApprovalResult(await securityPipeline.RetryIdentityAsync(assetId, cancellationToken));
+
+    private static async Task<IResult> OverrideIdentityAsync(
+        Guid assetId,
+        ApprovalDecisionRequest request,
+        ApprovalService approvals,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["reason"] = ["Explain why this file is correct despite the identity mismatch."]
+            });
+        }
+
+        return ToApprovalResult(
+            await approvals.OverrideIdentityAndApproveAsync(assetId, request.Reason, cancellationToken));
+    }
 
     private static async Task<IResult> RejectMediaAssetAsync(
         Guid assetId,

@@ -926,6 +926,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(asset => asset.AssociatedRequestFormatId).HasColumnName("associated_request_format_id");
             entity.Property(asset => asset.SourceAcquisitionCandidateId).HasColumnName("source_acquisition_candidate_id");
             entity.Property(asset => asset.StorageState).HasColumnName("storage_state").HasConversion<string>().HasMaxLength(32);
+            entity.Property(asset => asset.IdentityMismatchReason).HasColumnName("identity_mismatch_reason").HasMaxLength(1_024);
             entity.Property(asset => asset.BundleId).HasColumnName("bundle_id");
             entity.Property(asset => asset.BundleSequence).HasColumnName("bundle_sequence");
             entity.Property(asset => asset.BundleTrackCount).HasColumnName("bundle_track_count");

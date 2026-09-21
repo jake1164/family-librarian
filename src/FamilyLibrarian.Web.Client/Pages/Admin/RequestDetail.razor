@@ -412,7 +412,15 @@
         {
             var outcome = await MediaAssets.AcquireDirectAsync(
                 RequestId, formatId, option.ProviderId, option.ProviderResultId, confirmLowConfidenceMatch);
-            if (outcome.Succeeded)
+            if (outcome.AcquisitionInProgress)
+            {
+                Snackbar.Add(
+                    $"Submitted to {option.ProviderId} — no file yet. Watch this request's format status; " +
+                    "the provider may need further action (such as a link on its site) before it can deliver a copy.",
+                    Severity.Info);
+                await LoadAsync();
+            }
+            else if (outcome.Succeeded)
             {
                 Snackbar.Add(
                     $"Fetched from {option.ProviderId}. It is being scanned, verified, and published automatically when it passes.",

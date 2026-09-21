@@ -15,4 +15,5 @@ public sealed record MediaAssetAdminView(
     long SizeBytes,
     MediaAssetStorageState StorageState,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc,
+    string? IdentityMismatchReason = null);

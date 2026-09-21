@@ -29,17 +29,25 @@ public static class RequestFormatProgress
     /// <c>waiting</c>/<c>user-interaction</c> or simply still running shows
     /// real progress instead of the bare "Requested" state.
     /// </param>
+    /// <param name="providerJobInteractionMessage">
+    /// The provider's own explanation of what it is waiting on (protocol v2
+    /// §8's <c>interaction.message</c>), shown verbatim in place of the
+    /// generic waiting sentence when the provider supplied one -- otherwise
+    /// an admin sees the same "action needed" chip for a CAPTCHA, a rate
+    /// limit, and a manual review queue with no way to tell them apart.
+    /// </param>
     public static RequestFormatProgressView? Describe(
         MediaAssetStorageState? assetState,
         SecurityEvaluationStatus? securityStatus,
         LibraryImportStatus? libraryImportStatus,
         AudiobookshelfDeliveryStatus? deliveryStatus,
         ProviderAcquisitionJobLifecycleState? providerJobState = null,
-        string? providerJobPhase = null)
+        string? providerJobPhase = null,
+        string? providerJobInteractionMessage = null)
     {
         if (assetState is null && providerJobState is not null)
         {
-            return DescribeProviderJob(providerJobState.Value, providerJobPhase);
+            return DescribeProviderJob(providerJobState.Value, providerJobPhase, providerJobInteractionMessage);
         }
 
         return assetState switch
@@ -74,11 +82,13 @@ public static class RequestFormatProgress
     /// state (<c>queued</c>/<c>running</c>) is ordinary in-progress work.
     /// </summary>
     private static RequestFormatProgressView DescribeProviderJob(
-        ProviderAcquisitionJobLifecycleState state, string? phase) => state switch
+        ProviderAcquisitionJobLifecycleState state, string? phase, string? interactionMessage) => state switch
     {
         ProviderAcquisitionJobLifecycleState.Waiting => Stage(
             "AwaitingProviderAction",
-            "Action is needed to continue fetching this from the provider."),
+            string.IsNullOrWhiteSpace(interactionMessage)
+                ? "Action is needed to continue fetching this from the provider."
+                : interactionMessage),
         _ => Stage(
             "AcquisitionInProgress",
             "Fetching from the external provider.")

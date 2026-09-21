@@ -262,7 +262,8 @@ public sealed class RequestRepository(
                 job.LifecycleState != ProviderAcquisitionJobLifecycleState.Failed &&
                 job.LifecycleState != ProviderAcquisitionJobLifecycleState.Cancelled)
             .Select(job => new ProviderJobProgressRow(
-                job.RequestFormatId, job.LifecycleState, job.Phase, job.InteractionActionUrl, job.CreatedAtUtc))
+                job.RequestFormatId, job.LifecycleState, job.Phase, job.InteractionActionUrl,
+                job.InteractionMessage, job.CreatedAtUtc))
             .ToArrayAsync(cancellationToken);
         var latestProviderJobs = providerJobs
             .GroupBy(job => job.RequestFormatId)
@@ -486,7 +487,8 @@ public sealed class RequestRepository(
                 libraryImportStatus: null,
                 deliveryStatus: null,
                 providerJobState: providerJob.LifecycleState,
-                providerJobPhase: providerJob.Phase),
+                providerJobPhase: providerJob.Phase,
+                providerJobInteractionMessage: providerJob.InteractionMessage),
             ExternalActionUri = Uri.TryCreate(providerJob.InteractionActionUrl, UriKind.Absolute, out var actionUri)
                 ? actionUri
                 : null
@@ -685,6 +687,7 @@ public sealed class RequestRepository(
         ProviderAcquisitionJobLifecycleState LifecycleState,
         string? Phase,
         string? InteractionActionUrl,
+        string? InteractionMessage,
         DateTimeOffset CreatedAtUtc);
 
     private sealed record MediaAssetProgressRow(

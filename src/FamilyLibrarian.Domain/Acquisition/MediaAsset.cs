@@ -142,6 +142,15 @@ public sealed class MediaAsset
 
     public MediaAssetStorageState StorageState { get; private set; }
 
+    /// <summary>
+    /// The identity verifier's explanation of what it compared and why it
+    /// didn't match, set alongside a transition into <see cref="MediaAssetStorageState.Unmatched"/>
+    /// and cleared once the asset leaves that state. Without this, a librarian
+    /// facing "identity review required" has no way to tell a cosmetic title
+    /// difference from genuinely the wrong book.
+    /// </summary>
+    public string? IdentityMismatchReason { get; private set; }
+
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
     public DateTimeOffset UpdatedAtUtc { get; private set; }
@@ -161,4 +170,11 @@ public sealed class MediaAsset
         StorageState = to;
         UpdatedAtUtc = atUtc;
     }
+
+    /// <summary>
+    /// Records why an identity check held this asset as <see cref="MediaAssetStorageState.Unmatched"/>,
+    /// or clears the reason once it leaves that state (a stale reason from a
+    /// prior hold must never linger and be read as current).
+    /// </summary>
+    public void SetIdentityMismatchReason(string? reason) => IdentityMismatchReason = reason;
 }

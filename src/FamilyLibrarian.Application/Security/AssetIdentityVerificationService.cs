@@ -51,6 +51,7 @@ public sealed class AssetIdentityVerificationService(
                 asset.StoredFilename,
                 cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Unmatched, clock.UtcNow);
+            asset.SetIdentityMismatchReason(result.Reason);
             await repository.SaveChangesAsync(cancellationToken);
         }
 
@@ -58,7 +59,7 @@ public sealed class AssetIdentityVerificationService(
             result.IsMatch ? AuditActions.AssetIdentityVerified : AuditActions.AssetIdentityUnmatched,
             AuditSubjectTypes.MediaAsset,
             assetId.ToString(),
-            new { AssetId = assetId, result.VerifierId, result.IsMatch },
+            new { AssetId = assetId, result.VerifierId, result.IsMatch, result.Reason },
             cancellationToken);
 
         return result;
@@ -88,6 +89,16 @@ public sealed class AssetIdentityVerificationService(
                 asset.StoredFilename,
                 cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Processing, clock.UtcNow);
+            asset.SetIdentityMismatchReason(null);
+            await repository.SaveChangesAsync(cancellationToken);
+        }
+        else if (result.Reason != asset.IdentityMismatchReason)
+        {
+            // The comparison itself may have changed (e.g. the catalog Work's
+            // title was corrected) even though the outcome is still a
+            // mismatch -- keep the displayed reason current rather than
+            // stale from the original hold.
+            asset.SetIdentityMismatchReason(result.Reason);
             await repository.SaveChangesAsync(cancellationToken);
         }
 
@@ -95,7 +106,7 @@ public sealed class AssetIdentityVerificationService(
             result.IsMatch ? AuditActions.AssetIdentityVerified : AuditActions.AssetIdentityUnmatched,
             AuditSubjectTypes.MediaAsset,
             assetId.ToString(),
-            new { AssetId = assetId, result.VerifierId, result.IsMatch, Retried = true },
+            new { AssetId = assetId, result.VerifierId, result.IsMatch, result.Reason, Retried = true },
             cancellationToken);
 
         return result;

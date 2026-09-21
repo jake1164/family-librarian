@@ -68,6 +68,14 @@ else
                 <ChildContent>
                 <MudStack Spacing="2" Class="pb-2">
                     <MudLink Href="@($"admin/requests/{asset.RequestId}")">View request</MudLink>
+                @if (asset.StorageState == "Unmatched")
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined">
+                        <MudText Typo="Typo.body2">
+                            @(asset.IdentityMismatchReason ?? "The file's embedded metadata could not be matched to the catalog entry, but no further detail was recorded.")
+                        </MudText>
+                    </MudAlert>
+                }
                 @if (asset.LatestEvaluation is not null)
                 {
                     <MudText Typo="Typo.body2" Class="mt-2">
@@ -143,6 +151,15 @@ else
                             Retry identity check
                         </MudButton>
                     }
+                    @if (asset.StorageState == "Unmatched" && overridingAssetId != asset.AssetId)
+                    {
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Warning"
+                                   Disabled="@(busyAssetId is not null)"
+                                   OnClick="@(() => StartOverride(asset))">
+                            Confirm this is correct
+                        </MudButton>
+                    }
                     @if (CanDiscard(asset))
                     {
                         <MudButton Variant="Variant.Outlined"
@@ -153,6 +170,31 @@ else
                         </MudButton>
                     }
                 </MudStack>
+                @if (overridingAssetId == asset.AssetId)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
+                        <MudText Typo="Typo.body2">
+                            Only confirm if you've checked the file itself (title/author page) against the reason above
+                            and are sure this is the right book. This skips the automatic identity check and approves
+                            the file for publishing.
+                        </MudText>
+                        <MudTextField T="string" @bind-Value="overrideReason" Class="mt-2"
+                                      Label="Why is this file correct? (required, shown in the audit log)"
+                                      Lines="2" Disabled="@(busyAssetId is not null)" />
+                        <MudStack Row="true" Spacing="2" Class="mt-2">
+                            <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small"
+                                       Disabled="@(busyAssetId is not null || string.IsNullOrWhiteSpace(overrideReason))"
+                                       OnClick="@(() => OverrideIdentityAsync(asset))">
+                                Approve anyway
+                            </MudButton>
+                            <MudButton Variant="Variant.Text" Size="Size.Small"
+                                       Disabled="@(busyAssetId is not null)"
+                                       OnClick="CancelOverride">
+                                Cancel
+                            </MudButton>
+                        </MudStack>
+                    </MudAlert>
+                }
                 </MudStack>
                 </ChildContent>
             </MudExpansionPanel>
@@ -164,6 +206,8 @@ else
     private IReadOnlyList<MediaAssetAdminResponse>? assets;
     private bool loadFailed;
     private Guid? busyAssetId;
+    private Guid? overridingAssetId;
+    private string? overrideReason;
 
     private int maximumCount = 50;
     private bool loading;
@@ -224,6 +268,31 @@ else
 
     private async Task RetryIdentityAsync(MediaAssetAdminResponse asset) =>
         await RunAsync(asset, () => MediaAssets.RetryIdentityAsync(asset.AssetId));
+
+    private void StartOverride(MediaAssetAdminResponse asset)
+    {
+        overridingAssetId = asset.AssetId;
+        overrideReason = null;
+    }
+
+    private void CancelOverride()
+    {
+        overridingAssetId = null;
+        overrideReason = null;
+    }
+
+    private async Task OverrideIdentityAsync(MediaAssetAdminResponse asset)
+    {
+        if (string.IsNullOrWhiteSpace(overrideReason))
+        {
+            return;
+        }
+
+        var reason = overrideReason;
+        overridingAssetId = null;
+        overrideReason = null;
+        await RunAsync(asset, () => MediaAssets.OverrideIdentityAsync(asset.AssetId, reason));
+    }
 
     private async Task RejectAsync(MediaAssetAdminResponse asset) =>
         await RunAsync(asset, () => MediaAssets.RejectAsync(asset.AssetId));

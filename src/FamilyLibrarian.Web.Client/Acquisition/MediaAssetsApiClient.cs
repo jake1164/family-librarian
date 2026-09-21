@@ -68,6 +68,16 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
         await antiforgery.AttachAsync(request, cancellationToken);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
+        // A protocol-v2 provider (e.g. Anna's Archive) answers 202 Accepted
+        // when it has only durably submitted a job, not delivered bytes --
+        // that must not be reported to the librarian as "fetched" the same
+        // way a 200 OK immediate copy is (see AdminRequestEndpoints.ToManualImportResult).
+        if (response.StatusCode == HttpStatusCode.Accepted)
+        {
+            var accepted = await response.Content.ReadFromJsonAsync<ManualAcquisitionInProgressResponse>(cancellationToken);
+            return new ManualImportOutcome(true, null, null, AcquisitionInProgress: true, ProviderAcquisitionJobId: accepted?.ProviderAcquisitionJobId);
+        }
+
         if (response.IsSuccessStatusCode)
         {
             var result = await response.Content.ReadFromJsonAsync<ManualImportResultResponse>(cancellationToken);
@@ -83,6 +93,9 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
 
     public Task<MediaAssetActionOutcome> RetryIdentityAsync(Guid assetId, CancellationToken cancellationToken = default) =>
         SendActionAsync($"api/v1/admin/media-assets/{assetId}/retry-identity", reason: null, cancellationToken);
+
+    public Task<MediaAssetActionOutcome> OverrideIdentityAsync(Guid assetId, string reason, CancellationToken cancellationToken = default) =>
+        SendActionAsync($"api/v1/admin/media-assets/{assetId}/override-identity", reason, cancellationToken);
 
     public Task<MediaAssetActionOutcome> ApproveAsync(Guid assetId, CancellationToken cancellationToken = default) =>
         SendActionAsync($"api/v1/admin/media-assets/{assetId}/approve", reason: null, cancellationToken);
@@ -180,6 +193,11 @@ public sealed class MediaAssetsApiClient(HttpClient httpClient, AntiforgeryToken
 }
 
 public sealed record ManualImportOutcome(
-    bool Succeeded, ManualImportResultResponse? Result, string? Error, bool RequiresConfirmation = false);
+    bool Succeeded,
+    ManualImportResultResponse? Result,
+    string? Error,
+    bool RequiresConfirmation = false,
+    bool AcquisitionInProgress = false,
+    Guid? ProviderAcquisitionJobId = null);
 
 public sealed record MediaAssetActionOutcome(bool Succeeded, string? Error);
