@@ -78,8 +78,15 @@ public static class RequestFormatProgress
     /// A durable job is <c>waiting</c> whenever it needs something external
     /// to proceed (protocol v2 §8) -- most concretely user interaction, but
     /// the state alone is enough to warrant the "action needed" treatment
-    /// regardless of the exact open-string phase. Any other non-terminal
-    /// state (<c>queued</c>/<c>running</c>) is ordinary in-progress work.
+    /// regardless of the exact open-string phase. <c>failed</c> is shown
+    /// distinctly (not lumped into ordinary in-progress work) but, like
+    /// <see cref="MediaAssetStorageState.Rejected"/>/<c>PublishingNeedsAttention</c>
+    /// below, deliberately generic here -- this view is also read by the
+    /// plain requester (<c>ListForUserAsync</c>), so the provider's raw error
+    /// text belongs only in the admin-only Provider Activity ledger
+    /// (<see cref="ProviderAttempt"/>), not on this shared chip.
+    /// Any other non-terminal state (<c>queued</c>/<c>running</c>) is
+    /// ordinary in-progress work.
     /// </summary>
     private static RequestFormatProgressView DescribeProviderJob(
         ProviderAcquisitionJobLifecycleState state, string? phase, string? interactionMessage) => state switch
@@ -89,6 +96,9 @@ public static class RequestFormatProgress
             string.IsNullOrWhiteSpace(interactionMessage)
                 ? "Action is needed to continue fetching this from the provider."
                 : interactionMessage),
+        ProviderAcquisitionJobLifecycleState.Failed => Stage(
+            "AcquisitionFailed",
+            "The acquisition failed and needs the librarian's attention."),
         _ => Stage(
             "AcquisitionInProgress",
             "Fetching from the external provider.")

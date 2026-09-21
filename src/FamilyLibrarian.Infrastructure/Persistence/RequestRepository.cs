@@ -254,12 +254,16 @@ public sealed class RequestRepository(
         // the asset/security/publishing lookups below apply to it. Loaded
         // independently of assetIds precisely because it must still surface
         // for a format that has never had one.
+        // Failed is deliberately included here (unlike Completed/Cancelled): a
+        // failed job is exactly the case where no MediaAsset exists to take
+        // over the format's progress display, so excluding it left the
+        // format silently reverting to a bare "Requested" state -- looking
+        // identical to a format nothing had ever attempted.
         var providerJobs = await database.ProviderAcquisitionJobs
             .AsNoTracking()
             .Where(job =>
                 formatIds.Contains(job.RequestFormatId) &&
                 job.LifecycleState != ProviderAcquisitionJobLifecycleState.Completed &&
-                job.LifecycleState != ProviderAcquisitionJobLifecycleState.Failed &&
                 job.LifecycleState != ProviderAcquisitionJobLifecycleState.Cancelled)
             .Select(job => new ProviderJobProgressRow(
                 job.RequestFormatId, job.LifecycleState, job.Phase, job.InteractionActionUrl,
