@@ -60,6 +60,46 @@ public sealed class DeterministicBookMatcher : IBookMatcher
             !IsUnwantedVariant(candidateTitle, normalizedCandidate, normalizedExpected);
     }
 
+    public bool StrictTitleAuthorMatches(
+        string expectedTitle, string? expectedAuthor, string candidateTitle, string? candidateAuthor)
+    {
+        if (string.IsNullOrWhiteSpace(expectedTitle) || string.IsNullOrWhiteSpace(expectedAuthor) ||
+            string.IsNullOrWhiteSpace(candidateTitle))
+        {
+            return false;
+        }
+
+        var normalizedExpectedTitle = NormalizeTitle(expectedTitle);
+        if (normalizedExpectedTitle.Length == 0)
+        {
+            return false;
+        }
+
+        // Ordinary provider metadata: the candidate's work title and author
+        // are separate fields and both must be exact under the deterministic
+        // normalizers. This is intentionally stricter than TitleMatches.
+        if (string.Equals(normalizedExpectedTitle, NormalizeTitle(candidateTitle), StringComparison.OrdinalIgnoreCase))
+        {
+            return AuthorTokensEqual(expectedAuthor, candidateAuthor);
+        }
+
+        // A common source-record spelling embeds the author in the title
+        // ("Net force by Tom Clancy"). Treat it as equivalent only if the
+        // title before that marker is exact and the observed suffix agrees;
+        // a contradictory structured author remains a rejection.
+        var byMarker = candidateTitle.LastIndexOf(" by ", StringComparison.OrdinalIgnoreCase);
+        if (byMarker <= 0)
+        {
+            return false;
+        }
+
+        var titlePart = candidateTitle[..byMarker];
+        var authorPart = candidateTitle[(byMarker + 4)..];
+        return string.Equals(normalizedExpectedTitle, NormalizeTitle(titlePart), StringComparison.OrdinalIgnoreCase) &&
+            AuthorTokensEqual(expectedAuthor, authorPart) &&
+            (string.IsNullOrWhiteSpace(candidateAuthor) || AuthorTokensEqual(expectedAuthor, candidateAuthor));
+    }
+
     public bool AuthorMatches(string? expectedAuthor, string? candidateAuthor)
     {
         if (string.IsNullOrWhiteSpace(expectedAuthor) || string.IsNullOrWhiteSpace(candidateAuthor))
@@ -183,5 +223,17 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         }
 
         return tokens;
+    }
+
+    private static bool AuthorTokensEqual(string? expectedAuthor, string? candidateAuthor)
+    {
+        if (string.IsNullOrWhiteSpace(expectedAuthor) || string.IsNullOrWhiteSpace(candidateAuthor))
+        {
+            return false;
+        }
+
+        var expectedTokens = AuthorTokens(expectedAuthor);
+        var candidateTokens = AuthorTokens(candidateAuthor);
+        return expectedTokens.Count > 0 && expectedTokens.SetEquals(candidateTokens);
     }
 }

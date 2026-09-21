@@ -130,31 +130,27 @@ public sealed class ExternalProviderRecheckService(
                             continue;
                         }
 
-                        // A single ISBN-corroborated candidate is trusted the same way the
-                        // manual acquire flow already trusts one (docs/04 §7) -- fetch, scan,
-                        // and evaluate it automatically instead of waiting on a librarian --
-                        // but only once the admin has separately opted this provider into
-                        // automatic acquisition (AutoAcquireEnabled, plan §B): RecheckSchedule
-                        // controls retry cadence for discovery only and never by itself
-                        // authorizes an unattended fetch. Anything weaker (title/author only,
-                        // unconfirmed, language-excluded, or more than one such candidate)
-                        // still requires review regardless of that toggle. A release concern
-                        // (docs/04 §7/§10/§16 -- a collection, a sample, an abridged mismatch)
-                        // disqualifies a candidate from automatic acquisition even with a
-                        // verified identifier match: a correct ISBN on an omnibus edition is
-                        // still an omnibus, and that always needs a librarian's eyes, never a
-                        // silent automatic fetch.
-                        var identifierMatches = options
+                        // Identifier evidence is strongest, but identical normalized title and
+                        // observed-author records are also a deterministic single-work choice.
+                        // This does not apply to the broad TitleAuthor fallback, derivatives,
+                        // or a language conflict. The selected option is fetched exactly once;
+                        // failure reaches review rather than triggering a fallback download.
+                        var automaticMatches = options
                             .Where(option =>
-                                option.MatchBasis == BookMatchBasis.Identifier &&
+                                (option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor) &&
                                 !option.RequiresLanguageConfirmation &&
-                                !option.RequiresReleaseConfirmation)
+                                (!option.RequiresReleaseConfirmation || IsUnknownDrmOnlyConcern(option)))
                             .ToArray();
 
-                        if (identifierMatches.Length == 1 && provider.AutoAcquireEnabled)
+                        if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled)
                         {
                             var acquireResult = await security.AcquireAndEvaluateAsync(
-                                request.Id, format.Id, provider.ProviderId, identifierMatches[0].ProviderResultId, cancellationToken);
+                                request.Id,
+                                format.Id,
+                                provider.ProviderId,
+                                automaticMatches[0].ProviderResultId,
+                                cancellationToken,
+                                allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(automaticMatches[0]));
 
                             if (acquireResult.Outcome == ManualImportOutcome.Success)
                             {
@@ -239,6 +235,13 @@ public sealed class ExternalProviderRecheckService(
         ProviderRecheckSchedule.Weekly => TimeSpan.FromDays(7),
         _ => throw new ArgumentOutOfRangeException(nameof(schedule), schedule, "Only scheduled providers may be rechecked.")
     };
+
+    private static bool IsUnknownDrmOnlyConcern(FulfillmentOption option) =>
+        option.DrmStatus == "unknown" &&
+        string.Equals(
+            option.ReleaseConcern,
+            ExternalReleasePolicy.UnknownDrmConfirmationReason,
+            StringComparison.Ordinal);
 
     private void AddAttempt(
         BookRequest request,

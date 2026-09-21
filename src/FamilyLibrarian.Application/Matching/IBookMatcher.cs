@@ -30,6 +30,15 @@ public interface IBookMatcher
     bool TitleMatches(string expectedTitle, string candidateTitle);
 
     /// <summary>
+    /// True only for an exact normalized title and observed, token-equivalent
+    /// author. A source title written as <c>Title by Author</c> is accepted
+    /// only when that trailing author independently agrees. This deliberately
+    /// does not inherit <see cref="TitleMatches"/>'s subtitle/prefix behavior.
+    /// </summary>
+    bool StrictTitleAuthorMatches(
+        string expectedTitle, string? expectedAuthor, string candidateTitle, string? candidateAuthor);
+
+    /// <summary>
     /// Determines whether observed author metadata supports an expected author.
     /// Missing metadata is unknown rather than contradictory; callers that
     /// require author evidence must require an observed value separately.

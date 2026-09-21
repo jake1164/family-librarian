@@ -28,7 +28,8 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
     /// </remarks>
     public async Task<IReadOnlyDictionary<string, ExternalProviderMatchVerdict>> VerifyAsync(
         string title, string? author, string? isbn13,
-        IReadOnlyList<ExternalProviderCandidate> candidates, CancellationToken cancellationToken)
+        IReadOnlyList<ExternalProviderCandidate> candidates, CancellationToken cancellationToken,
+        string? acceptedLanguage = null)
     {
         if (candidates.Count == 0)
         {
@@ -47,7 +48,8 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
                 .Select(candidate => new CandidateBook(
                     candidate.ProviderReference, candidate.Title, candidate.Author, candidate.Edition?.Language))
                 .ToArray();
-            var identifierResult = await matchService.ResolveUniqueAsync(title, author, identifierCandidates, cancellationToken);
+            var identifierResult = await matchService.ResolveUniqueAsync(
+                title, author, identifierCandidates, cancellationToken, acceptedLanguage);
             if (identifierResult.Decision == BookMatchDecision.Match)
             {
                 var matched = candidates.First(
@@ -60,7 +62,24 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
             }
         }
 
-        var titleAuthorResult = await matchService.MatchByTitleAuthorAsync(title, author, candidateBooks, cancellationToken);
+        var strictMatches = candidates
+            .Where(candidate =>
+                LanguageAcceptance.IsAcceptedOrUnspecified(candidate.Edition?.Language, acceptedLanguage) &&
+                matcher.StrictTitleAuthorMatches(title, author, candidate.Title, candidate.Author))
+            .Select(candidate => candidate.ProviderReference)
+            .ToHashSet(StringComparer.Ordinal);
+        if (strictMatches.Count > 0)
+        {
+            return candidates.ToDictionary(
+                candidate => candidate.ProviderReference,
+                candidate => strictMatches.Contains(candidate.ProviderReference)
+                    ? new ExternalProviderMatchVerdict(BookMatchBasis.StrictTitleAuthor, RequiresLanguageConfirmation: false)
+                    : ExternalProviderMatchVerdict.Unconfirmed,
+                StringComparer.Ordinal);
+        }
+
+        var titleAuthorResult = await matchService.MatchByTitleAuthorAsync(
+            title, author, candidateBooks, cancellationToken, acceptedLanguage);
         return titleAuthorResult.Decision switch
         {
             BookMatchDecision.Match => BuildVerdicts(

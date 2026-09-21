@@ -74,7 +74,7 @@ public sealed class DirectAcquisitionServiceTests
     }
 
     [TestMethod]
-    public async Task AnExternalProviderTitleAuthorMatchRequiresConfirmationBeforeFetching()
+    public async Task AnExternalProviderBroadTitleAuthorMatchRequiresConfirmationBeforeFetching()
     {
         var context = new TestContext();
         var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
@@ -83,7 +83,7 @@ public sealed class DirectAcquisitionServiceTests
         context.ExternalProviderStore.Add(provider);
         context.ExternalProviderClient.Candidates =
         [
-            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000)
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit: A Novel", "J. R. R. Tolkien", "epub", 500_000)
         ];
 
         var result = await context.Service.AcquireAsync(
@@ -98,6 +98,60 @@ public sealed class DirectAcquisitionServiceTests
         // Protocol v2: the external-provider path now submits a durable job
         // rather than blocking on the fetch — see DirectAcquisitionService.
         Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, confirmed.Outcome);
+        Assert.AreEqual(1, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task AnExternalProviderStrictTitleAuthorMatchProceedsWithoutConfirmation()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            new ExternalProviderCandidate(
+                "ref-1",
+                new ExternalProviderWorkEvidence(
+                    "The Hobbit", null, [new BookAuthor("J. R. R. Tolkien", "author")], [], []),
+                Release: new ExternalProviderReleaseEvidence(
+                    "The-Hobbit.epub", "epub", 500_000, false, 1, false, null, null, [], null,
+                    ExternalProviderDrmStatus.None))
+        ];
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, result.Outcome);
+        Assert.AreEqual(1, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task UnknownDrmRequiresTheInternalDownloadTimeValidationPath()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000)
+        ];
+
+        var ordinary = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+        Assert.AreEqual(ManualImportOutcome.ReleaseConfirmationRequired, ordinary.Outcome);
+
+        var scheduled = await context.Service.AcquireAsync(
+            request.Id,
+            format.Id,
+            "custom-source",
+            "ref-1",
+            CancellationToken.None,
+            allowDownloadTimeDrmValidation: true);
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, scheduled.Outcome);
         Assert.AreEqual(1, context.ProviderAcquisitionJobs.Jobs.Count);
     }
 

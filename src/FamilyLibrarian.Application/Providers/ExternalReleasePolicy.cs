@@ -12,6 +12,9 @@ namespace FamilyLibrarian.Application.Providers;
 /// </summary>
 public static class ExternalReleasePolicy
 {
+    public const string UnknownDrmConfirmationReason =
+        "The provider could not confirm that this ebook source is DRM-free.";
+
     public static ExternalReleaseVerdict Evaluate(ExternalProviderReleaseEvidence? release, RequestMediaType mediaType)
     {
         if (mediaType == RequestMediaType.Ebook)
@@ -55,8 +58,7 @@ public static class ExternalReleasePolicy
 
             if (release.DrmStatus == ExternalProviderDrmStatus.Unknown)
             {
-                return ExternalReleaseVerdict.ReviewRequired(
-                    "The provider could not confirm that this ebook source is DRM-free.");
+                return ExternalReleaseVerdict.ReviewRequired(UnknownDrmConfirmationReason);
             }
 
             return ExternalReleaseVerdict.Acceptable;

@@ -26,7 +26,7 @@ public sealed class ExternalProviderMatchVerifierTests
     }
 
     [TestMethod]
-    public async Task AQueryIsbnWithoutCandidateIdentifierDoesNotCreateIdentifierConfidence()
+    public async Task AQueryIsbnWithoutCandidateIdentifierCanStillUseStrictTitleAuthorConfidence()
     {
         var verifier = NewVerifier();
         IReadOnlyList<ExternalProviderCandidate> candidates =
@@ -37,7 +37,7 @@ public sealed class ExternalProviderMatchVerifierTests
         var verdicts = await verifier.VerifyAsync(
             "The Hobbit", "J. R. R. Tolkien", "9780618260300", candidates, CancellationToken.None);
 
-        Assert.AreEqual(BookMatchBasis.TitleAuthor, verdicts["ref-1"].Basis);
+        Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["ref-1"].Basis);
     }
 
     [TestMethod]
@@ -56,7 +56,7 @@ public sealed class ExternalProviderMatchVerifierTests
     }
 
     [TestMethod]
-    public async Task NoIsbnFallsBackToTitleAuthorBasis()
+    public async Task NoIsbnWithExactObservedTitleAndAuthorUsesStrictTitleAuthorBasis()
     {
         var verifier = NewVerifier();
         IReadOnlyList<ExternalProviderCandidate> candidates =
@@ -66,7 +66,7 @@ public sealed class ExternalProviderMatchVerifierTests
 
         var verdicts = await verifier.VerifyAsync("The Hobbit", "J. R. R. Tolkien", null, candidates, CancellationToken.None);
 
-        Assert.AreEqual(BookMatchBasis.TitleAuthor, verdicts["ref-1"].Basis);
+        Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["ref-1"].Basis);
     }
 
     [TestMethod]
@@ -81,8 +81,8 @@ public sealed class ExternalProviderMatchVerifierTests
 
         var verdicts = await verifier.VerifyAsync("The Hobbit", "J. R. R. Tolkien", null, candidates, CancellationToken.None);
 
-        Assert.IsNull(verdicts["ref-1"].Basis);
-        Assert.IsNull(verdicts["ref-2"].Basis);
+        Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["ref-1"].Basis);
+        Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["ref-2"].Basis);
     }
 
     [TestMethod]
@@ -108,6 +108,34 @@ public sealed class ExternalProviderMatchVerifierTests
         var verdicts = await verifier.VerifyAsync("The Hobbit", "J. R. R. Tolkien", null, [], CancellationToken.None);
 
         Assert.AreEqual(0, verdicts.Count);
+    }
+
+    [TestMethod]
+    public async Task ASourceTitleWithVerifiedTrailingByAuthorUsesStrictTitleAuthorBasis()
+    {
+        var verifier = NewVerifier();
+        IReadOnlyList<ExternalProviderCandidate> candidates =
+        [
+            ExternalProviderCandidate.FromSimple("ref-1", "Net force by Tom Clancy", "Clancy, Tom", "epub", 500_000)
+        ];
+
+        var verdicts = await verifier.VerifyAsync("Net Force", "Tom Clancy", null, candidates, CancellationToken.None);
+
+        Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["ref-1"].Basis);
+    }
+
+    [TestMethod]
+    public async Task ASubtitleOrDerivativeTitleRemainsTheReviewableTitleAuthorTier()
+    {
+        var verifier = NewVerifier();
+        IReadOnlyList<ExternalProviderCandidate> candidates =
+        [
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit: A Novel", "J. R. R. Tolkien", "epub", 500_000)
+        ];
+
+        var verdicts = await verifier.VerifyAsync("The Hobbit", "J. R. R. Tolkien", null, candidates, CancellationToken.None);
+
+        Assert.AreEqual(BookMatchBasis.TitleAuthor, verdicts["ref-1"].Basis);
     }
 
     private static ExternalProviderCandidate CandidateWithIsbn(

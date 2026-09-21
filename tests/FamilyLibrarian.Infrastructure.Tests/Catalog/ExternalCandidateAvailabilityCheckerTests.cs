@@ -183,12 +183,35 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         Assert.IsTrue(options.Single().RequiresReleaseConfirmation);
     }
 
+    [TestMethod]
+    public async Task StrictEquivalentDuplicatesSelectOneEnglishEpubInsteadOfAskingForAnArbitraryChoice()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("format-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        context.Client.Candidates =
+        [
+            Candidate("french-epub", "epub", ExternalProviderDrmStatus.None, language: "fr"),
+            Candidate("english-mobi", "mobi", ExternalProviderDrmStatus.None, language: "en"),
+            Candidate("english-epub", "epub", ExternalProviderDrmStatus.None, language: "en")
+        ];
+
+        var options = await context.Checker.FindAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.HasCount(2, options);
+        Assert.AreEqual("english-epub", options.Single(option => option.MatchBasis == BookMatchBasis.StrictTitleAuthor).ProviderResultId);
+        Assert.IsFalse(options.Any(option => option.ProviderResultId == "french-epub"));
+    }
+
     private static ExternalProviderCandidate Candidate(
-        string providerReference, string sourceFormat, ExternalProviderDrmStatus drmStatus) =>
+        string providerReference, string sourceFormat, ExternalProviderDrmStatus drmStatus, string? language = null) =>
         new(
             providerReference,
             new ExternalProviderWorkEvidence(
                 "Moby Dick", null, [new BookAuthor("Herman Melville", "author")], [], []),
+            Edition: new ExternalProviderEditionEvidence(language, null, null, []),
             Release: new ExternalProviderReleaseEvidence(
                 $"Moby-Dick.{sourceFormat}", sourceFormat, 500_000, false, 1, false, null, null, [], null,
                 drmStatus));

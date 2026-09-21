@@ -16,7 +16,8 @@ public sealed class DirectAcquisitionSecurityService(
         string providerId,
         string providerResultId,
         CancellationToken cancellationToken,
-        bool confirmLowConfidenceMatch = false)
+        bool confirmLowConfidenceMatch = false,
+        bool allowDownloadTimeDrmValidation = false)
     {
         var result = await acquisitions.AcquireAsync(
             requestId,
@@ -24,7 +25,8 @@ public sealed class DirectAcquisitionSecurityService(
             providerId,
             providerResultId,
             cancellationToken,
-            confirmLowConfidenceMatch);
+            confirmLowConfidenceMatch,
+            allowDownloadTimeDrmValidation);
 
         if (result.Outcome == ManualImportOutcome.Success)
         {

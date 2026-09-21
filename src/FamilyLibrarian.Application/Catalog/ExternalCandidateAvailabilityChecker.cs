@@ -155,7 +155,8 @@ public sealed class ExternalCandidateAvailabilityChecker(
             return [];
         }
 
-        var verdicts = await matchVerifier.VerifyAsync(identity.Title, identity.Author, isbn13, candidates, cancellationToken);
+        var verdicts = await matchVerifier.VerifyAsync(
+            identity.Title, identity.Author, isbn13, candidates, cancellationToken, identity.Language);
 
         var candidatesWithVerdicts = candidates.Select(candidate =>
         {
@@ -165,6 +166,19 @@ public sealed class ExternalCandidateAvailabilityChecker(
         })
             .Where(candidate => !candidate.ReleaseVerdict.IsRejected)
             .ToArray();
+
+        // Do not put a requester in front of obvious foreign-language copies
+        // when the requested/default language has matching candidates. The
+        // default comes from LanguageAcceptance, not a hard-coded provider
+        // filter, so a future/requested non-English work keeps its own path.
+        var acceptedLanguageCandidates = candidatesWithVerdicts
+            .Where(candidate => Matching.LanguageAcceptance.IsAcceptedOrUnspecified(
+                candidate.Candidate.Edition?.Language, identity.Language))
+            .ToArray();
+        if (acceptedLanguageCandidates.Length > 0)
+        {
+            candidatesWithVerdicts = acceptedLanguageCandidates;
+        }
 
         // Possible conversion sources are intentionally a fallback. Once the
         // same response supplies any Safe source, do not make the requester
@@ -178,6 +192,17 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 Providers.ExternalEbookFormatPolicy.Classify(candidate.Candidate.Release?.Format) !=
                 Providers.ExternalEbookFormatTier.Possible).ToArray();
         }
+
+        // A duplicate provider record is not a meaningful choice when every
+        // candidate spells the same title and observed author exactly. Pick
+        // one only after FL's own language/release/format filters have run;
+        // format preference is FL policy, response order only breaks ties.
+        var selectedStrictCandidate = candidatesWithVerdicts
+            .Where(candidate => candidate.MatchVerdict.Basis == Matching.BookMatchBasis.StrictTitleAuthor)
+            .OrderBy(candidate => Providers.ExternalEbookFormatPolicy.AcquisitionPreference(
+                candidate.Candidate.Release?.Format))
+            .FirstOrDefault();
+        var selectedStrictReference = selectedStrictCandidate.Candidate?.ProviderReference;
 
         return candidatesWithVerdicts.Select(candidate =>
         {
@@ -205,7 +230,11 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 },
                 ExternalActionUri: null,
                 ProviderData: sourceCandidate.ProviderReference,
-                MatchBasis: candidate.MatchVerdict.Basis,
+                MatchBasis: candidate.Candidate.ProviderReference == selectedStrictReference
+                    ? Matching.BookMatchBasis.StrictTitleAuthor
+                    : candidate.MatchVerdict.Basis == Matching.BookMatchBasis.StrictTitleAuthor
+                        ? null
+                        : candidate.MatchVerdict.Basis,
                 RequiresLanguageConfirmation: candidate.MatchVerdict.RequiresLanguageConfirmation,
                 Title: sourceCandidate.Title,
                 Author: sourceCandidate.Author,

@@ -47,13 +47,21 @@ public sealed class DirectAcquisitionService(
     /// (DI-registered) <see cref="IDirectAcquisitionProvider"/> such as
     /// Gutenberg -- those are FL-vetted, not arbitrary third-party code.
     /// </param>
+    /// <param name="allowDownloadTimeDrmValidation">
+    /// Internal scheduled-recheck path only. It permits a Safe, strict-match
+    /// candidate whose *metadata* DRM state is unknown to submit one provider
+    /// job, on the condition that the provider validates the downloaded bytes
+    /// before publishing an output. It never waives a collection, sample,
+    /// Possible-format, encrypted, or low-confidence identity concern.
+    /// </param>
     public async Task<ManualImportResult> AcquireAsync(
         Guid requestId,
         Guid requestFormatId,
         string providerId,
         string providerResultId,
         CancellationToken cancellationToken,
-        bool confirmLowConfidenceMatch = false)
+        bool confirmLowConfidenceMatch = false,
+        bool allowDownloadTimeDrmValidation = false)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
@@ -170,7 +178,8 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.Invalid("That option is no longer available.");
         }
 
-        if (externalOption.MatchBasis != BookMatchBasis.Identifier && !confirmLowConfidenceMatch)
+        if (externalOption.MatchBasis is not (BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor) &&
+            !confirmLowConfidenceMatch)
         {
             return ManualImportResult.LowConfidenceMatchConfirmationRequired();
         }
@@ -180,7 +189,8 @@ public sealed class DirectAcquisitionService(
         // abridged edition). Checked separately so the message tells the
         // admin what's actually wrong rather than reusing the identity-match
         // explanation for an unrelated concern.
-        if (externalOption.RequiresReleaseConfirmation && !confirmLowConfidenceMatch)
+        if (externalOption.RequiresReleaseConfirmation && !confirmLowConfidenceMatch &&
+            !(allowDownloadTimeDrmValidation && IsUnknownDrmOnlyConcern(externalOption)))
         {
             return ManualImportResult.ReleaseConfirmationRequired(externalOption.ReleaseConcern);
         }
@@ -248,4 +258,11 @@ public sealed class DirectAcquisitionService(
 
         return ManualImportResult.AcquisitionInProgress(job.Id);
     }
+
+    private static bool IsUnknownDrmOnlyConcern(FulfillmentOption option) =>
+        option.DrmStatus == "unknown" &&
+        string.Equals(
+            option.ReleaseConcern,
+            ExternalReleasePolicy.UnknownDrmConfirmationReason,
+            StringComparison.Ordinal);
 }

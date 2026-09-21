@@ -278,7 +278,7 @@ Response:
 | `acquireToken` | no | Opaque state you want carried forward unchanged to `/acquire`, for a provider that cannot cheaply re-derive everything from `providerReference` alone at acquire time (e.g. a stateless scraper that captured ephemeral session data during search). A provider backed by a local index or a queryable GUID index typically does not need this — it can simply re-resolve by `providerReference` when `/acquire` is called. Family Librarian stores and returns this value unchanged, never inspects or logs it. |
 | `work`, `edition`, `release` | no, but populate what you have | Structured evidence, not a trusted verdict — Family Librarian performs its own match decision using this evidence (§7). `work`/`edition` mirror the request shape (structured authors/series/identifiers). `release` carries release-level facts distinct from the canonical book: original release/file name, format, DRM state, size, whether it's a multi-book collection or a sample, part count, abridged/unabridged status, free-form quality tags, and age. This is what lets Family Librarian reject a 20-book collection when one book was requested, a sample, an encrypted artifact, or a mismatched abridgement, without you having to make that judgment yourself. |
 | `release.format` | required for an FL ebook candidate | Bare source-format token such as `epub`, `azw3`, or `mobi`. FL currently accepts `epub`, `azw3`, `mobi`, `azw` as Safe sources and `fb2`, `fbz`, `kepub`, `prc`, `docx` as review-required Possible sources. It rejects all other external ebook formats before acquisition. |
-| `release.drm` | required for unattended FL ebook acquisition | One of `none`, `encrypted`, or `unknown`. Omit it only when unknown. `encrypted` is rejected without acquisition; `unknown` is never eligible for unattended acquisition. A provider must report only what its own metadata/index or inspection can establish; it must not guess that a release is DRM-free. |
+| `release.drm` | required for unattended FL ebook acquisition | One of `none`, `encrypted`, or `unknown`. Omit it only when unknown. `encrypted` is rejected without acquisition. A Safe, strict-equivalent candidate with `unknown` may be submitted once by an administrator-enabled automatic route only when the provider validates the actual downloaded bytes before exposing an output; if protected, it must discard the artifact and fail the job. A provider must report only what its own metadata/index or inspection can establish; it must not guess that a release is DRM-free. |
 | `extensions` | no | Namespaced provider-specific data — see §11. |
 
 | Envelope field | Required | Notes |
@@ -316,13 +316,16 @@ This is deliberately a conversation, not a provider-side verdict:
    handles (`providerReference`, and optionally `candidateRevision` and
    `acquireToken`).
 3. FL evaluates every candidate independently. A unique corroborated
-   identifier match can be auto-acquired only when the administrator has
+   identifier match, or one deterministic strict title-and-observed-author
+   equivalence, can be auto-acquired only when the administrator has
    explicitly enabled auto-acquisition and FL finds no language or release
-   concern. For ebooks, that means a Safe source format and explicitly
-   `drm: "none"`; a title/author match, conflicting identifier matches,
-   incomplete evidence, `unknown` DRM, Possible formats, samples, collections,
-   and other policy concerns remain reviewable. Encrypted and rejected-format
-   candidates are removed before FL can create an acquisition job.
+   concern. For ebooks, that means a Safe source format. `drm: "none"` is
+   immediately eligible; `drm: "unknown"` may use one acquisition only when
+   the provider's acquisition path inspects the bytes and fails without
+   output if protected. Broad title/author matches, conflicting identifier
+   matches, Possible formats, samples, collections, and other policy concerns
+   remain reviewable. Encrypted and rejected-format candidates are removed
+   before FL can create an acquisition job.
 4. For reviewable candidates, FL presents the candidate labels to the
    requester or librarian. It does not ask a provider to repair FL's title
    normalization or to choose a winner.

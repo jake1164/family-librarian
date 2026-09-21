@@ -19,15 +19,18 @@ public enum BookMatchDecision
 /// <summary>
 /// How confidently a <see cref="BookMatchDecision.Match"/> was made --
 /// <see cref="Identifier"/> for an ISBN (or other effectively-unique
-/// identifier) lookup, <see cref="TitleAuthor"/> for the normalized
-/// title/author fallback. A title/author match is a reviewable fallback, not
-/// a verified identity. Consumers that treat an owned match as safe to act
-/// on automatically (e.g. the Kindle existing-book send) should require
-/// explicit confirmation for <see cref="TitleAuthor"/> matches.
+/// identifier) lookup, <see cref="StrictTitleAuthor"/> for a deterministic
+/// exact title-and-observed-author equivalence, and <see cref="TitleAuthor"/>
+/// for the broader normalized fallback. The broad title/author match is a
+/// reviewable fallback, not a verified identity. Consumers that treat an
+/// owned match as safe to act on automatically (e.g. the Kindle existing-book
+/// send) should require explicit confirmation for <see cref="TitleAuthor"/>
+/// matches.
 /// </summary>
 public enum BookMatchBasis
 {
     Identifier,
+    StrictTitleAuthor,
     TitleAuthor
 }
 

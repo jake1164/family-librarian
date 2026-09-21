@@ -43,6 +43,15 @@ public static class ExternalEbookFormatPolicy
             : ExternalEbookFormatTier.Reject;
     }
 
+    /// <summary>Lower is better for selecting one otherwise-equivalent Safe source.</summary>
+    public static int AcquisitionPreference(string? format) => Normalize(format) switch
+    {
+        "epub" => 0,
+        "azw3" or "mobi" => 1,
+        "azw" => 2,
+        _ => 3
+    };
+
     private static string? Normalize(string? format)
     {
         if (string.IsNullOrWhiteSpace(format))
