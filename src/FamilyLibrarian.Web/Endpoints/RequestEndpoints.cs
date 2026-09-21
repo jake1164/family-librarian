@@ -244,7 +244,7 @@ internal static class RequestEndpoints
                 needsReview.Category.ToString(),
                 needsReview.Candidates
                     .Select(candidate => new RequestReviewCandidateResponse(
-                        candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language))
+                        candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language, candidate.Details))
                     .ToArray())
             : null);
 

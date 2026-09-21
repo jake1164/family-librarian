@@ -45,7 +45,8 @@ public sealed record RequestNeedsReviewView(
     RequestReviewCategory Category,
     IReadOnlyList<RequestReviewCandidateView> Candidates);
 
-public sealed record RequestReviewCandidateView(Guid CandidateId, string Title, string? Author, string? Language);
+public sealed record RequestReviewCandidateView(
+    Guid CandidateId, string Title, string? Author, string? Language, string? Details);
 
 public sealed record RequestFormatView(
     Guid Id,

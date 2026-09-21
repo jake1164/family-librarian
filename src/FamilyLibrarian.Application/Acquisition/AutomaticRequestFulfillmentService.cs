@@ -157,7 +157,9 @@ public sealed class AutomaticRequestFulfillmentService(
                         await MarkForReviewAsync(
                             request, RequestReviewCategory.PreferenceAmbiguity,
                             "Multiple plausible editions were found.", cancellationToken,
-                            autoEligible.Select(option => (format.Id, option.ProviderId, option.ProviderResultId, option.Title, option.Author, option.Language))
+                            autoEligible.Select(option => (format.Id, option.ProviderId, option.ProviderResultId,
+                                option.Title, option.Author, option.Language,
+                                RequestReviewCandidatePresentation.BuildDetails(option)))
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
@@ -185,7 +187,9 @@ public sealed class AutomaticRequestFulfillmentService(
                         await MarkForReviewAsync(
                             request, RequestReviewCategory.PreferenceAmbiguity,
                             "A copy was found, but not in English.", cancellationToken,
-                            languageExcluded.Select(option => (format.Id, option.ProviderId, option.ProviderResultId, option.Title, option.Author, option.Language))
+                            languageExcluded.Select(option => (format.Id, option.ProviderId, option.ProviderResultId,
+                                option.Title, option.Author, option.Language,
+                                RequestReviewCandidatePresentation.BuildDetails(option)))
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
@@ -479,7 +483,7 @@ public sealed class AutomaticRequestFulfillmentService(
         RequestReviewCategory category,
         string reason,
         CancellationToken cancellationToken,
-        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string? Title, string? Author, string? Language)>? candidateOptions = null)
+        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string? Title, string? Author, string? Language, string? Details)>? candidateOptions = null)
     {
         if (request.Status != RequestStatus.PendingAcquisition)
         {
@@ -489,13 +493,15 @@ public sealed class AutomaticRequestFulfillmentService(
         var view = await requests.FindAdminViewAsync(request.Id, cancellationToken);
         var workTitle = view?.Request.WorkTitle ?? request.WorkId.ToString();
 
-        // Prefer each option's own title/author, when the provider supplied
-        // one, so distinct editions stay distinguishable to the requester --
-        // fall back to the canonical Work title/no author only when a
-        // provider didn't supply its own.
+        // The title/author are FL's canonical catalog facts, never raw labels
+        // from the provider. A raw release title can carry filename/source
+        // debris; the neutral details below are the only provider evidence a
+        // requester needs to distinguish an edition.
+        var workAuthor = view?.Request.Authors is { Count: > 0 } authors ? authors[0] : null;
         var candidates = candidateOptions?
             .Select(option => (option.RequestFormatId, option.ProviderId, option.ProviderResultId,
-                Title: option.Title ?? workTitle, option.Author, option.Language))
+                Title: workTitle, Author: workAuthor, option.Language,
+                option.Details))
             .ToArray();
         request.MarkNeedsReview(category, reason, clock.UtcNow, candidates);
 

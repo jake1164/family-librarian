@@ -35,7 +35,7 @@ public sealed class CwaPublishingServiceTests
         var request = new BookRequest(Guid.NewGuid(), Guid.NewGuid(), [RequestMediaType.Ebook], null, Now);
         var formatId = request.Formats.Single().Id;
         request.MarkNeedsReview(RequestReviewCategory.PreferenceAmbiguity, "Choose edition", Now,
-            [(formatId, "gutendex", "1234", "The Hobbit", "J. R. R. Tolkien", accepted)]);
+            [(formatId, "gutendex", "1234", "The Hobbit", "J. R. R. Tolkien", accepted, null)]);
         request.AcceptReviewCandidate(request.ReviewCandidates.Single().Id, request.UserId, Now);
         context.RequestFulfillment.Requests[formatId] = request;
         await context.Service.PublishAsync(context.CreateAsset(formatId, request.WorkId), CancellationToken.None);

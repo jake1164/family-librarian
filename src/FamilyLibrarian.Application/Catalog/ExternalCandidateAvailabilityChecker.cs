@@ -154,7 +154,13 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 CandidateRevision: candidate.CandidateRevision,
                 AcquireToken: candidate.AcquireToken,
                 RequiresReleaseConfirmation: releaseVerdict.RequiresConfirmation,
-                ReleaseConcern: releaseVerdict.Reason);
+                ReleaseConcern: releaseVerdict.Reason,
+                PublicationYear: candidate.Edition?.PublicationYear,
+                Publisher: candidate.Edition?.Publisher,
+                SizeBytes: candidate.Release?.SizeBytes,
+                PartCount: candidate.Release?.PartCount,
+                IsAbridged: candidate.Release?.IsAbridged,
+                IsUnabridged: candidate.Release?.IsUnabridged);
         }).ToArray();
     }
 

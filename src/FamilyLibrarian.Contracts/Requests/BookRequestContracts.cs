@@ -80,7 +80,12 @@ public sealed record NeedsReviewResponse(
     string Category,
     IReadOnlyList<RequestReviewCandidateResponse> Candidates);
 
-public sealed record RequestReviewCandidateResponse(Guid CandidateId, string Title, string? Author, string? Language);
+/// <summary>
+/// A requester-safe candidate label. Details contains neutral edition/release
+/// facts only; it never exposes a provider identity, source URL, or opaque id.
+/// </summary>
+public sealed record RequestReviewCandidateResponse(
+    Guid CandidateId, string Title, string? Author, string? Language, string? Details);
 
 /// <param name="CandidateId">
 /// Which offered candidate to acquire ("get it anyway"). Omit to decline

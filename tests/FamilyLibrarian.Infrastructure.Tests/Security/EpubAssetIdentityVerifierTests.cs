@@ -204,7 +204,7 @@ public sealed class EpubAssetIdentityVerifierTests
         var format = request.Formats.Single();
         request.MarkNeedsReview(
             RequestReviewCategory.PreferenceAmbiguity, "A copy was found, but not in English.", DateTimeOffset.UtcNow,
-            [(format.Id, "gutenberg", "12345", "Restore Me", "Tahereh Mafi", language)]);
+            [(format.Id, "gutenberg", "12345", "Restore Me", "Tahereh Mafi", language, null)]);
         var candidateId = request.ReviewCandidates.Single().Id;
         request.AcceptReviewCandidate(candidateId, actorUserId: null, DateTimeOffset.UtcNow);
         return (request, format);

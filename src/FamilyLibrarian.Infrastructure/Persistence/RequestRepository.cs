@@ -542,7 +542,7 @@ public sealed class RequestRepository(
             .Where(candidate => preferenceAmbiguityIds.Contains(candidate.RequestId))
             .OrderBy(candidate => candidate.DisplayOrder)
             .Select(candidate => new RequestReviewCandidateRow(
-                candidate.RequestId, candidate.Id, candidate.Title, candidate.Author, candidate.Language))
+                candidate.RequestId, candidate.Id, candidate.Title, candidate.Author, candidate.Language, candidate.Details))
             .ToArrayAsync(cancellationToken);
         var candidatesByRequest = candidates
             .GroupBy(candidate => candidate.RequestId)
@@ -550,7 +550,7 @@ public sealed class RequestRepository(
                 group => group.Key,
                 group => (IReadOnlyList<RequestReviewCandidateView>)group
                     .Select(candidate => new RequestReviewCandidateView(
-                        candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language))
+                        candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language, candidate.Details))
                     .ToArray());
 
         return preferenceAmbiguityIds.ToDictionary(
@@ -715,5 +715,5 @@ public sealed class RequestRepository(
         string? FailureReason, int AttemptNumber, DeliveryConfirmationStatus ConfirmationStatus);
 
     private sealed record RequestReviewCandidateRow(
-        Guid RequestId, Guid CandidateId, string Title, string? Author, string? Language);
+        Guid RequestId, Guid CandidateId, string Title, string? Author, string? Language, string? Details);
 }

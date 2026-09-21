@@ -426,6 +426,110 @@ public sealed class ExternalProviderAutomaticAcquisitionFailureEndpointTests
     }
 }
 
+/// <summary>
+/// Exercises the requester-safe review flow from one external search through
+/// the real host and PostgreSQL projection. The provider returns four records,
+/// but only two distinct requester-visible editions; no acquire/download call
+/// is permitted while the default auto-acquire setting is off.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderReviewCandidatePresentationEndpointTests
+{
+    private static WebTestFixture? _fixture;
+
+    [ClassInitialize]
+    public static async Task InitializeAsync(TestContext testContext)
+    {
+        ArgumentNullException.ThrowIfNull(testContext);
+        _fixture = await WebTestFixture.CreateAsync();
+    }
+
+    [ClassCleanup]
+    public static async Task CleanupAsync()
+    {
+        if (_fixture is not null)
+        {
+            await _fixture.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task AnExternalSearchCollapsesDuplicateReviewCandidatesAndKeepsNeutralEditionFactsPrivateToTheRequester()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var providerClient = new PresentationExternalProviderClient();
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(providerClient);
+            });
+
+        using var requester = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await ExternalProviderAutomaticFixtureSupport.SignInAsync(
+            requester, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        requester.DefaultRequestHeaders.Add(
+            AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(requester));
+
+        var createdProvider = await requester.PostAsJsonAsync(
+            "/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest("presentation-external", "Presentation External", "http://fake-external.test"));
+        var provider = await createdProvider.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(provider);
+        (await requester.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true)))
+            .EnsureSuccessStatusCode();
+        (await requester.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule",
+            new SetExternalProviderRecheckScheduleRequest("Daily"))).EnsureSuccessStatusCode();
+
+        var resolve = await requester.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var createdRequest = await requester.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await createdRequest.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var rechecks = scope.ServiceProvider.GetRequiredService<ExternalProviderRecheckService>();
+            Assert.IsTrue(await rechecks.ProcessDueAsync(CancellationToken.None) >= 1);
+        }
+
+        using var response = await requester.GetAsync("/api/v1/me/requests");
+        response.EnsureSuccessStatusCode();
+        var rawResponse = await response.Content.ReadAsStringAsync();
+        var listed = await response.Content.ReadFromJsonAsync<BookRequestListResponse>();
+        Assert.IsNotNull(listed);
+        var review = listed.Active.Single(item => item.Id == request.Id);
+        Assert.IsNotNull(review.NeedsReview);
+        Assert.AreEqual("PreferenceAmbiguity", review.NeedsReview.Category);
+        Assert.HasCount(2, review.NeedsReview.Candidates);
+        CollectionAssert.AreEquivalent(
+            [
+                "EPUB · Published 2014 · Example Press · 1.5 MB",
+                "EPUB · Published 2016 · Archive House · 2 MB"
+            ],
+            review.NeedsReview.Candidates.Select(candidate => candidate.Details).ToArray());
+        Assert.IsFalse(rawResponse.Contains("presentation-external", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(rawResponse.Contains("opaque-duplicate", StringComparison.OrdinalIgnoreCase));
+        Assert.AreEqual(1, providerClient.SearchCalls, "One provider search must supply all review evidence.");
+        Assert.AreEqual(0, providerClient.AcquireCalls, "Review enrichment must not download a candidate.");
+
+        await using var verificationScope = factory.Services.CreateAsyncScope();
+        var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var persisted = await database.RequestReviewCandidates
+            .Where(candidate => candidate.RequestId == request.Id)
+            .OrderBy(candidate => candidate.DisplayOrder)
+            .ToArrayAsync();
+        Assert.HasCount(2, persisted);
+        Assert.AreEqual("opaque-duplicate-a", persisted[0].ProviderResultId,
+            "The first duplicate remains an opaque server-side acquisition handle.");
+    }
+}
+
 file static class ExternalProviderAutomaticFixtureSupport
 {
     public static async Task SignInAsync(HttpClient client, string email, string password)
@@ -643,4 +747,94 @@ file sealed class FailingFetchExternalProviderClient : IExternalProviderClient
     public Task DeleteAcquireAsync(
         string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+}
+
+file sealed class PresentationExternalProviderClient : IExternalProviderClient
+{
+    public int SearchCalls { get; private set; }
+
+    public int AcquireCalls { get; private set; }
+
+    public Task<ExternalProviderManifest> GetManifestAsync(
+        string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+        Task.FromResult(new ExternalProviderManifest(
+            ["2"], "2", null, "presentation-external", "Presentation External", "1.0.0",
+            new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null, "NORMAL"));
+
+    public Task<ExternalProviderHealth> GetHealthAsync(
+        string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+        Task.FromResult(new ExternalProviderHealth(
+            ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available));
+
+    public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
+        string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+        CancellationToken cancellationToken)
+    {
+        SearchCalls++;
+        if (request.MediaType != RequestMediaType.Ebook)
+        {
+            return Task.FromResult<IReadOnlyList<ExternalProviderCandidate>>([]);
+        }
+
+        var identifiers = request.Edition?.Identifiers ?? [];
+        var work = new ExternalProviderWorkEvidence(
+            "The Hobbit", null, [new BookAuthor("J. R. R. Tolkien", "author")], [], identifiers);
+        IReadOnlyList<ExternalProviderCandidate> candidates =
+        [
+            new ExternalProviderCandidate(
+                "opaque-duplicate-a", work,
+                new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),
+                new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null)),
+            new ExternalProviderCandidate(
+                "opaque-duplicate-b", work,
+                new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),
+                new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null)),
+            new ExternalProviderCandidate(
+                "opaque-edition-c", work,
+                new ExternalProviderEditionEvidence("en", 2016, "Archive House", identifiers),
+                new ExternalProviderReleaseEvidence(null, "epub", 2_097_152, false, 1, false, null, null, [], null)),
+            new ExternalProviderCandidate(
+                "opaque-duplicate-d", work,
+                new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),
+                new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null))
+        ];
+        return Task.FromResult(candidates);
+    }
+
+    public Task<ExternalProviderArtifact> AcquireAsync(
+        string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+        CancellationToken cancellationToken)
+    {
+        AcquireCalls++;
+        throw new InvalidOperationException("Review presentation must not acquire a file.");
+    }
+
+    public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+        CancellationToken cancellationToken)
+    {
+        AcquireCalls++;
+        throw new InvalidOperationException("Review presentation must not acquire a file.");
+    }
+
+    public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ExternalProviderArtifact> GetOutputAsync(
+        string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task CancelAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    public Task DeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 }

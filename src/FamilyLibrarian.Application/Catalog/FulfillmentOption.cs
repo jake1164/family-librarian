@@ -81,7 +81,17 @@ public sealed record FulfillmentOption(
     // low-confidence match, even when MatchBasis is Identifier: a correct
     // ISBN on an omnibus edition is still an omnibus.
     bool RequiresReleaseConfirmation = false,
-    string? ReleaseConcern = null);
+    string? ReleaseConcern = null,
+    // Neutral edition/release facts returned by an external provider's
+    // existing search result. They are retained only to make a review choice
+    // meaningful; they never contain a source URL, provider id, or raw
+    // provider extension data.
+    int? PublicationYear = null,
+    string? Publisher = null,
+    long? SizeBytes = null,
+    int? PartCount = null,
+    bool? IsAbridged = null,
+    bool? IsUnabridged = null);
 
 public enum OptionKind
 {

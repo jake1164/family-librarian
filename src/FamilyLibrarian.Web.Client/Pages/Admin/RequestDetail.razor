@@ -551,13 +551,14 @@
     }
 
     private static string CandidateLabel(RequestReviewCandidateResponse candidate) =>
-        candidate.Author is { } author
+        (candidate.Author is { } author
             ? string.IsNullOrWhiteSpace(candidate.Language)
                 ? $"{candidate.Title} by {author}"
                 : $"{candidate.Title} by {author} ({candidate.Language})"
             : string.IsNullOrWhiteSpace(candidate.Language)
                 ? candidate.Title
-                : $"{candidate.Title} ({candidate.Language})";
+                : $"{candidate.Title} ({candidate.Language})") +
+        (string.IsNullOrWhiteSpace(candidate.Details) ? string.Empty : $" — {candidate.Details}");
 
     private async Task ApplyOutcomeAsync(AdminRequestActionOutcome outcome)
     {

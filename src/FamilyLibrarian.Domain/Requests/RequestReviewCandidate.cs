@@ -14,7 +14,7 @@ public sealed class RequestReviewCandidate
 
     internal RequestReviewCandidate(
         Guid requestId, Guid requestFormatId, string providerId, string providerResultId, string title,
-        string? author, string? language, int displayOrder, DateTimeOffset createdAtUtc)
+        string? author, string? language, string? details, int displayOrder, DateTimeOffset createdAtUtc)
     {
         RequestId = requestId;
         RequestFormatId = requestFormatId;
@@ -23,6 +23,7 @@ public sealed class RequestReviewCandidate
         Title = title;
         Author = author;
         Language = language;
+        Details = details;
         DisplayOrder = displayOrder;
         CreatedAtUtc = createdAtUtc;
     }
@@ -43,6 +44,9 @@ public sealed class RequestReviewCandidate
     public string? Author { get; private set; }
 
     public string? Language { get; private set; }
+
+    /// <summary>Neutral edition/release facts for the requester; never provider provenance.</summary>
+    public string? Details { get; private set; }
 
     public int DisplayOrder { get; private set; }
 

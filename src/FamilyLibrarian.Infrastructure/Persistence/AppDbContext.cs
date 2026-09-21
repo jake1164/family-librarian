@@ -553,6 +553,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(candidate => candidate.Title).HasColumnName("title").HasMaxLength(512);
             entity.Property(candidate => candidate.Author).HasColumnName("author").HasMaxLength(512);
             entity.Property(candidate => candidate.Language).HasColumnName("language").HasMaxLength(32);
+            entity.Property(candidate => candidate.Details).HasColumnName("details").HasMaxLength(512);
             entity.Property(candidate => candidate.DisplayOrder).HasColumnName("display_order");
             entity.Property(candidate => candidate.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
 

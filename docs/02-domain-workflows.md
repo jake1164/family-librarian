@@ -1143,6 +1143,18 @@ secret-free provider-attempt summary. The detailed request activity ledger
 remains the provenance view. Requesters never receive provider IDs, transport
 failures, URLs, credentials, or diagnostic details.
 
+**Preference-review presentation:** when a provider's existing search result
+includes edition or release evidence, a requester sees only neutral facts that
+can make a choice meaningful: language, format, publication year, publisher,
+size, part count, and abridged/unabridged status when applicable. Candidate
+records that are identical on every requester-visible fact collapse to one
+choice while retaining one opaque server-side handle for a later acquisition.
+This presentation never triggers a per-candidate provider request, range
+probe, download, or file inspection; source identity, URLs, opaque handles,
+raw release names, provider-supplied title/author labels, and extension data
+remain administrator/server-only. The requester-facing title and author always
+come from Family Librarian's canonical catalog Work.
+
 There is still no general `CheckingLibrary`, `Searching`, `Acquiring`, or
 `Processing` request state machine; audiobook confirmation remains future work.
 Existing-ownership checks at request creation now produce a confirmable warning,

@@ -185,7 +185,7 @@ public sealed class ExternalProviderRecheckService(
                             $"Found {options.Count} candidate(s); choose a reviewed candidate before acquisition.",
                             nextEligibleCheckAtUtc: null);
                         await MarkForCandidateReviewAsync(
-                            request, format, provider, work.Title, options, cancellationToken);
+                            request, format, provider, work.Title, work.PrimaryAuthor, options, cancellationToken);
                         break;
                     }
                     catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or CryptographicException)
@@ -251,6 +251,7 @@ public sealed class ExternalProviderRecheckService(
         RequestFormat format,
         ExternalProvider provider,
         string workTitle,
+        string? workAuthor,
         IReadOnlyList<FulfillmentOption> options,
         CancellationToken cancellationToken)
     {
@@ -259,7 +260,10 @@ public sealed class ExternalProviderRecheckService(
             return;
         }
 
-        var reason = $"{provider.DisplayName} found {options.Count} candidate(s) that need a choice before acquisition.";
+        // The stored review may collapse records that are identical to the
+        // requester, so do not report the raw provider result count as though
+        // it were the number of choices a person will see.
+        var reason = $"{provider.DisplayName} found candidate editions that need a choice before acquisition.";
         request.MarkNeedsReview(
             RequestReviewCategory.PreferenceAmbiguity,
             reason,
@@ -268,9 +272,10 @@ public sealed class ExternalProviderRecheckService(
                 format.Id,
                 option.ProviderId,
                 option.ProviderResultId,
-                option.Title ?? workTitle,
-                option.Author,
-                option.Language)).ToArray());
+                workTitle,
+                workAuthor,
+                option.Language,
+                RequestReviewCandidatePresentation.BuildDetails(option))).ToArray());
         await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
         foreach (var requesterId in request.ActiveRequesterIds)
         {

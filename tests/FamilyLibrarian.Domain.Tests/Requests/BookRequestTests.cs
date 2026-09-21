@@ -226,6 +226,29 @@ public sealed class BookRequestTests
         Assert.IsTrue(participant.WantsAudiobook);
     }
 
+    [TestMethod]
+    public void PreferenceReviewCollapsesCandidatesThatAreIdenticalToTheRequester()
+    {
+        var request = Create(RequestMediaType.Ebook);
+        var formatId = request.Formats.Single().Id;
+
+        request.MarkNeedsReview(
+            RequestReviewCategory.PreferenceAmbiguity,
+            "Choose an edition.",
+            CreatedAt.AddHours(1),
+            [
+                (formatId, "provider-a", "opaque-a", "The Martian", "Andy Weir", "en", "EPUB · Published 2014 · Example Press"),
+                (formatId, "provider-a", "opaque-b", "the   martian", "Weir, Andy", "EN", "epub · published 2014 · example press"),
+                (formatId, "provider-a", "opaque-c", "The Martian", "Andy Weir", "en", "EPUB · Published 2015 · Archive House")
+            ]);
+
+        Assert.HasCount(2, request.ReviewCandidates);
+        Assert.AreEqual("opaque-a", request.ReviewCandidates.First().ProviderResultId);
+        CollectionAssert.AreEquivalent(
+            ["EPUB · Published 2014 · Example Press", "EPUB · Published 2015 · Archive House"],
+            request.ReviewCandidates.Select(candidate => candidate.Details).ToArray());
+    }
+
     private static BookRequest Create(params RequestMediaType[] mediaTypes) =>
         new(UserId, WorkId, mediaTypes, null, CreatedAt);
 }
