@@ -4,6 +4,7 @@ using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.SampleProvider;
 using System.Net;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -19,6 +20,7 @@ namespace FamilyLibrarian.Infrastructure.Tests.Providers;
 [TestClass]
 public sealed class ExternalProviderClientTests
 {
+    private static readonly string[] ExpectedEbookFormats = ["epub", "mobi"];
     private static WebApplication? _app;
     private static string _baseUrl = string.Empty;
 
@@ -126,6 +128,28 @@ public sealed class ExternalProviderClientTests
         handler.Release.TrySetResult();
         var results = await search;
         Assert.AreEqual(0, results.Count);
+    }
+
+    [TestMethod]
+    public async Task SearchOmitsUnspecifiedOptionalConstraintsInsteadOfSendingJsonNull()
+    {
+        var handler = new CapturingSearchHandler();
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(handler));
+
+        await client.SearchAsync(
+            "http://provider.test", apiKey: null,
+            new ExternalProviderSearchRequest(
+                Guid.NewGuid(), RequestMediaType.Ebook,
+                new ExternalProviderWorkEvidence("The Cardinal of the Kremlin", null, [], [], []),
+                Constraints: new ExternalProviderSearchConstraints(Formats: ["epub", "mobi"])),
+            EgressRoute.Direct, CancellationToken.None);
+
+        Assert.IsNotNull(handler.Payload);
+        var constraints = handler.Payload!["constraints"]!.AsObject();
+        Assert.IsNull(constraints["languages"]);
+        Assert.IsNull(constraints["excludeCollections"]);
+        CollectionAssert.AreEqual(ExpectedEbookFormats, constraints["formats"]!.AsArray()
+            .Select(node => node!.GetValue<string>()).ToArray());
     }
 
     [TestMethod]
@@ -382,6 +406,22 @@ public sealed class ExternalProviderClientTests
         {
             Started.TrySetResult();
             await Release.Task.WaitAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"candidates\":[]}")
+            };
+        }
+    }
+
+    private sealed class CapturingSearchHandler : HttpMessageHandler
+    {
+        public JsonObject? Payload { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Payload = JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken))!.AsObject();
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"candidates\":[]}")

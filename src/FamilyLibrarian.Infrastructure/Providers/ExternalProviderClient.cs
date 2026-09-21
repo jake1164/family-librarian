@@ -169,12 +169,7 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
 
         if (request.Constraints is not null)
         {
-            payload["constraints"] = new JsonObject
-            {
-                ["languages"] = ToJsonArrayOrNull(request.Constraints.Languages),
-                ["formats"] = ToJsonArrayOrNull(request.Constraints.Formats),
-                ["excludeCollections"] = request.Constraints.ExcludeCollections
-            };
+            payload["constraints"] = SerializeConstraints(request.Constraints);
         }
 
         if (request.Pagination is not null)
@@ -243,8 +238,29 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         .Select(identifier => (JsonNode)new JsonObject { ["scheme"] = identifier.Scheme, ["value"] = identifier.Value })
         .ToArray());
 
-    private static JsonArray? ToJsonArrayOrNull(IReadOnlyList<string>? values) =>
-        values is null ? null : new JsonArray(values.Select(value => (JsonNode)JsonValue.Create(value)).ToArray());
+    private static JsonObject SerializeConstraints(ExternalProviderSearchConstraints constraints)
+    {
+        var payload = new JsonObject();
+        if (constraints.Languages is not null)
+        {
+            payload["languages"] = ToJsonArray(constraints.Languages);
+        }
+
+        if (constraints.Formats is not null)
+        {
+            payload["formats"] = ToJsonArray(constraints.Formats);
+        }
+
+        if (constraints.ExcludeCollections is not null)
+        {
+            payload["excludeCollections"] = constraints.ExcludeCollections;
+        }
+
+        return payload;
+    }
+
+    private static JsonArray ToJsonArray(IReadOnlyList<string> values) =>
+        new(values.Select(value => (JsonNode)JsonValue.Create(value)).ToArray());
 
     /// <summary>
     /// Tolerant of both the v2 nested <c>work</c> object and a legacy flat
