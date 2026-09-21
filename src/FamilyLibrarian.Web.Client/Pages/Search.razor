@@ -4,6 +4,7 @@
 @using System.Net
 @using System.Text.RegularExpressions
 @inject CatalogApiClient Catalog
+@inject CatalogAvailabilityApiClient AvailabilityCatalog
 @inject CatalogSearchState SearchState
 
 <PageTitle>Search · Family Librarian</PageTitle>
@@ -296,6 +297,7 @@
 
     private async Task LoadAvailabilityAsync(CatalogBookCandidateResponse result, CancellationToken cancellationToken)
     {
+        Guid? runId = null;
         try
         {
             await availabilityGate.WaitAsync(cancellationToken);
@@ -308,15 +310,27 @@
 
         try
         {
-            var availability = await Catalog.GetAvailabilityAsync(result, cancellationToken);
-            await InvokeAsync(() =>
+            var started = await AvailabilityCatalog.StartAsync(result, cancellationToken);
+            runId = started.RunId;
+            while (true)
             {
-                if (!cancellationToken.IsCancellationRequested)
+                var availability = await AvailabilityCatalog.GetAsync(started.RunId, cancellationToken);
+                await InvokeAsync(() =>
                 {
-                    SearchState.AvailabilityByResultKey[ResultKey(result)] = availability;
-                    StateHasChanged();
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        SearchState.AvailabilityByResultKey[ResultKey(result)] = availability;
+                        StateHasChanged();
+                    }
+                });
+
+                if (availability.IsComplete)
+                {
+                    break;
                 }
-            });
+
+                await Task.Delay(TimeSpan.FromMilliseconds(400), cancellationToken);
+            }
         }
         catch (HttpRequestException)
         {
@@ -330,6 +344,17 @@
         }
         finally
         {
+            if (runId is { } activeRunId && cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await AvailabilityCatalog.CancelAsync(activeRunId, CancellationToken.None);
+                }
+                catch (HttpRequestException)
+                {
+                }
+            }
+
             availabilityGate.Release();
         }
     }

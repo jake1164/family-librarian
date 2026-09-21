@@ -5,6 +5,7 @@
 @using FamilyLibrarian.Web.Client.Delivery
 @using FamilyLibrarian.Web.Client.Following
 @inject CatalogApiClient Catalog
+@inject CatalogAvailabilityApiClient AvailabilityCatalog
 @inject CatalogSearchState SearchState
 @inject RequestsApiClient Requests
 @inject DeliveryTargetApiClient DeliveryTargets
@@ -60,7 +61,7 @@
                         {
                             <ProviderChip ProviderName="@source.ProviderName" SourceUrl="@source.SourceUrl" />
                         }
-                        <AvailabilityBadges Availability="@availability" />
+                        <AvailabilityBadges LegacyAvailability="@availability" />
                     </MudStack>
 
                     <div>
@@ -593,7 +594,7 @@
     {
         try
         {
-            var loaded = await Catalog.GetAvailabilityAsync(candidate, cancellationToken);
+            var loaded = await AvailabilityCatalog.GetAvailabilityAsync(candidate, cancellationToken);
             await InvokeAsync(() =>
             {
                 if (!cancellationToken.IsCancellationRequested)

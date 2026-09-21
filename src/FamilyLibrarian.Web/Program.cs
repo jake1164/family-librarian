@@ -7,6 +7,7 @@ using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web.Acquisition;
+using FamilyLibrarian.Web.Catalog;
 using FamilyLibrarian.Web.Communications;
 using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
@@ -33,6 +34,8 @@ builder.Services.ConfigureDbContext<AppDbContext>((services, options) =>
         new LiveUpdatesTransactionInterceptor(buffer, publisher));
 });
 builder.Services.AddScoped<SystemReadinessService>();
+builder.Services.AddSingleton<AvailabilityRunCoordinator>();
+builder.Services.AddHostedService<AvailabilityRunHostedService>();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<CwaVerificationHostedService>();

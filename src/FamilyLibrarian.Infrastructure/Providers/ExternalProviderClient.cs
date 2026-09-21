@@ -13,6 +13,7 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
 {
     private static readonly TimeSpan AcquirePollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan AcquireTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan ControlPlaneTimeout = TimeSpan.FromSeconds(20);
 
     // Governs the manifest/search/job-status calls below, all of which are
     // small JSON and read fully into memory via ReadAsStringAsync — the
@@ -153,7 +154,11 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
         CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        // Search backs interactive source enrichment. The caller's cancellation
+        // token represents the browser/request lifetime; imposing the normal
+        // short control-plane timeout here would misrepresent a slow provider
+        // as returning no candidate.
+        using var client = CreateClient(baseUrl, apiKey, route, Timeout.InfiniteTimeSpan);
         var payload = new JsonObject
         {
             ["requestId"] = request.RequestId.ToString(),
@@ -689,7 +694,11 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         }
     }
 
-    private HttpClient CreateClient(string baseUrl, string? apiKey, EgressRoute route)
+    private HttpClient CreateClient(
+        string baseUrl,
+        string? apiKey,
+        EgressRoute route,
+        TimeSpan? timeout = null)
     {
         var client = route is EgressRoute.GatewayRoute gatewayRoute
             ? new HttpClient(
@@ -698,7 +707,7 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
             : httpClientFactory.CreateClient();
 
         client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
-        client.Timeout = TimeSpan.FromSeconds(20);
+        client.Timeout = timeout ?? ControlPlaneTimeout;
         client.MaxResponseContentBufferSize = MaxJsonResponseBytes;
         if (!string.IsNullOrWhiteSpace(apiKey))
         {

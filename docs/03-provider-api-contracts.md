@@ -401,12 +401,19 @@ safe operational indicator, not a replacement for the append-only ledger: it
 contains only provider display name/ID, the bounded safe summary, and the time.
 It must never expose credentials, provider payloads, requesters, or artifact URLs.
 
-Provider availability is not page availability. Calls that populate optional
-availability, store-offer, direct-acquisition, owned-library, or external-source
-options isolate transport failures and provider-owned timeouts per provider.
-They return the remaining options (or none) while preserving caller-requested
-cancellation. Background acquisition calls still surface the same failures to
-the provider-attempt ledger and administrator attention projection.
+Provider availability is not page availability. Catalog metadata renders before
+optional availability, store-offer, direct-acquisition, owned-library, or
+external-source enrichment. Each enrichment call is isolated per provider and
+continues until it returns or the browser/API caller cancels or supersedes the
+search; a short server-side wall-clock cutoff must not turn a slow valid source
+into a false “no result.” Unattended background lookups use a separate bounded
+worker lifetime and surface expiry/failure in the provider-attempt ledger and
+administrator attention projection.
+
+**Progressive availability.** An authenticated requester starts an opaque,
+cancellable availability run. The card polls that run and receives accumulated
+availability facts as each provider completes, without receiving provider
+identifiers or topology. A replacement search cancels its outstanding runs.
 
 ### Private-egress policy
 

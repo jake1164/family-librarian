@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Requests;
+using System.Runtime.CompilerServices;
 
 namespace FamilyLibrarian.Application.Catalog;
 
@@ -33,45 +34,72 @@ public sealed class ExternalCandidateAvailabilityChecker(
     public async Task<IReadOnlyList<FulfillmentOption>> FindAsync(
         BookIdentity identity, RequestMediaType mediaType, CancellationToken cancellationToken)
     {
+        var found = new List<FulfillmentOption>();
+        await foreach (var update in FindUpdatesAsync(identity, mediaType, cancellationToken))
+        {
+            found.AddRange(update);
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// Emits one completed external provider at a time. This allows the
+    /// requester-safe availability run to publish a fast source without
+    /// waiting for another registered source.
+    /// </summary>
+    public async IAsyncEnumerable<IReadOnlyList<FulfillmentOption>> FindUpdatesAsync(
+        BookIdentity identity,
+        RequestMediaType mediaType,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
         var enabled = await externalProviders.ListEnabledAsync(cancellationToken);
         if (enabled.Count == 0)
+        {
+            yield break;
+        }
+
+        // Each external source is independent. Waiting for one slow source
+        // before asking the next would turn a source outage into a delay for
+        // all of them, and is especially wrong for browser enrichment.
+        var pending = enabled.Select(provider =>
+            FindProviderSafelyAsync(provider, identity, mediaType, cancellationToken)).ToList();
+        while (pending.Count > 0)
+        {
+            var completed = await Task.WhenAny(pending);
+            pending.Remove(completed);
+            var options = await completed;
+            if (options.Count > 0)
+            {
+                yield return options;
+            }
+        }
+    }
+
+    private async Task<IReadOnlyList<FulfillmentOption>> FindProviderSafelyAsync(
+        Domain.Providers.ExternalProvider provider,
+        BookIdentity identity,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken)
+    {
+        var resolution = routeResolver.Resolve(provider.EffectiveEgressPolicy);
+        if (!resolution.IsAllowed || IsKnownSearchUnavailable(provider))
         {
             return [];
         }
 
-        var found = new List<FulfillmentOption>();
-        foreach (var provider in enabled)
+        try
         {
-            var resolution = routeResolver.Resolve(provider.EffectiveEgressPolicy);
-            if (!resolution.IsAllowed)
-            {
-                continue;
-            }
-
-            // Skip a provider its own last health probe (Test Connection, or
-            // ExternalProviderRecheckService's periodic recheck) reported as
-            // unable to search at all -- same "degrade to no results" posture
-            // as every other failure this loop already tolerates, but without
-            // spending a network round trip on a provider already known to be
-            // down for this operation.
-            if (IsKnownSearchUnavailable(provider))
-            {
-                continue;
-            }
-
-            try
-            {
-                found.AddRange(await FindForProviderAsync(provider, resolution.Route!, identity, mediaType, cancellationToken));
-            }
-            catch (HttpRequestException)
-            {
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-            }
+            return await FindForProviderAsync(provider, resolution.Route!, identity, mediaType, cancellationToken);
         }
-
-        return found;
+        catch (HttpRequestException)
+        {
+            return [];
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return [];
+        }
     }
 
     /// <summary>

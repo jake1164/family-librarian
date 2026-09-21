@@ -442,8 +442,10 @@ Any `2xx` status containing a `jobId`:
 There is no fixed end-to-end time budget. A job may legitimately run for
 minutes or hours (large transfers, repair/extract work, a slow browser-gated
 download, a large audiobook) — design for that rather than assuming a short
-window. Each individual HTTP call (including this one) still has its own
-short transport timeout (§9) independent of how long the *job* takes overall.
+window. Control-plane HTTP calls still have their own short transport timeout
+(§9) independent of how long the *job* takes overall; interactive search is
+the exception because its lifetime belongs to the browser request that asked
+for optional catalog enrichment.
 
 **Polling cadence:** respond with a `Retry-After` header (seconds) and/or a
 body-level `pollAfterSeconds` when you know your own job doesn't need to be
@@ -559,8 +561,7 @@ v2-negotiated client always prefers `/outputs`.
 `Content-Length` when known — the same header contract as v1's `/artifact`
 endpoint (Appendix A.4). An unknown `outputId` (or one that names a `uri`
 output, which has no bytes to fetch) returns `404`. This call is exempt from
-the 20-second transport timeout that applies to every other call in this
-protocol — see §9.
+the 20-second control-plane transport timeout — see §9.
 
 ---
 
@@ -595,7 +596,8 @@ there was anything to actually do, and expect repeat calls.
 
 | What | Limit |
 |---|---|
-| Any single JSON-returning HTTP call (manifest, health, search, acquire-POST, job-status GET, `GET .../outputs` listing, cancel, delete) | 20 seconds total, connect through full response body |
+| JSON control-plane calls (manifest, health, acquire-POST, job-status GET, `GET .../outputs` listing, cancel, delete) | 20 seconds total, connect through full response body |
+| Interactive `POST /search` | No independent wall-clock timeout. It runs until the browser/API caller cancels or the provider responds, so a slow valid search is not presented as an empty result. Scheduled background searches have a separate two-minute worker budget and record expiry as a provider failure. |
 | Manifest/search/job-status/outputs-listing JSON response body | 10 MB |
 | `GET .../outputs/{outputId}` (the actual binary file/descriptor bytes) | **Not** subject to the 20-second total-call timeout above — a multi-gigabyte audiobook cannot complete in 20 seconds. Connect and response-header timeouts still apply (20 seconds to start responding); once streaming begins, only an inactivity timeout applies (no data for an extended period is treated as a stalled transfer), not a wall-clock cap on the whole transfer. No overall size cap in the HTTP client itself (downstream validation/quarantine steps apply their own limits). |
 | Acquire job, end to end | No fixed budget — bounded only by your own declared/implied retention. Design for jobs that may run minutes to hours. |

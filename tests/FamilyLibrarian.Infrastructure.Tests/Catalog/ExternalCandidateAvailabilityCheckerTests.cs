@@ -126,6 +126,27 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
     }
 
     [TestMethod]
+    public async Task EnabledProvidersAreSearchedConcurrently()
+    {
+        var context = new TestContext();
+        var first = NewProvider("first-source");
+        var second = NewProvider("second-source");
+        first.SetEnabled(true, null, Now);
+        second.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(first);
+        context.Store.Providers.Add(second);
+        context.Client.RequiredConcurrentCalls = 2;
+        context.Client.BlockSearches = true;
+
+        var lookup = context.Checker.FindAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
+
+        await context.Client.RequiredCallsStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        context.Client.ReleaseSearches.TrySetResult();
+        await lookup;
+    }
+
+    [TestMethod]
     public async Task ADetectedSafeSourceSuppressesPossibleConversionSources()
     {
         var context = new TestContext();
@@ -227,7 +248,17 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
 
         public bool Throw { get; set; }
 
-        public int CallCount { get; private set; }
+        private int callCount;
+
+        public int CallCount => callCount;
+
+        public int RequiredConcurrentCalls { get; set; }
+
+        public bool BlockSearches { get; set; }
+
+        public TaskCompletionSource RequiredCallsStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseSearches { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ExternalProviderSearchRequest? LastSearchRequest { get; private set; }
 
@@ -270,15 +301,28 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
             string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
+        public async Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
             string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
             CancellationToken cancellationToken)
         {
-            CallCount++;
+            var calls = Interlocked.Increment(ref callCount);
             LastSearchRequest = request;
-            return Throw
-                ? throw new HttpRequestException("The external provider is unavailable.")
-                : Task.FromResult(Candidates);
+            if (RequiredConcurrentCalls > 0 && calls >= RequiredConcurrentCalls)
+            {
+                RequiredCallsStarted.TrySetResult();
+            }
+
+            if (BlockSearches)
+            {
+                await ReleaseSearches.Task.WaitAsync(cancellationToken);
+            }
+
+            if (Throw)
+            {
+                throw new HttpRequestException("The external provider is unavailable.");
+            }
+
+            return Candidates;
         }
     }
 

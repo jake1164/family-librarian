@@ -37,6 +37,7 @@ public sealed class ExternalProviderRecheckService(
     NotificationService notifications)
 {
     private const int BatchSize = 20;
+    private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
 
     public async Task<int> ProcessDueAsync(CancellationToken cancellationToken)
     {
@@ -111,13 +112,16 @@ public sealed class ExternalProviderRecheckService(
                         continue;
                     }
 
+                    CancellationTokenSource? searchCancellation = null;
                     try
                     {
+                        searchCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        searchCancellation.CancelAfter(BackgroundSearchTimeout);
                         var identity = new BookIdentity(
                             work.Title, work.PrimaryAuthor, work.Isbn13s,
                             work.Authors, work.Series, work.Language, work.PublicationYear, work.Publisher);
                         var options = await candidateChecker.FindForProviderAsync(
-                            provider, resolution.Route!, identity, format.MediaType, cancellationToken);
+                            provider, resolution.Route!, identity, format.MediaType, searchCancellation.Token);
 
                         if (options.Count == 0)
                         {
@@ -188,10 +192,29 @@ public sealed class ExternalProviderRecheckService(
                             request, format, provider, work.Title, work.PrimaryAuthor, options, cancellationToken);
                         break;
                     }
-                    catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or CryptographicException)
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested &&
+                                                           searchCancellation?.IsCancellationRequested == true)
+                    {
+                        AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                            $"The provider search did not complete within {BackgroundSearchTimeout.TotalMinutes:0} minutes and will be retried on its configured schedule.", nextCheck);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                            "The provider canceled the lookup and it will be retried on its configured schedule.", nextCheck);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception exception) when (exception is HttpRequestException or CryptographicException)
                     {
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
                             "The provider lookup failed and will be retried on its configured schedule.", nextCheck);
+                    }
+                    finally
+                    {
+                        searchCancellation?.Dispose();
                     }
                 }
             }

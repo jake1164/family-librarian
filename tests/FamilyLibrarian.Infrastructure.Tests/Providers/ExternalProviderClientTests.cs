@@ -3,6 +3,7 @@ using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.SampleProvider;
+using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -101,6 +102,29 @@ public sealed class ExternalProviderClientTests
                 new ExternalProviderWorkEvidence("Not A Real Book Title Xyz", null, [], [], [])),
             EgressRoute.Direct, CancellationToken.None);
 
+        Assert.AreEqual(0, results.Count);
+    }
+
+    [TestMethod]
+    public async Task SearchUsesCallerCancellationRatherThanTheShortControlPlaneTimeout()
+    {
+        var handler = new HoldingSearchHandler();
+        var factory = new RecordingHttpClientFactory(handler);
+        var client = new ExternalProviderClient(factory);
+
+        var search = client.SearchAsync(
+            "http://provider.test", apiKey: null,
+            new ExternalProviderSearchRequest(
+                Guid.NewGuid(), RequestMediaType.Ebook,
+                new ExternalProviderWorkEvidence("Slow but valid", null, [], [], [])),
+            EgressRoute.Direct, CancellationToken.None);
+
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.IsNotNull(factory.CreatedClient);
+        Assert.AreEqual(Timeout.InfiniteTimeSpan, factory.CreatedClient.Timeout);
+
+        handler.Release.TrySetResult();
+        var results = await search;
         Assert.AreEqual(0, results.Count);
     }
 
@@ -338,5 +362,30 @@ public sealed class ExternalProviderClientTests
     private sealed class SimpleHttpClientFactory : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new();
+    }
+
+    private sealed class RecordingHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient? CreatedClient { get; private set; }
+
+        public HttpClient CreateClient(string name) => CreatedClient = new HttpClient(handler, disposeHandler: false);
+    }
+
+    private sealed class HoldingSearchHandler : HttpMessageHandler
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"candidates\":[]}")
+            };
+        }
     }
 }

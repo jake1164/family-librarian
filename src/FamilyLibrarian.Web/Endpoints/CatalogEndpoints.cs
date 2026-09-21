@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Policy;
 using FamilyLibrarian.Application.Publishing;
@@ -8,6 +9,7 @@ using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Policy;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Web.Logging;
+using FamilyLibrarian.Web.Catalog;
 
 namespace FamilyLibrarian.Web.Endpoints;
 
@@ -28,6 +30,9 @@ internal static class CatalogEndpoints
         catalog.MapGet("/works/{workId:guid}", GetCatalogWorkAsync);
         catalog.MapGet("/works/{workId:guid}/fulfillment-options", GetWorkFulfillmentOptionsAsync);
         catalog.MapPost("/availability", GetCandidateAvailabilityAsync);
+        catalog.MapPost("/availability/runs", StartCandidateAvailabilityRunAsync);
+        catalog.MapGet("/availability/runs/{runId:guid}", GetCandidateAvailabilityRunAsync);
+        catalog.MapDelete("/availability/runs/{runId:guid}", CancelCandidateAvailabilityRunAsync);
         catalog.MapGet("/external-library-links", GetExternalLibraryLinksAsync);
     }
 
@@ -255,6 +260,57 @@ internal static class CatalogEndpoints
             result.Ebook.Select(ToFulfillmentOptionResponse).ToArray(),
             result.Audiobook.Select(ToFulfillmentOptionResponse).ToArray()));
     }
+
+    private static IResult StartCandidateAvailabilityRunAsync(
+        CandidateAvailabilityRequest request,
+        ICurrentUser currentUser,
+        AvailabilityRunCoordinator coordinator)
+    {
+        var title = request.Title?.Trim();
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["title"] = ["A title is required to check availability."]
+            });
+        }
+
+        if (currentUser.UserId is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        var run = coordinator.Start(userId, new BookIdentity(
+            title, request.Authors.Count > 0 ? request.Authors[0] : null, request.Isbn13s));
+        return run is null
+            ? Results.StatusCode(StatusCodes.Status503ServiceUnavailable)
+            : Results.Accepted($"/api/v1/catalog/availability/runs/{run.Id}", new CandidateAvailabilityRunStartedResponse(run.Id));
+    }
+
+    private static IResult GetCandidateAvailabilityRunAsync(
+        Guid runId,
+        ICurrentUser currentUser,
+        AvailabilityRunCoordinator coordinator)
+    {
+        if (currentUser.UserId is not { } userId || !coordinator.TryGet(userId, runId, out var run) || run is null)
+        {
+            return Results.NotFound();
+        }
+
+        var facts = run.Snapshot()
+            .GroupBy(option => (option.OptionKind.ToString(), MediaType: option.MediaType.ToString()))
+            .Select(group => new AvailabilityFactResponse(group.Key.Item1, group.Key.MediaType))
+            .ToArray();
+        return Results.Ok(new CandidateAvailabilityRunResponse(run.IsComplete, facts));
+    }
+
+    private static IResult CancelCandidateAvailabilityRunAsync(
+        Guid runId,
+        ICurrentUser currentUser,
+        AvailabilityRunCoordinator coordinator) =>
+        currentUser.UserId is { } userId && coordinator.Cancel(userId, runId)
+            ? Results.NoContent()
+            : Results.NotFound();
 
     private static async Task<IResult> GetExternalLibraryLinksAsync(
         ICwaSettingsStore cwaSettingsStore,

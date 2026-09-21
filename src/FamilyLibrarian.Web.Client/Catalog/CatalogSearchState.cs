@@ -22,5 +22,5 @@ public sealed class CatalogSearchState
     /// result's detail page and back instead of re-checking every source
     /// again.
     /// </summary>
-    public Dictionary<string, CandidateAvailabilityResponse> AvailabilityByResultKey { get; } = [];
+    public Dictionary<string, CandidateAvailabilityRunResponse> AvailabilityByResultKey { get; } = [];
 }

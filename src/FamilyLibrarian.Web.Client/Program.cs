@@ -33,6 +33,13 @@ builder.Services.AddScoped(sp => new HttpClient
 {
     BaseAddress = new Uri(builder.HostEnvironment.BaseAddress)
 });
+builder.Services.AddScoped<CatalogAvailabilityApiClient>(sp => new CatalogAvailabilityApiClient(
+    new HttpClient
+    {
+        BaseAddress = new Uri(builder.HostEnvironment.BaseAddress),
+        Timeout = Timeout.InfiniteTimeSpan
+    },
+    sp.GetRequiredService<AntiforgeryTokenProvider>()));
 builder.Services.AddScoped<AntiforgeryTokenProvider>();
 builder.Services.AddScoped<AccountsApiClient>();
 builder.Services.AddScoped<CatalogApiClient>();

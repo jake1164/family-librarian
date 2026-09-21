@@ -4,6 +4,9 @@ namespace FamilyLibrarian.Application.Catalog;
 public sealed record CandidateAvailabilityResult(
     IReadOnlyList<FulfillmentOption> Ebook, IReadOnlyList<FulfillmentOption> Audiobook);
 
+/// <summary>A completed source's optional availability facts for one candidate.</summary>
+public sealed record CandidateAvailabilityUpdate(IReadOnlyList<FulfillmentOption> Options);
+
 /// <summary>
 /// The identity-based sibling of <see cref="IWorkFulfillmentOptionsService"/>:
 /// checks whether the household already owns or can acquire a raw search
@@ -19,4 +22,7 @@ public sealed record CandidateAvailabilityResult(
 public interface ICandidateAvailabilityService
 {
     Task<CandidateAvailabilityResult> GetAvailabilityAsync(BookIdentity identity, CancellationToken cancellationToken);
+
+    IAsyncEnumerable<CandidateAvailabilityUpdate> GetAvailabilityUpdatesAsync(
+        BookIdentity identity, CancellationToken cancellationToken);
 }
