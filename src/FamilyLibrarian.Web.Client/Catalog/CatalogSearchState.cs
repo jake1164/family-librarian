@@ -16,6 +16,14 @@ public sealed class CatalogSearchState
     public bool HasMore { get; set; }
 
     /// <summary>
+    /// Availability is a point-in-time enrichment result. A fresh catalog
+    /// query must not reuse an earlier empty (or positive) answer for the
+    /// same provider result: a provider may have been enabled, recovered, or
+    /// completed its own index work since that earlier lookup.
+    /// </summary>
+    public void BeginNewSearch() => AvailabilityByResultKey.Clear();
+
+    /// <summary>
     /// Availability badges already resolved for a result, keyed by
     /// <c>"{ProviderId}:{ExternalId}"</c> -- carried here (not just in
     /// <c>Search.razor</c>'s own state) so they survive navigating to a
