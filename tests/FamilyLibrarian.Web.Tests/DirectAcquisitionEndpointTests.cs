@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace FamilyLibrarian.Web.Tests;
 
@@ -167,7 +168,11 @@ public sealed class DirectAcquisitionEndpointTests
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var fulfillment = scope.ServiceProvider.GetRequiredService<AutomaticRequestFulfillmentService>();
-            Assert.AreEqual(1, await fulfillment.ProcessPendingAsync(CancellationToken.None));
+            // ProcessPendingAsync reports every pending format in this class's
+            // fixture database, including setup from earlier test methods. The
+            // behavior under test is verified below against this request's
+            // format, not that unrelated pending work does not exist.
+            await fulfillment.ProcessPendingAsync(CancellationToken.None);
         }
 
         await using var verificationScope = factory.Services.CreateAsyncScope();
@@ -238,6 +243,10 @@ public sealed class DirectAcquisitionEndpointTests
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = new FamilyLibrarianAppFactory(fixture.ConnectionString, services =>
         {
+            // This test invokes the fulfillment pass explicitly below. Leaving
+            // the production worker running creates a second concurrent pass
+            // over the same request and makes the outcome timing-dependent.
+            services.RemoveAll<IHostedService>();
             services.RemoveAll<IDirectAcquisitionProvider>();
             services.RemoveAll<IAutomaticDirectAcquisitionProvider>();
             services.AddSingleton<IDirectAcquisitionProvider>(new FakeProvider(matches: true));
@@ -361,11 +370,14 @@ public sealed class DirectAcquisitionEndpointTests
             Assert.AreEqual(2, candidates.Length);
             Assert.AreEqual("1234-0", candidates[0].ProviderResultId);
             Assert.AreEqual("1234-1", candidates[1].ProviderResultId);
-            // Each edition keeps its own distinguishable title -- not the
-            // canonical Work title repeated for every candidate.
-            Assert.AreEqual("The Hobbit (Edition 1)", candidates[0].Title);
-            Assert.AreEqual("The Hobbit (Edition 2)", candidates[1].Title);
+            // The requester sees FL's canonical work title, never a raw
+            // provider title. Neutral edition facts make the choices
+            // distinguishable without exposing source metadata.
+            Assert.AreEqual("The Hobbit", candidates[0].Title);
+            Assert.AreEqual("The Hobbit", candidates[1].Title);
             Assert.AreEqual("J. R. R. Tolkien", candidates[0].Author);
+            Assert.AreEqual("EPUB · Published 2014 · Example Press · 1.5 MB", candidates[0].Details);
+            Assert.AreEqual("EPUB · Published 2016 · Archive House · 2 MB", candidates[1].Details);
             firstCandidateId = candidates[0].Id;
         }
 
@@ -682,6 +694,9 @@ public sealed class DirectAcquisitionEndpointTests
             fixture.ConnectionString,
             services =>
             {
+                // The tests drive AutomaticRequestFulfillmentService directly
+                // so each assertion observes exactly one deliberate pass.
+                services.RemoveAll<IHostedService>();
                 services.RemoveAll<IDirectAcquisitionProvider>();
                 services.RemoveAll<IAutomaticDirectAcquisitionProvider>();
                 services.AddSingleton<IDirectAcquisitionProvider>(provider);
@@ -771,7 +786,10 @@ public sealed class DirectAcquisitionEndpointTests
                     MatchBasis: null,
                     RequiresLanguageConfirmation: requiresLanguageConfirmation,
                     Title: matchCount == 1 ? null : $"The Hobbit (Edition {index + 1})",
-                    Author: matchCount == 1 ? null : "J. R. R. Tolkien"))
+                    Author: matchCount == 1 ? null : "J. R. R. Tolkien",
+                    PublicationYear: matchCount == 1 ? null : 2014 + (index * 2),
+                    Publisher: matchCount == 1 ? null : index == 0 ? "Example Press" : "Archive House",
+                    SizeBytes: matchCount == 1 ? null : index == 0 ? 1_572_864 : 2_097_152))
                 .ToArray();
             return Task.FromResult(options);
         }
