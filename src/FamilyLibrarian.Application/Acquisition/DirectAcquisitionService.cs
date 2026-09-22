@@ -159,7 +159,8 @@ public sealed class DirectAcquisitionService(
 
         var identity = new BookIdentity(
             work?.Title ?? string.Empty, work?.PrimaryAuthor, work?.Isbn13s ?? [],
-            work?.Authors, work?.Series, work?.Language, work?.PublicationYear, work?.Publisher);
+            work?.Authors, work?.Series, work?.Language, work?.PublicationYear, work?.Publisher,
+            work?.AlternateTitles);
         IReadOnlyList<FulfillmentOption> externalOptions;
         try
         {

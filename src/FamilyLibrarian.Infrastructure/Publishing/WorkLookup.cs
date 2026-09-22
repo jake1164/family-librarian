@@ -29,6 +29,13 @@ public sealed class WorkLookup(AppDbContext database) : IWorkLookup
         // best-effort source for the fields that live only on an Edition,
         // not a per-format-authoritative choice.
         var firstEdition = work.Editions.OrderBy(edition => edition.CreatedAtUtc).FirstOrDefault();
+        var alternateTitles = work.Editions
+            .Select(edition => edition.Title?.Trim())
+            .Where(title => !string.IsNullOrWhiteSpace(title) &&
+                            !string.Equals(title, work.CanonicalTitle, StringComparison.Ordinal))
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
         return new WorkSummary(
             work.Id,
@@ -39,6 +46,7 @@ public sealed class WorkLookup(AppDbContext database) : IWorkLookup
             work.SeriesEntries.Select(entry => new BookSeries(entry.Series.Name, entry.PositionLabel)).ToArray(),
             firstEdition?.Language,
             firstEdition?.PublicationDate?.Year,
-            firstEdition?.Publisher);
+            firstEdition?.Publisher,
+            alternateTitles);
     }
 }

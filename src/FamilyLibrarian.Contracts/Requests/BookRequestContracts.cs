@@ -78,7 +78,8 @@ public sealed record KindleDeliveryResponse(
 /// </summary>
 public sealed record NeedsReviewResponse(
     string Category,
-    IReadOnlyList<RequestReviewCandidateResponse> Candidates);
+    IReadOnlyList<RequestReviewCandidateResponse> Candidates,
+    string? Reason = null);
 
 /// <summary>
 /// A requester-safe candidate label. Details contains neutral edition/release
@@ -135,7 +136,22 @@ public sealed record AdminBookRequestResponse(
     string RequesterDisplayName,
     string RequesterEmail,
     IReadOnlyList<BookRequestStatusHistoryResponse> StatusHistory,
-    IReadOnlyList<RequestParticipantResponse>? Participants = null);
+    IReadOnlyList<RequestParticipantResponse>? Participants = null,
+    IReadOnlyList<AdminRequestReviewCandidateResponse>? ReviewCandidates = null);
+
+/// <summary>
+/// Administrator-only evidence for a review candidate. <see cref="InspectionUri"/>
+/// is an optional provider-declared browser page, never a download URL and never
+/// returned from family request endpoints.
+/// </summary>
+public sealed record AdminRequestReviewCandidateResponse(
+    Guid CandidateId,
+    string ProviderId,
+    string Title,
+    string? Author,
+    string? Language,
+    string? Details,
+    string? InspectionUri);
 
 public sealed record RequestParticipantResponse(string DisplayName, string Email, string? Note, bool Withdrawn);
 

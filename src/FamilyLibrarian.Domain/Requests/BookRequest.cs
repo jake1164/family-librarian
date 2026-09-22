@@ -157,7 +157,7 @@ public sealed class BookRequest
         RequestReviewCategory category,
         string reason,
         DateTimeOffset atUtc,
-        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string Title, string? Author, string? Language, string? Details)>? candidates = null)
+        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string Title, string? Author, string? Language, string? Details, string? AdminInspectionUri)>? candidates = null)
     {
         if (category == RequestReviewCategory.PreferenceAmbiguity)
         {
@@ -195,7 +195,7 @@ public sealed class BookRequest
                 var candidate = visibleCandidates[index];
                 _reviewCandidates.Add(new RequestReviewCandidate(
                     Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
-                    candidate.Author, candidate.Language, candidate.Details, index, atUtc));
+                    candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri, index, atUtc));
             }
         }
 

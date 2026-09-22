@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 
@@ -122,6 +123,27 @@ public sealed class ExternalProviderMatchVerifierTests
         var verdicts = await verifier.VerifyAsync("Net Force", "Tom Clancy", null, candidates, CancellationToken.None);
 
         Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["ref-1"].Basis);
+    }
+
+    [TestMethod]
+    public async Task ARecordedEditionTitleCanCorroborateOneCandidateWithoutTrustingOtherBooksByTheAuthor()
+    {
+        var verifier = NewVerifier();
+        var identity = new BookIdentity(
+            "Mekhanicheskiĭ apelʹsin", "Anthony Burgess", [],
+            AlternateTitles: ["A Clockwork Orange"]);
+        IReadOnlyList<ExternalProviderCandidate> candidates =
+        [
+            ExternalProviderCandidate.FromSimple(
+                "clockwork-orange", "A Clockwork Orange", "Anthony Burgess", "epub", 500_000),
+            ExternalProviderCandidate.FromSimple(
+                "unrelated-burgess", "ABBA ABBA", "Anthony Burgess", "epub", 500_000)
+        ];
+
+        var verdicts = await verifier.VerifyAsync(identity, candidates, CancellationToken.None);
+
+        Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["clockwork-orange"].Basis);
+        Assert.IsNull(verdicts["unrelated-burgess"].Basis);
     }
 
     [TestMethod]

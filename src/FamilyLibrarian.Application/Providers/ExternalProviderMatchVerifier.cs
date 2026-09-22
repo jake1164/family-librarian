@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Matching;
 
 namespace FamilyLibrarian.Application.Providers;
@@ -15,6 +16,23 @@ namespace FamilyLibrarian.Application.Providers;
 public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService, IBookMatcher matcher)
 {
     /// <summary>
+    /// Verifies a provider response against the catalog identity, including
+    /// only the Work's persisted edition-title aliases. Those aliases are
+    /// catalog evidence, not provider labels and not inferred translations.
+    /// </summary>
+    public Task<IReadOnlyDictionary<string, ExternalProviderMatchVerdict>> VerifyAsync(
+        BookIdentity identity, IReadOnlyList<ExternalProviderCandidate> candidates,
+        CancellationToken cancellationToken) =>
+        VerifyAsync(
+            identity.Title,
+            identity.AlternateTitles,
+            identity.Author,
+            identity.Isbn13Candidates.FirstOrDefault(),
+            candidates,
+            identity.Language,
+            cancellationToken);
+
+    /// <summary>
     /// Returns one verdict per candidate, keyed by <see cref="ExternalProviderCandidate.ProviderReference"/>.
     /// </summary>
     /// <remarks>
@@ -26,10 +44,16 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
     /// record cannot turn a query echo into an unattended download. Every
     /// other result falls back to the ordinary title/author tier.
     /// </remarks>
-    public async Task<IReadOnlyDictionary<string, ExternalProviderMatchVerdict>> VerifyAsync(
+    public Task<IReadOnlyDictionary<string, ExternalProviderMatchVerdict>> VerifyAsync(
         string title, string? author, string? isbn13,
         IReadOnlyList<ExternalProviderCandidate> candidates, CancellationToken cancellationToken,
-        string? acceptedLanguage = null)
+        string? acceptedLanguage = null) =>
+        VerifyAsync(title, null, author, isbn13, candidates, acceptedLanguage, cancellationToken);
+
+    private async Task<IReadOnlyDictionary<string, ExternalProviderMatchVerdict>> VerifyAsync(
+        string title, IReadOnlyList<string>? alternateTitles, string? author, string? isbn13,
+        IReadOnlyList<ExternalProviderCandidate> candidates, string? acceptedLanguage,
+        CancellationToken cancellationToken)
     {
         if (candidates.Count == 0)
         {
@@ -54,7 +78,7 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
             {
                 var matched = candidates.First(
                     candidate => candidate.ProviderReference == identifierResult.MatchedId);
-                if (matcher.TitleMatches(title, matched.Title) &&
+                if (TitleMatchesAnyExpectedTitle(title, alternateTitles, matched.Title) &&
                     (author is null || matcher.AuthorMatches(author, matched.Author)))
                 {
                     return BuildVerdicts(candidates, identifierResult.MatchedId, BookMatchBasis.Identifier, requiresLanguageConfirmation: false);
@@ -65,7 +89,7 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
         var strictMatches = candidates
             .Where(candidate =>
                 LanguageAcceptance.IsAcceptedOrUnspecified(candidate.Edition?.Language, acceptedLanguage) &&
-                matcher.StrictTitleAuthorMatches(title, author, candidate.Title, candidate.Author))
+                StrictTitleAuthorMatchesAnyExpectedTitle(title, alternateTitles, author, candidate.Title, candidate.Author))
             .Select(candidate => candidate.ProviderReference)
             .ToHashSet(StringComparer.Ordinal);
         if (strictMatches.Count > 0)
@@ -104,6 +128,21 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
         .Where(char.IsLetterOrDigit)
         .Select(char.ToUpperInvariant)
         .ToArray());
+
+    private bool TitleMatchesAnyExpectedTitle(
+        string title, IReadOnlyList<string>? alternateTitles, string candidateTitle) =>
+        ExpectedTitles(title, alternateTitles).Any(expectedTitle => matcher.TitleMatches(expectedTitle, candidateTitle));
+
+    private bool StrictTitleAuthorMatchesAnyExpectedTitle(
+        string title, IReadOnlyList<string>? alternateTitles, string? author, string candidateTitle, string? candidateAuthor) =>
+        ExpectedTitles(title, alternateTitles).Any(expectedTitle =>
+            matcher.StrictTitleAuthorMatches(expectedTitle, author, candidateTitle, candidateAuthor));
+
+    private static IEnumerable<string> ExpectedTitles(string title, IReadOnlyList<string>? alternateTitles) =>
+        new[] { title }
+            .Concat(alternateTitles ?? [])
+            .Where(expectedTitle => !string.IsNullOrWhiteSpace(expectedTitle))
+            .Distinct(StringComparer.Ordinal);
 
     private static Dictionary<string, ExternalProviderMatchVerdict> BuildVerdicts(
         IReadOnlyList<ExternalProviderCandidate> candidates, string? matchedId, BookMatchBasis? basis,

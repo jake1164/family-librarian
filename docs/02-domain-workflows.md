@@ -1168,6 +1168,31 @@ their encryption flag and never decrypts or circumvents DRM. Provider format
 constraints are a quota-saving hint, not enforcement; FL independently applies
 this policy before it can submit `/acquire`.
 
+For deterministic title identity, FL compares a candidate against the Work's
+canonical title and any distinct titles recorded on that same Work's catalog
+editions. These edition titles are catalog-owned evidence (for example, an
+original-language title), not provider labels or guessed translations. A
+candidate must still pass the strict title-and-author, language, release, DRM,
+and Safe-format checks before unattended acquisition; an author-only or broad
+title match remains reviewable. EPUB package identity verification uses the
+same title set after download.
+
+When automatic acquisition is disabled or the remaining candidates need a
+human review, Family Librarian does not ask a requester to guess between rows
+whose available evidence provides no meaningful distinction. The requester
+receives a concise explanation; the administrator receives the structured
+candidate evidence and, only when the provider explicitly supplied a safe
+browser inspection URL, a link to inspect that source page. Provider
+provenance and inspection URLs never leave administrator-authorized APIs.
+
+The explanation is an explicit review fact, not a client-side inference from
+the category name. When no candidate has identifier or strict title-and-author
+corroboration, it says that possible copies were found but their titles could
+not be confirmed as the requested work, and that a librarian must verify the
+source before acquisition. That is an identity review, not an edition
+preference. When work identity is confirmed but automatic acquisition is off,
+the explanation instead says that matching copies need librarian selection.
+
 CWA receives the original approved source file and performs any library/device
 conversion later. FL does not yet receive CWA's converted EPUB as an artifact,
 so it cannot structurally validate that converted file; Possible formats remain

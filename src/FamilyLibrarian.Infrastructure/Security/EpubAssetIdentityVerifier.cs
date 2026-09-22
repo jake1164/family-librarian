@@ -76,12 +76,17 @@ public sealed class EpubAssetIdentityVerifier(
             }
 
             var (titles, creators, languages) = await ReadPackageMetadataAsync(package, cancellationToken);
-            var titleMatches = titles.Any(title => bookMatcher.TitleMatches(expected.Title, title));
+            var expectedTitles = new[] { expected.Title }
+                .Concat(expected.AlternateTitles ?? [])
+                .Where(title => !string.IsNullOrWhiteSpace(title))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            var titleMatches = titles.Any(title => expectedTitles.Any(expectedTitle => bookMatcher.TitleMatches(expectedTitle, title)));
             var authorMatches = creators.Any(creator => bookMatcher.AuthorMatches(expected.PrimaryAuthor, creator));
             if (!titleMatches || !authorMatches)
             {
                 return AssetIdentityVerificationResult.Unmatched(Id, DescribeTitleAuthorMismatch(
-                    expected.Title, expected.PrimaryAuthor, titles, creators, titleMatches, authorMatches));
+                    expectedTitles, expected.PrimaryAuthor, titles, creators, titleMatches, authorMatches));
             }
 
             // Consent is specific to the selected language, including English.
@@ -112,7 +117,7 @@ public sealed class EpubAssetIdentityVerifier(
     /// line up.
     /// </summary>
     private static string DescribeTitleAuthorMismatch(
-        string expectedTitle,
+        IReadOnlyList<string> expectedTitles,
         string expectedAuthor,
         IReadOnlyList<string> foundTitles,
         IReadOnlyList<string> foundCreators,
@@ -123,8 +128,8 @@ public sealed class EpubAssetIdentityVerifier(
         if (!titleMatches)
         {
             parts.Add(foundTitles.Count == 0
-                ? $"the file has no embedded title (catalog expects \"{expectedTitle}\")"
-                : $"the file's embedded title is \"{string.Join("\" / \"", foundTitles)}\" but the catalog expects \"{expectedTitle}\"");
+                ? $"the file has no embedded title (catalog expects \"{string.Join("\" / \"", expectedTitles)}\")"
+                : $"the file's embedded title is \"{string.Join("\" / \"", foundTitles)}\" but the catalog expects one of \"{string.Join("\" / \"", expectedTitles)}\"");
         }
 
         if (!authorMatches)

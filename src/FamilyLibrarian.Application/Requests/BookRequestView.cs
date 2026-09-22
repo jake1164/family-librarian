@@ -43,7 +43,8 @@ public sealed record BookRequestView(
 /// </summary>
 public sealed record RequestNeedsReviewView(
     RequestReviewCategory Category,
-    IReadOnlyList<RequestReviewCandidateView> Candidates);
+    IReadOnlyList<RequestReviewCandidateView> Candidates,
+    string? Reason = null);
 
 public sealed record RequestReviewCandidateView(
     Guid CandidateId, string Title, string? Author, string? Language, string? Details);
@@ -77,7 +78,18 @@ public sealed record AdminBookRequestView(
     string RequesterDisplayName,
     string RequesterEmail,
     IReadOnlyList<RequestStatusHistoryView> StatusHistory,
-    IReadOnlyList<RequestParticipantView>? Participants = null);
+    IReadOnlyList<RequestParticipantView>? Participants = null,
+    IReadOnlyList<AdminRequestReviewCandidateView>? ReviewCandidates = null);
+
+/// <summary>Administrative candidate evidence, including source inspection only available to a librarian.</summary>
+public sealed record AdminRequestReviewCandidateView(
+    Guid CandidateId,
+    string ProviderId,
+    string Title,
+    string? Author,
+    string? Language,
+    string? Details,
+    string? InspectionUri);
 
 public sealed record RequestParticipantView(string DisplayName, string Email, string? Note, bool Withdrawn);
 

@@ -133,25 +133,34 @@
             </MudStack>
         </MudPaper>
 
-        @if (request.Request.NeedsReview is { Category: "PreferenceAmbiguity" } review)
+        @if (request.Request.NeedsReview is { Category: "PreferenceAmbiguity" } &&
+             request.ReviewCandidates is { Count: > 0 } reviewCandidates)
         {
             <MudPaper Outlined="true" Class="pa-4">
                 <MudStack Spacing="2">
-                    <MudText Typo="Typo.h6">Preference review</MudText>
+                    <MudText Typo="Typo.h6">Librarian candidate review</MudText>
                     <MudText Typo="Typo.body2">
-                        The requester was offered these candidates directly. An admin can resolve the same review
-                        (additive, not exclusive) if the requester hasn't -- e.g. for a request with no active participant.
+                        @ReviewReason(request.Request.NeedsReview)
                     </MudText>
-                    @foreach (var candidate in review.Candidates)
+                    @foreach (var candidate in reviewCandidates)
                     {
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-                            <MudText Typo="Typo.body2">@CandidateLabel(candidate)</MudText>
-                            <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Success"
-                                       Disabled="@isBusy"
-                                       OnClick="() => ResolveNeedsReviewAsync(candidate.CandidateId)">
-                                Get it anyway
-                            </MudButton>
-                        </MudStack>
+                        <MudPaper Outlined="true" Class="pa-3">
+                            <MudStack Spacing="1">
+                                <MudText Typo="Typo.body1">@AdminCandidateLabel(candidate)</MudText>
+                                <MudText Typo="Typo.caption">Provider: @candidate.ProviderId</MudText>
+                                @if (!string.IsNullOrWhiteSpace(candidate.InspectionUri))
+                                {
+                                    <a href="@candidate.InspectionUri" target="_blank" rel="noopener noreferrer">
+                                        Inspect source page
+                                    </a>
+                                }
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Success"
+                                           Disabled="@isBusy"
+                                           OnClick="() => ResolveNeedsReviewAsync(candidate.CandidateId)">
+                                    Acquire this reviewed copy
+                                </MudButton>
+                            </MudStack>
+                        </MudPaper>
                     }
                     <MudButton Variant="Variant.Text" Size="Size.Small" Disabled="@isBusy"
                                OnClick="() => ResolveNeedsReviewAsync(null)">
@@ -550,7 +559,7 @@
         }
     }
 
-    private static string CandidateLabel(RequestReviewCandidateResponse candidate) =>
+    private static string AdminCandidateLabel(AdminRequestReviewCandidateResponse candidate) =>
         (candidate.Author is { } author
             ? string.IsNullOrWhiteSpace(candidate.Language)
                 ? $"{candidate.Title} by {author}"
@@ -559,6 +568,11 @@
                 ? candidate.Title
                 : $"{candidate.Title} ({candidate.Language})") +
         (string.IsNullOrWhiteSpace(candidate.Details) ? string.Empty : $" — {candidate.Details}");
+
+    private static string ReviewReason(NeedsReviewResponse? review) =>
+        string.IsNullOrWhiteSpace(review?.Reason)
+            ? "Compare the source evidence here, then select one copy for acquisition."
+            : review.Reason;
 
     private async Task ApplyOutcomeAsync(AdminRequestActionOutcome outcome)
     {

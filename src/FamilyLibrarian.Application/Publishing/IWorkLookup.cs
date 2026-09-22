@@ -21,6 +21,12 @@ public interface IWorkLookup
 /// </param>
 /// <param name="PublicationYear">Same best-effort source as <paramref name="Language"/>.</param>
 /// <param name="Publisher">Same best-effort source as <paramref name="Language"/>.</param>
+/// <param name="AlternateTitles">
+/// Distinct non-empty titles recorded on this Work's Editions, excluding the
+/// canonical Work title. These are catalog-owned identity evidence (for
+/// example, an original-language edition title), never provider-supplied
+/// labels or inferred translations.
+/// </param>
 public sealed record WorkSummary(
     Guid WorkId,
     string Title,
@@ -30,4 +36,5 @@ public sealed record WorkSummary(
     IReadOnlyList<BookSeries>? Series = null,
     string? Language = null,
     int? PublicationYear = null,
-    string? Publisher = null);
+    string? Publisher = null,
+    IReadOnlyList<string>? AlternateTitles = null);

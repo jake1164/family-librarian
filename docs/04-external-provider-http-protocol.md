@@ -236,6 +236,7 @@ Response:
       "providerReference": "abc123",
       "candidateRevision": null,
       "acquireToken": null,
+      "inspectionUrl": "https://provider.example.test/item/abc123",
 
       "work": {
         "title": "Debt of Honor",
@@ -276,6 +277,7 @@ Response:
 | `providerReference` | **yes** | A candidate missing this is silently dropped by the client. Must be an opaque, stable string you can resolve again in `/acquire` — it does not need to mean anything to Family Librarian, and it does **not** need to be a download URL. It can be a content hash, a release GUID, or any other stable identifier you can look up later. |
 | `candidateRevision` | no | Opaque version marker for this candidate's underlying record. See §8's staleness-conflict behavior. Most providers can omit this — see the note there. |
 | `acquireToken` | no | Opaque state you want carried forward unchanged to `/acquire`, for a provider that cannot cheaply re-derive everything from `providerReference` alone at acquire time (e.g. a stateless scraper that captured ephemeral session data during search). A provider backed by a local index or a queryable GUID index typically does not need this — it can simply re-resolve by `providerReference` when `/acquire` is called. Family Librarian stores and returns this value unchanged, never inspects or logs it. |
+| `inspectionUrl` | no | Stable, browser-viewable candidate detail page for an administrator to inspect before a review decision. It must be an absolute `http` or `https` URL with no embedded credentials, and must **not** be a download, interaction, signed, or bearer-token URL. FL validates and persists it only for an administrator-only review projection; it never appears in family/requester APIs and never participates in acquisition. Omit it when no safe page exists. |
 | `work`, `edition`, `release` | no, but populate what you have | Structured evidence, not a trusted verdict — Family Librarian performs its own match decision using this evidence (§7). `work`/`edition` mirror the request shape (structured authors/series/identifiers). `release` carries release-level facts distinct from the canonical book: original release/file name, format, DRM state, size, whether it's a multi-book collection or a sample, part count, abridged/unabridged status, free-form quality tags, and age. This is what lets Family Librarian reject a 20-book collection when one book was requested, a sample, an encrypted artifact, or a mismatched abridgement, without you having to make that judgment yourself. |
 | `release.format` | required for an FL ebook candidate | Bare source-format token such as `epub`, `azw3`, or `mobi`. FL currently accepts `epub`, `azw3`, `mobi`, `azw` as Safe sources and `fb2`, `fbz`, `kepub`, `prc`, `docx` as review-required Possible sources. It rejects all other external ebook formats before acquisition. |
 | `release.drm` | required for unattended FL ebook acquisition | One of `none`, `encrypted`, or `unknown`. Omit it only when unknown. `encrypted` is rejected without acquisition. A Safe, strict-equivalent candidate with `unknown` may be submitted once by an administrator-enabled automatic route only when the provider validates the actual downloaded bytes before exposing an output; if protected, it must discard the artifact and fail the job. A provider must report only what its own metadata/index or inspection can establish; it must not guess that a release is DRM-free. |
@@ -297,8 +299,14 @@ returns, it independently checks your candidates' evidence — identifiers
 first, then title/author/series/language — against what was actually
 requested, and assigns its own internal decision (auto-accept, requires
 review, or reject) with an explainable evidence list. A provider-side
-ranking score, if you supply one via `extensions`, may help you order
-results but is never treated as Family Librarian's match confidence.
+ranking score, if you supply one via `extensions`, may help you order results
+but is never treated as Family Librarian's match confidence.
+
+If none of the candidates gains identifier or strict title-and-author
+corroboration, Family Librarian's requester-safe review reason says that the
+title could not be confirmed as the requested work. It does not describe this
+as an edition preference or ask the requester to choose an arbitrary record;
+an administrator can inspect provider evidence where available.
 
 Implication for you: the more accurately and completely you populate
 `work`/`edition`/`release` evidence, the more often a correct result can be
@@ -317,7 +325,8 @@ This is deliberately a conversation, not a provider-side verdict:
    `acquireToken`).
 3. FL evaluates every candidate independently. A unique corroborated
    identifier match, or one deterministic strict title-and-observed-author
-   equivalence, can be auto-acquired only when the administrator has
+   equivalence against the canonical Work title or a title recorded on one of
+   that Work's catalog editions, can be auto-acquired only when the administrator has
    explicitly enabled auto-acquisition and FL finds no language or release
    concern. For ebooks, that means a Safe source format. `drm: "none"` is
    immediately eligible; `drm: "unknown"` may use one acquisition only when

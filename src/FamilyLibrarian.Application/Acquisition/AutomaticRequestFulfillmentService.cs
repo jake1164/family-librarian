@@ -159,7 +159,8 @@ public sealed class AutomaticRequestFulfillmentService(
                             "Multiple plausible editions were found.", cancellationToken,
                             autoEligible.Select(option => (format.Id, option.ProviderId, option.ProviderResultId,
                                 option.Title, option.Author, option.Language,
-                                RequestReviewCandidatePresentation.BuildDetails(option)))
+                                RequestReviewCandidatePresentation.BuildDetails(option),
+                                option.AdminInspectionUri?.ToString()))
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
@@ -189,7 +190,8 @@ public sealed class AutomaticRequestFulfillmentService(
                             "A copy was found, but not in English.", cancellationToken,
                             languageExcluded.Select(option => (format.Id, option.ProviderId, option.ProviderResultId,
                                 option.Title, option.Author, option.Language,
-                                RequestReviewCandidatePresentation.BuildDetails(option)))
+                                RequestReviewCandidatePresentation.BuildDetails(option),
+                                option.AdminInspectionUri?.ToString()))
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
@@ -483,7 +485,7 @@ public sealed class AutomaticRequestFulfillmentService(
         RequestReviewCategory category,
         string reason,
         CancellationToken cancellationToken,
-        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string? Title, string? Author, string? Language, string? Details)>? candidateOptions = null)
+        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string? Title, string? Author, string? Language, string? Details, string? AdminInspectionUri)>? candidateOptions = null)
     {
         if (request.Status != RequestStatus.PendingAcquisition)
         {
@@ -501,7 +503,7 @@ public sealed class AutomaticRequestFulfillmentService(
         var candidates = candidateOptions?
             .Select(option => (option.RequestFormatId, option.ProviderId, option.ProviderResultId,
                 Title: workTitle, Author: workAuthor, option.Language,
-                option.Details))
+                option.Details, option.AdminInspectionUri))
             .ToArray();
         request.MarkNeedsReview(category, reason, clock.UtcNow, candidates);
 

@@ -66,6 +66,20 @@ public sealed class EpubAssetIdentityVerifierTests
     }
 
     [TestMethod]
+    public async Task APackageTitleMatchingARecordedEditionTitleIsAccepted()
+    {
+        var verifier = CreateVerifier(
+            "Mekhanicheskiĭ apelʹsin", "Anthony Burgess", alternateTitles: ["A Clockwork Orange"]);
+
+        var result = await verifier.VerifyAsync(
+            CreateAsset(),
+            BuildEpub("A Clockwork Orange", "Anthony Burgess"),
+            CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch);
+    }
+
+    [TestMethod]
     public async Task ACreatorWithAParentheticalFullNameStillMatches()
     {
         var verifier = CreateVerifier("Peter Pan", "J. M. Barrie");
@@ -204,15 +218,16 @@ public sealed class EpubAssetIdentityVerifierTests
         var format = request.Formats.Single();
         request.MarkNeedsReview(
             RequestReviewCategory.PreferenceAmbiguity, "A copy was found, but not in English.", DateTimeOffset.UtcNow,
-            [(format.Id, "gutenberg", "12345", "Restore Me", "Tahereh Mafi", language, null)]);
+            [(format.Id, "gutenberg", "12345", "Restore Me", "Tahereh Mafi", language, null, null)]);
         var candidateId = request.ReviewCandidates.Single().Id;
         request.AcceptReviewCandidate(candidateId, actorUserId: null, DateTimeOffset.UtcNow);
         return (request, format);
     }
 
     private static EpubAssetIdentityVerifier CreateVerifier(
-        string title, string author, IBookRequestFulfillmentStore? requestFulfillment = null) =>
-        new(new StubWorkLookup(title, author), new DeterministicBookMatcher(),
+        string title, string author, IBookRequestFulfillmentStore? requestFulfillment = null,
+        IReadOnlyList<string>? alternateTitles = null) =>
+        new(new StubWorkLookup(title, author, alternateTitles), new DeterministicBookMatcher(),
             requestFulfillment ?? new FakeRequestFulfillmentStore(null, null));
 
     private static MemoryStream BuildEpub(string title, string? creator, string? language = null)
@@ -246,10 +261,11 @@ public sealed class EpubAssetIdentityVerifierTests
         writer.Write(contents);
     }
 
-    private sealed class StubWorkLookup(string title, string author) : IWorkLookup
+    private sealed class StubWorkLookup(
+        string title, string author, IReadOnlyList<string>? alternateTitles = null) : IWorkLookup
     {
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, title, author, []));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, title, author, [], AlternateTitles: alternateTitles));
     }
 
     private sealed class FakeRequestFulfillmentStore(Guid? requestFormatId, BookRequest? request) : IBookRequestFulfillmentStore

@@ -91,7 +91,10 @@ public sealed record FulfillmentOption(
     long? SizeBytes = null,
     int? PartCount = null,
     bool? IsAbridged = null,
-    bool? IsUnabridged = null);
+    bool? IsUnabridged = null,
+    // A provider-declared, non-download browser page for an administrator to
+    // inspect a candidate. It is deliberately never part of a requester view.
+    Uri? AdminInspectionUri = null);
 
 public enum OptionKind
 {
@@ -135,7 +138,8 @@ public sealed record BookIdentity(
     IReadOnlyList<BookSeries>? Series = null,
     string? Language = null,
     int? PublicationYear = null,
-    string? Publisher = null);
+    string? Publisher = null,
+    IReadOnlyList<string>? AlternateTitles = null);
 
 /// <summary>Advertises store-offer discovery. No concrete implementation ships in M8.</summary>
 public interface IStoreOfferProvider

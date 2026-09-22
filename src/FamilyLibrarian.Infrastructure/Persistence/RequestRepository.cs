@@ -526,12 +526,18 @@ public sealed class RequestRepository(
             return new Dictionary<Guid, RequestNeedsReviewView>();
         }
 
-        var preferenceAmbiguityIds = await database.BookRequests
+        var preferenceReviews = await database.BookRequests
             .AsNoTracking()
             .Where(request => needsReviewIds.Contains(request.Id) &&
                 request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity)
-            .Select(request => request.Id)
+            .Select(request => new PreferenceReviewRow(
+                request.Id,
+                request.StatusHistory
+                    .OrderByDescending(history => history.OccurredAtUtc)
+                    .Select(history => history.Reason)
+                    .FirstOrDefault()))
             .ToArrayAsync(cancellationToken);
+        var preferenceAmbiguityIds = preferenceReviews.Select(review => review.RequestId).ToArray();
         if (preferenceAmbiguityIds.Length == 0)
         {
             return new Dictionary<Guid, RequestNeedsReviewView>();
@@ -557,7 +563,8 @@ public sealed class RequestRepository(
             requestId => requestId,
             requestId => new RequestNeedsReviewView(
                 RequestReviewCategory.PreferenceAmbiguity,
-                candidatesByRequest.TryGetValue(requestId, out var list) ? list : []));
+                candidatesByRequest.TryGetValue(requestId, out var list) ? list : [],
+                preferenceReviews.Single(review => review.RequestId == requestId).Reason));
     }
 
     private static IReadOnlyList<BookRequestView> ApplyNeedsReview(
@@ -684,7 +691,18 @@ public sealed class RequestRepository(
                 database.Users.Where(member => member.Id == participant.UserId).Select(member => member.DisplayName).First(),
                 database.Users.Where(member => member.Id == participant.UserId).Select(member => member.Email!).First(),
                 participant.Note,
-                participant.WithdrawnAtUtc != null)).ToList());
+                participant.WithdrawnAtUtc != null)).ToList(),
+            request.ReviewCandidates
+                .OrderBy(candidate => candidate.DisplayOrder)
+                .Select(candidate => new AdminRequestReviewCandidateView(
+                    candidate.Id,
+                    candidate.ProviderId,
+                    candidate.Title,
+                    candidate.Author,
+                    candidate.Language,
+                    candidate.Details,
+                    candidate.AdminInspectionUri))
+                .ToList());
 
     private sealed record ProviderJobProgressRow(
         Guid RequestFormatId,
@@ -716,4 +734,6 @@ public sealed class RequestRepository(
 
     private sealed record RequestReviewCandidateRow(
         Guid RequestId, Guid CandidateId, string Title, string? Author, string? Language, string? Details);
+
+    private sealed record PreferenceReviewRow(Guid RequestId, string? Reason);
 }

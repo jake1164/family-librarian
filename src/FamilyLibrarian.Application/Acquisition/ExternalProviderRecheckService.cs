@@ -119,7 +119,8 @@ public sealed class ExternalProviderRecheckService(
                         searchCancellation.CancelAfter(BackgroundSearchTimeout);
                         var identity = new BookIdentity(
                             work.Title, work.PrimaryAuthor, work.Isbn13s,
-                            work.Authors, work.Series, work.Language, work.PublicationYear, work.Publisher);
+                            work.Authors, work.Series, work.Language, work.PublicationYear, work.Publisher,
+                            work.AlternateTitles);
                         var options = await candidateChecker.FindForProviderAsync(
                             provider, resolution.Route!, identity, format.MediaType, searchCancellation.Token);
 
@@ -185,7 +186,8 @@ public sealed class ExternalProviderRecheckService(
                             $"Found {options.Count} candidate(s); choose a reviewed candidate before acquisition.",
                             nextEligibleCheckAtUtc: null);
                         await MarkForCandidateReviewAsync(
-                            request, format, provider, work.Title, work.PrimaryAuthor, options, cancellationToken);
+                            request, format, provider, work.Title, work.PrimaryAuthor, options,
+                            DescribeCandidateReviewReason(options, provider.AutoAcquireEnabled), cancellationToken);
                         break;
                     }
                     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested &&
@@ -279,6 +281,7 @@ public sealed class ExternalProviderRecheckService(
         string workTitle,
         string? workAuthor,
         IReadOnlyList<FulfillmentOption> options,
+        string reason,
         CancellationToken cancellationToken)
     {
         if (request.Status != RequestStatus.PendingAcquisition)
@@ -289,7 +292,6 @@ public sealed class ExternalProviderRecheckService(
         // The stored review may collapse records that are identical to the
         // requester, so do not report the raw provider result count as though
         // it were the number of choices a person will see.
-        var reason = $"{provider.DisplayName} found candidate editions that need a choice before acquisition.";
         request.MarkNeedsReview(
             RequestReviewCategory.PreferenceAmbiguity,
             reason,
@@ -301,12 +303,30 @@ public sealed class ExternalProviderRecheckService(
                 workTitle,
                 workAuthor,
                 option.Language,
-                RequestReviewCandidatePresentation.BuildDetails(option))).ToArray());
+                RequestReviewCandidatePresentation.BuildDetails(option),
+                option.AdminInspectionUri?.ToString())).ToArray());
         await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
         foreach (var requesterId in request.ActiveRequesterIds)
         {
             await notifications.RecordPreferenceAmbiguityAsync(
                 requesterId, request.Id, workTitle, reason, cancellationToken);
         }
+    }
+
+    private static string DescribeCandidateReviewReason(
+        IReadOnlyList<FulfillmentOption> options,
+        bool autoAcquireEnabled)
+    {
+        var hasConfirmedWorkIdentity = options.Any(option =>
+            option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor);
+
+        if (!hasConfirmedWorkIdentity)
+        {
+            return "Possible copies were found, but their titles could not be confirmed as the requested work. A librarian must verify the source before acquisition.";
+        }
+
+        return autoAcquireEnabled
+            ? "Several matching copies need a librarian comparison before acquisition."
+            : "Matching copies were found, but automatic acquisition is disabled. A librarian will verify and select one.";
     }
 }

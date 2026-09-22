@@ -97,6 +97,19 @@ there. On admin surfaces (`Tasks`, `RequestQueue`, `RequestDetail`) the viewer
 *is* the librarian, so the same sentence reads as narration — use the short
 label instead (the default).
 
+## Review-decision language
+
+A review category is routing metadata, not an explanation a person can act
+on. Requester and administrator review panels must render the host-provided
+plain-language review reason. In particular, an external search whose title
+could not be corroborated as the requested Work must say so; it must never be
+headed or described merely as a “preference review.” Do not manufacture a
+quality recommendation from byte count, publication year, provider ordering,
+or free-form quality tags. When there is no meaningful requester-visible
+difference between multiple records, tell the requester that a librarian will
+compare them and expose the provider/source inspection evidence only in the
+administrator panel.
+
 ## Adding a new status or media type
 
 1. Add the color/label mapping to `MediaTypeVisuals` — not to the page.

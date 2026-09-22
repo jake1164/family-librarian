@@ -239,9 +239,9 @@ public sealed class BookRequestTests
             "Choose an edition.",
             CreatedAt.AddHours(1),
             [
-                (formatId, "provider-a", "opaque-a", "The Martian", "Andy Weir", "en", "EPUB · Published 2014 · Example Press"),
-                (formatId, "provider-a", "opaque-b", "the   martian", "Weir, Andy", "EN", "epub · published 2014 · example press"),
-                (formatId, "provider-a", "opaque-c", "The Martian", "Andy Weir", "en", "EPUB · Published 2015 · Archive House")
+                (formatId, "provider-a", "opaque-a", "The Martian", "Andy Weir", "en", "EPUB · Published 2014 · Example Press", null),
+                (formatId, "provider-a", "opaque-b", "the   martian", "Weir, Andy", "EN", "epub · published 2014 · example press", null),
+                (formatId, "provider-a", "opaque-c", "The Martian", "Andy Weir", "en", "EPUB · Published 2015 · Archive House", null)
             ]);
 
         Assert.HasCount(2, request.ReviewCandidates);

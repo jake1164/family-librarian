@@ -418,6 +418,14 @@ public sealed class ExternalProviderAutomaticReviewFallbackEndpointTests
         Assert.AreEqual(RequestStatus.NeedsReview, persisted.Status);
         Assert.AreEqual(0, await database.MediaAssets.CountAsync(
             asset => asset.AssociatedRequestFormatId == format.FormatId));
+
+        var requesterView = await admin.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(requesterView);
+        var review = requesterView.Active.Single(item => item.Id == request.Id).NeedsReview;
+        Assert.IsNotNull(review);
+        Assert.AreEqual(
+            "Possible copies were found, but their titles could not be confirmed as the requested work. A librarian must verify the source before acquisition.",
+            review.Reason);
     }
 }
 
@@ -609,6 +617,8 @@ public sealed class ExternalProviderReviewCandidatePresentationEndpointTests
             review.NeedsReview.Candidates.Select(candidate => candidate.Details).ToArray());
         Assert.IsFalse(rawResponse.Contains("presentation-external", StringComparison.OrdinalIgnoreCase));
         Assert.IsFalse(rawResponse.Contains("opaque-duplicate", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(rawResponse.Contains("source.example.test", StringComparison.OrdinalIgnoreCase),
+            "A provider inspection URL is administrator-only and must never leave the family endpoint.");
         Assert.AreEqual(
             searchCallsBeforeRecheck + 1,
             providerClient.SearchCalls,
@@ -624,6 +634,14 @@ public sealed class ExternalProviderReviewCandidatePresentationEndpointTests
         Assert.HasCount(2, persisted);
         Assert.AreEqual("opaque-duplicate-a", persisted[0].ProviderResultId,
             "The first duplicate remains an opaque server-side acquisition handle.");
+
+        var adminView = await requester.GetFromJsonAsync<AdminBookRequestResponse>(
+            $"/api/v1/admin/requests/{request.Id}");
+        Assert.IsNotNull(adminView);
+        Assert.IsNotNull(adminView.ReviewCandidates);
+        Assert.HasCount(2, adminView.ReviewCandidates);
+        Assert.AreEqual("presentation-external", adminView.ReviewCandidates[0].ProviderId);
+        Assert.AreEqual("https://source.example.test/md5/opaque-duplicate-a", adminView.ReviewCandidates[0].InspectionUri);
     }
 }
 
@@ -884,7 +902,8 @@ file sealed class PresentationExternalProviderClient : IExternalProviderClient
                 "opaque-duplicate-a", work,
                 new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),
                 new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null,
-                    ExternalProviderDrmStatus.None)),
+                    ExternalProviderDrmStatus.None),
+                InspectionUri: new Uri("https://source.example.test/md5/opaque-duplicate-a")),
             new ExternalProviderCandidate(
                 "opaque-duplicate-b", work,
                 new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),
@@ -894,7 +913,8 @@ file sealed class PresentationExternalProviderClient : IExternalProviderClient
                 "opaque-edition-c", work,
                 new ExternalProviderEditionEvidence("en", 2016, "Archive House", identifiers),
                 new ExternalProviderReleaseEvidence(null, "epub", 2_097_152, false, 1, false, null, null, [], null,
-                    ExternalProviderDrmStatus.None)),
+                    ExternalProviderDrmStatus.None),
+                InspectionUri: new Uri("https://source.example.test/md5/opaque-edition-c")),
             new ExternalProviderCandidate(
                 "opaque-duplicate-d", work,
                 new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),

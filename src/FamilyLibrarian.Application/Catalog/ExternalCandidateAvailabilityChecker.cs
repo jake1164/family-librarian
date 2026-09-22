@@ -155,8 +155,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
             return [];
         }
 
-        var verdicts = await matchVerifier.VerifyAsync(
-            identity.Title, identity.Author, isbn13, candidates, cancellationToken, identity.Language);
+        var verdicts = await matchVerifier.VerifyAsync(identity, candidates, cancellationToken);
 
         var candidatesWithVerdicts = candidates.Select(candidate =>
         {
@@ -247,7 +246,8 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 SizeBytes: sourceCandidate.Release?.SizeBytes,
                 PartCount: sourceCandidate.Release?.PartCount,
                 IsAbridged: sourceCandidate.Release?.IsAbridged,
-                IsUnabridged: sourceCandidate.Release?.IsUnabridged);
+                IsUnabridged: sourceCandidate.Release?.IsUnabridged,
+                AdminInspectionUri: sourceCandidate.InspectionUri);
         }).ToArray();
     }
 

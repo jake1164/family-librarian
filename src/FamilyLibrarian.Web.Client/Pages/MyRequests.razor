@@ -90,11 +90,12 @@
                     </MudStack>
                     @if (request.NeedsReview is { Category: "PreferenceAmbiguity" } review)
                     {
-                        <MudAlert Severity="Severity.Info" Dense="true">
-                            We found an edition, but want to check with you before getting it.
-                        </MudAlert>
-                        @foreach (var candidate in review.Candidates)
+                        @if (review.Candidates.Count == 1)
                         {
+                            var candidate = review.Candidates[0];
+                            <MudAlert Severity="Severity.Info" Dense="true">
+                                @ReviewReason(review)
+                            </MudAlert>
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                                 <MudText Typo="Typo.body2">@CandidateLabel(candidate)</MudText>
                                 <MudButton Variant="Variant.Text"
@@ -102,16 +103,16 @@
                                            Color="Color.Success"
                                            Disabled="@(busyRequestId == request.Id)"
                                            OnClick="() => ResolveNeedsReviewAsync(request, candidate.CandidateId)">
-                                    Get it anyway
+                                    Get this copy
                                 </MudButton>
                             </MudStack>
                         }
-                        <MudButton Variant="Variant.Text"
-                                   Size="Size.Small"
-                                   Disabled="@(busyRequestId == request.Id)"
-                                   OnClick="() => ResolveNeedsReviewAsync(request, null)">
-                            Keep looking
-                        </MudButton>
+                        else
+                        {
+                            <MudAlert Severity="Severity.Info" Dense="true">
+                                @ReviewReason(review)
+                            </MudAlert>
+                        }
                     }
                     @if (request.KindleDelivery is { } kindle)
                     {
@@ -292,6 +293,11 @@
                 ? candidate.Title
                 : $"{candidate.Title} ({candidate.Language})") +
         (string.IsNullOrWhiteSpace(candidate.Details) ? string.Empty : $" — {candidate.Details}");
+
+    private static string ReviewReason(NeedsReviewResponse review) =>
+        string.IsNullOrWhiteSpace(review.Reason)
+            ? "A librarian is reviewing these copies before selecting one."
+            : review.Reason;
 
     private async Task RetryKindleDeliveryAsync(Guid attemptId, bool confirmPossibleDuplicate)
     {

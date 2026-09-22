@@ -153,6 +153,30 @@ public sealed class ExternalProviderClientTests
     }
 
     [TestMethod]
+    public async Task SearchAcceptsOnlySafeProviderInspectionUris()
+    {
+        var handler = new StaticSearchHandler("""
+            { "candidates": [
+              { "providerReference": "safe", "inspectionUrl": "https://source.example.test/item/safe", "work": { "title": "Safe" } },
+              { "providerReference": "unsafe", "inspectionUrl": "javascript:alert(1)", "work": { "title": "Unsafe" } },
+              { "providerReference": "credentialed", "inspectionUrl": "https://user:secret@source.example.test/item", "work": { "title": "Credentialed" } }
+            ] }
+            """);
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(handler));
+
+        var results = await client.SearchAsync(
+            "http://provider.test", apiKey: null,
+            new ExternalProviderSearchRequest(
+                Guid.NewGuid(), RequestMediaType.Ebook,
+                new ExternalProviderWorkEvidence("Any", null, [], [], [])),
+            EgressRoute.Direct, CancellationToken.None);
+
+        Assert.AreEqual("https://source.example.test/item/safe", results.Single(candidate => candidate.ProviderReference == "safe").InspectionUri?.ToString());
+        Assert.IsNull(results.Single(candidate => candidate.ProviderReference == "unsafe").InspectionUri);
+        Assert.IsNull(results.Single(candidate => candidate.ProviderReference == "credentialed").InspectionUri);
+    }
+
+    [TestMethod]
     public async Task AcquirePollsThroughToACompletedArtifact()
     {
         var client = CreateClient();
@@ -427,5 +451,16 @@ public sealed class ExternalProviderClientTests
                 Content = new StringContent("{\"candidates\":[]}")
             };
         }
+    }
+
+    private sealed class StaticSearchHandler(string payload) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload)
+            });
     }
 }

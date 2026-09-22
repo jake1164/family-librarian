@@ -418,5 +418,13 @@ internal static class AdminRequestEndpoints
                 history.OccurredAtUtc))
             .ToArray(),
         request.Participants?.Select(participant => new RequestParticipantResponse(
-            participant.DisplayName, participant.Email, participant.Note, participant.Withdrawn)).ToArray());
+            participant.DisplayName, participant.Email, participant.Note, participant.Withdrawn)).ToArray(),
+        request.ReviewCandidates?.Select(candidate => new AdminRequestReviewCandidateResponse(
+            candidate.CandidateId,
+            candidate.ProviderId,
+            candidate.Title,
+            candidate.Author,
+            candidate.Language,
+            candidate.Details,
+            candidate.InspectionUri)).ToArray());
 }

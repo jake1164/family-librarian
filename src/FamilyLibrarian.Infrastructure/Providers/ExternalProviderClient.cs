@@ -207,7 +207,8 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
                 ParseRelease(node["release"]),
                 node["candidateRevision"]?.GetValue<string>(),
                 node["acquireToken"]?.GetValue<string>(),
-                node["extensions"]?.ToJsonString()));
+                node["extensions"]?.ToJsonString(),
+                ParseInspectionUri(node["inspectionUrl"]?.GetValue<string>())));
         }
 
         return results;
@@ -317,6 +318,18 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         "encrypted" => ExternalProviderDrmStatus.Encrypted,
         _ => ExternalProviderDrmStatus.Unknown
     };
+
+    // An inspection URI is rendered only on an administrator surface. It is
+    // still untrusted provider input: accept only browser-safe absolute HTTP(S)
+    // links with no embedded credentials, and never treat it as an acquire URL.
+    private static Uri? ParseInspectionUri(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        (string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) &&
+        !string.IsNullOrWhiteSpace(uri.Host) &&
+        string.IsNullOrEmpty(uri.UserInfo)
+            ? uri
+            : null;
 
     private static List<BookAuthor> ParseAuthors(JsonNode? authorsNode)
     {

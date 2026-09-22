@@ -245,7 +245,8 @@ internal static class RequestEndpoints
                 needsReview.Candidates
                     .Select(candidate => new RequestReviewCandidateResponse(
                         candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language, candidate.Details))
-                    .ToArray())
+                    .ToArray(),
+                needsReview.Reason)
             : null);
 
     // Plain language for a family, not the enum name. The status itself travels
