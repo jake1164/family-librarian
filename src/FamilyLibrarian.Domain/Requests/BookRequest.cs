@@ -194,6 +194,42 @@ public sealed class BookRequest
     }
 
     /// <summary>
+    /// Replaces stale evidence for an existing preference review without
+    /// reopening the request. Used only when a background worker can recover
+    /// evidence that an older review did not retain.
+    /// </summary>
+    public void RefreshPreferenceReview(
+        string reason,
+        DateTimeOffset atUtc,
+        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string Title, string? Author, string? Language, string? Details, string? AdminInspectionUri)> candidates)
+    {
+        if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
+        {
+            throw new InvalidOperationException("Only an existing preference review can be refreshed.");
+        }
+
+        if (candidates.Count == 0)
+        {
+            throw new ArgumentException("A preference review requires at least one candidate.", nameof(candidates));
+        }
+
+        _reviewCandidates.Clear();
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            var candidate = candidates[index];
+            _reviewCandidates.Add(new RequestReviewCandidate(
+                Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
+                candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri, index, atUtc));
+        }
+
+        StatusChangedAtUtc = atUtc;
+        UpdatedAtUtc = atUtc;
+        _statusHistory.Add(new RequestStatusHistory(
+            Id, RequestStatus.NeedsReview, RequestStatus.NeedsReview, actorUserId: null,
+            CleanNote(reason, MaxReasonLength, nameof(reason)), atUtc));
+    }
+
+    /// <summary>
     /// The requester (or an admin -- additive, not exclusive) accepts a
     /// specific <see cref="RequestReviewCandidate"/> from a
     /// <see cref="RequestReviewCategory.PreferenceAmbiguity"/> review ("get it

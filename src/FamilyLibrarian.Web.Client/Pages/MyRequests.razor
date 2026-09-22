@@ -299,7 +299,7 @@
 
     private static string ReviewReason(NeedsReviewResponse review) =>
         IsLegacyCollapsedReview(review)
-            ? "A librarian is comparing the source records before selecting one."
+            ? "A librarian is comparing the audiobook records. The automatic source rule did not find one clear enough to choose safely."
             : string.IsNullOrWhiteSpace(review.Reason)
                 ? "A librarian is reviewing these copies before selecting one."
                 : review.Reason;

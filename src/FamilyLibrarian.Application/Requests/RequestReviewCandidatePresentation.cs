@@ -41,6 +41,11 @@ public static class RequestReviewCandidatePresentation
             facts.Add($"{option.PartCount.Value.ToString(CultureInfo.InvariantCulture)} parts");
         }
 
+        if (option.ProviderPopularity is > 0)
+        {
+            facts.Add($"{option.ProviderPopularity.Value.ToString("N0", CultureInfo.InvariantCulture)} source downloads");
+        }
+
         if (option.IsUnabridged == true)
         {
             facts.Add("Unabridged");

@@ -115,6 +115,10 @@ For a legacy review saved before those records were retained, suppress any
 one-row requester action rather than presenting a false choice; the admin view
 may show a stable built-in-catalogue record page when the stored record ID is
 validated.
+Where a built-in source has a narrow deterministic tie-breaker, show its
+stored decision evidence (the metric, threshold, and runner-up) rather than
+calling the result “better.” Do not turn that source-specific evidence into a
+general-purpose quality badge or color.
 
 ## Adding a new status or media type
 

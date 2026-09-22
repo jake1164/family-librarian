@@ -71,7 +71,8 @@ public sealed class AutomaticRequestFulfillmentService(
         foreach (var request in pending)
         {
             if (request.RequiresManualFulfillment) continue;
-            var reviewedFormatIds = request.Status == RequestStatus.NeedsReview
+            var refreshLegacyReview = IsLegacyCollapsedPreferenceReview(request);
+            var reviewedFormatIds = request.Status == RequestStatus.NeedsReview && !refreshLegacyReview
                 ? request.ReviewCandidates.Select(candidate => candidate.RequestFormatId).ToHashSet()
                 : [];
             foreach (var format in request.Formats.Where(format =>
@@ -87,7 +88,9 @@ public sealed class AutomaticRequestFulfillmentService(
                 {
                     var latestAttempt = await attempts.FindLatestForFormatAsync(
                         format.Id, provider.Id, cancellationToken);
-                    if (HasRecentAttempt(latestAttempt, request))
+                    // A pre-evidence review needs one immediate refresh even
+                    // when its earlier lookup is inside the normal cooldown.
+                    if (!refreshLegacyReview && HasRecentAttempt(latestAttempt, request))
                     {
                         continue;
                     }
@@ -113,7 +116,7 @@ public sealed class AutomaticRequestFulfillmentService(
                             providerOptions.Count == 0 ? ProviderAttemptOutcome.NoMatch : ProviderAttemptOutcome.CandidatesFound,
                             providerOptions.Count == 0
                                 ? "No high-confidence automatic copy was found."
-                                : $"Found {providerOptions.Count} high-confidence automatic candidate(s).",
+                                : DescribeProviderCandidates(providerOptions),
                             clock.UtcNow,
                             nextEligibleCheckAtUtc: null));
                     }
@@ -161,7 +164,7 @@ public sealed class AutomaticRequestFulfillmentService(
                         // result rather than the cross-provider case below.
                         await MarkForReviewAsync(
                             request, RequestReviewCategory.PreferenceAmbiguity,
-                            "Several eligible records were found, but no single record met the automatic-selection rule.", cancellationToken,
+                            DescribeSameProviderAmbiguity(autoEligible), cancellationToken,
                             autoEligible.Select(option => (format.Id, option.ProviderId, option.ProviderResultId,
                                 option.Title, option.Author, option.Language,
                                 RequestReviewCandidatePresentation.BuildDetails(option),
@@ -498,7 +501,10 @@ public sealed class AutomaticRequestFulfillmentService(
         CancellationToken cancellationToken,
         IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string? Title, string? Author, string? Language, string? Details, string? AdminInspectionUri)>? candidateOptions = null)
     {
-        if (request.Status != RequestStatus.PendingAcquisition)
+        var refreshLegacyReview = category == RequestReviewCategory.PreferenceAmbiguity &&
+                                  candidateOptions is { Count: > 0 } &&
+                                  IsLegacyCollapsedPreferenceReview(request);
+        if (request.Status != RequestStatus.PendingAcquisition && !refreshLegacyReview)
         {
             return;
         }
@@ -516,13 +522,23 @@ public sealed class AutomaticRequestFulfillmentService(
                 Title: workTitle, Author: workAuthor, option.Language,
                 option.Details, option.AdminInspectionUri))
             .ToArray();
-        request.MarkNeedsReview(category, reason, clock.UtcNow, candidates);
+        if (refreshLegacyReview)
+        {
+            request.RefreshPreferenceReview(reason, clock.UtcNow, candidates!);
+        }
+        else
+        {
+            request.MarkNeedsReview(category, reason, clock.UtcNow, candidates);
+        }
 
         // Admin can still resolve a PreferenceAmbiguity item too (additive,
         // not exclusive), so this fires unconditionally for every category.
-        await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
+        if (!refreshLegacyReview)
+        {
+            await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
+        }
 
-        if (category == RequestReviewCategory.PreferenceAmbiguity)
+        if (!refreshLegacyReview && category == RequestReviewCategory.PreferenceAmbiguity)
         {
             foreach (var requesterId in request.ActiveRequesterIds)
             {
@@ -539,6 +555,44 @@ public sealed class AutomaticRequestFulfillmentService(
             "The automatic provider timed out; it will be tried again automatically.",
         _ => "The automatic provider could not be reached; it will be tried again automatically."
     };
+
+    private static string DescribeProviderCandidates(IReadOnlyList<FulfillmentOption> options) =>
+        options.Count == 1 && !string.IsNullOrWhiteSpace(options[0].AutomaticSelectionReason)
+            ? options[0].AutomaticSelectionReason!
+            : $"Found {options.Count} high-confidence automatic candidate(s).";
+
+    private static bool IsLegacyCollapsedPreferenceReview(BookRequest request) =>
+        request.Status == RequestStatus.NeedsReview &&
+        request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity &&
+        request.ReviewCandidates.Count == 1 &&
+        string.Equals(
+            request.StatusHistory.LastOrDefault()?.Reason,
+            "Multiple plausible editions were found.",
+            StringComparison.Ordinal);
+
+    private static string DescribeSameProviderAmbiguity(IReadOnlyList<FulfillmentOption> options)
+    {
+        const string gutenbergProviderId = "gutendex";
+        const int minimumDownloads = 1_000;
+        const double dominanceRatio = 3.0;
+
+        var ranked = options.OrderByDescending(option => option.ProviderPopularity ?? 0).ToArray();
+        if (ranked.Length >= 2 &&
+            ranked.All(option => option.ProviderId.Equals(gutenbergProviderId, StringComparison.OrdinalIgnoreCase) &&
+                                 option.ProviderPopularity is > 0) &&
+            ranked[1].ProviderPopularity is { } runnerUpDownloads)
+        {
+            var leading = ranked[0];
+            var leadingDownloads = leading.ProviderPopularity!.Value;
+            var ratio = leadingDownloads / (double)runnerUpDownloads;
+            return $"Project Gutenberg found {ranked.Length} eligible records. Its leading record " +
+                   $"(#{leading.ProviderResultId}, {leadingDownloads:N0} downloads) is only " +
+                   $"{ratio:0.#}× the runner-up (#{ranked[1].ProviderResultId}, {runnerUpDownloads:N0}). " +
+                   $"Automatic selection requires at least {minimumDownloads:N0} downloads and a {dominanceRatio:0.#}× lead.";
+        }
+
+        return "Several eligible records were found, but no single record met the automatic-selection rule.";
+    }
 
     private sealed class StringTupleComparer : IEqualityComparer<(string ProviderId, string ProviderResultId)>
     {

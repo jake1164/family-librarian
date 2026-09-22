@@ -254,6 +254,31 @@ public sealed class BookRequestTests
             request.ReviewCandidates.Select(candidate => candidate.Details).ToArray());
     }
 
+    [TestMethod]
+    public void RefreshPreferenceReviewReplacesLegacyEvidenceWithoutReopeningTheRequest()
+    {
+        var request = Create(RequestMediaType.Audiobook);
+        var formatId = request.Formats.Single().Id;
+        request.MarkNeedsReview(
+            RequestReviewCategory.PreferenceAmbiguity,
+            "Multiple plausible editions were found.",
+            CreatedAt.AddHours(1),
+            [(formatId, "gutendex", "9147", "Moby Dick", "Herman Melville", "en", null, null)]);
+
+        request.RefreshPreferenceReview(
+            "Project Gutenberg found 2 eligible records. Its leading record (#28794, 5,505 downloads) is only 1.8× the runner-up (#9147, 3,064). Automatic selection requires at least 1,000 downloads and a 3× lead.",
+            CreatedAt.AddHours(2),
+            [
+                (formatId, "gutendex", "9147", "Moby Dick", "Herman Melville", "en", "MP3 audiobook · 155 parts · 3,064 source downloads", null),
+                (formatId, "gutendex", "28794", "Moby Dick", "Herman Melville", "en", "MP3 audiobook · 44 parts · 5,505 source downloads", null)
+            ]);
+
+        Assert.AreEqual(RequestStatus.NeedsReview, request.Status);
+        Assert.HasCount(2, request.ReviewCandidates);
+        Assert.AreEqual("28794", request.ReviewCandidates.Last().ProviderResultId);
+        Assert.IsTrue(request.StatusHistory.Last().Reason!.Contains("1.8×", StringComparison.Ordinal));
+    }
+
     private static BookRequest Create(params RequestMediaType[] mediaTypes) =>
         new(UserId, WorkId, mediaTypes, null, CreatedAt);
 }

@@ -90,6 +90,14 @@ public sealed record FulfillmentOption(
     string? Publisher = null,
     long? SizeBytes = null,
     int? PartCount = null,
+    // A provider-owned usage count. It is not a universal quality score and is
+    // populated only where a built-in provider has a documented, locally
+    // mirrored metric used by its narrowly-scoped automatic-selection rule.
+    int? ProviderPopularity = null,
+    // A controlled explanation of a built-in provider's own deterministic
+    // automatic selection. It is audit evidence, not a provider supplied
+    // recommendation, and is never populated by an external provider.
+    string? AutomaticSelectionReason = null,
     bool? IsAbridged = null,
     bool? IsUnabridged = null,
     // A provider-declared, non-download browser page for an administrator to

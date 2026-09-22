@@ -587,7 +587,7 @@
         if (string.Equals(review?.Reason, "Multiple plausible editions were found.", StringComparison.Ordinal))
         {
             return candidateCount == 1
-                ? "One source record was retained from an earlier review. Inspect it before acquiring."
+                ? "One source record was retained from an earlier review. Project Gutenberg compares ebook and audiobook records separately and only selects a record automatically when it has at least 1,000 downloads and a 3× lead over the runner-up. Inspect this audiobook record before acquiring it."
                 : "Several eligible records were found, but no single record met the automatic-selection rule.";
         }
 

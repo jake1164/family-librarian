@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Acquisition;
@@ -107,7 +108,8 @@ public sealed class GutenbergProviderTests
                 [
                     new GutenbergCatalogFormat("9147/track-01.mp3", "audio/mpeg", GutenbergFormatKind.AudioMp3, 1_000_000, null),
                     new GutenbergCatalogFormat("9147/track-02.mp3", "audio/mpeg", GutenbergFormatKind.AudioMp3, 2_000_000, null)
-                ])
+                ],
+                DownloadCount: 5_505)
         ];
 
         var options = await context.Provider.FindDirectAcquisitionsAsync(
@@ -118,6 +120,10 @@ public sealed class GutenbergProviderTests
         Assert.AreEqual("audio-bundle", option.Format);
         Assert.AreEqual(2, option.PartCount);
         Assert.AreEqual(3_000_000L, option.SizeBytes);
+        Assert.AreEqual(5_505, option.ProviderPopularity);
+        StringAssert.Contains(
+            RequestReviewCandidatePresentation.BuildDetails(option) ?? string.Empty,
+            "5,505 source downloads");
         Assert.AreEqual("https://www.gutenberg.org/ebooks/9147", option.AdminInspectionUri?.ToString());
     }
 
@@ -222,6 +228,8 @@ public sealed class GutenbergProviderTests
 
         Assert.AreEqual(1, options.Count);
         Assert.AreEqual("2701", options[0].ProviderResultId);
+        StringAssert.Contains(options[0].AutomaticSelectionReason, "164,301 downloads");
+        StringAssert.Contains(options[0].AutomaticSelectionReason, "6.5× the runner-up record #2489");
     }
 
     [TestMethod]

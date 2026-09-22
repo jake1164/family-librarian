@@ -216,7 +216,7 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     [TestMethod]
-    public async Task AStoredAudiobookReviewStillAllowsAnUnreviewedEbookToBeAcquired()
+    public async Task AStoredLegacyAudiobookReviewIsRefreshedWhileAnUnreviewedEbookIsAcquired()
     {
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = CreateFactory(
@@ -232,7 +232,7 @@ public sealed class DirectAcquisitionEndpointTests
                 .SingleAsync(item => item.Id == requestId);
             request.MarkNeedsReview(
                 RequestReviewCategory.PreferenceAmbiguity,
-                "Several eligible records were found, but no single record met the automatic-selection rule.",
+                "Multiple plausible editions were found.",
                 DateTimeOffset.UtcNow,
                 [(audiobookFormatId, "gutendex", "stale-audio-record", "The Hobbit", "J. R. R. Tolkien", "en", "MP3 audiobook · 2 parts", null)]);
             await database.SaveChangesAsync();
@@ -246,6 +246,8 @@ public sealed class DirectAcquisitionEndpointTests
             asset => asset.AssociatedRequestFormatId == ebookFormatId));
         Assert.AreEqual(0, await verificationDatabase.MediaAssets.CountAsync(
             asset => asset.AssociatedRequestFormatId == audiobookFormatId));
+        Assert.AreEqual(2, await verificationDatabase.RequestReviewCandidates.CountAsync(
+            candidate => candidate.RequestId == requestId));
     }
 
     [TestMethod]

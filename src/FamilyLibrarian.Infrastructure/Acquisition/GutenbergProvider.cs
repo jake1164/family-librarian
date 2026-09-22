@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
@@ -28,8 +29,8 @@ public sealed class GutenbergProvider(
 
     // See PickDominantByPopularity's remarks for why these exist and what
     // they deliberately do not do.
-    private const int MinimumDominantDownloadCount = 1_000;
-    private const double DominantDownloadRatio = 3.0;
+    internal const int MinimumDominantDownloadCount = 1_000;
+    internal const double DominantDownloadRatio = 3.0;
 
     public string Id => ProviderRegistry.GutenbergProviderId;
 
@@ -175,7 +176,24 @@ public sealed class GutenbergProvider(
         }
 
         var runnerUpCount = ranked[1].DownloadCount ?? 0;
-        return topCount >= runnerUpCount * DominantDownloadRatio ? top.Option : null;
+        if (topCount < runnerUpCount * DominantDownloadRatio)
+        {
+            return null;
+        }
+
+        var dominance = runnerUpCount == 0
+            ? "the runner-up has no reported downloads"
+            : $"{topCount / (double)runnerUpCount:0.#}× the runner-up record " +
+              $"#{ranked[1].Option.ProviderResultId} " +
+              $"({runnerUpCount.ToString("N0", CultureInfo.InvariantCulture)} downloads)";
+        return top.Option with
+        {
+            AutomaticSelectionReason =
+                $"Selected automatically: Project Gutenberg record #{top.Option.ProviderResultId} has " +
+                $"{topCount.ToString("N0", CultureInfo.InvariantCulture)} downloads, and {dominance}. " +
+                $"The rule requires at least {MinimumDominantDownloadCount.ToString("N0", CultureInfo.InvariantCulture)} downloads " +
+                $"and a {DominantDownloadRatio:0.#}× lead."
+        };
     }
 
     public async Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
@@ -265,6 +283,7 @@ public sealed class GutenbergProvider(
         JsonSerializer.Serialize(new GutenbergDownloadReference(formatKind, sourcePaths)),
         SizeBytes: sizeBytes,
         PartCount: partCount,
+        ProviderPopularity: book.DownloadCount,
         AdminInspectionUri: new Uri($"https://www.gutenberg.org/ebooks/{book.GutenbergId}"));
 
     private static long? SumKnownSizes(IReadOnlyList<GutenbergCatalogFormat> formats) =>

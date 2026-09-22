@@ -1127,6 +1127,17 @@ as format, size, and track count, and—where the provider supplies one or a
 built-in catalogue has a stable public record—a link to the corresponding
 browser page before choosing an acquisition.
 
+For the built-in Gutenberg source, the administrator also sees the actual
+automatic-selection evidence. Download counts are a narrow, source-owned tie
+breaker—not a general quality score—and are compared separately for ebooks and
+audiobooks. A record is selected only when it has at least 1,000 downloads and
+a 3× lead over the next record in that same format. The review reason records
+the audiobook's leading and runner-up records and counts; provider activity
+records the corresponding ebook selection when it proceeds automatically.
+Older collapsed Gutenberg reviews are refreshed once by the background worker:
+the worker replaces the stale one-record evidence with the current complete
+comparison while still leaving the audiobook in review.
+
 This is intentionally limited to the bundled provider that explicitly opts in
 to automatic acquisition. Project Gutenberg has effective `Once` behavior: each outcome
 is recorded and it is not repeatedly queried. Admin-registered external
