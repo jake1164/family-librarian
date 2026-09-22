@@ -49,13 +49,16 @@ public interface IRequestRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// A small, bounded batch of requests that have not yet left the automatic
-    /// acquisition queue. This is a server-only background-work query; it never
+    /// A small, bounded batch of requests eligible for automatic acquisition.
+    /// With <paramref name="includeNeedsReview"/>, this also includes a
+    /// preference review so an independently requested, unreviewed format can
+    /// still progress. This is a server-only background-work query; it never
     /// exposes requester identity to a provider.
     /// </summary>
     Task<IReadOnlyList<BookRequest>> ListPendingForAutomaticFulfillmentAsync(
         int maximumCount,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        bool includeNeedsReview = false) =>
         Task.FromResult<IReadOnlyList<BookRequest>>([]);
 
     /// <summary>Whether this requested format already has an acquired artifact.</summary>

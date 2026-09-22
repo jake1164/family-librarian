@@ -147,6 +147,7 @@ public sealed record AdminBookRequestResponse(
 public sealed record AdminRequestReviewCandidateResponse(
     Guid CandidateId,
     string ProviderId,
+    string ProviderResultId,
     string Title,
     string? Author,
     string? Language,

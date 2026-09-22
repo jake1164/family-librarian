@@ -85,6 +85,7 @@ public sealed record AdminBookRequestView(
 public sealed record AdminRequestReviewCandidateView(
     Guid CandidateId,
     string ProviderId,
+    string ProviderResultId,
     string Title,
     string? Author,
     string? Language,

@@ -223,7 +223,9 @@ public sealed class GutenbergProvider(
             })
             .FirstOrDefault(format => format.Kind is GutenbergFormatKind.Epub3Images or
                 GutenbergFormatKind.EpubImages or GutenbergFormatKind.EpubNoImages);
-        return format is null ? null : CreateOption(book, RequestMediaType.Ebook, "epub", [format.SourcePath], format.Kind);
+        return format is null ? null : CreateOption(
+            book, RequestMediaType.Ebook, "epub", [format.SourcePath], format.Kind,
+            sizeBytes: format.FileSizeBytes);
     }
 
     private FulfillmentOption? BuildAudiobookOption(GutenbergCatalogBook book)
@@ -232,7 +234,8 @@ public sealed class GutenbergProvider(
             .OrderBy(format => format.SourcePath, StringComparer.Ordinal).ToArray();
         return tracks.Length == 0 ? null : CreateOption(
             book, RequestMediaType.Audiobook, AudioBundleFormat,
-            tracks.Select(track => track.SourcePath).ToArray(), GutenbergFormatKind.AudioMp3);
+            tracks.Select(track => track.SourcePath).ToArray(), GutenbergFormatKind.AudioMp3,
+            sizeBytes: SumKnownSizes(tracks), partCount: tracks.Length);
     }
 
     private FulfillmentOption CreateOption(
@@ -240,7 +243,9 @@ public sealed class GutenbergProvider(
         RequestMediaType mediaType,
         string format,
         string[] sourcePaths,
-        GutenbergFormatKind formatKind) => new(
+        GutenbergFormatKind formatKind,
+        long? sizeBytes = null,
+        int? partCount = null) => new(
         Id,
         book.GutenbergId.ToString(System.Globalization.CultureInfo.InvariantCulture),
         WorkId: Guid.Empty,
@@ -257,7 +262,15 @@ public sealed class GutenbergProvider(
         LicenseOrUsageStatus: "Public domain",
         DrmStatus: null,
         ExternalActionUri: null,
-        JsonSerializer.Serialize(new GutenbergDownloadReference(formatKind, sourcePaths)));
+        JsonSerializer.Serialize(new GutenbergDownloadReference(formatKind, sourcePaths)),
+        SizeBytes: sizeBytes,
+        PartCount: partCount,
+        AdminInspectionUri: new Uri($"https://www.gutenberg.org/ebooks/{book.GutenbergId}"));
+
+    private static long? SumKnownSizes(IReadOnlyList<GutenbergCatalogFormat> formats) =>
+        formats.Any(format => format.FileSizeBytes is null)
+            ? null
+            : formats.Sum(format => format.FileSizeBytes!.Value);
 
     private async Task<Stream> OpenFromMirrorsAsync(
         string sourcePath,

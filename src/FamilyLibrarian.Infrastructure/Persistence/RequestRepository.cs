@@ -109,7 +109,8 @@ public sealed class RequestRepository(
 
     public async Task<IReadOnlyList<BookRequest>> ListPendingForAutomaticFulfillmentAsync(
         int maximumCount,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeNeedsReview = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
 
@@ -119,7 +120,10 @@ public sealed class RequestRepository(
             .Include(request => request.StatusHistory)
             .Include(request => request.ReviewCandidates)
             .Include(request => request.DeclinedCandidates)
-            .Where(request => request.Status == RequestStatus.PendingAcquisition && !request.RequiresManualFulfillment)
+            .Where(request => !request.RequiresManualFulfillment &&
+                (request.Status == RequestStatus.PendingAcquisition ||
+                 (includeNeedsReview && request.Status == RequestStatus.NeedsReview &&
+                  request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity)))
             .OrderBy(request => request.RequestedAtUtc)
             .Take(maximumCount)
             .ToArrayAsync(cancellationToken);
@@ -697,6 +701,7 @@ public sealed class RequestRepository(
                 .Select(candidate => new AdminRequestReviewCandidateView(
                     candidate.Id,
                     candidate.ProviderId,
+                    candidate.ProviderResultId,
                     candidate.Title,
                     candidate.Author,
                     candidate.Language,

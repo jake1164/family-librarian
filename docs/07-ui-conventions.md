@@ -108,7 +108,13 @@ quality recommendation from byte count, publication year, provider ordering,
 or free-form quality tags. When there is no meaningful requester-visible
 difference between multiple records, tell the requester that a librarian will
 compare them and expose the provider/source inspection evidence only in the
-administrator panel.
+administrator panel. Do not collapse source records before persistence: the
+administrator must see every record, its human-facing source and record
+identifier, and the neutral media facts needed to compare it.
+For a legacy review saved before those records were retained, suppress any
+one-row requester action rather than presenting a false choice; the admin view
+may show a stable built-in-catalogue record page when the stored record ID is
+validated.
 
 ## Adding a new status or media type
 

@@ -90,7 +90,7 @@
                     </MudStack>
                     @if (request.NeedsReview is { Category: "PreferenceAmbiguity" } review)
                     {
-                        @if (review.Candidates.Count == 1)
+                        @if (review.Candidates.Count == 1 && !IsLegacyCollapsedReview(review))
                         {
                             var candidate = review.Candidates[0];
                             <MudAlert Severity="Severity.Info" Dense="true">
@@ -294,10 +294,15 @@
                 : $"{candidate.Title} ({candidate.Language})") +
         (string.IsNullOrWhiteSpace(candidate.Details) ? string.Empty : $" — {candidate.Details}");
 
+    private static bool IsLegacyCollapsedReview(NeedsReviewResponse review) =>
+        string.Equals(review.Reason, "Multiple plausible editions were found.", StringComparison.Ordinal);
+
     private static string ReviewReason(NeedsReviewResponse review) =>
-        string.IsNullOrWhiteSpace(review.Reason)
-            ? "A librarian is reviewing these copies before selecting one."
-            : review.Reason;
+        IsLegacyCollapsedReview(review)
+            ? "A librarian is comparing the source records before selecting one."
+            : string.IsNullOrWhiteSpace(review.Reason)
+                ? "A librarian is reviewing these copies before selecting one."
+                : review.Reason;
 
     private async Task RetryKindleDeliveryAsync(Guid attemptId, bool confirmPossibleDuplicate)
     {

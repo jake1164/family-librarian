@@ -422,9 +422,26 @@ internal static class AdminRequestEndpoints
         request.ReviewCandidates?.Select(candidate => new AdminRequestReviewCandidateResponse(
             candidate.CandidateId,
             candidate.ProviderId,
+            candidate.ProviderResultId,
             candidate.Title,
             candidate.Author,
             candidate.Language,
             candidate.Details,
-            candidate.InspectionUri)).ToArray());
+            ResolveInspectionUri(candidate))).ToArray());
+
+    private static string? ResolveInspectionUri(AdminRequestReviewCandidateView candidate)
+{
+    if (!string.IsNullOrWhiteSpace(candidate.InspectionUri))
+    {
+        return candidate.InspectionUri;
+    }
+
+    // Older built-in-provider reviews predate AdminInspectionUri. Their
+    // positive catalogue IDs are still sufficient to point an administrator at
+    // the same public record; no opaque external-provider result is inferred.
+    return candidate.ProviderId.Equals("gutendex", StringComparison.OrdinalIgnoreCase) &&
+           int.TryParse(candidate.ProviderResultId, out var gutenbergId) && gutenbergId > 0
+        ? $"https://www.gutenberg.org/ebooks/{gutenbergId}"
+        : null;
+    }
 }

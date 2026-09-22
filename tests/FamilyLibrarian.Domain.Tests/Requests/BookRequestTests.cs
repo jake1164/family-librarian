@@ -13,9 +13,12 @@ public sealed class BookRequestTests
 
     private static readonly Guid UserId = Guid.NewGuid();
     private static readonly Guid WorkId = Guid.NewGuid();
-    private static readonly string[] ExpectedReviewCandidateDetails =
-    ["EPUB · Published 2014 · Example Press", "EPUB · Published 2015 · Archive House"];
-
+    private static readonly string[] RetainedReviewCandidateDetails =
+    [
+        "EPUB · Published 2014 · Example Press",
+        "epub · published 2014 · example press",
+        "EPUB · Published 2015 · Archive House"
+    ];
     [TestMethod]
     public void ANewRequestStartsPendingWithOneRowPerRequestedFormat()
     {
@@ -229,7 +232,7 @@ public sealed class BookRequestTests
     }
 
     [TestMethod]
-    public void PreferenceReviewCollapsesCandidatesThatAreIdenticalToTheRequester()
+    public void PreferenceReviewRetainsEveryDistinctProviderRecordForLibrarianReview()
     {
         var request = Create(RequestMediaType.Ebook);
         var formatId = request.Formats.Single().Id;
@@ -244,10 +247,10 @@ public sealed class BookRequestTests
                 (formatId, "provider-a", "opaque-c", "The Martian", "Andy Weir", "en", "EPUB · Published 2015 · Archive House", null)
             ]);
 
-        Assert.HasCount(2, request.ReviewCandidates);
+        Assert.HasCount(3, request.ReviewCandidates);
         Assert.AreEqual("opaque-a", request.ReviewCandidates.First().ProviderResultId);
         CollectionAssert.AreEquivalent(
-            ExpectedReviewCandidateDetails,
+            RetainedReviewCandidateDetails,
             request.ReviewCandidates.Select(candidate => candidate.Details).ToArray());
     }
 

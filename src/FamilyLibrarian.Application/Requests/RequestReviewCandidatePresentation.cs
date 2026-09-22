@@ -74,6 +74,7 @@ public static class RequestReviewCandidatePresentation
         "ogg" => "OGG",
         "opus" => "OPUS",
         "flac" => "FLAC",
+        "audio-bundle" => "MP3 audiobook",
         _ => null
     };
 

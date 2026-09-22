@@ -176,23 +176,13 @@ public sealed class BookRequest
         _reviewCandidates.Clear();
         if (candidates is not null)
         {
-            // Multiple remote records may be indistinguishable to a requester.
-            // Keep the first opaque provider reference for the eventual choice,
-            // but never ask a person to guess between identical labels.
-            var visibleCandidates = candidates
-                .GroupBy(candidate => new
-                {
-                    Title = NormalizeVisibleFact(candidate.Title),
-                    Author = NormalizeAuthor(candidate.Author),
-                    Language = NormalizeVisibleFact(candidate.Language),
-                    Details = NormalizeVisibleFact(candidate.Details)
-                })
-                .Select(group => group.First())
-                .ToArray();
-
-            for (var index = 0; index < visibleCandidates.Length; index++)
+            // Retain every distinct provider record for the administrator.
+            // Requester-facing UI deliberately withholds a multi-record choice,
+            // but collapsing here would leave the librarian with a blind approval
+            // while the review reason still truthfully says there were several.
+            for (var index = 0; index < candidates.Count; index++)
             {
-                var candidate = visibleCandidates[index];
+                var candidate = candidates[index];
                 _reviewCandidates.Add(new RequestReviewCandidate(
                     Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
                     candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri, index, atUtc));
@@ -202,18 +192,6 @@ public sealed class BookRequest
         ReviewCategory = category;
         TransitionTo(RequestStatus.NeedsReview, actorUserId: null, reason, atUtc);
     }
-
-    private static string NormalizeVisibleFact(string? value) => string.IsNullOrWhiteSpace(value)
-        ? string.Empty
-        : string.Join(' ', value.Trim().ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-
-    private static string NormalizeAuthor(string? author) => string.IsNullOrWhiteSpace(author)
-        ? string.Empty
-        : string.Join(' ', new string(author.ToLowerInvariant()
-            .Where(character => char.IsLetterOrDigit(character) || char.IsWhiteSpace(character))
-            .ToArray())
-            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-            .OrderBy(part => part, StringComparer.Ordinal));
 
     /// <summary>
     /// The requester (or an admin -- additive, not exclusive) accepts a

@@ -185,6 +185,70 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     [TestMethod]
+    public async Task AnAmbiguousAudiobookDoesNotPreventAnEligibleEbookFromBeingAcquired()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(
+            fixture, new FakeProvider(matches: true, audiobookMatchCount: 2));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, ebookFormatId, audiobookFormatId) = await CreateEbookAndAudiobookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await database.BookRequests.SingleAsync(item => item.Id == requestId);
+
+        // The audiobook still requires a deliberate selection, but it must not
+        // starve the independently safe ebook just because it was enumerated
+        // first. This mirrors the live Moby Dick regression.
+        Assert.AreEqual(RequestStatus.NeedsReview, request.Status);
+        Assert.AreEqual(RequestReviewCategory.PreferenceAmbiguity, request.ReviewCategory);
+        var reviewCandidates = await database.RequestReviewCandidates
+            .Where(candidate => candidate.RequestId == requestId)
+            .ToArrayAsync();
+        Assert.HasCount(2, reviewCandidates);
+        Assert.IsTrue(reviewCandidates.All(candidate => candidate.RequestFormatId == audiobookFormatId));
+        Assert.AreEqual(1, await database.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == ebookFormatId));
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == audiobookFormatId));
+    }
+
+    [TestMethod]
+    public async Task AStoredAudiobookReviewStillAllowsAnUnreviewedEbookToBeAcquired()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(
+            fixture, new FakeProvider(matches: true, audiobookMatchCount: 2));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, ebookFormatId, audiobookFormatId) = await CreateEbookAndAudiobookRequestAsync(requester);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var request = await database.BookRequests
+                .Include(item => item.Formats)
+                .SingleAsync(item => item.Id == requestId);
+            request.MarkNeedsReview(
+                RequestReviewCategory.PreferenceAmbiguity,
+                "Several eligible records were found, but no single record met the automatic-selection rule.",
+                DateTimeOffset.UtcNow,
+                [(audiobookFormatId, "gutendex", "stale-audio-record", "The Hobbit", "J. R. R. Tolkien", "en", "MP3 audiobook · 2 parts", null)]);
+            await database.SaveChangesAsync();
+        }
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        await using var verificationScope = factory.Services.CreateAsyncScope();
+        var verificationDatabase = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(1, await verificationDatabase.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == ebookFormatId));
+        Assert.AreEqual(0, await verificationDatabase.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == audiobookFormatId));
+    }
+
+    [TestMethod]
     public async Task ANoMatchLeavesTheRequestInTheAutomaticQueueInsteadOfNeedingALibrarian()
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -738,10 +802,37 @@ public sealed class DirectAcquisitionEndpointTests
         return (request.Id, format.FormatId);
     }
 
+    private static async Task<(Guid RequestId, Guid EbookFormatId, Guid AudiobookFormatId)> CreateEbookAndAudiobookRequestAsync(
+        HttpClient client)
+    {
+        var resolve = await client.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        resolve.EnsureSuccessStatusCode();
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+
+        // Audiobook is intentionally first: this is the order that exposed the
+        // live Moby Dick failure, and proves a review does not short-circuit
+        // the independent ebook path.
+        var created = await client.PostAsJsonAsync(
+            "/api/v1/requests/",
+            new CreateBookRequestRequest(
+                await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id),
+                ["Audiobook", "Ebook"], null, false, false));
+        Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        return (
+            request.Id,
+            request.Formats.Single(format => format.MediaType == "Ebook").FormatId,
+            request.Formats.Single(format => format.MediaType == "Audiobook").FormatId);
+    }
+
     /// <summary>Always reports one DirectAcquisition match (or none), and fetches a fake EPUB.</summary>
     private sealed class FakeProvider(
         bool matches, string providerId = "gutendex", string providerResultId = "1234", bool throwsOnFetch = false,
-        bool isReady = true, bool requiresLanguageConfirmation = false, string? language = null, int matchCount = 1)
+        bool isReady = true, bool requiresLanguageConfirmation = false, string? language = null, int matchCount = 1,
+        int audiobookMatchCount = 0)
         : IAutomaticDirectAcquisitionProvider
     {
         public string Id => providerId;
@@ -759,21 +850,22 @@ public sealed class DirectAcquisitionEndpointTests
         public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
             Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)
         {
-            if (!matches || mediaType != RequestMediaType.Ebook)
+            var candidateCount = mediaType == RequestMediaType.Ebook ? matchCount : audiobookMatchCount;
+            if (!matches || candidateCount == 0)
             {
                 return Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
             }
 
-            IReadOnlyList<FulfillmentOption> options = Enumerable.Range(0, matchCount)
+            IReadOnlyList<FulfillmentOption> options = Enumerable.Range(0, candidateCount)
                 .Select(index => new FulfillmentOption(
                     ProviderId: Id,
-                    ProviderResultId: matchCount == 1 ? ProviderResultId : $"{ProviderResultId}-{index}",
+                    ProviderResultId: candidateCount == 1 ? ProviderResultId : $"{ProviderResultId}-{mediaType}-{index}",
                     WorkId: workId,
                     EditionId: null,
-                    MediaType: RequestMediaType.Ebook,
+                    MediaType: mediaType,
                     OptionKind: OptionKind.DirectAcquisition,
                     AcquisitionMethod: AcquisitionMethod.DirectDownload,
-                    Format: "epub",
+                    Format: mediaType == RequestMediaType.Ebook ? "epub" : "audio-bundle",
                     Language: language,
                     Quality: null,
                     Availability: null,
@@ -785,11 +877,11 @@ public sealed class DirectAcquisitionEndpointTests
                     ProviderData: "https://example.test/book.epub",
                     MatchBasis: null,
                     RequiresLanguageConfirmation: requiresLanguageConfirmation,
-                    Title: matchCount == 1 ? null : $"The Hobbit (Edition {index + 1})",
-                    Author: matchCount == 1 ? null : "J. R. R. Tolkien",
-                    PublicationYear: matchCount == 1 ? null : 2014 + (index * 2),
-                    Publisher: matchCount == 1 ? null : index == 0 ? "Example Press" : "Archive House",
-                    SizeBytes: matchCount == 1 ? null : index == 0 ? 1_572_864 : 2_097_152))
+                    Title: candidateCount == 1 ? null : $"The Hobbit (Edition {index + 1})",
+                    Author: candidateCount == 1 ? null : "J. R. R. Tolkien",
+                    PublicationYear: candidateCount == 1 ? null : 2014 + (index * 2),
+                    Publisher: candidateCount == 1 ? null : index == 0 ? "Example Press" : "Archive House",
+                    SizeBytes: candidateCount == 1 ? null : index == 0 ? 1_572_864 : 2_097_152))
                 .ToArray();
             return Task.FromResult(options);
         }

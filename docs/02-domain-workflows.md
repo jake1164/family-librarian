@@ -1096,16 +1096,36 @@ available, the request moves to completed history with an explicit status
 event. A background verifier performs the OPDS rechecks, so administrators do
 not have to drive that normal asynchronous CWA step by hand.
 
-**Automatic public-domain ebook path:** a second background worker processes
-pending ebook formats. The locally indexed Project Gutenberg source is enabled by default and is only eligible for
-unattended acquisition when it returns exactly one result whose normalized title
-starts with the canonical title and whose creator-name tokens exactly match the
-canonical primary author. The worker then re-derives the candidate on the
-server, downloads it into quarantine, runs malware and EPUB structure checks,
-verifies package title/creator identity, and lets the existing approval and CWA
-publishing path continue. A result that is missing, ambiguous, unavailable, or
-cannot be acquired moves the request to `NeedsReview`; it is never guessed or
-retried continuously.
+**Automatic public-domain format path:** a second background worker processes
+pending formats. The locally indexed Project Gutenberg source is enabled by
+default and is only eligible for unattended acquisition when it returns exactly
+one result whose normalized title starts with the canonical title and whose
+creator-name tokens exactly match the canonical primary author. For an ebook,
+the worker then re-derives the candidate on the server, downloads it into
+quarantine, runs malware and EPUB structure checks, verifies package
+title/creator identity, and lets the existing approval and CWA publishing path
+continue. A result that is missing, ambiguous, unavailable, or cannot be
+acquired is not guessed or retried continuously.
+
+An ambiguous or failed format can place the aggregate request in
+`NeedsReview`, but it does not stop the same automatic pass from acquiring a
+different requested format that has one safe candidate. For example, an
+ambiguous audiobook must not prevent a clearly selected EPUB from entering the
+security and publishing pipeline. The review remains scoped to its
+`RequestFormat`; the request becomes fully available only when all requested
+formats complete.
+This also applies to an already-stored preference review: the worker skips the
+format under review and continues unattended processing of another requested
+format, so a historical audiobook review does not require someone to requeue
+the request before its ebook can proceed.
+
+When several records require review, Family Librarian retains every source
+record for the librarian rather than collapsing them into a single blind
+approval. The requester is not asked to guess among several copies. The
+administrator sees the source name and record number, neutral media facts such
+as format, size, and track count, and—where the provider supplies one or a
+built-in catalogue has a stable public record—a link to the corresponding
+browser page before choosing an acquisition.
 
 This is intentionally limited to the bundled provider that explicitly opts in
 to automatic acquisition. Project Gutenberg has effective `Once` behavior: each outcome

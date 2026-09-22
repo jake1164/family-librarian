@@ -64,13 +64,18 @@ public sealed class AutomaticRequestFulfillmentService(
             return 0;
         }
 
-        var pending = await requests.ListPendingForAutomaticFulfillmentAsync(BatchSize, cancellationToken);
+        var pending = await requests.ListPendingForAutomaticFulfillmentAsync(
+            BatchSize, cancellationToken, includeNeedsReview: true);
         var processed = 0;
 
         foreach (var request in pending)
         {
             if (request.RequiresManualFulfillment) continue;
-            foreach (var format in request.Formats.Where(format => format.Status == RequestFormatStatus.Requested))
+            var reviewedFormatIds = request.Status == RequestStatus.NeedsReview
+                ? request.ReviewCandidates.Select(candidate => candidate.RequestFormatId).ToHashSet()
+                : [];
+            foreach (var format in request.Formats.Where(format =>
+                format.Status == RequestFormatStatus.Requested && !reviewedFormatIds.Contains(format.Id)))
             {
                 if (await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken))
                 {
@@ -156,7 +161,7 @@ public sealed class AutomaticRequestFulfillmentService(
                         // result rather than the cross-provider case below.
                         await MarkForReviewAsync(
                             request, RequestReviewCategory.PreferenceAmbiguity,
-                            "Multiple plausible editions were found.", cancellationToken,
+                            "Several eligible records were found, but no single record met the automatic-selection rule.", cancellationToken,
                             autoEligible.Select(option => (format.Id, option.ProviderId, option.ProviderResultId,
                                 option.Title, option.Author, option.Language,
                                 RequestReviewCandidatePresentation.BuildDetails(option),
@@ -164,7 +169,11 @@ public sealed class AutomaticRequestFulfillmentService(
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
-                        break;
+                        // A request can ask for both ebook and audiobook. An
+                        // ambiguity in one format must not prevent a separate
+                        // requested format with one safe candidate from being
+                        // acquired in this same pass.
+                        continue;
                     }
 
                     // Different providers confidently disagree on the file. Picking
@@ -175,7 +184,7 @@ public sealed class AutomaticRequestFulfillmentService(
                         "More than one high-confidence automatic copy was found.", cancellationToken);
                     await attempts.SaveChangesAsync(cancellationToken);
                     await requests.SaveChangesAsync(cancellationToken);
-                    break;
+                    continue;
                 }
 
                 if (autoEligible.Length == 0)
@@ -195,7 +204,7 @@ public sealed class AutomaticRequestFulfillmentService(
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
-                        break;
+                        continue;
                     }
 
                     // Nothing found yet, not a failure — leave the request in the
@@ -211,7 +220,9 @@ public sealed class AutomaticRequestFulfillmentService(
                 }
                 else
                 {
-                    break;
+                    // The failed format is now in review, but another requested
+                    // format can still be fulfilled automatically.
+                    continue;
                 }
             }
         }

@@ -140,18 +140,19 @@
                 <MudStack Spacing="2">
                     <MudText Typo="Typo.h6">Librarian candidate review</MudText>
                     <MudText Typo="Typo.body2">
-                        @ReviewReason(request.Request.NeedsReview)
+                        @ReviewSummary(reviewCandidates.Count)
                     </MudText>
+                    <MudText Typo="Typo.caption">@ReviewReason(request.Request.NeedsReview, reviewCandidates.Count)</MudText>
                     @foreach (var candidate in reviewCandidates)
                     {
                         <MudPaper Outlined="true" Class="pa-3">
                             <MudStack Spacing="1">
                                 <MudText Typo="Typo.body1">@AdminCandidateLabel(candidate)</MudText>
-                                <MudText Typo="Typo.caption">Provider: @candidate.ProviderId</MudText>
+                                <MudText Typo="Typo.caption">Source: @AdminSourceLabel(candidate)</MudText>
                                 @if (!string.IsNullOrWhiteSpace(candidate.InspectionUri))
                                 {
                                     <a href="@candidate.InspectionUri" target="_blank" rel="noopener noreferrer">
-                                        Inspect source page
+                                        Open source record
                                     </a>
                                 }
                                 <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Success"
@@ -569,10 +570,31 @@
                 : $"{candidate.Title} ({candidate.Language})") +
         (string.IsNullOrWhiteSpace(candidate.Details) ? string.Empty : $" — {candidate.Details}");
 
-    private static string ReviewReason(NeedsReviewResponse? review) =>
-        string.IsNullOrWhiteSpace(review?.Reason)
+    private static string AdminSourceLabel(AdminRequestReviewCandidateResponse candidate)
+    {
+        var source = candidate.ProviderId.Equals("gutendex", StringComparison.OrdinalIgnoreCase)
+            ? "Project Gutenberg"
+            : candidate.ProviderId;
+        return $"{source} record #{candidate.ProviderResultId}";
+    }
+
+    private static string ReviewSummary(int candidateCount) => candidateCount == 1
+        ? "One source record needs your review. Inspect its source page and media details before acquiring it."
+        : $"{candidateCount} distinct source records need your review. Compare their source pages and media details before acquiring one.";
+
+    private static string ReviewReason(NeedsReviewResponse? review, int candidateCount)
+    {
+        if (string.Equals(review?.Reason, "Multiple plausible editions were found.", StringComparison.Ordinal))
+        {
+            return candidateCount == 1
+                ? "One source record was retained from an earlier review. Inspect it before acquiring."
+                : "Several eligible records were found, but no single record met the automatic-selection rule.";
+        }
+
+        return string.IsNullOrWhiteSpace(review?.Reason)
             ? "Compare the source evidence here, then select one copy for acquisition."
             : review.Reason;
+    }
 
     private async Task ApplyOutcomeAsync(AdminRequestActionOutcome outcome)
     {

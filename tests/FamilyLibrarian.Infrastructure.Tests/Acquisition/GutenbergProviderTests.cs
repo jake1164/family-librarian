@@ -91,6 +91,37 @@ public sealed class GutenbergProviderTests
     }
 
     [TestMethod]
+    public async Task AnAudiobookCandidateIncludesTheSourceRecordAndMediaFactsNeededForReview()
+    {
+        var context = new TestContext();
+        context.Catalog.Books =
+        [
+            new GutenbergCatalogBook(
+                9147,
+                "Moby Dick",
+                "moby dick",
+                "Audiobook",
+                "Public domain",
+                [new GutenbergCatalogPerson("Herman Melville", GutenbergPersonRole.Author)],
+                ["en"],
+                [
+                    new GutenbergCatalogFormat("9147/track-01.mp3", "audio/mpeg", GutenbergFormatKind.AudioMp3, 1_000_000, null),
+                    new GutenbergCatalogFormat("9147/track-02.mp3", "audio/mpeg", GutenbergFormatKind.AudioMp3, 2_000_000, null)
+                ])
+        ];
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        var option = options.Single();
+        Assert.AreEqual("audio-bundle", option.Format);
+        Assert.AreEqual(2, option.PartCount);
+        Assert.AreEqual(3_000_000L, option.SizeBytes);
+        Assert.AreEqual("https://www.gutenberg.org/ebooks/9147", option.AdminInspectionUri?.ToString());
+    }
+
+    [TestMethod]
     public async Task TheGuidBasedPathStampsTheRealWorkId()
     {
         var context = new TestContext();
