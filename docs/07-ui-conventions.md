@@ -125,6 +125,14 @@ quality signal. Do not display M4B/MP3/etc. in status colors or describe the
 selected container as “better”; surface the format as ordinary media evidence
 when explaining an automatic decision or a genuine same-format tie.
 
+Audiobook narration (Human/Synthetic/Unknown) is the requester's own stated
+preference applied to meaningful evidence, not a quality score either. Show it
+by kind (e.g. “Human narration — Stewart Wills”, “Computer-generated
+narration”) as ordinary media evidence alongside format/size/parts, never in
+status colors, and never phrased as one recording being generally “better”
+than another. An `Unknown` classification is a valid, expected result — do not
+imply it as a defect or guess a kind the provider's own evidence did not state.
+
 ## Adding a new status or media type
 
 1. Add the color/label mapping to `MediaTypeVisuals` — not to the page.

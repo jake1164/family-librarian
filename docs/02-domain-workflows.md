@@ -1127,30 +1127,63 @@ as format, size, and track count, and—where the provider supplies one or a
 built-in catalogue has a stable public record—a link to the corresponding
 browser page before choosing an acquisition.
 
-For the built-in Gutenberg source, the administrator also sees the actual
-automatic-selection evidence. Download counts are a narrow, source-owned tie
-breaker—not a general quality score—and are compared separately for ebooks and
-audiobooks. A record is selected only when it has at least 1,000 downloads and
-a 3× lead over the next record in that same format. The review reason records
-the audiobook's leading and runner-up records and counts; provider activity
-records the corresponding ebook selection when it proceeds automatically.
-Older collapsed Gutenberg reviews are refreshed once by the background worker:
+For the built-in Gutenberg source's **ebook** path, the administrator also sees
+the actual automatic-selection evidence. Download counts are a narrow,
+source-owned tie breaker for choosing among several plausible text editions of
+the same title — not a general quality score. An edition is selected only when
+it has at least 1,000 downloads and a 3× lead over the next edition. Older
+collapsed Gutenberg ebook reviews are refreshed once by the background worker:
 the worker replaces the stale one-record evidence with the current complete
-comparison while still leaving the audiobook in review.
+comparison while still leaving the request in review. **This download-count
+dominance rule applies only to ebooks.** It has no role in choosing among
+audiobook recordings (below) — a lightly-downloaded audiobook is not treated
+as less acceptable than a popular one.
 
-**Automatic audiobook format policy:** format differences alone are not a
-reason to stop for review when an otherwise strong same-source match exists.
-Family Librarian automatically prefers M4B, MP3, M4A/AAC, OPUS, OGG/OGA, then
-FLAC, in that order. Project Gutenberg audio records commonly bundle several
-of these codecs (e.g. MP3, M4B, and Ogg Vorbis side by side); the Gutenberg
-provider builds one candidate bundle per codec the record actually publishes
-and keeps only the highest-ranked one, so a record's own best format — not
-just its MP3 tracks — is what the requester sees and what gets acquired.
-Legacy Speex (`.spx`), WAV, AIFF/AIF, WMA, APE, and any other unrecognized
-audio format are ignored: they neither auto-acquire nor create an
-automatic-review choice. If candidates tie at the best usable format, or
-originate from different providers, the request remains reviewable; identity,
-language, release, and DRM checks are unchanged.
+**Automatic audiobook selection:** choosing among multiple acceptable
+audiobook recordings of the same requested work is a deterministic
+suitability/quality decision, not a popularity contest, and multiple
+same-provider candidates never force a review merely because more than one
+exists. `AudiobookCandidateSelector` ranks acceptable candidates by an ordered
+comparator chain — each dimension dominates every later one, never combined
+into one additive score — so an earlier requirement can never be outvoted by
+several weaker signals in a later one:
+
+1. **Completeness.** A recording known to be abridged ranks behind one that
+   is not known to be.
+2. **Narration**, governed by the requester's own narration preference
+   (`/settings/audiobook-narration`, defaulting to *Prefer human narration*
+   for every account): under *Prefer human narration*, a confirmed human
+   recording outranks every other candidate, but
+   a synthetic (computer-generated) one remains fully eligible when no human
+   recording is acceptable; under *Human narration only*, a confirmed
+   synthetic recording is excluded outright, and one whose narration cannot be
+   confirmed is neither accepted nor silently discarded — it is routed for
+   review as genuine unresolved uncertainty; under *No narration preference*,
+   narration has no effect on the outcome. For Project Gutenberg, narration is
+   classified from that record's own `*readme.txt` (structured catalogue
+   metadata does not distinguish a human reading from a computer-generated
+   one), never guessed — an unrecognized statement is `Unknown`, a valid,
+   expected result.
+3. **Packaging/format preference** — the existing container/codec ranking
+   below (M4B, MP3, M4A/AAC, OPUS, OGG/OGA, then FLAC), applied only as a late
+   tiebreaker among otherwise-equivalent recordings, never as a stand-in for
+   audio quality (a smaller M4B file is not "better" than a larger MP3 one on
+   that basis alone).
+4. **Popularity**, then **a stable record ID**, as the last, weak
+   tiebreakers — never an acceptance requirement, and never enough by
+   themselves to prefer one otherwise-equivalent recording over another for a
+   requester-visible reason.
+
+A record's own bundled codecs are resolved separately, before this
+comparison: Project Gutenberg audio records commonly publish several codecs
+side by side (e.g. MP3, M4B, and Ogg Vorbis for the same reading), so the
+Gutenberg provider first picks that one record's own best usable format —
+M4B, MP3, M4A/AAC, OPUS, OGG/OGA, then FLAC, in that order — before it is
+ever compared against a *different* record. Legacy Speex (`.spx`), WAV,
+AIFF/AIF, WMA, APE, and any other unrecognized audio format are ignored:
+they neither auto-acquire nor create an automatic-review choice. A
+cross-provider disagreement, and identity/language/release/DRM checks, are
+unchanged.
 
 This is intentionally limited to the bundled provider that explicitly opts in
 to automatic acquisition. Project Gutenberg has effective `Once` behavior: each outcome
