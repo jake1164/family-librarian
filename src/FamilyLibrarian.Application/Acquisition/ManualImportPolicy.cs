@@ -24,7 +24,7 @@ public sealed class ManualImportPolicy
     public IList<string> AllowedEbookExtensions { get; set; } =
         [".epub", ".azw3", ".mobi", ".azw", ".fb2", ".fbz", ".kepub", ".prc", ".docx"];
 
-    public IList<string> AllowedAudiobookExtensions { get; set; } = [".m4b", ".mp3"];
+    public IList<string> AllowedAudiobookExtensions { get; set; } = [".m4b", ".mp3", ".ogg"];
 
     /// <summary>
     /// Upper bound on how many track files a multi-file audiobook

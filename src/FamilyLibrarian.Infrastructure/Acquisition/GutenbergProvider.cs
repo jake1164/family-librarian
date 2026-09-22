@@ -25,7 +25,17 @@ public sealed class GutenbergProvider(
     ManualImportPolicy importPolicy,
     IBookMatcher bookMatcher) : IAutomaticDirectAcquisitionProvider
 {
-    private const string AudioBundleFormat = "audio-bundle";
+    // Real, deterministically-ranked audiobook formats Project Gutenberg's
+    // audio mirrors actually serve (see BuildAudiobookOptions). Anything else
+    // reported by the RDF catalogue (legacy Speex, WAV, ...) is classified as
+    // GutenbergFormatKind.Other by the synchronizer and never reaches here.
+    private static readonly Dictionary<GutenbergFormatKind, string> AudiobookFormatLabels =
+        new()
+        {
+            [GutenbergFormatKind.AudioM4b] = "m4b",
+            [GutenbergFormatKind.AudioMp3] = "mp3",
+            [GutenbergFormatKind.AudioOgg] = "ogg"
+        };
 
     // See PickDominantByPopularity's remarks for why these exist and what
     // they deliberately do not do.
@@ -117,7 +127,7 @@ public sealed class GutenbergProvider(
 
             var option = mediaType == RequestMediaType.Ebook
                 ? BuildEbookOption(candidate)
-                : BuildAudiobookOption(candidate);
+                : BuildBestAudiobookOption(candidate);
             if (option is null)
             {
                 continue;
@@ -208,7 +218,7 @@ public sealed class GutenbergProvider(
             throw new InvalidOperationException("This Gutenberg option has no downloadable formats.");
         }
 
-        if (fulfillmentOption.Format != AudioBundleFormat)
+        if (fulfillmentOption.MediaType != RequestMediaType.Audiobook)
         {
             var stream = await OpenFromMirrorsAsync(reference.SourcePaths[0], reference.FormatKind, cancellationToken);
             return [new DirectAcquisitionFile(stream, $"gutenberg-{fulfillmentOption.ProviderResultId}.epub")];
@@ -224,9 +234,10 @@ public sealed class GutenbergProvider(
                 "file manually from this request's Files section.");
         }
 
+        var extension = AudiobookFormatLabels.GetValueOrDefault(reference.FormatKind, "mp3");
         IReadOnlyList<DirectAcquisitionFile> files = reference.SourcePaths.Select((path, index) => new DirectAcquisitionFile(
             new LazyMirrorStream(token => OpenFromMirrorsAsync(path, reference.FormatKind, token)),
-            $"gutenberg-{fulfillmentOption.ProviderResultId}-{index + 1:00}.mp3")).ToArray();
+            $"gutenberg-{fulfillmentOption.ProviderResultId}-{index + 1:00}.{extension}")).ToArray();
         return files;
     }
 
@@ -246,15 +257,32 @@ public sealed class GutenbergProvider(
             sizeBytes: format.FileSizeBytes);
     }
 
-    private FulfillmentOption? BuildAudiobookOption(GutenbergCatalogBook book)
+    /// <summary>
+    /// Builds one bundle option per real codec this record actually publishes
+    /// (Project Gutenberg audio editions commonly ship MP3, M4B, and Ogg
+    /// Vorbis side by side), then keeps only the one <see cref="AudiobookFormatPolicy"/>
+    /// ranks highest -- e.g. M4B's much smaller, chaptered files over a
+    /// needlessly large MP3 bundle -- so the rest of this method still sees
+    /// exactly one option per Gutenberg record, same as every other kind.
+    /// </summary>
+    private FulfillmentOption? BuildBestAudiobookOption(GutenbergCatalogBook book)
     {
-        var tracks = book.Formats.Where(format => format.Kind == GutenbergFormatKind.AudioMp3)
-            .OrderBy(format => format.SourcePath, StringComparer.Ordinal).ToArray();
-        return tracks.Length == 0 ? null : CreateOption(
-            book, RequestMediaType.Audiobook, AudioBundleFormat,
-            tracks.Select(track => track.SourcePath).ToArray(), GutenbergFormatKind.AudioMp3,
-            sizeBytes: SumKnownSizes(tracks), partCount: tracks.Length);
+        var best = AudiobookFormatPolicy.KeepHighestUsable(BuildAudiobookOptions(book));
+        return best.Count == 0 ? null : best[0];
     }
+
+    private FulfillmentOption[] BuildAudiobookOptions(GutenbergCatalogBook book) => book.Formats
+        .Where(format => AudiobookFormatLabels.ContainsKey(format.Kind))
+        .GroupBy(format => format.Kind)
+        .Select(group =>
+        {
+            var tracks = group.OrderBy(format => format.SourcePath, StringComparer.Ordinal).ToArray();
+            return CreateOption(
+                book, RequestMediaType.Audiobook, AudiobookFormatLabels[group.Key],
+                tracks.Select(track => track.SourcePath).ToArray(), group.Key,
+                sizeBytes: SumKnownSizes(tracks), partCount: tracks.Length);
+        })
+        .ToArray();
 
     private FulfillmentOption CreateOption(
         GutenbergCatalogBook book,

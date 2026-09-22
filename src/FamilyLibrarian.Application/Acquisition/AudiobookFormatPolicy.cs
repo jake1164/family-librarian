@@ -34,7 +34,7 @@ public static class AudiobookFormatPolicy
     public static string? GetAutomaticAcquisitionLabel(string? format) => Normalize(format) switch
     {
         "m4b" => "M4B",
-        "mp3" or "audio-bundle" => "MP3",
+        "mp3" => "MP3",
         "m4a" => "M4A",
         "aac" => "AAC",
         "opus" => "OPUS",
@@ -60,7 +60,7 @@ public static class AudiobookFormatPolicy
     private static int? Rank(string? format) => Normalize(format) switch
     {
         "m4b" => 1,
-        "mp3" or "audio-bundle" => 2,
+        "mp3" => 2,
         "m4a" or "aac" => 3,
         "opus" => 4,
         "ogg" or "oga" => 5,

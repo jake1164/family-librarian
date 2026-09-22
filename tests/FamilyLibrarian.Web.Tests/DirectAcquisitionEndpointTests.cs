@@ -938,7 +938,7 @@ public sealed class DirectAcquisitionEndpointTests
                     MediaType: mediaType,
                     OptionKind: OptionKind.DirectAcquisition,
                     AcquisitionMethod: AcquisitionMethod.DirectDownload,
-                    Format: mediaType == RequestMediaType.Ebook ? "epub" : audiobookFormats?[index] ?? "audio-bundle",
+                    Format: mediaType == RequestMediaType.Ebook ? "epub" : audiobookFormats?[index] ?? "mp3",
                     Language: language,
                     Quality: null,
                     Availability: null,

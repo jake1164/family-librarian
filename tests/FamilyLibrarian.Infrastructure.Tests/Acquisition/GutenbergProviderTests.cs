@@ -117,7 +117,7 @@ public sealed class GutenbergProviderTests
 
         Assert.AreEqual(1, options.Count);
         var option = options.Single();
-        Assert.AreEqual("audio-bundle", option.Format);
+        Assert.AreEqual("mp3", option.Format);
         Assert.AreEqual(2, option.PartCount);
         Assert.AreEqual(3_000_000L, option.SizeBytes);
         Assert.AreEqual(5_505, option.ProviderPopularity);
@@ -125,6 +125,68 @@ public sealed class GutenbergProviderTests
             RequestReviewCandidatePresentation.BuildDetails(option) ?? string.Empty,
             "5,505 source downloads");
         Assert.AreEqual("https://www.gutenberg.org/ebooks/9147", option.AdminInspectionUri?.ToString());
+    }
+
+    [TestMethod]
+    public async Task ARecordPublishingSeveralAudioCodecsAutoSelectsTheHighestRankedOne()
+    {
+        // Reproduces real Gutenberg data found live at #28794: the same
+        // record publishes MP3, M4B, and Ogg Vorbis side by side. M4B must
+        // win per AudiobookFormatPolicy even though its tracks were parsed
+        // last and are individually smaller than the MP3 ones.
+        var context = new TestContext();
+        context.Catalog.Books =
+        [
+            new GutenbergCatalogBook(
+                28794,
+                "Moby Dick",
+                "moby dick",
+                "Audiobook",
+                "Public domain",
+                [new GutenbergCatalogPerson("Herman Melville", GutenbergPersonRole.Author)],
+                ["en"],
+                [
+                    new GutenbergCatalogFormat("28794/mp3/28794-01.mp3", "audio/mpeg", GutenbergFormatKind.AudioMp3, 9_000_000, null),
+                    new GutenbergCatalogFormat("28794/ogg/28794-01.ogg", "audio/ogg", GutenbergFormatKind.AudioOgg, 6_000_000, null),
+                    new GutenbergCatalogFormat("28794/m4b/28794-01.m4b", "audio/mp4", GutenbergFormatKind.AudioM4b, 3_000_000, null)
+                ],
+                DownloadCount: 5_505)
+        ];
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(1, options.Count);
+        var option = options.Single();
+        Assert.AreEqual("m4b", option.Format);
+        Assert.AreEqual(3_000_000L, option.SizeBytes);
+        StringAssert.Contains(
+            RequestReviewCandidatePresentation.BuildDetails(option) ?? string.Empty,
+            "M4B AUDIOBOOK");
+    }
+
+    [TestMethod]
+    public async Task ARecordWithOnlyUnsupportedAudioCodecsReturnsNoAudiobookOption()
+    {
+        var context = new TestContext();
+        context.Catalog.Books =
+        [
+            new GutenbergCatalogBook(
+                28794,
+                "Moby Dick",
+                "moby dick",
+                "Audiobook",
+                "Public domain",
+                [new GutenbergCatalogPerson("Herman Melville", GutenbergPersonRole.Author)],
+                ["en"],
+                [new GutenbergCatalogFormat("28794/spx/28794-01.spx", "audio/ogg", GutenbergFormatKind.Other, 1_000_000, null)],
+                DownloadCount: 5_505)
+        ];
+
+        var options = await context.Provider.FindDirectAcquisitionsAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(0, options.Count);
     }
 
     [TestMethod]

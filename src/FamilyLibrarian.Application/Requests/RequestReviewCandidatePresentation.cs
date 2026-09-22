@@ -1,5 +1,6 @@
 using System.Globalization;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Requests;
 
@@ -17,7 +18,9 @@ public static class RequestReviewCandidatePresentation
         var format = NormalizeFormat(option.Format);
         if (format is not null)
         {
-            facts.Add(format.ToUpperInvariant());
+            facts.Add(option.MediaType == RequestMediaType.Audiobook
+                ? $"{format} audiobook".ToUpperInvariant()
+                : format.ToUpperInvariant());
         }
 
         if (option.PublicationYear is >= 1000 and <= 9999)
@@ -79,7 +82,6 @@ public static class RequestReviewCandidatePresentation
         "ogg" => "OGG",
         "opus" => "OPUS",
         "flac" => "FLAC",
-        "audio-bundle" => "MP3 audiobook",
         _ => null
     };
 

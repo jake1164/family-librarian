@@ -62,15 +62,6 @@ public sealed class AudiobookFormatPolicyTests
     }
 
     [TestMethod]
-    public void TreatsTheBundledGutenbergMp3BundleAsMp3()
-    {
-        var selected = AudiobookFormatPolicy.KeepHighestUsable([Option("audio-bundle"), Option("m4a")]);
-
-        Assert.HasCount(1, selected);
-        Assert.AreEqual("audio-bundle", selected[0].Format);
-    }
-
-    [TestMethod]
     public void RecordsTheSelectedAudiobookFormatInTheControlledAuditSummary()
     {
         var summary = AudiobookFormatPolicy.DescribeAcquiredOption(Option("m4b"));

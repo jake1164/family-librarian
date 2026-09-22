@@ -24,6 +24,7 @@ public static class KnownFormatContentTypes
             [".kepub"] = "application/epub+zip",
             [".docx"] = "application/zip",
             [".mp3"] = "audio/mpeg",
-            [".m4b"] = "audio/mp4"
+            [".m4b"] = "audio/mp4",
+            [".ogg"] = "audio/ogg"
         };
 }

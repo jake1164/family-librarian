@@ -69,6 +69,11 @@ public static class SignatureFileTypeDetector
             return "audio/mp4"; // ISO base media file (M4A/M4B) ftyp box
         }
 
+        if (StartsWith(bytes, 0x4F, 0x67, 0x67, 0x53))
+        {
+            return "audio/ogg"; // "OggS" capture pattern (RFC 3533 §6)
+        }
+
         return "application/octet-stream";
     }
 

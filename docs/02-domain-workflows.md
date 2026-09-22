@@ -1141,12 +1141,16 @@ comparison while still leaving the audiobook in review.
 **Automatic audiobook format policy:** format differences alone are not a
 reason to stop for review when an otherwise strong same-source match exists.
 Family Librarian automatically prefers M4B, MP3, M4A/AAC, OPUS, OGG/OGA, then
-FLAC, in that order. The bundled Gutenberg MP3 bundle is treated as MP3. WAV,
-AIFF/AIF, WMA, APE, and unrecognized audio formats are ignored: they neither
-auto-acquire nor create an automatic-review choice. If candidates tie at the
-best usable format, or originate from
-different providers, the request remains reviewable; identity, language,
-release, and DRM checks are unchanged.
+FLAC, in that order. Project Gutenberg audio records commonly bundle several
+of these codecs (e.g. MP3, M4B, and Ogg Vorbis side by side); the Gutenberg
+provider builds one candidate bundle per codec the record actually publishes
+and keeps only the highest-ranked one, so a record's own best format — not
+just its MP3 tracks — is what the requester sees and what gets acquired.
+Legacy Speex (`.spx`), WAV, AIFF/AIF, WMA, APE, and any other unrecognized
+audio format are ignored: they neither auto-acquire nor create an
+automatic-review choice. If candidates tie at the best usable format, or
+originate from different providers, the request remains reviewable; identity,
+language, release, and DRM checks are unchanged.
 
 This is intentionally limited to the bundled provider that explicitly opts in
 to automatic acquisition. Project Gutenberg has effective `Once` behavior: each outcome

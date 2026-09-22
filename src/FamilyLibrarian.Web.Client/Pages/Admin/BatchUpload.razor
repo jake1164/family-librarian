@@ -152,7 +152,7 @@
     private static string? MediaTypeFor(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
     {
         ".epub" or ".pdf" or ".mobi" or ".azw" or ".azw3" or ".fb2" or ".txt" or ".html" or ".rtf" or ".odt" or ".djvu" or ".prc" or ".doc" or ".docx" => "Ebook",
-        ".mp3" or ".m4a" or ".m4b" => "Audiobook",
+        ".mp3" or ".m4a" or ".m4b" or ".ogg" => "Audiobook",
         _ => null
     };
 

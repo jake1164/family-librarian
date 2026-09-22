@@ -593,11 +593,28 @@ internal sealed partial class GutenbergCatalogSynchronizer(
         rights?.Contains("copyright", StringComparison.OrdinalIgnoreCase) == true ? "Copyrighted" : "Unknown";
 
     private static GutenbergFormatKind ClassifyFormat(string path, string mimeType) =>
-        mimeType.Equals("audio/mpeg", StringComparison.OrdinalIgnoreCase) ? GutenbergFormatKind.AudioMp3 :
         path.EndsWith(".epub3.images", StringComparison.OrdinalIgnoreCase) || path.EndsWith("-images-3.epub", StringComparison.OrdinalIgnoreCase) ? GutenbergFormatKind.Epub3Images :
         path.EndsWith(".epub.images", StringComparison.OrdinalIgnoreCase) || path.EndsWith("-images.epub", StringComparison.OrdinalIgnoreCase) ? GutenbergFormatKind.EpubImages :
         mimeType.Equals("application/epub+zip", StringComparison.OrdinalIgnoreCase) ? GutenbergFormatKind.EpubNoImages :
-        GutenbergFormatKind.Other;
+        ClassifyAudioFormat(path, mimeType);
+
+    // Project Gutenberg's audio mirrors serve each codec from its own
+    // subdirectory/extension (.../mp3/x.mp3, .../m4b/x.m4b, .../ogg/x.ogg),
+    // which is the only reliable signal here: Ogg Vorbis and legacy Speex
+    // (.spx) both report the identical dcterms:format mime "audio/ogg", so
+    // mime type alone cannot tell a real Ogg Vorbis track from a Speex one.
+    private static GutenbergFormatKind ClassifyAudioFormat(string path, string mimeType)
+    {
+        var dot = path.LastIndexOf('.');
+        var extension = dot < 0 ? string.Empty : path[(dot + 1)..].ToLowerInvariant();
+        return (mimeType.ToLowerInvariant(), extension) switch
+        {
+            ("audio/mpeg", "mp3") => GutenbergFormatKind.AudioMp3,
+            ("audio/mp4", "m4b") => GutenbergFormatKind.AudioM4b,
+            ("audio/ogg", "ogg" or "oga") => GutenbergFormatKind.AudioOgg,
+            _ => GutenbergFormatKind.Other
+        };
+    }
 
     private static bool TryGetSourcePath(string? source, out string path)
     {
