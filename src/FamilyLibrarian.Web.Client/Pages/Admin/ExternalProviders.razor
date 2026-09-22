@@ -666,9 +666,15 @@
             string.Equals(issue.ProviderId, providerId, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(issue.IssueKind, issueKind, StringComparison.Ordinal));
 
+    // Providers self-report managementUrl/documentationUrl (protocol v2 S4) and are often
+    // reached over plain http on an internal/lab network (docs/04-external-provider-http-protocol.md
+    // S4's own example is http). Restricting to https here would silently hide a correctly
+    // configured, provider-supplied link, so both schemes are allowed; anything else (e.g.
+    // javascript:) is rejected.
     private static bool IsSafeExternalUrl(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
-        string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+        (string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Shared coloring for the health/operations chips (protocol v2 §5):
