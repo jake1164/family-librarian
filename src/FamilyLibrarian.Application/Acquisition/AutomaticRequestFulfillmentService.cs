@@ -111,11 +111,19 @@ public sealed class AutomaticRequestFulfillmentService(
                             format.MediaType,
                             cancellationToken);
                         options.AddRange(providerOptions);
+                        var onlyExcludedAudiobookFormats = format.MediaType == RequestMediaType.Audiobook &&
+                                                           providerOptions.Count > 0 &&
+                                                           providerOptions.All(option =>
+                                                               !AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format));
                         attempts.Add(new ProviderAttempt(
                             request.Id, format.Id, provider.Id,
-                            providerOptions.Count == 0 ? ProviderAttemptOutcome.NoMatch : ProviderAttemptOutcome.CandidatesFound,
+                            providerOptions.Count == 0 || onlyExcludedAudiobookFormats
+                                ? ProviderAttemptOutcome.NoMatch
+                                : ProviderAttemptOutcome.CandidatesFound,
                             providerOptions.Count == 0
                                 ? "No high-confidence automatic copy was found."
+                                : onlyExcludedAudiobookFormats
+                                    ? "The provider reported only audiobook formats excluded from automatic acquisition."
                                 : DescribeProviderCandidates(providerOptions),
                             clock.UtcNow,
                             nextEligibleCheckAtUtc: null));
@@ -150,8 +158,22 @@ public sealed class AutomaticRequestFulfillmentService(
                 // must never be auto-selected here -- it is kept separate so it
                 // can be offered to the requester as a preference decision below
                 // instead of silently acquired or silently discarded.
-                var autoEligible = distinctOptions.Where(option => !option.RequiresLanguageConfirmation).ToArray();
-                var languageExcluded = distinctOptions.Where(option => option.RequiresLanguageConfirmation).ToArray();
+                var automaticFormatOptions = format.MediaType == RequestMediaType.Audiobook
+                    ? distinctOptions.Where(option => AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format)).ToArray()
+                    : distinctOptions;
+                var autoEligible = automaticFormatOptions.Where(option => !option.RequiresLanguageConfirmation).ToArray();
+                var languageExcluded = automaticFormatOptions.Where(option => option.RequiresLanguageConfirmation).ToArray();
+
+                // A deterministic format preference resolves only same-source
+                // audiobook candidates. Different sources remain a real trust
+                // disagreement; a tie at the highest usable format remains a
+                // review rather than a hidden arbitrary choice.
+                if (format.MediaType == RequestMediaType.Audiobook &&
+                    autoEligible.Length > 1 &&
+                    autoEligible.Select(option => option.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
+                {
+                    autoEligible = AudiobookFormatPolicy.KeepHighestUsable(autoEligible).ToArray();
+                }
 
                 if (autoEligible.Length > 1)
                 {
@@ -293,7 +315,7 @@ public sealed class AutomaticRequestFulfillmentService(
 
         attempts.Add(new ProviderAttempt(
             request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Acquired,
-            "A high-confidence copy was acquired and sent through the security pipeline.", clock.UtcNow,
+            AudiobookFormatPolicy.DescribeAcquiredOption(option), clock.UtcNow,
             nextEligibleCheckAtUtc: null));
         await attempts.SaveChangesAsync(cancellationToken);
         return true;

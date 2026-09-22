@@ -120,6 +120,11 @@ stored decision evidence (the metric, threshold, and runner-up) rather than
 calling the result “better.” Do not turn that source-specific evidence into a
 general-purpose quality badge or color.
 
+Audiobook format priority is a deterministic acquisition rule, not a status or
+quality signal. Do not display M4B/MP3/etc. in status colors or describe the
+selected container as “better”; surface the format as ordinary media evidence
+when explaining an automatic decision or a genuine same-format tie.
+
 ## Adding a new status or media type
 
 1. Add the color/label mapping to `MediaTypeVisuals` — not to the page.

@@ -131,17 +131,32 @@ public sealed class ExternalProviderRecheckService(
                             continue;
                         }
 
+                        var reviewableOptions = format.MediaType == RequestMediaType.Audiobook
+                            ? options.Where(option => AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format)).ToArray()
+                            : options;
+                        if (reviewableOptions.Count == 0)
+                        {
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.NoMatch,
+                                "The provider reported only audiobook formats excluded from automatic acquisition.", nextCheck);
+                            continue;
+                        }
+
                         // Identifier evidence is strongest, but identical normalized title and
                         // observed-author records are also a deterministic single-work choice.
                         // This does not apply to the broad TitleAuthor fallback, derivatives,
                         // or a language conflict. The selected option is fetched exactly once;
                         // failure reaches review rather than triggering a fallback download.
-                        var automaticMatches = options
+                        var automaticMatches = reviewableOptions
                             .Where(option =>
                                 (option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor) &&
                                 !option.RequiresLanguageConfirmation &&
                                 (!option.RequiresReleaseConfirmation || IsUnknownDrmOnlyConcern(option)))
                             .ToArray();
+
+                        if (format.MediaType == RequestMediaType.Audiobook)
+                        {
+                            automaticMatches = AudiobookFormatPolicy.KeepHighestUsable(automaticMatches).ToArray();
+                        }
 
                         if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled)
                         {
@@ -156,7 +171,7 @@ public sealed class ExternalProviderRecheckService(
                             if (acquireResult.Outcome == ManualImportOutcome.Success)
                             {
                                 AddAttempt(request, format, provider, ProviderAttemptOutcome.Acquired,
-                                    "A high-confidence copy was acquired and sent through the security pipeline.",
+                                    AudiobookFormatPolicy.DescribeAcquiredOption(automaticMatches[0]),
                                     nextEligibleCheckAtUtc: null);
                                 break;
                             }
@@ -183,11 +198,11 @@ public sealed class ExternalProviderRecheckService(
                         }
 
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
-                            $"Found {options.Count} candidate(s); choose a reviewed candidate before acquisition.",
+                            $"Found {reviewableOptions.Count} candidate(s); choose a reviewed candidate before acquisition.",
                             nextEligibleCheckAtUtc: null);
                         await MarkForCandidateReviewAsync(
-                            request, format, provider, work.Title, work.PrimaryAuthor, options,
-                            DescribeCandidateReviewReason(options, provider.AutoAcquireEnabled), cancellationToken);
+                            request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
+                            DescribeCandidateReviewReason(reviewableOptions, provider.AutoAcquireEnabled), cancellationToken);
                         break;
                     }
                     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested &&

@@ -216,6 +216,53 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     [TestMethod]
+    public async Task APreferredSameSourceAudiobookFormatIsFetchedWithoutAFormatReview()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var provider = new FakeProvider(
+            matches: true,
+            throwsOnFetch: true,
+            audiobookFormats: ["m4a", "m4b", "mp3"]);
+        await using var factory = CreateFactory(fixture, provider);
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, _) = await CreateAudiobookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        // The fake deliberately fails after the selection point. That proves
+        // the production acquisition path selected M4B, while avoiding an
+        // invalid pretend-audio fixture in this host-level routing test.
+        Assert.AreEqual("m4b", provider.LastFetchedFormat);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await database.BookRequests.SingleAsync(item => item.Id == requestId);
+        Assert.AreEqual(RequestReviewCategory.SecurityOrIdentityFailure, request.ReviewCategory);
+    }
+
+    [TestMethod]
+    public async Task IgnoredAudiobookFormatsDoNotFetchOrCreateAReview()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var provider = new FakeProvider(matches: true, audiobookFormats: ["wav", "aiff", "wma", "ape"]);
+        await using var factory = CreateFactory(fixture, provider);
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateAudiobookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        Assert.IsNull(provider.LastFetchedFormat);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await database.BookRequests.SingleAsync(item => item.Id == requestId);
+        Assert.AreEqual(RequestStatus.PendingAcquisition, request.Status);
+        Assert.IsNull(request.ReviewCategory);
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(asset => asset.AssociatedRequestFormatId == formatId));
+        Assert.AreEqual(1, await database.ProviderAttempts.CountAsync(attempt =>
+            attempt.RequestFormatId == formatId && attempt.Outcome == ProviderAttemptOutcome.NoMatch));
+    }
+
+    [TestMethod]
     public async Task AStoredLegacyAudiobookReviewIsRefreshedWhileAnUnreviewedEbookIsAcquired()
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -804,6 +851,26 @@ public sealed class DirectAcquisitionEndpointTests
         return (request.Id, format.FormatId);
     }
 
+    private static async Task<(Guid RequestId, Guid FormatId)> CreateAudiobookRequestAsync(HttpClient client)
+    {
+        var resolve = await client.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        resolve.EnsureSuccessStatusCode();
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+
+        var created = await client.PostAsJsonAsync(
+            "/api/v1/requests/",
+            new CreateBookRequestRequest(
+                await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id),
+                ["Audiobook"], null, false, false));
+        Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        var format = request.Formats.Single(format => format.MediaType == "Audiobook");
+        return (request.Id, format.FormatId);
+    }
+
     private static async Task<(Guid RequestId, Guid EbookFormatId, Guid AudiobookFormatId)> CreateEbookAndAudiobookRequestAsync(
         HttpClient client)
     {
@@ -834,7 +901,7 @@ public sealed class DirectAcquisitionEndpointTests
     private sealed class FakeProvider(
         bool matches, string providerId = "gutendex", string providerResultId = "1234", bool throwsOnFetch = false,
         bool isReady = true, bool requiresLanguageConfirmation = false, string? language = null, int matchCount = 1,
-        int audiobookMatchCount = 0)
+        int audiobookMatchCount = 0, IReadOnlyList<string>? audiobookFormats = null)
         : IAutomaticDirectAcquisitionProvider
     {
         public string Id => providerId;
@@ -847,12 +914,16 @@ public sealed class DirectAcquisitionEndpointTests
         /// </summary>
         public string ProviderResultId { get; set; } = providerResultId;
 
+        public string? LastFetchedFormat { get; private set; }
+
         public Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(isReady);
 
         public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
             Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)
         {
-            var candidateCount = mediaType == RequestMediaType.Ebook ? matchCount : audiobookMatchCount;
+            var candidateCount = mediaType == RequestMediaType.Ebook
+                ? matchCount
+                : audiobookFormats?.Count ?? audiobookMatchCount;
             if (!matches || candidateCount == 0)
             {
                 return Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
@@ -867,7 +938,7 @@ public sealed class DirectAcquisitionEndpointTests
                     MediaType: mediaType,
                     OptionKind: OptionKind.DirectAcquisition,
                     AcquisitionMethod: AcquisitionMethod.DirectDownload,
-                    Format: mediaType == RequestMediaType.Ebook ? "epub" : "audio-bundle",
+                    Format: mediaType == RequestMediaType.Ebook ? "epub" : audiobookFormats?[index] ?? "audio-bundle",
                     Language: language,
                     Quality: null,
                     Availability: null,
@@ -895,6 +966,7 @@ public sealed class DirectAcquisitionEndpointTests
         public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
             FulfillmentOption fulfillmentOption, CancellationToken cancellationToken)
         {
+            LastFetchedFormat = fulfillmentOption.Format;
             if (throwsOnFetch)
             {
                 throw new InvalidOperationException(
