@@ -116,6 +116,14 @@ internal sealed class FamilyLibrarianAppFactory(
         // which runs after this and so wins.
         builder.ConfigureServices(services =>
         {
+            // Host-integration tests drive scheduled application services
+            // explicitly. Starting production polling loops here races those
+            // deliberate calls and lets a test host contact real services
+            // (for example, the Gutenberg catalog and its bzip2 dependency).
+            // The hosted loops contain no business behavior beyond scheduling;
+            // their underlying services remain registered and testable.
+            services.RemoveAll<IHostedService>();
+
             services.RemoveAll<IMalwareScanner>();
             services.AddSingleton<IMalwareScanner, AlwaysCleanTestMalwareScanner>();
 

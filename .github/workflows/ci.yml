@@ -47,10 +47,40 @@ jobs:
       - name: Build (zero warnings, zero errors)
         run: dotnet build FamilyLibrarian.slnx --no-restore
 
+      # Browser regressions are required coverage, not a developer-machine
+      # assumption. Playwright's browser binary is installed explicitly for
+      # this Linux runner; the package itself does not ship one.
+      - name: Install Playwright Chromium
+        run: pwsh tests/FamilyLibrarian.Web.Tests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium
+
+      # BrowserRequestQueueE2ETests deliberately exercises a deployed Compose
+      # application rather than an in-process host. These credentials exist
+      # only for this fresh, isolated CI database and are not deployment
+      # secrets.
+      - name: Start browser E2E deployment
+        env:
+          FL_DB_PASSWORD: ci-browser-e2e-database-only
+          ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
+          ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
+        run: docker compose --project-name family-librarian-browser-e2e up --build --wait
+
       # Testcontainers.PostgreSql needs a Docker daemon, which is
       # preinstalled and running on GitHub-hosted ubuntu-latest runners.
       - name: Test
+        env:
+          FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS: "1"
+          FAMILY_LIBRARIAN_E2E_BASE_URL: http://localhost:8080
+          FAMILY_LIBRARIAN_E2E_ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
+          FAMILY_LIBRARIAN_E2E_ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
         run: dotnet test --solution FamilyLibrarian.slnx --no-restore
+
+      - name: Stop browser E2E deployment
+        if: always()
+        env:
+          FL_DB_PASSWORD: ci-browser-e2e-database-only
+          ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
+          ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
+        run: docker compose --project-name family-librarian-browser-e2e down --volumes --remove-orphans
 
   # docs/01 §13.1 requires "dependency and container image scanning in the
   # build pipeline". This job covers NuGet packages; container-scan below
