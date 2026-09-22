@@ -231,5 +231,11 @@ public sealed class AccountAdminServiceTests
             AdminChanges.Add((userId, isAdmin));
             return Task.FromResult(AccountOperationResult.Success(userId));
         }
+
+        public Task<AccountOperationResult> SetAudiobookNarrationPreferenceAsync(
+            Guid userId,
+            AudiobookNarrationPreference preference,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(AccountOperationResult.Success(userId));
     }
 }

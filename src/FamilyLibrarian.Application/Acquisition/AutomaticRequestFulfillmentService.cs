@@ -1,7 +1,9 @@
+using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
 
@@ -44,7 +46,8 @@ public sealed class AutomaticRequestFulfillmentService(
     DirectAcquisitionSecurityService acquisition,
     IClock clock,
     NotificationService notifications,
-    ICurrentUser currentUser)
+    ICurrentUser currentUser,
+    IUserAccountStore accounts)
 {
     private const int BatchSize = 20;
 
@@ -164,15 +167,44 @@ public sealed class AutomaticRequestFulfillmentService(
                 var autoEligible = automaticFormatOptions.Where(option => !option.RequiresLanguageConfirmation).ToArray();
                 var languageExcluded = automaticFormatOptions.Where(option => option.RequiresLanguageConfirmation).ToArray();
 
-                // A deterministic format preference resolves only same-source
-                // audiobook candidates. Different sources remain a real trust
-                // disagreement; a tie at the highest usable format remains a
-                // review rather than a hidden arbitrary choice.
+                // Cross-record audiobook selection -- narration preference,
+                // completeness, then packaging/popularity/ID as late
+                // tiebreakers -- resolves only same-source candidates.
+                // Different sources remain a real trust disagreement (below).
+                // Multiple acceptable candidates never force a review by
+                // themselves: AudiobookCandidateSelector's comparator chain
+                // always ends in a stable-ID tiebreak, so it always produces
+                // exactly one winner from an acceptable candidate set. The
+                // one exception is genuine unresolved uncertainty -- a
+                // HumanOnly requirement no candidate can confirm satisfying.
                 if (format.MediaType == RequestMediaType.Audiobook &&
-                    autoEligible.Length > 1 &&
+                    autoEligible.Length > 0 &&
                     autoEligible.Select(option => option.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
                 {
-                    autoEligible = AudiobookFormatPolicy.KeepHighestUsable(autoEligible).ToArray();
+                    var preference = await GetNarrationPreferenceAsync(request.UserId, cancellationToken);
+                    var selection = AudiobookCandidateSelector.Select(autoEligible, preference);
+                    if (selection.Winner is { } winner)
+                    {
+                        autoEligible = [winner with { AutomaticSelectionReason = selection.DecisionReason }];
+                    }
+                    else if (selection.CandidatesRequiringNarrationConfirmation.Count > 0)
+                    {
+                        await MarkForReviewAsync(
+                            request, RequestReviewCategory.PreferenceAmbiguity,
+                            selection.DecisionReason, cancellationToken,
+                            selection.CandidatesRequiringNarrationConfirmation.Select(option => (format.Id, option.ProviderId, option.ProviderResultId,
+                                option.Title, option.Author, option.Language,
+                                RequestReviewCandidatePresentation.BuildDetails(option),
+                                option.AdminInspectionUri?.ToString()))
+                                .ToArray());
+                        await attempts.SaveChangesAsync(cancellationToken);
+                        await requests.SaveChangesAsync(cancellationToken);
+                        continue;
+                    }
+                    else
+                    {
+                        autoEligible = [];
+                    }
                 }
 
                 if (autoEligible.Length > 1)
@@ -591,6 +623,13 @@ public sealed class AutomaticRequestFulfillmentService(
             request.StatusHistory.LastOrDefault()?.Reason,
             "Multiple plausible editions were found.",
             StringComparison.Ordinal);
+
+    private async Task<AudiobookNarrationPreference> GetNarrationPreferenceAsync(
+        Guid requesterUserId, CancellationToken cancellationToken)
+    {
+        var account = await accounts.FindAsync(requesterUserId, cancellationToken);
+        return account?.AudiobookNarrationPreference ?? AudiobookNarrationPreference.PreferHuman;
+    }
 
     private static string DescribeSameProviderAmbiguity(IReadOnlyList<FulfillmentOption> options)
     {

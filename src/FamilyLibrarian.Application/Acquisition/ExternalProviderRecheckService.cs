@@ -1,11 +1,13 @@
 using System.Security.Cryptography;
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
@@ -34,7 +36,8 @@ public sealed class ExternalProviderRecheckService(
     PrivateEgressRouteResolver routeResolver,
     IWorkLookup workLookup,
     IClock clock,
-    NotificationService notifications)
+    NotificationService notifications,
+    IUserAccountStore accounts)
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
@@ -153,9 +156,21 @@ public sealed class ExternalProviderRecheckService(
                                 (!option.RequiresReleaseConfirmation || IsUnknownDrmOnlyConcern(option)))
                             .ToArray();
 
+                        // A narration-aware winner replaces raw format-rank
+                        // collapsing here too -- same selector, same rules,
+                        // as the built-in Gutenberg path. Unlike that fully
+                        // trusted path, anything short of exactly one clean
+                        // winner still falls through to this method's existing
+                        // conservative review fallback below (reviewableOptions),
+                        // matching this service's doc comment: for an
+                        // admin-registered provider, weaker evidence is always
+                        // for a librarian, never silent automatic acquisition.
+                        AudiobookCandidateSelectionResult? audiobookSelection = null;
                         if (format.MediaType == RequestMediaType.Audiobook)
                         {
-                            automaticMatches = AudiobookFormatPolicy.KeepHighestUsable(automaticMatches).ToArray();
+                            var preference = await GetNarrationPreferenceAsync(request.UserId, cancellationToken);
+                            audiobookSelection = AudiobookCandidateSelector.Select(automaticMatches, preference);
+                            automaticMatches = audiobookSelection.Winner is { } winner ? [winner] : [];
                         }
 
                         if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled)
@@ -171,7 +186,7 @@ public sealed class ExternalProviderRecheckService(
                             if (acquireResult.Outcome == ManualImportOutcome.Success)
                             {
                                 AddAttempt(request, format, provider, ProviderAttemptOutcome.Acquired,
-                                    AudiobookFormatPolicy.DescribeAcquiredOption(automaticMatches[0]),
+                                    audiobookSelection?.DecisionReason ?? AudiobookFormatPolicy.DescribeAcquiredOption(automaticMatches[0]),
                                     nextEligibleCheckAtUtc: null);
                                 break;
                             }
@@ -252,6 +267,13 @@ public sealed class ExternalProviderRecheckService(
         ProviderRecheckSchedule.Weekly => TimeSpan.FromDays(7),
         _ => throw new ArgumentOutOfRangeException(nameof(schedule), schedule, "Only scheduled providers may be rechecked.")
     };
+
+    private async Task<AudiobookNarrationPreference> GetNarrationPreferenceAsync(
+        Guid requesterUserId, CancellationToken cancellationToken)
+    {
+        var account = await accounts.FindAsync(requesterUserId, cancellationToken);
+        return account?.AudiobookNarrationPreference ?? AudiobookNarrationPreference.PreferHuman;
+    }
 
     private static bool IsUnknownDrmOnlyConcern(FulfillmentOption option) =>
         option.DrmStatus == "unknown" &&

@@ -200,6 +200,24 @@ public sealed class IdentityUserAccountStore(UserManager<AppUser> userManager) :
             : AccountOperationResult.Failure(Describe(stamped));
     }
 
+    public async Task<AccountOperationResult> SetAudiobookNarrationPreferenceAsync(
+        Guid userId,
+        AudiobookNarrationPreference preference,
+        CancellationToken cancellationToken)
+    {
+        var user = await userManager.FindByIdAsync(userId.ToString());
+        if (user is null)
+        {
+            return AccountOperationResult.Failure("That account no longer exists.");
+        }
+
+        user.AudiobookNarrationPreference = preference;
+        var updated = await userManager.UpdateAsync(user);
+        return updated.Succeeded
+            ? AccountOperationResult.Success(user.Id)
+            : AccountOperationResult.Failure(Describe(updated));
+    }
+
     private async Task<HashSet<Guid>> GetAdminIdsAsync(CancellationToken cancellationToken)
     {
         _ = cancellationToken;
@@ -216,7 +234,8 @@ public sealed class IdentityUserAccountStore(UserManager<AppUser> userManager) :
         user.Status,
         isAdmin,
         user.CreatedAtUtc,
-        user.LastLoginAtUtc);
+        user.LastLoginAtUtc,
+        user.AudiobookNarrationPreference);
 
     private static string Describe(IdentityResult result) =>
         string.Join(" ", result.Errors.Select(error => error.Description));

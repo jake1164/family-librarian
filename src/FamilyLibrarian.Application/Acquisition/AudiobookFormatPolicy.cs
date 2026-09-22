@@ -30,6 +30,14 @@ public static class AudiobookFormatPolicy
 
     public static bool IsUsableForAutomaticAcquisition(string? format) => Rank(format) is not null;
 
+    /// <summary>
+    /// The same container/codec ranking <see cref="KeepHighestUsable"/> uses,
+    /// exposed for <see cref="AudiobookCandidateSelector"/>'s packaging-preference
+    /// tiebreak dimension -- lower is more preferred; <see langword="null"/> for an
+    /// unusable/unrecognized format.
+    /// </summary>
+    public static int? GetFormatRank(string? format) => Rank(format);
+
     /// <summary>Returns the neutral label used in an acquisition audit entry.</summary>
     public static string? GetAutomaticAcquisitionLabel(string? format) => Normalize(format) switch
     {

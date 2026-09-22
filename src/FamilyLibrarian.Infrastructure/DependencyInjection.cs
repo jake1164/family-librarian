@@ -308,6 +308,7 @@ public static class DependencyInjection
         services.AddSingleton<IInvitationTokenGenerator, InvitationTokenGenerator>();
         services.AddScoped<InvitationService>();
         services.AddScoped<AccountAdminService>();
+        services.AddScoped<AudiobookNarrationPreferenceService>();
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();

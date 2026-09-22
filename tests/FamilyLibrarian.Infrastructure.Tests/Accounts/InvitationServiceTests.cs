@@ -519,5 +519,11 @@ public sealed class InvitationServiceTests
             bool isAdmin,
             CancellationToken cancellationToken) =>
             Task.FromResult(AccountOperationResult.Success(userId));
+
+        public Task<AccountOperationResult> SetAudiobookNarrationPreferenceAsync(
+            Guid userId,
+            AudiobookNarrationPreference preference,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(AccountOperationResult.Success(userId));
     }
 }

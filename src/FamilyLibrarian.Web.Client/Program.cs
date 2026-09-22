@@ -57,6 +57,7 @@ builder.Services.AddScoped<MatrixLinkApiClient>();
 builder.Services.AddScoped<FeedbackApiClient>();
 builder.Services.AddScoped<FollowApiClient>();
 builder.Services.AddScoped<DeliveryTargetApiClient>();
+builder.Services.AddScoped<AudiobookNarrationPreferenceApiClient>();
 builder.Services.AddScoped<MediaAssetsApiClient>();
 builder.Services.AddScoped<CwaSettingsApiClient>();
 builder.Services.AddScoped<AudiobookshelfSettingsApiClient>();

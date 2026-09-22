@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
@@ -127,7 +128,7 @@ public sealed class GutenbergProvider(
 
             var option = mediaType == RequestMediaType.Ebook
                 ? BuildEbookOption(candidate)
-                : BuildBestAudiobookOption(candidate);
+                : await BuildBestAudiobookOptionAsync(candidate, cancellationToken);
             if (option is null)
             {
                 continue;
@@ -150,7 +151,15 @@ public sealed class GutenbergProvider(
             }
         }
 
-        if (autoEligible.Count > 1 && PickDominantByPopularity(autoEligible) is { } dominant)
+        // Download-count dominance decides only between ambiguous EBOOK
+        // editions of the same text (see PickDominantByPopularity's remarks).
+        // An audiobook's "which record" ambiguity is a narration/completeness
+        // decision now, made by AudiobookCandidateSelector at the caller --
+        // popularity must not gate whether an audiobook can auto-acquire at
+        // all (a 17-download recording can still be the one clearly correct
+        // copy), only ever break a genuine tie there, very late.
+        if (mediaType == RequestMediaType.Ebook &&
+            autoEligible.Count > 1 && PickDominantByPopularity(autoEligible) is { } dominant)
         {
             return [dominant];
         }
@@ -265,24 +274,81 @@ public sealed class GutenbergProvider(
     /// needlessly large MP3 bundle -- so the rest of this method still sees
     /// exactly one option per Gutenberg record, same as every other kind.
     /// </summary>
-    private FulfillmentOption? BuildBestAudiobookOption(GutenbergCatalogBook book)
+    private async Task<FulfillmentOption?> BuildBestAudiobookOptionAsync(
+        GutenbergCatalogBook book, CancellationToken cancellationToken)
     {
-        var best = AudiobookFormatPolicy.KeepHighestUsable(BuildAudiobookOptions(book));
+        var options = await BuildAudiobookOptionsAsync(book, cancellationToken);
+        var best = AudiobookFormatPolicy.KeepHighestUsable(options);
         return best.Count == 0 ? null : best[0];
     }
 
-    private FulfillmentOption[] BuildAudiobookOptions(GutenbergCatalogBook book) => book.Formats
-        .Where(format => AudiobookFormatLabels.ContainsKey(format.Kind))
-        .GroupBy(format => format.Kind)
-        .Select(group =>
+    private async Task<FulfillmentOption[]> BuildAudiobookOptionsAsync(
+        GutenbergCatalogBook book, CancellationToken cancellationToken)
+    {
+        var groups = book.Formats
+            .Where(format => AudiobookFormatLabels.ContainsKey(format.Kind))
+            .GroupBy(format => format.Kind)
+            .ToArray();
+        if (groups.Length == 0)
+        {
+            return [];
+        }
+
+        // One recording can be bundled as several codecs, but they are all
+        // the same reading -- fetch the narration credit once per book, not
+        // once per codec bundle.
+        var narration = await TryFetchNarrationEvidenceAsync(book, cancellationToken);
+
+        return groups.Select(group =>
         {
             var tracks = group.OrderBy(format => format.SourcePath, StringComparer.Ordinal).ToArray();
             return CreateOption(
                 book, RequestMediaType.Audiobook, AudiobookFormatLabels[group.Key],
                 tracks.Select(track => track.SourcePath).ToArray(), group.Key,
-                sizeBytes: SumKnownSizes(tracks), partCount: tracks.Length);
-        })
-        .ToArray();
+                sizeBytes: SumKnownSizes(tracks), partCount: tracks.Length) with
+            {
+                NarrationKind = narration.Kind,
+                Narrator = narration.Narrator,
+                NarrationEvidence = narration.Evidence
+            };
+        }).ToArray();
+    }
+
+    /// <summary>
+    /// Project Gutenberg's RDF/bibliographic metadata does not distinguish
+    /// human from computer-generated narration (checked against real records
+    /// before writing this -- see <see cref="GutenbergNarrationParser"/>'s
+    /// remarks), but every audio record's own <c>*readme.txt</c> commonly
+    /// states it in prose. A fetch failure here degrades to
+    /// <see cref="NarrationKind.Unknown"/> rather than failing the whole
+    /// candidate -- narration is enrichment, not a required field.
+    /// </summary>
+    private async Task<GutenbergNarrationEvidence> TryFetchNarrationEvidenceAsync(
+        GutenbergCatalogBook book, CancellationToken cancellationToken)
+    {
+        var readme = book.Formats.FirstOrDefault(format =>
+            format.SourcePath.EndsWith("readme.txt", StringComparison.OrdinalIgnoreCase));
+        if (readme is null)
+        {
+            return GutenbergNarrationEvidence.Unknown;
+        }
+
+        try
+        {
+            await using var stream = await OpenFromMirrorsAsync(readme.SourcePath, GutenbergFormatKind.Other, cancellationToken);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            // The narration statement always appears near the top -- reading
+            // a capped prefix avoids holding a whole file in memory for a
+            // value only ever found in its first few kilobytes.
+            var buffer = new char[16 * 1024];
+            var read = await reader.ReadBlockAsync(buffer.AsMemory(), cancellationToken);
+            return GutenbergNarrationParser.Parse(new string(buffer, 0, read));
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return GutenbergNarrationEvidence.Unknown;
+        }
+    }
 
     private FulfillmentOption CreateOption(
         GutenbergCatalogBook book,

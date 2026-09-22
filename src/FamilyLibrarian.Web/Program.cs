@@ -233,6 +233,7 @@ app.MapMatrixIdentityLinkEndpoints();
 app.MapFeedbackEndpoints();
 app.MapFollowingEndpoints();
 app.MapDeliveryTargetEndpoints();
+app.MapAudiobookNarrationPreferenceEndpoints();
 app.MapSecurityQueueEndpoints();
 app.MapLiveUpdatesEndpoints();
 app.MapInvitationEndpoints();

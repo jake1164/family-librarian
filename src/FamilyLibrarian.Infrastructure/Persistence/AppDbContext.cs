@@ -140,6 +140,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .HasConversion<string>()
                 .HasMaxLength(32);
             entity.HasIndex(user => user.Status);
+            entity.Property(user => user.AudiobookNarrationPreference)
+                .HasColumnName("audiobook_narration_preference")
+                .HasConversion<string>()
+                .HasMaxLength(32);
         });
 
         ConfigureInvitations(builder);

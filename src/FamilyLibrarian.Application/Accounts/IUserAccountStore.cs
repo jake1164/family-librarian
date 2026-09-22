@@ -53,6 +53,16 @@ public interface IUserAccountStore
         Guid userId,
         bool isAdmin,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the account's own audiobook narration preference (self-service --
+    /// see <c>AudiobookNarrationPreferenceService</c>). Unlike the other
+    /// setters here, this is not an administrator operation.
+    /// </summary>
+    Task<AccountOperationResult> SetAudiobookNarrationPreferenceAsync(
+        Guid userId,
+        AudiobookNarrationPreference preference,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>An account as the admin surface displays it. Never carries a credential.</summary>
@@ -63,7 +73,8 @@ public sealed record UserAccount(
     UserStatus Status,
     bool IsAdmin,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset? LastLoginAtUtc);
+    DateTimeOffset? LastLoginAtUtc,
+    AudiobookNarrationPreference AudiobookNarrationPreference = AudiobookNarrationPreference.PreferHuman);
 
 public sealed record AccountOperationResult(bool Succeeded, string? Error, Guid UserId)
 {

@@ -199,16 +199,20 @@ public sealed class DirectAcquisitionEndpointTests
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var request = await database.BookRequests.SingleAsync(item => item.Id == requestId);
 
-        // The audiobook still requires a deliberate selection, but it must not
-        // starve the independently safe ebook just because it was enumerated
-        // first. This mirrors the live Moby Dick regression.
+        // Two same-provider audiobook candidates tied on every modeled
+        // dimension (narration/completeness/format unknown or equal for
+        // both) no longer force a review by themselves -- AudiobookCandidateSelector
+        // deterministically picks one (a stable provider-result-ID tiebreak)
+        // and an acquisition is attempted for it. This fake provider always
+        // fetches EPUB bytes regardless of media type, so that attempt fails
+        // identity/format validation -- proving the audiobook was actually
+        // *attempted*, not silently skipped -- while the independently safe
+        // ebook must not be starved just because it was enumerated first.
+        // This mirrors the live Moby Dick regression.
         Assert.AreEqual(RequestStatus.NeedsReview, request.Status);
-        Assert.AreEqual(RequestReviewCategory.PreferenceAmbiguity, request.ReviewCategory);
-        var reviewCandidates = await database.RequestReviewCandidates
-            .Where(candidate => candidate.RequestId == requestId)
-            .ToArrayAsync();
-        Assert.HasCount(2, reviewCandidates);
-        Assert.IsTrue(reviewCandidates.All(candidate => candidate.RequestFormatId == audiobookFormatId));
+        Assert.AreEqual(RequestReviewCategory.SecurityOrIdentityFailure, request.ReviewCategory);
+        Assert.AreEqual(0, await database.RequestReviewCandidates.CountAsync(
+            candidate => candidate.RequestId == requestId));
         Assert.AreEqual(1, await database.MediaAssets.CountAsync(
             asset => asset.AssociatedRequestFormatId == ebookFormatId));
         Assert.AreEqual(0, await database.MediaAssets.CountAsync(
@@ -274,10 +278,10 @@ public sealed class DirectAcquisitionEndpointTests
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var request = await database.BookRequests
+            var seedRequest = await database.BookRequests
                 .Include(item => item.Formats)
                 .SingleAsync(item => item.Id == requestId);
-            request.MarkNeedsReview(
+            seedRequest.MarkNeedsReview(
                 RequestReviewCategory.PreferenceAmbiguity,
                 "Multiple plausible editions were found.",
                 DateTimeOffset.UtcNow,
@@ -287,14 +291,34 @@ public sealed class DirectAcquisitionEndpointTests
 
         await ProcessAutomaticFulfillmentAsync(factory);
 
+        // AudiobookCandidateSelector now deterministically resolves the two
+        // tied candidates instead of asking for a preference, so this format
+        // no longer takes the "refresh the stale PreferenceAmbiguity review
+        // with real candidate evidence" path at all -- it attempts an
+        // acquisition directly (see AnAmbiguousAudiobookDoesNotPreventAn
+        // EligibleEbookFromBeingAcquired for why this fake provider's attempt
+        // fails identity/format validation rather than succeeding). That
+        // failure cannot overwrite the stale review either:
+        // MarkForReviewAsync only ever bypasses its "already NeedsReview"
+        // guard for a legacy PreferenceAmbiguity *refresh* specifically, not
+        // for an unrelated SecurityOrIdentityFailure discovered afterwards --
+        // by design, automatic processing must not silently overwrite a
+        // review a librarian may already be looking at. The stale review
+        // is therefore left exactly as seeded; only the independently safe
+        // ebook, in a separate per-format iteration, is unaffected and
+        // still gets acquired.
         await using var verificationScope = factory.Services.CreateAsyncScope();
         var verificationDatabase = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await verificationDatabase.BookRequests.SingleAsync(item => item.Id == requestId);
+        Assert.AreEqual(RequestReviewCategory.PreferenceAmbiguity, request.ReviewCategory);
         Assert.AreEqual(1, await verificationDatabase.MediaAssets.CountAsync(
             asset => asset.AssociatedRequestFormatId == ebookFormatId));
         Assert.AreEqual(0, await verificationDatabase.MediaAssets.CountAsync(
             asset => asset.AssociatedRequestFormatId == audiobookFormatId));
-        Assert.AreEqual(2, await verificationDatabase.RequestReviewCandidates.CountAsync(
-            candidate => candidate.RequestId == requestId));
+        var reviewCandidates = await verificationDatabase.RequestReviewCandidates
+            .Where(candidate => candidate.RequestId == requestId).ToArrayAsync();
+        Assert.HasCount(1, reviewCandidates);
+        Assert.AreEqual("stale-audio-record", reviewCandidates[0].ProviderResultId);
     }
 
     [TestMethod]

@@ -102,7 +102,36 @@ public sealed record FulfillmentOption(
     bool? IsUnabridged = null,
     // A provider-declared, non-download browser page for an administrator to
     // inspect a candidate. It is deliberately never part of a requester view.
-    Uri? AdminInspectionUri = null);
+    Uri? AdminInspectionUri = null,
+    // Audiobook narration evidence (AudiobookCandidateSelector). Null/Unknown
+    // for every non-audiobook option and for a provider that does not (yet)
+    // report narration -- that is a valid, expected state, never inferred.
+    NarrationKind? NarrationKind = null,
+    // The credited human reader, when NarrationKind is Human and the provider
+    // names one. Never populated for Synthetic or Unknown narration.
+    string? Narrator = null,
+    // The source text NarrationKind was derived from (e.g. a provider's own
+    // README/description), kept only to explain an automatic decision or a
+    // review reason -- never a source URL or provider-internal reference.
+    string? NarrationEvidence = null,
+    // True when AudiobookNarrationPreference.HumanOnly could not be confirmed
+    // satisfied because this candidate's narration is Unknown -- distinct from
+    // a confirmed Synthetic candidate, which is simply unusable rather than
+    // reviewable. Never true for a non-audiobook option.
+    bool RequiresNarrationConfirmation = false);
+
+/// <summary>
+/// Deterministic classification of an audiobook candidate's narration, as
+/// far as a provider's own evidence supports -- never inferred beyond what
+/// that evidence states. See <c>Application.Acquisition.AudiobookCandidateSelector</c>.
+/// </summary>
+public enum NarrationKind
+{
+    /// <summary>The provider's evidence does not clearly indicate either kind.</summary>
+    Unknown,
+    Human,
+    Synthetic
+}
 
 public enum OptionKind
 {

@@ -23,6 +23,12 @@ public static class RequestReviewCandidatePresentation
                 : format.ToUpperInvariant());
         }
 
+        var narration = DescribeNarration(option);
+        if (narration is not null)
+        {
+            facts.Add(narration);
+        }
+
         if (option.PublicationYear is >= 1000 and <= 9999)
         {
             facts.Add($"Published {option.PublicationYear.Value.ToString(CultureInfo.InvariantCulture)}");
@@ -60,6 +66,21 @@ public static class RequestReviewCandidatePresentation
 
         return facts.Count == 0 ? null : string.Join(" · ", facts);
     }
+
+    /// <summary>
+    /// Narration is meaningful audiobook evidence, not a quality score --
+    /// shown by kind, never ranked or colored (docs/07-ui-conventions.md).
+    /// Absent for every non-audiobook option and whenever the provider's own
+    /// evidence did not support a confident classification.
+    /// </summary>
+    private static string? DescribeNarration(FulfillmentOption option) => option.NarrationKind switch
+    {
+        NarrationKind.Human => string.IsNullOrWhiteSpace(option.Narrator)
+            ? "Human narration"
+            : $"Human narration — {Clean(option.Narrator, 120)}",
+        NarrationKind.Synthetic => "Computer-generated narration",
+        _ => null
+    };
 
     private static string? NormalizeFormat(string? value) => Clean(value, 40)?.ToLowerInvariant() switch
     {
