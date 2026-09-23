@@ -86,6 +86,9 @@ public static class AuditActions
     public const string ExternalProviderAutoAcquireEnabled = "external_provider.auto_acquire_enabled";
     public const string ExternalProviderAutoAcquireDisabled = "external_provider.auto_acquire_disabled";
     public const string ExternalProviderAcquisitionStaged = "external_provider_acquisition.staged";
+    public const string ProviderInteractionStarted = "provider_interaction.started";
+    public const string ProviderInteractionFallbackSelected = "provider_interaction.fallback_selected";
+    public const string ProviderInteractionCancelled = "provider_interaction.cancelled";
 
     public const string PrivateEgressGatewayChanged = "private_egress_gateway.changed";
     public const string PrivateEgressGatewayTested = "private_egress_gateway.tested";
@@ -123,4 +126,5 @@ public static class AuditSubjectTypes
     public const string SettingsBackup = "settings_backup";
     public const string DeliveryAttempt = "delivery_attempt";
     public const string DeliveryTarget = "delivery_target";
+    public const string ProviderInteraction = "provider_interaction";
 }

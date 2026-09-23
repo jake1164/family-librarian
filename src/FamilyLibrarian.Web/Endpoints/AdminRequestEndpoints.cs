@@ -27,6 +27,10 @@ internal static class AdminRequestEndpoints
         adminRequests.MapGet("/", ListAdminRequestsAsync);
         adminRequests.MapGet("/attention", GetAttentionAsync);
         adminRequests.MapPost("/recheck", RecheckNeedsReviewAsync);
+        adminRequests.MapGet("/provider-interactions", ListProviderInteractionsAsync);
+        adminRequests.MapPost("/provider-interactions/{jobId:guid}/start", StartProviderInteractionAsync);
+        adminRequests.MapPost("/provider-interactions/{jobId:guid}/fallback", UseProviderInteractionFallbackAsync);
+        adminRequests.MapPost("/provider-interactions/{jobId:guid}/cancel", CancelProviderInteractionAsync);
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-attempts", ListProviderAttemptsAsync);
         adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
@@ -71,6 +75,61 @@ internal static class AdminRequestEndpoints
         var request = await requests.GetForAdminAsync(requestId, cancellationToken);
         return request is null ? Results.NotFound() : Results.Ok(ToAdminRequestResponse(request));
     }
+
+    private static async Task<IResult> ListProviderInteractionsAsync(
+        ProviderInteractionService service,
+        CancellationToken cancellationToken) =>
+        Results.Ok((await service.ListAsync(cancellationToken)).Select(interaction => new ProviderInteractionResponse(
+            interaction.ProviderAcquisitionJobId,
+            interaction.RequestId,
+            interaction.RequestFormatId,
+            interaction.ProviderId,
+            interaction.Type,
+            interaction.Message,
+            interaction.ExpiresAtUtc,
+            interaction.ResumeSupported,
+            interaction.IsExpired,
+            interaction.CanStart,
+            interaction.CanUseFallback,
+            interaction.CanCancel)).ToArray());
+
+    private static Task<IResult> StartProviderInteractionAsync(
+        Guid jobId,
+        ProviderInteractionService service,
+        CancellationToken cancellationToken) =>
+        ToProviderInteractionResult(service.StartAsync(jobId, cancellationToken));
+
+    private static Task<IResult> UseProviderInteractionFallbackAsync(
+        Guid jobId,
+        ProviderInteractionService service,
+        CancellationToken cancellationToken) =>
+        ToProviderInteractionResult(service.UseFallbackAsync(jobId, cancellationToken));
+
+    private static Task<IResult> CancelProviderInteractionAsync(
+        Guid jobId,
+        ProviderInteractionService service,
+        CancellationToken cancellationToken) =>
+        ToProviderInteractionResult(service.CancelAsync(jobId, cancellationToken));
+
+    private static async Task<IResult> ToProviderInteractionResult(Task<ProviderInteractionCommandResult> operation) =>
+        (await operation) switch
+        {
+            ProviderInteractionCommandResult.Success => Results.NoContent(),
+            ProviderInteractionCommandResult.NotFound => Results.NotFound(),
+            ProviderInteractionCommandResult.NotWaiting => Results.Conflict(new
+            {
+                message = "This provider acquisition is no longer waiting for human interaction. Reload the queue."
+            }),
+            ProviderInteractionCommandResult.Expired => Results.Conflict(new
+            {
+                message = "This provider interaction has expired. Reload the queue before choosing a new action."
+            }),
+            ProviderInteractionCommandResult.Unsupported => Results.Conflict(new
+            {
+                message = "This provider does not support administrator interaction control."
+            }),
+            _ => Results.StatusCode(StatusCodes.Status503ServiceUnavailable)
+        };
 
     /// <summary>
     /// SELFSERV-1: admin counterpart of the requester's own needs-review

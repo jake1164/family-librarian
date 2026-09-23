@@ -250,6 +250,7 @@ public static class DependencyInjection
         services.AddScoped<ExternalProviderRecheckService>();
         services.AddScoped<ExternalProviderHealthPollService>();
         services.AddScoped<AcquisitionJobPollingService>();
+        services.AddScoped<ProviderInteractionService>();
 
         services.AddOptions<ClamAvScannerOptions>()
             .Bind(configuration.GetSection(ClamAvScannerOptions.SectionName))

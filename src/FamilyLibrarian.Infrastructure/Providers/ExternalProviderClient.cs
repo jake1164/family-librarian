@@ -516,6 +516,34 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))
             ?? throw new HttpRequestException("The job status response was not valid JSON.");
 
+        return ParseJobStatus(jobId, json, response);
+    }
+
+    public Task<ExternalProviderJobStatus> StartInteractionAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        PostInteractionControlAsync(baseUrl, apiKey, jobId, "start", route, cancellationToken);
+
+    public Task<ExternalProviderJobStatus> UseAcquireFallbackAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        PostInteractionControlAsync(baseUrl, apiKey, jobId, "fallback", route, cancellationToken);
+
+    private async Task<ExternalProviderJobStatus> PostInteractionControlAsync(
+        string baseUrl, string? apiKey, string jobId, string operation, EgressRoute route, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey, route);
+        using var response = await client.PostAsync(
+            $"acquire/{Uri.EscapeDataString(jobId)}/interaction/{operation}", content: null, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))
+            ?? throw new HttpRequestException("The interaction control response was not valid JSON.");
+
+        return ParseJobStatus(jobId, json, response);
+    }
+
+    private static ExternalProviderJobStatus ParseJobStatus(string jobId, JsonNode json, HttpResponseMessage response)
+    {
+
         var state = ParseLifecycleState(json["state"]?.GetValue<string>());
         var interactionNode = json["interaction"];
         var interaction = interactionNode is null

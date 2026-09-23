@@ -470,6 +470,31 @@ Family Librarian enforces its own reasonable minimum/maximum bounds around
 whatever you suggest; it will not poll faster than a sane floor even if you
 ask for less, and will not wait indefinitely even if you ask for more.
 
+### Optional interaction control
+
+A provider declaring `waiting-interaction-control` supports these
+server-to-server operations for a job currently in
+`waiting`/`user-interaction`:
+
+```text
+POST /acquire/{jobId}/interaction/start
+POST /acquire/{jobId}/interaction/fallback
+```
+
+Both requests use the ordinary provider API authentication and return the
+normal job-status representation. They are idempotent for the current waiting
+offer: repeated `start` requests must not create another browser session, and
+repeated `fallback` requests must not select another candidate or transfer
+bytes twice. Return `409` when the job is no longer waiting for that
+interaction and `404` for an unknown job.
+
+`start` asks the provider to prepare its private, canonical interaction
+session. It does not return a browser, VNC/noVNC endpoint, cookie, signed URL,
+or bearer token. Family Librarian separately authorizes and brokers any
+administrator view. `fallback` makes the provider apply its declared
+alternative path (or report that none is available); it is never inferred from
+the passage of time alone.
+
 ### Structured failure
 
 ```json

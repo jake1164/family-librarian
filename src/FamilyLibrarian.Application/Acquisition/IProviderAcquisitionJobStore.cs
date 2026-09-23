@@ -23,6 +23,15 @@ public interface IProviderAcquisitionJobStore
     Task<IReadOnlyList<ProviderAcquisitionJob>> ListDueForPollAsync(
         DateTimeOffset asOfUtc, int maximumCount, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Administrator-only work queue for provider jobs that are explicitly
+    /// waiting on a human interaction. The returned job is the durable
+    /// interaction record; no browser URL or provider credential is included
+    /// in its client projection.
+    /// </summary>
+    Task<IReadOnlyList<ProviderAcquisitionJob>> ListWaitingForInteractionAsync(
+        CancellationToken cancellationToken);
+
     void Add(ProviderAcquisitionJob job);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);

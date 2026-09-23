@@ -69,6 +69,21 @@ public interface IExternalProviderClient
     Task CancelAcquireAsync(
         string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Optional <c>waiting-interaction-control</c> operation. The caller must
+    /// first verify that the provider advertised that feature; defaulting to a
+    /// failure keeps existing v1/v2 provider fakes and implementations
+    /// backward compatible.
+    /// </summary>
+    Task<ExternalProviderJobStatus> StartInteractionAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("The provider does not support interaction control.");
+
+    /// <summary>Optional <c>waiting-interaction-control</c> fallback operation.</summary>
+    Task<ExternalProviderJobStatus> UseAcquireFallbackAsync(
+        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("The provider does not support interaction control.");
+
     /// <summary><c>DELETE /acquire/{jobId}</c> — release retained resources; best-effort.</summary>
     Task DeleteAcquireAsync(
         string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken);
