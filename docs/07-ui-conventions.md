@@ -70,7 +70,7 @@ cover every case:
 
 | Component | Use for | Shows |
 | --- | --- | --- |
-| `FormatStatusChip` | One request format (Ebook/Audiobook + its status) | icon (media type) + chip colored by status + tooltip; clickable once `ExternalActionUri` is set |
+| `FormatStatusChip` | One request format (Ebook/Audiobook + its status) | icon (media type) + chip colored by status + tooltip; clickable once a safe `ExternalActionUri` is set |
 | `RequestStatusChip` | A whole request's status (no single media type) | chip colored by status, short label by default |
 | `MediaTypeChip` | A media type with no status attached (e.g. a provider lookup) | neutral/outlined chip + icon + tooltip |
 
@@ -87,6 +87,12 @@ cover every case:
 @* The request's overall status *@
 <RequestStatusChip Status="@request.Status" />
 ```
+
+`ExternalActionUri` is reserved for a safe, ordinary external-library action
+such as opening an already-owned copy. It must never carry an external
+provider's interaction/control URL, signed URL, bearer capability, or remote
+browser destination. Those remain server-side and, when needed, are exposed
+only through a separately authorized administrator broker.
 
 `RequestStatusChip` defaults to a short, scannable label
 (`MediaTypeVisuals.StatusLabel`, e.g. "Needs review"). Pass `Label="@request.StatusDescription"`

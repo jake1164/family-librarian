@@ -110,6 +110,12 @@ public sealed class ProviderAcquisitionJob
 
     public bool? InteractionResumeSupported { get; private set; }
 
+    /// <summary>
+    /// Legacy protocol-v2 interaction URL storage. Family Librarian no longer
+    /// persists this value: a provider's control URL must never flow into a
+    /// requester projection, and the forthcoming broker will use a dedicated
+    /// server-only interaction record instead.
+    /// </summary>
     public string? InteractionActionUrl { get; private set; }
 
     public double? ProgressPercent { get; private set; }
@@ -194,7 +200,10 @@ public sealed class ProviderAcquisitionJob
         InteractionMessage = interactionMessage;
         InteractionExpiresAtUtc = interactionExpiresAtUtc;
         InteractionResumeSupported = interactionResumeSupported;
-        InteractionActionUrl = interactionActionUrl;
+        // The v2 descriptor is accepted for compatibility, but is not kept.
+        // It is neither a safe requester-facing link nor sufficient to grant a
+        // browser access to a provider-side human-verification session.
+        InteractionActionUrl = null;
 
         ProgressPercent = progressPercent;
         ProgressBytesCompleted = progressBytesCompleted;

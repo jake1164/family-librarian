@@ -270,8 +270,7 @@ public sealed class RequestRepository(
                 job.LifecycleState != ProviderAcquisitionJobLifecycleState.Completed &&
                 job.LifecycleState != ProviderAcquisitionJobLifecycleState.Cancelled)
             .Select(job => new ProviderJobProgressRow(
-                job.RequestFormatId, job.LifecycleState, job.Phase, job.InteractionActionUrl,
-                job.InteractionMessage, job.CreatedAtUtc))
+                job.RequestFormatId, job.LifecycleState, job.Phase, job.CreatedAtUtc))
             .ToArrayAsync(cancellationToken);
         var latestProviderJobs = providerJobs
             .GroupBy(job => job.RequestFormatId)
@@ -495,11 +494,11 @@ public sealed class RequestRepository(
                 libraryImportStatus: null,
                 deliveryStatus: null,
                 providerJobState: providerJob.LifecycleState,
-                providerJobPhase: providerJob.Phase,
-                providerJobInteractionMessage: providerJob.InteractionMessage),
-            ExternalActionUri = Uri.TryCreate(providerJob.InteractionActionUrl, UriKind.Absolute, out var actionUri)
-                ? actionUri
-                : null
+                providerJobPhase: providerJob.Phase),
+            // Provider interaction control is an administrator-only,
+            // server-brokered workflow. Never turn a provider URL into a
+            // requester-visible link while its job is active.
+            ExternalActionUri = null
         };
 
     private static IReadOnlyList<BookRequestView> ApplyKindleDeliveries(
@@ -713,8 +712,6 @@ public sealed class RequestRepository(
         Guid RequestFormatId,
         ProviderAcquisitionJobLifecycleState LifecycleState,
         string? Phase,
-        string? InteractionActionUrl,
-        string? InteractionMessage,
         DateTimeOffset CreatedAtUtc);
 
     private sealed record MediaAssetProgressRow(

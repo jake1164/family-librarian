@@ -71,6 +71,7 @@ public sealed class RequestFormatProgressTests
 
         Assert.IsNotNull(result);
         Assert.AreEqual("AwaitingProviderAction", result.Code);
+        Assert.AreEqual("A librarian is working with the provider to continue this request.", result.Description);
     }
 
     [TestMethod]

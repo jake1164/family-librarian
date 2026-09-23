@@ -84,4 +84,27 @@ public sealed class AcquisitionJobTests
 
         Assert.AreEqual(AcquisitionCandidateStatus.Acquired, candidate.Status);
     }
+
+    [TestMethod]
+    public void ProviderInteractionControlUrlIsNotPersisted()
+    {
+        var job = new ProviderAcquisitionJob(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "example-source", null,
+            "idempotency-key", "candidate-reference", null, null, Now);
+
+        job.ApplyStatus(
+            ProviderAcquisitionJobLifecycleState.Waiting,
+            "user-interaction",
+            "browser",
+            "Complete the check at source.example.test.",
+            Now.AddMinutes(10),
+            true,
+            "https://provider.example.test/acquire/job/interaction?bearer=not-for-a-browser",
+            null, null, null, null,
+            Now.AddMinutes(1),
+            Now);
+
+        Assert.IsNull(job.InteractionActionUrl);
+        Assert.AreEqual("Complete the check at source.example.test.", job.InteractionMessage);
+    }
 }

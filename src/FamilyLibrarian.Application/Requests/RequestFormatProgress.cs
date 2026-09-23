@@ -29,25 +29,17 @@ public static class RequestFormatProgress
     /// <c>waiting</c>/<c>user-interaction</c> or simply still running shows
     /// real progress instead of the bare "Requested" state.
     /// </param>
-    /// <param name="providerJobInteractionMessage">
-    /// The provider's own explanation of what it is waiting on (protocol v2
-    /// §8's <c>interaction.message</c>), shown verbatim in place of the
-    /// generic waiting sentence when the provider supplied one -- otherwise
-    /// an admin sees the same "action needed" chip for a CAPTCHA, a rate
-    /// limit, and a manual review queue with no way to tell them apart.
-    /// </param>
     public static RequestFormatProgressView? Describe(
         MediaAssetStorageState? assetState,
         SecurityEvaluationStatus? securityStatus,
         LibraryImportStatus? libraryImportStatus,
         AudiobookshelfDeliveryStatus? deliveryStatus,
         ProviderAcquisitionJobLifecycleState? providerJobState = null,
-        string? providerJobPhase = null,
-        string? providerJobInteractionMessage = null)
+        string? providerJobPhase = null)
     {
         if (assetState is null && providerJobState is not null)
         {
-            return DescribeProviderJob(providerJobState.Value, providerJobPhase, providerJobInteractionMessage);
+            return DescribeProviderJob(providerJobState.Value, providerJobPhase);
         }
 
         return assetState switch
@@ -77,8 +69,10 @@ public static class RequestFormatProgress
     /// <summary>
     /// A durable job is <c>waiting</c> whenever it needs something external
     /// to proceed (protocol v2 §8) -- most concretely user interaction, but
-    /// the state alone is enough to warrant the "action needed" treatment
-    /// regardless of the exact open-string phase. <c>failed</c> is shown
+    /// the state alone is enough to warrant an in-progress treatment
+    /// regardless of the exact open-string phase. Provider interaction text
+    /// is deliberately not shown here: this projection is also used by
+    /// requesters and must not disclose provider-specific details. <c>failed</c> is shown
     /// distinctly (not lumped into ordinary in-progress work) but, like
     /// <see cref="MediaAssetStorageState.Rejected"/>/<c>PublishingNeedsAttention</c>
     /// below, deliberately generic here -- this view is also read by the
@@ -89,13 +83,11 @@ public static class RequestFormatProgress
     /// ordinary in-progress work.
     /// </summary>
     private static RequestFormatProgressView DescribeProviderJob(
-        ProviderAcquisitionJobLifecycleState state, string? phase, string? interactionMessage) => state switch
+        ProviderAcquisitionJobLifecycleState state, string? phase) => state switch
     {
         ProviderAcquisitionJobLifecycleState.Waiting => Stage(
             "AwaitingProviderAction",
-            string.IsNullOrWhiteSpace(interactionMessage)
-                ? "Action is needed to continue fetching this from the provider."
-                : interactionMessage),
+            "A librarian is working with the provider to continue this request."),
         ProviderAcquisitionJobLifecycleState.Failed => Stage(
             "AcquisitionFailed",
             "The acquisition failed and needs the librarian's attention."),

@@ -93,7 +93,7 @@ Response:
   "capabilities": {
     "mediaTypes": ["ebook"],
     "operations": ["search", "acquire"],
-    "features": ["pagination", "checksums", "waiting-interaction"]
+    "features": ["pagination", "checksums", "waiting-interaction", "waiting-interaction-control"]
   },
   "outputRetentionSeconds": 86400,
   "managementUrl": "http://provider.local/admin",
@@ -121,8 +121,11 @@ provider declaring `protocolVersions: ["2"]` is expected to support all of
 it (cancel/cleanup are cheap to support trivially, since a no-op `204` is a
 valid response for a provider with nothing to actually cancel). `features`
 in `capabilities` is for behavior a provider may or may not implement on
-top of that baseline: `pagination`, `checksums`, and `waiting-interaction`
-today. Don't declare `idempotency` or `outputs` as features — they aren't
+top of that baseline: `pagination`, `checksums`, `waiting-interaction`, and
+`waiting-interaction-control` today. The latter is required before Family
+Librarian can offer an administrator a brokered remote interaction; its
+control routes are a separately negotiated addition to the waiting descriptor,
+not a browser use of `actionUrl`. Don't declare `idempotency` or `outputs` as features — they aren't
 optional.
 
 Once a version is negotiated, every subsequent call (health, search, every
@@ -446,7 +449,7 @@ Any `2xx` status containing a `jobId`:
 |---|---|---|
 | `state` | yes | One of exactly six values: `queued`, `running`, `waiting`, `completed`, `failed`, `cancelled`. Small and closed on purpose — Family Librarian validates this set strictly. Case-insensitive. |
 | `phase` | no | An **open string** describing what's actually happening — `resolving`, `downloading`, `repairing`, `extracting`, `user-interaction`, or anything else meaningful to you. Never validated against a fixed list on either side; an unrecognized phase is simply displayed as-is. A provider can expose source-specific work such as `checking` or `browser-queue` without changing the protocol. |
-| `interaction` | required when `state = waiting` and the wait is on the user | `{type, message, expiresAt, resumeSupported, actionUrl}`. `type` is an open string (`browser`, `login`, `mfa`, `captcha`, `approval`, `device-code`, `other`, ...). `actionUrl` is where a human completes the step; `resumeSupported: true` means you'll pick the job back up automatically once they do — Family Librarian does not send you a separate "resume" call. Never put a provider cookie or authenticated session token in this object; you own your own session state. |
+| `interaction` | required when `state = waiting` and the wait is on the user | `{type, message, expiresAt, resumeSupported, actionUrl}`. `type` is an open string (`browser`, `login`, `mfa`, `captcha`, `approval`, `device-code`, `other`, ...). `resumeSupported: true` means you'll pick the job back up automatically once the human step succeeds — Family Librarian does not send a separate "resume" call. `actionUrl` is a legacy provider-control reference, not a browser-facing URL: Family Librarian never returns it to a requester or directs an administrator's browser to it. It must contain neither a provider cookie nor an authenticated/session bearer token. A provider that needs an administrator-operated remote view must negotiate `waiting-interaction-control`; FL then authorizes and brokers a separate, expiring browser route. |
 | `progress` | no | `percent`/`bytesCompleted`/`bytesTotal`/`message`, any or all of which may be omitted if you don't know them. |
 | `pollAfterSeconds` | no | The body-level form of the polling-cadence hint described just below — equivalent to a `Retry-After` header when you'd rather put it in the JSON. Provide either, both, or neither. |
 | `error` | present when `state = failed` | See below. |
