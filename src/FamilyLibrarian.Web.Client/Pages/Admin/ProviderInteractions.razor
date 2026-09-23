@@ -1,0 +1,189 @@
+@page "/admin/provider-interactions"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Acquisition
+@using FamilyLibrarian.Web.Client.Acquisition
+@inject ProviderInteractionsApiClient Interactions
+@inject ISnackbar Snackbar
+
+<PageTitle>Provider interactions · Family Librarian</PageTitle>
+
+<MudStack Spacing="4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+        <div>
+            <MudText Typo="Typo.h3">Provider interactions</MudText>
+            <MudText Typo="Typo.body1">
+                Provider work waiting for an administrator. Requesters cannot see these controls or provider details.
+            </MudText>
+        </div>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" Disabled="@isLoading" OnClick="LoadAsync">
+            Refresh
+        </MudButton>
+    </MudStack>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+    }
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (interactions.Count == 0)
+    {
+        <MudAlert Severity="Severity.Success">No provider interactions need attention.</MudAlert>
+    }
+    else
+    {
+        @foreach (var interaction in interactions)
+        {
+            <MudCard Outlined="true">
+                <MudCardContent>
+                    <MudStack Spacing="1">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                            <MudAlert Severity="@(interaction.IsExpired ? Severity.Error : Severity.Warning)"
+                                      Dense="true"
+                                      Variant="Variant.Outlined">
+                                @(interaction.IsExpired ? "Expired" : "Action needed")
+                            </MudAlert>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@interaction.ProviderId</MudChip>
+                            <MudText Typo="Typo.subtitle1">@InteractionLabel(interaction.Type)</MudText>
+                        </MudStack>
+                        @if (!string.IsNullOrWhiteSpace(interaction.Message))
+                        {
+                            <MudText Typo="Typo.body2">@interaction.Message</MudText>
+                        }
+                        <MudText Typo="Typo.caption">
+                            @ExpiryDescription(interaction)
+                        </MudText>
+                        @if (interaction.CanStart)
+                        {
+                            <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined">
+                                Preparing verification is available, but the protected remote view is not implemented yet.
+                                Do not start a time-limited interaction until the broker slice is deployed.
+                            </MudAlert>
+                        }
+                    </MudStack>
+                </MudCardContent>
+                <MudCardActions>
+                    @if (confirmFallbackJobId == interaction.ProviderAcquisitionJobId)
+                    {
+                        <MudText Typo="Typo.caption">Use the provider fallback?</MudText>
+                        <MudButton Color="Color.Warning" Variant="Variant.Filled" Disabled="@isActing"
+                                   OnClick="() => UseFallbackAsync(interaction.ProviderAcquisitionJobId)">
+                            Confirm fallback
+                        </MudButton>
+                        <MudButton Variant="Variant.Text" Disabled="@isActing" OnClick="CancelFallbackConfirmation">
+                            Keep waiting
+                        </MudButton>
+                    }
+                    else
+                    {
+                        <MudButton Color="Color.Warning" Variant="Variant.Outlined"
+                                   Disabled="@(isActing || interaction.IsExpired || !interaction.CanUseFallback)"
+                                   OnClick="() => ConfirmFallback(interaction.ProviderAcquisitionJobId)">
+                            Use fallback
+                        </MudButton>
+                    }
+                    <MudButton Color="Color.Error" Variant="Variant.Text" Disabled="@isActing"
+                               OnClick="() => CancelAsync(interaction.ProviderAcquisitionJobId)">
+                        Cancel acquisition
+                    </MudButton>
+                </MudCardActions>
+            </MudCard>
+        }
+    }
+</MudStack>
+
+@code {
+    private IReadOnlyList<ProviderInteractionResponse> interactions = [];
+    private Guid? confirmFallbackJobId;
+    private bool isActing;
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+        try
+        {
+            interactions = (await Interactions.GetAsync())
+                .OrderBy(item => item.IsExpired)
+                .ThenBy(item => item.ExpiresAtUtc)
+                .ToArray();
+        }
+        catch (HttpRequestException)
+        {
+            interactions = [];
+            errorMessage = "The provider interaction queue could not be loaded. Please try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ConfirmFallback(Guid jobId) => confirmFallbackJobId = jobId;
+
+    private void CancelFallbackConfirmation() => confirmFallbackJobId = null;
+
+    private async Task UseFallbackAsync(Guid jobId)
+    {
+        isActing = true;
+        try
+        {
+            var outcome = await Interactions.UseFallbackAsync(jobId);
+            await HandleOutcomeAsync(outcome, "Provider fallback selected.");
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
+
+    private async Task CancelAsync(Guid jobId)
+    {
+        isActing = true;
+        try
+        {
+            var outcome = await Interactions.CancelAsync(jobId);
+            await HandleOutcomeAsync(outcome, "Provider acquisition cancelled.");
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
+
+    private async Task HandleOutcomeAsync(ProviderInteractionCommandOutcome outcome, string successMessage)
+    {
+        if (outcome.Succeeded)
+        {
+            confirmFallbackJobId = null;
+            Snackbar.Add(successMessage, Severity.Success);
+            await LoadAsync();
+        }
+        else
+        {
+            errorMessage = outcome.Error;
+        }
+    }
+
+    private static string InteractionLabel(string type) => type switch
+    {
+        "browser" => "Browser verification",
+        "login" => "Provider sign-in",
+        "mfa" => "Multi-factor verification",
+        "captcha" => "Human verification",
+        _ => "Provider action"
+    };
+
+    private static string ExpiryDescription(ProviderInteractionResponse interaction) => interaction.ExpiresAtUtc is { } expiresAt
+        ? interaction.IsExpired
+            ? $"Expired {expiresAt.ToLocalTime():g}."
+            : $"Expires {expiresAt.ToLocalTime():g}."
+        : "No expiry was reported by the provider.";
+}

@@ -48,6 +48,7 @@ builder.Services.AddScoped<MetadataIntegrationsApiClient>();
 builder.Services.AddScoped<GutenbergCatalogApiClient>();
 builder.Services.AddScoped<RequestsApiClient>();
 builder.Services.AddScoped<AdminRequestsApiClient>();
+builder.Services.AddScoped<ProviderInteractionsApiClient>();
 builder.Services.AddScoped<AdminTasksApiClient>();
 builder.Services.AddScoped<SystemReadinessApiClient>();
 builder.Services.AddScoped<NotificationsApiClient>();
