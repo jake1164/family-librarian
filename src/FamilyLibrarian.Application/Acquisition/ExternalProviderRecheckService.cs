@@ -137,6 +137,7 @@ public sealed class ExternalProviderRecheckService(
                         var reviewableOptions = format.MediaType == RequestMediaType.Audiobook
                             ? options.Where(option => AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format)).ToArray()
                             : options;
+                        reviewableOptions = CollapseEquivalentReviewOptions(reviewableOptions);
                         if (reviewableOptions.Count == 0)
                         {
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.NoMatch,
@@ -261,12 +262,65 @@ public sealed class ExternalProviderRecheckService(
         latest is null || latest.AttemptedAtUtc < request.StatusChangedAtUtc ||
         latest.NextEligibleCheckAtUtc is { } next && next <= now;
 
+    /// <summary>
+    /// An external provider can report multiple opaque references for one
+    /// edition and release. Those references are server-side acquisition
+    /// handles, not meaningful requester choices, so retain the first one
+    /// once all neutral presentation facts agree.
+    /// </summary>
+    private static FulfillmentOption[] CollapseEquivalentReviewOptions(
+        IEnumerable<FulfillmentOption> options) =>
+        options
+            .GroupBy(option => new ReviewCandidatePresentationKey(
+                NormalizeReviewFact(option.ProviderId),
+                option.MediaType,
+                NormalizeReviewFact(option.Format),
+                NormalizeReviewFact(option.Language),
+                option.PublicationYear,
+                NormalizeReviewFact(option.Publisher),
+                option.SizeBytes,
+                option.PartCount,
+                option.ProviderPopularity,
+                option.IsAbridged,
+                option.IsUnabridged,
+                option.NarrationKind,
+                NormalizeReviewFact(option.Narrator),
+                option.RequiresLanguageConfirmation,
+                option.RequiresReleaseConfirmation,
+                NormalizeReviewFact(option.DrmStatus),
+                NormalizeReviewFact(option.ReleaseConcern)))
+            .Select(group => group.First())
+            .ToArray();
+
+    private static string? NormalizeReviewFact(string? value) => string.IsNullOrWhiteSpace(value)
+        ? null
+        : string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToUpperInvariant();
+
     private static TimeSpan ToInterval(ProviderRecheckSchedule schedule) => schedule switch
     {
         ProviderRecheckSchedule.Daily => TimeSpan.FromDays(1),
         ProviderRecheckSchedule.Weekly => TimeSpan.FromDays(7),
         _ => throw new ArgumentOutOfRangeException(nameof(schedule), schedule, "Only scheduled providers may be rechecked.")
     };
+
+    private sealed record ReviewCandidatePresentationKey(
+        string? ProviderId,
+        RequestMediaType MediaType,
+        string? Format,
+        string? Language,
+        int? PublicationYear,
+        string? Publisher,
+        long? SizeBytes,
+        int? PartCount,
+        int? ProviderPopularity,
+        bool? IsAbridged,
+        bool? IsUnabridged,
+        NarrationKind? NarrationKind,
+        string? Narrator,
+        bool RequiresLanguageConfirmation,
+        bool RequiresReleaseConfirmation,
+        string? DrmStatus,
+        string? ReleaseConcern);
 
     private async Task<AudiobookNarrationPreference> GetNarrationPreferenceAsync(
         Guid requesterUserId, CancellationToken cancellationToken)

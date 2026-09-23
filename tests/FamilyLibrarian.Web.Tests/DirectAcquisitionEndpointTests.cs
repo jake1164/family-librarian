@@ -505,8 +505,8 @@ public sealed class DirectAcquisitionEndpointTests
             var candidates = await database.RequestReviewCandidates
                 .Where(c => c.RequestId == requestId).OrderBy(c => c.DisplayOrder).ToArrayAsync();
             Assert.AreEqual(2, candidates.Length);
-            Assert.AreEqual("1234-0", candidates[0].ProviderResultId);
-            Assert.AreEqual("1234-1", candidates[1].ProviderResultId);
+            Assert.AreEqual("1234-Ebook-0", candidates[0].ProviderResultId);
+            Assert.AreEqual("1234-Ebook-1", candidates[1].ProviderResultId);
             // The requester sees FL's canonical work title, never a raw
             // provider title. Neutral edition facts make the choices
             // distinguishable without exposing source metadata.

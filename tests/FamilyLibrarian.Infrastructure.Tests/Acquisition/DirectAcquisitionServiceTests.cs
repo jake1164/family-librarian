@@ -479,6 +479,12 @@ public sealed class DirectAcquisitionServiceTests
             Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>(
                 Jobs.Where(job => job.NextPollAtUtc is not null && job.NextPollAtUtc <= asOfUtc).ToArray());
 
+        public Task<IReadOnlyList<ProviderAcquisitionJob>> ListWaitingForInteractionAsync(
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>(
+                Jobs.Where(job => job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting &&
+                    job.InteractionType is not null).ToArray());
+
         public void Add(ProviderAcquisitionJob job) => Jobs.Add(job);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
