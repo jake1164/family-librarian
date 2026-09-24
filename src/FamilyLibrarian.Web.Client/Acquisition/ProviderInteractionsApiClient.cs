@@ -21,6 +21,25 @@ public sealed class ProviderInteractionsApiClient(HttpClient httpClient, Antifor
     public Task<ProviderInteractionCommandOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default) =>
         SendAsync(jobId, "cancel", cancellationToken);
 
+    /// <summary>
+    /// The brokered remote-view WebSocket (HUMAN-ACQ-1 Phase 3). Built from
+    /// <see cref="HttpClient.BaseAddress"/> rather than a relative path,
+    /// since a WebSocket connection needs an absolute <c>ws(s)://</c> URI --
+    /// there is no cookie/header injection here to replicate: the browser
+    /// attaches the same-origin session cookie to the upgrade request
+    /// automatically, the same way it does for this client's own HTTP calls.
+    /// </summary>
+    public Uri GetViewWebSocketUri(Guid jobId)
+    {
+        var baseAddress = httpClient.BaseAddress
+            ?? throw new InvalidOperationException("No base address is configured for the API client.");
+        return new UriBuilder(baseAddress)
+        {
+            Scheme = baseAddress.Scheme == "https" ? "wss" : "ws",
+            Path = $"{BasePath}/{jobId}/view"
+        }.Uri;
+    }
+
     private async Task<ProviderInteractionCommandOutcome> SendAsync(
         Guid jobId, string action, CancellationToken cancellationToken)
     {

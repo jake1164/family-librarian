@@ -27,6 +27,7 @@ public sealed class AcquisitionJobPollingService(
     AutomatedSecurityPipeline securityPipeline,
     ICredentialProtector protector,
     PrivateEgressRouteResolver routeResolver,
+    IAuditWriter audit,
     IClock clock)
 {
     private const int BatchSize = 25;
@@ -44,12 +45,19 @@ public sealed class AcquisitionJobPollingService(
 
     private async Task ProcessOneAsync(ProviderAcquisitionJob job, CancellationToken cancellationToken)
     {
+        // Captured before any status mutation below, purely to decide whether
+        // a terminal outcome discovered on this pass also closes out a human
+        // verification -- distinct from and narrower than "this job just
+        // finished," which happens on every ordinary poll.
+        var wasWaitingForInteraction = job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting &&
+            !string.IsNullOrWhiteSpace(job.InteractionType);
+
         var provider = await externalProviders.FindAsync(job.ExternalProviderId, cancellationToken);
         if (provider is null)
         {
             await RecordFailureAsync(
                 job, "PROVIDER_INTERNAL_ERROR", "The provider registration no longer exists.",
-                retryable: false, retryAfterSeconds: null, detailsJson: null, cancellationToken);
+                retryable: false, retryAfterSeconds: null, detailsJson: null, wasWaitingForInteraction, cancellationToken);
             return;
         }
 
@@ -87,7 +95,7 @@ public sealed class AcquisitionJobPollingService(
         {
             await RecordFailureAsync(
                 job, status.Error?.Code, status.Error?.Message, status.Error?.Retryable,
-                status.Error?.RetryAfterSeconds, status.Error?.DetailsJson, cancellationToken);
+                status.Error?.RetryAfterSeconds, status.Error?.DetailsJson, wasWaitingForInteraction, cancellationToken);
             return;
         }
 
@@ -111,7 +119,7 @@ public sealed class AcquisitionJobPollingService(
             return;
         }
 
-        await CompleteAsync(job, provider, apiKey, resolution, status, cancellationToken);
+        await CompleteAsync(job, provider, apiKey, resolution, status, wasWaitingForInteraction, cancellationToken);
     }
 
     private async Task CompleteAsync(
@@ -120,6 +128,7 @@ public sealed class AcquisitionJobPollingService(
         string? apiKey,
         EgressResolution resolution,
         ExternalProviderJobStatus status,
+        bool wasWaitingForInteraction,
         CancellationToken cancellationToken)
     {
         var request = await requests.FindRequestForAdminAsync(job.RequestId, cancellationToken);
@@ -128,7 +137,7 @@ public sealed class AcquisitionJobPollingService(
         {
             await RecordFailureAsync(
                 job, "PROVIDER_INTERNAL_ERROR", "The originating request or format no longer exists.",
-                retryable: false, retryAfterSeconds: null, detailsJson: null, cancellationToken);
+                retryable: false, retryAfterSeconds: null, detailsJson: null, wasWaitingForInteraction, cancellationToken);
             return;
         }
 
@@ -141,7 +150,7 @@ public sealed class AcquisitionJobPollingService(
             await RecordFailureAsync(
                 job, "CONTENT_UNAVAILABLE",
                 $"The provider reported completion but returned no fetchable {format.MediaType} file output.",
-                retryable: false, retryAfterSeconds: null, detailsJson: null, cancellationToken);
+                retryable: false, retryAfterSeconds: null, detailsJson: null, wasWaitingForInteraction, cancellationToken);
             return;
         }
 
@@ -176,7 +185,7 @@ public sealed class AcquisitionJobPollingService(
             // a non-terminal job), leaving no trace anything was ever tried.
             await RecordFailureAsync(
                 job, "STAGING_REJECTED", stageResult.Error ?? "The fetched file could not be staged.",
-                retryable: false, retryAfterSeconds: null, detailsJson: null, cancellationToken);
+                retryable: false, retryAfterSeconds: null, detailsJson: null, wasWaitingForInteraction, cancellationToken);
             return;
         }
 
@@ -184,6 +193,13 @@ public sealed class AcquisitionJobPollingService(
             status.State, status.Phase, null, null, null, null, null, null, null, null, null,
             nextPollAtUtc: null, clock.UtcNow);
         await jobs.SaveChangesAsync(cancellationToken);
+
+        if (wasWaitingForInteraction)
+        {
+            await audit.WriteAsync(
+                AuditActions.ProviderInteractionCompleted, AuditSubjectTypes.ProviderInteraction, job.Id.ToString(),
+                new { job.Id, job.RequestId, job.RequestFormatId, job.ProviderId }, cancellationToken);
+        }
 
         foreach (var assetId in stageResult.MediaAssetIds)
         {
@@ -233,6 +249,7 @@ public sealed class AcquisitionJobPollingService(
         bool? retryable,
         int? retryAfterSeconds,
         string? detailsJson,
+        bool wasWaitingForInteraction,
         CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
@@ -242,6 +259,14 @@ public sealed class AcquisitionJobPollingService(
             errorMessage ?? "The acquisition failed.", now, nextEligibleCheckAtUtc: null));
         await jobs.SaveChangesAsync(cancellationToken);
         await attempts.SaveChangesAsync(cancellationToken);
+
+        if (wasWaitingForInteraction)
+        {
+            await audit.WriteAsync(
+                AuditActions.ProviderInteractionFailed, AuditSubjectTypes.ProviderInteraction, job.Id.ToString(),
+                new { job.Id, job.RequestId, job.RequestFormatId, job.ProviderId, ErrorCode = errorCode },
+                cancellationToken);
+        }
     }
 
     private void Reschedule(ProviderAcquisitionJob job, TimeSpan delay) =>

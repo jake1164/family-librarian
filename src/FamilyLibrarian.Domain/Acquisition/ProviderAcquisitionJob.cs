@@ -118,6 +118,15 @@ public sealed class ProviderAcquisitionJob
     /// </summary>
     public string? InteractionActionUrl { get; private set; }
 
+    /// <summary>
+    /// When an administrator most recently asked the provider to prepare a
+    /// verification session (protocol v2 §8 <c>interaction/start</c>). Lets
+    /// the admin queue offer "open remote view" after a page reload, instead
+    /// of only within the single browser tab that clicked Start. Cleared
+    /// whenever the job leaves <see cref="ProviderAcquisitionJobLifecycleState.Waiting"/>.
+    /// </summary>
+    public DateTimeOffset? InteractionViewSessionStartedAtUtc { get; private set; }
+
     public double? ProgressPercent { get; private set; }
 
     public long? ProgressBytesCompleted { get; private set; }
@@ -204,6 +213,10 @@ public sealed class ProviderAcquisitionJob
         // It is neither a safe requester-facing link nor sufficient to grant a
         // browser access to a provider-side human-verification session.
         InteractionActionUrl = null;
+        if (state != ProviderAcquisitionJobLifecycleState.Waiting)
+        {
+            InteractionViewSessionStartedAtUtc = null;
+        }
 
         ProgressPercent = progressPercent;
         ProgressBytesCompleted = progressBytesCompleted;
@@ -233,6 +246,24 @@ public sealed class ProviderAcquisitionJob
         ErrorDetailsJson = detailsJson;
         NextPollAtUtc = null;
         UpdatedAtUtc = atUtc;
+    }
+
+    /// <summary>
+    /// Records that an administrator has asked the provider to prepare its
+    /// verification session (a successful <c>interaction/start</c> call).
+    /// Does not itself change <see cref="LifecycleState"/> — the job stays
+    /// <see cref="ProviderAcquisitionJobLifecycleState.Waiting"/> until the
+    /// next poll or provider push moves it.
+    /// </summary>
+    public void RecordInteractionSessionStarted(DateTimeOffset atUtc)
+    {
+        if (LifecycleState != ProviderAcquisitionJobLifecycleState.Waiting)
+        {
+            throw new InvalidOperationException(
+                $"Cannot record an interaction session start while the job is {LifecycleState}.");
+        }
+
+        InteractionViewSessionStartedAtUtc = atUtc;
     }
 
     public void SetRetention(DateTimeOffset? expiresAtUtc, DateTimeOffset atUtc)

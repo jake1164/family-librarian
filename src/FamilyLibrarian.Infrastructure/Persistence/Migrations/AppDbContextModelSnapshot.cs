@@ -555,6 +555,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(64)")
                         .HasColumnName("interaction_type");
 
+                    b.Property<DateTimeOffset?>("InteractionViewSessionStartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("interaction_view_session_started_at_utc");
+
                     b.Property<string>("LifecycleState")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -1919,6 +1923,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("AcquisitionMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("acquisition_mode");
+
                     b.Property<int>("ApiKeyFormatVersion")
                         .HasColumnType("integer")
                         .HasColumnName("api_key_format_version");
@@ -1935,12 +1945,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<bool>("AutoAcquireEnabled")
                         .HasColumnType("boolean")
                         .HasColumnName("auto_acquire_enabled");
-
-                    b.Property<string>("AcquisitionMode")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("acquisition_mode");
 
                     b.Property<string>("BaseUrl")
                         .IsRequired()

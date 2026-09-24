@@ -590,6 +590,8 @@ public static class DependencyInjection
         // runtime cache.
         services.AddScoped<IExternalProviderStore, ExternalProviderStore>();
         services.AddScoped<IExternalProviderClient, ExternalProviderClient>();
+        services.AddScoped<IProviderRemoteViewClient, ProviderRemoteViewClient>();
+        services.AddScoped<ProviderRemoteViewBrokerService>();
         services.AddScoped<ExternalProviderAdminService>();
 
         services.AddSingleton<IPrivateEgressGatewayRuntimeCache, PrivateEgressGatewayRuntimeCache>();

@@ -90,6 +90,11 @@ public static class AuditActions
     public const string ProviderInteractionStarted = "provider_interaction.started";
     public const string ProviderInteractionFallbackSelected = "provider_interaction.fallback_selected";
     public const string ProviderInteractionCancelled = "provider_interaction.cancelled";
+    public const string ProviderInteractionExpired = "provider_interaction.expired";
+    public const string ProviderInteractionCompleted = "provider_interaction.completed";
+    public const string ProviderInteractionFailed = "provider_interaction.failed";
+    public const string ProviderInteractionViewConnected = "provider_interaction.view_connected";
+    public const string ProviderInteractionViewEnded = "provider_interaction.view_ended";
 
     public const string PrivateEgressGatewayChanged = "private_egress_gateway.changed";
     public const string PrivateEgressGatewayTested = "private_egress_gateway.tested";

@@ -31,6 +31,7 @@ internal static class AdminRequestEndpoints
         adminRequests.MapPost("/provider-interactions/{jobId:guid}/start", StartProviderInteractionAsync);
         adminRequests.MapPost("/provider-interactions/{jobId:guid}/fallback", UseProviderInteractionFallbackAsync);
         adminRequests.MapPost("/provider-interactions/{jobId:guid}/cancel", CancelProviderInteractionAsync);
+        adminRequests.MapGet("/provider-interactions/{jobId:guid}/view", HandleProviderInteractionViewAsync);
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-attempts", ListProviderAttemptsAsync);
         adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
@@ -91,7 +92,8 @@ internal static class AdminRequestEndpoints
             interaction.IsExpired,
             interaction.CanStart,
             interaction.CanUseFallback,
-            interaction.CanCancel)).ToArray());
+            interaction.CanCancel,
+            interaction.CanViewNow)).ToArray());
 
     private static Task<IResult> StartProviderInteractionAsync(
         Guid jobId,
@@ -130,6 +132,46 @@ internal static class AdminRequestEndpoints
             }),
             _ => Results.StatusCode(StatusCodes.Status503ServiceUnavailable)
         };
+
+    /// <summary>
+    /// The brokered remote-view WebSocket (HUMAN-ACQ-1 Phase 3, docs/04 §8
+    /// "Optional interaction view"). Eligibility is checked <em>before</em>
+    /// accepting the upgrade so an ineligible request gets a plain HTTP
+    /// status, not an upgrade immediately followed by a close.
+    /// </summary>
+    private static async Task<IResult> HandleProviderInteractionViewAsync(
+        Guid jobId,
+        HttpContext context,
+        ProviderRemoteViewBrokerService broker,
+        IHostApplicationLifetime lifetime,
+        CancellationToken cancellationToken)
+    {
+        if (!context.WebSockets.IsWebSocketRequest)
+        {
+            return Results.BadRequest(new { message = "This route only accepts a WebSocket upgrade." });
+        }
+
+        var eligibility = await broker.EvaluateAsync(jobId, cancellationToken);
+        switch (eligibility)
+        {
+            case RemoteViewEligibility.NotFound:
+                return Results.NotFound();
+            case RemoteViewEligibility.NotWaiting:
+                return Results.Conflict(new
+                {
+                    message = "This provider acquisition is not currently offering a remote view. Reload the queue."
+                });
+            case RemoteViewEligibility.Expired:
+                return Results.Conflict(new
+                {
+                    message = "This provider interaction has expired. Reload the queue before choosing a new action."
+                });
+        }
+
+        using var browserSocket = await context.WebSockets.AcceptWebSocketAsync();
+        await broker.RunAsync(jobId, browserSocket, lifetime.ApplicationStopping);
+        return Results.Empty;
+    }
 
     /// <summary>
     /// SELFSERV-1: admin counterpart of the requester's own needs-review
