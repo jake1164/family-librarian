@@ -331,6 +331,22 @@ public sealed class AutomaticRequestFulfillmentService(
                 $"The file could not be processed: {exception.Message}");
         }
 
+        if (result.Outcome == ManualImportOutcome.AcquisitionInProgress)
+        {
+            // Protocol v2: the provider accepted a durable job rather than
+            // returning bytes immediately. AcquisitionJobPollingService
+            // drives it to completion (or a real failure) in the
+            // background -- this is progress, not a failure, and must not
+            // route to review (mirrors ExternalProviderRecheckService's
+            // same check).
+            attempts.Add(new ProviderAttempt(
+                request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Submitted,
+                "A high-confidence copy acquisition was submitted and is being tracked to completion.",
+                clock.UtcNow, nextEligibleCheckAtUtc: null));
+            await attempts.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+
         if (result.Outcome != ManualImportOutcome.Success)
         {
             attempts.Add(new ProviderAttempt(
