@@ -1,0 +1,106 @@
+@page "/admin/provider-interactions/{JobId:guid}/view"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Web.Client.Acquisition
+@implements IAsyncDisposable
+@inject ProviderInteractionsApiClient Interactions
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<PageTitle>Remote view · Family Librarian</PageTitle>
+
+<MudStack Spacing="4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+        <div>
+            <MudText Typo="Typo.h3">Provider remote view</MudText>
+            <MudText Typo="Typo.body1">
+                One narrow, expiring view of the provider's own constrained browser. Nothing is solved
+                automatically here -- the provider decides when the session is done.
+            </MudText>
+        </div>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ArrowBack"
+                   OnClick="@(() => Navigation.NavigateTo("/admin/provider-interactions"))">
+            Back to queue
+        </MudButton>
+    </MudStack>
+
+    <MudAlert Severity="@statusSeverity" Dense="true">@statusMessage</MudAlert>
+
+    <div @ref="containerRef" style="width:100%; max-width:1024px; min-height:480px; background:#111; border-radius:4px;"></div>
+</MudStack>
+
+@code {
+    [Parameter]
+    public Guid JobId { get; set; }
+
+    private ElementReference containerRef;
+    private IJSObjectReference? interopModule;
+    private IJSObjectReference? rfbInstance;
+    private DotNetObjectReference<ProviderInteractionView>? selfReference;
+    private Severity statusSeverity = Severity.Info;
+    private string statusMessage = "Connecting...";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            interopModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/remote-view-interop.js");
+            selfReference = DotNetObjectReference.Create(this);
+            var wsUrl = Interactions.GetViewWebSocketUri(JobId);
+            rfbInstance = await interopModule.InvokeAsync<IJSObjectReference>(
+                "open", containerRef, wsUrl.ToString(), selfReference);
+        }
+        catch (JSException)
+        {
+            statusSeverity = Severity.Error;
+            statusMessage = "The remote view could not be opened. Return to the queue and try again.";
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public void OnRemoteViewConnected()
+    {
+        statusSeverity = Severity.Success;
+        statusMessage = "Connected. Solve any check shown below; the provider takes over automatically once it recognizes success.";
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnRemoteViewDisconnected(bool clean)
+    {
+        statusSeverity = clean ? Severity.Info : Severity.Warning;
+        statusMessage = clean
+            ? "The session ended. The provider has either taken over or the interaction is no longer waiting -- check the queue."
+            : "The connection was lost unexpectedly. Return to the queue to see the current status.";
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (rfbInstance is not null && interopModule is not null)
+            {
+                await interopModule.InvokeVoidAsync("close", rfbInstance);
+                await rfbInstance.DisposeAsync();
+            }
+
+            if (interopModule is not null)
+            {
+                await interopModule.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // The circuit is already gone (navigated away, closed tab) --
+            // there is nothing left to clean up on the JS side.
+        }
+
+        selfReference?.Dispose();
+    }
+}

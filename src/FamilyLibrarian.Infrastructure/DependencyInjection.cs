@@ -588,6 +588,8 @@ public static class DependencyInjection
         // widening ProviderSetting.
         services.AddScoped<IExternalProviderStore, ExternalProviderStore>();
         services.AddScoped<IExternalProviderClient, ExternalProviderClient>();
+        services.AddScoped<IProviderRemoteViewClient, ProviderRemoteViewClient>();
+        services.AddScoped<ProviderRemoteViewBrokerService>();
         services.AddScoped<ExternalProviderAdminService>();
 
 

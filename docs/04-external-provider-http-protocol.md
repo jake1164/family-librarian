@@ -93,7 +93,7 @@ Response:
   "capabilities": {
     "mediaTypes": ["ebook"],
     "operations": ["search", "acquire"],
-    "features": ["pagination", "checksums", "waiting-interaction", "waiting-interaction-control"]
+    "features": ["pagination", "checksums", "waiting-interaction", "waiting-interaction-control", "interaction-view"]
   },
   "outputRetentionSeconds": 86400,
   "managementUrl": "http://provider.local/admin",
@@ -122,11 +122,16 @@ provider declaring `protocolVersions: ["2"]` is expected to support all of
 it (cancel/cleanup are cheap to support trivially, since a no-op `204` is a
 valid response for a provider with nothing to actually cancel). `features`
 in `capabilities` is for behavior a provider may or may not implement on
-top of that baseline: `pagination`, `checksums`, `waiting-interaction`, and
-`waiting-interaction-control` today. The latter is required before Family
-Librarian can offer an administrator a brokered remote interaction; its
-control routes are a separately negotiated addition to the waiting descriptor,
-not a browser use of `actionUrl`. Don't declare `idempotency` or `outputs` as features — they aren't
+top of that baseline: `pagination`, `checksums`, `waiting-interaction`,
+`waiting-interaction-control`, and `interaction-view` today.
+`waiting-interaction-control` is required before Family Librarian can offer
+an administrator a brokered remote interaction at all; its `start`/`fallback`
+control routes are a separately negotiated addition to the waiting
+descriptor, not a browser use of `actionUrl`. `interaction-view` is a further
+addition on top of it — a provider may support `start`/`fallback` without
+`interaction-view` (Family Librarian then offers only "use fallback," never
+"verify," for that provider), but must not declare `interaction-view` without
+`waiting-interaction-control`. Don't declare `idempotency` or `outputs` as features — they aren't
 optional.
 
 Once a version is negotiated, every subsequent call (health, search, every
@@ -460,7 +465,7 @@ Any `2xx` status containing a `jobId`:
 |---|---|---|
 | `state` | yes | One of exactly six values: `queued`, `running`, `waiting`, `completed`, `failed`, `cancelled`. Small and closed on purpose — Family Librarian validates this set strictly. Case-insensitive. |
 | `phase` | no | An **open string** describing what's actually happening — `resolving`, `downloading`, `repairing`, `extracting`, `user-interaction`, or anything else meaningful to you. Never validated against a fixed list on either side; an unrecognized phase is simply displayed as-is. A provider can expose source-specific work such as `checking` or `browser-queue` without changing the protocol. |
-| `interaction` | required when `state = waiting` and the wait is on the user | `{type, message, expiresAt, resumeSupported, actionUrl}`. `type` is an open string (`browser`, `login`, `mfa`, `captcha`, `approval`, `device-code`, `other`, ...). `resumeSupported: true` means you'll pick the job back up automatically once the human step succeeds — Family Librarian does not send a separate "resume" call. `actionUrl` is a legacy provider-control reference, not a browser-facing URL: Family Librarian never returns it to a requester or directs an administrator's browser to it. It must contain neither a provider cookie nor an authenticated/session bearer token. A provider that needs an administrator-operated remote view must negotiate `waiting-interaction-control`; FL then authorizes and brokers a separate, expiring browser route. |
+| `interaction` | required when `state = waiting` and the wait is on the user | `{type, message, expiresAt, resumeSupported, actionUrl}`. `type` is an open string (`browser`, `login`, `mfa`, `captcha`, `approval`, `device-code`, `other`, ...). `resumeSupported: true` means you'll pick the job back up automatically once the human step succeeds — Family Librarian does not send a separate "resume" call. `actionUrl` is a legacy provider-control reference, not a browser-facing URL: Family Librarian never returns it to a requester or directs an administrator's browser to it. It must contain neither a provider cookie nor an authenticated/session bearer token. A provider that needs an administrator-operated remote view must negotiate `waiting-interaction-control` and `interaction-view`; FL then authorizes and brokers a separate, expiring browser route rather than using `actionUrl` for anything browser-facing. |
 | `progress` | no | `percent`/`bytesCompleted`/`bytesTotal`/`message`, any or all of which may be omitted if you don't know them. |
 | `pollAfterSeconds` | no | The body-level form of the polling-cadence hint described just below — equivalent to a `Retry-After` header when you'd rather put it in the JSON. Provide either, both, or neither. |
 | `error` | present when `state = failed` | See below. |
@@ -505,6 +510,50 @@ or bearer token. Family Librarian separately authorizes and brokers any
 administrator view. `fallback` makes the provider apply its declared
 alternative path (or report that none is available); it is never inferred from
 the passage of time alone.
+
+### Optional interaction view (browser broker leg)
+
+A provider declaring `waiting-interaction-control` **and** the
+`interaction-view` feature also exposes a WebSocket-upgrade endpoint for a
+job currently in `waiting`/`user-interaction`:
+
+```text
+GET /acquire/{jobId}/interaction/view
+```
+
+Requested with the ordinary provider API `Authorization: Bearer {apiKey}`
+header on the HTTP upgrade request — this is a server-to-server call Family
+Librarian makes itself with a WebSocket client, never a URL handed to an
+administrator's browser or to any other channel (Matrix included).
+
+Once upgraded, the socket carries binary frames only: the provider's
+constrained remote-desktop protocol bytes, opaque to Family Librarian, which
+relays them without parsing, altering, or storing them. There is no text-frame
+control channel on this connection; any text frame received by either side is
+a protocol violation, and the receiver closes the connection with WebSocket
+close code `1003` (unsupported data).
+
+Return `404` (plain HTTP, not upgraded) for an unknown job, and `409` (plain
+HTTP) for a job not currently `waiting`/`user-interaction`, using the same
+`problem+json` shape as other control calls. A provider must accept **at most
+one concurrent view connection per job** — reject a second concurrent upgrade
+attempt for the same `jobId` with `409`, mirroring the "one session at a
+time" rule already implicit in `start`'s idempotency.
+
+The provider closes its end of the socket (a WebSocket close, not a TCP-level
+abort where avoidable) when:
+
+- the job leaves `waiting` (fallback selected, the interaction resolves,
+  completion, failure, or cancellation), or
+- `interaction.expiresAt` is reached, or
+- the provider's own browser session is torn down for any internal reason.
+
+Family Librarian independently enforces its own copy of the same rules on the
+administrator-facing leg (its own expiry clock, its own `waiting`-state
+check, its own cancellation) rather than trusting the provider's close alone.
+This call is exempt from the 20-second control-plane transport timeout (§9):
+its lifetime is the interaction's own TTL, the same exemption already given
+to `GET .../outputs/{outputId}`.
 
 ### Structured failure
 

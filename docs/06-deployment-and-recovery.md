@@ -341,6 +341,15 @@ this at a network wider than the actual proxy: any address inside it can then
 spoof its own client IP into request logs and the invitation rate limiter's
 per-caller partitioning.
 
+Set `RemoteView__AllowedOrigins__0` (and `__1`, `__2`, ... for more than one)
+to this deployment's own public HTTPS origin(s) before enabling any
+provider's administrator-brokered remote view (HUMAN-ACQ-1 Phase 3).
+WebSocket upgrades are accepted only from an origin in this list —
+unconfigured, every upgrade is rejected, never "any origin," to close the
+cross-site WebSocket hijacking gap the framework's own default otherwise
+leaves open. This mirrors `ReverseProxy__TrustedNetworks` immediately above:
+both fail closed until explicitly set for the real deployment topology.
+
 Keep PostgreSQL credentials, bootstrap credentials, OIDC secrets, and provider
 credentials outside the repository. Provider credentials entered through the
 administrator UI are encrypted using the persisted Data Protection key ring in

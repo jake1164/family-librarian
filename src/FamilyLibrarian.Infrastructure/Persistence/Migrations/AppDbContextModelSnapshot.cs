@@ -549,6 +549,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(64)")
                         .HasColumnName("interaction_type");
 
+                    b.Property<DateTimeOffset?>("InteractionViewSessionStartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("interaction_view_session_started_at_utc");
+
                     b.Property<string>("LifecycleState")
                         .IsRequired()
                         .HasMaxLength(32)

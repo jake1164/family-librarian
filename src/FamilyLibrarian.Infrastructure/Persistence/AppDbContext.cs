@@ -808,6 +808,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(job => job.InteractionExpiresAtUtc).HasColumnName("interaction_expires_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(job => job.InteractionResumeSupported).HasColumnName("interaction_resume_supported");
             entity.Property(job => job.InteractionActionUrl).HasColumnName("interaction_action_url").HasMaxLength(2_048);
+            entity.Property(job => job.InteractionViewSessionStartedAtUtc).HasColumnName("interaction_view_session_started_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(job => job.ProgressPercent).HasColumnName("progress_percent");
             entity.Property(job => job.ProgressBytesCompleted).HasColumnName("progress_bytes_completed");
             entity.Property(job => job.ProgressBytesTotal).HasColumnName("progress_bytes_total");

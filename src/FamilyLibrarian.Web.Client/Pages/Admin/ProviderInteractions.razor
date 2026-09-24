@@ -4,6 +4,7 @@
 @using FamilyLibrarian.Web.Client.Acquisition
 @inject ProviderInteractionsApiClient Interactions
 @inject ISnackbar Snackbar
+@inject NavigationManager Navigation
 
 <PageTitle>Provider interactions · Family Librarian</PageTitle>
 
@@ -56,16 +57,24 @@
                         <MudText Typo="Typo.caption">
                             @ExpiryDescription(interaction)
                         </MudText>
-                        @if (interaction.CanStart)
-                        {
-                            <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined">
-                                Preparing verification is available, but the protected remote view is not implemented yet.
-                                Do not start a time-limited interaction until the broker slice is deployed.
-                            </MudAlert>
-                        }
                     </MudStack>
                 </MudCardContent>
                 <MudCardActions>
+                    @if (interaction.CanViewNow)
+                    {
+                        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                                   StartIcon="@Icons.Material.Filled.OpenInNew" Disabled="@(isActing || interaction.IsExpired)"
+                                   OnClick="() => OpenRemoteView(interaction.ProviderAcquisitionJobId)">
+                            Open remote view
+                        </MudButton>
+                    }
+                    else if (interaction.CanStart)
+                    {
+                        <MudButton Color="Color.Primary" Variant="Variant.Outlined" Disabled="@(isActing || interaction.IsExpired)"
+                                   OnClick="() => StartAsync(interaction.ProviderAcquisitionJobId)">
+                            Start verification
+                        </MudButton>
+                    }
                     @if (confirmFallbackJobId == interaction.ProviderAcquisitionJobId)
                     {
                         <MudText Typo="Typo.caption">Use the provider fallback?</MudText>
@@ -125,6 +134,22 @@
             isLoading = false;
         }
     }
+
+    private async Task StartAsync(Guid jobId)
+    {
+        isActing = true;
+        try
+        {
+            var outcome = await Interactions.StartAsync(jobId);
+            await HandleOutcomeAsync(outcome, "Verification session requested. Open the remote view once it's ready.");
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
+
+    private void OpenRemoteView(Guid jobId) => Navigation.NavigateTo($"/admin/provider-interactions/{jobId}/view");
 
     private void ConfirmFallback(Guid jobId) => confirmFallbackJobId = jobId;
 

@@ -16,18 +16,20 @@ public sealed class ProviderInteractionService(
     IExternalProviderStore providers,
     IExternalProviderClient client,
     ICredentialProtector protector,
+    RemoteViewSessionRegistry viewSessions,
     IAuditWriter audit,
     IClock clock)
 {
-    private const string InteractionControlFeature = "waiting-interaction-control";
-
     public async Task<IReadOnlyList<ProviderInteractionView>> ListAsync(CancellationToken cancellationToken)
     {
         var waiting = await jobs.ListWaitingForInteractionAsync(cancellationToken);
         var registered = await providers.ListAsync(cancellationToken);
-        var controls = registered.ToDictionary(provider => provider.Id, SupportsInteractionControl);
+        var controls = registered.ToDictionary(provider => provider.Id, ProviderInteractionFeatures.SupportsInteractionControl);
+        var views = registered.ToDictionary(provider => provider.Id, ProviderInteractionFeatures.SupportsInteractionView);
 
-        return waiting.Select(job => ToView(job, controls.GetValueOrDefault(job.ExternalProviderId))).ToArray();
+        return waiting.Select(job => ToView(
+            job, controls.GetValueOrDefault(job.ExternalProviderId), views.GetValueOrDefault(job.ExternalProviderId)))
+            .ToArray();
     }
 
     public Task<ProviderInteractionCommandResult> StartAsync(Guid jobId, CancellationToken cancellationToken) =>
@@ -58,6 +60,10 @@ public sealed class ProviderInteractionService(
         if (command != ProviderInteractionCommand.Cancel &&
             job.InteractionExpiresAtUtc is { } expiresAt && expiresAt <= clock.UtcNow)
         {
+            await audit.WriteAsync(
+                AuditActions.ProviderInteractionExpired, AuditSubjectTypes.ProviderInteraction, job.Id.ToString(),
+                new { job.Id, job.RequestId, job.RequestFormatId, job.ProviderId, Command = command.ToString() },
+                cancellationToken);
             return ProviderInteractionCommandResult.Expired;
         }
 
@@ -80,13 +86,17 @@ public sealed class ProviderInteractionService(
                     ProviderAcquisitionJobLifecycleState.Cancelled, null, null, null, null, null, null,
                     null, null, null, null, nextPollAtUtc: null, clock.UtcNow);
                 await jobs.SaveChangesAsync(cancellationToken);
+                // Tear down a live remote-view session immediately rather than
+                // waiting for its own next lifecycle-check tick to notice the
+                // job left Waiting.
+                viewSessions.RequestClose(job.Id);
                 await audit.WriteAsync(
                     AuditActions.ProviderInteractionCancelled, AuditSubjectTypes.ProviderInteraction, job.Id.ToString(),
                     new { job.Id, job.RequestId, job.RequestFormatId, job.ProviderId }, cancellationToken);
                 return ProviderInteractionCommandResult.Success;
             }
 
-            if (!SupportsInteractionControl(provider))
+            if (!ProviderInteractionFeatures.SupportsInteractionControl(provider))
             {
                 return ProviderInteractionCommandResult.Unsupported;
             }
@@ -96,6 +106,12 @@ public sealed class ProviderInteractionService(
                 : await client.UseAcquireFallbackAsync(provider.BaseUrl, apiKey, job.ProviderJobId, cancellationToken);
 
             ApplyStatus(job, status);
+            if (command == ProviderInteractionCommand.Start &&
+                job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting)
+            {
+                job.RecordInteractionSessionStarted(clock.UtcNow);
+            }
+
             await jobs.SaveChangesAsync(cancellationToken);
             await audit.WriteAsync(
                 command == ProviderInteractionCommand.Start
@@ -122,23 +138,17 @@ public sealed class ProviderInteractionService(
                 : clock.UtcNow.AddSeconds(status.PollAfterSeconds ?? 2),
             clock.UtcNow);
 
-    private ProviderInteractionView ToView(ProviderAcquisitionJob job, bool supportsControl) => new(
-        job.Id, job.RequestId, job.RequestFormatId, job.ProviderId, job.InteractionType!, job.InteractionMessage,
-        job.InteractionExpiresAtUtc, job.InteractionResumeSupported ?? false,
-        job.InteractionExpiresAtUtc is { } expiresAt && expiresAt <= clock.UtcNow,
-        supportsControl, supportsControl, true);
-
-    private static bool SupportsInteractionControl(Domain.Providers.ExternalProvider provider)
+    private ProviderInteractionView ToView(ProviderAcquisitionJob job, bool supportsControl, bool supportsView)
     {
-        var features = provider.CachedCapabilities?
-            .Split(';', StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault(section => section.StartsWith("features:", StringComparison.Ordinal));
+        var isExpired = job.InteractionExpiresAtUtc is { } expiresAt && expiresAt <= clock.UtcNow;
+        var canViewNow = supportsView && !isExpired && job.InteractionViewSessionStartedAtUtc is not null;
 
-        return features is not null &&
-            features["features:".Length..]
-                .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Any(feature => string.Equals(feature.Trim(), InteractionControlFeature, StringComparison.OrdinalIgnoreCase));
+        return new(
+            job.Id, job.RequestId, job.RequestFormatId, job.ProviderId, job.InteractionType!, job.InteractionMessage,
+            job.InteractionExpiresAtUtc, job.InteractionResumeSupported ?? false,
+            isExpired, supportsControl, supportsControl, true, canViewNow);
     }
+
 }
 
 public sealed record ProviderInteractionView(
@@ -153,7 +163,8 @@ public sealed record ProviderInteractionView(
     bool IsExpired,
     bool CanStart,
     bool CanUseFallback,
-    bool CanCancel);
+    bool CanCancel,
+    bool CanViewNow);
 
 public enum ProviderInteractionCommand
 {

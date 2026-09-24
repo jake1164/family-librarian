@@ -17,4 +17,8 @@ public sealed record ProviderInteractionResponse(
     bool IsExpired,
     bool CanStart,
     bool CanUseFallback,
-    bool CanCancel);
+    bool CanCancel,
+    // True once a verification session has been started and is still
+    // unexpired -- the admin queue should offer "open remote view" rather
+    // than "start verification" for this job.
+    bool CanViewNow);

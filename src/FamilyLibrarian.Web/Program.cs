@@ -1,5 +1,6 @@
 using System.Threading.RateLimiting;
 using FamilyLibrarian.Application.Accounts;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
@@ -25,6 +26,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<LiveConnections>();
 builder.Services.AddSingleton<LiveUpdatesPublisher>();
+builder.Services.AddSingleton<RemoteViewSessionRegistry>();
 builder.Services.ConfigureDbContext<AppDbContext>((services, options) =>
 {
     var buffer = new LiveUpdateBuffer();
@@ -139,6 +141,12 @@ builder.Services.AddProblemDetails();
 
 builder.Services.AddHsts(options => options.MaxAge = TimeSpan.FromHours(1));
 
+// Brokered remote-view sessions (HUMAN-ACQ-1 Phase 3) are the only WebSocket
+// upgrades this host accepts. They are long-lived by nature (one per active
+// human-verification session), so bound how many can pile up rather than
+// leaving Kestrel's own default (unlimited) in place.
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxConcurrentUpgradedConnections = 50);
+
 var app = builder.Build();
 
 if (args.Contains("--migrate", StringComparer.Ordinal))
@@ -205,6 +213,22 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
 app.UseRateLimiter();
+
+// Brokered remote-view sessions (HUMAN-ACQ-1 Phase 3) upgrade to a raw
+// WebSocket. Fail closed on Origin the same way ReverseProxy:TrustedNetworks
+// above fails closed on address: an empty/unset list means every upgrade is
+// rejected, never "any origin" (Kestrel's own default) -- a self-hosted
+// deployment must set this to its own real, browser-facing origin(s).
+var webSocketOptions = new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30)
+};
+foreach (var origin in app.Configuration.GetSection("RemoteView:AllowedOrigins").Get<string[]>() ?? [])
+{
+    webSocketOptions.AllowedOrigins.Add(origin);
+}
+
+app.UseWebSockets(webSocketOptions);
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }))
     .AllowAnonymous();
