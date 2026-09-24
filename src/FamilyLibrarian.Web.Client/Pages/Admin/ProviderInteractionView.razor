@@ -25,7 +25,14 @@
 
     <MudAlert Severity="@statusSeverity" Dense="true">@statusMessage</MudAlert>
 
-    <div @ref="containerRef" style="width:100%; max-width:1024px; min-height:480px; background:#111; border-radius:4px;"></div>
+    @* height (not min-height): noVNC's inner wrapper is styled height:100% --
+       a percentage height only resolves against a *definite* ancestor height
+       per the CSS spec, and min-height alone doesn't make one. With
+       min-height here, that 100% resolved to 0, and display.js's
+       autoscale() zeroes the whole scale (both dimensions) the instant
+       either container dimension measures 0 -- a real black canvas with
+       correct 1280x1024 bitmap data underneath but 0x0 CSS size. *@
+    <div @ref="containerRef" style="width:100%; max-width:1024px; height:480px; background:#111; border-radius:4px;"></div>
 </MudStack>
 
 @code {
