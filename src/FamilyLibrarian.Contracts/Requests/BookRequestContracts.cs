@@ -122,7 +122,8 @@ public sealed record AdminBookRequestListResponse(
 /// </summary>
 public sealed record AdminRequestAttentionResponse(
     int NeedsReviewCount,
-    IReadOnlyList<AdminProviderIssueResponse> ProviderIssues);
+    IReadOnlyList<AdminProviderIssueResponse> ProviderIssues,
+    IReadOnlyList<AdminProviderInteractionAttentionResponse> WaitingProviderInteractions);
 
 public sealed record AdminProviderIssueResponse(
     string ProviderId,
@@ -130,6 +131,21 @@ public sealed record AdminProviderIssueResponse(
     string Summary,
     DateTimeOffset OccurredAtUtc,
     string IssueKind);
+
+/// <summary>
+/// A durable provider acquisition job parked on an administrator (protocol
+/// v2 §8). Deliberately smaller than <c>ProviderInteractionResponse</c> --
+/// just enough to badge a request and link to the full interaction, not to
+/// act on it from here.
+/// </summary>
+public sealed record AdminProviderInteractionAttentionResponse(
+    Guid ProviderAcquisitionJobId,
+    Guid RequestId,
+    string? WorkTitle,
+    string ProviderId,
+    string Type,
+    DateTimeOffset? ExpiresAtUtc,
+    bool IsExpired);
 
 public sealed record AdminBookRequestResponse(
     BookRequestResponse Request,

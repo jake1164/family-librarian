@@ -50,6 +50,18 @@
                             <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@interaction.ProviderId</MudChip>
                             <MudText Typo="Typo.subtitle1">@InteractionLabel(interaction.Type)</MudText>
                         </MudStack>
+                        <MudText Typo="Typo.h6">@(interaction.WorkTitle ?? "(request no longer available)")</MudText>
+                        @if (interaction.Authors is { Count: > 0 } authors)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">@string.Join(", ", authors)</MudText>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(interaction.RequesterDisplayName))
+                        {
+                            <MudText Typo="Typo.body2">Requested by @interaction.RequesterDisplayName</MudText>
+                        }
+                        <MudLink Href="@($"admin/requests/{interaction.RequestId}")" Typo="Typo.body2">
+                            Open this request
+                        </MudLink>
                         @if (!string.IsNullOrWhiteSpace(interaction.Message))
                         {
                             <MudText Typo="Typo.body2">@interaction.Message</MudText>

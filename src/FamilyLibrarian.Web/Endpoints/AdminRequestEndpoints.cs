@@ -33,6 +33,7 @@ internal static class AdminRequestEndpoints
         adminRequests.MapPost("/provider-interactions/{jobId:guid}/cancel", CancelProviderInteractionAsync);
         adminRequests.MapGet("/provider-interactions/{jobId:guid}/view", HandleProviderInteractionViewAsync);
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
+        adminRequests.MapGet("/{requestId:guid}/provider-interaction", GetProviderInteractionForRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-attempts", ListProviderAttemptsAsync);
         adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
         adminRequests.MapPost("/{requestId:guid}/needs-review/resolve", AdminResolveNeedsReviewAsync);
@@ -80,20 +81,37 @@ internal static class AdminRequestEndpoints
     private static async Task<IResult> ListProviderInteractionsAsync(
         ProviderInteractionService service,
         CancellationToken cancellationToken) =>
-        Results.Ok((await service.ListAsync(cancellationToken)).Select(interaction => new ProviderInteractionResponse(
-            interaction.ProviderAcquisitionJobId,
-            interaction.RequestId,
-            interaction.RequestFormatId,
-            interaction.ProviderId,
-            interaction.Type,
-            interaction.Message,
-            interaction.ExpiresAtUtc,
-            interaction.ResumeSupported,
-            interaction.IsExpired,
-            interaction.CanStart,
-            interaction.CanUseFallback,
-            interaction.CanCancel,
-            interaction.CanViewNow)).ToArray());
+        Results.Ok((await service.ListAsync(cancellationToken)).Select(ToProviderInteractionResponse).ToArray());
+
+    private static async Task<IResult> GetProviderInteractionForRequestAsync(
+        Guid requestId,
+        ProviderInteractionService service,
+        CancellationToken cancellationToken)
+    {
+        // 200/null, not 404: "no interaction waiting" is this request's
+        // ordinary state, not an exceptional one -- the client deserializes
+        // straight to null without a caught-exception round trip.
+        var interaction = await service.FindForRequestAsync(requestId, cancellationToken);
+        return Results.Ok(interaction is null ? null : ToProviderInteractionResponse(interaction));
+    }
+
+    private static ProviderInteractionResponse ToProviderInteractionResponse(ProviderInteractionView interaction) => new(
+        interaction.ProviderAcquisitionJobId,
+        interaction.RequestId,
+        interaction.RequestFormatId,
+        interaction.ProviderId,
+        interaction.Type,
+        interaction.Message,
+        interaction.ExpiresAtUtc,
+        interaction.ResumeSupported,
+        interaction.IsExpired,
+        interaction.CanStart,
+        interaction.CanUseFallback,
+        interaction.CanCancel,
+        interaction.CanViewNow,
+        interaction.WorkTitle,
+        interaction.Authors,
+        interaction.RequesterDisplayName);
 
     private static Task<IResult> StartProviderInteractionAsync(
         Guid jobId,
@@ -231,14 +249,16 @@ internal static class AdminRequestEndpoints
         IProviderAttemptRepository attempts,
         IProviderRegistry registry,
         IExternalProviderStore externalProviders,
+        ProviderInteractionService providerInteractions,
         CancellationToken cancellationToken)
     {
-        // All three stores are scoped over the same AppDbContext. EF Core does
+        // All stores here are scoped over the same AppDbContext. EF Core does
         // not allow concurrent operations on that context, so keep these small
         // administrative projections sequential rather than fanning them out.
         var needsReviewCount = await requests.CountForAdminAsync(RequestStatus.NeedsReview, cancellationToken);
         var latestAttempts = await attempts.ListLatestByProviderAsync(cancellationToken);
         var registeredExternalProviders = await externalProviders.ListAsync(cancellationToken);
+        var waitingInteractions = await providerInteractions.ListAsync(cancellationToken);
 
         var displayNames = registry.GetInstalledProviders()
             .ToDictionary(provider => provider.Id, provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase);
@@ -262,7 +282,18 @@ internal static class AdminRequestEndpoints
                 attempt.IssueKind!.Value.ToString()))
             .ToArray();
 
-        return Results.Ok(new AdminRequestAttentionResponse(needsReviewCount, providerIssues));
+        var providerInteractionsWaiting = waitingInteractions
+            .Select(interaction => new AdminProviderInteractionAttentionResponse(
+                interaction.ProviderAcquisitionJobId,
+                interaction.RequestId,
+                interaction.WorkTitle,
+                interaction.ProviderId,
+                interaction.Type,
+                interaction.ExpiresAtUtc,
+                interaction.IsExpired))
+            .ToArray();
+
+        return Results.Ok(new AdminRequestAttentionResponse(needsReviewCount, providerIssues, providerInteractionsWaiting));
     }
 
     private static async Task<IResult> ListProviderAttemptsAsync(

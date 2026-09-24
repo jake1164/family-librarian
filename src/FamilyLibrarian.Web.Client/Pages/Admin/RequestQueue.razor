@@ -75,6 +75,14 @@
                             Asked @item.Request.RequestedAtUtc.ToLocalTime().ToString("g")
                             (@Age(item.Request.RequestedAtUtc))
                         </MudText>
+                        @if (WaitingInteractionFor(item.Request.Id) is { } waitingInteraction)
+                        {
+                            <MudAlert Severity="@(waitingInteraction.IsExpired ? Severity.Error : Severity.Warning)"
+                                      Dense="true" Variant="Variant.Outlined">
+                                Needs you: @waitingInteraction.ProviderId is waiting on a librarian action.
+                                <MudLink Href="admin/provider-interactions" Class="ml-1">Open provider interactions</MudLink>
+                            </MudAlert>
+                        }
                         @if (item.Request.Status == "NeedsReview")
                         {
                             <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined">
@@ -215,19 +223,37 @@
     }
 
     /// <summary>
+    /// The waiting provider interaction for one request in the queue, if any
+    /// -- looked up from the same attention payload the "Needs review" filter
+    /// count already uses, so no extra round trip per card.
+    /// </summary>
+    private AdminProviderInteractionAttentionResponse? WaitingInteractionFor(Guid requestId) =>
+        attention?.WaitingProviderInteractions.FirstOrDefault(interaction => interaction.RequestId == requestId);
+
+    /// <summary>
     /// Lowest rank surfaces first: requests or formats colored red (failed /
     /// not available) outrank amber (needs review / awaiting approval),
     /// which outrank in-progress blue, which outrank resolved green/grey.
     /// Mirrors the chip color convention in <see cref="MediaTypeVisuals"/> so
     /// "needs action" in the queue always means the same thing it means on
-    /// the chip.
+    /// the chip. A waiting provider interaction is folded in at the same
+    /// amber/red tier as the shared status vocabulary, even though the
+    /// underlying format chip itself stays the deliberately generic blue
+    /// "AwaitingProviderAction" (docs/07-ui-conventions.md) -- this ranking
+    /// is admin-only and does not touch that shared chip.
     /// </summary>
-    private static int AttentionRank(AdminBookRequestResponse item)
+    private int AttentionRank(AdminBookRequestResponse item)
     {
         var colors = item.Request.Formats
             .Select(format => MediaTypeVisuals.StatusColor(format.Status, format.ProgressCode))
             .Append(MediaTypeVisuals.StatusColor(item.Request.Status));
-        return colors.Min(ColorRank);
+        var rank = colors.Min(ColorRank);
+        if (WaitingInteractionFor(item.Request.Id) is { } interaction)
+        {
+            rank = Math.Min(rank, ColorRank(interaction.IsExpired ? Color.Error : Color.Warning));
+        }
+
+        return rank;
     }
 
     private static int ColorRank(Color color) => color switch

@@ -13,7 +13,14 @@ public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTok
         CancellationToken cancellationToken = default) =>
         await httpClient.GetFromJsonAsync<AdminRequestAttentionResponse>(
             "api/v1/admin/requests/attention", cancellationToken)
-        ?? new AdminRequestAttentionResponse(0, []);
+        ?? new AdminRequestAttentionResponse(0, [], []);
+
+    /// <summary>This request's own waiting provider interaction, or null if none is waiting.</summary>
+    public Task<ProviderInteractionResponse?> GetProviderInteractionAsync(
+        Guid requestId,
+        CancellationToken cancellationToken = default) =>
+        httpClient.GetFromJsonAsync<ProviderInteractionResponse>(
+            $"api/v1/admin/requests/{requestId}/provider-interaction", cancellationToken);
 
     public async Task<IReadOnlyList<AdminBookRequestResponse>> GetQueueAsync(
         string? status,

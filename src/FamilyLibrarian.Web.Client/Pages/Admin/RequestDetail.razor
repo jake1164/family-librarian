@@ -65,6 +65,18 @@
                 <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
                 <MudText Typo="Typo.caption">Asked @request.Request.RequestedAtUtc.ToLocalTime().ToString("f")</MudText>
                 <MudText Typo="Typo.body2">@request.Request.RequesterCount active requester(s) share this fulfillment.</MudText>
+                @if (waitingInteraction is not null)
+                {
+                    <MudAlert Severity="@(waitingInteraction.IsExpired ? Severity.Error : Severity.Warning)">
+                        This request needs a librarian action:
+                        @(waitingInteraction.Message ?? $"{waitingInteraction.ProviderId} is waiting on a verification step.")
+                        <div class="mt-2">
+                            <MudButton Variant="Variant.Filled" Color="Color.Warning" Href="admin/provider-interactions">
+                                Open provider interactions
+                            </MudButton>
+                        </div>
+                    </MudAlert>
+                }
                 @if (request.Request.RequiresManualFulfillment)
                 {
                     <MudAlert Severity="Severity.Warning">
@@ -285,6 +297,7 @@
     private AdminBookRequestResponse? request;
     private WorkFulfillmentOptionsResponse? fulfillment;
     private IReadOnlyList<ProviderAttemptResponse> providerAttempts = [];
+    private ProviderInteractionResponse? waitingInteraction;
     private string? adminNote;
     private string? transitionReason;
     private bool isLoading = true;
@@ -312,6 +325,7 @@
         {
             fulfillment = null;
             providerAttempts = [];
+            waitingInteraction = null;
             request = null;
         }
         var loadingRequestId = RequestId;
@@ -345,6 +359,17 @@
         catch (HttpRequestException)
         {
             providerActivityError = "Provider activity could not be loaded. The request is still available.";
+        }
+
+        try
+        {
+            var interaction = await Requests.GetProviderInteractionAsync(loadingRequestId);
+            if (loadingRequestId != RequestId) return;
+            waitingInteraction = interaction;
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: worst case the banner just doesn't show this load.
         }
 
         StartFulfillmentOptionsLoad(request.Request.WorkId);

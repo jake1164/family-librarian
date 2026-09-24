@@ -127,6 +127,26 @@
                     Timestamp: issue.OccurredAtUtc,
                     IsRead: false,
                     Href: "settings/sources")));
+
+                // Reflects the live jobs.ApplyStatus(...) lifecycle rather
+                // than a persisted event, so there is nothing to mark
+                // read/dismiss here the way notifications.Id-backed entries
+                // are -- it simply stops appearing once the job leaves
+                // Waiting (resolved, expired, or cancelled).
+                merged.AddRange(attention.WaitingProviderInteractions.Select(interaction => new TrayEntry(
+                    Id: null,
+                    Category: ProviderInteractionWaitingCategory,
+                    Severity: interaction.IsExpired ? "Error" : "Warning",
+                    Title: interaction.WorkTitle is { } title
+                        ? $"'{title}' needs a librarian action"
+                        : "A request needs a librarian action",
+                    Detail: interaction.IsExpired
+                        ? $"The provider's verification window for {interaction.ProviderId} expired."
+                        : $"{interaction.ProviderId} is waiting on a verification step.",
+                    RepeatCount: 1,
+                    Timestamp: interaction.ExpiresAtUtc ?? DateTimeOffset.UtcNow,
+                    IsRead: false,
+                    Href: $"admin/requests/{interaction.RequestId}")));
             }
             catch (HttpRequestException)
             {
@@ -212,6 +232,8 @@
     // The client only references Contracts, not Domain, so the value is duplicated here.
     private const string RequestNeedsReviewCategory = "request.needs_review";
     private const string ProviderIssueCategory = "provider.issue";
+    // No Domain.Notifications match -- this is derived live from ProviderAcquisitionJob.LifecycleState, not a persisted Notification.
+    private const string ProviderInteractionWaitingCategory = "provider.interaction_waiting";
     private const string SourceIssueCategory = "source.issue";
     private const string PublishingIssueCategory = "publishing.issue";
     private const string KindleDeliveryConfirmationRequestedCategory = "delivery.kindle_confirmation_requested";

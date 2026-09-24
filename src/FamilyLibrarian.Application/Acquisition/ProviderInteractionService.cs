@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 
@@ -15,6 +16,7 @@ public sealed class ProviderInteractionService(
     IProviderAcquisitionJobStore jobs,
     IExternalProviderStore providers,
     IExternalProviderClient client,
+    IRequestRepository requests,
     ICredentialProtector protector,
     RemoteViewSessionRegistry viewSessions,
     IAuditWriter audit,
@@ -27,10 +29,28 @@ public sealed class ProviderInteractionService(
         var controls = registered.ToDictionary(provider => provider.Id, ProviderInteractionFeatures.SupportsInteractionControl);
         var views = registered.ToDictionary(provider => provider.Id, ProviderInteractionFeatures.SupportsInteractionView);
 
-        return waiting.Select(job => ToView(
-            job, controls.GetValueOrDefault(job.ExternalProviderId), views.GetValueOrDefault(job.ExternalProviderId)))
-            .ToArray();
+        // Sequential, not fanned out: every lookup below shares one
+        // AppDbContext, which EF Core does not allow concurrent operations
+        // on (same reasoning as AdminRequestEndpoints.GetAttentionAsync).
+        // The waiting queue is small by construction -- it only ever holds
+        // jobs actively parked on an administrator -- so this stays cheap.
+        var result = new List<ProviderInteractionView>(waiting.Count);
+        foreach (var job in waiting)
+        {
+            // Best-effort: a request deleted after its job started must not
+            // hide the interaction itself, just its book/requester context.
+            var requestView = await requests.FindAdminViewAsync(job.RequestId, cancellationToken);
+            result.Add(ToView(
+                job, controls.GetValueOrDefault(job.ExternalProviderId), views.GetValueOrDefault(job.ExternalProviderId),
+                requestView));
+        }
+
+        return result;
     }
+
+    /// <summary>Used by the request-detail page to show one request's own waiting interaction, if any.</summary>
+    public async Task<ProviderInteractionView?> FindForRequestAsync(Guid requestId, CancellationToken cancellationToken) =>
+        (await ListAsync(cancellationToken)).FirstOrDefault(interaction => interaction.RequestId == requestId);
 
     public Task<ProviderInteractionCommandResult> StartAsync(Guid jobId, CancellationToken cancellationToken) =>
         ControlAsync(jobId, ProviderInteractionCommand.Start, cancellationToken);
@@ -138,7 +158,8 @@ public sealed class ProviderInteractionService(
                 : clock.UtcNow.AddSeconds(status.PollAfterSeconds ?? 2),
             clock.UtcNow);
 
-    private ProviderInteractionView ToView(ProviderAcquisitionJob job, bool supportsControl, bool supportsView)
+    private ProviderInteractionView ToView(
+        ProviderAcquisitionJob job, bool supportsControl, bool supportsView, AdminBookRequestView? requestView)
     {
         var isExpired = job.InteractionExpiresAtUtc is { } expiresAt && expiresAt <= clock.UtcNow;
         var canViewNow = supportsView && !isExpired && job.InteractionViewSessionStartedAtUtc is not null;
@@ -146,7 +167,8 @@ public sealed class ProviderInteractionService(
         return new(
             job.Id, job.RequestId, job.RequestFormatId, job.ProviderId, job.InteractionType!, job.InteractionMessage,
             job.InteractionExpiresAtUtc, job.InteractionResumeSupported ?? false,
-            isExpired, supportsControl, supportsControl, true, canViewNow);
+            isExpired, supportsControl, supportsControl, true, canViewNow,
+            requestView?.Request.WorkTitle, requestView?.Request.Authors, requestView?.RequesterDisplayName);
     }
 
 }
@@ -164,7 +186,10 @@ public sealed record ProviderInteractionView(
     bool CanStart,
     bool CanUseFallback,
     bool CanCancel,
-    bool CanViewNow);
+    bool CanViewNow,
+    string? WorkTitle,
+    IReadOnlyList<string>? Authors,
+    string? RequesterDisplayName);
 
 public enum ProviderInteractionCommand
 {
