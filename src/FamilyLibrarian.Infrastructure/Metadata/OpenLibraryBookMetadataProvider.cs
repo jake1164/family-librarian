@@ -65,18 +65,28 @@ public sealed class OpenLibraryBookMetadataProvider(
             return null;
         }
 
-        var result = await SearchCoreAsync(
+        var response = await FetchSearchAsync(
             $"key:/works/{externalId}",
             SearchFields,
             1,
             1,
             cancellationToken);
 
-        var candidate = result.Candidates.SingleOrDefault(candidate =>
-            string.Equals(candidate.ExternalId, externalId, StringComparison.Ordinal));
+        var document = response?.Documents?.SingleOrDefault(document =>
+            string.Equals(GetWorkId(document.Key), externalId, StringComparison.Ordinal));
+        var candidate = document is null ? null : ToCandidate(document);
+        if (candidate is null)
+        {
+            return null;
+        }
 
-        return candidate is null
-            ? null
+        // editions.json lists entries in modification order, not relevance,
+        // so its first preferred-language entry can be an abridgement or
+        // graded reader (observed live: "Killing Floor" -> "Penguin Readers
+        // Level 4"). Only go looking when the edition we already have isn't
+        // confirmed to be in the preferred language.
+        return IsPreferredLanguageEdition(PrimaryEdition(document!))
+            ? candidate
             : await ApplyPreferredLanguageEditionAsync(candidate, externalId, cancellationToken);
     }
 
@@ -149,15 +159,7 @@ public sealed class OpenLibraryBookMetadataProvider(
         int page,
         CancellationToken cancellationToken)
     {
-        var requestUri =
-            $"search.json?q={Uri.EscapeDataString(query)}" +
-            $"&fields={Uri.EscapeDataString(fields)}" +
-            $"&limit={limit.ToString(CultureInfo.InvariantCulture)}" +
-            $"&page={page.ToString(CultureInfo.InvariantCulture)}";
-
-        var response = await httpClient.GetFromJsonAsync<OpenLibrarySearchResponse>(
-            requestUri,
-            cancellationToken);
+        var response = await FetchSearchAsync(query, fields, limit, page, cancellationToken);
 
         if (response?.Documents is not { Count: > 0 })
         {
@@ -178,6 +180,28 @@ public sealed class OpenLibraryBookMetadataProvider(
 
         return new BookCandidateSearchPage(candidates, hasMore);
     }
+
+    private Task<OpenLibrarySearchResponse?> FetchSearchAsync(
+        string query,
+        string fields,
+        int limit,
+        int page,
+        CancellationToken cancellationToken) =>
+        httpClient.GetFromJsonAsync<OpenLibrarySearchResponse>(
+            $"search.json?q={Uri.EscapeDataString(query)}" +
+            $"&fields={Uri.EscapeDataString(fields)}" +
+            $"&limit={limit.ToString(CultureInfo.InvariantCulture)}" +
+            $"&page={page.ToString(CultureInfo.InvariantCulture)}",
+            cancellationToken);
+
+    private static OpenLibraryEditionDocument? PrimaryEdition(OpenLibrarySearchDocument document) =>
+        document.Editions?.Documents is { Count: > 0 } editions ? editions[0] : null;
+
+    private static bool IsPreferredLanguageEdition(OpenLibraryEditionDocument? edition) =>
+        edition is not null && string.Equals(
+            LanguageCodeNormalizer.Normalize(FirstString(edition.Languages)),
+            PreferredLanguage,
+            StringComparison.OrdinalIgnoreCase);
 
     private BookCandidate? ToCandidate(OpenLibrarySearchDocument document)
     {
@@ -203,15 +227,11 @@ public sealed class OpenLibraryBookMetadataProvider(
         // when that edition itself is in the preferred language, otherwise
         // mixing its fields with the (differently-languaged) work title would
         // just trade one kind of mismatch for another.
-        var editionDocuments = document.Editions?.Documents;
-        var primaryEdition = editionDocuments is { Count: > 0 } ? editionDocuments[0] : null;
+        var primaryEdition = PrimaryEdition(document);
         var primaryEditionLanguage = primaryEdition is null
             ? null
             : LanguageCodeNormalizer.Normalize(FirstString(primaryEdition.Languages));
-        var useEditionFields = string.Equals(
-            primaryEditionLanguage,
-            PreferredLanguage,
-            StringComparison.OrdinalIgnoreCase);
+        var useEditionFields = IsPreferredLanguageEdition(primaryEdition);
 
         // Title gets its own, slightly looser rule than cover/publisher/language
         // below: an edition whose language is merely *unknown* (not confirmed

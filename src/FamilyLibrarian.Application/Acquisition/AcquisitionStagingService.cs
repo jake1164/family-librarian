@@ -48,8 +48,7 @@ public sealed class AcquisitionStagingService(
         var extension = Path.GetExtension(originalFilename);
         if (string.IsNullOrEmpty(extension) || !policy.IsExtensionAllowed(format.MediaType, extension))
         {
-            return ManualImportResult.Invalid(
-                $"'{extension}' is not an allowed file type for {format.MediaType}.");
+            return ManualImportResult.Invalid(DisallowedFileTypeMessage(extension, format.MediaType));
         }
 
         if (!await boundaryGuard.CanAcceptNewArtifactAsync(cancellationToken))
@@ -152,8 +151,7 @@ public sealed class AcquisitionStagingService(
             if (string.IsNullOrEmpty(extension) || !policy.IsExtensionAllowed(format.MediaType, extension))
             {
                 await CleanUpAsync(quarantined, cancellationToken);
-                return ManualImportResult.Invalid(
-                    $"'{extension}' is not an allowed file type for {format.MediaType}.");
+                return ManualImportResult.Invalid(DisallowedFileTypeMessage(extension, format.MediaType));
             }
 
             var (stagedFile, error) = await WriteAndValidateContentAsync(
@@ -302,6 +300,13 @@ public sealed class AcquisitionStagingService(
         job.MarkCandidateStatus(candidate.Id, AcquisitionCandidateStatus.Acquired, now);
         return candidate;
     }
+
+    // An empty extension rendered as "'' is not an allowed file type", which
+    // reads like a stray quote rather than "the name has no extension".
+    private static string DisallowedFileTypeMessage(string extension, RequestMediaType mediaType) =>
+        string.IsNullOrEmpty(extension)
+            ? $"The file name has no extension, so it can't be accepted as {mediaType}."
+            : $"'{extension}' is not an allowed file type for {mediaType}.";
 
     private async Task CleanUpAsync(IReadOnlyList<StagedFile> quarantined, CancellationToken cancellationToken)
     {

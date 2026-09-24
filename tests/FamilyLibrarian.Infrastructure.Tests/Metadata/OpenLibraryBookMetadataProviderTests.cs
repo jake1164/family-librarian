@@ -495,6 +495,67 @@ public sealed class OpenLibraryBookMetadataProviderTests
     }
 
     [TestMethod]
+    public async Task GetDetailsAsyncKeepsAnAlreadyPreferredLanguageEditionInsteadOfTheFirstEditionsListEntry()
+    {
+        // Live OL24477958W: the search's own edition is the English Jove
+        // "Killing Floor", but editions.json (modification order) leads its
+        // English entries with a graded reader, "Penguin Readers Level 4".
+        var editionsRequested = false;
+        using var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("editions.json", StringComparison.Ordinal))
+            {
+                editionsRequested = true;
+                return JsonResponse(
+                    """
+                    {
+                      "entries": [
+                        {
+                          "key": "/books/OL38814068M",
+                          "title": "Penguin Readers Level 4",
+                          "languages": [{ "key": "/languages/eng" }],
+                          "publishers": ["Penguin"]
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL24477958W",
+                      "title": "Killing Floor",
+                      "author_name": ["Lee Child"],
+                      "editions": {
+                        "docs": [
+                          {
+                            "key": "/books/OL7657915M",
+                            "title": "Killing Floor",
+                            "language": ["eng"],
+                            "publisher": ["Jove Books"]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """);
+        });
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var candidate = await provider.GetDetailsAsync("OL24477958W", CancellationToken.None);
+
+        Assert.IsNotNull(candidate);
+        Assert.AreEqual("Killing Floor", candidate.Title);
+        Assert.AreEqual("Jove Books", candidate.Publisher);
+        Assert.IsFalse(editionsRequested);
+    }
+
+    [TestMethod]
     public async Task SearchAsyncPropagatesProviderHttpFailure()
     {
         using var handler = new StubHttpMessageHandler((_, _) =>
