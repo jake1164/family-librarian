@@ -49,6 +49,12 @@ public sealed class ExternalProviderApiClient(HttpClient httpClient, Antiforgery
             HttpMethod.Put, $"{ProvidersPath}/{id}/auto-acquire",
             new SetExternalProviderAutoAcquireEnabledRequest(enabled), cancellationToken);
 
+    public Task<ExternalProviderResult> SetProviderAcquisitionModeAsync(
+        Guid id, string acquisitionMode, CancellationToken cancellationToken = default) =>
+        SendProviderAsync(
+            HttpMethod.Put, $"{ProvidersPath}/{id}/acquisition-mode",
+            new SetExternalProviderAcquisitionModeRequest(acquisitionMode), cancellationToken);
+
     public Task<ExternalProviderResult> SetProviderApiKeyAsync(
         Guid id, string apiKey, CancellationToken cancellationToken = default) =>
         SendProviderAsync(

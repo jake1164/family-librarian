@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Providers;
@@ -473,7 +474,14 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
             ["candidateReference"] = request.CandidateReference,
             ["candidateRevision"] = request.CandidateRevision,
             ["acquireToken"] = request.AcquireToken,
-            ["mediaType"] = request.MediaType.ToString().ToLowerInvariant()
+            ["mediaType"] = request.MediaType.ToString().ToLowerInvariant(),
+            ["acquisitionMode"] = request.AcquisitionMode switch
+            {
+                ExternalProviderAcquisitionMode.SubscriptionFirst => "subscription-first",
+                ExternalProviderAcquisitionMode.FreeFirst => "free-first",
+                ExternalProviderAcquisitionMode.SubscriptionOnly => "subscription-only",
+                _ => "free-only"
+            }
         };
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "acquire")

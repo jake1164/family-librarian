@@ -227,6 +227,35 @@ public sealed class ExternalProviderEndpointTests
     }
 
     [TestMethod]
+    public async Task AnAdminCanSetTheProviderNativeAcquisitionModeWithoutChangingAutomaticAcquisition()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        var create = await client.PostAsJsonAsync(
+            "/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest("mode-provider", "Mode Provider", "http://provider.test"));
+        var created = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(created);
+        Assert.AreEqual("FreeOnly", created.AcquisitionMode);
+        Assert.IsFalse(created.AutoAcquireEnabled);
+
+        var setMode = await client.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{created.Id}/acquisition-mode",
+            new SetExternalProviderAcquisitionModeRequest("SubscriptionFirst"));
+        Assert.AreEqual(HttpStatusCode.OK, setMode.StatusCode);
+        var updated = await setMode.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(updated);
+        Assert.AreEqual("SubscriptionFirst", updated.AcquisitionMode);
+        Assert.IsFalse(updated.AutoAcquireEnabled);
+
+        var invalid = await client.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{created.Id}/acquisition-mode",
+            new SetExternalProviderAcquisitionModeRequest("use-everything"));
+        Assert.AreEqual(HttpStatusCode.BadRequest, invalid.StatusCode);
+    }
+
+    [TestMethod]
     public async Task AFetchedCatalogsEntriesRoundTripThroughTheApi()
     {
         var fixture = WebTestFixture.Require(_fixture);

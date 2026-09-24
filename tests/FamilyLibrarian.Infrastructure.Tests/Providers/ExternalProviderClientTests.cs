@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.SampleProvider;
@@ -220,6 +221,22 @@ public sealed class ExternalProviderClientTests
 
         Assert.AreEqual(ProviderAcquireOutcome.Accepted, first.Outcome);
         Assert.AreEqual(first.JobId, second.JobId);
+    }
+
+    [TestMethod]
+    public async Task SubmitAcquireSendsTheConfiguredProviderNativeAcquisitionMode()
+    {
+        var handler = new CapturingAcquireHandler();
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(handler));
+        var request = new ExternalAcquireRequest(
+            Guid.NewGuid(), "candidate", null, null, RequestMediaType.Ebook,
+            ExternalProviderAcquisitionMode.SubscriptionFirst);
+
+        await client.SubmitAcquireAsync(
+            "http://provider.test", null, request, Guid.NewGuid().ToString("N"), EgressRoute.Direct, CancellationToken.None);
+
+        Assert.IsNotNull(handler.Payload);
+        Assert.AreEqual("subscription-first", handler.Payload!["acquisitionMode"]!.GetValue<string>());
     }
 
     [TestMethod]
@@ -449,6 +466,22 @@ public sealed class ExternalProviderClientTests
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"candidates\":[]}")
+            };
+        }
+    }
+
+    private sealed class CapturingAcquireHandler : HttpMessageHandler
+    {
+        public JsonObject? Payload { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Payload = JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken))!.AsObject();
+            return new HttpResponseMessage(HttpStatusCode.Accepted)
+            {
+                Content = new StringContent("{\"jobId\":\"job-1\",\"state\":\"queued\"}")
             };
         }
     }

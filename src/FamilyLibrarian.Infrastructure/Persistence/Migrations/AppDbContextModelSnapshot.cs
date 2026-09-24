@@ -1936,6 +1936,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("auto_acquire_enabled");
 
+                    b.Property<string>("AcquisitionMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("acquisition_mode");
+
                     b.Property<string>("BaseUrl")
                         .IsRequired()
                         .HasMaxLength(1024)

@@ -43,6 +43,7 @@ public sealed class ExternalProvider
         CachedEgressPolicy = EgressPolicy.Normal;
         RecheckSchedule = ProviderRecheckSchedule.Manual;
         AutoAcquireEnabled = false;
+        AcquisitionMode = ExternalProviderAcquisitionMode.FreeOnly;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
     }
@@ -80,6 +81,15 @@ public sealed class ExternalProvider
     /// <c>ExternalProviderRecheckService</c>, not here.
     /// </summary>
     public bool AutoAcquireEnabled { get; private set; }
+
+    /// <summary>
+    /// The provider-native path preference passed to every acquisition job.
+    /// This is independent of <see cref="AutoAcquireEnabled"/>: the latter
+    /// authorizes unattended acquisition, while this value tells the provider
+    /// how it may use its own quota and free-interactive paths once an
+    /// acquisition has been authorized.
+    /// </summary>
+    public ExternalProviderAcquisitionMode AcquisitionMode { get; private set; }
 
     public string? ProtectedApiKey { get; private set; }
 
@@ -184,6 +194,15 @@ public sealed class ExternalProvider
     public void SetAutoAcquireEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
     {
         AutoAcquireEnabled = isEnabled;
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void SetAcquisitionMode(
+        ExternalProviderAcquisitionMode acquisitionMode,
+        Guid? actorUserId,
+        DateTimeOffset updatedAtUtc)
+    {
+        AcquisitionMode = acquisitionMode;
         Touch(actorUserId, updatedAtUtc);
     }
 

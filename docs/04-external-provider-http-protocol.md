@@ -364,7 +364,8 @@ Request:
   "candidateReference": "abc123",
   "candidateRevision": null,
   "acquireToken": null,
-  "mediaType": "ebook"
+  "mediaType": "ebook",
+  "acquisitionMode": "free-only"
 }
 ```
 
@@ -386,6 +387,15 @@ accepted it for, reject with `409`.
 `candidateRevision` and `acquireToken`, if you returned them from `/search`,
 are sent back unchanged. If you never return them, you will never receive
 them here either, and nothing about this section applies to you.
+
+`acquisitionMode` is always one of `subscription-first`, `free-first`,
+`subscription-only`, or `free-only`. It is the administrator's persisted
+choice for the provider's own subscription/quota and free-interactive paths;
+it is not a purchase authorization, and providers retain their own quota
+accounting. A provider that cannot use the selected path because quota is
+exhausted should keep the job queued or running and provide a suitable
+`pollAfterSeconds`. It must use `waiting` with an `interaction` object only
+when an administrator must perform a human action.
 
 ### Staleness: `candidateRevision` mismatch
 

@@ -85,6 +85,7 @@ public static class AuditActions
     public const string ExternalProviderRecheckScheduleChanged = "external_provider.recheck_schedule_changed";
     public const string ExternalProviderAutoAcquireEnabled = "external_provider.auto_acquire_enabled";
     public const string ExternalProviderAutoAcquireDisabled = "external_provider.auto_acquire_disabled";
+    public const string ExternalProviderAcquisitionModeChanged = "external_provider.acquisition_mode_changed";
     public const string ExternalProviderAcquisitionStaged = "external_provider_acquisition.staged";
     public const string ProviderInteractionStarted = "provider_interaction.started";
     public const string ProviderInteractionFallbackSelected = "provider_interaction.fallback_selected";

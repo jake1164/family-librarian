@@ -217,7 +217,7 @@ public sealed class DirectAcquisitionService(
         var idempotencyKey = Guid.NewGuid().ToString("N");
         var acquireRequest = new ExternalAcquireRequest(
             Guid.NewGuid(), externalOption.ProviderResultId, externalOption.CandidateRevision, externalOption.AcquireToken,
-            format.MediaType);
+            format.MediaType, externalProvider.AcquisitionMode);
 
         ExternalProviderAcquireSubmission submission;
         try

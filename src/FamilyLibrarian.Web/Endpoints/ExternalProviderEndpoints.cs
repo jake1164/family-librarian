@@ -24,6 +24,7 @@ internal static class ExternalProviderEndpoints
         adminExternalProviders.MapPut("/{id:guid}/enabled", SetExternalProviderEnabledAsync);
         adminExternalProviders.MapPut("/{id:guid}/recheck-schedule", SetExternalProviderRecheckScheduleAsync);
         adminExternalProviders.MapPut("/{id:guid}/auto-acquire", SetExternalProviderAutoAcquireEnabledAsync);
+        adminExternalProviders.MapPut("/{id:guid}/acquisition-mode", SetExternalProviderAcquisitionModeAsync);
         adminExternalProviders.MapPut("/{id:guid}/api-key", SetExternalProviderApiKeyAsync);
         adminExternalProviders.MapDelete("/{id:guid}/api-key", ClearExternalProviderApiKeyAsync);
         adminExternalProviders.MapPost("/{id:guid}/test", TestExternalProviderAsync);
@@ -70,6 +71,22 @@ internal static class ExternalProviderEndpoints
         Guid id, SetExternalProviderAutoAcquireEnabledRequest request, ExternalProviderAdminService service,
         CancellationToken cancellationToken) =>
         ToExternalProviderResult(await service.SetAutoAcquireEnabledAsync(id, request.Enabled, cancellationToken));
+
+    private static async Task<IResult> SetExternalProviderAcquisitionModeAsync(
+        Guid id, SetExternalProviderAcquisitionModeRequest request, ExternalProviderAdminService service,
+        CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<ExternalProviderAcquisitionMode>(request.AcquisitionMode, ignoreCase: true, out var mode) ||
+            !Enum.IsDefined(mode))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["acquisitionMode"] = ["Choose subscription first, free first, subscription only, or free only."]
+            });
+        }
+
+        return ToExternalProviderResult(await service.SetAcquisitionModeAsync(id, mode, cancellationToken));
+    }
 
     private static async Task<IResult> SetExternalProviderApiKeyAsync(
         Guid id, SetExternalProviderApiKeyRequest request, ExternalProviderAdminService service,
@@ -131,6 +148,7 @@ internal static class ExternalProviderEndpoints
         status.IsEnabled,
         status.RecheckSchedule,
         status.AutoAcquireEnabled,
+        status.AcquisitionMode,
         status.HasApiKey,
         status.ApiKeyHint,
         status.ApiKeySetAtUtc,

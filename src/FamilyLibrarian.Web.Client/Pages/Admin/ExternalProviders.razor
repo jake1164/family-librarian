@@ -458,6 +458,22 @@
                     title/author-only match still always requires review regardless of this setting.
                 </MudText>
 
+                <MudText Typo="Typo.subtitle2" Class="mt-3">Provider acquisition path</MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    Choose how this provider uses its own subscription quota and free interactive path after FL has
+                    authorized an acquisition. This does not change whether FL may automatically acquire a match.
+                    A provider waiting for quota stays in its normal job queue; only a human verification wait appears
+                    under Provider interactions.
+                </MudText>
+                <MudSelect T="string" Label="Acquisition mode" Value="provider.AcquisitionMode"
+                           ValueChanged="@(value => SetProviderAcquisitionModeAsync(provider.Id, value))"
+                           Disabled="@providersBusy" Class="mb-2">
+                    <MudSelectItem T="string" Value="@("SubscriptionFirst")">Subscription first — use quota before free interactive</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("FreeFirst")">Free first — use the free interactive path before quota</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("SubscriptionOnly")">Subscription only — do not use the free interactive path</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("FreeOnly")">Free only — do not use subscription quota</MudSelectItem>
+                </MudSelect>
+
                 <MudStack Row="true" Spacing="2" Class="mt-2">
                     <MudTextField T="string" Label="Base URL" Value="@provider.BaseUrl" Disabled="@providersBusy" Class="flex-grow-1"
                                   ValueChanged="@(value => baseUrlDrafts[provider.Id] = value)" />
@@ -1152,6 +1168,26 @@
         try
         {
             var result = await Api.SetProviderAutoAcquireEnabledAsync(id, enabled);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task SetProviderAcquisitionModeAsync(Guid id, string acquisitionMode)
+    {
+        providersBusy = true;
+        try
+        {
+            var result = await Api.SetProviderAcquisitionModeAsync(id, acquisitionMode);
             if (!result.Succeeded)
             {
                 Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);

@@ -9,6 +9,18 @@ public sealed class ExternalProviderTests
     private static readonly DateTimeOffset Now = new(2026, 8, 11, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
+    public void ANewProviderDefaultsToFreeOnlyAndAnAdminCanChangeTheAcquisitionMode()
+    {
+        var provider = new ExternalProvider("test-provider", "Test Provider", "https://provider.example", Now);
+
+        Assert.AreEqual(ExternalProviderAcquisitionMode.FreeOnly, provider.AcquisitionMode);
+
+        provider.SetAcquisitionMode(ExternalProviderAcquisitionMode.SubscriptionFirst, Guid.NewGuid(), Now.AddMinutes(1));
+
+        Assert.AreEqual(ExternalProviderAcquisitionMode.SubscriptionFirst, provider.AcquisitionMode);
+    }
+
+    [TestMethod]
     public void ADegradedHealthResultStillUpdatesTheCachedHealthSearchAndAcquireStatus()
     {
         var provider = new ExternalProvider("libgen", "LibGen", "https://libgen.example", Now);
