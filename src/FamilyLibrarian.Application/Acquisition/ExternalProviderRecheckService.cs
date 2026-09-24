@@ -33,7 +33,6 @@ public sealed class ExternalProviderRecheckService(
     IExternalProviderStore providers,
     ExternalCandidateAvailabilityChecker candidateChecker,
     DirectAcquisitionSecurityService security,
-    PrivateEgressRouteResolver routeResolver,
     IWorkLookup workLookup,
     IClock clock,
     NotificationService notifications,
@@ -79,14 +78,6 @@ public sealed class ExternalProviderRecheckService(
 
                     checks++;
                     var nextCheck = clock.UtcNow + ToInterval(provider.RecheckSchedule);
-                    var resolution = routeResolver.Resolve(provider.EffectiveEgressPolicy);
-                    if (!resolution.IsAllowed)
-                    {
-                        AddAttempt(request, format, provider, ProviderAttemptOutcome.Blocked,
-                            resolution.BlockedReason ?? "The provider's egress policy could not be satisfied.", nextCheck);
-                        continue;
-                    }
-
                     // Protocol v2 §5: operations.search/operations.acquire is
                     // the specific signal, over the coarse overall status --
                     // a provider already known unable to search or acquire
@@ -125,7 +116,7 @@ public sealed class ExternalProviderRecheckService(
                             work.Authors, work.Series, work.Language, work.PublicationYear, work.Publisher,
                             work.AlternateTitles);
                         var options = await candidateChecker.FindForProviderAsync(
-                            provider, resolution.Route!, identity, format.MediaType, searchCancellation.Token);
+                            provider, identity, format.MediaType, searchCancellation.Token);
 
                         if (options.Count == 0)
                         {

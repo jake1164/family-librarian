@@ -1,4 +1,3 @@
-using FamilyLibrarian.Domain.Acquisition;
 
 namespace FamilyLibrarian.Domain.Providers;
 
@@ -10,9 +9,8 @@ namespace FamilyLibrarian.Domain.Providers;
 /// Unlike <c>ProviderRegistry</c>'s hardcoded allowlist — deliberately closed,
 /// so no configuration or request body can introduce a new provider — this is
 /// a multi-row table by design: an external provider only exists because an
-/// administrator explicitly registered one. <see cref="CachedEgressPolicy"/>
-/// and the other manifest-derived <c>Cached*</c> fields (protocol version,
-/// capabilities, instance id, egress policy) come only from the provider's
+/// administrator explicitly registered one. The manifest-derived <c>Cached*</c> fields (protocol version,
+/// capabilities, instance id) come only from the provider's
 /// own <c>/manifest</c> response at registration/Test Connection time; they
 /// are never admin-typed, since the provider is the one declaring what it
 /// needs. <see cref="CachedHealthStatus"/>/<see cref="CachedSearchOperationStatus"/>/
@@ -40,7 +38,6 @@ public sealed class ExternalProvider
         DisplayName = RequireText(displayName, nameof(displayName));
         BaseUrl = RequireText(baseUrl, nameof(baseUrl));
         IsEnabled = false;
-        CachedEgressPolicy = EgressPolicy.Normal;
         RecheckSchedule = ProviderRecheckSchedule.Manual;
         AutoAcquireEnabled = false;
         AcquisitionMode = ExternalProviderAcquisitionMode.FreeOnly;
@@ -122,7 +119,6 @@ public sealed class ExternalProvider
     /// </summary>
     public bool InstanceReplacedSincePreviousTest { get; private set; }
 
-    public EgressPolicy CachedEgressPolicy { get; private set; }
 
     /// <summary>
     /// Coarse overall health from the provider's last successful test, per
@@ -157,17 +153,6 @@ public sealed class ExternalProvider
 
     public uint Version { get; private set; }
 
-    /// <summary>
-    /// An administrator-chosen replacement for <see cref="CachedEgressPolicy"/>.
-    /// <c>null</c> means "use the provider's own declared policy" (the default).
-    /// Survives re-tests: <see cref="RecordTestResult"/> only ever updates
-    /// <see cref="CachedEgressPolicy"/>, never this.
-    /// </summary>
-    public EgressPolicy? EgressPolicyOverride { get; private set; }
-
-    /// <summary>What actually governs routing for this provider right now.</summary>
-    public EgressPolicy EffectiveEgressPolicy => EgressPolicyOverride ?? CachedEgressPolicy;
-
     public bool HasApiKey => !string.IsNullOrEmpty(ProtectedApiKey);
 
     public void SetEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
@@ -182,12 +167,6 @@ public sealed class ExternalProvider
         DateTimeOffset updatedAtUtc)
     {
         RecheckSchedule = schedule;
-        Touch(actorUserId, updatedAtUtc);
-    }
-
-    public void SetEgressPolicyOverride(EgressPolicy? policy, Guid? actorUserId, DateTimeOffset updatedAtUtc)
-    {
-        EgressPolicyOverride = policy;
         Touch(actorUserId, updatedAtUtc);
     }
 
@@ -245,7 +224,6 @@ public sealed class ExternalProvider
         string? message,
         string? protocolVersion,
         string? capabilities,
-        EgressPolicy egressPolicy,
         Guid? actorUserId,
         DateTimeOffset testedAtUtc,
         string? instanceId = null,
@@ -272,7 +250,6 @@ public sealed class ExternalProvider
         {
             CachedProtocolVersion = protocolVersion;
             CachedCapabilities = capabilities;
-            CachedEgressPolicy = egressPolicy;
             CachedHealthStatus = healthStatus;
             CachedSearchOperationStatus = searchOperationStatus;
             CachedAcquireOperationStatus = acquireOperationStatus;
@@ -300,7 +277,7 @@ public sealed class ExternalProvider
     /// provider regardless of <see cref="RecheckSchedule"/> (docs/04 §5).
     /// Deliberately narrower than <see cref="RecordTestResult"/>:
     /// a probe never calls <c>/manifest</c>, so this must not touch protocol
-    /// version, capabilities, instance id, or egress policy — those stay
+    /// version, capabilities, or instance id — those stay
     /// exactly what the last real Test Connection observed. Also does not
     /// call <see cref="Touch"/>: <see cref="UpdatedByUserId"/>/
     /// <see cref="UpdatedAtUtc"/> record an administrator's own edits, and an

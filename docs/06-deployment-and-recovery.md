@@ -360,7 +360,7 @@ todo, not routine output, once real provider credentials are in use.
 
 An administrator can create an encrypted settings-only archive from **Settings
 backup** in the application. It contains current integration, provider, OIDC,
-private-egress, and acquisition-policy configuration, including Data Protection
+and acquisition-policy configuration, including Data Protection
 ciphertext for the supported credentials. **Excluded:** CWA e-reader service-account
 username/password, personal Kindle targets and all delivery/receipt history.
 After import, re-enter the service credentials in Publishing settings and have
@@ -368,7 +368,10 @@ users set up their Kindle addresses again. The service sign-in test only checks
 login; verify an intended book send separately. It does not contain accounts,
 catalogue data, requests, audit history, notifications, jobs, files, or the
 Data Protection key ring. It is not a replacement for the PostgreSQL backup
-and restore procedure above.
+and restore procedure above. Older settings archives may include the removed
+Family Librarian private-egress gateway section. Import ignores that section;
+external providers manage their own Internet routes. The schema migration drops
+the old FL gateway settings and per-provider policy columns.
 
 Import is intentionally create-only: use it only to seed a fresh instance with
 none of those settings configured. Before import, the target validates that all

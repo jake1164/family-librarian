@@ -55,7 +55,6 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/policy/settings")]
     [DataRow("/api/v1/admin/authentication/oidc/")]
     [DataRow("/api/v1/admin/external-providers/")]
-    [DataRow("/api/v1/admin/private-egress-gateway/")]
     [DataRow("/api/v1/admin/provider-catalogs/")]
     [DataRow("/api/v1/notifications/")]
     public async Task AnAnonymousCallerIsChallengedOnAProtectedRoute(string route)
@@ -125,7 +124,6 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/policy/settings")]
     [DataRow("/api/v1/admin/authentication/oidc/")]
     [DataRow("/api/v1/admin/external-providers/")]
-    [DataRow("/api/v1/admin/private-egress-gateway/")]
     [DataRow("/api/v1/admin/provider-catalogs/")]
     public async Task ANonAdminIsDeniedAnAdminRoute(string route)
     {

@@ -19,13 +19,11 @@ namespace FamilyLibrarian.Application.Catalog;
 public sealed class ExternalCandidateAvailabilityChecker(
     Providers.IExternalProviderStore externalProviders,
     Providers.IExternalProviderClient externalProviderClient,
-    Providers.PrivateEgressRouteResolver routeResolver,
     Providers.ExternalProviderMatchVerifier matchVerifier,
     ICredentialProtector protector)
 {
     /// <summary>
-    /// A provider whose declared egress policy the gateway cannot currently
-    /// satisfy, or whose search call fails, is silently skipped — same
+    /// A provider whose search call fails is silently skipped — same
     /// "degrade to no results" posture the rest of the fulfillment pipeline
     /// already has. Returned options carry <see cref="FulfillmentOption.WorkId"/>
     /// as <see cref="Guid.Empty"/>; a caller resolving for a real Work should
@@ -82,15 +80,9 @@ public sealed class ExternalCandidateAvailabilityChecker(
         RequestMediaType mediaType,
         CancellationToken cancellationToken)
     {
-        var resolution = routeResolver.Resolve(provider.EffectiveEgressPolicy);
-        if (!resolution.IsAllowed || IsKnownSearchUnavailable(provider))
-        {
-            return [];
-        }
-
         try
         {
-            return await FindForProviderAsync(provider, resolution.Route!, identity, mediaType, cancellationToken);
+            return await FindForProviderAsync(provider, identity, mediaType, cancellationToken);
         }
         catch (HttpRequestException)
         {
@@ -116,7 +108,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
     /// while <see cref="FindAsync"/>'s own aggregation loop degrades it.
     /// </summary>
     public async Task<IReadOnlyList<FulfillmentOption>> FindForProviderAsync(
-        Domain.Providers.ExternalProvider provider, Providers.EgressRoute route, BookIdentity identity,
+        Domain.Providers.ExternalProvider provider, BookIdentity identity,
         RequestMediaType mediaType, CancellationToken cancellationToken)
     {
         var apiKey = provider.HasApiKey
@@ -147,7 +139,6 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 mediaType == RequestMediaType.Ebook
                     ? new Providers.ExternalProviderSearchConstraints(Formats: Providers.ExternalEbookFormatPolicy.SearchFormats)
                     : null),
-            route,
             cancellationToken);
 
         if (candidates.Count == 0)
@@ -259,14 +250,14 @@ public sealed class ExternalCandidateAvailabilityChecker(
     /// already does.
     /// </summary>
     public async Task<Providers.ExternalProviderHealth> CheckHealthAsync(
-        Domain.Providers.ExternalProvider provider, Providers.EgressRoute route, CancellationToken cancellationToken)
+        Domain.Providers.ExternalProvider provider, CancellationToken cancellationToken)
     {
         var apiKey = provider.HasApiKey
             ? protector.Unprotect(
                 Providers.ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
             : null;
 
-        return await externalProviderClient.GetHealthAsync(provider.BaseUrl, apiKey, route, cancellationToken);
+        return await externalProviderClient.GetHealthAsync(provider.BaseUrl, apiKey, cancellationToken);
     }
 
     /// <summary>

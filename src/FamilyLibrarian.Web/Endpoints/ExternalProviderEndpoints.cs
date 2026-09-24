@@ -1,6 +1,5 @@
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Contracts.Providers;
-using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Providers;
 
 namespace FamilyLibrarian.Web.Endpoints;
@@ -28,7 +27,6 @@ internal static class ExternalProviderEndpoints
         adminExternalProviders.MapPut("/{id:guid}/api-key", SetExternalProviderApiKeyAsync);
         adminExternalProviders.MapDelete("/{id:guid}/api-key", ClearExternalProviderApiKeyAsync);
         adminExternalProviders.MapPost("/{id:guid}/test", TestExternalProviderAsync);
-        adminExternalProviders.MapPut("/{id:guid}/egress-policy-override", SetExternalProviderEgressPolicyOverrideAsync);
         adminExternalProviders.MapDelete("/{id:guid}", RemoveExternalProviderAsync);
     }
 
@@ -101,27 +99,6 @@ internal static class ExternalProviderEndpoints
         Guid id, ExternalProviderAdminService service, CancellationToken cancellationToken) =>
         ToExternalProviderResult(await service.TestConnectionAsync(id, cancellationToken));
 
-    private static async Task<IResult> SetExternalProviderEgressPolicyOverrideAsync(
-        Guid id, SetExternalProviderEgressPolicyOverrideRequest request, ExternalProviderAdminService service,
-        CancellationToken cancellationToken)
-    {
-        EgressPolicy? policy = null;
-        if (!string.IsNullOrWhiteSpace(request.EgressPolicy))
-        {
-            if (!Enum.TryParse<EgressPolicy>(request.EgressPolicy, ignoreCase: true, out var parsed))
-            {
-                return Results.ValidationProblem(new Dictionary<string, string[]>
-                {
-                    ["externalProvider"] = ["That is not a known egress policy."]
-                });
-            }
-
-            policy = parsed;
-        }
-
-        return ToExternalProviderResult(await service.SetEgressPolicyOverrideAsync(id, policy, cancellationToken));
-    }
-
     private static async Task<IResult> RemoveExternalProviderAsync(
         Guid id, ExternalProviderAdminService service, CancellationToken cancellationToken)
     {
@@ -161,9 +138,6 @@ internal static class ExternalProviderEndpoints
         status.CachedAcquireOperationStatus,
         status.CachedManagementUrl,
         status.CachedDocumentationUrl,
-        status.CachedEgressPolicy,
-        status.EgressPolicyOverride,
-        status.EffectiveEgressPolicy,
         status.LastTestedAtUtc,
         status.LastTestSucceeded,
         status.LastTestMessage);

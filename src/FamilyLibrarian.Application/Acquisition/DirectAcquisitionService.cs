@@ -32,7 +32,6 @@ public sealed class DirectAcquisitionService(
     IExternalProviderClient externalProviderClient,
     IProviderAcquisitionJobStore providerAcquisitionJobs,
     ExternalCandidateAvailabilityChecker externalCandidateChecker,
-    PrivateEgressRouteResolver routeResolver,
     ICredentialProtector protector,
     IWorkLookup workLookup,
     AcquisitionStagingService staging,
@@ -143,12 +142,6 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.Invalid("That provider is not available.");
         }
 
-        var resolution = routeResolver.Resolve(externalProvider.EffectiveEgressPolicy);
-        if (!resolution.IsAllowed)
-        {
-            return ManualImportResult.Invalid(resolution.BlockedReason!);
-        }
-
         if (ExternalCandidateAvailabilityChecker.IsKnownSearchUnavailable(externalProvider))
         {
             return ManualImportResult.Invalid(
@@ -165,7 +158,7 @@ public sealed class DirectAcquisitionService(
         try
         {
             externalOptions = await externalCandidateChecker.FindForProviderAsync(
-                externalProvider, resolution.Route!, identity, format.MediaType, cancellationToken);
+                externalProvider, identity, format.MediaType, cancellationToken);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
@@ -223,7 +216,7 @@ public sealed class DirectAcquisitionService(
         try
         {
             submission = await externalProviderClient.SubmitAcquireAsync(
-                externalProvider.BaseUrl, apiKey, acquireRequest, idempotencyKey, resolution.Route!, cancellationToken);
+                externalProvider.BaseUrl, apiKey, acquireRequest, idempotencyKey, cancellationToken);
         }
         catch (Exception exception) when (exception is HttpRequestException or TimeoutException or TaskCanceledException)
         {

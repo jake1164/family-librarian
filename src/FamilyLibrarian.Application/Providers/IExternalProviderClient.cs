@@ -2,23 +2,17 @@ using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Providers;
 
-/// <summary>
-/// Speaks the versioned external-provider HTTP protocol. Deliberately
-/// low-level: every call takes an explicit <see cref="EgressRoute"/> decided
-/// by the caller (<see cref="PrivateEgressRouteResolver"/>), so this type has
-/// no opinion of its own about when a provider's traffic must be routed
-/// through the private-egress gateway.
-/// </summary>
+/// <summary>Speaks the versioned external-provider HTTP protocol.</summary>
 public interface IExternalProviderClient
 {
     Task<ExternalProviderManifest> GetManifestAsync(
-        string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken);
+        string baseUrl, string? apiKey, CancellationToken cancellationToken);
 
     Task<ExternalProviderHealth> GetHealthAsync(
-        string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken);
+        string baseUrl, string? apiKey, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-        string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+        string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -38,7 +32,7 @@ public interface IExternalProviderClient
     /// yet exercise v2's richer job lifecycle.
     /// </remarks>
     Task<ExternalProviderArtifact> AcquireAsync(
-        string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+        string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -49,25 +43,25 @@ public interface IExternalProviderClient
     /// must resolve to the same logical job, never a duplicate.
     /// </summary>
     Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
-        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
         CancellationToken cancellationToken);
 
     /// <summary>One <c>GET /acquire/{jobId}</c> poll tick — the caller decides cadence from <see cref="ExternalProviderJobStatus.PollAfterSeconds"/>.</summary>
     Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken);
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken);
 
     /// <summary><c>GET /acquire/{jobId}/outputs</c> — call once <c>state = completed</c>.</summary>
     Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken);
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken);
 
     /// <summary><c>GET /acquire/{jobId}/outputs/{outputId}</c> — not valid for a <c>uri</c>-kind output, which has no bytes to fetch.</summary>
     Task<ExternalProviderArtifact> GetOutputAsync(
-        string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+        string baseUrl, string? apiKey, string jobId, string outputId,
         CancellationToken cancellationToken);
 
     /// <summary><c>POST /acquire/{jobId}/cancel</c> — try to stop active work; best-effort.</summary>
     Task CancelAcquireAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken);
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Optional <c>waiting-interaction-control</c> operation. The caller must
@@ -76,17 +70,17 @@ public interface IExternalProviderClient
     /// backward compatible.
     /// </summary>
     Task<ExternalProviderJobStatus> StartInteractionAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
         throw new NotSupportedException("The provider does not support interaction control.");
 
     /// <summary>Optional <c>waiting-interaction-control</c> fallback operation.</summary>
     Task<ExternalProviderJobStatus> UseAcquireFallbackAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
         throw new NotSupportedException("The provider does not support interaction control.");
 
     /// <summary><c>DELETE /acquire/{jobId}</c> — release retained resources; best-effort.</summary>
     Task DeleteAcquireAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken);
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -112,8 +106,7 @@ public sealed record ExternalProviderManifest(
     ProviderCapabilities Capabilities,
     int? OutputRetentionSeconds,
     string? ManagementUrl,
-    string? DocumentationUrl,
-    string EgressPolicy);
+    string? DocumentationUrl);
 
 public enum ProviderHealthStatus
 {
@@ -209,15 +202,3 @@ public sealed record ExternalProviderCandidate(
 }
 
 public sealed record ExternalProviderArtifact(Stream Content, string Filename);
-
-/// <summary>Where an outbound call to an external provider is routed.</summary>
-public abstract record EgressRoute
-{
-    public static readonly EgressRoute Direct = new DirectRoute();
-
-    public static EgressRoute ViaGateway(Uri proxyEndpoint) => new GatewayRoute(proxyEndpoint);
-
-    private sealed record DirectRoute : EgressRoute;
-
-    public sealed record GatewayRoute(Uri ProxyEndpoint) : EgressRoute;
-}

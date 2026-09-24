@@ -81,7 +81,6 @@ public static class AuditActions
     public const string ExternalProviderApiKeyCleared = "external_provider.api_key_cleared";
     public const string ExternalProviderTested = "external_provider.tested";
     public const string ExternalProviderRemoved = "external_provider.removed";
-    public const string ExternalProviderEgressPolicyOverrideChanged = "external_provider.egress_policy_override_changed";
     public const string ExternalProviderRecheckScheduleChanged = "external_provider.recheck_schedule_changed";
     public const string ExternalProviderAutoAcquireEnabled = "external_provider.auto_acquire_enabled";
     public const string ExternalProviderAutoAcquireDisabled = "external_provider.auto_acquire_disabled";
@@ -91,8 +90,6 @@ public static class AuditActions
     public const string ProviderInteractionFallbackSelected = "provider_interaction.fallback_selected";
     public const string ProviderInteractionCancelled = "provider_interaction.cancelled";
 
-    public const string PrivateEgressGatewayChanged = "private_egress_gateway.changed";
-    public const string PrivateEgressGatewayTested = "private_egress_gateway.tested";
 
     public const string ProviderCatalogAdded = "provider_catalog.added";
     public const string ProviderCatalogRemoved = "provider_catalog.removed";
@@ -122,7 +119,6 @@ public static class AuditSubjectTypes
     public const string AcquisitionPolicy = "acquisition_policy";
     public const string Oidc = "oidc";
     public const string ExternalProvider = "external_provider";
-    public const string PrivateEgressGateway = "private_egress_gateway";
     public const string ProviderCatalog = "provider_catalog";
     public const string SettingsBackup = "settings_backup";
     public const string DeliveryAttempt = "delivery_attempt";

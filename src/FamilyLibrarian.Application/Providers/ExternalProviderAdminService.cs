@@ -1,6 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
-using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Providers;
 
@@ -11,7 +10,6 @@ public sealed class ExternalProviderAdminService(
     IExternalProviderStore store,
     ICredentialProtector protector,
     IExternalProviderClient client,
-    PrivateEgressRouteResolver routeResolver,
     IAuditWriter audit,
     ICurrentUser currentUser,
     IClock clock)
@@ -206,25 +204,14 @@ public sealed class ExternalProviderAdminService(
             return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
         }
 
-        var resolution = routeResolver.Resolve(provider.CachedEgressPolicy);
-        if (!resolution.IsAllowed)
-        {
-            provider.RecordTestResult(
-                false, resolution.BlockedReason, provider.CachedProtocolVersion, provider.CachedCapabilities,
-                provider.CachedEgressPolicy, currentUser.UserId, clock.UtcNow);
-            await store.SaveChangesAsync(cancellationToken);
-            return ExternalProviderCommandResult.Success(ToStatus(provider));
-        }
-
         var apiKey = provider.HasApiKey
             ? protector.Unprotect(ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
             : null;
 
         try
         {
-            var manifest = await client.GetManifestAsync(provider.BaseUrl, apiKey, resolution.Route!, cancellationToken);
+            var manifest = await client.GetManifestAsync(provider.BaseUrl, apiKey, cancellationToken);
             var negotiatedVersion = ProtocolVersionNegotiation.Negotiate(manifest.ProtocolVersions);
-            var egressPolicy = ParseEgressPolicy(manifest.EgressPolicy);
 
             if (negotiatedVersion is null)
             {
@@ -238,7 +225,6 @@ public sealed class ExternalProviderAdminService(
                         "none of which Family Librarian supports.",
                     protocolVersion: null,
                     capabilities: SerializeCapabilities(manifest.Capabilities),
-                    egressPolicy,
                     currentUser.UserId,
                     clock.UtcNow,
                     manifest.InstanceId,
@@ -254,7 +240,7 @@ public sealed class ExternalProviderAdminService(
                 return ExternalProviderCommandResult.Success(ToStatus(provider));
             }
 
-            var health = await client.GetHealthAsync(provider.BaseUrl, apiKey, resolution.Route!, cancellationToken);
+            var health = await client.GetHealthAsync(provider.BaseUrl, apiKey, cancellationToken);
             provider.RecordTestResult(
                 health.IsFullyOperational,
                 health.IsFullyOperational
@@ -265,7 +251,6 @@ public sealed class ExternalProviderAdminService(
                         : "The manifest was reachable, but the health check did not report healthy.",
                 negotiatedVersion,
                 SerializeCapabilities(manifest.Capabilities),
-                egressPolicy,
                 currentUser.UserId,
                 clock.UtcNow,
                 manifest.InstanceId,
@@ -280,7 +265,7 @@ public sealed class ExternalProviderAdminService(
         {
             provider.RecordTestResult(
                 false, $"The provider is unreachable: {exception.Message}", provider.CachedProtocolVersion,
-                provider.CachedCapabilities, provider.CachedEgressPolicy, currentUser.UserId, clock.UtcNow);
+                provider.CachedCapabilities, currentUser.UserId, clock.UtcNow);
         }
 
         await store.SaveChangesAsync(cancellationToken);
@@ -309,39 +294,6 @@ public sealed class ExternalProviderAdminService(
 
         return ExternalProviderCommandResult.Success(status: null);
     }
-
-    /// <summary>
-    /// Lets an administrator override a provider's own declared egress policy —
-    /// accepted as a deliberate trade-off: a provider that declares
-    /// <c>PRIVATE_REQUIRED</c> for a real reason can have that requirement
-    /// weakened here, which is exactly why the UI surfaces a warning when the
-    /// effective policy ends up less strict than what the provider declared.
-    /// </summary>
-    public async Task<ExternalProviderCommandResult> SetEgressPolicyOverrideAsync(
-        Guid id, EgressPolicy? policy, CancellationToken cancellationToken)
-    {
-        var provider = await store.FindAsync(id, cancellationToken);
-        if (provider is null)
-        {
-            return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
-        }
-
-        provider.SetEgressPolicyOverride(policy, currentUser.UserId, clock.UtcNow);
-        await store.SaveChangesAsync(cancellationToken);
-
-        await audit.WriteAsync(
-            AuditActions.ExternalProviderEgressPolicyOverrideChanged, AuditSubjectTypes.ExternalProvider, id.ToString(),
-            new { provider.ProviderId, Override = policy?.ToString() }, cancellationToken);
-
-        return ExternalProviderCommandResult.Success(ToStatus(provider));
-    }
-
-    private static EgressPolicy ParseEgressPolicy(string value) => value.ToUpperInvariant() switch
-    {
-        "PRIVATE_REQUIRED" => EgressPolicy.PrivateRequired,
-        "CUSTOM_PROXY" => EgressPolicy.CustomProxy,
-        _ => EgressPolicy.Normal
-    };
 
     /// <summary>
     /// A stable, human-legible flattening of the structured v2 capabilities
@@ -392,9 +344,6 @@ public sealed class ExternalProviderAdminService(
         provider.CachedAcquireOperationStatus,
         provider.CachedManagementUrl,
         provider.CachedDocumentationUrl,
-        provider.CachedEgressPolicy.ToString(),
-        provider.EgressPolicyOverride?.ToString(),
-        provider.EffectiveEgressPolicy.ToString(),
         provider.LastTestedAtUtc,
         provider.LastTestSucceeded,
         provider.LastTestMessage);
@@ -421,9 +370,6 @@ public sealed record ExternalProviderStatus(
     string? CachedAcquireOperationStatus,
     string? CachedManagementUrl,
     string? CachedDocumentationUrl,
-    string CachedEgressPolicy,
-    string? EgressPolicyOverride,
-    string EffectiveEgressPolicy,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
     string? LastTestMessage);

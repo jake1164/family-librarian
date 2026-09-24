@@ -5,7 +5,6 @@ using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Providers;
-using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
@@ -16,8 +15,8 @@ namespace FamilyLibrarian.Infrastructure.Tests.Providers;
 /// Covers <see cref="ExternalProviderHealthPollService"/>'s independent
 /// background probe -- decoupled from <see cref="ProviderRecheckSchedule"/>
 /// (a Manual-schedule provider must still be checked), and every failure
-/// mode recorded rather than silently skipped (egress-blocked, connection
-/// failure, undecryptable credential), each participating in the same
+/// mode recorded rather than silently skipped (connection failure or
+/// undecryptable credential), each participating in the same
 /// notify-on-transition logic.
 /// </summary>
 [TestClass]
@@ -60,27 +59,6 @@ public sealed class ExternalProviderHealthPollServiceTests
         Assert.AreEqual(0, checkedCount);
         Assert.AreEqual(0, context.Client.HealthCallCount);
         Assert.AreEqual(0, context.Store.SaveChangesCallCount);
-    }
-
-    [TestMethod]
-    public async Task AnEgressBlockedProviderIsRecordedUnhealthyRatherThanSilentlySkipped()
-    {
-        var context = new TestContext();
-        var provider = NewProvider("vpn-source");
-        provider.SetEnabled(true, null, Now);
-        provider.SetEgressPolicyOverride(EgressPolicy.PrivateRequired, null, Now);
-        context.Store.Add(provider);
-        // Gateway cache defaults to Disabled -- PrivateEgressRouteResolver blocks PrivateRequired.
-
-        var checkedCount = await context.Service.CheckAllEnabledAsync(CancellationToken.None);
-
-        Assert.AreEqual(1, checkedCount);
-        Assert.AreEqual(0, context.Client.HealthCallCount);
-        Assert.IsFalse(provider.LastTestSucceeded);
-        Assert.AreEqual("Unhealthy", provider.CachedHealthStatus);
-        Assert.AreEqual("Unavailable", provider.CachedSearchOperationStatus);
-        Assert.Contains("gateway", provider.LastTestMessage!, StringComparison.OrdinalIgnoreCase);
-        Assert.AreEqual(1, context.Repository.Events.Count);
     }
 
     [TestMethod]
@@ -196,15 +174,14 @@ public sealed class ExternalProviderHealthPollServiceTests
             var checker = new ExternalCandidateAvailabilityChecker(
                 Store,
                 Client,
-                new PrivateEgressRouteResolver(new FakeGatewayRuntimeCache()),
-                new ExternalProviderMatchVerifier(
+                                new ExternalProviderMatchVerifier(
                     new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver()),
                     new DeterministicBookMatcher()),
                 Protector);
             var notifications = new NotificationService(Repository, new StubCurrentUser(), new FixedClock());
 
             Service = new ExternalProviderHealthPollService(
-                Store, checker, new PrivateEgressRouteResolver(new FakeGatewayRuntimeCache()), notifications, new FixedClock());
+                Store, checker, notifications, new FixedClock());
         }
 
         public FakeExternalProviderStore Store { get; }
@@ -256,58 +233,51 @@ public sealed class ExternalProviderHealthPollServiceTests
         public int HealthCallCount { get; private set; }
 
         public Task<ExternalProviderHealth> GetHealthAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken)
+            string baseUrl, string? apiKey, CancellationToken cancellationToken)
         {
             HealthCallCount++;
             return ThrowOnHealth is not null ? throw ThrowOnHealth : Task.FromResult(Health);
         }
 
         public Task<ExternalProviderManifest> GetManifestAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-            string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderArtifact> AcquireAsync(
-            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
-            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderArtifact> GetOutputAsync(
-            string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+            string baseUrl, string? apiKey, string jobId, string outputId,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task CancelAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task DeleteAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-    }
-
-    private sealed class FakeGatewayRuntimeCache : IPrivateEgressGatewayRuntimeCache
-    {
-        public PrivateEgressGatewayRuntimeState Current { get; private set; } = PrivateEgressGatewayRuntimeState.Disabled;
-
-        public void Refresh(PrivateEgressGatewayRuntimeState state) => Current = state;
     }
 
     private sealed class FakeCredentialProtector : ICredentialProtector

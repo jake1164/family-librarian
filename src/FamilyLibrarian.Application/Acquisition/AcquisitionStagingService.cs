@@ -43,8 +43,7 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
-        CancellationToken cancellationToken,
-        EgressPolicy egressPolicy = EgressPolicy.Normal)
+        CancellationToken cancellationToken)
     {
         var extension = Path.GetExtension(originalFilename);
         if (string.IsNullOrEmpty(extension) || !policy.IsExtensionAllowed(format.MediaType, extension))
@@ -72,7 +71,7 @@ public sealed class AcquisitionStagingService(
         }
 
         var now = clock.UtcNow;
-        var job = new AcquisitionJob(request.Id, format.MediaType, providerId, EgressPolicy.Normal, now);
+        var job = new AcquisitionJob(request.Id, format.MediaType, providerId, now);
         var candidate = AddAcquiredCandidate(job, providerId, staged!, candidateTitle, candidateAuthor, extension, now);
         job.TransitionTo(AcquisitionJobStatus.CandidateAcquired, now);
 
@@ -171,7 +170,7 @@ public sealed class AcquisitionStagingService(
 
         var now = clock.UtcNow;
         var bundleId = Guid.NewGuid();
-        var job = new AcquisitionJob(request.Id, format.MediaType, providerId, EgressPolicy.Normal, now);
+        var job = new AcquisitionJob(request.Id, format.MediaType, providerId, now);
         var assetIds = new List<Guid>(staged.Count);
 
         for (var index = 0; index < staged.Count; index++)

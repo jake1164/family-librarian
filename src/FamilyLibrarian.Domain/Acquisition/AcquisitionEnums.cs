@@ -6,16 +6,8 @@ public enum AcquisitionJobStatus
     InProgress = 2,
     CandidateAcquired = 3,
     WaitingForSecurityScanner = 4,
-    WaitingForPrivateEgress = 5,
     Failed = 6,
     Cancelled = 7
-}
-
-public enum EgressPolicy
-{
-    Normal = 1,
-    PrivateRequired = 2,
-    CustomProxy = 3
 }
 
 public enum AcquisitionCandidateStatus

@@ -2,7 +2,6 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
-using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
@@ -17,23 +16,6 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
     public async Task NoEnabledProvidersReturnsEmptyWithoutCallingTheClient()
     {
         var context = new TestContext();
-
-        var options = await context.Checker.FindAsync(
-            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
-
-        Assert.AreEqual(0, options.Count);
-        Assert.AreEqual(0, context.Client.CallCount);
-    }
-
-    [TestMethod]
-    public async Task AProviderWhoseEgressIsBlockedIsSkipped()
-    {
-        var context = new TestContext();
-        var provider = NewProvider("blocked-source");
-        provider.SetEnabled(true, null, Now);
-        provider.SetEgressPolicyOverride(EgressPolicy.PrivateRequired, null, Now);
-        context.Store.Providers.Add(provider);
-        // Gateway cache defaults to Disabled -- PrivateEgressRouteResolver blocks PrivateRequired.
 
         var options = await context.Checker.FindAsync(
             new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Ebook, CancellationToken.None);
@@ -228,8 +210,7 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
             Checker = new ExternalCandidateAvailabilityChecker(
                 Store,
                 Client,
-                new PrivateEgressRouteResolver(new FakeGatewayRuntimeCache()),
-                new ExternalProviderMatchVerifier(
+                                new ExternalProviderMatchVerifier(
                     new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver()),
                     new DeterministicBookMatcher()),
                 new NoOpCredentialProtector());
@@ -286,46 +267,46 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         public ExternalProviderSearchRequest? LastSearchRequest { get; private set; }
 
         public Task<ExternalProviderManifest> GetManifestAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderHealth> GetHealthAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderArtifact> AcquireAsync(
-            string baseUrl, string? apiKey, string providerReference, RequestMediaType mediaType, EgressRoute route,
+            string baseUrl, string? apiKey, string providerReference, RequestMediaType mediaType,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
-            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderArtifact> GetOutputAsync(
-            string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+            string baseUrl, string? apiKey, string jobId, string outputId,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task CancelAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task DeleteAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public async Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-            string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
             CancellationToken cancellationToken)
         {
             var calls = Interlocked.Increment(ref callCount);
@@ -347,13 +328,6 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
 
             return Candidates;
         }
-    }
-
-    private sealed class FakeGatewayRuntimeCache : IPrivateEgressGatewayRuntimeCache
-    {
-        public PrivateEgressGatewayRuntimeState Current { get; private set; } = PrivateEgressGatewayRuntimeState.Disabled;
-
-        public void Refresh(PrivateEgressGatewayRuntimeState state) => Current = state;
     }
 
     private sealed class NoOpCredentialProtector : ICredentialProtector

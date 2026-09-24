@@ -104,7 +104,6 @@ internal static class SettingsBackupEndpoints
         counts.CwaSettings,
         counts.AudiobookshelfSettings,
         counts.SmtpSettings,
-        counts.PrivateEgressGatewaySettings,
         counts.ProviderSettings,
         counts.OidcSettings,
         counts.AcquisitionPolicySettings);

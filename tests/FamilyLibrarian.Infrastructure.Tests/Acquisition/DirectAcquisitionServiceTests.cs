@@ -286,8 +286,7 @@ public sealed class DirectAcquisitionServiceTests
             var checker = new ExternalCandidateAvailabilityChecker(
                 ExternalProviderStore,
                 ExternalProviderClient,
-                new PrivateEgressRouteResolver(new AlwaysDisabledGatewayCache()),
-                new ExternalProviderMatchVerifier(
+                                new ExternalProviderMatchVerifier(
                     new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver()),
                     new DeterministicBookMatcher()),
                 new NoOpCredentialProtector());
@@ -305,8 +304,7 @@ public sealed class DirectAcquisitionServiceTests
                 ExternalProviderClient,
                 ProviderAcquisitionJobs,
                 checker,
-                new PrivateEgressRouteResolver(new AlwaysDisabledGatewayCache()),
-                new NoOpCredentialProtector(),
+                                new NoOpCredentialProtector(),
                 WorkLookup,
                 staging,
                 new FixedClock());
@@ -593,56 +591,49 @@ public sealed class DirectAcquisitionServiceTests
         public IReadOnlyList<ExternalProviderCandidate> Candidates { get; set; } = [];
 
         public Task<ExternalProviderManifest> GetManifestAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderHealth> GetHealthAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-            string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
             CancellationToken cancellationToken) =>
             Task.FromResult(Candidates);
 
         public Task<ExternalProviderArtifact> AcquireAsync(
-            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
             CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderArtifact(new MemoryStream(Encoding.UTF8.GetBytes("epub bytes")), "book.epub"));
 
         public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
-            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
             CancellationToken cancellationToken) =>
             Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
                 "fake-job-1", ProviderAcquisitionJobLifecycleState.Queued, phase: null, pollAfterSeconds: null));
 
         public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderArtifact> GetOutputAsync(
-            string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+            string baseUrl, string? apiKey, string jobId, string outputId,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task CancelAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task DeleteAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-    }
-
-    private sealed class AlwaysDisabledGatewayCache : IPrivateEgressGatewayRuntimeCache
-    {
-        public PrivateEgressGatewayRuntimeState Current => PrivateEgressGatewayRuntimeState.Disabled;
-
-        public void Refresh(PrivateEgressGatewayRuntimeState state) => throw new NotSupportedException();
     }
 
     private sealed class NoOpCredentialProtector : ICredentialProtector

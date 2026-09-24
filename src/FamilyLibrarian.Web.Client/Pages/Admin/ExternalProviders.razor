@@ -229,54 +229,6 @@
 </MudPaper>
 
 <MudPaper Class="pa-4 mb-6" Elevation="1">
-    <MudText Typo="Typo.h6">Private acquisition network</MudText>
-    <MudText Typo="Typo.body2" Class="mb-3">
-        An optional HTTP proxy (e.g. Gluetun) that a provider declaring
-        <code>PRIVATE_REQUIRED</code> or <code>CUSTOM_PROXY</code> must be routed
-        through. No gateway means those providers simply fail closed rather than
-        falling back to normal egress.
-    </MudText>
-
-    @if (gateway is null)
-    {
-        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
-    }
-    else
-    {
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
-            <MudSwitch T="bool"
-                       @key="@("gateway:" + gatewayGeneration)"
-                       Value="gateway.IsEnabled"
-                       ValueChanged="@(enabled => SetGatewayEnabledAsync(enabled))"
-                       Color="Color.Primary"
-                       Disabled="@gatewayBusy"
-                       Label="@(gateway.IsEnabled ? "Enabled" : "Disabled")" />
-        </MudStack>
-
-        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-            <MudTextField T="string" Label="Gateway endpoint (e.g. http://gluetun:8888)"
-                          @bind-Value="gatewayEndpoint" Disabled="@gatewayBusy" Class="flex-grow-1" />
-            <MudButton Variant="Variant.Filled" Disabled="@gatewayBusy" OnClick="SaveGatewayEndpointAsync">
-                Save
-            </MudButton>
-            <MudButton Variant="Variant.Outlined" Disabled="@gatewayBusy" OnClick="TestGatewayAsync">
-                Test connection
-            </MudButton>
-        </MudStack>
-
-        @if (gateway.LastTestedAtUtc is not null)
-        {
-            <MudText Typo="Typo.body2" Class="mt-2">
-                <MudIcon Icon="@(gateway.LastTestSucceeded == true ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Error)"
-                         Color="@(gateway.LastTestSucceeded == true ? Color.Success : Color.Error)"
-                         Size="Size.Small" />
-                @gateway.LastTestMessage
-            </MudText>
-        }
-    }
-</MudPaper>
-
-<MudPaper Class="pa-4 mb-6" Elevation="1">
     <MudText Typo="Typo.h6" Class="mb-2">Provider catalogs</MudText>
     <MudText Typo="Typo.body2" Class="mb-3">
         A discovery listing, not an installer — signed catalog verification is not
@@ -484,29 +436,6 @@
                 </MudStack>
 
                 <MudDivider Class="my-2" />
-                <MudText Typo="Typo.subtitle2">Egress policy</MudText>
-                <MudText Typo="Typo.body2" Class="mb-2">
-                    Declared by the provider's manifest as <b>@provider.CachedEgressPolicy</b>. Override the
-                    routing decision here if needed.
-                </MudText>
-                <MudSelect T="string" Label="Override" Value="@(provider.EgressPolicyOverride ?? string.Empty)"
-                           ValueChanged="@(value => SetEgressPolicyOverrideAsync(provider.Id, value))"
-                           Disabled="@providersBusy" Class="mb-2">
-                    <MudSelectItem T="string" Value="@string.Empty">Use provider default (currently: @provider.CachedEgressPolicy)</MudSelectItem>
-                    <MudSelectItem T="string" Value="@("Normal")">Normal</MudSelectItem>
-                    <MudSelectItem T="string" Value="@("PrivateRequired")">PrivateRequired</MudSelectItem>
-                    <MudSelectItem T="string" Value="@("CustomProxy")">CustomProxy</MudSelectItem>
-                </MudSelect>
-                @if (IsOverrideWeaker(provider))
-                {
-                    <MudAlert Severity="Severity.Warning" Class="mb-2" Dense="true">
-                        This override weakens the provider's declared @provider.CachedEgressPolicy requirement
-                        down to @provider.EffectiveEgressPolicy — acquisitions from this provider may no longer
-                        be routed through the private egress gateway.
-                    </MudAlert>
-                }
-
-                <MudDivider Class="my-2" />
                 <MudText Typo="Typo.subtitle2">API key</MudText>
                 <MudText Typo="Typo.body2" Class="mb-2">
                     @(provider.HasApiKey
@@ -561,7 +490,6 @@
                             @if (provider.CachedProtocolVersion is not null)
                             {
                                 <MudChip T="string" Size="Size.Small">Protocol v@(provider.CachedProtocolVersion)</MudChip>
-                                <MudChip T="string" Size="Size.Small">Egress: @provider.CachedEgressPolicy</MudChip>
                             }
                             @if (provider.CachedHealthStatus is not null)
                             {
@@ -625,10 +553,6 @@
 </MudPaper>
 
 @code {
-    private PrivateEgressGatewayResponse? gateway;
-    private bool gatewayBusy;
-    private int gatewayGeneration;
-    private string? gatewayEndpoint;
 
     private IReadOnlyList<ProviderCatalogResponse>? catalogs;
     private bool catalogsBusy;
@@ -663,7 +587,6 @@
         Observe(LiveUpdateTopics.Sources | LiveUpdateTopics.Requests,
             () => Task.WhenAll(LoadProvidersAsync(), LoadAttentionAsync(), LoadGutenbergCatalogStatusAsync()));
         await Task.WhenAll(
-            LoadGatewayAsync(),
             LoadCatalogsAsync(),
             LoadProvidersAsync(),
             LoadBuiltInSourcesAsync(),
@@ -943,72 +866,6 @@
         {
             builtInSourcesBusy = false;
             builtInSourceGenerations[source.ProviderId] = BuiltInSourceGeneration(source.ProviderId) + 1;
-        }
-    }
-
-    // --- Gateway -------------------------------------------------------------
-
-    private async Task LoadGatewayAsync()
-    {
-        gateway = await Api.GetGatewayAsync();
-        gatewayEndpoint = gateway?.GatewayEndpoint;
-    }
-
-    private async Task SetGatewayEnabledAsync(bool enabled)
-    {
-        gatewayBusy = true;
-        try
-        {
-            var result = await Api.SetGatewayEnabledAsync(enabled);
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-            }
-
-            gateway = result.Settings;
-        }
-        finally
-        {
-            gatewayBusy = false;
-            gatewayGeneration++;
-        }
-    }
-
-    private async Task SaveGatewayEndpointAsync()
-    {
-        gatewayBusy = true;
-        try
-        {
-            var result = await Api.SetGatewayEndpointAsync(gatewayEndpoint);
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-                return;
-            }
-
-            gateway = result.Settings;
-            Snackbar.Add("Saved the gateway endpoint.", Severity.Success);
-        }
-        finally
-        {
-            gatewayBusy = false;
-        }
-    }
-
-    private async Task TestGatewayAsync()
-    {
-        gatewayBusy = true;
-        try
-        {
-            var result = await Api.TestGatewayAsync();
-            gateway = result.Settings ?? gateway;
-            Snackbar.Add(
-                gateway?.LastTestMessage ?? "The connection test could not be run.",
-                gateway?.LastTestSucceeded == true ? Severity.Success : Severity.Warning);
-        }
-        finally
-        {
-            gatewayBusy = false;
         }
     }
 
@@ -1310,43 +1167,5 @@
         }
     }
 
-    private async Task SetEgressPolicyOverrideAsync(Guid id, string? value)
-    {
-        providersBusy = true;
-        try
-        {
-            var policy = string.IsNullOrEmpty(value) ? null : value;
-            var result = await Api.SetProviderEgressPolicyOverrideAsync(id, policy);
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-                return;
-            }
 
-            await LoadProvidersAsync();
-        }
-        finally
-        {
-            providersBusy = false;
-        }
-    }
-
-    private static readonly Dictionary<string, int> EgressPolicyStrictness = new()
-    {
-        ["Normal"] = 1,
-        ["PrivateRequired"] = 2,
-        ["CustomProxy"] = 3
-    };
-
-    private static bool IsOverrideWeaker(ExternalProviderResponse provider)
-    {
-        if (provider.EgressPolicyOverride is null)
-        {
-            return false;
-        }
-
-        var declared = EgressPolicyStrictness.GetValueOrDefault(provider.CachedEgressPolicy, 0);
-        var overridden = EgressPolicyStrictness.GetValueOrDefault(provider.EgressPolicyOverride, 0);
-        return overridden < declared;
-    }
 }

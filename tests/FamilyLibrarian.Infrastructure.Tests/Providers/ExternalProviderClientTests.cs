@@ -52,14 +52,26 @@ public sealed class ExternalProviderClientTests
     {
         var client = CreateClient();
 
-        var manifest = await client.GetManifestAsync(_baseUrl, apiKey: null, EgressRoute.Direct, CancellationToken.None);
+        var manifest = await client.GetManifestAsync(_baseUrl, apiKey: null, CancellationToken.None);
 
         CollectionAssert.Contains(manifest.ProtocolVersions.ToArray(), "2");
         Assert.AreEqual("2", ProtocolVersionNegotiation.Negotiate(manifest.ProtocolVersions));
         Assert.IsFalse(string.IsNullOrEmpty(manifest.InstanceId));
         Assert.AreEqual("sample-provider", manifest.Id);
         CollectionAssert.Contains(manifest.Capabilities.Operations.ToArray(), "acquire");
-        Assert.AreEqual("NORMAL", manifest.EgressPolicy);
+    }
+
+    [TestMethod]
+    public async Task LegacyManifestEgressFieldDoesNotAffectProviderConnection()
+    {
+        var factory = new RecordingHttpClientFactory(new StaticSearchHandler(
+            """{"protocolVersions":["2"],"id":"legacy-provider","egressPolicy":"PRIVATE_REQUIRED"}"""));
+        var client = new ExternalProviderClient(factory);
+
+        var manifest = await client.GetManifestAsync("http://provider.test", apiKey: null, CancellationToken.None);
+
+        Assert.AreEqual("legacy-provider", manifest.Id);
+        Assert.IsNotNull(factory.CreatedClient);
     }
 
     [TestMethod]
@@ -67,7 +79,7 @@ public sealed class ExternalProviderClientTests
     {
         var client = CreateClient();
 
-        var health = await client.GetHealthAsync(_baseUrl, apiKey: null, EgressRoute.Direct, CancellationToken.None);
+        var health = await client.GetHealthAsync(_baseUrl, apiKey: null, CancellationToken.None);
 
         Assert.IsTrue(health.IsHealthy);
         Assert.AreEqual(ProviderOperationalStatus.Available, health.Search);
@@ -84,7 +96,7 @@ public sealed class ExternalProviderClientTests
             new ExternalProviderSearchRequest(
                 Guid.NewGuid(), RequestMediaType.Ebook,
                 new ExternalProviderWorkEvidence("Pride and Prejudice", null, [], [], [])),
-            EgressRoute.Direct, CancellationToken.None);
+            CancellationToken.None);
 
         Assert.AreEqual(1, results.Count);
         Assert.AreEqual("pride-and-prejudice", results[0].ProviderReference);
@@ -103,7 +115,7 @@ public sealed class ExternalProviderClientTests
             new ExternalProviderSearchRequest(
                 Guid.NewGuid(), RequestMediaType.Ebook,
                 new ExternalProviderWorkEvidence("Not A Real Book Title Xyz", null, [], [], [])),
-            EgressRoute.Direct, CancellationToken.None);
+            CancellationToken.None);
 
         Assert.AreEqual(0, results.Count);
     }
@@ -120,7 +132,7 @@ public sealed class ExternalProviderClientTests
             new ExternalProviderSearchRequest(
                 Guid.NewGuid(), RequestMediaType.Ebook,
                 new ExternalProviderWorkEvidence("Slow but valid", null, [], [], [])),
-            EgressRoute.Direct, CancellationToken.None);
+            CancellationToken.None);
 
         await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.IsNotNull(factory.CreatedClient);
@@ -143,7 +155,7 @@ public sealed class ExternalProviderClientTests
                 Guid.NewGuid(), RequestMediaType.Ebook,
                 new ExternalProviderWorkEvidence("The Cardinal of the Kremlin", null, [], [], []),
                 Constraints: new ExternalProviderSearchConstraints(Formats: ["epub", "mobi"])),
-            EgressRoute.Direct, CancellationToken.None);
+            CancellationToken.None);
 
         Assert.IsNotNull(handler.Payload);
         var constraints = handler.Payload!["constraints"]!.AsObject();
@@ -170,7 +182,7 @@ public sealed class ExternalProviderClientTests
             new ExternalProviderSearchRequest(
                 Guid.NewGuid(), RequestMediaType.Ebook,
                 new ExternalProviderWorkEvidence("Any", null, [], [], [])),
-            EgressRoute.Direct, CancellationToken.None);
+            CancellationToken.None);
 
         Assert.AreEqual("https://source.example.test/item/safe", results.Single(candidate => candidate.ProviderReference == "safe").InspectionUri?.ToString());
         Assert.IsNull(results.Single(candidate => candidate.ProviderReference == "unsafe").InspectionUri);
@@ -183,7 +195,7 @@ public sealed class ExternalProviderClientTests
         var client = CreateClient();
 
         var artifact = await client.AcquireAsync(
-            _baseUrl, apiKey: null, "frankenstein", RequestMediaType.Ebook, EgressRoute.Direct, CancellationToken.None);
+            _baseUrl, apiKey: null, "frankenstein", RequestMediaType.Ebook, CancellationToken.None);
 
         await using var content = artifact.Content;
         Assert.AreEqual("frankenstein.epub", artifact.Filename);
@@ -206,7 +218,7 @@ public sealed class ExternalProviderClientTests
         var client = CreateClient();
 
         await Assert.ThrowsExactlyAsync<HttpRequestException>(() => client.AcquireAsync(
-            _baseUrl, apiKey: null, "not-a-real-candidate", RequestMediaType.Ebook, EgressRoute.Direct, CancellationToken.None));
+            _baseUrl, apiKey: null, "not-a-real-candidate", RequestMediaType.Ebook, CancellationToken.None));
     }
 
     [TestMethod]
@@ -216,8 +228,8 @@ public sealed class ExternalProviderClientTests
         var request = new ExternalAcquireRequest(Guid.NewGuid(), "frankenstein", null, null, RequestMediaType.Ebook);
         var idempotencyKey = Guid.NewGuid().ToString("N");
 
-        var first = await client.SubmitAcquireAsync(_baseUrl, null, request, idempotencyKey, EgressRoute.Direct, CancellationToken.None);
-        var second = await client.SubmitAcquireAsync(_baseUrl, null, request, idempotencyKey, EgressRoute.Direct, CancellationToken.None);
+        var first = await client.SubmitAcquireAsync(_baseUrl, null, request, idempotencyKey, CancellationToken.None);
+        var second = await client.SubmitAcquireAsync(_baseUrl, null, request, idempotencyKey, CancellationToken.None);
 
         Assert.AreEqual(ProviderAcquireOutcome.Accepted, first.Outcome);
         Assert.AreEqual(first.JobId, second.JobId);
@@ -233,7 +245,7 @@ public sealed class ExternalProviderClientTests
             ExternalProviderAcquisitionMode.SubscriptionFirst);
 
         await client.SubmitAcquireAsync(
-            "http://provider.test", null, request, Guid.NewGuid().ToString("N"), EgressRoute.Direct, CancellationToken.None);
+            "http://provider.test", null, request, Guid.NewGuid().ToString("N"), CancellationToken.None);
 
         Assert.IsNotNull(handler.Payload);
         Assert.AreEqual("subscription-first", handler.Payload!["acquisitionMode"]!.GetValue<string>());
@@ -247,7 +259,7 @@ public sealed class ExternalProviderClientTests
             Guid.NewGuid(), "the-time-machine", null, null, RequestMediaType.Ebook);
 
         var submission = await client.SubmitAcquireAsync(
-            _baseUrl, null, request, Guid.NewGuid().ToString("N"), EgressRoute.Direct, CancellationToken.None);
+            _baseUrl, null, request, Guid.NewGuid().ToString("N"), CancellationToken.None);
         Assert.AreEqual(ProviderAcquireOutcome.Accepted, submission.Outcome);
 
         ExternalProviderJobStatus? sawWaiting = null;
@@ -256,7 +268,7 @@ public sealed class ExternalProviderClientTests
         do
         {
             status = await client.GetAcquireStatusAsync(
-                _baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+                _baseUrl, null, submission.JobId!, CancellationToken.None);
             if (status.State == ProviderAcquisitionJobLifecycleState.Waiting)
             {
                 sawWaiting = status;
@@ -286,14 +298,14 @@ public sealed class ExternalProviderClientTests
             Guid.NewGuid(), "pride-and-prejudice", null, null, RequestMediaType.Ebook);
 
         var submission = await client.SubmitAcquireAsync(
-            _baseUrl, null, request, Guid.NewGuid().ToString("N"), EgressRoute.Direct, CancellationToken.None);
+            _baseUrl, null, request, Guid.NewGuid().ToString("N"), CancellationToken.None);
 
         ExternalProviderJobStatus status;
         var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
         do
         {
             status = await client.GetAcquireStatusAsync(
-                _baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+                _baseUrl, null, submission.JobId!, CancellationToken.None);
             if (status.State != ProviderAcquisitionJobLifecycleState.Completed)
             {
                 await Task.Delay(200);
@@ -303,7 +315,7 @@ public sealed class ExternalProviderClientTests
 
         Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Completed, status.State);
 
-        var outputs = await client.ListOutputsAsync(_baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+        var outputs = await client.ListOutputsAsync(_baseUrl, null, submission.JobId!, CancellationToken.None);
         Assert.AreEqual(2, outputs.Count);
 
         var primary = outputs.Single(output => output.OutputId == "primary");
@@ -311,7 +323,7 @@ public sealed class ExternalProviderClientTests
         Assert.IsFalse(string.IsNullOrEmpty(primary.ChecksumsJson));
 
         var artifact = await client.GetOutputAsync(
-            _baseUrl, null, submission.JobId!, "primary", EgressRoute.Direct, CancellationToken.None);
+            _baseUrl, null, submission.JobId!, "primary", CancellationToken.None);
         await using var content = artifact.Content;
         using var buffer = new MemoryStream();
         await content.CopyToAsync(buffer);
@@ -326,13 +338,13 @@ public sealed class ExternalProviderClientTests
         var client = CreateClient();
         var request = new ExternalAcquireRequest(Guid.NewGuid(), "frankenstein", null, null, RequestMediaType.Ebook);
         var submission = await client.SubmitAcquireAsync(
-            _baseUrl, null, request, Guid.NewGuid().ToString("N"), EgressRoute.Direct, CancellationToken.None);
+            _baseUrl, null, request, Guid.NewGuid().ToString("N"), CancellationToken.None);
 
-        await client.CancelAcquireAsync(_baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
-        var status = await client.GetAcquireStatusAsync(_baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+        await client.CancelAcquireAsync(_baseUrl, null, submission.JobId!, CancellationToken.None);
+        var status = await client.GetAcquireStatusAsync(_baseUrl, null, submission.JobId!, CancellationToken.None);
         Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Cancelled, status.State);
 
-        await client.DeleteAcquireAsync(_baseUrl, null, submission.JobId!, EgressRoute.Direct, CancellationToken.None);
+        await client.DeleteAcquireAsync(_baseUrl, null, submission.JobId!, CancellationToken.None);
     }
 
     [TestMethod]
@@ -345,7 +357,7 @@ public sealed class ExternalProviderClientTests
             new ExternalProviderSearchRequest(
                 Guid.NewGuid(), RequestMediaType.Ebook,
                 new ExternalProviderWorkEvidence("Debt of Honor", null, [], [], [])),
-            EgressRoute.Direct, CancellationToken.None);
+            CancellationToken.None);
 
         var candidate = results.Single();
         Assert.AreEqual("Tom Clancy", candidate.Work.Authors[0].Name);
@@ -366,7 +378,7 @@ public sealed class ExternalProviderClientTests
             new ExternalProviderSearchRequest(
                 Guid.NewGuid(), RequestMediaType.Ebook,
                 new ExternalProviderWorkEvidence("Jack Ryan Omnibus", null, [], [], [])),
-            EgressRoute.Direct, CancellationToken.None);
+            CancellationToken.None);
 
         var candidate = results.Single();
         Assert.AreEqual(true, candidate.Release!.IsCollection);
@@ -383,7 +395,7 @@ public sealed class ExternalProviderClientTests
             Guid.NewGuid(), "debt-of-honor", CandidateRevision: "rev-1", AcquireToken: null, RequestMediaType.Ebook);
 
         var submission = await client.SubmitAcquireAsync(
-            _baseUrl, apiKey: null, request, Guid.NewGuid().ToString("N"), EgressRoute.Direct, CancellationToken.None);
+            _baseUrl, apiKey: null, request, Guid.NewGuid().ToString("N"), CancellationToken.None);
 
         // retryable:false scopes to "don't retry this exact call with this
         // stale revision" -- not "the book request is dead"; that
@@ -406,11 +418,11 @@ public sealed class ExternalProviderClientTests
             var client = CreateClient();
 
             var manifestWithoutKey = () =>
-                client.GetManifestAsync(securedBaseUrl, null, EgressRoute.Direct, CancellationToken.None);
+                client.GetManifestAsync(securedBaseUrl, null, CancellationToken.None);
             await Assert.ThrowsExactlyAsync<HttpRequestException>(manifestWithoutKey);
 
             var manifest = await client.GetManifestAsync(
-                securedBaseUrl, "expected-secret", EgressRoute.Direct, CancellationToken.None);
+                securedBaseUrl, "expected-secret", CancellationToken.None);
             Assert.AreEqual("sample-provider", manifest.Id);
         }
         finally

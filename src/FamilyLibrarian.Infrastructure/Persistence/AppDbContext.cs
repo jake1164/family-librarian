@@ -107,7 +107,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<ExternalProvider> ExternalProviders => Set<ExternalProvider>();
 
-    public DbSet<PrivateEgressGatewaySettings> PrivateEgressGatewaySettings => Set<PrivateEgressGatewaySettings>();
 
     public DbSet<ProviderCatalog> ProviderCatalogs => Set<ProviderCatalog>();
 
@@ -703,8 +702,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(provider => provider.CachedAcquireOperationStatus).HasColumnName("cached_acquire_operation_status").HasMaxLength(32);
             entity.Property(provider => provider.CachedManagementUrl).HasColumnName("cached_management_url").HasMaxLength(1_024);
             entity.Property(provider => provider.CachedDocumentationUrl).HasColumnName("cached_documentation_url").HasMaxLength(1_024);
-            entity.Property(provider => provider.CachedEgressPolicy).HasColumnName("cached_egress_policy").HasConversion<string>().HasMaxLength(32);
-            entity.Property(provider => provider.EgressPolicyOverride).HasColumnName("overridden_egress_policy").HasConversion<string>().HasMaxLength(32);
             entity.Property(provider => provider.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(provider => provider.LastTestSucceeded).HasColumnName("last_test_succeeded");
             entity.Property(provider => provider.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
@@ -714,22 +711,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(provider => provider.Version).HasColumnName("xmin").IsRowVersion();
 
             entity.HasIndex(provider => provider.ProviderId).IsUnique();
-        });
-
-        builder.Entity<PrivateEgressGatewaySettings>(entity =>
-        {
-            entity.ToTable("private_egress_gateway_settings", "providers");
-            entity.HasKey(settings => settings.Id);
-            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
-            entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
-            entity.Property(settings => settings.GatewayEndpoint).HasColumnName("gateway_endpoint").HasMaxLength(512);
-            entity.Property(settings => settings.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");
-            entity.Property(settings => settings.LastTestSucceeded).HasColumnName("last_test_succeeded");
-            entity.Property(settings => settings.LastTestMessage).HasColumnName("last_test_message").HasMaxLength(512);
-            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
-            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
-            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
-            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
         });
 
         builder.Entity<ProviderCatalog>(entity =>
@@ -761,7 +742,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(job => job.RequestId).HasColumnName("request_id");
             entity.Property(job => job.MediaType).HasColumnName("media_type").HasConversion<string>().HasMaxLength(32);
             entity.Property(job => job.ProviderId).HasColumnName("provider_id").HasMaxLength(128);
-            entity.Property(job => job.EgressPolicy).HasColumnName("egress_policy").HasConversion<string>().HasMaxLength(32);
             entity.Property(job => job.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
             entity.Property(job => job.StartedAtUtc).HasColumnName("started_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(job => job.CompletedAtUtc).HasColumnName("completed_at_utc").HasColumnType("timestamp with time zone");

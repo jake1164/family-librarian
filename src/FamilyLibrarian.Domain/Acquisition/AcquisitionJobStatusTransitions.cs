@@ -4,7 +4,7 @@ namespace FamilyLibrarian.Domain.Acquisition;
 /// The allowed <see cref="AcquisitionJob"/> status transitions, as an explicit
 /// matrix. M9's manual-import path only drives Created -> CandidateAcquired and
 /// Created -> Failed; the wider matrix is declared now so M10/M11 (security
-/// waiting, private egress, retries) do not need another migration to widen it.
+/// waiting and retries) do not need another migration to widen it.
 /// </summary>
 public static class AcquisitionJobStatusTransitions
 {
@@ -17,7 +17,6 @@ public static class AcquisitionJobStatusTransitions
             AcquisitionJobStatus.InProgress,
             AcquisitionJobStatus.CandidateAcquired,
             AcquisitionJobStatus.WaitingForSecurityScanner,
-            AcquisitionJobStatus.WaitingForPrivateEgress,
             AcquisitionJobStatus.Failed,
             AcquisitionJobStatus.Cancelled
         ],
@@ -25,7 +24,6 @@ public static class AcquisitionJobStatusTransitions
         [
             AcquisitionJobStatus.CandidateAcquired,
             AcquisitionJobStatus.WaitingForSecurityScanner,
-            AcquisitionJobStatus.WaitingForPrivateEgress,
             AcquisitionJobStatus.Failed,
             AcquisitionJobStatus.Cancelled
         ],
@@ -34,11 +32,6 @@ public static class AcquisitionJobStatusTransitions
             AcquisitionJobStatus.InProgress,
             AcquisitionJobStatus.Cancelled
         ],
-        [AcquisitionJobStatus.WaitingForPrivateEgress] =
-        [
-            AcquisitionJobStatus.InProgress,
-            AcquisitionJobStatus.Cancelled
-        ]
         // CandidateAcquired, Failed, and Cancelled are terminal.
     };
 

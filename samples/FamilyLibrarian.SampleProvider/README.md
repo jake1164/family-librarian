@@ -15,7 +15,7 @@ real polling, not just call a synchronous stub.
 
 | Method & path                    | Purpose                                                  |
 |-----------------------------------|-----------------------------------------------------------|
-| `GET /manifest`                   | Identity, protocol version, declared capabilities, declared egress policy |
+| `GET /manifest`                   | Identity, protocol version, and declared capabilities |
 | `GET /health`                     | v2 health plus per-operation availability                   |
 | `POST /search`                    | v2 work/edition evidence → structured candidate evidence    |
 | `POST /acquire`                   | Exact candidate reference/revision/token → durable v2 job   |
@@ -24,10 +24,6 @@ real polling, not just call a synchronous stub.
 | `GET /acquire/{jobId}/outputs/{outputId}` | Streams one file output                              |
 | `POST /acquire/{jobId}/cancel`    | Best-effort cancellation                                    |
 | `DELETE /acquire/{jobId}`         | Best-effort cleanup                                         |
-
-`egressPolicy` in the manifest is `NORMAL` (default), `PRIVATE_REQUIRED`, or
-`CUSTOM_PROXY` — the provider's own declared requirement for how Family Librarian
-must route every call to it (search *and* acquire), not a per-request choice.
 
 An optional `Authorization: Bearer <token>` header carries the scoped API key
 Family Librarian was given for this registration — checked here only if

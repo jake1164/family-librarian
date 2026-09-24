@@ -11,7 +11,7 @@ public sealed class AcquisitionJobTests
     [TestMethod]
     public void ANewJobStartsCreatedWithNoCandidates()
     {
-        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", EgressPolicy.Normal, Now);
+        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", Now);
 
         Assert.AreEqual(AcquisitionJobStatus.Created, job.Status);
         Assert.HasCount(0, job.Candidates);
@@ -22,7 +22,7 @@ public sealed class AcquisitionJobTests
     [TestMethod]
     public void TransitioningToCandidateAcquiredSetsStartedAndCompleted()
     {
-        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", EgressPolicy.Normal, Now);
+        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", Now);
 
         job.TransitionTo(AcquisitionJobStatus.CandidateAcquired, Now.AddMinutes(1));
 
@@ -34,7 +34,7 @@ public sealed class AcquisitionJobTests
     [TestMethod]
     public void TransitioningToFailedRecordsTheReason()
     {
-        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", EgressPolicy.Normal, Now);
+        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", Now);
 
         job.TransitionTo(AcquisitionJobStatus.Failed, Now.AddMinutes(1), "checksum mismatch");
 
@@ -44,7 +44,7 @@ public sealed class AcquisitionJobTests
     [TestMethod]
     public void ATerminalStatusCannotTransitionFurther()
     {
-        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", EgressPolicy.Normal, Now);
+        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", Now);
         job.TransitionTo(AcquisitionJobStatus.CandidateAcquired, Now.AddMinutes(1));
 
         Assert.ThrowsExactly<InvalidAcquisitionJobTransitionException>(() =>
@@ -54,7 +54,7 @@ public sealed class AcquisitionJobTests
     [TestMethod]
     public void AddingACandidateRecordsItAgainstTheJob()
     {
-        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", EgressPolicy.Normal, Now);
+        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", Now);
 
         var candidate = job.AddCandidate(
             "manual", "stored-file.epub", null, null, ".epub", 1024, null, null, null, null, Now);
@@ -67,7 +67,7 @@ public sealed class AcquisitionJobTests
     [TestMethod]
     public void MarkingAnUnknownCandidateStatusThrows()
     {
-        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", EgressPolicy.Normal, Now);
+        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", Now);
 
         Assert.ThrowsExactly<InvalidOperationException>(() =>
             job.MarkCandidateStatus(Guid.NewGuid(), AcquisitionCandidateStatus.Acquired, Now));
@@ -76,7 +76,7 @@ public sealed class AcquisitionJobTests
     [TestMethod]
     public void MarkingACandidateStatusUpdatesIt()
     {
-        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", EgressPolicy.Normal, Now);
+        var job = new AcquisitionJob(Guid.NewGuid(), RequestMediaType.Ebook, "manual", Now);
         var candidate = job.AddCandidate(
             "manual", "stored-file.epub", null, null, ".epub", 1024, null, null, null, null, Now);
 

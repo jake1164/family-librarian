@@ -16,7 +16,6 @@ public sealed class ProviderInteractionService(
     IExternalProviderStore providers,
     IExternalProviderClient client,
     ICredentialProtector protector,
-    PrivateEgressRouteResolver routeResolver,
     IAuditWriter audit,
     IClock clock)
 {
@@ -68,12 +67,6 @@ public sealed class ProviderInteractionService(
             return ProviderInteractionCommandResult.ProviderUnavailable;
         }
 
-        var resolution = routeResolver.Resolve(provider.EffectiveEgressPolicy);
-        if (!resolution.IsAllowed)
-        {
-            return ProviderInteractionCommandResult.ProviderUnavailable;
-        }
-
         var apiKey = provider.HasApiKey
             ? protector.Unprotect(ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
             : null;
@@ -82,7 +75,7 @@ public sealed class ProviderInteractionService(
         {
             if (command == ProviderInteractionCommand.Cancel)
             {
-                await client.CancelAcquireAsync(provider.BaseUrl, apiKey, job.ProviderJobId, resolution.Route!, cancellationToken);
+                await client.CancelAcquireAsync(provider.BaseUrl, apiKey, job.ProviderJobId, cancellationToken);
                 job.ApplyStatus(
                     ProviderAcquisitionJobLifecycleState.Cancelled, null, null, null, null, null, null,
                     null, null, null, null, nextPollAtUtc: null, clock.UtcNow);
@@ -99,8 +92,8 @@ public sealed class ProviderInteractionService(
             }
 
             var status = command == ProviderInteractionCommand.Start
-                ? await client.StartInteractionAsync(provider.BaseUrl, apiKey, job.ProviderJobId, resolution.Route!, cancellationToken)
-                : await client.UseAcquireFallbackAsync(provider.BaseUrl, apiKey, job.ProviderJobId, resolution.Route!, cancellationToken);
+                ? await client.StartInteractionAsync(provider.BaseUrl, apiKey, job.ProviderJobId, cancellationToken)
+                : await client.UseAcquireFallbackAsync(provider.BaseUrl, apiKey, job.ProviderJobId, cancellationToken);
 
             ApplyStatus(job, status);
             await jobs.SaveChangesAsync(cancellationToken);

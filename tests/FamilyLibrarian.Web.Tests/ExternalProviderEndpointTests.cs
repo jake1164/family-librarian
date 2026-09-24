@@ -133,41 +133,6 @@ public sealed class ExternalProviderEndpointTests
     }
 
     [TestMethod]
-    public async Task SettingAnEgressPolicyOverrideChangesTheEffectivePolicyButNotTheCachedOne()
-    {
-        var fixture = WebTestFixture.Require(_fixture);
-        using var client = await CreateAdminClientWithTokenAsync(fixture);
-
-        var create = await client.PostAsJsonAsync(
-            "/api/v1/admin/external-providers/",
-            new CreateExternalProviderRequest("override-provider", "Override Provider", "http://provider.test"));
-        var created = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
-        Assert.IsNotNull(created);
-        Assert.AreEqual("Normal", created.CachedEgressPolicy);
-        Assert.IsNull(created.EgressPolicyOverride);
-        Assert.AreEqual("Normal", created.EffectiveEgressPolicy);
-
-        var setOverride = await client.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{created.Id}/egress-policy-override",
-            new SetExternalProviderEgressPolicyOverrideRequest("PrivateRequired"));
-        Assert.AreEqual(HttpStatusCode.OK, setOverride.StatusCode);
-        var overridden = await setOverride.Content.ReadFromJsonAsync<ExternalProviderResponse>();
-        Assert.IsNotNull(overridden);
-        Assert.AreEqual("Normal", overridden.CachedEgressPolicy);
-        Assert.AreEqual("PrivateRequired", overridden.EgressPolicyOverride);
-        Assert.AreEqual("PrivateRequired", overridden.EffectiveEgressPolicy);
-
-        var clearOverride = await client.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{created.Id}/egress-policy-override",
-            new SetExternalProviderEgressPolicyOverrideRequest(null));
-        Assert.AreEqual(HttpStatusCode.OK, clearOverride.StatusCode);
-        var cleared = await clearOverride.Content.ReadFromJsonAsync<ExternalProviderResponse>();
-        Assert.IsNotNull(cleared);
-        Assert.IsNull(cleared.EgressPolicyOverride);
-        Assert.AreEqual("Normal", cleared.EffectiveEgressPolicy);
-    }
-
-    [TestMethod]
     public async Task AnAdminCanChooseThePerProviderRecheckSchedule()
     {
         var fixture = WebTestFixture.Require(_fixture);

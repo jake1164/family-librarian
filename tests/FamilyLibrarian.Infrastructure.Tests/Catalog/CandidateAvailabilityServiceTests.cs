@@ -120,8 +120,6 @@ public sealed class CandidateAvailabilityServiceTests
 
         services.AddScoped(_ => (IExternalProviderStore)new NoProvidersStore());
         services.AddScoped(_ => (IExternalProviderClient)new UnusedExternalClient());
-        services.AddSingleton<IPrivateEgressGatewayRuntimeCache>(new DisabledGatewayCache());
-        services.AddScoped<PrivateEgressRouteResolver>();
         services.AddScoped(_ => (ICredentialProtector)new NoOpCredentialProtector());
         services.AddSingleton(new ExternalProviderMatchVerifier(
             new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver()), new DeterministicBookMatcher()));
@@ -218,54 +216,47 @@ public sealed class CandidateAvailabilityServiceTests
     private sealed class UnusedExternalClient : IExternalProviderClient
     {
         public Task<ExternalProviderManifest> GetManifestAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<ExternalProviderHealth> GetHealthAsync(string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+        public Task<ExternalProviderHealth> GetHealthAsync(string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-            string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderArtifact> AcquireAsync(
-            string baseUrl, string? apiKey, string providerReference, RequestMediaType mediaType, EgressRoute route,
+            string baseUrl, string? apiKey, string providerReference, RequestMediaType mediaType,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
-            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<ExternalProviderArtifact> GetOutputAsync(
-            string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+            string baseUrl, string? apiKey, string jobId, string outputId,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task CancelAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task DeleteAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-    }
-
-    private sealed class DisabledGatewayCache : IPrivateEgressGatewayRuntimeCache
-    {
-        public PrivateEgressGatewayRuntimeState Current { get; private set; } = PrivateEgressGatewayRuntimeState.Disabled;
-
-        public void Refresh(PrivateEgressGatewayRuntimeState state) => Current = state;
     }
 
     private sealed class NoOpCredentialProtector : ICredentialProtector

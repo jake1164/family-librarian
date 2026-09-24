@@ -95,8 +95,7 @@ public static class SampleProviderHost
                 mediaTypes = MediaTypes,
                 operations = Operations,
                 features = Features
-            },
-            egressPolicy = "NORMAL"
+            }
         }));
 
         app.MapGet("/health", () => Results.Ok(new

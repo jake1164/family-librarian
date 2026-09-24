@@ -18,7 +18,7 @@ namespace FamilyLibrarian.Application.Providers;
 /// </summary>
 /// <remarks>
 /// Every failure mode here is recorded, never silently skipped: an
-/// egress-blocked provider (e.g. an expired VPN/gateway subscription) and an
+/// unreachable provider and an
 /// undecryptable stored credential both get the same "unhealthy, here's why"
 /// treatment as an ordinary connection failure, so the Sources page chip and
 /// (on a transition into non-operational) an admin notification both fire.
@@ -28,7 +28,6 @@ namespace FamilyLibrarian.Application.Providers;
 public sealed class ExternalProviderHealthPollService(
     IExternalProviderStore store,
     ExternalCandidateAvailabilityChecker candidateChecker,
-    PrivateEgressRouteResolver routeResolver,
     NotificationService notifications,
     IClock clock)
 {
@@ -43,24 +42,9 @@ public sealed class ExternalProviderHealthPollService(
             var wasOperational = provider.LastTestSucceeded != false;
             checkedCount++;
 
-            var resolution = routeResolver.Resolve(provider.EffectiveEgressPolicy);
-            if (!resolution.IsAllowed)
-            {
-                provider.RecordHealthCheck(
-                    false,
-                    resolution.BlockedReason ?? "This provider's egress policy could not be satisfied.",
-                    healthStatus: nameof(ProviderHealthStatus.Unhealthy),
-                    searchOperationStatus: nameof(ProviderOperationalStatus.Unavailable),
-                    acquireOperationStatus: nameof(ProviderOperationalStatus.Unavailable),
-                    clock.UtcNow);
-                changed = true;
-                await NotifyIfDegradedAsync(provider, wasOperational, cancellationToken);
-                continue;
-            }
-
             try
             {
-                var health = await candidateChecker.CheckHealthAsync(provider, resolution.Route!, cancellationToken);
+                var health = await candidateChecker.CheckHealthAsync(provider, cancellationToken);
                 provider.RecordHealthCheck(
                     health.IsFullyOperational,
                     health.IsFullyOperational

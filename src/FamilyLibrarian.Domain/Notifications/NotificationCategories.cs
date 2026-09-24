@@ -49,7 +49,7 @@ public static class NotificationCategories
     /// <summary>
     /// Raised by <c>ExternalProviderHealthPollService</c>'s independent
     /// background probe when a registered external provider transitions
-    /// from operational to not (unreachable, egress-blocked, or an
+    /// from operational to not (unreachable or an
     /// undecryptable stored credential) -- not fired again on every
     /// still-down poll tick, only the transition, so recurring never
     /// un-dismisses a still-broken provider's notification every cycle.

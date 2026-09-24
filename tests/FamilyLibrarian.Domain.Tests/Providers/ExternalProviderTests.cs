@@ -1,4 +1,3 @@
-using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Providers;
 
 namespace FamilyLibrarian.Domain.Tests.Providers;
@@ -29,7 +28,6 @@ public sealed class ExternalProviderTests
             message: "Reached LibGen (protocol v2).",
             protocolVersion: "2",
             capabilities: "operations:search,acquire",
-            egressPolicy: EgressPolicy.Normal,
             actorUserId: null,
             testedAtUtc: Now,
             instanceId: "instance-1",
@@ -47,7 +45,6 @@ public sealed class ExternalProviderTests
             message: "The manifest was reachable, but LibGen reported its search or acquire capability as unavailable.",
             protocolVersion: "2",
             capabilities: "operations:search,acquire",
-            egressPolicy: EgressPolicy.Normal,
             actorUserId: null,
             testedAtUtc: Now.AddMinutes(5),
             instanceId: "instance-1",
@@ -71,7 +68,6 @@ public sealed class ExternalProviderTests
             message: "Reached LibGen (protocol v2).",
             protocolVersion: "2",
             capabilities: "operations:search,acquire",
-            egressPolicy: EgressPolicy.Normal,
             actorUserId: null,
             testedAtUtc: Now,
             instanceId: "instance-1",
@@ -87,7 +83,6 @@ public sealed class ExternalProviderTests
             message: "The provider is unreachable: timed out.",
             protocolVersion: provider.CachedProtocolVersion,
             capabilities: provider.CachedCapabilities,
-            egressPolicy: provider.CachedEgressPolicy,
             actorUserId: null,
             testedAtUtc: Now.AddMinutes(5));
 

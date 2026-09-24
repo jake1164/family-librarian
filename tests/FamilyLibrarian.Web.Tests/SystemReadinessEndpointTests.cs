@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Json;
 using FamilyLibrarian.Contracts.Operations;
 using FamilyLibrarian.Contracts.Providers;
-using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.EntityFrameworkCore;
@@ -80,7 +79,6 @@ public sealed class SystemReadinessEndpointTests
                 message: "The manifest was reachable, but Readiness Provider reported its search or acquire capability as unavailable.",
                 protocolVersion: "2",
                 capabilities: "operations:search",
-                egressPolicy: EgressPolicy.Normal,
                 actorUserId: null,
                 testedAtUtc: DateTimeOffset.UtcNow,
                 instanceId: "instance-1",

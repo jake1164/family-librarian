@@ -62,8 +62,8 @@ Concretely:
 
 Unchanged from v1. The admin-entered base URL is used as-is; every endpoint
 below is a path relative to it. Every call — manifest, health, search, and
-every step of acquire — goes to the same base URL and is routed identically
-per your manifest's declared `egressPolicy` (§4).
+every step of acquire — uses ordinary HTTP networking to that URL. The provider
+separately owns and enforces the network route for its Internet traffic.
 
 ---
 
@@ -97,8 +97,7 @@ Response:
   },
   "outputRetentionSeconds": 86400,
   "managementUrl": "http://provider.local/admin",
-  "documentationUrl": "https://example.invalid/docs",
-  "egressPolicy": "NORMAL"
+  "documentationUrl": "https://example.invalid/docs"
 }
 ```
 
@@ -112,7 +111,9 @@ Response:
 | `outputRetentionSeconds` | no | How long you guarantee a completed job's outputs remain fetchable after completion, if you don't specify a per-job `retention.expiresAt` (§8a). Omit if you have no fixed policy. |
 | `managementUrl` | no | Link to your own admin/configuration UI, if you have one — Family Librarian shows it as a link rather than modeling your configuration itself (§12). This is often *not* the same address Family Librarian uses to reach you (e.g. a Docker-internal hostname isn't browser-reachable by the admin) — if that's the case for you, set this to a separately browser-reachable address, even if it points at the same service. |
 | `documentationUrl` | no | Link to your own documentation, shown the same way. |
-| `egressPolicy` | no | Unchanged from v1: one of `NORMAL` (default), `PRIVATE_REQUIRED`, `CUSTOM_PROXY`. |
+
+Existing providers may still include the former `egressPolicy` manifest field.
+Family Librarian ignores it; providers manage their own outbound networking.
 
 **Baseline vs. optional features.** Everything else in this document —
 `Idempotency-Key` handling, the `/outputs` endpoints, the `state`/`phase`
@@ -750,8 +751,7 @@ Response:
   "id": "your-provider-id",
   "name": "Your Provider Name",
   "version": "1.0.0",
-  "capabilities": ["ebook", "search", "acquire"],
-  "egressPolicy": "NORMAL"
+  "capabilities": ["ebook", "search", "acquire"]
 }
 ```
 
@@ -760,7 +760,6 @@ Response:
 | `protocolVersion` | no | Defaults to `"1"` if omitted. Not enforced — a mismatched value is stored and displayed to the admin but does not block calls. |
 | `id`, `name`, `version` | no | Default to empty string if omitted. Purely informational. |
 | `capabilities` | no | Free-form strings, purely informational — not used to gate which endpoints are called. |
-| `egressPolicy` | no | One of `NORMAL` (default), `PRIVATE_REQUIRED`, `CUSTOM_PROXY`. Anything else (including lowercase) is treated as `NORMAL`. |
 
 ## A.2 `GET /health`
 

@@ -26,7 +26,6 @@ public sealed class AcquisitionJobPollingService(
     AcquisitionStagingService staging,
     AutomatedSecurityPipeline securityPipeline,
     ICredentialProtector protector,
-    PrivateEgressRouteResolver routeResolver,
     IClock clock)
 {
     private const int BatchSize = 25;
@@ -53,16 +52,6 @@ public sealed class AcquisitionJobPollingService(
             return;
         }
 
-        var resolution = routeResolver.Resolve(provider.EffectiveEgressPolicy);
-        if (!resolution.IsAllowed)
-        {
-            // The gateway may recover later -- this is a retry condition, not
-            // a permanent failure of the job itself.
-            Reschedule(job, TimeSpan.FromMinutes(5));
-            await jobs.SaveChangesAsync(cancellationToken);
-            return;
-        }
-
         var apiKey = provider.HasApiKey
             ? protector.Unprotect(
                 ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
@@ -72,7 +61,7 @@ public sealed class AcquisitionJobPollingService(
         try
         {
             status = await client.GetAcquireStatusAsync(
-                provider.BaseUrl, apiKey, job.ProviderJobId!, resolution.Route!, cancellationToken);
+                provider.BaseUrl, apiKey, job.ProviderJobId!, cancellationToken);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
@@ -111,14 +100,13 @@ public sealed class AcquisitionJobPollingService(
             return;
         }
 
-        await CompleteAsync(job, provider, apiKey, resolution, status, cancellationToken);
+        await CompleteAsync(job, provider, apiKey, status, cancellationToken);
     }
 
     private async Task CompleteAsync(
         ProviderAcquisitionJob job,
         Domain.Providers.ExternalProvider provider,
         string? apiKey,
-        EgressResolution resolution,
         ExternalProviderJobStatus status,
         CancellationToken cancellationToken)
     {
@@ -133,7 +121,7 @@ public sealed class AcquisitionJobPollingService(
         }
 
         var outputs = await client.ListOutputsAsync(
-            provider.BaseUrl, apiKey, job.ProviderJobId!, resolution.Route!, cancellationToken);
+            provider.BaseUrl, apiKey, job.ProviderJobId!, cancellationToken);
         var primary = SelectPrimaryOutput(outputs, format.MediaType);
 
         if (primary is null)
@@ -147,14 +135,13 @@ public sealed class AcquisitionJobPollingService(
 
         ManualImportResult stageResult;
         var artifact = await client.GetOutputAsync(
-            provider.BaseUrl, apiKey, job.ProviderJobId!, primary.OutputId, resolution.Route!, cancellationToken);
+            provider.BaseUrl, apiKey, job.ProviderJobId!, primary.OutputId, cancellationToken);
         await using (var content = artifact.Content)
         {
             stageResult = await staging.StageAsync(
                 request, format, content, artifact.Filename, provider.ProviderId,
                 AuditActions.ExternalProviderAcquisitionStaged,
-                candidateTitle: null, candidateAuthor: null, cancellationToken,
-                egressPolicy: provider.EffectiveEgressPolicy);
+                candidateTitle: null, candidateAuthor: null, cancellationToken);
         }
 
         foreach (var output in outputs)

@@ -130,7 +130,6 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var acquisitionJob = await database.AcquisitionJobs.SingleAsync(
             acquisitionJob => acquisitionJob.RequestId == request.Id);
         Assert.AreEqual("fake-external", acquisitionJob.ProviderId);
-        Assert.AreEqual(EgressPolicy.Normal, acquisitionJob.EgressPolicy);
     }
 
     [TestMethod]
@@ -238,143 +237,6 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     }
 
     [TestMethod]
-    public async Task OverridingEgressPolicyDownToNormalLetsAcquisitionSucceedWithNoGatewayConfigured()
-    {
-        var fixture = WebTestFixture.Require(_fixture);
-        await using var factory = new FamilyLibrarianAppFactory(
-            fixture.ConnectionString,
-            services =>
-            {
-                services.RemoveAll<IExternalProviderClient>();
-                services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient("PRIVATE_REQUIRED"));
-            });
-
-        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-        await SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
-        var token = await WebTestFixture.GetAntiforgeryTokenAsync(admin);
-        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
-
-        var create = await admin.PostAsJsonAsync(
-            "/api/v1/admin/external-providers/",
-            new CreateExternalProviderRequest("override-down-external", "Override Down External", "http://fake-external.test"));
-        create.EnsureSuccessStatusCode();
-        var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
-        Assert.IsNotNull(provider);
-
-        var enable = await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true));
-        enable.EnsureSuccessStatusCode();
-
-        // Populates CachedEgressPolicy from the manifest — PRIVATE_REQUIRED, with no gateway configured.
-        var test = await admin.PostAsync($"/api/v1/admin/external-providers/{provider.Id}/test", content: null);
-        test.EnsureSuccessStatusCode();
-
-        var setOverride = await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/egress-policy-override",
-            new SetExternalProviderEgressPolicyOverrideRequest("Normal"));
-        setOverride.EnsureSuccessStatusCode();
-
-        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
-        resolve.EnsureSuccessStatusCode();
-        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
-        Assert.IsNotNull(work);
-
-        var created = await admin.PostAsJsonAsync(
-            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
-        Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
-        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
-        Assert.IsNotNull(request);
-        var format = request.Formats.Single(candidate => candidate.MediaType == "Ebook");
-
-        var fulfillment = await admin.GetFromJsonAsync<WorkFulfillmentOptionsResponse>(
-            $"/api/v1/catalog/works/{work.Id}/fulfillment-options");
-        Assert.IsNotNull(fulfillment);
-        var option = fulfillment.Ebook.SingleOrDefault(candidate => candidate.ProviderId == "override-down-external");
-        Assert.IsNotNull(option, "An overridden-to-Normal provider should still surface options with no gateway configured.");
-
-        var acquire = await admin.PostAsync(
-            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/override-down-external/{option.ProviderResultId}" +
-            "?confirmLowConfidenceMatch=true",
-            content: null);
-        // Reaching Accepted at all proves the override took effect: with the
-        // provider's own declared PRIVATE_REQUIRED and no gateway
-        // configured, routeResolver.Resolve would otherwise have blocked
-        // this before ever calling SubmitAcquireAsync.
-        Assert.AreEqual(HttpStatusCode.Accepted, acquire.StatusCode);
-        var result = await acquire.Content.ReadFromJsonAsync<ManualAcquisitionInProgressResponse>();
-        Assert.IsNotNull(result);
-
-        await using (var pollScope = factory.Services.CreateAsyncScope())
-        {
-            var polling = pollScope.ServiceProvider.GetRequiredService<AcquisitionJobPollingService>();
-            Assert.AreEqual(1, await polling.ProcessDueAsync(CancellationToken.None));
-        }
-
-        await using var scope = factory.Services.CreateAsyncScope();
-        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var job = await database.ProviderAcquisitionJobs.SingleAsync(
-            acquisitionJob => acquisitionJob.Id == result.ProviderAcquisitionJobId);
-        Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Completed, job.LifecycleState);
-
-        var acquisitionJob = await database.AcquisitionJobs.SingleAsync(
-            acquisitionJob => acquisitionJob.RequestId == request.Id);
-        Assert.AreEqual(EgressPolicy.Normal, acquisitionJob.EgressPolicy);
-    }
-
-    [TestMethod]
-    public async Task OverridingEgressPolicyUpToPrivateRequiredBlocksAcquisitionEvenThoughTheManifestDeclaresNormal()
-    {
-        var fixture = WebTestFixture.Require(_fixture);
-        await using var factory = new FamilyLibrarianAppFactory(
-            fixture.ConnectionString,
-            services =>
-            {
-                services.RemoveAll<IExternalProviderClient>();
-                services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient());
-            });
-
-        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-        await SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
-        var token = await WebTestFixture.GetAntiforgeryTokenAsync(admin);
-        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
-
-        var create = await admin.PostAsJsonAsync(
-            "/api/v1/admin/external-providers/",
-            new CreateExternalProviderRequest("override-up-external", "Override Up External", "http://fake-external.test"));
-        create.EnsureSuccessStatusCode();
-        var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
-        Assert.IsNotNull(provider);
-
-        var enable = await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true));
-        enable.EnsureSuccessStatusCode();
-
-        var setOverride = await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/egress-policy-override",
-            new SetExternalProviderEgressPolicyOverrideRequest("PrivateRequired"));
-        setOverride.EnsureSuccessStatusCode();
-        var overridden = await setOverride.Content.ReadFromJsonAsync<ExternalProviderResponse>();
-        Assert.IsNotNull(overridden);
-        Assert.AreEqual("Normal", overridden.CachedEgressPolicy);
-        Assert.AreEqual("PrivateRequired", overridden.EffectiveEgressPolicy);
-
-        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
-        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
-        Assert.IsNotNull(work);
-        var created = await admin.PostAsJsonAsync(
-            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
-        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
-        Assert.IsNotNull(request);
-        var format = request.Formats.Single(candidate => candidate.MediaType == "Ebook");
-
-        var acquire = await admin.PostAsync(
-            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/override-up-external/anything",
-            content: null);
-
-        Assert.AreEqual(HttpStatusCode.BadRequest, acquire.StatusCode);
-    }
-
-    [TestMethod]
     public async Task APlausibleButWrongTitleRequiresConfirmationBeforeFetching()
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -450,21 +312,21 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     }
 
     /// <summary>Always finds "the-hobbit"-matching searches and fetches a real, minimal, valid EPUB.</summary>
-    private sealed class FakeExternalProviderClient(string egressPolicy = "NORMAL") : IExternalProviderClient
+    private sealed class FakeExternalProviderClient : IExternalProviderClient
     {
         public Task<ExternalProviderManifest> GetManifestAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderManifest(
                 ["2"], "2", null, "fake-external", "Fake External", "1.0.0",
-                new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null, egressPolicy));
+                new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null));
 
         public Task<ExternalProviderHealth> GetHealthAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderHealth(
                 ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available));
 
         public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-            string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
             CancellationToken cancellationToken)
         {
             IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
@@ -474,26 +336,26 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         }
 
         public Task<ExternalProviderArtifact> AcquireAsync(
-            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
             CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderArtifact(
                 new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
                 "the-hobbit.epub"));
 
         public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
-            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
             CancellationToken cancellationToken) =>
             Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
                 "fake-job-1", ProviderAcquisitionJobLifecycleState.Completed, phase: null, pollAfterSeconds: 0));
 
         public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderJobStatus(
                 jobId, ProviderAcquisitionJobLifecycleState.Completed, Phase: null, Interaction: null, Progress: null,
                 Error: null, PollAfterSeconds: null));
 
         public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<ExternalProviderOutput>>(
             [
                 new ExternalProviderOutput(
@@ -502,17 +364,17 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             ]);
 
         public Task<ExternalProviderArtifact> GetOutputAsync(
-            string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+            string baseUrl, string? apiKey, string jobId, string outputId,
             CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderArtifact(
                 new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()), "the-hobbit.epub"));
 
         public Task CancelAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
         public Task DeleteAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             Task.CompletedTask;
     }
 
@@ -526,18 +388,18 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     private sealed class WrongTitleExternalProviderClient : IExternalProviderClient
     {
         public Task<ExternalProviderManifest> GetManifestAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderManifest(
                 ["2"], "2", null, "wrong-title-external", "Wrong Title External", "1.0.0",
-                new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null, "NORMAL"));
+                new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null));
 
         public Task<ExternalProviderHealth> GetHealthAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderHealth(
                 ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available));
 
         public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-            string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
             CancellationToken cancellationToken)
         {
             IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
@@ -547,26 +409,26 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         }
 
         public Task<ExternalProviderArtifact> AcquireAsync(
-            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
             CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderArtifact(
                 new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
                 "wrong-title.epub"));
 
         public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
-            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
             CancellationToken cancellationToken) =>
             Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
                 "fake-job-1", ProviderAcquisitionJobLifecycleState.Completed, phase: null, pollAfterSeconds: 0));
 
         public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderJobStatus(
                 jobId, ProviderAcquisitionJobLifecycleState.Completed, Phase: null, Interaction: null, Progress: null,
                 Error: null, PollAfterSeconds: null));
 
         public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<ExternalProviderOutput>>(
             [
                 new ExternalProviderOutput(
@@ -575,17 +437,17 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             ]);
 
         public Task<ExternalProviderArtifact> GetOutputAsync(
-            string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+            string baseUrl, string? apiKey, string jobId, string outputId,
             CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderArtifact(
                 new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()), "wrong-title.epub"));
 
         public Task CancelAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
         public Task DeleteAcquireAsync(
-            string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
             Task.CompletedTask;
     }
 }

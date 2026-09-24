@@ -3,7 +3,7 @@ namespace FamilyLibrarian.Domain.Acquisition;
 /// <summary>
 /// An immutable record of one provider lookup made for a requested format.
 /// This is deliberately separate from an acquisition job: a lookup may find
-/// nothing, be blocked by egress policy, or surface candidates for review
+/// nothing, be blocked by source availability, or surface candidates for review
 /// without ever downloading a file.
 /// </summary>
 public sealed class ProviderAttempt

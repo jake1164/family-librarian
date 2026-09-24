@@ -441,7 +441,6 @@ AcquisitionJobId
 RequestId
 MediaType
 ProviderId
-EgressPolicy
 ScannerHealthAtStart?
 Status
 CreatedAt
@@ -451,20 +450,6 @@ FailureReason?
 ```
 
 A request may have multiple acquisition jobs.
-
-`EgressPolicy` is a policy selected by the provider or deployment, not a VPN
-provider identity. It should support at least:
-
-```text
-NORMAL
-PRIVATE_REQUIRED
-CUSTOM_PROXY
-```
-
-`PRIVATE_REQUIRED` means all provider-originated external traffic must use the
-configured private-egress gateway. It must fail closed when that gateway is
-unavailable; the job may wait for private egress or fail, but must never fall
-back silently to normal host Internet access.
 
 **Provider-attempt ledger:** `AcquisitionJob` is created only after an artifact
 is successfully staged, so it cannot explain providers that found no result.
@@ -1189,8 +1174,8 @@ This is intentionally limited to the bundled provider that explicitly opts in
 to automatic acquisition. Project Gutenberg has effective `Once` behavior: each outcome
 is recorded and it is not repeatedly queried. Admin-registered external
 providers default to `Manual`, but an administrator may select `Daily` or
-`Weekly` per enabled provider. A scheduled external lookup follows the declared
-egress policy and records the outcome; a result moves the request to
+`Weekly` per enabled provider. A scheduled external lookup calls the provider over its registered API URL
+and records the outcome; a result moves the request to
 `NeedsReview` and never downloads the external artifact automatically.
 
 Project Gutenberg discovery reads the locally imported daily RDF catalogue, so it
@@ -1352,10 +1337,6 @@ Acquisition engine selects providers
       |
       +--> Required scanner unavailable
       |        --> WaitingForSecurityScanner (do not search/acquire/stage files)
-      |
-      +--> Enforce provider egress policy
-      |      PRIVATE_REQUIRED + gateway unavailable
-      |        --> WaitingForPrivateEgress / AcquisitionFailed
       |
       +--> Search provider A
       +--> Search provider B
@@ -1619,8 +1600,6 @@ RequestCreated
 MetadataResolved
 MetadataCorrected
 AcquisitionStarted
-PrivateEgressUnavailable
-PrivateEgressPolicyBlocked
 CandidateSelected
 AssetUploaded
 SecurityScanStarted
@@ -1672,5 +1651,3 @@ Recommended default:
 - Different regional publication dates.
 - Multiple audiobook editions/narrators.
 - Whether a Request should directly target a Work or optionally a specific Edition.
-- How a deployment proves a private-egress gateway is healthy before dispatching
-  a `PRIVATE_REQUIRED` acquisition job.

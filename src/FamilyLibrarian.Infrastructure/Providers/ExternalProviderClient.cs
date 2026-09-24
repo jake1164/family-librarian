@@ -26,9 +26,9 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     private const long MaxJsonResponseBytes = 10 * 1024 * 1024;
 
     public async Task<ExternalProviderManifest> GetManifestAsync(
-        string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken)
+        string baseUrl, string? apiKey, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        using var client = CreateClient(baseUrl, apiKey);
         using var response = await client.GetAsync("manifest", cancellationToken);
         response.EnsureSuccessStatusCode();
 
@@ -55,8 +55,7 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
             ParseCapabilities(json["capabilities"]),
             json["outputRetentionSeconds"]?.GetValue<int?>(),
             json["managementUrl"]?.GetValue<string>(),
-            json["documentationUrl"]?.GetValue<string>(),
-            json["egressPolicy"]?.GetValue<string>() ?? "NORMAL");
+            json["documentationUrl"]?.GetValue<string>());
     }
 
     /// <summary>
@@ -88,9 +87,9 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     }
 
     public async Task<ExternalProviderHealth> GetHealthAsync(
-        string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken)
+        string baseUrl, string? apiKey, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        using var client = CreateClient(baseUrl, apiKey);
         try
         {
             using var response = await client.GetAsync("health", cancellationToken);
@@ -152,14 +151,14 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         };
 
     public async Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-        string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+        string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
         CancellationToken cancellationToken)
     {
         // Search backs interactive source enrichment. The caller's cancellation
         // token represents the browser/request lifetime; imposing the normal
         // short control-plane timeout here would misrepresent a slow provider
         // as returning no candidate.
-        using var client = CreateClient(baseUrl, apiKey, route, Timeout.InfiniteTimeSpan);
+        using var client = CreateClient(baseUrl, apiKey, Timeout.InfiniteTimeSpan);
         var payload = new JsonObject
         {
             ["requestId"] = request.RequestId.ToString(),
@@ -419,10 +418,10 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     }
 
     public async Task<ExternalProviderArtifact> AcquireAsync(
-        string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+        string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
         CancellationToken cancellationToken)
     {
-        var client = CreateClient(baseUrl, apiKey, route);
+        var client = CreateClient(baseUrl, apiKey);
         try
         {
             var payload = new JsonObject
@@ -464,10 +463,10 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     }
 
     public async Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
-        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey, EgressRoute route,
+        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
         CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        using var client = CreateClient(baseUrl, apiKey);
         var payload = new JsonObject
         {
             ["requestId"] = request.RequestId.ToString(),
@@ -515,9 +514,9 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     }
 
     public async Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken)
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        using var client = CreateClient(baseUrl, apiKey);
         using var response = await client.GetAsync($"acquire/{Uri.EscapeDataString(jobId)}", cancellationToken);
         response.EnsureSuccessStatusCode();
 
@@ -528,17 +527,17 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     }
 
     public Task<ExternalProviderJobStatus> StartInteractionAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
-        PostInteractionControlAsync(baseUrl, apiKey, jobId, "start", route, cancellationToken);
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+        PostInteractionControlAsync(baseUrl, apiKey, jobId, "start", cancellationToken);
 
     public Task<ExternalProviderJobStatus> UseAcquireFallbackAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken) =>
-        PostInteractionControlAsync(baseUrl, apiKey, jobId, "fallback", route, cancellationToken);
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+        PostInteractionControlAsync(baseUrl, apiKey, jobId, "fallback", cancellationToken);
 
     private async Task<ExternalProviderJobStatus> PostInteractionControlAsync(
-        string baseUrl, string? apiKey, string jobId, string operation, EgressRoute route, CancellationToken cancellationToken)
+        string baseUrl, string? apiKey, string jobId, string operation, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        using var client = CreateClient(baseUrl, apiKey);
         using var response = await client.PostAsync(
             $"acquire/{Uri.EscapeDataString(jobId)}/interaction/{operation}", content: null, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -588,9 +587,9 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     }
 
     public async Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken)
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        using var client = CreateClient(baseUrl, apiKey);
         using var response = await client.GetAsync($"acquire/{Uri.EscapeDataString(jobId)}/outputs", cancellationToken);
         response.EnsureSuccessStatusCode();
 
@@ -627,10 +626,10 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     }
 
     public async Task<ExternalProviderArtifact> GetOutputAsync(
-        string baseUrl, string? apiKey, string jobId, string outputId, EgressRoute route,
+        string baseUrl, string? apiKey, string jobId, string outputId,
         CancellationToken cancellationToken)
     {
-        var client = CreateClient(baseUrl, apiKey, route);
+        var client = CreateClient(baseUrl, apiKey);
         try
         {
             var response = await client.GetAsync(
@@ -653,9 +652,9 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     }
 
     public async Task CancelAcquireAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken)
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        using var client = CreateClient(baseUrl, apiKey);
         try
         {
             using var response = await client.PostAsync(
@@ -668,9 +667,9 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     }
 
     public async Task DeleteAcquireAsync(
-        string baseUrl, string? apiKey, string jobId, EgressRoute route, CancellationToken cancellationToken)
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        using var client = CreateClient(baseUrl, apiKey);
         try
         {
             using var response = await client.DeleteAsync($"acquire/{Uri.EscapeDataString(jobId)}", cancellationToken);
@@ -762,14 +761,9 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     private HttpClient CreateClient(
         string baseUrl,
         string? apiKey,
-        EgressRoute route,
         TimeSpan? timeout = null)
     {
-        var client = route is EgressRoute.GatewayRoute gatewayRoute
-            ? new HttpClient(
-                new SocketsHttpHandler { Proxy = new WebProxy(gatewayRoute.ProxyEndpoint), UseProxy = true },
-                disposeHandler: true)
-            : httpClientFactory.CreateClient();
+        var client = httpClientFactory.CreateClient();
 
         client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
         client.Timeout = timeout ?? ControlPlaneTimeout;

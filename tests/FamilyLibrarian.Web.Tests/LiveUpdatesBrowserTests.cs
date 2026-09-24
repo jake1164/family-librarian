@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Providers;
@@ -236,7 +235,6 @@ public sealed class LiveUpdatesBrowserTests
                 message: "Reached Browser Live Chips Provider (protocol v2).",
                 protocolVersion: "2",
                 capabilities: "operations:search,acquire",
-                egressPolicy: EgressPolicy.Normal,
                 actorUserId: null,
                 testedAtUtc: DateTimeOffset.UtcNow,
                 instanceId: "instance-1",

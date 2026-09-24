@@ -21,9 +21,6 @@ public sealed record ExternalProviderResponse(
     string? CachedAcquireOperationStatus,
     string? CachedManagementUrl,
     string? CachedDocumentationUrl,
-    string CachedEgressPolicy,
-    string? EgressPolicyOverride,
-    string EffectiveEgressPolicy,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
     string? LastTestMessage);
@@ -50,20 +47,6 @@ public sealed record SetExternalProviderAutoAcquireEnabledRequest(bool Enabled);
 public sealed record SetExternalProviderAcquisitionModeRequest(string AcquisitionMode);
 
 public sealed record SetExternalProviderApiKeyRequest(string ApiKey);
-
-/// <summary>One of "Normal", "PrivateRequired", "CustomProxy", or <c>null</c> to clear the override.</summary>
-public sealed record SetExternalProviderEgressPolicyOverrideRequest(string? EgressPolicy);
-
-public sealed record PrivateEgressGatewayResponse(
-    bool IsEnabled,
-    string? GatewayEndpoint,
-    DateTimeOffset? LastTestedAtUtc,
-    bool? LastTestSucceeded,
-    string? LastTestMessage);
-
-public sealed record SetPrivateEgressGatewayEnabledRequest(bool Enabled);
-
-public sealed record SetPrivateEgressGatewayEndpointRequest(string? GatewayEndpoint);
 
 public sealed record ProviderCatalogEntryResponse(
     string Id,

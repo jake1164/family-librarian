@@ -4,7 +4,6 @@ using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Persistence;
-using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web.Acquisition;
 using FamilyLibrarian.Web.Catalog;
@@ -169,10 +168,6 @@ if (app.Configuration.GetValue<bool>("Authentication:EnableLocal"))
 // configuration at Build() time the way the connection string is.
 await app.Services.InitializeOidcRuntimeCacheAsync();
 
-// Same reasoning as the OIDC cache above, for the private-egress gateway
-// PrivateEgressRouteResolver reads from.
-await app.Services.InitializeGatewayRuntimeCacheAsync();
-
 // First: everything below — HTTPS redirection, the auth cookie's Secure flag,
 // the rate limiter's per-caller partition key — depends on seeing the
 // original client address and scheme, not the reverse proxy's.
@@ -246,7 +241,6 @@ app.MapPolicyEndpoints();
 app.MapSystemReadinessEndpoints();
 app.MapOidcSettingsEndpoints();
 app.MapExternalProviderEndpoints();
-app.MapPrivateEgressGatewayEndpoints();
 app.MapProviderCatalogEndpoints();
 app.MapSettingsBackupEndpoints();
 

@@ -391,9 +391,8 @@ Each automatic lookup creates an append-only, administrator-only
 provider-attempt entry containing provider ID, request format, attempt time,
 outcome (`match`, `no-match`, `ambiguous`, `blocked`, or `failed`), a safe
 summary, and next eligible check time. It must not record credentials, complete
-untrusted provider payloads, or downloadable artifact URLs. A provider's
-declared egress policy applies to every scheduled check and must still fail
-closed; a failed private route never permits a normal-egress retry.
+untrusted provider payloads, or downloadable artifact URLs. Family Librarian calls the provider over its registered API URL. The provider
+controls the network route for its own source interactions.
 
 The newest attempt for each provider is also projected into the administrator's
 in-app attention summary when its outcome is `failed` or `blocked`. This is a
@@ -415,39 +414,15 @@ cancellable availability run. The card polls that run and receives accumulated
 availability facts as each provider completes, without receiving provider
 identifiers or topology. A replacement search cancels its outstanding runs.
 
-### Private-egress policy
+### External provider network boundary
 
-Family Librarian **SHALL NOT** depend on a specific commercial VPN provider.
-An acquisition provider may declare `PRIVATE_REQUIRED` or inherit that policy
-from its server-side configuration. For an in-process provider, the policy
-applies to every outbound interaction with its source: authentication, search,
-result and detail lookup, artifact resolution, download-URL resolution, and
-direct download. A private provider must not leak any of those steps via normal
-host egress.
-
-The generic private-acquisition configuration is server-side and represents a
-gateway endpoint rather than a VPN service:
-
-```text
-Private Acquisition Network
-  Enabled
-  Gateway type: HTTP proxy | SOCKS5 proxy | external route (future)
-  Gateway endpoint
-  Require private egress
-  Fail closed
-  Health/status where available
-```
-
-For example, an HTTP proxy endpoint can use a deployment-local hostname such
-as `http://egress-gateway:8080`. The provider never needs to know how that
-gateway is implemented; compatible proxy gateways and router-level routing are
-equally valid.
-
-When private egress is required, an unavailable or unhealthy gateway blocks the
-operation. The engine records a policy-blocked, waiting, or error state and can
-retry or notify an administrator later; it must not silently fall back to normal
-Internet access. `CUSTOM_PROXY` similarly requires an explicitly configured
-proxy and must not imply an automatic fallback policy.
+Family Librarian calls each external provider through its registered HTTP API
+using ordinary host networking. It has no VPN configuration or egress policy for
+that connection. The provider deployment owns and enforces any VPN or private
+route needed for its own Internet requests, including authentication, search,
+artifact resolution, and download. A failed provider route must not fall back
+to an unintended public route; the provider reports the resulting failure or
+unavailability through its API.
 
 ### External provider boundary
 
@@ -467,9 +442,9 @@ built-in providers. The integration model preserves these boundaries:
 - external implementations communicate over the versioned HTTP protocol or run in
   isolated containers. The main application does not load arbitrary provider code.
 
-Provider implementations remain independent of private-egress implementations.
-A provider may require `PRIVATE_REQUIRED` and use the generic gateway, but it
-must not embed tunnel-management logic.
+Provider implementations configure and enforce their own outbound network
+routes at deployment. Family Librarian reaches them through their registered
+API URL over the ordinary network.
 
 This creates a clear administration/settings surface for source management
 without requiring a plugin marketplace or support for unreviewed sources.
@@ -500,7 +475,7 @@ A trusted built-in Manual Provider may exist in the acquisition engine.
 
 For an external component that actually contacts private services, prefer
 putting the entire component behind the private-egress gateway rather than
-relying only on its application-level proxy setting. The gateway's firewall
+relying only on an application-level proxy setting inside that provider. The gateway's firewall
 and fail-closed network policy should govern that component's outbound traffic.
 
 Family Librarian may call those components over internal APIs, but that does not
@@ -510,15 +485,15 @@ transfer, must be routed by the gateway when required. The main application
 retains normal LAN/Internet networking and must not need
 `NET_ADMIN`, `NET_RAW`, privileged mode, or tunnel-management responsibility.
 
-The same boundary supports a future out-of-process model:
+The external-provider deployment follows this model:
 
 ```text
-Family Librarian --> provider API --> private provider container
-                                  --> VPN/private-egress gateway --> Internet
+Family Librarian --> provider API over the normal network
+Provider container --> its VPN/private-egress gateway --> Internet
 ```
 
-That is an optional deployment architecture, not a baseline requirement solely
-for private-egress support.
+The provider configures and verifies the second path independently of Family
+Librarian.
 
 External providers receive only the minimum scoped configuration, credentials,
 network route, and temporary staging access they require. They never receive the
@@ -1010,7 +985,7 @@ links between unrelated concerns:
 
 ```text
 Metadata providers
-Sources and private acquisition network
+Sources
 Security
 Notifications
 Publishing destinations
@@ -1037,12 +1012,10 @@ Last Error
 
 Secrets must never be returned to the browser after storage.
 
-The Private Acquisition Network settings use the generic gateway fields above,
-not tunnel-service credentials or provider-selection controls. Tunnel
-configuration, DNS, fail-closed networking, leak prevention, and reconnection
-belong to the external gateway/deployment. Health status must distinguish an
-unavailable required gateway from a general provider failure, without exposing
-gateway credentials.
+Family Librarian has no Private Acquisition Network setting. Each external
+provider configures its own tunnel, DNS, fail-closed networking, leak prevention,
+and reconnection. Its health response should report when those dependencies
+make search or acquisition unavailable, without exposing credentials.
 
 ### Credential lifecycle
 
@@ -1095,7 +1068,6 @@ Examples:
 ```text
 MetadataProviderContractTests
 AcquisitionProviderProtocolTests
-PrivateEgressPolicyTests
 MalwareScannerContractTests
 NotificationProviderContractTests
 DeliveryProviderContractTests
@@ -1112,7 +1084,3 @@ without requiring Family Librarian's internal source code or database.
 The protocol conformance surface is defined by
 [04-external-provider-http-protocol.md](04-external-provider-http-protocol.md);
 internal provider contracts require their corresponding application-level tests.
-
-Private-egress conformance tests must confirm that `PRIVATE_REQUIRED` blocks
-the whole provider interaction when its gateway is unavailable and that no
-normal-egress fallback is attempted.
