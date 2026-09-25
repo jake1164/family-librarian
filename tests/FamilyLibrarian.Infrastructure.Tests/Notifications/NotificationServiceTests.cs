@@ -146,6 +146,24 @@ public sealed class NotificationServiceTests
         Assert.IsTrue(visible[0].IsRead);
     }
 
+    [TestMethod]
+    public async Task AnsweringDeliveryConfirmationDismissesOnlyThatAttemptForThatUser()
+    {
+        var repository = new InMemoryNotificationRepository();
+        var producer = CreateFor(repository, Guid.NewGuid());
+        var asReader = CreateFor(repository, Reader);
+        var attemptId = Guid.NewGuid();
+        var otherAttemptId = Guid.NewGuid();
+        await producer.RecordKindleDeliverySubmittedAsync(Reader, attemptId, "Gone Tomorrow", CancellationToken.None);
+        await producer.RecordKindleDeliverySubmittedAsync(Reader, otherAttemptId, "The Personal", CancellationToken.None);
+
+        await asReader.DismissKindleDeliveryConfirmationAsync(Reader, attemptId, CancellationToken.None);
+
+        var visible = await asReader.ListForViewerAsync(isAdmin: false, CancellationToken.None);
+        Assert.HasCount(1, visible);
+        Assert.AreEqual(otherAttemptId.ToString(), visible[0].SubjectId);
+    }
+
     private static NotificationService CreateFor(INotificationRepository repository, Guid userId) =>
         new(repository, new StubCurrentUser(userId), new FixedClock());
 

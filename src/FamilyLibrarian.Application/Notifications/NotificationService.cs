@@ -95,6 +95,37 @@ public sealed class NotificationService(
             cancellationToken);
 
     /// <summary>
+    /// Clears the recipient's in-app prompt once they answer whether this
+    /// submitted Kindle delivery arrived. The prompt is keyed to the attempt,
+    /// so answering one retry must not clear another attempt's prompt.
+    /// </summary>
+    public async Task DismissKindleDeliveryConfirmationAsync(
+        Guid userId, Guid attemptId, CancellationToken cancellationToken)
+    {
+        var notification = await repository.FindLatestAsync(
+            NotificationAudience.SingleUser,
+            userId,
+            NotificationCategories.KindleDeliveryConfirmationRequested,
+            NotificationSubjectTypes.DeliveryAttempt,
+            attemptId.ToString(),
+            cancellationToken);
+        if (notification is null)
+        {
+            return;
+        }
+
+        var receipt = await repository.FindReceiptAsync(notification.Id, userId, cancellationToken);
+        if (receipt is null)
+        {
+            receipt = new NotificationReceipt(notification.Id, userId);
+            await repository.AddReceiptAsync(receipt, cancellationToken);
+        }
+
+        receipt.Dismiss(clock.UtcNow);
+        await repository.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
     /// Admin-facing counterpart to <see cref="RecordKindleDeliverySubmittedAsync"/>:
     /// raised when a delivery attempt has no automatic path forward left -- a
     /// terminal failure, an ambiguous submission, or a user's report-missing --

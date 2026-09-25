@@ -504,15 +504,16 @@ public sealed class DeliveryAttemptServiceTests
         await context.Service.ReleaseForRequestFormatAsync(
             request, "42", "epub", Now, CancellationToken.None, workTitle: "Debt of Honor");
         var attempt = context.DeliveryAttempts.Rows.Single();
-        context.NotificationRepository.Added.Clear();
 
         var result = await context.Service.ReportMissingAsync(attempt.Id, CancellationToken.None);
 
         Assert.AreEqual(ConfirmDeliveryOutcome.Success, result.Outcome);
-        var notification = context.NotificationRepository.Added.Single();
+        var notification = context.NotificationRepository.Added.Single(
+            item => item.Category == NotificationCategories.DeliveryNeedsAttention);
         Assert.AreEqual(NotificationCategories.DeliveryNeedsAttention, notification.Category);
         Assert.AreEqual(NotificationAudience.AdminBroadcast, notification.Audience);
         Assert.AreEqual(attempt.DeliveryId.ToString(), notification.SubjectId);
+        Assert.AreEqual(Now, context.NotificationRepository.Receipts.Single().DismissedAtUtc);
     }
 
     [TestMethod]
@@ -543,11 +544,14 @@ public sealed class DeliveryAttemptServiceTests
         submitted.TransitionTo(DeliveryAttemptStatus.Submitting, Now);
         submitted.TransitionTo(DeliveryAttemptStatus.Submitted, Now);
         context.DeliveryAttempts.Add(submitted);
+        await context.Notifications.RecordKindleDeliverySubmittedAsync(
+            target.UserId, submitted.Id, "Test book", CancellationToken.None);
 
         var result = await context.Service.ConfirmReceivedAsync(submitted.Id, CancellationToken.None);
 
         Assert.AreEqual(ConfirmDeliveryOutcome.Success, result.Outcome);
         Assert.AreEqual(DeliveryConfirmationStatus.Confirmed, submitted.ConfirmationStatus);
+        Assert.AreEqual(Now, context.NotificationRepository.Receipts.Single().DismissedAtUtc);
     }
 
     [TestMethod]
@@ -1158,6 +1162,8 @@ public sealed class DeliveryAttemptServiceTests
     {
         public List<NotificationEvent> Added { get; } = [];
 
+        public List<NotificationReceipt> Receipts { get; } = [];
+
         public Task<NotificationEvent?> FindLatestAsync(
             NotificationAudience audience,
             Guid? recipientUserId,
@@ -1188,10 +1194,14 @@ public sealed class DeliveryAttemptServiceTests
 
         public Task<NotificationReceipt?> FindReceiptAsync(
             Guid notificationEventId, Guid userId, CancellationToken cancellationToken) =>
-            Task.FromResult<NotificationReceipt?>(null);
+            Task.FromResult(Receipts.SingleOrDefault(receipt =>
+                receipt.NotificationEventId == notificationEventId && receipt.UserId == userId));
 
-        public Task AddReceiptAsync(NotificationReceipt receipt, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+        public Task AddReceiptAsync(NotificationReceipt receipt, CancellationToken cancellationToken)
+        {
+            Receipts.Add(receipt);
+            return Task.CompletedTask;
+        }
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }

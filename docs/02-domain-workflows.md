@@ -850,8 +850,10 @@ missing does not itself retry it: an explicit retry creates a new row, and
 a `Submitted`+`ReportedMissing` row alongside an ordinary `Failed` one.
 Reaching `Submitted` also raises a
 `NotificationCategories.KindleDeliveryConfirmationRequested` notification
-asking the user to confirm receipt. Automatic retries never resend a
-Submitted attempt solely because the user reported it missing.
+asking the user to confirm receipt. Confirming receipt or reporting it missing
+dismisses that attempt's in-app prompt; reporting it missing still raises the
+admin-facing delivery-needs-attention notification. Automatic retries never
+resend a Submitted attempt solely because the user reported it missing.
 
 ```text
 DeliveryAttemptId
