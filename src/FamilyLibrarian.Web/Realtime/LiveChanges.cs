@@ -81,6 +81,9 @@ internal sealed class LiveChanges
                 case AcquisitionJob job:
                     changes.RequestIds.Add(job.RequestId);
                     break;
+                case ProviderAcquisitionJob job:
+                    changes.RequestIds.Add(job.RequestId);
+                    break;
                 case AcquisitionCandidate candidate:
                     changes.JobIds.Add(candidate.AcquisitionJobId);
                     break;

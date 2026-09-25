@@ -11,6 +11,7 @@ using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Publishing;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
 using FamilyLibrarian.Infrastructure.Identity;
@@ -158,6 +159,42 @@ public sealed class LiveUpdatesEndpointTests
         received = await BarrierAsync(factory, admin, owner);
         Assert.AreEqual(LiveUpdateTopics.None, received[0]);
         Assert.AreEqual(LiveUpdateTopics.Notifications, received[1]);
+    }
+
+    [TestMethod]
+    public async Task ProviderInteractionProgressReachesTheRequestOwnerAndAdmins()
+    {
+        await using var factory = new FamilyLibrarianAppFactory(WebTestFixture.Require(fixture).ConnectionString);
+        await using var admin = await Viewer.ConnectAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        await using var owner = await Viewer.ConnectAsync(factory, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
+        await using var unrelated = await Viewer.ConnectAsync(factory, await CreateUserAsync(factory), WebTestFixture.UserPassword);
+        var resolved = await owner.Http.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", null);
+        resolved.EnsureSuccessStatusCode();
+        var work = await resolved.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var request = new BookRequest(owner.UserId, work.Id, [RequestMediaType.Ebook], null, now);
+        var provider = new ExternalProvider($"live-update-{Guid.NewGuid():N}", "Live Update Test Provider", "http://provider.invalid", now);
+        var job = new ProviderAcquisitionJob(request.Id, request.Formats.Single().Id, provider.Id, provider.ProviderId,
+            null, Guid.NewGuid().ToString("N"), "candidate", null, null, now);
+        job.RecordSubmission("provider-job", ProviderAcquisitionJobLifecycleState.Running, now, now);
+        database.BookRequests.Add(request);
+        database.ExternalProviders.Add(provider);
+        database.ProviderAcquisitionJobs.Add(job);
+        await database.SaveChangesAsync();
+        await BarrierAsync(factory, admin, owner, unrelated);
+
+        job.ApplyStatus(
+            ProviderAcquisitionJobLifecycleState.Waiting, "user-interaction", "browser", "A check needs attention.",
+            now.AddMinutes(10), true, null, null, null, null, null, now.AddSeconds(30), now.AddSeconds(1));
+        await database.SaveChangesAsync();
+        var received = await BarrierAsync(factory, admin, owner, unrelated);
+        Assert.AreEqual(LiveUpdateTopics.Requests, received[0]);
+        Assert.AreEqual(LiveUpdateTopics.Requests, received[1]);
+        Assert.AreEqual(LiveUpdateTopics.None, received[2]);
     }
 
     [TestMethod]

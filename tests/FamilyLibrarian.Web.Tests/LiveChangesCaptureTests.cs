@@ -1,5 +1,6 @@
 using FamilyLibrarian.Contracts.Realtime;
 using FamilyLibrarian.Domain.Communications;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Realtime;
 using Microsoft.EntityFrameworkCore;
@@ -32,5 +33,25 @@ public sealed class LiveChangesCaptureTests
         Assert.AreEqual(LiveUpdateTopics.Communications, verified.UserTopics[ownerId]);
         Assert.AreEqual(LiveUpdateTopics.None, verified.AdminTopics);
         Assert.AreEqual(LiveUpdateTopics.None, verified.SharedTopics);
+    }
+
+    [TestMethod]
+    public void ProviderJobUpdatesInvalidateTheRelatedRequest()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=localhost;Database=unused;Username=unused;Password=unused")
+            .Options;
+        using var database = new AppDbContext(options);
+        var now = DateTimeOffset.UtcNow;
+        var job = new ProviderAcquisitionJob(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "test-provider", null, "idempotency", "candidate",
+            null, null, now);
+        job.RecordSubmission("provider-job", ProviderAcquisitionJobLifecycleState.Running, now, now);
+        database.ProviderAcquisitionJobs.Add(job);
+
+        var changes = LiveChanges.Capture(database);
+
+        Assert.IsTrue(changes.RequestIds.Contains(job.RequestId));
+        Assert.AreEqual(LiveUpdateTopics.Requests, changes.AdminTopics);
     }
 }
