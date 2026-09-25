@@ -133,20 +133,36 @@
                 // read/dismiss here the way notifications.Id-backed entries
                 // are -- it simply stops appearing once the job leaves
                 // Waiting (resolved, expired, or cancelled).
-                merged.AddRange(attention.WaitingProviderInteractions.Select(interaction => new TrayEntry(
-                    Id: null,
-                    Category: ProviderInteractionWaitingCategory,
-                    Severity: interaction.IsExpired ? "Error" : "Warning",
-                    Title: interaction.WorkTitle is { } title
-                        ? $"'{title}' needs a librarian action"
-                        : "A request needs a librarian action",
-                    Detail: interaction.IsExpired
-                        ? $"The provider's verification window for {interaction.ProviderId} expired."
-                        : $"{interaction.ProviderId} is waiting on a verification step.",
-                    RepeatCount: 1,
-                    Timestamp: interaction.ExpiresAtUtc ?? DateTimeOffset.UtcNow,
-                    IsRead: false,
-                    Href: $"admin/requests/{interaction.RequestId}")));
+                merged.AddRange(attention.WaitingProviderInteractions.Select(interaction =>
+                {
+                    // HUMAN-ACQ-1 D7: a claimed interaction (in-app or via a
+                    // Matrix magic link) is already being worked -- informational,
+                    // not an action-needed warning, and never claims IsExpired's
+                    // Error severity for a job someone is actively handling.
+                    var claimedByOther = !string.IsNullOrWhiteSpace(interaction.ClaimedByDisplayName) &&
+                        !interaction.IsClaimedByCurrentUser;
+
+                    return new TrayEntry(
+                        Id: null,
+                        Category: ProviderInteractionWaitingCategory,
+                        Severity: claimedByOther ? "Info" : interaction.IsExpired ? "Error" : "Warning",
+                        Title: claimedByOther
+                            ? (interaction.WorkTitle is { } claimedTitle
+                                ? $"'{claimedTitle}' is being verified by {interaction.ClaimedByDisplayName}"
+                                : $"A request is being verified by {interaction.ClaimedByDisplayName}")
+                            : interaction.WorkTitle is { } title
+                                ? $"'{title}' needs a librarian action"
+                                : "A request needs a librarian action",
+                        Detail: claimedByOther
+                            ? "Nothing to do right now."
+                            : interaction.IsExpired
+                                ? $"The provider's verification window for {interaction.ProviderId} expired."
+                                : $"{interaction.ProviderId} is waiting on a verification step.",
+                        RepeatCount: 1,
+                        Timestamp: interaction.ExpiresAtUtc ?? DateTimeOffset.UtcNow,
+                        IsRead: false,
+                        Href: $"admin/requests/{interaction.RequestId}");
+                }));
             }
             catch (HttpRequestException)
             {

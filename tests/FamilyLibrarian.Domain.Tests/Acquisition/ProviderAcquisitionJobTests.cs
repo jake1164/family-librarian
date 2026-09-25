@@ -66,4 +66,47 @@ public sealed class ProviderAcquisitionJobTests
 
         Assert.AreEqual(Now.AddSeconds(5), job.InteractionViewSessionStartedAtUtc);
     }
+
+    [TestMethod]
+    public void MovingIntoWaitingFromANonWaitingStateSetsWaitingSinceUtc()
+    {
+        var job = NewJob(); // starts Queued
+
+        job.RecordSubmission("provider-job-1", ProviderAcquisitionJobLifecycleState.Waiting, Now, Now.AddSeconds(1));
+
+        Assert.AreEqual(Now.AddSeconds(1), job.WaitingSinceUtc);
+        Assert.IsNull(job.LeftWaitingAtUtc);
+    }
+
+    [TestMethod]
+    public void MovingOutOfWaitingSetsLeftWaitingAtUtcAndClearsWaitingSinceUtc()
+    {
+        var job = NewWaitingJob();
+
+        job.ApplyStatus(
+            ProviderAcquisitionJobLifecycleState.Completed, phase: null,
+            interactionType: null, interactionMessage: null, interactionExpiresAtUtc: null,
+            interactionResumeSupported: null, interactionActionUrl: null,
+            progressPercent: null, progressBytesCompleted: null, progressBytesTotal: null, progressMessage: null,
+            nextPollAtUtc: null, atUtc: Now.AddSeconds(10));
+
+        Assert.IsNull(job.WaitingSinceUtc);
+        Assert.AreEqual(Now.AddSeconds(10), job.LeftWaitingAtUtc);
+    }
+
+    [TestMethod]
+    public void StayingInWaitingChangesNeitherWaitingTimestamp()
+    {
+        var job = NewWaitingJob(); // WaitingSinceUtc == Now
+
+        job.ApplyStatus(
+            ProviderAcquisitionJobLifecycleState.Waiting, phase: "user-interaction",
+            interactionType: "browser", interactionMessage: "still waiting", interactionExpiresAtUtc: Now.AddMinutes(10),
+            interactionResumeSupported: true, interactionActionUrl: null,
+            progressPercent: null, progressBytesCompleted: null, progressBytesTotal: null, progressMessage: null,
+            nextPollAtUtc: Now.AddSeconds(15), atUtc: Now.AddSeconds(10));
+
+        Assert.AreEqual(Now, job.WaitingSinceUtc);
+        Assert.IsNull(job.LeftWaitingAtUtc);
+    }
 }

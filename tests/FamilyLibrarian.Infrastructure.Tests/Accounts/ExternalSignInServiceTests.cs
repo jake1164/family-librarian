@@ -214,6 +214,16 @@ public sealed class ExternalSignInServiceTests
             Guid userId, AudiobookNarrationPreference preference, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<IReadOnlyList<AdminAccountSummary>> ListActiveAdminsAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<QuietHours?> GetQuietHoursAsync(Guid userId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<AccountOperationResult> SetQuietHoursAsync(
+            Guid userId, QuietHours? quietHours, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         private static UserAccount ToAccount(Row row) =>
             new(row.Id, row.Email, row.DisplayName, row.Status, row.IsAdmin, DateTimeOffset.UtcNow, null);
 

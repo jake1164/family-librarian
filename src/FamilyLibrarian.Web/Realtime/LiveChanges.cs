@@ -138,6 +138,12 @@ internal sealed class LiveChanges
                     changes.AdminTopics |= LiveUpdateTopics.Publishing;
                     changes.SharedTopics |= LiveUpdateTopics.System;
                     break;
+                case ProviderInteractionClaim:
+                case ProviderInteractionAlert:
+                case ProviderInteractionAlertRecipient:
+                    // HUMAN-ACQ-1: the tray and provider-interactions page observe this topic.
+                    changes.AdminTopics |= LiveUpdateTopics.Requests;
+                    break;
             }
         }
 

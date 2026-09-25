@@ -33,6 +33,9 @@ public sealed class RemoteViewSessionRegistry
         return false;
     }
 
+    /// <summary>Whether a view session is currently active for this job — HUMAN-ACQ-1's claim-lease check.</summary>
+    public bool IsActive(Guid jobId) => sessions.ContainsKey(jobId);
+
     /// <summary>Releases the job so a later session may claim it. Idempotent.</summary>
     public void Release(Guid jobId)
     {
@@ -57,5 +60,22 @@ public sealed class RemoteViewSessionRegistry
 
         closeSignal.Cancel();
         return true;
+    }
+
+    /// <summary>Ends the old viewer before a replacement is allowed to connect.</summary>
+    public async Task<bool> RequestCloseAndWaitAsync(Guid jobId, CancellationToken cancellationToken)
+    {
+        if (!RequestClose(jobId))
+        {
+            return true;
+        }
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (IsActive(jobId) && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(50, cancellationToken);
+        }
+
+        return !IsActive(jobId);
     }
 }

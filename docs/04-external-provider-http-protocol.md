@@ -555,6 +555,13 @@ This call is exempt from the 20-second control-plane transport timeout (§9):
 its lifetime is the interaction's own TTL, the same exemption already given
 to `GET .../outputs/{outputId}`.
 
+Family Librarian may also notify administrators out of band (for example, a
+chat message with a single-use link) when a job has been waiting long enough
+to need a person; a provider sees no protocol difference either way — the
+same brokered view above is what the notified administrator's browser
+connects to once Family Librarian has verified and authorized that specific
+click, never a direct path to this endpoint.
+
 ### Structured failure
 
 ```json

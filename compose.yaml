@@ -105,6 +105,14 @@ services:
       Storage__RootPath: /data/family-librarian
       ClamAv__Host: clamav
       ClamAv__Port: 3310
+      # Required to enable administrator-brokered remote view (HUMAN-ACQ-1
+      # Phase 3) and, on top of it, the Matrix verification alert -- both
+      # fail closed (no WebSocket upgrade, alert disabled) until set. See
+      # docs/06-deployment-and-recovery.md. Both must name this deployment's
+      # own public HTTPS origin, and Interaction__PublicOrigin must also
+      # appear in RemoteView__AllowedOrigins.
+      # RemoteView__AllowedOrigins__0: https://fl.example.com
+      # Interaction__PublicOrigin: https://fl.example.com
     # Without this, `docker compose up --wait` returns the moment the container
     # is *running* — which is before Kestrel has bound the port. The VS Code
     # task then opens a browser against an app that cannot answer yet, and the

@@ -483,6 +483,11 @@ public sealed class DirectAcquisitionServiceTests
                 Jobs.Where(job => job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting &&
                     job.InteractionType is not null).ToArray());
 
+        public Task<bool> HasLeftWaitingSinceAsync(
+            Guid externalProviderId, DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
+            Task.FromResult(Jobs.Any(job => job.ExternalProviderId == externalProviderId &&
+                job.LeftWaitingAtUtc is not null && job.LeftWaitingAtUtc >= sinceUtc));
+
         public void Add(ProviderAcquisitionJob job) => Jobs.Add(job);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;

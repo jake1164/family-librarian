@@ -29,4 +29,9 @@ public sealed record ProviderInteractionResponse(
     // still renders, just without this context.
     string? WorkTitle,
     IReadOnlyList<string>? Authors,
-    string? RequesterDisplayName);
+    string? RequesterDisplayName,
+    // HUMAN-ACQ-1 D7: set once another admin (or a Matrix magic link) has
+    // claimed this job, so the queue can show "Being handled by {name}" and
+    // offer Take over instead of Start. Never carries token or link data.
+    string? ClaimedByDisplayName,
+    bool IsClaimedByCurrentUser);

@@ -28,6 +28,23 @@ public interface IMatrixClient
         MatrixSettings settings, string accessToken, string roomId, string text, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Sends an HTML-formatted message and returns the homeserver's event id —
+    /// HUMAN-ACQ-1 needs the id to later edit this same message (<see cref="EditMessageAsync"/>).
+    /// <paramref name="plainBody"/> is the fallback for clients that ignore <c>formatted_body</c>.
+    /// </summary>
+    Task<MatrixSendResult> SendRichMessageAsync(
+        MatrixSettings settings, string accessToken, string roomId, string plainBody, string htmlBody,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Edits (<c>m.replace</c>) a previously sent message in place — HUMAN-ACQ-1 uses this so a
+    /// stale "verify now" link is never left live once the alert's state has moved on.
+    /// </summary>
+    Task<SendResult> EditMessageAsync(
+        MatrixSettings settings, string accessToken, string roomId, string eventId, string plainBody,
+        string htmlBody, CancellationToken cancellationToken);
+
+    /// <summary>
     /// One <c>/sync</c> long-poll pass across every room the bot belongs to.
     /// <paramref name="since"/> is <see langword="null"/> only on the very
     /// first call; every call after that resumes from the previous result's
@@ -42,6 +59,13 @@ public sealed record MatrixRoomResult(bool Succeeded, string? RoomId, string? Er
     public static MatrixRoomResult Success(string roomId) => new(true, roomId, null);
 
     public static MatrixRoomResult Failure(string error) => new(false, null, error);
+}
+
+public sealed record MatrixSendResult(bool Succeeded, string? EventId, string? Error)
+{
+    public static MatrixSendResult Success(string? eventId) => new(true, eventId, null);
+
+    public static MatrixSendResult Failure(string error) => new(false, null, error);
 }
 
 public sealed record MatrixInboundMessage(string RoomId, string SenderUserId, string Body);

@@ -1,8 +1,13 @@
 @page "/settings/matrix"
 @attribute [Authorize]
+@using FamilyLibrarian.Contracts.Accounts
 @using FamilyLibrarian.Contracts.Communications
+@using FamilyLibrarian.Web.Client.Accounts
 @using FamilyLibrarian.Web.Client.Communications
+@implements IAsyncDisposable
 @inject MatrixLinkApiClient MatrixLinkApi
+@inject QuietHoursApiClient QuietHoursApi
+@inject IJSRuntime JS
 @inject ISnackbar Snackbar
 
 <PageTitle>Matrix chat · Family Librarian</PageTitle>
@@ -64,6 +69,61 @@ else
     </MudPaper>
 }
 
+<MudText Typo="Typo.h4" GutterBottom="true" Class="mt-8">Quiet hours</MudText>
+<MudText Typo="Typo.body1" Class="mb-6">
+    During these hours Family Librarian holds verification alerts until the window ends,
+    instead of sending them right away. (Other notifications are not affected yet.)
+</MudText>
+
+@if (isLoadingQuietHours)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading quiet hours" />
+}
+else if (quietHoursLoadFailed)
+{
+    <MudAlert Severity="Severity.Error">We could not load your quiet hours.</MudAlert>
+}
+else
+{
+    <MudPaper Class="pa-4" Outlined="true">
+        <MudStack Spacing="3">
+            <MudSwitch T="bool" Value="quietHoursEnabled" ValueChanged="OnQuietHoursEnabledChangedAsync"
+                       Color="Color.Primary" Label="Hold verification alerts during a daily window" />
+
+            @if (quietHoursEnabled)
+            {
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudTextField T="string" @bind-Value="timeZoneId" Label="Time zone" Disabled="@busy"
+                                  Placeholder="@("America/New_York")" Style="min-width:16rem;" />
+                    <MudButton Variant="Variant.Text" Disabled="@busy" OnClick="UseBrowserTimeZoneAsync">
+                        Use my browser's time zone
+                    </MudButton>
+                </MudStack>
+
+                <MudStack Row="true" Spacing="4" Wrap="Wrap.Wrap">
+                    <MudTimePicker Label="Start" @bind-Time="startTime" Disabled="@busy" />
+                    <MudTimePicker Label="End" @bind-Time="endTime" Disabled="@busy" />
+                </MudStack>
+
+                <MudText Typo="Typo.caption">
+                    A window that ends before it starts (e.g. 22:00-07:00) crosses midnight.
+                </MudText>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(quietHoursError))
+            {
+                <MudAlert Severity="Severity.Error">@quietHoursError</MudAlert>
+            }
+
+            <div>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveQuietHoursAsync">
+                    Save quiet hours
+                </MudButton>
+            </div>
+        </MudStack>
+    </MudPaper>
+}
+
 @code {
     private bool isLoading = true;
     private bool loadFailed;
@@ -71,6 +131,15 @@ else
     private MatrixLinkStatusResponse? status;
     private string matrixUserId = string.Empty;
     private string? errorMessage;
+
+    private bool isLoadingQuietHours = true;
+    private bool quietHoursLoadFailed;
+    private bool quietHoursEnabled;
+    private string timeZoneId = string.Empty;
+    private TimeSpan? startTime;
+    private TimeSpan? endTime;
+    private string? quietHoursError;
+    private IJSObjectReference? timezoneInterop;
 
     protected override async Task OnInitializedAsync()
     {
@@ -86,6 +155,89 @@ else
         finally
         {
             isLoading = false;
+        }
+
+        try
+        {
+            var quietHours = await QuietHoursApi.GetAsync();
+            if (quietHours is { TimeZoneId: not null, StartMinute: { } start, EndMinute: { } end })
+            {
+                quietHoursEnabled = true;
+                timeZoneId = quietHours.TimeZoneId;
+                startTime = TimeSpan.FromMinutes(start);
+                endTime = TimeSpan.FromMinutes(end);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            quietHoursLoadFailed = true;
+        }
+        finally
+        {
+            isLoadingQuietHours = false;
+        }
+    }
+
+    private async Task OnQuietHoursEnabledChangedAsync(bool enabled)
+    {
+        quietHoursEnabled = enabled;
+        if (enabled && string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            await UseBrowserTimeZoneAsync();
+        }
+    }
+
+    private async Task UseBrowserTimeZoneAsync()
+    {
+        try
+        {
+            timezoneInterop ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/timezone-interop.js");
+            timeZoneId = await timezoneInterop.InvokeAsync<string>("getBrowserTimeZone");
+        }
+        catch (JSException)
+        {
+            // The field stays editable either way; this is only a convenience default.
+        }
+    }
+
+    private async Task SaveQuietHoursAsync()
+    {
+        busy = true;
+        quietHoursError = null;
+
+        try
+        {
+            QuietHoursResult result;
+            if (!quietHoursEnabled)
+            {
+                result = await QuietHoursApi.SetAsync(null, null, null);
+            }
+            else if (startTime is { } start && endTime is { } end && !string.IsNullOrWhiteSpace(timeZoneId))
+            {
+                result = await QuietHoursApi.SetAsync(timeZoneId, (int)start.TotalMinutes, (int)end.TotalMinutes);
+            }
+            else
+            {
+                quietHoursError = "Enter a time zone and both a start and end time.";
+                return;
+            }
+
+            if (result.Succeeded)
+            {
+                Snackbar.Add("Quiet hours saved.", Severity.Success);
+            }
+            else
+            {
+                quietHoursError = result.Error;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            quietHoursError = "That could not be saved. Please try again.";
+        }
+        finally
+        {
+            busy = false;
         }
     }
 
@@ -142,6 +294,21 @@ else
         finally
         {
             busy = false;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (timezoneInterop is not null)
+        {
+            try
+            {
+                await timezoneInterop.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // The circuit is already gone -- nothing left to clean up.
+            }
         }
     }
 }

@@ -72,7 +72,33 @@
                     </MudStack>
                 </MudCardContent>
                 <MudCardActions>
-                    @if (interaction.CanViewNow)
+                    @if (!string.IsNullOrWhiteSpace(interaction.ClaimedByDisplayName) && !interaction.IsClaimedByCurrentUser)
+                    {
+                        @* HUMAN-ACQ-1 D7: another admin (in-app or via Matrix link) already
+                           holds this job. Start/Open stay hidden until an explicit take-over. *@
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            Being handled by @interaction.ClaimedByDisplayName
+                        </MudText>
+                        @if (confirmTakeOverJobId == interaction.ProviderAcquisitionJobId)
+                        {
+                            <MudText Typo="Typo.caption">Take over from @interaction.ClaimedByDisplayName?</MudText>
+                            <MudButton Color="Color.Warning" Variant="Variant.Filled" Disabled="@isActing"
+                                       OnClick="() => TakeOverAsync(interaction.ProviderAcquisitionJobId)">
+                                Confirm take over
+                            </MudButton>
+                            <MudButton Variant="Variant.Text" Disabled="@isActing" OnClick="CancelTakeOverConfirmation">
+                                Never mind
+                            </MudButton>
+                        }
+                        else
+                        {
+                            <MudButton Color="Color.Warning" Variant="Variant.Outlined" Disabled="@isActing"
+                                       OnClick="() => ConfirmTakeOver(interaction.ProviderAcquisitionJobId)">
+                                Take over
+                            </MudButton>
+                        }
+                    }
+                    else if (interaction.CanViewNow)
                     {
                         <MudButton Color="Color.Primary" Variant="Variant.Filled"
                                    StartIcon="@Icons.Material.Filled.OpenInNew" Disabled="@(isActing || interaction.IsExpired)"
@@ -119,6 +145,7 @@
 @code {
     private IReadOnlyList<ProviderInteractionResponse> interactions = [];
     private Guid? confirmFallbackJobId;
+    private Guid? confirmTakeOverJobId;
     private bool isActing;
     private bool isLoading = true;
     private string? errorMessage;
@@ -166,6 +193,25 @@
     private void ConfirmFallback(Guid jobId) => confirmFallbackJobId = jobId;
 
     private void CancelFallbackConfirmation() => confirmFallbackJobId = null;
+
+    private void ConfirmTakeOver(Guid jobId) => confirmTakeOverJobId = jobId;
+
+    private void CancelTakeOverConfirmation() => confirmTakeOverJobId = null;
+
+    private async Task TakeOverAsync(Guid jobId)
+    {
+        isActing = true;
+        try
+        {
+            var outcome = await Interactions.TakeOverAsync(jobId);
+            confirmTakeOverJobId = null;
+            await HandleOutcomeAsync(outcome, "Took over this verification.");
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
 
     private async Task UseFallbackAsync(Guid jobId)
     {

@@ -21,6 +21,10 @@ public sealed class ProviderInteractionsApiClient(HttpClient httpClient, Antifor
     public Task<ProviderInteractionCommandOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default) =>
         SendAsync(jobId, "cancel", cancellationToken);
 
+    /// <summary>Explicit, audited override: replaces whoever currently holds the claim, then starts the session.</summary>
+    public Task<ProviderInteractionCommandOutcome> TakeOverAsync(Guid jobId, CancellationToken cancellationToken = default) =>
+        SendAsync(jobId, "take-over", cancellationToken);
+
     /// <summary>
     /// The brokered remote-view WebSocket (HUMAN-ACQ-1 Phase 3). Built from
     /// <see cref="HttpClient.BaseAddress"/> rather than a relative path,

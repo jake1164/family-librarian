@@ -101,6 +101,82 @@ public sealed class HttpMatrixClient(IHttpClientFactory httpClientFactory) : IMa
         }
     }
 
+    public async Task<MatrixSendResult> SendRichMessageAsync(
+        MatrixSettings settings, string accessToken, string roomId, string plainBody, string htmlBody,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var client = CreateClient(settings, accessToken);
+            var payload = new JsonObject
+            {
+                ["msgtype"] = "m.text",
+                ["body"] = plainBody,
+                ["format"] = "org.matrix.custom.html",
+                ["formatted_body"] = htmlBody,
+            };
+
+            var transactionId = Guid.NewGuid().ToString("N");
+            var requestUri = $"_matrix/client/v3/rooms/{Uri.EscapeDataString(roomId)}/send/m.room.message/{transactionId}";
+            using var response = await client.PutAsJsonAsync(requestUri, payload, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                // DescribeErrorAsync only ever reads the response body, never the
+                // request payload above -- the link lives in that payload and must
+                // never reach a log or error string (HUMAN-ACQ-1).
+                return MatrixSendResult.Failure(await DescribeErrorAsync(response, cancellationToken));
+            }
+
+            var body = await ReadJsonAsync(response, cancellationToken);
+            return MatrixSendResult.Success(body?["event_id"]?.GetValue<string>());
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            return MatrixSendResult.Failure($"Could not reach the Matrix homeserver: {exception.Message}");
+        }
+    }
+
+    public async Task<SendResult> EditMessageAsync(
+        MatrixSettings settings, string accessToken, string roomId, string eventId, string plainBody,
+        string htmlBody, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var client = CreateClient(settings, accessToken);
+            var newContent = new JsonObject
+            {
+                ["msgtype"] = "m.text",
+                ["body"] = plainBody,
+                ["format"] = "org.matrix.custom.html",
+                ["formatted_body"] = htmlBody,
+            };
+            var payload = new JsonObject
+            {
+                ["msgtype"] = "m.text",
+                ["body"] = $"* {plainBody}",
+                ["format"] = "org.matrix.custom.html",
+                ["formatted_body"] = $"* {htmlBody}",
+                ["m.new_content"] = newContent,
+                ["m.relates_to"] = new JsonObject
+                {
+                    ["rel_type"] = "m.replace",
+                    ["event_id"] = eventId,
+                },
+            };
+
+            var transactionId = Guid.NewGuid().ToString("N");
+            var requestUri = $"_matrix/client/v3/rooms/{Uri.EscapeDataString(roomId)}/send/m.room.message/{transactionId}";
+            using var response = await client.PutAsJsonAsync(requestUri, payload, cancellationToken);
+            return response.IsSuccessStatusCode
+                ? SendResult.Success()
+                : SendResult.Failure(await DescribeErrorAsync(response, cancellationToken));
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            return SendResult.Failure($"Could not reach the Matrix homeserver: {exception.Message}");
+        }
+    }
+
     public async Task<MatrixSyncResult> SyncAsync(
         MatrixSettings settings, string accessToken, string? since, CancellationToken cancellationToken)
     {

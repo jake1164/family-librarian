@@ -152,6 +152,14 @@ public sealed class MatrixIdentityLinkServiceTests
         public Task<MatrixSyncResult> SyncAsync(
             MatrixSettings settings, string accessToken, string? since, CancellationToken cancellationToken) =>
             Task.FromResult(MatrixSyncResult.Success(since, []));
+
+        public Task<MatrixSendResult> SendRichMessageAsync(
+            MatrixSettings settings, string accessToken, string roomId, string plainBody, string htmlBody,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<SendResult> EditMessageAsync(
+            MatrixSettings settings, string accessToken, string roomId, string eventId, string plainBody,
+            string htmlBody, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class FakeCredentialProtector : ICredentialProtector

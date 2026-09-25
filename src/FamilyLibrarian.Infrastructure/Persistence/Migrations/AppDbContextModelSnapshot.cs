@@ -553,6 +553,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("interaction_view_session_started_at_utc");
 
+                    b.Property<DateTimeOffset?>("LeftWaitingAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("left_waiting_at_utc");
+
                     b.Property<string>("LifecycleState")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -622,6 +626,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("xid")
                         .HasColumnName("xmin");
+
+                    b.Property<DateTimeOffset?>("WaitingSinceUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("waiting_since_utc");
 
                     b.HasKey("Id");
 
@@ -753,6 +761,204 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasIndex("RequestFormatId", "ProviderId", "AttemptedAtUtc");
 
                     b.ToTable("provider_attempts", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlert", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("ClaimedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_at_utc");
+
+                    b.Property<string>("ClaimedByDisplayName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("claimed_by_display_name");
+
+                    b.Property<Guid?>("ClaimedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("claimed_by_user_id");
+
+                    b.Property<Guid?>("ClaimedJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("claimed_job_id");
+
+                    b.Property<string>("CloseReason")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("close_reason");
+
+                    b.Property<DateTimeOffset?>("ClosedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("closed_at_utc");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid>("ExternalProviderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("external_provider_id");
+
+                    b.Property<string>("ProviderDisplayName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("provider_display_name");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("state");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExternalProviderId")
+                        .IsUnique()
+                        .HasFilter("state IN ('Open','Claimed')");
+
+                    b.ToTable("provider_interaction_alerts", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlertRecipient", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AlertId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("alert_id");
+
+                    b.Property<string>("DeliveryState")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("delivery_state");
+
+                    b.Property<string>("EventId")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("event_id");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("last_error");
+
+                    b.Property<string>("RenderedState")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("rendered_state");
+
+                    b.Property<string>("RoomId")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("room_id");
+
+                    b.Property<int>("SendAttempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("send_attempts");
+
+                    b.Property<DateTimeOffset?>("SentAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at_utc");
+
+                    b.Property<DateTimeOffset?>("TokenConsumedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("token_consumed_at_utc");
+
+                    b.Property<string>("TokenHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("token_hash");
+
+                    b.Property<DateTimeOffset?>("TokenRevokedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("token_revoked_at_utc");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AlertId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasFilter("token_hash IS NOT NULL");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("provider_interaction_alert_recipients", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionClaim", b =>
+                {
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("job_id");
+
+                    b.Property<Guid?>("AlertId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("alert_id");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("channel");
+
+                    b.Property<DateTimeOffset>("ClaimedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_at_utc");
+
+                    b.Property<Guid>("ClaimedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("claimed_by_user_id");
+
+                    b.Property<Guid>("ExternalProviderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("external_provider_id");
+
+                    b.Property<DateTimeOffset?>("LastViewerActivityAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_viewer_activity_at_utc");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("JobId");
+
+                    b.HasIndex("ClaimedByUserId");
+
+                    b.ToTable("provider_interaction_claims", "acquisition");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Audit.AuditEvent", b =>
@@ -3406,6 +3612,19 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<bool>("PhoneNumberConfirmed")
                         .HasColumnType("boolean");
 
+                    b.Property<int?>("QuietHoursEndMinute")
+                        .HasColumnType("integer")
+                        .HasColumnName("quiet_hours_end_minute");
+
+                    b.Property<int?>("QuietHoursStartMinute")
+                        .HasColumnType("integer")
+                        .HasColumnName("quiet_hours_start_minute");
+
+                    b.Property<string>("QuietHoursTimeZoneId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("quiet_hours_time_zone_id");
+
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("text");
 
@@ -3678,6 +3897,47 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("RequestId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlert", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Providers.ExternalProvider", null)
+                        .WithMany()
+                        .HasForeignKey("ExternalProviderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlertRecipient", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlert", "Alert")
+                        .WithMany("Recipients")
+                        .HasForeignKey("AlertId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Alert");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionClaim", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("ClaimedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", null)
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
@@ -4052,6 +4312,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", b =>
                 {
                     b.Navigation("Outputs");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlert", b =>
+                {
+                    b.Navigation("Recipients");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.Author", b =>

@@ -23,6 +23,7 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddProviderInteractionAlertOptions(builder.Configuration, builder.Environment.IsDevelopment());
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<LiveConnections>();
 builder.Services.AddSingleton<LiveUpdatesPublisher>();
@@ -49,6 +50,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
     builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();
     builder.Services.AddHostedService<MatrixInboundSyncHostedService>();
+    builder.Services.AddHostedService<ProviderInteractionAlertHostedService>();
 }
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgresql")
@@ -119,6 +121,25 @@ builder.Services.AddRateLimiter(options =>
         limiterOptions.Window = TimeSpan.FromMinutes(1);
         limiterOptions.QueueLimit = 0;
     });
+
+    // HUMAN-ACQ-1's magic-link claim: the same reasoning as invitation
+    // redemption above -- the token is 256 bits, so this bounds resource use
+    // and log/DB churn from a guessing attempt, not the guess's own odds.
+    options.AddPolicy(InteractionLinkEndpoints.RateLimitPolicy, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = redemptionAttemptsPerMinute,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+    options.AddFixedWindowLimiter(InteractionLinkEndpoints.GlobalRateLimitPolicy, limiterOptions =>
+    {
+        limiterOptions.PermitLimit = Math.Max(redemptionAttemptsPerMinute * 20, 100);
+        limiterOptions.Window = TimeSpan.FromMinutes(1);
+        limiterOptions.QueueLimit = 0;
+    });
 });
 
 // The WebAssembly client cannot read an HttpOnly cookie, so the request token
@@ -164,6 +185,11 @@ app.Services.EnsureAssetValidatorsAreConfigured();
 // F4: a soft warning, not a startup guard — see WarnIfKeyRingIsUnprotected's
 // own remarks for why an unconfigured certificate does not fail closed here.
 app.Services.WarnIfKeyRingIsUnprotected();
+
+// HUMAN-ACQ-1: a fresh install has no Interaction:PublicOrigin yet, so this is a
+// warning, not a startup guard — see AddProviderInteractionAlertOptions above for
+// the checks that DO fail closed when the setting is present but wrong.
+app.Services.WarnIfInteractionAlertsAreDisabled();
 
 if (app.Configuration.GetValue<bool>("Authentication:EnableLocal"))
 {
@@ -253,6 +279,7 @@ app.MapFeedbackEndpoints();
 app.MapFollowingEndpoints();
 app.MapDeliveryTargetEndpoints();
 app.MapAudiobookNarrationPreferenceEndpoints();
+app.MapQuietHoursEndpoints();
 app.MapSecurityQueueEndpoints();
 app.MapLiveUpdatesEndpoints();
 app.MapInvitationEndpoints();
@@ -267,6 +294,7 @@ app.MapOidcSettingsEndpoints();
 app.MapExternalProviderEndpoints();
 app.MapProviderCatalogEndpoints();
 app.MapSettingsBackupEndpoints();
+app.MapInteractionLinkEndpoints();
 
 app.MapFallbackToFile("index.html");
 

@@ -43,4 +43,18 @@ public sealed class AppUser : IdentityUser<Guid>
     /// manual repair after upgrade.
     /// </remarks>
     public AudiobookNarrationPreference AudiobookNarrationPreference { get; set; } = AudiobookNarrationPreference.PreferHuman;
+
+    /// <summary>
+    /// This account's own "do not disturb" window (HUMAN-ACQ-1 D9). All three quiet-hours
+    /// fields are null together, meaning no quiet hours are set. Enforced only by the
+    /// Matrix verification alert in this slice -- see <c>NOTIFY-QUIET-1</c> for extending
+    /// it to every outbound notification.
+    /// </summary>
+    public string? QuietHoursTimeZoneId { get; set; }
+
+    /// <summary>Minutes after local midnight (0-1439). Null iff quiet hours are unset.</summary>
+    public int? QuietHoursStartMinute { get; set; }
+
+    /// <summary>Minutes after local midnight (0-1439). Null iff quiet hours are unset.</summary>
+    public int? QuietHoursEndMinute { get; set; }
 }

@@ -21,6 +21,7 @@ public sealed class ProviderRemoteViewBrokerService(
     IProviderRemoteViewClient remoteViewClient,
     ICredentialProtector protector,
     RemoteViewSessionRegistry sessions,
+    IProviderInteractionClaimStore claims,
     IAuditWriter audit,
     IClock clock)
 {
@@ -65,7 +66,9 @@ public sealed class ProviderRemoteViewBrokerService(
     /// ends, for any reason. Never throws for an ordinary end-of-session; a
     /// caller only needs to handle this returning.
     /// </summary>
-    public async Task RunAsync(Guid jobId, WebSocket browserSocket, CancellationToken hostShutdownToken)
+    public async Task RunAsync(
+        Guid jobId, WebSocket browserSocket, CancellationToken hostShutdownToken,
+        Func<CancellationToken, Task<bool>>? authorizationStillValid = null)
     {
         if (!sessions.TryAcquire(jobId, out var closeSignal))
         {
@@ -112,7 +115,9 @@ public sealed class ProviderRemoteViewBrokerService(
                 AuditActions.ProviderInteractionViewConnected, AuditSubjectTypes.ProviderInteraction, job.Id.ToString(),
                 new { job.Id, job.RequestId, job.RequestFormatId, job.ProviderId }, CancellationToken.None);
 
-            reason = await PumpAsync(jobId, browserSocket, providerConnection, linked.Token);
+            await RecordViewerActivityAsync(jobId, CancellationToken.None);
+
+            reason = await PumpAsync(jobId, browserSocket, providerConnection, authorizationStillValid, linked.Token);
         }
         catch (OperationCanceledException)
         {
@@ -131,6 +136,7 @@ public sealed class ProviderRemoteViewBrokerService(
                     providerAuditSubjectId.ToString(), new { JobId = providerAuditSubjectId, Reason = reason },
                     CancellationToken.None);
                 await providerConnection.DisposeAsync();
+                await RecordViewerActivityAsync(jobId, CancellationToken.None);
             }
 
             sessions.Release(jobId);
@@ -138,14 +144,34 @@ public sealed class ProviderRemoteViewBrokerService(
         }
     }
 
+    /// <summary>
+    /// Records that a claim's session is (still) alive, at connect and again at
+    /// disconnect -- so a claim's lease (HUMAN-ACQ-1) never lapses mid-session and
+    /// starts its countdown fresh from the moment the viewer actually left. A
+    /// missing claim (in-app sessions predate the claim table; a claim the alert
+    /// worker already reaped) is a no-op, not an error.
+    /// </summary>
+    private async Task RecordViewerActivityAsync(Guid jobId, CancellationToken cancellationToken)
+    {
+        var claim = await claims.FindAsync(jobId, cancellationToken);
+        if (claim is null)
+        {
+            return;
+        }
+
+        claim.RecordViewerActivity(clock.UtcNow);
+        await claims.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task<string> PumpAsync(
-        Guid jobId, WebSocket browserSocket, IProviderRemoteViewConnection providerConnection, CancellationToken sessionToken)
+        Guid jobId, WebSocket browserSocket, IProviderRemoteViewConnection providerConnection,
+        Func<CancellationToken, Task<bool>>? authorizationStillValid, CancellationToken sessionToken)
     {
         using var lifecycleCts = CancellationTokenSource.CreateLinkedTokenSource(sessionToken);
 
         var browserToProvider = PumpBrowserToProviderAsync(browserSocket, providerConnection, lifecycleCts.Token);
         var providerToBrowser = PumpProviderToBrowserAsync(providerConnection, browserSocket, lifecycleCts.Token);
-        var lifecycleWatch = WatchLifecycleAsync(jobId, lifecycleCts.Token);
+        var lifecycleWatch = WatchLifecycleAsync(jobId, authorizationStillValid, lifecycleCts.Token);
         var pumps = new[] { browserToProvider, providerToBrowser, lifecycleWatch };
 
         var winner = await Task.WhenAny(pumps);
@@ -216,11 +242,18 @@ public sealed class ProviderRemoteViewBrokerService(
         }
     }
 
-    private async Task<string> WatchLifecycleAsync(Guid jobId, CancellationToken cancellationToken)
+    private async Task<string> WatchLifecycleAsync(
+        Guid jobId, Func<CancellationToken, Task<bool>>? authorizationStillValid,
+        CancellationToken cancellationToken)
     {
         using var timer = new PeriodicTimer(LifecycleCheckInterval);
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
+            if (authorizationStillValid is not null && !await authorizationStillValid(cancellationToken))
+            {
+                return "GrantRevoked";
+            }
+
             var job = await jobs.FindAsync(jobId, cancellationToken);
             if (job is null || job.LifecycleState != ProviderAcquisitionJobLifecycleState.Waiting)
             {

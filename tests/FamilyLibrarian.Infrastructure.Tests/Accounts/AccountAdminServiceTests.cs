@@ -237,5 +237,18 @@ public sealed class AccountAdminServiceTests
             AudiobookNarrationPreference preference,
             CancellationToken cancellationToken) =>
             Task.FromResult(AccountOperationResult.Success(userId));
+
+        public Task<IReadOnlyList<AdminAccountSummary>> ListActiveAdminsAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AdminAccountSummary>>(_accounts
+                .Where(account => account.IsAdmin && UserStatuses.CanSignIn(account.Status))
+                .Select(account => new AdminAccountSummary(account.Id, account.DisplayName))
+                .ToArray());
+
+        public Task<QuietHours?> GetQuietHoursAsync(Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<QuietHours?>(null);
+
+        public Task<AccountOperationResult> SetQuietHoursAsync(
+            Guid userId, QuietHours? quietHours, CancellationToken cancellationToken) =>
+            Task.FromResult(AccountOperationResult.Success(userId));
     }
 }

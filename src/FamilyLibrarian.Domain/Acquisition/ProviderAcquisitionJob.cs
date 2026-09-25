@@ -165,6 +165,18 @@ public sealed class ProviderAcquisitionJob
 
     public DateTimeOffset UpdatedAtUtc { get; private set; }
 
+    /// <summary>
+    /// When the job most recently entered <see cref="ProviderAcquisitionJobLifecycleState.Waiting"/>.
+    /// Cleared when it leaves. Drives HUMAN-ACQ-1's send-delay/quiescence checks
+    /// (<c>.ai_docs/human-acq-1-matrix-authorize-plan.md</c> §1a) — written only
+    /// by <see cref="ApplyState"/>, the same writer as the poller's other saves,
+    /// so it never conflicts with the poller's <c>xmin</c> concurrency check.
+    /// </summary>
+    public DateTimeOffset? WaitingSinceUtc { get; private set; }
+
+    /// <summary>When the job most recently left <see cref="ProviderAcquisitionJobLifecycleState.Waiting"/>.</summary>
+    public DateTimeOffset? LeftWaitingAtUtc { get; private set; }
+
     public uint Version { get; private set; }
 
     public IReadOnlyCollection<ProviderAcquisitionJobOutput> Outputs => _outputs;
@@ -304,6 +316,18 @@ public sealed class ProviderAcquisitionJob
         if (!ProviderAcquisitionJobLifecycleTransitions.IsAllowed(LifecycleState, to))
         {
             throw new InvalidProviderAcquisitionJobTransitionException(LifecycleState, to);
+        }
+
+        var wasWaiting = LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting;
+        var isWaiting = to == ProviderAcquisitionJobLifecycleState.Waiting;
+        if (isWaiting && !wasWaiting)
+        {
+            WaitingSinceUtc = atUtc;
+        }
+        else if (!isWaiting && wasWaiting)
+        {
+            LeftWaitingAtUtc = atUtc;
+            WaitingSinceUtc = null;
         }
 
         LifecycleState = to;

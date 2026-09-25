@@ -85,6 +85,34 @@ public static class DependencyInjection
         // remarks for why that has to happen lazily.
         authenticationBuilder.AddOpenIdConnect(OidcOptionsConfigurator.SchemeName, _ => { });
 
+        // HUMAN-ACQ-1 D12: a second, non-default cookie scheme for a magic-link
+        // claim's short-lived, single-job grant. Adding a named scheme here does
+        // not change AddAuthentication's default above, so ordinary admin cookie
+        // auth is untouched; this scheme is only ever selected explicitly, via
+        // the "InteractionGrant" policy's AuthenticationSchemes below.
+        authenticationBuilder.AddCookie(InteractionGrantDefaults.AuthenticationScheme, options =>
+        {
+            options.Cookie.Name = InteractionGrantDefaults.CookieName;
+            options.Cookie.Path = "/api/v1/interaction-links";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SameSite = SameSiteMode.Strict;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            options.ExpireTimeSpan = TimeSpan.FromMinutes(30);
+            options.SlidingExpiration = false;
+            // This is an API, not a page: a failed check must return a status
+            // code, never redirect to a login page that does not exist for it.
+            options.Events.OnRedirectToLogin = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            };
+            options.Events.OnRedirectToAccessDenied = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return Task.CompletedTask;
+            };
+        });
+
         services.ConfigureOptions<OidcOptionsConfigurator>();
         services.AddSingleton<IOidcRuntimeSettingsCache, OidcRuntimeSettingsCache>();
         services.AddSingleton<IOidcOptionsInvalidator, OidcOptionsInvalidator>();
@@ -158,7 +186,18 @@ public static class DependencyInjection
         services.AddAuthorizationBuilder()
             .AddPolicy(
                 "Admin",
-                policy => policy.RequireRole(RoleNames.Admin));
+                policy => policy.RequireRole(RoleNames.Admin))
+            .AddPolicy(
+                InteractionGrantDefaults.PolicyName,
+                policy =>
+                {
+                    // Scoped to this one scheme: an ordinary Identity admin cookie
+                    // must not satisfy this policy, and this grant must never
+                    // satisfy "Admin" -- see InteractionGrantDefaults' remarks.
+                    policy.AuthenticationSchemes.Add(InteractionGrantDefaults.AuthenticationScheme);
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireClaim(InteractionGrantDefaults.JobIdClaimType);
+                });
 
         services.AddScoped<IClock, SystemClock>();
         services.AddScoped<ICatalogRepository, CatalogRepository>();
@@ -227,6 +266,8 @@ public static class DependencyInjection
         services.AddScoped<IAcquisitionRepository, AcquisitionRepository>();
         services.AddScoped<IProviderAcquisitionJobStore, ProviderAcquisitionJobStore>();
         services.AddScoped<IProviderAttemptRepository, ProviderAttemptRepository>();
+        services.AddScoped<IProviderInteractionClaimStore, ProviderInteractionClaimStore>();
+        services.AddScoped<IProviderInteractionAlertStore, ProviderInteractionAlertStore>();
 
         // Mirrors InvitationPolicy above: a plain settings object, since the
         // Application layer that consumes it takes no dependency on the options
@@ -250,7 +291,10 @@ public static class DependencyInjection
         services.AddScoped<ExternalProviderRecheckService>();
         services.AddScoped<ExternalProviderHealthPollService>();
         services.AddScoped<AcquisitionJobPollingService>();
+        services.AddScoped<ProviderInteractionClaimService>();
         services.AddScoped<ProviderInteractionService>();
+        services.AddScoped<ProviderInteractionLinkService>();
+        services.AddScoped<ProviderInteractionAlertService>();
 
         services.AddOptions<ClamAvScannerOptions>()
             .Bind(configuration.GetSection(ClamAvScannerOptions.SectionName))
@@ -306,10 +350,13 @@ public static class DependencyInjection
 
         services.AddScoped<IInvitationRepository, InvitationRepository>();
         services.AddScoped<IUserAccountStore, IdentityUserAccountStore>();
-        services.AddSingleton<IInvitationTokenGenerator, InvitationTokenGenerator>();
+        services.AddSingleton<InvitationTokenGenerator>();
+        services.AddSingleton<IInvitationTokenGenerator>(provider => provider.GetRequiredService<InvitationTokenGenerator>());
+        services.AddSingleton<ISecureTokenGenerator>(provider => provider.GetRequiredService<InvitationTokenGenerator>());
         services.AddScoped<InvitationService>();
         services.AddScoped<AccountAdminService>();
         services.AddScoped<AudiobookNarrationPreferenceService>();
+        services.AddScoped<QuietHoursPreferenceService>();
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();

@@ -41,6 +41,13 @@ public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProvid
             .ThenBy(job => job.CreatedAtUtc)
             .ToArrayAsync(cancellationToken);
 
+    public Task<bool> HasLeftWaitingSinceAsync(
+        Guid externalProviderId, DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
+        database.ProviderAcquisitionJobs.AnyAsync(
+            job => job.ExternalProviderId == externalProviderId && job.LeftWaitingAtUtc != null &&
+                job.LeftWaitingAtUtc >= sinceUtc,
+            cancellationToken);
+
     public void Add(ProviderAcquisitionJob job) => database.ProviderAcquisitionJobs.Add(job);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);

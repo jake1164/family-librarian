@@ -350,6 +350,25 @@ cross-site WebSocket hijacking gap the framework's own default otherwise
 leaves open. This mirrors `ReverseProxy__TrustedNetworks` immediately above:
 both fail closed until explicitly set for the real deployment topology.
 
+Set `Interaction__PublicOrigin` to this deployment's own public HTTPS origin
+(e.g. `https://fl.example.com`, no path/query/fragment) to enable HUMAN-ACQ-1's
+Matrix verification alert — the magic link an administrator taps from chat to
+open a provider's remote-verification view without signing in first. It must
+also already be listed in `RemoteView__AllowedOrigins` above: the magic-link
+page opens the same brokered WebSocket, so an origin the WebSocket upgrade
+would reject can never actually work, and the application refuses to start if
+the two settings disagree. Left unset, the application still starts normally
+— it only disables this one alert (a warning is logged at startup) — every
+other notification path and the existing in-app "needs you" queue keep
+working. `http` is accepted only in the Development environment.
+
+Each administrator links their own Matrix ID at **Settings → Matrix chat**
+(`/settings/matrix`) to receive this alert; an administrator with no verified
+link simply receives none. The same page's quiet hours (a time zone and daily
+window) hold this alert until the window ends instead of dropping it — a
+general per-account setting, not admin-only, though only administrators
+receive an alert this slice enforces it against today.
+
 Keep PostgreSQL credentials, bootstrap credentials, OIDC secrets, and provider
 credentials outside the repository. Provider credentials entered through the
 administrator UI are encrypted using the persisted Data Protection key ring in

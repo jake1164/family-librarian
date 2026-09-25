@@ -77,11 +77,21 @@
                         </MudText>
                         @if (WaitingInteractionFor(item.Request.Id) is { } waitingInteraction)
                         {
-                            <MudAlert Severity="@(waitingInteraction.IsExpired ? Severity.Error : Severity.Warning)"
-                                      Dense="true" Variant="Variant.Outlined">
-                                Needs you: @waitingInteraction.ProviderId is waiting on a librarian action.
-                                <MudLink Href="admin/provider-interactions" Class="ml-1">Open provider interactions</MudLink>
-                            </MudAlert>
+                            @* HUMAN-ACQ-1 D7: claimed-by-another is informational, not a "needs you" prompt. *@
+                            @if (!string.IsNullOrWhiteSpace(waitingInteraction.ClaimedByDisplayName) && !waitingInteraction.IsClaimedByCurrentUser)
+                            {
+                                <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined">
+                                    Being handled by @waitingInteraction.ClaimedByDisplayName.
+                                </MudAlert>
+                            }
+                            else
+                            {
+                                <MudAlert Severity="@(waitingInteraction.IsExpired ? Severity.Error : Severity.Warning)"
+                                          Dense="true" Variant="Variant.Outlined">
+                                    Needs you: @waitingInteraction.ProviderId is waiting on a librarian action.
+                                    <MudLink Href="admin/provider-interactions" Class="ml-1">Open provider interactions</MudLink>
+                                </MudAlert>
+                            }
                         }
                         @if (item.Request.Status == "NeedsReview")
                         {

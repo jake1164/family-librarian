@@ -218,6 +218,53 @@ public sealed class IdentityUserAccountStore(UserManager<AppUser> userManager) :
             : AccountOperationResult.Failure(Describe(updated));
     }
 
+    public async Task<IReadOnlyList<AdminAccountSummary>> ListActiveAdminsAsync(CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        var admins = await userManager.GetUsersInRoleAsync(RoleNames.Admin);
+        return admins
+            .Where(admin => UserStatuses.CanSignIn(admin.Status))
+            .Select(admin => new AdminAccountSummary(admin.Id, admin.DisplayName))
+            .ToArray();
+    }
+
+    public async Task<QuietHours?> GetQuietHoursAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await userManager.FindByIdAsync(userId.ToString());
+        return ToQuietHours(user);
+    }
+
+    public async Task<AccountOperationResult> SetQuietHoursAsync(
+        Guid userId,
+        QuietHours? quietHours,
+        CancellationToken cancellationToken)
+    {
+        var user = await userManager.FindByIdAsync(userId.ToString());
+        if (user is null)
+        {
+            return AccountOperationResult.Failure("That account no longer exists.");
+        }
+
+        user.QuietHoursTimeZoneId = quietHours?.TimeZoneId;
+        user.QuietHoursStartMinute = quietHours?.StartMinute;
+        user.QuietHoursEndMinute = quietHours?.EndMinute;
+
+        var updated = await userManager.UpdateAsync(user);
+        return updated.Succeeded
+            ? AccountOperationResult.Success(user.Id)
+            : AccountOperationResult.Failure(Describe(updated));
+    }
+
+    private static QuietHours? ToQuietHours(AppUser? user)
+    {
+        if (user is not { QuietHoursTimeZoneId: { } zoneId, QuietHoursStartMinute: { } start, QuietHoursEndMinute: { } end })
+        {
+            return null;
+        }
+
+        return new QuietHours(zoneId, start, end);
+    }
+
     private async Task<HashSet<Guid>> GetAdminIdsAsync(CancellationToken cancellationToken)
     {
         _ = cancellationToken;

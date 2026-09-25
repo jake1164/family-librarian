@@ -32,6 +32,13 @@ public interface IProviderAcquisitionJobStore
     Task<IReadOnlyList<ProviderAcquisitionJob>> ListWaitingForInteractionAsync(
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Whether any job of this provider left <see cref="ProviderAcquisitionJobLifecycleState.Waiting"/>
+    /// within the given window — HUMAN-ACQ-1's quiescence check (a provider actively
+    /// draining its queue should not trigger a fresh alert for the next job in line).
+    /// </summary>
+    Task<bool> HasLeftWaitingSinceAsync(Guid externalProviderId, DateTimeOffset sinceUtc, CancellationToken cancellationToken);
+
     void Add(ProviderAcquisitionJob job);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);

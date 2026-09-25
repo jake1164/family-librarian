@@ -1,13 +1,16 @@
 using System.Net;
 using System.Net.Http.Json;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -168,6 +171,146 @@ public sealed class ProviderInteractionEndpointTests
     }
 
     [TestMethod]
+    public async Task TwoAdminsRacingStartOneWinsAndTheOtherGetsAConflictNamingTheWinner()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services => ReplaceProviderClient(services, new FakeInteractionControlClient()));
+
+        var jobId = await SeedWaitingJobAsync(factory, supportsInteractionControl: true);
+        using var adminA = await CreateAdminClientAsync(factory);
+        var tokenA = await WebTestFixture.GetAntiforgeryTokenAsync(adminA);
+        adminA.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, tokenA);
+
+        var emailB = await CreateSecondAdminAsync(factory);
+        using var adminB = await CreateSignedInClientAsync(factory, emailB, WebTestFixture.UserPassword);
+        var tokenB = await WebTestFixture.GetAntiforgeryTokenAsync(adminB);
+        adminB.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, tokenB);
+
+        var firstResponse = await adminA.PostAsync(
+            $"/api/v1/admin/requests/provider-interactions/{jobId}/start", content: null);
+        Assert.AreEqual(HttpStatusCode.NoContent, firstResponse.StatusCode);
+
+        var secondResponse = await adminB.PostAsync(
+            $"/api/v1/admin/requests/provider-interactions/{jobId}/start", content: null);
+        Assert.AreEqual(HttpStatusCode.Conflict, secondResponse.StatusCode);
+
+        var body = await secondResponse.Content.ReadFromJsonAsync<ConflictBody>();
+        Assert.IsNotNull(body);
+        StringAssert.Contains(body.message, "Take over");
+        // Admin A's bootstrap display name is derived from the local part of
+        // its email (see IdentityInitializer): "admin@..." -> "admin".
+        Assert.AreEqual("admin", body.claimedBy);
+    }
+
+    [TestMethod]
+    public async Task TakeOverReplacesAnExistingClaimAndLetsTheNewAdminStart()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services => ReplaceProviderClient(services, new FakeInteractionControlClient()));
+
+        var jobId = await SeedWaitingJobAsync(factory, supportsInteractionControl: true);
+        using var adminA = await CreateAdminClientAsync(factory);
+        var tokenA = await WebTestFixture.GetAntiforgeryTokenAsync(adminA);
+        adminA.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, tokenA);
+
+        var emailB = await CreateSecondAdminAsync(factory);
+        using var adminB = await CreateSignedInClientAsync(factory, emailB, WebTestFixture.UserPassword);
+        var tokenB = await WebTestFixture.GetAntiforgeryTokenAsync(adminB);
+        adminB.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, tokenB);
+
+        var claimed = await adminA.PostAsync(
+            $"/api/v1/admin/requests/provider-interactions/{jobId}/start", content: null);
+        Assert.AreEqual(HttpStatusCode.NoContent, claimed.StatusCode);
+
+        var sessions = factory.Services.GetRequiredService<RemoteViewSessionRegistry>();
+        Assert.IsTrue(sessions.TryAcquire(jobId, out var oldViewCloseSignal));
+        var oldViewEnded = Task.Run(() =>
+        {
+            var closeRequested = oldViewCloseSignal.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(3));
+            sessions.Release(jobId);
+            return closeRequested;
+        });
+
+        var takeOver = await adminB.PostAsync(
+            $"/api/v1/admin/requests/provider-interactions/{jobId}/take-over", content: null);
+        Assert.AreEqual(HttpStatusCode.NoContent, takeOver.StatusCode);
+        Assert.IsTrue(await oldViewEnded, "Take over must close the old viewer before admitting the new holder.");
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var claim = await database.ProviderInteractionClaims.SingleAsync(c => c.JobId == jobId);
+        var adminBUser = await database.Users.SingleAsync(user => user.Email == emailB);
+        Assert.AreEqual(adminBUser.Id, claim.ClaimedByUserId);
+    }
+
+    [TestMethod]
+    public async Task ALapsedClaimCanBeReclaimedByAnotherAdmin()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services => ReplaceProviderClient(services, new FakeInteractionControlClient()));
+
+        var jobId = await SeedWaitingJobAsync(factory, supportsInteractionControl: true);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var job = await database.ProviderAcquisitionJobs.SingleAsync(j => j.Id == jobId);
+            var admin = await database.Users.SingleAsync(user => user.Email == FamilyLibrarianAppFactory.AdminEmail);
+            // Older than any realistic ClaimLeaseSeconds and with no active
+            // viewer -- IsLeaseLive must report this claim as lapsed.
+            var staleClaim = new ProviderInteractionClaim(
+                jobId, job.ExternalProviderId, admin.Id, ProviderInteractionClaimChannel.InApp, null,
+                DateTimeOffset.UtcNow.AddHours(-1));
+            database.ProviderInteractionClaims.Add(staleClaim);
+            await database.SaveChangesAsync();
+        }
+
+        var emailB = await CreateSecondAdminAsync(factory);
+        using var adminB = await CreateSignedInClientAsync(factory, emailB, WebTestFixture.UserPassword);
+        var tokenB = await WebTestFixture.GetAntiforgeryTokenAsync(adminB);
+        adminB.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, tokenB);
+
+        var response = await adminB.PostAsync(
+            $"/api/v1/admin/requests/provider-interactions/{jobId}/start", content: null);
+
+        Assert.AreEqual(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task CancelSucceedsForAnyAdminEvenWhenAnotherAdminHoldsTheClaim()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services => ReplaceProviderClient(services, new FakeInteractionControlClient()));
+
+        var jobId = await SeedWaitingJobAsync(factory, supportsInteractionControl: true);
+        using var adminA = await CreateAdminClientAsync(factory);
+        var tokenA = await WebTestFixture.GetAntiforgeryTokenAsync(adminA);
+        adminA.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, tokenA);
+
+        var claimed = await adminA.PostAsync(
+            $"/api/v1/admin/requests/provider-interactions/{jobId}/start", content: null);
+        Assert.AreEqual(HttpStatusCode.NoContent, claimed.StatusCode);
+
+        var emailB = await CreateSecondAdminAsync(factory);
+        using var adminB = await CreateSignedInClientAsync(factory, emailB, WebTestFixture.UserPassword);
+        var tokenB = await WebTestFixture.GetAntiforgeryTokenAsync(adminB);
+        adminB.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, tokenB);
+
+        var response = await adminB.PostAsync(
+            $"/api/v1/admin/requests/provider-interactions/{jobId}/cancel", content: null);
+
+        Assert.AreEqual(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    [TestMethod]
     public async Task AnOrdinaryUserCannotReachTheInteractionQueue()
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -186,6 +329,20 @@ public sealed class ProviderInteractionEndpointTests
         services.RemoveAll<IExternalProviderClient>();
         services.AddSingleton<IExternalProviderClient>(client);
     }
+
+    /// <summary>Seeds a second, distinct admin account (the bootstrap admin already exists) for claim-racing tests.</summary>
+    private static async Task<string> CreateSecondAdminAsync(FamilyLibrarianAppFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var email = $"second-admin-{Guid.NewGuid():N}@family-librarian.example";
+        var user = new AppUser { UserName = email, Email = email, DisplayName = "Second Admin", EmailConfirmed = true };
+        Assert.IsTrue((await users.CreateAsync(user, WebTestFixture.UserPassword)).Succeeded);
+        Assert.IsTrue((await users.AddToRoleAsync(user, "Admin")).Succeeded);
+        return email;
+    }
+
+    private sealed record ConflictBody(string message, string? claimedBy);
 
     /// <summary>
     /// Signed-in HTTP clients from this fixture's own default-configured

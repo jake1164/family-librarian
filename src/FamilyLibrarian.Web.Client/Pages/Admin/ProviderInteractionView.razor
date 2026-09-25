@@ -53,6 +53,27 @@
             return;
         }
 
+        // Checked before ever attempting the WebSocket upgrade: a failed
+        // handshake exposes no HTTP status/reason to JS, so this is the only
+        // reliable way to show "being handled by {name}" (HUMAN-ACQ-1 D7)
+        // instead of a generic connection-failed message for that specific case.
+        try
+        {
+            var interactions = await Interactions.GetAsync();
+            var current = interactions.FirstOrDefault(interaction => interaction.ProviderAcquisitionJobId == JobId);
+            if (current is { IsClaimedByCurrentUser: false } && !string.IsNullOrWhiteSpace(current.ClaimedByDisplayName))
+            {
+                statusSeverity = Severity.Warning;
+                statusMessage = $"Being handled by {current.ClaimedByDisplayName}. Return to the queue to take over.";
+                StateHasChanged();
+                return;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort pre-check; fall through to the ordinary connect attempt.
+        }
+
         try
         {
             interopModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/remote-view-interop.js");

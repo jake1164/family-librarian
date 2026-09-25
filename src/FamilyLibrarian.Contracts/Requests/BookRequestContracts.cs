@@ -145,7 +145,9 @@ public sealed record AdminProviderInteractionAttentionResponse(
     string ProviderId,
     string Type,
     DateTimeOffset? ExpiresAtUtc,
-    bool IsExpired);
+    bool IsExpired,
+    string? ClaimedByDisplayName,
+    bool IsClaimedByCurrentUser);
 
 public sealed record AdminBookRequestResponse(
     BookRequestResponse Request,

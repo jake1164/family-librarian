@@ -153,5 +153,15 @@ public sealed class AudiobookNarrationPreferenceServiceTests
             _accounts[userId] = account with { AudiobookNarrationPreference = preference };
             return Task.FromResult(AccountOperationResult.Success(userId));
         }
+
+        public Task<IReadOnlyList<AdminAccountSummary>> ListActiveAdminsAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<QuietHours?> GetQuietHoursAsync(Guid userId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<AccountOperationResult> SetQuietHoursAsync(
+            Guid userId, QuietHours? quietHours, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 }

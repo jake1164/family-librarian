@@ -31,6 +31,7 @@ internal static class AdminRequestEndpoints
         adminRequests.MapPost("/provider-interactions/{jobId:guid}/start", StartProviderInteractionAsync);
         adminRequests.MapPost("/provider-interactions/{jobId:guid}/fallback", UseProviderInteractionFallbackAsync);
         adminRequests.MapPost("/provider-interactions/{jobId:guid}/cancel", CancelProviderInteractionAsync);
+        adminRequests.MapPost("/provider-interactions/{jobId:guid}/take-over", TakeOverProviderInteractionAsync);
         adminRequests.MapGet("/provider-interactions/{jobId:guid}/view", HandleProviderInteractionViewAsync);
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-interaction", GetProviderInteractionForRequestAsync);
@@ -80,18 +81,20 @@ internal static class AdminRequestEndpoints
 
     private static async Task<IResult> ListProviderInteractionsAsync(
         ProviderInteractionService service,
+        ICurrentUser currentUser,
         CancellationToken cancellationToken) =>
-        Results.Ok((await service.ListAsync(cancellationToken)).Select(ToProviderInteractionResponse).ToArray());
+        Results.Ok((await service.ListAsync(currentUser.UserId, cancellationToken)).Select(ToProviderInteractionResponse).ToArray());
 
     private static async Task<IResult> GetProviderInteractionForRequestAsync(
         Guid requestId,
         ProviderInteractionService service,
+        ICurrentUser currentUser,
         CancellationToken cancellationToken)
     {
         // 200/null, not 404: "no interaction waiting" is this request's
         // ordinary state, not an exceptional one -- the client deserializes
         // straight to null without a caught-exception round trip.
-        var interaction = await service.FindForRequestAsync(requestId, cancellationToken);
+        var interaction = await service.FindForRequestAsync(requestId, currentUser.UserId, cancellationToken);
         return Results.Ok(interaction is null ? null : ToProviderInteractionResponse(interaction));
     }
 
@@ -111,13 +114,23 @@ internal static class AdminRequestEndpoints
         interaction.CanViewNow,
         interaction.WorkTitle,
         interaction.Authors,
-        interaction.RequesterDisplayName);
+        interaction.RequesterDisplayName,
+        interaction.ClaimedByDisplayName,
+        interaction.IsClaimedByCurrentUser);
 
-    private static Task<IResult> StartProviderInteractionAsync(
+    private static async Task<IResult> StartProviderInteractionAsync(
         Guid jobId,
         ProviderInteractionService service,
-        CancellationToken cancellationToken) =>
-        ToProviderInteractionResult(service.StartAsync(jobId, cancellationToken));
+        ICurrentUser currentUser,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        return await ToProviderInteractionResult(service.StartAsync(jobId, userId, cancellationToken));
+    }
 
     private static Task<IResult> UseProviderInteractionFallbackAsync(
         Guid jobId,
@@ -131,8 +144,38 @@ internal static class AdminRequestEndpoints
         CancellationToken cancellationToken) =>
         ToProviderInteractionResult(service.CancelAsync(jobId, cancellationToken));
 
-    private static async Task<IResult> ToProviderInteractionResult(Task<ProviderInteractionCommandResult> operation) =>
-        (await operation) switch
+    /// <summary>Explicit, audited override: replaces whoever currently holds the claim, then starts the session.</summary>
+    private static async Task<IResult> TakeOverProviderInteractionAsync(
+        Guid jobId,
+        ProviderInteractionClaimService claimService,
+        ProviderInteractionService service,
+        ICurrentUser currentUser,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        try
+        {
+            await claimService.TakeOverAsync(jobId, userId, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            return Results.Conflict(new { message = "The current view is still closing. Try taking over again." });
+        }
+        catch (InvalidOperationException)
+        {
+            return Results.Conflict(new { message = "This job is no longer waiting for interaction." });
+        }
+        return await ToProviderInteractionResult(service.StartAsync(jobId, userId, cancellationToken));
+    }
+
+    private static async Task<IResult> ToProviderInteractionResult(Task<ProviderInteractionCommandOutcome> operation)
+    {
+        var outcome = await operation;
+        return outcome.Result switch
         {
             ProviderInteractionCommandResult.Success => Results.NoContent(),
             ProviderInteractionCommandResult.NotFound => Results.NotFound(),
@@ -148,8 +191,14 @@ internal static class AdminRequestEndpoints
             {
                 message = "This provider does not support administrator interaction control."
             }),
+            ProviderInteractionCommandResult.ClaimedByAnother => Results.Conflict(new
+            {
+                message = $"Being handled by {outcome.ClaimedByDisplayName}. Use Take over if they're stuck.",
+                claimedBy = outcome.ClaimedByDisplayName
+            }),
             _ => Results.StatusCode(StatusCodes.Status503ServiceUnavailable)
         };
+    }
 
     /// <summary>
     /// The brokered remote-view WebSocket (HUMAN-ACQ-1 Phase 3, docs/04 §8
@@ -161,6 +210,8 @@ internal static class AdminRequestEndpoints
         Guid jobId,
         HttpContext context,
         ProviderRemoteViewBrokerService broker,
+        ProviderInteractionClaimService claimService,
+        ICurrentUser currentUser,
         IHostApplicationLifetime lifetime,
         CancellationToken cancellationToken)
     {
@@ -169,26 +220,26 @@ internal static class AdminRequestEndpoints
             return Results.BadRequest(new { message = "This route only accepts a WebSocket upgrade." });
         }
 
-        var eligibility = await broker.EvaluateAsync(jobId, cancellationToken);
-        switch (eligibility)
+        // Opening the remote view also counts as a claim (HUMAN-ACQ-1 D7) --
+        // checked, and rejected with a plain HTTP status, before the WebSocket
+        // upgrade so a busy admin never sees an upgrade immediately closed.
+        if (currentUser.UserId is not { } userId)
         {
-            case RemoteViewEligibility.NotFound:
-                return Results.NotFound();
-            case RemoteViewEligibility.NotWaiting:
-                return Results.Conflict(new
-                {
-                    message = "This provider acquisition is not currently offering a remote view. Reload the queue."
-                });
-            case RemoteViewEligibility.Expired:
-                return Results.Conflict(new
-                {
-                    message = "This provider interaction has expired. Reload the queue before choosing a new action."
-                });
+            return Results.Unauthorized();
         }
 
-        using var browserSocket = await context.WebSockets.AcceptWebSocketAsync();
-        await broker.RunAsync(jobId, browserSocket, lifetime.ApplicationStopping);
-        return Results.Empty;
+        var claim = await claimService.TryClaimForUserAsync(
+            jobId, userId, ProviderInteractionClaimChannel.InApp, alertId: null, cancellationToken);
+        if (claim.Kind == ClaimOutcomeKind.HeldByOther)
+        {
+            return Results.Conflict(new
+            {
+                message = $"Being handled by {claim.HeldByDisplayName}. Use Take over if they're stuck.",
+                claimedBy = claim.HeldByDisplayName
+            });
+        }
+
+        return await RemoteViewSocketHandler.HandleAsync(jobId, context, broker, lifetime, cancellationToken);
     }
 
     /// <summary>
@@ -250,6 +301,7 @@ internal static class AdminRequestEndpoints
         IProviderRegistry registry,
         IExternalProviderStore externalProviders,
         ProviderInteractionService providerInteractions,
+        ICurrentUser currentUser,
         CancellationToken cancellationToken)
     {
         // All stores here are scoped over the same AppDbContext. EF Core does
@@ -258,7 +310,7 @@ internal static class AdminRequestEndpoints
         var needsReviewCount = await requests.CountForAdminAsync(RequestStatus.NeedsReview, cancellationToken);
         var latestAttempts = await attempts.ListLatestByProviderAsync(cancellationToken);
         var registeredExternalProviders = await externalProviders.ListAsync(cancellationToken);
-        var waitingInteractions = await providerInteractions.ListAsync(cancellationToken);
+        var waitingInteractions = await providerInteractions.ListAsync(currentUser.UserId, cancellationToken);
 
         var displayNames = registry.GetInstalledProviders()
             .ToDictionary(provider => provider.Id, provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase);
@@ -290,7 +342,9 @@ internal static class AdminRequestEndpoints
                 interaction.ProviderId,
                 interaction.Type,
                 interaction.ExpiresAtUtc,
-                interaction.IsExpired))
+                interaction.IsExpired,
+                interaction.ClaimedByDisplayName,
+                interaction.IsClaimedByCurrentUser))
             .ToArray();
 
         return Results.Ok(new AdminRequestAttentionResponse(needsReviewCount, providerIssues, providerInteractionsWaiting));

@@ -85,6 +85,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<ProviderAttempt> ProviderAttempts => Set<ProviderAttempt>();
 
+    public DbSet<ProviderInteractionClaim> ProviderInteractionClaims => Set<ProviderInteractionClaim>();
+
+    public DbSet<ProviderInteractionAlert> ProviderInteractionAlerts => Set<ProviderInteractionAlert>();
+
+    public DbSet<ProviderInteractionAlertRecipient> ProviderInteractionAlertRecipients => Set<ProviderInteractionAlertRecipient>();
+
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
 
     public DbSet<SecurityEvaluation> SecurityEvaluations => Set<SecurityEvaluation>();
@@ -143,6 +149,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .HasColumnName("audiobook_narration_preference")
                 .HasConversion<string>()
                 .HasMaxLength(32);
+            entity.Property(user => user.QuietHoursTimeZoneId).HasColumnName("quiet_hours_time_zone_id").HasMaxLength(64);
+            entity.Property(user => user.QuietHoursStartMinute).HasColumnName("quiet_hours_start_minute");
+            entity.Property(user => user.QuietHoursEndMinute).HasColumnName("quiet_hours_end_minute");
         });
 
         ConfigureInvitations(builder);
@@ -823,6 +832,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(job => job.ExtensionsJson).HasColumnName("extensions_json").HasColumnType("jsonb");
             entity.Property(job => job.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(job => job.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(job => job.WaitingSinceUtc).HasColumnName("waiting_since_utc").HasColumnType("timestamp with time zone");
+            entity.Property(job => job.LeftWaitingAtUtc).HasColumnName("left_waiting_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(job => job.Version).HasColumnName("xmin").IsRowVersion();
 
             // The background poller's due-work query; the restart-recovery
@@ -939,6 +950,98 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasOne<AcquisitionCandidate>()
                 .WithMany()
                 .HasForeignKey(asset => asset.SourceAcquisitionCandidateId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<ProviderInteractionClaim>(entity =>
+        {
+            entity.ToTable("provider_interaction_claims", "acquisition");
+            entity.HasKey(claim => claim.JobId);
+            entity.Property(claim => claim.JobId).HasColumnName("job_id").ValueGeneratedNever();
+            entity.Property(claim => claim.ExternalProviderId).HasColumnName("external_provider_id");
+            entity.Property(claim => claim.ClaimedByUserId).HasColumnName("claimed_by_user_id");
+            entity.Property(claim => claim.Channel).HasColumnName("channel").HasConversion<string>().HasMaxLength(32);
+            entity.Property(claim => claim.AlertId).HasColumnName("alert_id");
+            entity.Property(claim => claim.ClaimedAtUtc).HasColumnName("claimed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(claim => claim.LastViewerActivityAtUtc).HasColumnName("last_viewer_activity_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(claim => claim.Version).HasColumnName("xmin").IsRowVersion();
+
+            entity.HasOne<ProviderAcquisitionJob>()
+                .WithMany()
+                .HasForeignKey(claim => claim.JobId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<AppUser>()
+                .WithMany()
+                .HasForeignKey(claim => claim.ClaimedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<ProviderInteractionAlert>(entity =>
+        {
+            entity.ToTable("provider_interaction_alerts", "acquisition");
+            entity.HasKey(alert => alert.Id);
+            entity.Property(alert => alert.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(alert => alert.ExternalProviderId).HasColumnName("external_provider_id");
+            entity.Property(alert => alert.ProviderId).HasColumnName("provider_id").HasMaxLength(128).IsRequired();
+            entity.Property(alert => alert.ProviderDisplayName).HasColumnName("provider_display_name").HasMaxLength(256).IsRequired();
+            entity.Property(alert => alert.State).HasColumnName("state").HasConversion<string>().HasMaxLength(32);
+            entity.Property(alert => alert.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(alert => alert.ClaimedJobId).HasColumnName("claimed_job_id");
+            entity.Property(alert => alert.ClaimedByUserId).HasColumnName("claimed_by_user_id");
+            entity.Property(alert => alert.ClaimedByDisplayName).HasColumnName("claimed_by_display_name").HasMaxLength(256);
+            entity.Property(alert => alert.ClaimedAtUtc).HasColumnName("claimed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(alert => alert.ClosedAtUtc).HasColumnName("closed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(alert => alert.CloseReason).HasColumnName("close_reason").HasMaxLength(64);
+            entity.Property(alert => alert.Version).HasColumnName("xmin").IsRowVersion();
+
+            // HUMAN-ACQ-1 D5: at most one open alert per provider, enforced at
+            // the database, not merely in application logic.
+            entity.HasIndex(alert => alert.ExternalProviderId)
+                .IsUnique()
+                .HasFilter("state IN ('Open','Claimed')");
+
+            entity.HasOne<ExternalProvider>()
+                .WithMany()
+                .HasForeignKey(alert => alert.ExternalProviderId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(alert => alert.Recipients)
+                .WithOne(recipient => recipient.Alert)
+                .HasForeignKey(recipient => recipient.AlertId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.Navigation(alert => alert.Recipients).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        builder.Entity<ProviderInteractionAlertRecipient>(entity =>
+        {
+            entity.ToTable("provider_interaction_alert_recipients", "acquisition");
+            entity.HasKey(recipient => recipient.Id);
+            entity.Property(recipient => recipient.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(recipient => recipient.AlertId).HasColumnName("alert_id");
+            entity.Property(recipient => recipient.UserId).HasColumnName("user_id");
+            entity.Property(recipient => recipient.DeliveryState).HasColumnName("delivery_state").HasConversion<string>().HasMaxLength(32);
+            entity.Property(recipient => recipient.TokenHash).HasColumnName("token_hash")
+                .HasMaxLength(ProviderInteractionAlertRecipient.MaxTokenHashLength);
+            entity.Property(recipient => recipient.TokenConsumedAtUtc).HasColumnName("token_consumed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(recipient => recipient.TokenRevokedAtUtc).HasColumnName("token_revoked_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(recipient => recipient.RoomId).HasColumnName("room_id")
+                .HasMaxLength(ProviderInteractionAlertRecipient.MaxRoomOrEventIdLength);
+            entity.Property(recipient => recipient.EventId).HasColumnName("event_id")
+                .HasMaxLength(ProviderInteractionAlertRecipient.MaxRoomOrEventIdLength);
+            entity.Property(recipient => recipient.SendAttempts).HasColumnName("send_attempts");
+            entity.Property(recipient => recipient.LastError).HasColumnName("last_error")
+                .HasMaxLength(ProviderInteractionAlertRecipient.MaxLastErrorLength);
+            entity.Property(recipient => recipient.SentAtUtc).HasColumnName("sent_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(recipient => recipient.RenderedState).HasColumnName("rendered_state").HasMaxLength(32);
+            entity.Property(recipient => recipient.Version).HasColumnName("xmin").IsRowVersion();
+
+            entity.HasIndex(recipient => recipient.TokenHash).IsUnique().HasFilter("token_hash IS NOT NULL");
+            entity.HasIndex(recipient => recipient.AlertId);
+
+            entity.HasOne<AppUser>()
+                .WithMany()
+                .HasForeignKey(recipient => recipient.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }

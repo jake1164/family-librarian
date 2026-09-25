@@ -67,15 +67,27 @@
                 <MudText Typo="Typo.body2">@request.Request.RequesterCount active requester(s) share this fulfillment.</MudText>
                 @if (waitingInteraction is not null)
                 {
-                    <MudAlert Severity="@(waitingInteraction.IsExpired ? Severity.Error : Severity.Warning)">
-                        This request needs a librarian action:
-                        @(waitingInteraction.Message ?? $"{waitingInteraction.ProviderId} is waiting on a verification step.")
-                        <div class="mt-2">
-                            <MudButton Variant="Variant.Filled" Color="Color.Warning" Href="admin/provider-interactions">
-                                Open provider interactions
-                            </MudButton>
-                        </div>
-                    </MudAlert>
+                    @* HUMAN-ACQ-1 D7: already claimed by another admin (in-app or
+                       via a Matrix magic link) -- informational, not an action
+                       prompt; Take over lives on the provider-interactions queue. *@
+                    @if (!string.IsNullOrWhiteSpace(waitingInteraction.ClaimedByDisplayName) && !waitingInteraction.IsClaimedByCurrentUser)
+                    {
+                        <MudAlert Severity="Severity.Info">
+                            Being handled by @waitingInteraction.ClaimedByDisplayName. Nothing to do right now.
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudAlert Severity="@(waitingInteraction.IsExpired ? Severity.Error : Severity.Warning)">
+                            This request needs a librarian action:
+                            @(waitingInteraction.Message ?? $"{waitingInteraction.ProviderId} is waiting on a verification step.")
+                            <div class="mt-2">
+                                <MudButton Variant="Variant.Filled" Color="Color.Warning" Href="admin/provider-interactions">
+                                    Open provider interactions
+                                </MudButton>
+                            </div>
+                        </MudAlert>
+                    }
                 }
                 @if (request.Request.RequiresManualFulfillment)
                 {

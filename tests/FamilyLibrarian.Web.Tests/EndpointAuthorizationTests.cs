@@ -42,6 +42,7 @@ public sealed class EndpointAuthorizationTests
 
     [TestMethod]
     [DataRow("/api/v1/me")]
+    [DataRow("/api/v1/me/quiet-hours/")]
     [DataRow("/api/v1/antiforgery/token")]
     [DataRow("/api/v1/admin/ping")]
     [DataRow("/api/v1/admin/integrations/metadata/")]
@@ -57,6 +58,8 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/external-providers/")]
     [DataRow("/api/v1/admin/provider-catalogs/")]
     [DataRow("/api/v1/notifications/")]
+    [DataRow("/api/v1/interaction-links/jobs/00000000-0000-0000-0000-000000000001/status")]
+    [DataRow("/api/v1/interaction-links/jobs/00000000-0000-0000-0000-000000000001/view")]
     public async Task AnAnonymousCallerIsChallengedOnAProtectedRoute(string route)
     {
         var fixture = WebTestFixture.Require(_fixture);
