@@ -790,13 +790,14 @@ action apply across the application. Navigating away disposes that page's
 subscription without closing the tab's connection; sign-out stops the connection.
 
 SignalR messages carry only topic flags for requests, scans, publishing,
-notifications, sources and system readiness. Existing HTTP APIs provide snapshots
-and perform actions, retaining their authorization, input validation and
-anti-forgery rules. The server resolves request owners and current active users,
-roles and security stamps before sending. Private notifications target their
-recipient; admin topics target current admins. Disabled or revoked sessions are
-closed. Clients cannot select another user's audience or subscribe themselves to
-privileged server groups.
+notifications, sources, communications settings and system readiness. Personal
+communications changes are scoped to the affected user. Existing HTTP APIs
+provide snapshots and perform actions, retaining their authorization, input
+validation and anti-forgery rules. The server resolves request owners and current
+active users, roles and security stamps before sending. Private notifications
+target their recipient; admin topics target current admins. Disabled or revoked
+sessions are closed. Clients cannot select another user's audience or subscribe
+themselves to privileged server groups.
 
 EF save and transaction interceptors capture affected records. Implicit saves
 notify after SaveChanges succeeds; explicit transactions buffer notifications

@@ -8,6 +8,7 @@ using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
@@ -157,6 +158,29 @@ public sealed class LiveUpdatesEndpointTests
         received = await BarrierAsync(factory, admin, owner);
         Assert.AreEqual(LiveUpdateTopics.None, received[0]);
         Assert.AreEqual(LiveUpdateTopics.Notifications, received[1]);
+    }
+
+    [TestMethod]
+    public async Task MatrixIdentityChangesReachOnlyTheLinkedUser()
+    {
+        await using var factory = new FamilyLibrarianAppFactory(WebTestFixture.Require(fixture).ConnectionString);
+        await using var owner = await Viewer.ConnectAsync(factory, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
+        await using var unrelated = await Viewer.ConnectAsync(factory, await CreateUserAsync(factory), WebTestFixture.UserPassword);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var destination = new UserMatrixDestination(owner.UserId, DateTimeOffset.UtcNow);
+        destination.RequestVerification("@reader:example.test", "!room:example.test", "123456", DateTimeOffset.UtcNow);
+        database.UserMatrixDestinations.Add(destination);
+        await database.SaveChangesAsync();
+        var received = await BarrierAsync(factory, owner, unrelated);
+        Assert.AreEqual(LiveUpdateTopics.Communications, received[0]);
+        Assert.AreEqual(LiveUpdateTopics.None, received[1]);
+
+        destination.Verify(DateTimeOffset.UtcNow);
+        await database.SaveChangesAsync();
+        received = await BarrierAsync(factory, owner, unrelated);
+        Assert.AreEqual(LiveUpdateTopics.Communications, received[0]);
+        Assert.AreEqual(LiveUpdateTopics.None, received[1]);
     }
 
     [TestMethod]

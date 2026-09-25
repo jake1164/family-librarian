@@ -1381,6 +1381,11 @@ and sends no filenames, identifiers, or scan details. Every snapshot and action
 continues to enforce current server-side authorization; mutations retain their
 anti-forgery checks. No periodic data polling is used by this page.
 
+Personal communications settings use the same connection: a Matrix identity-link
+change invalidates the owning user's communications snapshot so the page reflects
+verification or unlinking without a manual reload. The hub message carries only a
+topic flag; the page reloads the status through its authenticated HTTP API.
+
 ```text
 Asset enters quarantine
       |

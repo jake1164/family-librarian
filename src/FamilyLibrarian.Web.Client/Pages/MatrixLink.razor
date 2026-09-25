@@ -4,6 +4,8 @@
 @using FamilyLibrarian.Contracts.Communications
 @using FamilyLibrarian.Web.Client.Accounts
 @using FamilyLibrarian.Web.Client.Communications
+@using FamilyLibrarian.Web.Client.Realtime
+@inherits LiveComponentBase
 @implements IAsyncDisposable
 @inject MatrixLinkApiClient MatrixLinkApi
 @inject QuietHoursApiClient QuietHoursApi
@@ -141,6 +143,9 @@ else
     private string? quietHoursError;
     private IJSObjectReference? timezoneInterop;
 
+    protected override void OnInitialized() =>
+        Observe(LiveUpdateTopics.Communications, RefreshMatrixStatusAsync);
+
     protected override async Task OnInitializedAsync()
     {
         try
@@ -176,6 +181,13 @@ else
         {
             isLoadingQuietHours = false;
         }
+    }
+
+    private async Task RefreshMatrixStatusAsync()
+    {
+        var latestStatus = await MatrixLinkApi.GetAsync();
+        status = latestStatus;
+        matrixUserId = latestStatus?.MatrixUserId ?? string.Empty;
     }
 
     private async Task OnQuietHoursEnabledChangedAsync(bool enabled)
@@ -252,6 +264,14 @@ else
             if (result.Succeeded)
             {
                 status = result.Status;
+                try
+                {
+                    await RefreshMatrixStatusAsync();
+                }
+                catch (HttpRequestException)
+                {
+                    // Keep the successful request response; a later live update will refresh again.
+                }
                 Snackbar.Add("Verification code sent on Matrix.", Severity.Success);
             }
             else

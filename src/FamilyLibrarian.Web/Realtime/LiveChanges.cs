@@ -1,5 +1,6 @@
 using FamilyLibrarian.Contracts.Realtime;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Requests;
@@ -126,6 +127,9 @@ internal sealed class LiveChanges
                     break;
                 case NotificationReceipt receipt:
                     changes.ForUser(receipt.UserId, LiveUpdateTopics.Notifications);
+                    break;
+                case UserMatrixDestination destination:
+                    changes.ForUser(destination.UserId, LiveUpdateTopics.Communications);
                     break;
                 case GutenbergCatalogSyncStateEntity:
                 case ProviderSetting:
