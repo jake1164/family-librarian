@@ -383,6 +383,11 @@
         {
             // Best-effort: worst case the banner just doesn't show this load.
         }
+        catch (System.Text.Json.JsonException)
+        {
+            // Same best-effort intent as above: a malformed/empty response
+            // must not take down the whole page render.
+        }
 
         StartFulfillmentOptionsLoad(request.Request.WorkId);
     }

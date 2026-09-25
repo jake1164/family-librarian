@@ -93,9 +93,15 @@ internal static class AdminRequestEndpoints
     {
         // 200/null, not 404: "no interaction waiting" is this request's
         // ordinary state, not an exceptional one -- the client deserializes
-        // straight to null without a caught-exception round trip.
+        // straight to null without a caught-exception round trip. Since
+        // .NET 7/8, Results.Ok(null) writes zero bytes rather than the JSON
+        // literal "null" (https://github.com/dotnet/aspnetcore/issues/53509),
+        // which GetFromJsonAsync<T> on the Blazor WASM client cannot parse
+        // (JsonException: ExpectedJsonTokens) -- write the literal ourselves.
         var interaction = await service.FindForRequestAsync(requestId, currentUser.UserId, cancellationToken);
-        return Results.Ok(interaction is null ? null : ToProviderInteractionResponse(interaction));
+        return interaction is null
+            ? Results.Text("null", "application/json")
+            : Results.Ok(ToProviderInteractionResponse(interaction));
     }
 
     private static ProviderInteractionResponse ToProviderInteractionResponse(ProviderInteractionView interaction) => new(
