@@ -53,16 +53,26 @@
             <MudStack Spacing="2">
                 <MudText Typo="Typo.h6">Request</MudText>
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
-                    <RequestStatusChip Status="@request.Request.Status" />
+                    <RequestStatusChip Status="@request.Request.Status" Label="@RequestLabel" />
                     @foreach (var format in request.Request.Formats)
                     {
                         <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
-                                           ProgressCode="@format.ProgressCode"
-                                           ProgressDescription="@format.ProgressDescription"
+                                           ProgressCode="@FormatProgressCode(format)"
+                                           ProgressDescription="@FormatDescription(format)"
                                            ExternalActionUri="@format.ExternalActionUri" />
                     }
                 </MudStack>
-                <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
+                @foreach (var activity in ActiveForRequest)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Info">
+                        @activity.Stage from @activity.ProviderDisplayName for @FormatName(activity.RequestFormatId)
+                        since @activity.StartedAtUtc.ToLocalTime().ToString("t").
+                    </MudText>
+                }
+                @if (!ActiveForRequest.Any())
+                {
+                    <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
+                }
                 <MudText Typo="Typo.caption">Asked @request.Request.RequestedAtUtc.ToLocalTime().ToString("f")</MudText>
                 <MudText Typo="Typo.body2">@request.Request.RequesterCount active requester(s) share this fulfillment.</MudText>
                 @if (waitingInteraction is not null)
@@ -303,6 +313,32 @@
 </MudStack>
 
 @code {
+    [CascadingParameter]
+    private IReadOnlyList<AdminActiveAcquisitionResponse> ActiveAcquisitions { get; set; } = [];
+
+    private IEnumerable<AdminActiveAcquisitionResponse> ActiveForRequest =>
+        ActiveAcquisitions.Where(activity => activity.RequestId == RequestId);
+
+    private string? RequestLabel => request?.Request.Status == "PendingAcquisition"
+        ? ActiveForRequest.Any() ? "Working" : "Awaiting next check"
+        : null;
+
+    private bool HasReviewCandidates(Guid formatId) =>
+        request?.Request.Status == "NeedsReview" &&
+        request.ReviewCandidates?.Any(candidate => candidate.RequestFormatId == formatId) == true;
+
+    private string? FormatProgressCode(BookRequestFormatResponse format) =>
+        HasReviewCandidates(format.FormatId) ? "AwaitingApproval" : format.ProgressCode;
+
+    private string? FormatDescription(BookRequestFormatResponse format) =>
+        ActiveAcquisitions.FirstOrDefault(activity => activity.RequestFormatId == format.FormatId) is { } activity
+            ? $"{activity.Stage} via {activity.ProviderDisplayName}"
+            : HasReviewCandidates(format.FormatId) ? "Source review needed"
+            : format.ProgressDescription ?? (format.Status == "Requested" ? "Awaiting next check" : null);
+
+    private string FormatName(Guid formatId) =>
+        request?.Request.Formats.FirstOrDefault(format => format.FormatId == formatId)?.MediaType ?? "format";
+
     [Parameter]
     public Guid RequestId { get; set; }
 

@@ -26,6 +26,7 @@ internal static class AdminRequestEndpoints
 
         adminRequests.MapGet("/", ListAdminRequestsAsync);
         adminRequests.MapGet("/attention", GetAttentionAsync);
+        adminRequests.MapGet("/active-acquisitions", GetActiveAcquisitions);
         adminRequests.MapPost("/recheck", RecheckNeedsReviewAsync);
         adminRequests.MapGet("/provider-interactions", ListProviderInteractionsAsync);
         adminRequests.MapPost("/provider-interactions/{jobId:guid}/start", StartProviderInteractionAsync);
@@ -69,6 +70,12 @@ internal static class AdminRequestEndpoints
         return Results.Ok(new AdminBookRequestListResponse(
             queue.Select(ToAdminRequestResponse).ToArray()));
     }
+
+    private static IResult GetActiveAcquisitions(ActiveAcquisitionTracker tracker, IProviderRegistry registry) =>
+        Results.Ok(tracker.Snapshot().Select(activity => new AdminActiveAcquisitionResponse(
+            activity.RequestId, activity.RequestFormatId, activity.ProviderId,
+            registry.Find(activity.ProviderId)?.DisplayName ?? activity.ProviderId,
+            activity.Stage, activity.WorkTitle, activity.StartedAtUtc)).ToArray());
 
     private static async Task<IResult> GetAdminRequestAsync(
         Guid requestId,
@@ -613,6 +620,7 @@ internal static class AdminRequestEndpoints
             participant.DisplayName, participant.Email, participant.Note, participant.Withdrawn)).ToArray(),
         request.ReviewCandidates?.Select(candidate => new AdminRequestReviewCandidateResponse(
             candidate.CandidateId,
+            candidate.RequestFormatId,
             candidate.ProviderId,
             candidate.ProviderResultId,
             candidate.Title,

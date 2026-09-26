@@ -103,6 +103,18 @@ there. On admin surfaces (`Tasks`, `RequestQueue`, `RequestDetail`) the viewer
 *is* the librarian, so the same sentence reads as narration — use the short
 label instead (the default).
 
+For administrator request surfaces, a pending format may override the shared
+chip label with a server-reported active acquisition stage (such as
+"Downloading and preparing files via LibriVox" or "Processing files") and otherwise say
+"Awaiting next check." The underlying `Requested` status and its blue color
+remain unchanged. The active stage is transient host activity, not a durable
+request transition or evidence that a queued provider has already been asked.
+Only the administrator endpoint exposes provider identity and current work.
+When saved review candidates identify a particular request format, its admin
+chip says "Source review needed" and uses the existing amber
+`AwaitingApproval` progress color. Other formats on the same request retain
+their own status and color.
+
 ## Review-decision language
 
 A review category is routing metadata, not an explanation a person can act

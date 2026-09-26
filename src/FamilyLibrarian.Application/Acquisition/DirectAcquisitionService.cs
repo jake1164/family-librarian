@@ -35,7 +35,8 @@ public sealed class DirectAcquisitionService(
     ICredentialProtector protector,
     IWorkLookup workLookup,
     AcquisitionStagingService staging,
-    IClock clock)
+    IClock clock,
+    ActiveAcquisitionTracker activityTracker)
 {
     /// <param name="confirmLowConfidenceMatch">
     /// Required once an external provider's result is only
@@ -81,6 +82,8 @@ public sealed class DirectAcquisitionService(
 
         if (provider is not null)
         {
+            using var activity = activityTracker.Begin(requestId, requestFormatId, providerId,
+                "Checking provider", work?.Title);
             var options = await provider.FindDirectAcquisitionsAsync(request.WorkId, format.MediaType, cancellationToken);
             var option = options.FirstOrDefault(option =>
                 string.Equals(option.ProviderResultId, providerResultId, StringComparison.Ordinal));
@@ -92,6 +95,7 @@ public sealed class DirectAcquisitionService(
             IReadOnlyList<DirectAcquisitionFile> files;
             try
             {
+                activity.SetStage("Downloading and preparing files");
                 files = await provider.FetchAsync(option, cancellationToken);
             }
             catch (HttpRequestException exception)
@@ -112,6 +116,8 @@ public sealed class DirectAcquisitionService(
             {
                 return ManualImportResult.Invalid("The provider returned no file for that option.");
             }
+
+            activity.SetStage("Processing files");
 
             if (files.Count == 1)
             {

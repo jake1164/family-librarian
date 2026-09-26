@@ -434,6 +434,12 @@ public sealed class DirectAcquisitionEndpointTests
         Assert.AreEqual("1234", candidate.ProviderResultId);
         Assert.AreEqual("spa", candidate.Language);
 
+        using var admin = await CreateTokenClientAsync(factory, isAdmin: true);
+        var adminView = await admin.GetFromJsonAsync<AdminBookRequestResponse>(
+            $"/api/v1/admin/requests/{requestId}");
+        Assert.IsNotNull(adminView);
+        Assert.AreEqual(formatId, adminView.ReviewCandidates?.Single().RequestFormatId);
+
         var requesterUserId = await GetUserIdAsync(database, WebTestFixture.UserEmail);
         var userNotifications = await database.NotificationEvents.Where(e =>
             e.Category == NotificationCategories.RequestPreferenceAmbiguity &&

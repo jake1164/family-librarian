@@ -27,6 +27,7 @@ builder.Services.AddProviderInteractionAlertOptions(builder.Configuration, build
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<LiveConnections>();
 builder.Services.AddSingleton<LiveUpdatesPublisher>();
+builder.Services.AddSingleton<ActiveAcquisitionTracker>();
 builder.Services.AddSingleton<RemoteViewSessionRegistry>();
 builder.Services.ConfigureDbContext<AppDbContext>((services, options) =>
 {

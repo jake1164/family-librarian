@@ -202,7 +202,9 @@
     <MudMainContent Class="family-librarian-main-content">
         <LiveConnectionStatus />
         <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
-            @Body
+            <CascadingValue Value="@activeAcquisitions">
+                @Body
+            </CascadingValue>
         </MudContainer>
     </MudMainContent>
 
@@ -214,11 +216,19 @@
             aria-label="Go to top"
             title="Go to top" />
 
-    @* Sticky status footer, ABS/M3Undle-style. The readiness chip is a plain
-       healthy/degraded signal for every signed-in user — no per-source
-    detail, which stays admin-only on the Tasks page. *@
+    @* Sticky status footer. Readiness is a plain healthy/degraded signal for
+       everyone; transient built-in acquisition work is shown to admins. *@
     <MudAppBar Bottom="true" Dense="true" Elevation="1" Class="family-librarian-status-footer">
         <MudSpacer />
+        @if (isAdmin && activeAcquisitions.Count > 0)
+        {
+            <MudButton Variant="Variant.Text" Color="Color.Info" Size="Size.Small"
+                       Href="admin/requests" StartIcon="@Icons.Material.Filled.Downloading">
+                @(activeAcquisitions.Count == 1
+                    ? $"{activeAcquisitions[0].Stage}: {activeAcquisitions[0].WorkTitle ?? "request"}"
+                    : $"{activeAcquisitions.Count} local acquisitions active")
+            </MudButton>
+        }
         @if (systemReadiness is { } readiness)
         {
             @if (readiness.Healthy)
@@ -261,6 +271,8 @@
     private bool isDarkMode;
     private ThemeMode themeMode = ThemeMode.System;
     private AdminRequestAttentionResponse? adminAttention;
+    private IReadOnlyList<AdminActiveAcquisitionResponse> activeAcquisitions = [];
+    private readonly CancellationTokenSource activityPollCancellation = new();
     private LiveSubscription? liveSubscription;
     private SystemReadinessResponse? systemReadiness;
     private ExternalLibraryLinksResponse? externalLibraryLinks;
@@ -352,13 +364,54 @@
                     externalLibraryLinks = null;
                 }
                 if (isAdmin)
+                {
                     await RefreshAdminAttentionAsync(token);
+                    await RefreshActiveAcquisitionsAsync(token);
+                }
                 else
+                {
                     adminAttention = null;
+                    activeAcquisitions = [];
+                }
                 if (!token.IsCancellationRequested) StateHasChanged();
             }));
         Updates.Start();
         await liveSubscription.RefreshAsync();
+        _ = PollActiveAcquisitionsAsync();
+    }
+
+    private async Task PollActiveAcquisitionsAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(activityPollCancellation.Token))
+            {
+                if (isAdmin)
+                {
+                    await InvokeAsync(async () =>
+                    {
+                        await RefreshActiveAcquisitionsAsync(activityPollCancellation.Token);
+                        StateHasChanged();
+                    });
+                }
+            }
+        }
+        catch (OperationCanceledException) when (activityPollCancellation.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task RefreshActiveAcquisitionsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            activeAcquisitions = await AdminRequests.GetActiveAcquisitionsAsync(cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            activeAcquisitions = [];
+        }
     }
 
     private async Task RefreshSystemReadinessAsync(CancellationToken cancellationToken)
@@ -424,5 +477,10 @@
         Navigation.NavigateTo("/", forceLoad: true);
     }
 
-    public void Dispose() => liveSubscription?.Dispose();
+    public void Dispose()
+    {
+        activityPollCancellation.Cancel();
+        activityPollCancellation.Dispose();
+        liveSubscription?.Dispose();
+    }
 }

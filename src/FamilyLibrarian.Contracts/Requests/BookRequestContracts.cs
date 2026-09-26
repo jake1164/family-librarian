@@ -115,6 +115,16 @@ public sealed record BookRequestListResponse(
 public sealed record AdminBookRequestListResponse(
     IReadOnlyList<AdminBookRequestResponse> Requests);
 
+/// <summary>Current host-local acquisition work, visible only to administrators.</summary>
+public sealed record AdminActiveAcquisitionResponse(
+    Guid RequestId,
+    Guid RequestFormatId,
+    string ProviderId,
+    string ProviderDisplayName,
+    string Stage,
+    string? WorkTitle,
+    DateTimeOffset StartedAtUtc);
+
 /// <summary>
 /// Small, administrator-only attention summary for the persistent application
 /// chrome and request-review surfaces. It deliberately contains no requester
@@ -164,6 +174,7 @@ public sealed record AdminBookRequestResponse(
 /// </summary>
 public sealed record AdminRequestReviewCandidateResponse(
     Guid CandidateId,
+    Guid RequestFormatId,
     string ProviderId,
     string ProviderResultId,
     string Title,

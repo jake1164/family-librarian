@@ -84,6 +84,7 @@ public sealed record AdminBookRequestView(
 /// <summary>Administrative candidate evidence, including source inspection only available to a librarian.</summary>
 public sealed record AdminRequestReviewCandidateView(
     Guid CandidateId,
+    Guid RequestFormatId,
     string ProviderId,
     string ProviderResultId,
     string Title,

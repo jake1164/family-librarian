@@ -307,7 +307,8 @@ public sealed class DirectAcquisitionServiceTests
                                 new NoOpCredentialProtector(),
                 WorkLookup,
                 staging,
-                new FixedClock());
+                new FixedClock(),
+                new ActiveAcquisitionTracker());
         }
 
         public FakeProviderAcquisitionJobStore ProviderAcquisitionJobs { get; }

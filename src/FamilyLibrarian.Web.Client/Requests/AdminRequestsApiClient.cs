@@ -9,6 +9,11 @@ namespace FamilyLibrarian.Web.Client.Requests;
 /// <summary>Typed client for the administrator's request-review queue.</summary>
 public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTokenProvider antiforgery)
 {
+    public async Task<IReadOnlyList<AdminActiveAcquisitionResponse>> GetActiveAcquisitionsAsync(
+        CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<AdminActiveAcquisitionResponse[]>(
+            "api/v1/admin/requests/active-acquisitions", cancellationToken) ?? [];
+
     public async Task<AdminRequestAttentionResponse> GetAttentionAsync(
         CancellationToken cancellationToken = default) =>
         await httpClient.GetFromJsonAsync<AdminRequestAttentionResponse>(

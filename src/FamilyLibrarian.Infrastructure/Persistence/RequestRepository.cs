@@ -699,6 +699,7 @@ public sealed class RequestRepository(
                 .OrderBy(candidate => candidate.DisplayOrder)
                 .Select(candidate => new AdminRequestReviewCandidateView(
                     candidate.Id,
+                    candidate.RequestFormatId,
                     candidate.ProviderId,
                     candidate.ProviderResultId,
                     candidate.Title,

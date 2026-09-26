@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain.Acquisition;
@@ -161,6 +162,38 @@ public sealed class AdminRequestQueueEndpointTests
         using var nonAdmin = await CreateTokenClientAsync(fixture, isAdmin: false);
         var forbidden = await nonAdmin.GetAsync("/api/v1/admin/requests/attention");
         Assert.AreEqual(HttpStatusCode.Forbidden, forbidden.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task ActiveAcquisitionEndpointShowsCurrentStageOnlyToAnAdmin()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var tracker = fixture.Services.GetRequiredService<ActiveAcquisitionTracker>();
+        var requestId = Guid.NewGuid();
+        var formatId = Guid.NewGuid();
+        using var admin = await CreateTokenClientAsync(fixture, isAdmin: true);
+        using var nonAdmin = await CreateTokenClientAsync(fixture, isAdmin: false);
+
+        using (var activity = tracker.Begin(requestId, formatId, "librivox", "Downloading", "Dodsworth"))
+        {
+            var response = await admin.GetFromJsonAsync<AdminActiveAcquisitionResponse[]>(
+                "/api/v1/admin/requests/active-acquisitions");
+            var current = response?.Single(item => item.RequestFormatId == formatId);
+            Assert.IsNotNull(current);
+            Assert.AreEqual("Downloading", current.Stage);
+            Assert.AreEqual("LibriVox", current.ProviderDisplayName);
+            Assert.AreEqual("Dodsworth", current.WorkTitle);
+            var forbidden = await nonAdmin.GetAsync("/api/v1/admin/requests/active-acquisitions");
+            Assert.AreEqual(HttpStatusCode.Forbidden, forbidden.StatusCode);
+            activity.SetStage("Processing files");
+            response = await admin.GetFromJsonAsync<AdminActiveAcquisitionResponse[]>(
+                "/api/v1/admin/requests/active-acquisitions");
+            Assert.AreEqual("Processing files", response?.Single(item => item.RequestFormatId == formatId).Stage);
+        }
+
+        var completed = await admin.GetFromJsonAsync<AdminActiveAcquisitionResponse[]>(
+            "/api/v1/admin/requests/active-acquisitions");
+        Assert.IsFalse(completed?.Any(item => item.RequestFormatId == formatId) ?? true);
     }
 
     [TestMethod]

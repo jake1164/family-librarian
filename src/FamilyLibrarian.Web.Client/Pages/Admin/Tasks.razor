@@ -71,13 +71,13 @@
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
                                 <MudLink Href="@($"admin/requests/{request.Request.Id}")">@request.Request.WorkTitle</MudLink>
                                 <MudLink Href="@($"admin/requests/{request.Request.Id}")" Underline="Underline.None">
-                                    <RequestStatusChip Status="@request.Request.Status" />
+                                    <RequestStatusChip Status="@request.Request.Status" Label="@RequestLabel(request.Request)" />
                                 </MudLink>
                                 @foreach (var format in request.Request.Formats)
                                 {
                                     <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
-                                                       ProgressCode="@format.ProgressCode"
-                                                       ProgressDescription="@format.ProgressDescription"
+                                                       ProgressCode="@FormatProgressCode(request, format)"
+                                                       ProgressDescription="@FormatDescription(request, format)"
                                                        ExternalActionUri="@format.ExternalActionUri" />
                                 }
                             </MudStack>
@@ -215,6 +215,26 @@
 </MudStack>
 
 @code {
+    [CascadingParameter]
+    private IReadOnlyList<AdminActiveAcquisitionResponse> ActiveAcquisitions { get; set; } = [];
+
+    private string? RequestLabel(BookRequestResponse request) => request.Status == "PendingAcquisition"
+        ? ActiveAcquisitions.Any(activity => activity.RequestId == request.Id) ? "Working" : "Awaiting next check"
+        : null;
+
+    private static bool HasReviewCandidates(AdminBookRequestResponse request, Guid formatId) =>
+        request.Request.Status == "NeedsReview" &&
+        request.ReviewCandidates?.Any(candidate => candidate.RequestFormatId == formatId) == true;
+
+    private string? FormatProgressCode(AdminBookRequestResponse request, BookRequestFormatResponse format) =>
+        HasReviewCandidates(request, format.FormatId) ? "AwaitingApproval" : format.ProgressCode;
+
+    private string? FormatDescription(AdminBookRequestResponse request, BookRequestFormatResponse format) =>
+        ActiveAcquisitions.FirstOrDefault(activity => activity.RequestFormatId == format.FormatId) is { } activity
+            ? $"{activity.Stage} via {activity.ProviderDisplayName}"
+            : HasReviewCandidates(request, format.FormatId) ? "Source review needed"
+            : format.ProgressDescription ?? (format.Status == "Requested" ? "Awaiting next check" : null);
+
     private AdminTasksResponse? snapshot;
     private string? errorMessage;
 

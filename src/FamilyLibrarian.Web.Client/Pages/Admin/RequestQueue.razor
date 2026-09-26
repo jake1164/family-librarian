@@ -62,15 +62,22 @@
                             Requested by @item.RequesterDisplayName (@item.RequesterEmail)
                         </MudText>
                         <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
-                            <RequestStatusChip Status="@item.Request.Status" />
+                            <RequestStatusChip Status="@item.Request.Status" Label="@RequestLabel(item.Request)" />
                             @foreach (var format in item.Request.Formats)
                             {
                                 <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
-                                                   ProgressCode="@format.ProgressCode"
-                                                   ProgressDescription="@format.ProgressDescription"
+                                                   ProgressCode="@FormatProgressCode(item, format)"
+                                                   ProgressDescription="@FormatDescription(item, format)"
                                                    ExternalActionUri="@format.ExternalActionUri" />
                             }
                         </MudStack>
+                        @foreach (var activity in ActiveForRequest(item.Request.Id))
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Info">
+                                @activity.Stage from @activity.ProviderDisplayName for @FormatName(item.Request, activity.RequestFormatId)
+                                since @activity.StartedAtUtc.ToLocalTime().ToString("t").
+                            </MudText>
+                        }
                         <MudText Typo="Typo.caption">
                             Asked @item.Request.RequestedAtUtc.ToLocalTime().ToString("g")
                             (@Age(item.Request.RequestedAtUtc))
@@ -96,7 +103,15 @@
                         @if (item.Request.Status == "NeedsReview")
                         {
                             <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined">
-                                <MudText Typo="Typo.body2">@item.Request.StatusDescription</MudText>
+                                <MudText Typo="Typo.body2">@ReviewDescription(item)</MudText>
+                                @if (item.ReviewCandidates is { Count: > 0 } candidates)
+                                {
+                                    <MudText Typo="Typo.caption">
+                                        @candidates.Count source record@(candidates.Count == 1 ? "" : "s")
+                                        from @string.Join(", ", candidates.Select(candidate => candidate.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase)).
+                                        Open the request to inspect and resolve them.
+                                    </MudText>
+                                }
                                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-1" Wrap="Wrap.Wrap">
                                     <MudMenu Label="Recheck" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
                                              StartIcon="@Icons.Material.Filled.Refresh" Disabled="@isRechecking">
@@ -131,6 +146,40 @@
 </MudStack>
 
 @code {
+    [CascadingParameter]
+    private IReadOnlyList<AdminActiveAcquisitionResponse> ActiveAcquisitions { get; set; } = [];
+
+    private IEnumerable<AdminActiveAcquisitionResponse> ActiveForRequest(Guid requestId) =>
+        ActiveAcquisitions.Where(activity => activity.RequestId == requestId);
+
+    private AdminActiveAcquisitionResponse? ActiveForFormat(Guid formatId) =>
+        ActiveAcquisitions.FirstOrDefault(activity => activity.RequestFormatId == formatId);
+
+    private string? RequestLabel(BookRequestResponse request) => request.Status == "PendingAcquisition"
+        ? ActiveForRequest(request.Id).Any() ? "Working" : "Awaiting next check"
+        : null;
+
+    private static bool HasReviewCandidates(AdminBookRequestResponse item, Guid formatId) =>
+        item.Request.Status == "NeedsReview" &&
+        item.ReviewCandidates?.Any(candidate => candidate.RequestFormatId == formatId) == true;
+
+    private string? FormatProgressCode(AdminBookRequestResponse item, BookRequestFormatResponse format) =>
+        HasReviewCandidates(item, format.FormatId) ? "AwaitingApproval" : format.ProgressCode;
+
+    private string? FormatDescription(AdminBookRequestResponse item, BookRequestFormatResponse format) =>
+        ActiveForFormat(format.FormatId) is { } activity
+            ? $"{activity.Stage} via {activity.ProviderDisplayName}"
+            : HasReviewCandidates(item, format.FormatId) ? "Source review needed"
+            : format.ProgressDescription ?? (format.Status == "Requested" ? "Awaiting next check" : null);
+
+    private static string FormatName(BookRequestResponse request, Guid formatId) =>
+        request.Formats.FirstOrDefault(format => format.FormatId == formatId)?.MediaType ?? "format";
+
+    private static string ReviewDescription(AdminBookRequestResponse item) =>
+        item.Request.NeedsReview?.Reason is { Length: > 0 } reason && !string.IsNullOrWhiteSpace(reason)
+            ? reason
+            : item.Request.StatusDescription;
+
     private static readonly (string? Status, string Label)[] Filters =
     [
         (null, "All requests"),
