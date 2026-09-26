@@ -168,7 +168,11 @@ public sealed class LiveUpdatesEndpointTests
         await using var admin = await Viewer.ConnectAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
         await using var owner = await Viewer.ConnectAsync(factory, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
         await using var unrelated = await Viewer.ConnectAsync(factory, await CreateUserAsync(factory), WebTestFixture.UserPassword);
-        var resolved = await owner.Http.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", null);
+        // A distinct demo candidate from RequestScanAndPublishingChangesReachOnlyTheOwnerAndAdmins:
+        // both tests share one per-class database, and IX_book_requests_work_id (AppDbContext.cs)
+        // forbids two open requests for the same Work, so reusing "the-hobbit" here would collide
+        // with that test's still-open request whenever it runs first.
+        var resolved = await owner.Http.PostAsync("/api/v1/catalog/candidates/demo/a-wrinkle-in-time/resolve", null);
         resolved.EnsureSuccessStatusCode();
         var work = await resolved.Content.ReadFromJsonAsync<CatalogWorkResponse>();
         Assert.IsNotNull(work);
@@ -178,11 +182,20 @@ public sealed class LiveUpdatesEndpointTests
         var now = DateTimeOffset.UtcNow;
         var request = new BookRequest(owner.UserId, work.Id, [RequestMediaType.Ebook], null, now);
         var provider = new ExternalProvider($"live-update-{Guid.NewGuid():N}", "Live Update Test Provider", "http://provider.invalid", now);
+        // Saved and barrier-drained separately from the request/job below: LiveChanges.Capture
+        // (correctly) puts every ExternalProvider change on the shared System topic too, and
+        // BarrierAsync uses that same System flag as its own "batch is flushed" marker. Saving
+        // it together with the request would let this message satisfy that marker early, so the
+        // dedicated barrier message below gets left unread in each viewer's channel and is then
+        // wrongly consumed as the answer to the *next* barrier instead.
+        database.ExternalProviders.Add(provider);
+        await database.SaveChangesAsync();
+        await BarrierAsync(factory, admin, owner, unrelated);
+
         var job = new ProviderAcquisitionJob(request.Id, request.Formats.Single().Id, provider.Id, provider.ProviderId,
             null, Guid.NewGuid().ToString("N"), "candidate", null, null, now);
         job.RecordSubmission("provider-job", ProviderAcquisitionJobLifecycleState.Running, now, now);
         database.BookRequests.Add(request);
-        database.ExternalProviders.Add(provider);
         database.ProviderAcquisitionJobs.Add(job);
         await database.SaveChangesAsync();
         await BarrierAsync(factory, admin, owner, unrelated);
