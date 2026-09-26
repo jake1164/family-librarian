@@ -382,8 +382,8 @@ WEEKLY   A lower-priority approved source may be checked no more than once per w
 MANUAL   No background lookup; an administrator explicitly checks it.
 ```
 
-The bundled Project Gutenberg implementation has effective `ONCE` behavior. Registered
-external providers default to `MANUAL`; an administrator may explicitly select
+The bundled Project Gutenberg and LibriVox implementations have effective
+`ONCE` behavior. Registered external providers default to `MANUAL`; an administrator may explicitly select
 `DAILY` or `WEEKLY` for each enabled provider. The application owns that policy,
 not the provider manifest.
 

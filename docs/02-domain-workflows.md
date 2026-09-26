@@ -1084,8 +1084,16 @@ event. A background verifier performs the OPDS rechecks, so administrators do
 not have to drive that normal asynchronous CWA step by hand.
 
 **Automatic public-domain format path:** a second background worker processes
-pending formats. The locally indexed Project Gutenberg source is enabled by
-default and is only eligible for unattended acquisition when it returns exactly
+pending formats. Project Gutenberg and LibriVox are compiled-in direct-acquisition
+providers, independently enabled by default, and can each be disabled in
+Settings → Sources. Gutenberg searches its locally imported RDF catalogue;
+LibriVox searches its live audiobook API by title. LibriVox uses one project ID
+per recording and acquires the selected recording's whole-book ZIP, safely
+extracts its MP3 tracks into the existing quarantine bundle pipeline, and lets
+the existing audio, security, and identity validation run before approval.
+Both public-domain providers use the existing acquisition and review flow; no
+provider writes directly to a library destination. The Project Gutenberg source
+is only eligible for unattended acquisition when it returns exactly
 one result whose normalized title starts with the canonical title and whose
 creator-name tokens exactly match the canonical primary author. For an ebook,
 the worker then re-derives the candidate on the server, downloads it into
@@ -1181,11 +1189,13 @@ and records the outcome; a result moves the request to
 `NeedsReview` and never downloads the external artifact automatically.
 
 Project Gutenberg discovery reads the locally imported daily RDF catalogue, so it
-continues to work when external catalogue APIs are blocked. The source's mirror
-download failure is recorded by the automatic request worker as an
-administrator-visible provider failure. The same source's optional
-fulfillment-options lookup degrades to no options, so it must
-not fail or delay the core Work and request detail views.
+continues to work when external catalogue APIs are blocked. LibriVox discovery
+uses the upstream title-only search (not combined title-and-author filtering),
+spaces catalog requests, and performs one bounded retry for rate limits or
+transient server failures. An upstream search failure is recorded separately
+from an archive download or post-download validation failure. Neither source's
+optional fulfillment-options lookup may fail or delay core Work and request
+detail views.
 
 **Cancel and ask again:** reopening a cancelled request begins a fresh
 acquisition cycle. Previous provider attempts remain visible in the audit

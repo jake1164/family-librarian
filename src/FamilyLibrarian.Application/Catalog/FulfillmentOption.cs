@@ -118,7 +118,12 @@ public sealed record FulfillmentOption(
     // satisfied because this candidate's narration is Unknown -- distinct from
     // a confirmed Synthetic candidate, which is simply unusable rather than
     // reviewable. Never true for a non-audiobook option.
-    bool RequiresNarrationConfirmation = false);
+    bool RequiresNarrationConfirmation = false,
+    long? RuntimeSeconds = null,
+    IReadOnlyList<string>? SectionTitles = null,
+    IReadOnlyList<string>? NarratorNames = null,
+    IReadOnlyList<string>? SourceGenres = null,
+    Uri? CoverArtUri = null);
 
 /// <summary>
 /// Deterministic classification of an audiobook candidate's narration, as

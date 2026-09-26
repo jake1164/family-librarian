@@ -166,6 +166,12 @@ and sends a clean verified copy to CWA. **My requests** and the book page refres
 while open so the requester can follow safe, plain-language progress without
 seeing provider diagnostics.
 
+For audiobooks, the built-in LibriVox source is also enabled by default. It
+searches LibriVox's public catalog by title, keeps each recording as a separate
+candidate, and acquires the selected whole-book ZIP into Family Librarian's
+normal quarantine, audio-validation, and approval flow before Audiobookshelf
+delivery. Both built-in sources can be disabled independently under **Sources**.
+
 For Kindle delivery, configure **Ebook delivery**, then opt in on an ebook
 request or choose **Send to Kindle** for a book already in the library.
 **My Kindle deliveries** includes both paths, receipt confirmation, failures,
@@ -182,12 +188,13 @@ Administrators also get:
   Queue navigation label show any requests that need review;
 - **Metadata providers**, for enabling book-information providers and storing a
   Google Books key;
-- **Sources**, for reviewing the built-in Project Gutenberg source and configuring
+- **Sources**, for reviewing the built-in Project Gutenberg and LibriVox sources and configuring
   external acquisition sources, their private network, and a per-source manual,
   daily, or weekly recheck schedule. The page also shows the latest safe
   automatic-source failure directly, so an operator does not have to trace a
   request timeline to discover it. Project Gutenberg searches use the daily RDF
-  catalogue imported into PostgreSQL; actual ebook downloads use configured mirrors.
+  catalogue imported into PostgreSQL; LibriVox searches its live audiobook API.
+  Project Gutenberg ebook downloads use configured mirrors.
   Source failures remain visible to administrators but
   do not prevent Work or request pages from loading;
 - **Security scans**, for the latest 25, 50 (default), or 100 imported/acquired

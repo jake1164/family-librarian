@@ -24,6 +24,7 @@ public sealed class ProviderRegistry : IProviderRegistry
     // enablement choices and attempt history continue to resolve after the
     // implementation moves from the Gutendex API to the local RDF catalogue.
     public const string GutenbergProviderId = "gutendex";
+    public const string LibriVoxProviderId = "librivox";
 
     private static readonly IReadOnlySet<ProviderCapability> MetadataOnly =
         new HashSet<ProviderCapability> { ProviderCapability.Metadata };
@@ -139,6 +140,24 @@ public sealed class ProviderRegistry : IProviderRegistry
                 [
                     new ProviderSetupLink("Offline catalogue documentation", "https://www.gutenberg.org/ebooks/offline_catalogs.html"),
                     new ProviderSetupLink("About Project Gutenberg", "https://www.gutenberg.org/about/")
+                ]),
+            new ProviderDescriptor(
+                LibriVoxProviderId,
+                "LibriVox",
+                DirectAcquisitionOnly,
+                RequiresCredential: false,
+                HasExternallyManagedCredential: false,
+                // Like Project Gutenberg above, this is an anonymous, credential-free
+                // public-domain built-in source; a fresh install should be able to
+                // fulfil an audiobook request from it without any admin setup.
+                DefaultEnabled: true,
+                SetupInstructions:
+                    "Searches the public LibriVox audiobook catalog. Selected recordings are downloaded " +
+                    "as a whole-book archive and each MP3 track passes Family Librarian's normal validation.",
+                SetupLinks:
+                [
+                    new ProviderSetupLink("LibriVox", "https://librivox.org/"),
+                    new ProviderSetupLink("API documentation", "https://librivox.org/api/info")
                 ])
         ];
     }

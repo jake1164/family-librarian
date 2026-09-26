@@ -50,6 +50,21 @@ public static class RequestReviewCandidatePresentation
             facts.Add($"{option.PartCount.Value.ToString(CultureInfo.InvariantCulture)} parts");
         }
 
+        if (option.RuntimeSeconds is > 0)
+        {
+            var duration = TimeSpan.FromSeconds(option.RuntimeSeconds.Value);
+            facts.Add(duration.TotalHours >= 1
+                ? $"Runtime {((int)duration.TotalHours).ToString(CultureInfo.InvariantCulture)}h {duration.Minutes.ToString(CultureInfo.InvariantCulture)}m"
+                : $"Runtime {duration.Minutes.ToString(CultureInfo.InvariantCulture)}m");
+        }
+
+        var narratorNames = option.NarratorNames?.Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => Clean(name, 80)).Where(name => name is not null).Take(5).ToArray();
+        if (narratorNames is { Length: > 1 })
+        {
+            facts.Add($"Readers: {string.Join(", ", narratorNames)}");
+        }
+
         if (option.ProviderPopularity is > 0)
         {
             facts.Add($"{option.ProviderPopularity.Value.ToString("N0", CultureInfo.InvariantCulture)} source downloads");
@@ -71,13 +86,18 @@ public static class RequestReviewCandidatePresentation
     /// Narration is meaningful audiobook evidence, not a quality score --
     /// shown by kind, never ranked or colored (docs/07-ui-conventions.md).
     /// Absent for every non-audiobook option and whenever the provider's own
-    /// evidence did not support a confident classification.
+    /// evidence did not support a confident classification. A collaborative
+    /// (multi-reader) recording names its narrator here as "collaborative"
+    /// rather than listing everyone twice -- the full list follows as a
+    /// separate "Readers: ..." fact below.
     /// </summary>
     private static string? DescribeNarration(FulfillmentOption option) => option.NarrationKind switch
     {
-        NarrationKind.Human => string.IsNullOrWhiteSpace(option.Narrator)
-            ? "Human narration"
-            : $"Human narration — {Clean(option.Narrator, 120)}",
+        NarrationKind.Human => (option.NarratorNames?.Count(name => !string.IsNullOrWhiteSpace(name)) ?? 0) > 1
+            ? "Human narration — collaborative"
+            : string.IsNullOrWhiteSpace(option.Narrator)
+                ? "Human narration"
+                : $"Human narration — {Clean(option.Narrator, 120)}",
         NarrationKind.Synthetic => "Computer-generated narration",
         _ => null
     };

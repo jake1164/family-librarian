@@ -20,6 +20,7 @@ using FamilyLibrarian.Infrastructure.Catalog;
 using FamilyLibrarian.Infrastructure.Communications;
 using FamilyLibrarian.Infrastructure.Delivery;
 using FamilyLibrarian.Infrastructure.Gutenberg;
+using FamilyLibrarian.Infrastructure.LibriVox;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
@@ -564,6 +565,28 @@ public static class DependencyInjection
             serviceProvider.GetRequiredService<GutenbergProvider>());
         services.AddTransient<IAutomaticDirectAcquisitionProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<GutenbergProvider>());
+
+        services.AddSingleton<LibriVoxRequestThrottle>();
+        services.AddHttpClient<LibriVoxApiClient>(client =>
+        {
+            client.BaseAddress = new Uri("https://librivox.org/");
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        });
+        services.AddHttpClient<LibriVoxProvider>(client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(30);
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+        }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false
+        });
+        services.AddTransient<IDirectAcquisitionProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<LibriVoxProvider>());
+        services.AddTransient<IAutomaticDirectAcquisitionProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<LibriVoxProvider>());
 
         // Publishing destinations (M12): CWA (ebook library, ingest folder) and
         // Audiobookshelf (audiobook delivery, upload API). Neither is a metadata

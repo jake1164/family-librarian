@@ -50,6 +50,10 @@
                     {
                         <span>Searches the locally imported Project Gutenberg catalogue; downloads use configured mirrors when a family request is fulfilled.</span>
                     }
+                    else if (source.ProviderId == "librivox")
+                    {
+                        <span>Searches the live LibriVox audiobook catalog; selected recordings are downloaded as a whole-book ZIP and validated as MP3 tracks.</span>
+                    }
                     else
                     {
                         <span>Provides direct acquisition options during fulfillment.</span>

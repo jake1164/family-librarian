@@ -117,9 +117,13 @@ public sealed class MetadataIntegrationsEndpointTests
 
         Assert.IsNotNull(providers);
         var gutendex = providers.Providers.Single(provider => provider.ProviderId == "gutendex");
+        var librivox = providers.Providers.Single(provider => provider.ProviderId == "librivox");
         var googleBooks = providers.Providers.Single(provider => provider.ProviderId == CredentialedProvider);
 
         CollectionAssert.AreEquivalent(DirectAcquisitionCapability, gutendex.Capabilities.ToArray());
+        CollectionAssert.AreEquivalent(DirectAcquisitionCapability, librivox.Capabilities.ToArray());
+        Assert.IsTrue(librivox.IsEnabled);
+        Assert.IsFalse(librivox.RequiresCredential);
         CollectionAssert.Contains(googleBooks.Capabilities.ToArray(), "Metadata");
     }
 
@@ -135,6 +139,7 @@ public sealed class MetadataIntegrationsEndpointTests
 
         var openLibrary = providers.Providers.Single(provider => provider.ProviderId == KeylessProvider);
         var gutendex = providers.Providers.Single(provider => provider.ProviderId == "gutendex");
+        var librivox = providers.Providers.Single(provider => provider.ProviderId == "librivox");
 
         CollectionAssert.Contains(
             openLibrary.SetupLinks.Select(link => link.Url).ToArray(),
@@ -145,6 +150,26 @@ public sealed class MetadataIntegrationsEndpointTests
         CollectionAssert.Contains(
             gutendex.SetupLinks.Select(link => link.Url).ToArray(),
             "https://www.gutenberg.org/about/");
+        CollectionAssert.Contains(
+            librivox.SetupLinks.Select(link => link.Url).ToArray(),
+            "https://librivox.org/api/info");
+    }
+
+    [TestMethod]
+    public async Task LibriVoxCanBeDisabledIndependentlyAsABuiltInSource()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        var response = await client.PutAsJsonAsync(
+            "/api/v1/admin/integrations/metadata/librivox/enabled",
+            new SetProviderEnabledRequest(false));
+
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        var providers = await client.GetFromJsonAsync<ProviderListResponse>(
+            "/api/v1/admin/integrations/metadata/");
+        Assert.IsNotNull(providers);
+        Assert.IsFalse(providers.Providers.Single(provider => provider.ProviderId == "librivox").IsEnabled);
     }
 
     [TestMethod]
