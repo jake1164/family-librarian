@@ -25,6 +25,9 @@ internal static class CatalogEndpoints
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
         catalog.MapGet("/search", SearchCatalogAsync);
+        catalog.MapPost("/search/runs", StartCatalogSearchRunAsync);
+        catalog.MapGet("/search/runs/{runId:guid}", GetCatalogSearchRunAsync);
+        catalog.MapDelete("/search/runs/{runId:guid}", CancelCatalogSearchRunAsync);
         catalog.MapGet("/candidates/{providerId}/{externalId}", GetCatalogCandidateAsync);
         catalog.MapPost("/candidates/{providerId}/{externalId}/resolve", ResolveCatalogCandidateAsync);
         catalog.MapGet("/works/{workId:guid}", GetCatalogWorkAsync);
@@ -260,6 +263,41 @@ internal static class CatalogEndpoints
             result.Ebook.Select(ToFulfillmentOptionResponse).ToArray(),
             result.Audiobook.Select(ToFulfillmentOptionResponse).ToArray()));
     }
+
+    private static IResult StartCatalogSearchRunAsync(
+        CatalogSearchRequest request,
+        ICurrentUser currentUser,
+        CatalogSearchRunCoordinator coordinator)
+    {
+        var searchText = request.Query?.Trim();
+        if (string.IsNullOrWhiteSpace(searchText) || searchText.Length is < 2 or > 200 || request.Page is < 1 or > BookSearchQuery.MaximumPage)
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["query"] = ["Enter a query of 2–200 characters and a valid page number."] });
+        if (currentUser.UserId is not { } userId) return Results.Unauthorized();
+        var run = coordinator.Start(userId, new BookSearchQuery(searchText, request.Page));
+        return run is null ? Results.StatusCode(StatusCodes.Status503ServiceUnavailable) :
+            Results.Accepted($"/api/v1/catalog/search/runs/{run.Id}", new CatalogSearchRunStartedResponse(run.Id));
+    }
+
+    private static IResult GetCatalogSearchRunAsync(
+        Guid runId,
+        string? q,
+        ICurrentUser currentUser,
+        CatalogSearchRunCoordinator coordinator)
+    {
+        if (currentUser.UserId is not { } userId || !coordinator.TryGet(userId, runId, out var run) || run is null)
+            return Results.NotFound();
+        var providerResults = run.Snapshot();
+        var candidates = BookCandidateGrouper.GroupMatchingCandidates(
+            providerResults.Where(result => result.Succeeded).SelectMany(result => result.Candidates).ToArray(), q ?? run.Query.Text)
+            .Select(candidate => ToResponse(candidate, q ?? run.Query.Text)).ToArray();
+        var response = new CatalogSearchResponse(candidates,
+            providerResults.Select(result => new CatalogProviderSearchStatusResponse(result.ProviderId, result.ProviderName, result.Succeeded)).ToArray(),
+            run.Query.Page, providerResults.Any(result => result.Succeeded && result.HasMore));
+        return Results.Ok(new CatalogSearchRunResponse(response, run.IsComplete));
+    }
+
+    private static IResult CancelCatalogSearchRunAsync(Guid runId, ICurrentUser currentUser, CatalogSearchRunCoordinator coordinator) =>
+        currentUser.UserId is { } userId && coordinator.Cancel(userId, runId) ? Results.NoContent() : Results.NotFound();
 
     private static IResult StartCandidateAvailabilityRunAsync(
         CandidateAvailabilityRequest request,

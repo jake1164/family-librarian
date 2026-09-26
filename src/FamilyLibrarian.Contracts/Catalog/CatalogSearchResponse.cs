@@ -6,6 +6,12 @@ public sealed record CatalogSearchResponse(
     int Page = 1,
     bool HasMore = false);
 
+public sealed record CatalogSearchRequest(string Query, int Page = 1);
+
+public sealed record CatalogSearchRunStartedResponse(Guid RunId);
+
+public sealed record CatalogSearchRunResponse(CatalogSearchResponse Search, bool IsComplete);
+
 public sealed record CatalogProviderSearchStatusResponse(
     string ProviderId,
     string ProviderName,

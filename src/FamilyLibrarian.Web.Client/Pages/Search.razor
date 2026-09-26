@@ -25,12 +25,12 @@
                               Variant="Variant.Outlined"
                               Immediate="true"
                               Class="flex-grow-1"
-                              Disabled="@(isSearching || isLoadingMore)" />
+                              Disabled="@isLoadingMore" />
                 <MudButton ButtonType="ButtonType.Submit"
                            Variant="Variant.Filled"
                            Color="Color.Primary"
-                           Disabled="@(isSearching || isLoadingMore)">
-                    Search
+                           Disabled="@isLoadingMore">
+                    @(isSearching ? "Search again" : "Search")
                 </MudButton>
             </MudStack>
         </form>
@@ -52,7 +52,7 @@
     {
         <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
     }
-    else if (hasSearched && results.Count == 0)
+    @if (!isSearching && hasSearched && results.Count == 0)
     {
         <MudAlert Severity="Severity.Info">No matches found. Try a title with its author, or an ISBN.</MudAlert>
     }
@@ -165,7 +165,10 @@
     // so firing every visible result off at once risks piling that up across
     // a whole page of results.
     private readonly SemaphoreSlim availabilityGate = new(4, 4);
+    private readonly HashSet<string> availabilityStartedKeys = [];
     private CancellationTokenSource? availabilityCancellation;
+    private CancellationTokenSource? searchCancellation;
+    private Guid? activeSearchRunId;
 
     protected override void OnInitialized()
     {
@@ -186,6 +189,19 @@
             return;
         }
 
+        searchCancellation?.Cancel();
+        availabilityCancellation?.Cancel();
+        availabilityCancellation?.Dispose();
+        availabilityCancellation = null;
+        if (activeSearchRunId is { } previousRun)
+        {
+            try { await Catalog.CancelSearchRunAsync(previousRun); } catch (HttpRequestException) { }
+        }
+        searchCancellation?.Dispose();
+        searchCancellation = new CancellationTokenSource();
+        var thisSearch = searchCancellation;
+        var token = searchCancellation.Token;
+        activeSearchRunId = null;
         isSearching = true;
         hasSearched = true;
         errorMessage = null;
@@ -193,18 +209,38 @@
         showOtherMatches = false;
         currentPage = 1;
         hasMore = false;
+        results = [];
 
+        Guid? thisRunId = null;
         try
         {
-            var response = await Catalog.SearchAsync(query, currentPage);
-            results = response.Results;
-            unavailableProviders = response.Providers
-                .Where(provider => !provider.Succeeded)
-                .Select(provider => provider.ProviderName)
-                .ToArray();
-            currentPage = response.Page;
-            hasMore = response.HasMore;
+            SearchState.BeginNewSearch();
+            availabilityStartedKeys.Clear();
+            var availabilityStarted = false;
+            var started = await Catalog.StartSearchAsync(query, currentPage, token);
+            thisRunId = started.RunId;
+            activeSearchRunId = started.RunId;
+            while (true)
+            {
+                var run = await Catalog.GetSearchRunAsync(started.RunId, token);
+                results = run.Search.Results;
+                unavailableProviders = run.Search.Providers.Where(provider => !provider.Succeeded).Select(provider => provider.ProviderName).ToArray();
+                currentPage = run.Search.Page;
+                hasMore = run.Search.HasMore;
+                SearchState.SearchText = query;
+                SearchState.Results = results;
+                SearchState.UnavailableProviders = unavailableProviders;
+                SearchState.HasSearched = true;
+                SearchState.CurrentPage = currentPage;
+                SearchState.HasMore = hasMore;
+                StartAvailabilityLoad(results, cancelPreviousBatch: !availabilityStarted);
+                availabilityStarted = true;
+                await InvokeAsync(StateHasChanged);
+                if (run.IsComplete) break;
+                await Task.Delay(TimeSpan.FromMilliseconds(350), token);
+            }
         }
+        catch (OperationCanceledException) { }
         catch (HttpRequestException)
         {
             errorMessage = "The catalog is unavailable. Please try again.";
@@ -213,18 +249,23 @@
         }
         finally
         {
-            isSearching = false;
+            if (ReferenceEquals(searchCancellation, thisSearch)) isSearching = false;
+            if (activeSearchRunId == thisRunId) activeSearchRunId = null;
+            if (thisRunId is { } completedRun && token.IsCancellationRequested)
+            {
+                try { await Catalog.CancelSearchRunAsync(completedRun); } catch (HttpRequestException) { }
+            }
         }
 
-        SearchState.SearchText = searchText;
-        SearchState.Results = results;
-        SearchState.UnavailableProviders = unavailableProviders;
-        SearchState.HasSearched = hasSearched;
-        SearchState.CurrentPage = currentPage;
-        SearchState.HasMore = hasMore;
-        SearchState.BeginNewSearch();
-
-        StartAvailabilityLoad(results);
+        if (ReferenceEquals(searchCancellation, thisSearch))
+        {
+            SearchState.SearchText = searchText;
+            SearchState.Results = results;
+            SearchState.UnavailableProviders = unavailableProviders;
+            SearchState.HasSearched = hasSearched;
+            SearchState.CurrentPage = currentPage;
+            SearchState.HasMore = hasMore;
+        }
     }
 
     private async Task LoadMoreAsync()
@@ -292,7 +333,10 @@
 
         availabilityCancellation ??= new CancellationTokenSource();
         var token = availabilityCancellation.Token;
-        var uncached = resultsToCheck.Where(result => !SearchState.AvailabilityByResultKey.ContainsKey(ResultKey(result))).ToArray();
+        var uncached = resultsToCheck
+            .Where(result => !SearchState.AvailabilityByResultKey.ContainsKey(ResultKey(result)))
+            .Where(result => availabilityStartedKeys.Add(ResultKey(result)))
+            .ToArray();
         _ = Task.WhenAll(uncached.Select(result => LoadAvailabilityAsync(result, token)));
     }
 
@@ -362,9 +406,22 @@
 
     public void Dispose()
     {
+        searchCancellation?.Cancel();
+        searchCancellation?.Dispose();
+        if (activeSearchRunId is { } runId)
+        {
+            _ = CancelSearchRunQuietlyAsync(runId);
+        }
         availabilityCancellation?.Cancel();
         availabilityCancellation?.Dispose();
         availabilityGate.Dispose();
+    }
+
+    private async Task CancelSearchRunQuietlyAsync(Guid runId)
+    {
+        try { await Catalog.CancelSearchRunAsync(runId); }
+        catch (HttpRequestException) { }
+        catch (OperationCanceledException) { }
     }
 
     private static bool IsBestMatch(CatalogBookCandidateResponse result) =>

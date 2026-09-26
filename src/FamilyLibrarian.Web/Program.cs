@@ -38,6 +38,8 @@ builder.Services.ConfigureDbContext<AppDbContext>((services, options) =>
 builder.Services.AddScoped<SystemReadinessService>();
 builder.Services.AddSingleton<AvailabilityRunCoordinator>();
 builder.Services.AddHostedService<AvailabilityRunHostedService>();
+builder.Services.AddSingleton<CatalogSearchRunCoordinator>();
+builder.Services.AddHostedService<CatalogSearchRunHostedService>();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<CwaVerificationHostedService>();

@@ -18,6 +18,29 @@ public sealed class CatalogApiClient(HttpClient httpClient, AntiforgeryTokenProv
         return response ?? new CatalogSearchResponse([], []);
     }
 
+    public async Task<CatalogSearchRunStartedResponse> StartSearchAsync(string searchText, int page, CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/catalog/search/runs")
+        { Content = JsonContent.Create(new CatalogSearchRequest(searchText, page)) };
+        await antiforgery.AttachAsync(request, cancellationToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<CatalogSearchRunStartedResponse>(cancellationToken)
+            ?? throw new HttpRequestException("The catalog did not start a search.");
+    }
+
+    public async Task<CatalogSearchRunResponse> GetSearchRunAsync(Guid runId, CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<CatalogSearchRunResponse>($"api/v1/catalog/search/runs/{runId}", cancellationToken)
+        ?? throw new HttpRequestException("The catalog search returned no status.");
+
+    public async Task CancelSearchRunAsync(Guid runId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"api/v1/catalog/search/runs/{runId}");
+        await antiforgery.AttachAsync(request, CancellationToken.None);
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
+
     public Task<CatalogBookCandidateResponse?> GetCandidateAsync(
         string providerId,
         string externalId,

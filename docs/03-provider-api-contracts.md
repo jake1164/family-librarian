@@ -168,6 +168,16 @@ the application must:
 4. return one Work result with independently enriched Ebook and Audiobook
    availability.
 
+Interactive metadata searches run enabled providers concurrently and publish
+each provider's results and safe status independently. The requester receives
+an opaque, owner-scoped search-run ID and polls the accumulated result snapshot;
+a slow or unavailable provider must not hold back completed providers. A newer
+search cancels the prior run. The legacy aggregate search endpoint may remain
+for compatibility, but the browser's primary search flow uses the progressive
+run protocol. Provider identifiers are included only in the authenticated
+requester's catalog response; availability-run responses retain their separate
+topology-hiding contract.
+
 The response must be able to represent `Owned`, `Requested`,
 `WaitingForAvailability`, `Acquiring`, `Processing`, and delivery availability
 for each media type. It should offer product actions such as `GetEbook`,
