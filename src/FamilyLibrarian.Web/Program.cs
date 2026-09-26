@@ -48,6 +48,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AudiobookshelfVerificationHostedService>();
     builder.Services.AddHostedService<PublishingDestinationHealthHostedService>();
     builder.Services.AddHostedService<ExternalProviderHealthHostedService>();
+    builder.Services.AddHostedService<LibriVoxDownloadWorkspaceCleanupHostedService>();
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
     builder.Services.AddHostedService<AcquisitionJobPollingHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();

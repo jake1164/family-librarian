@@ -256,6 +256,28 @@ public interface IDirectAcquisitionProvider
     Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(FulfillmentOption fulfillmentOption, CancellationToken cancellationToken);
 }
 
+/// <summary>Optional progress reporting for a direct provider that streams a large transfer.</summary>
+public interface IProgressReportingDirectAcquisitionProvider : IDirectAcquisitionProvider
+{
+    Task<IReadOnlyList<DirectAcquisitionFile>> FetchWithProgressAsync(
+        FulfillmentOption fulfillmentOption,
+        DirectAcquisitionRequestContext requestContext,
+        Action<DirectAcquisitionTransferProgress> reportProgress,
+        CancellationToken cancellationToken);
+
+    /// <summary>Called when an acquisition attempt finishes without preserving resumable data.</summary>
+    Task FinishAcquisitionAsync(
+        DirectAcquisitionRequestContext requestContext);
+}
+
+public sealed record DirectAcquisitionRequestContext(Guid RequestId, Guid RequestFormatId);
+
+public sealed record DirectAcquisitionTransferProgress(
+    long BytesReceived,
+    long? TotalBytes,
+    string Stage,
+    bool IsTransferBaseline = false);
+
 /// <summary>
 /// A direct-acquisition provider whose returned options are conservative enough
 /// for the server to fetch without a librarian choosing among them first.

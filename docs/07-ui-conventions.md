@@ -110,6 +110,10 @@ chip label with a server-reported active acquisition stage (such as
 remain unchanged. The active stage is transient host activity, not a durable
 request transition or evidence that a queued provider has already been asked.
 Only the administrator endpoint exposes provider identity and current work.
+When an external provider is waiting for a human action, the admin-only chip
+may say "Provider action needed" using the amber `AwaitingProviderAction`
+progress code. Show the provider-supplied reason in adjacent admin-only text
+or an attention panel; keep the shared requester progress sentence generic.
 When saved review candidates identify a particular request format, its admin
 chip says "Source review needed" and uses the existing amber
 `AwaitingApproval` progress color. Other formats on the same request retain

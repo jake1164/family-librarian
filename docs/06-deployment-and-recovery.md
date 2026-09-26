@@ -13,6 +13,37 @@ same application image with the `--migrate` command, so the schema reviewed in
 source control is the schema deployed by Compose. Do not replace it with
 `EnsureCreated`, and do not run migrations from every application replica.
 
+## Resumable audiobook archive downloads
+
+An in-progress LibriVox audiobook archive is kept under
+`Storage__RootPath/acquisition-work/librivox/<request-format-id>` as one
+partial ZIP plus a small sidecar containing the provider result, final download
+URL, entity validator, and expected byte count. In the default Compose setup,
+`Storage__RootPath` is `/data/family-librarian`, backed by the
+`family-librarian-data` volume. Keep that volume mounted across container
+recreation; the partial archive is not stored in PostgreSQL or the container's
+temporary directory.
+
+After restart, Family Librarian sends an HTTP byte-range request from the saved
+file length and uses `If-Range` with a strong ETag or Last-Modified value. It
+appends only when the response confirms the requested range and matching
+representation. If the source redirects to a different mirror, ignores the
+range, changes the archive, or provides no stable validator, Family Librarian
+discards the partial file and downloads the archive from the beginning. A
+completed archive remains available through extraction and quarantine staging.
+It is removed after staging finishes, including a handled rejection. A
+connection interruption, retryable server response, or host shutdown releases
+the lock and retains the ZIP for the next attempt. Other failed attempts and
+invalid or corrupt archives are deleted immediately. Any leftovers from an
+unclean process termination are pruned at startup after 30 days.
+
+Range support varies by final download host, so a particular transfer may safely
+restart from zero even though the resume path is implemented. A download that
+receives no bytes for two minutes is treated as interrupted; automatic
+fulfillment schedules a retry while the request remains pending. A completed
+ZIP is re-used after restart and is fully read during extraction before it is
+accepted.
+
 ## Optional linked ebook libraries
 
 Calibre-Web and Calibre-Web Automated (CWA) are optional integrations, not

@@ -13,6 +13,7 @@ using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Acquisition;
 using FamilyLibrarian.Infrastructure.LibriVox;
 using FamilyLibrarian.Infrastructure.Providers;
+using Microsoft.Extensions.Options;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Acquisition;
 
@@ -180,7 +181,8 @@ public sealed class LibriVoxProviderTests
 
     private static LibriVoxProvider CreateProvider(LibriVoxApiClient api, HttpClient downloadClient) => new(
         api, downloadClient, new FakeRegistry(), new FakeSettingsStore(), new FakeWorkLookup(),
-        new DeterministicBookMatcher(), new ManualImportPolicy());
+        new DeterministicBookMatcher(), new ManualImportPolicy(),
+        new LibriVoxDownloadWorkspace(Options.Create(new StorageOptions { RootPath = Path.GetTempPath() })));
 
     private static HttpResponseMessage JsonResponse(string content) => new(HttpStatusCode.OK)
     {

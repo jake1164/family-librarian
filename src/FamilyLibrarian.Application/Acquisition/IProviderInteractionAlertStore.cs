@@ -14,6 +14,10 @@ public interface IProviderInteractionAlertStore
     /// <summary>Looks up a recipient by its token hash, with the owning alert loaded. Never by plaintext token.</summary>
     Task<ProviderInteractionAlertRecipient?> FindRecipientByTokenHashAsync(string tokenHash, CancellationToken cancellationToken);
 
+    /// <summary>Finds the exact Matrix alert reply target by room and original message event.</summary>
+    Task<ProviderInteractionAlertRecipient?> FindRecipientByRoomAndEventIdAsync(
+        string roomId, string eventId, CancellationToken cancellationToken);
+
     /// <summary>Loads one alert (with recipients) by id — used to reload after a concurrency conflict with the worker.</summary>
     Task<ProviderInteractionAlert?> FindByIdAsync(Guid alertId, CancellationToken cancellationToken);
 

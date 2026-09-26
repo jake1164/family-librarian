@@ -95,7 +95,7 @@
                             {
                                 <MudAlert Severity="@(waitingInteraction.IsExpired ? Severity.Error : Severity.Warning)"
                                           Dense="true" Variant="Variant.Outlined">
-                                    Needs you: @waitingInteraction.ProviderId is waiting on a librarian action.
+                                    Needs you: @(waitingInteraction.Message ?? $"{waitingInteraction.ProviderId} needs a librarian action.")
                                     <MudLink Href="admin/provider-interactions" Class="ml-1">Open provider interactions</MudLink>
                                 </MudAlert>
                             }
@@ -168,8 +168,9 @@
 
     private string? FormatDescription(AdminBookRequestResponse item, BookRequestFormatResponse format) =>
         ActiveForFormat(format.FormatId) is { } activity
-            ? $"{activity.Stage} via {activity.ProviderDisplayName}"
+            ? AdminAcquisitionProgressText.Describe(activity)
             : HasReviewCandidates(item, format.FormatId) ? "Source review needed"
+            : WaitingInteractionForFormat(item.Request.Id, format.FormatId) is not null ? "Provider action needed"
             : format.ProgressDescription ?? (format.Status == "Requested" ? "Awaiting next check" : null);
 
     private static string FormatName(BookRequestResponse request, Guid formatId) =>
@@ -288,6 +289,10 @@
     /// </summary>
     private AdminProviderInteractionAttentionResponse? WaitingInteractionFor(Guid requestId) =>
         attention?.WaitingProviderInteractions.FirstOrDefault(interaction => interaction.RequestId == requestId);
+
+    private AdminProviderInteractionAttentionResponse? WaitingInteractionForFormat(Guid requestId, Guid formatId) =>
+        attention?.WaitingProviderInteractions.FirstOrDefault(interaction =>
+            interaction.RequestId == requestId && interaction.RequestFormatId == formatId);
 
     /// <summary>
     /// Lowest rank surfaces first: requests or formats colored red (failed /

@@ -115,7 +115,9 @@
                     }
                     @if (confirmFallbackJobId == interaction.ProviderAcquisitionJobId)
                     {
-                        <MudText Typo="Typo.caption">Use the provider fallback?</MudText>
+                        <MudText Typo="Typo.caption">
+                            This invokes the provider-configured alternative. It may use provider account quota or subscription access.
+                        </MudText>
                         <MudButton Color="Color.Warning" Variant="Variant.Filled" Disabled="@isActing"
                                    OnClick="() => UseFallbackAsync(interaction.ProviderAcquisitionJobId)">
                             Confirm fallback
@@ -129,7 +131,7 @@
                         <MudButton Color="Color.Warning" Variant="Variant.Outlined"
                                    Disabled="@(isActing || interaction.IsExpired || !interaction.CanUseFallback)"
                                    OnClick="() => ConfirmFallback(interaction.ProviderAcquisitionJobId)">
-                            Use fallback
+                            Use provider fallback
                         </MudButton>
                     }
                     <MudButton Color="Color.Error" Variant="Variant.Text" Disabled="@isActing"

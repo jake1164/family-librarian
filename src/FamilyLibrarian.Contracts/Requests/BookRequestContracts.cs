@@ -123,6 +123,9 @@ public sealed record AdminActiveAcquisitionResponse(
     string ProviderDisplayName,
     string Stage,
     string? WorkTitle,
+    long BytesReceived,
+    long? TotalBytes,
+    long? AverageBytesPerSecond,
     DateTimeOffset StartedAtUtc);
 
 /// <summary>
@@ -151,9 +154,11 @@ public sealed record AdminProviderIssueResponse(
 public sealed record AdminProviderInteractionAttentionResponse(
     Guid ProviderAcquisitionJobId,
     Guid RequestId,
+    Guid RequestFormatId,
     string? WorkTitle,
     string ProviderId,
     string Type,
+    string? Message,
     DateTimeOffset? ExpiresAtUtc,
     bool IsExpired,
     string? ClaimedByDisplayName,

@@ -71,11 +71,23 @@ internal static class AdminRequestEndpoints
             queue.Select(ToAdminRequestResponse).ToArray()));
     }
 
-    private static IResult GetActiveAcquisitions(ActiveAcquisitionTracker tracker, IProviderRegistry registry) =>
-        Results.Ok(tracker.Snapshot().Select(activity => new AdminActiveAcquisitionResponse(
-            activity.RequestId, activity.RequestFormatId, activity.ProviderId,
+    private static IResult GetActiveAcquisitions(ActiveAcquisitionTracker tracker, IProviderRegistry registry)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return Results.Ok(tracker.Snapshot().Select(activity => new AdminActiveAcquisitionResponse(
+            activity.RequestId,
+            activity.RequestFormatId,
+            activity.ProviderId,
             registry.Find(activity.ProviderId)?.DisplayName ?? activity.ProviderId,
-            activity.Stage, activity.WorkTitle, activity.StartedAtUtc)).ToArray());
+            activity.Stage,
+            activity.WorkTitle,
+            activity.BytesReceived,
+            activity.TotalBytes,
+            activity.Stage == "Downloading" && activity.TransferStartedAtUtc is { } startedAt && now > startedAt
+                ? (long)(Math.Max(0, activity.BytesReceived - activity.TransferStartBytesReceived) / (now - startedAt).TotalSeconds)
+                : null,
+            activity.StartedAtUtc)).ToArray());
+    }
 
     private static async Task<IResult> GetAdminRequestAsync(
         Guid requestId,
@@ -351,9 +363,11 @@ internal static class AdminRequestEndpoints
             .Select(interaction => new AdminProviderInteractionAttentionResponse(
                 interaction.ProviderAcquisitionJobId,
                 interaction.RequestId,
+                interaction.RequestFormatId,
                 interaction.WorkTitle,
                 interaction.ProviderId,
                 interaction.Type,
+                interaction.Message,
                 interaction.ExpiresAtUtc,
                 interaction.IsExpired,
                 interaction.ClaimedByDisplayName,
@@ -551,7 +565,9 @@ internal static class AdminRequestEndpoints
             attemptOutcome,
             attemptSummary,
             clock.UtcNow,
-            nextEligibleCheckAtUtc: null));
+            nextEligibleCheckAtUtc: result.Outcome == ManualImportOutcome.TransferInterrupted
+                ? clock.UtcNow.AddMinutes(2)
+                : null));
         await providerAttempts.SaveChangesAsync(cancellationToken);
 
         return ToManualImportResult(result);
@@ -572,6 +588,10 @@ internal static class AdminRequestEndpoints
             detail: result.Error,
             statusCode: StatusCodes.Status503ServiceUnavailable,
             type: "WAITING_FOR_SECURITY_SCANNER"),
+        ManualImportOutcome.TransferInterrupted => Results.Problem(
+            detail: result.Error,
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            type: "ACQUISITION_TRANSFER_INTERRUPTED"),
         _ => Results.ValidationProblem(new Dictionary<string, string[]>
         {
             ["file"] = [result.Error ?? "That file could not be imported."]

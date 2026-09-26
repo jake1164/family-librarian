@@ -34,14 +34,15 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
         long totalBytesRead = 0;
         var exceeded = false;
 
-        await using (var destination = new FileStream(
-            destinationPath,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            bufferSize: 81_920,
-            useAsync: true))
+        try
         {
+            await using var destination = new FileStream(
+                destinationPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 81_920,
+                useAsync: true);
             int bytesRead;
             while (!exceeded && (bytesRead = await content.ReadAsync(buffer, cancellationToken)) > 0)
             {
@@ -66,6 +67,11 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
                 await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
             }
         }
+        catch
+        {
+            TryDelete(destinationPath);
+            throw;
+        }
 
         if (exceeded)
         {
@@ -77,6 +83,13 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
         var detectedMimeType = SignatureFileTypeDetector.Detect(header, headerBytesRead);
 
         return new StagedFile(storedFilename, totalBytesRead, checksum, detectedMimeType);
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     public Task<Stream> OpenAsync(

@@ -214,7 +214,8 @@ public sealed class HttpMatrixClient(IHttpClientFactory httpClientFactory) : IMa
                         // Never react to the bot's own messages (verification codes, replies) echoed back through /sync.
                         if (botUserId is not null && string.Equals(sender, botUserId, StringComparison.Ordinal)) continue;
 
-                        messages.Add(new MatrixInboundMessage(roomId, sender, messageBody));
+                        var replyToEventId = candidateEvent["content"]?["m.relates_to"]?["m.in_reply_to"]?["event_id"]?.GetValue<string>();
+                        messages.Add(new MatrixInboundMessage(roomId, sender, messageBody, replyToEventId));
                     }
                 }
             }

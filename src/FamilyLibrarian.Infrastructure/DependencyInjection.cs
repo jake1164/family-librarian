@@ -263,6 +263,7 @@ public static class DependencyInjection
                 options => !string.IsNullOrWhiteSpace(options.RootPath),
                 $"{StorageOptions.SectionName}:RootPath is required.")
             .ValidateOnStart();
+        services.AddSingleton<LibriVoxDownloadWorkspace>();
         services.AddScoped<IAssetStagingStore, FileSystemAssetStagingStore>();
         services.AddScoped<IAcquisitionRepository, AcquisitionRepository>();
         services.AddScoped<IProviderAcquisitionJobStore, ProviderAcquisitionJobStore>();

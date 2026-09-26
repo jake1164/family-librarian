@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Audit;
@@ -7,14 +8,11 @@ using FamilyLibrarian.Domain.Communications;
 namespace FamilyLibrarian.Application.Communications;
 
 /// <summary>
-/// Handles one inbound Matrix DM (COMM-1 §D). Two, and only two, things a
-/// message can be: the reply to a pending verification code (§C), or a
-/// response to the linked user's most recent promptable ask. Everything
-/// else -- an unrecognized reply, or nothing outstanding to resolve it
-/// against -- gets a generic reply pointing to the web app, never silence
-/// and never an attempt at general parsing. Adding a future promptable type
-/// (P1-4's series-following example in the plan) means adding another case
-/// here, not a router redesign.
+/// Handles one inbound Matrix DM (COMM-1 §D): a reply to a pending verification
+/// code, a response to the linked user's most recent promptable ask, or an
+/// administrator's FALLBACK reply to an exact provider alert event. Everything
+/// else gets a generic reply pointing to the web app; this is a fixed command
+/// set, not a general parser.
 /// </summary>
 public sealed class MatrixInboundRouter(
     IUserMatrixDestinationStore destinationStore,
@@ -24,7 +22,8 @@ public sealed class MatrixInboundRouter(
     ICredentialProtector protector,
     IMatrixClient matrixClient,
     IClock clock,
-    IAuditWriter audit)
+    IAuditWriter audit,
+    ProviderInteractionLinkService? providerInteractions = null)
 {
     private static readonly string[] AffirmativeReplies = ["yes", "yep", "y"];
     private static readonly string[] NegativeReplies = ["no", "nope", "n"];
@@ -51,7 +50,7 @@ public sealed class MatrixInboundRouter(
             return;
         }
 
-        var body = message.Body.Trim();
+        var body = CommandBody(message);
 
         if (!destination.IsVerified)
         {
@@ -59,7 +58,52 @@ public sealed class MatrixInboundRouter(
             return;
         }
 
+        if (string.Equals(body, "fallback", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleProviderFallbackReplyAsync(
+                destination, message, settings, accessToken, cancellationToken);
+            return;
+        }
+
         await HandlePromptableReplyAsync(destination, body, settings, accessToken, cancellationToken);
+    }
+
+    private async Task HandleProviderFallbackReplyAsync(
+        UserMatrixDestination destination, MatrixInboundMessage message, MatrixSettings settings,
+        string accessToken, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(destination.MatrixUserId, message.SenderUserId, StringComparison.Ordinal))
+        {
+            await ReplyAsync(settings, accessToken, destination.RoomId!,
+                "Only the linked Matrix account can choose a provider fallback.", cancellationToken);
+            return;
+        }
+
+        if (providerInteractions is null)
+        {
+            await ReplyAsync(settings, accessToken, destination.RoomId!,
+                "Provider fallback replies are not available right now. Open Family Librarian's provider interactions page.",
+                cancellationToken);
+            return;
+        }
+
+        var result = await providerInteractions.UseFallbackFromMatrixReplyAsync(
+            destination.UserId, message.RoomId, message.ReplyToEventId, cancellationToken);
+        var reply = result.Kind switch
+        {
+            InteractionLinkClaimOutcomeKind.Claimed when !result.ProviderUnavailable =>
+                $"The provider fallback was selected for {Quote(result.WorkTitle)}. The request will continue if the provider can fulfill it.",
+            InteractionLinkClaimOutcomeKind.Claimed =>
+                $"The fallback action was sent for {Quote(result.WorkTitle)}, but the provider could not confirm it. Open Family Librarian's provider interactions page to check the request.",
+            InteractionLinkClaimOutcomeKind.ClaimedByOther =>
+                $"Another administrator is handling this provider interaction ({result.ClaimedByDisplayName}).",
+            InteractionLinkClaimOutcomeKind.NothingWaiting or InteractionLinkClaimOutcomeKind.Done =>
+                "That provider interaction is no longer waiting for an action.",
+            InteractionLinkClaimOutcomeKind.Expired =>
+                "That provider alert has expired. Open Family Librarian to review the current request.",
+            _ => "I couldn't match that reply to an active provider alert. Reply FALLBACK to the current alert message, or open Family Librarian's provider interactions page."
+        };
+        await ReplyAsync(settings, accessToken, destination.RoomId!, reply, cancellationToken);
     }
 
     private async Task HandleVerificationReplyAsync(
@@ -123,4 +167,24 @@ public sealed class MatrixInboundRouter(
     private Task<SendResult> ReplyAsync(
         MatrixSettings settings, string accessToken, string roomId, string text, CancellationToken cancellationToken) =>
         matrixClient.SendMessageAsync(settings, accessToken, roomId, text, cancellationToken);
+
+    private static string Quote(string? title) =>
+        string.IsNullOrWhiteSpace(title) ? "the waiting request" : $"\"{title}\"";
+
+    private static string CommandBody(MatrixInboundMessage message)
+    {
+        var body = message.Body.Trim();
+        if (string.IsNullOrWhiteSpace(message.ReplyToEventId)) return body;
+
+        // Matrix clients commonly prepend the quoted alert to m.text when
+        // replying. Parse the text after that quote so a normal one-word reply
+        // still works; the event relation remains the actual authorization
+        // binding, never the quoted body itself.
+        var separator = body.IndexOf("\n\n", StringComparison.Ordinal);
+        if (separator <= 0) return body;
+        var quote = body[..separator].Split('\n');
+        return quote.All(line => line.TrimStart().StartsWith('>'))
+            ? body[(separator + 2)..].Trim()
+            : body;
+    }
 }

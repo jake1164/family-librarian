@@ -31,6 +31,15 @@ public sealed class ProviderInteractionAlertStore(AppDbContext database) : IProv
             .ThenInclude(alert => alert.Recipients)
             .FirstOrDefaultAsync(recipient => recipient.TokenHash == tokenHash, cancellationToken);
 
+    public Task<ProviderInteractionAlertRecipient?> FindRecipientByRoomAndEventIdAsync(
+        string roomId, string eventId, CancellationToken cancellationToken) =>
+        database.ProviderInteractionAlertRecipients
+            .Include(recipient => recipient.Alert)
+            .ThenInclude(alert => alert.Recipients)
+            .FirstOrDefaultAsync(
+                recipient => recipient.RoomId == roomId && recipient.EventId == eventId,
+                cancellationToken);
+
     public Task<ProviderInteractionAlert?> FindByIdAsync(Guid alertId, CancellationToken cancellationToken) =>
         database.ProviderInteractionAlerts
             .Include(alert => alert.Recipients)

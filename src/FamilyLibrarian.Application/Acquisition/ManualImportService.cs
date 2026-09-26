@@ -91,6 +91,13 @@ public sealed record ManualImportResult(
             null,
             "A required security scanner is unavailable. Try again once it has recovered.");
 
+    public static ManualImportResult TransferInterrupted() =>
+        new(
+            ManualImportOutcome.TransferInterrupted,
+            null,
+            null,
+            "The audiobook archive transfer was interrupted. An automatic retry is scheduled; the saved byte offset will be resumed when the source provides a stable validator and range support.");
+
     public static ManualImportResult LowConfidenceMatchConfirmationRequired() =>
         new(
             ManualImportOutcome.LowConfidenceMatchConfirmationRequired,
@@ -138,6 +145,7 @@ public enum ManualImportOutcome
     Invalid,
     DuplicateDetected,
     WaitingForSecurityScanner,
+    TransferInterrupted,
     LowConfidenceMatchConfirmationRequired,
     AcquisitionInProgress,
     ReleaseConfirmationRequired

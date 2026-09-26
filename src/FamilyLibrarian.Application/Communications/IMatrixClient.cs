@@ -68,7 +68,11 @@ public sealed record MatrixSendResult(bool Succeeded, string? EventId, string? E
     public static MatrixSendResult Failure(string error) => new(false, null, error);
 }
 
-public sealed record MatrixInboundMessage(string RoomId, string SenderUserId, string Body);
+public sealed record MatrixInboundMessage(
+    string RoomId,
+    string SenderUserId,
+    string Body,
+    string? ReplyToEventId = null);
 
 public sealed record MatrixSyncResult(bool Succeeded, string? NextBatch, IReadOnlyList<MatrixInboundMessage> Messages, string? Error)
 {

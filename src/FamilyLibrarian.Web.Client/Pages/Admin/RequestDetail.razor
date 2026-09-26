@@ -332,8 +332,9 @@
 
     private string? FormatDescription(BookRequestFormatResponse format) =>
         ActiveAcquisitions.FirstOrDefault(activity => activity.RequestFormatId == format.FormatId) is { } activity
-            ? $"{activity.Stage} via {activity.ProviderDisplayName}"
+            ? AdminAcquisitionProgressText.Describe(activity)
             : HasReviewCandidates(format.FormatId) ? "Source review needed"
+            : waitingInteraction?.RequestFormatId == format.FormatId ? "Provider action needed"
             : format.ProgressDescription ?? (format.Status == "Requested" ? "Awaiting next check" : null);
 
     private string FormatName(Guid formatId) =>

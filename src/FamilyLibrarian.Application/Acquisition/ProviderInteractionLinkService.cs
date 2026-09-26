@@ -44,6 +44,42 @@ public sealed class ProviderInteractionLinkService(
             return InteractionLinkClaimResult.Invalid();
         }
 
+        return await ClaimRecipientAsync(recipient, recipient.UserId, useFallback: false, cancellationToken);
+    }
+
+    /// <summary>
+    /// Selects the provider fallback from a reply to the exact Matrix alert
+    /// event. Room/event binding is performed by the store lookup; this method
+    /// additionally rechecks active-admin status and consumes/revokes the same
+    /// one-time recipient capability as the browser link.
+    /// </summary>
+    public async Task<InteractionLinkClaimResult> UseFallbackFromMatrixReplyAsync(
+        Guid linkedUserId, string roomId, string? replyToEventId, CancellationToken cancellationToken)
+    {
+        if (linkedUserId == Guid.Empty || string.IsNullOrWhiteSpace(roomId) ||
+            string.IsNullOrWhiteSpace(replyToEventId) || replyToEventId.Length > ProviderInteractionAlertRecipient.MaxRoomOrEventIdLength)
+        {
+            return InteractionLinkClaimResult.Invalid();
+        }
+
+        var recipient = await alerts.FindRecipientByRoomAndEventIdAsync(roomId, replyToEventId, cancellationToken);
+        if (recipient is null || !recipient.HasUsableToken || recipient.UserId != linkedUserId)
+        {
+            return InteractionLinkClaimResult.Invalid();
+        }
+
+        return await ClaimRecipientAsync(recipient, linkedUserId, useFallback: true, cancellationToken);
+    }
+
+    private async Task<InteractionLinkClaimResult> ClaimRecipientAsync(
+        ProviderInteractionAlertRecipient recipient,
+        Guid userId,
+        bool useFallback,
+        CancellationToken cancellationToken)
+    {
+        if (!recipient.HasUsableToken || recipient.UserId != userId)
+            return InteractionLinkClaimResult.Invalid();
+
         var alert = recipient.Alert;
         var closedOutcome = TryMapClosedAlert(alert);
         if (closedOutcome is not null)
@@ -53,7 +89,7 @@ public sealed class ProviderInteractionLinkService(
 
         if (alert.State == ProviderInteractionAlertState.Claimed)
         {
-            if (alert.ClaimedByUserId == recipient.UserId)
+            if (alert.ClaimedByUserId == userId)
             {
                 // Single-use: this recipient already has (or had) the job through
                 // some path -- send them back to the page/app they already have
@@ -64,7 +100,7 @@ public sealed class ProviderInteractionLinkService(
             return InteractionLinkClaimResult.ClaimedByOther(alert.ClaimedByDisplayName ?? "another administrator");
         }
 
-        var admin = await accounts.FindAsync(recipient.UserId, cancellationToken);
+        var admin = await accounts.FindAsync(userId, cancellationToken);
         if (admin is null || !admin.IsAdmin || !UserStatuses.CanSignIn(admin.Status))
         {
             return InteractionLinkClaimResult.Invalid();
@@ -99,7 +135,7 @@ public sealed class ProviderInteractionLinkService(
         foreach (var candidate in candidates)
         {
             var outcome = await claimService.TryClaimForUserAsync(
-                candidate.Id, recipient.UserId, ProviderInteractionClaimChannel.MatrixLink, alert.Id, cancellationToken);
+                candidate.Id, userId, ProviderInteractionClaimChannel.MatrixLink, alert.Id, cancellationToken);
             if (outcome.Kind is ClaimOutcomeKind.Claimed or ClaimOutcomeKind.AlreadyYours)
             {
                 won = candidate;
@@ -120,21 +156,23 @@ public sealed class ProviderInteractionLinkService(
             // A different recipient won the provider alert while we were
             // claiming a different job. The provisional claim must not outlive
             // that loss or turn into a second magic-link grant.
-            await claimService.ReleaseProvisionalAlertClaimAsync(won.Id, recipient.UserId, alert.Id, cancellationToken);
+            await claimService.ReleaseProvisionalAlertClaimAsync(won.Id, userId, alert.Id, cancellationToken);
             return alertOutcome;
         }
 
         await audit.WriteAsync(
             AuditActions.ProviderInteractionClaimed, AuditSubjectTypes.ProviderInteraction, won.Id.ToString(),
-            new { JobId = won.Id, UserId = recipient.UserId, Channel = ProviderInteractionClaimChannel.MatrixLink.ToString() },
+            new { JobId = won.Id, UserId = userId, Channel = ProviderInteractionClaimChannel.MatrixLink.ToString(), Action = useFallback ? "Fallback" : "Verify" },
             cancellationToken);
 
-        var startOutcome = await interactionService.StartAsync(won.Id, recipient.UserId, cancellationToken);
+        var commandOutcome = useFallback
+            ? await interactionService.UseFallbackAsync(won.Id, cancellationToken)
+            : await interactionService.StartAsync(won.Id, userId, cancellationToken);
         var requestView = await requests.FindAdminViewAsync(won.RequestId, cancellationToken);
 
         return InteractionLinkClaimResult.Claimed(
-            won.Id, recipient.UserId, alert.Id, requestView?.Request.WorkTitle, alert.ProviderDisplayName,
-            won.InteractionExpiresAtUtc, providerUnavailable: startOutcome.Result != ProviderInteractionCommandResult.Success);
+            won.Id, userId, alert.Id, requestView?.Request.WorkTitle, alert.ProviderDisplayName,
+            won.InteractionExpiresAtUtc, providerUnavailable: commandOutcome.Result != ProviderInteractionCommandResult.Success);
     }
 
     /// <summary>

@@ -93,10 +93,30 @@ public sealed class DirectAcquisitionService(
             }
 
             IReadOnlyList<DirectAcquisitionFile> files;
+            IProgressReportingDirectAcquisitionProvider? progressProvider = null;
+            var progressContext = new DirectAcquisitionRequestContext(requestId, requestFormatId);
             try
             {
-                activity.SetStage("Downloading and preparing files");
-                files = await provider.FetchAsync(option, cancellationToken);
+                if (provider is IProgressReportingDirectAcquisitionProvider reportingProvider)
+                {
+                    progressProvider = reportingProvider;
+                    activity.SetStage("Downloading");
+                    files = await progressProvider.FetchWithProgressAsync(
+                        option,
+                        progressContext,
+                        progress => activity.ReportTransferProgress(
+                            progress.BytesReceived, progress.TotalBytes, progress.Stage, progress.IsTransferBaseline),
+                        cancellationToken);
+                }
+                else
+                {
+                    activity.SetStage("Downloading and preparing files");
+                    files = await provider.FetchAsync(option, cancellationToken);
+                }
+            }
+            catch (ResumableDownloadInterruptedException)
+            {
+                return ManualImportResult.TransferInterrupted();
             }
             catch (HttpRequestException exception)
             {
@@ -111,35 +131,50 @@ public sealed class DirectAcquisitionService(
                 // letting it surface as an unhandled failure.
                 return ManualImportResult.Invalid($"The file could not be processed: {exception.Message}");
             }
+            catch (IOException exception)
+            {
+                return ManualImportResult.Invalid($"The file could not be processed: {exception.Message}");
+            }
 
             if (files.Count == 0)
             {
+                if (progressProvider is not null) await progressProvider.FinishAcquisitionAsync(progressContext);
                 return ManualImportResult.Invalid("The provider returned no file for that option.");
             }
 
             activity.SetStage("Processing files");
 
-            if (files.Count == 1)
-            {
-                await using var content = files[0].Content;
-                return await staging.StageAsync(
-                    request, format, content, files[0].Filename, providerId, AuditActions.DirectAcquisitionStaged,
-                    candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
-            }
-
+            ManualImportResult stagedResult;
             try
             {
-                return await staging.StageBundleAsync(
-                    request, format, files, providerId, AuditActions.DirectAcquisitionStaged,
-                    candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
+                if (files.Count == 1)
+                {
+                    await using var content = files[0].Content;
+                    stagedResult = await staging.StageAsync(
+                        request, format, content, files[0].Filename, providerId, AuditActions.DirectAcquisitionStaged,
+                        candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
+                }
+                else
+                {
+                    stagedResult = await staging.StageBundleAsync(
+                        request, format, files, providerId, AuditActions.DirectAcquisitionStaged,
+                        candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
+                }
             }
             finally
             {
-                foreach (var file in files)
+                if (files.Count > 1)
                 {
-                    await file.Content.DisposeAsync();
+                    foreach (var file in files)
+                        await file.Content.DisposeAsync();
                 }
+                // A caller cancellation can represent host shutdown; preserve a
+                // completed ZIP so the next attempt can reuse it after restart.
+                if (progressProvider is not null && !cancellationToken.IsCancellationRequested)
+                    await progressProvider.FinishAcquisitionAsync(progressContext);
             }
+
+            return stagedResult;
         }
 
         var externalProvider = await externalProviders.FindByProviderIdAsync(providerId, cancellationToken);

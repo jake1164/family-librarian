@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
+using System.Net;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
@@ -19,11 +22,13 @@ public sealed class LibriVoxProvider(
     IProviderSettingsStore settingsStore,
     IWorkLookup workLookup,
     IBookMatcher matcher,
-    ManualImportPolicy importPolicy) : IAutomaticDirectAcquisitionProvider
+    ManualImportPolicy importPolicy,
+    LibriVoxDownloadWorkspace downloadWorkspace) : IAutomaticDirectAcquisitionProvider, IProgressReportingDirectAcquisitionProvider, IDisposable
 {
     private const long MaximumZipBytes = 2L * 1024 * 1024 * 1024;
     private const long MaximumExpandedBytes = 2L * 1024 * 1024 * 1024;
     private static readonly HashSet<string> HarmlessMetadataExtensions = [".txt", ".jpg", ".jpeg", ".pdf"];
+    private readonly ConcurrentDictionary<Guid, FileStream> acquisitionLocks = new();
     public string Id => ProviderRegistry.LibriVoxProviderId;
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(true);
@@ -87,8 +92,81 @@ public sealed class LibriVoxProvider(
             : options.Select(option => option with { RequiresLanguageConfirmation = true }).ToArray();
     }
 
-    public async Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
-        FulfillmentOption fulfillmentOption, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
+        FulfillmentOption fulfillmentOption, CancellationToken cancellationToken) =>
+        FetchCoreAsync(fulfillmentOption, null, null, cancellationToken);
+
+    public async Task<IReadOnlyList<DirectAcquisitionFile>> FetchWithProgressAsync(
+        FulfillmentOption fulfillmentOption,
+        DirectAcquisitionRequestContext requestContext,
+        Action<DirectAcquisitionTransferProgress> reportProgress,
+        CancellationToken cancellationToken)
+    {
+        FileStream workspaceLock;
+        try
+        {
+            workspaceLock = downloadWorkspace.AcquireLock(requestContext.RequestFormatId);
+        }
+        catch (IOException exception)
+        {
+            throw new ResumableDownloadInterruptedException(
+                "Another acquisition currently owns this audiobook download workspace.", exception);
+        }
+
+        if (!acquisitionLocks.TryAdd(requestContext.RequestFormatId, workspaceLock))
+        {
+            await workspaceLock.DisposeAsync();
+            throw new ResumableDownloadInterruptedException(
+                "Another acquisition currently owns this audiobook download workspace.");
+        }
+
+        try
+        {
+            return await FetchCoreAsync(fulfillmentOption, requestContext, reportProgress, cancellationToken);
+        }
+        catch (ResumableDownloadInterruptedException)
+        {
+            ReleaseLock(requestContext.RequestFormatId);
+            throw;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            ReleaseLock(requestContext.RequestFormatId);
+            throw;
+        }
+        catch
+        {
+            ReleaseLock(requestContext.RequestFormatId);
+            downloadWorkspace.Delete(requestContext.RequestFormatId);
+            throw;
+        }
+    }
+
+    public Task FinishAcquisitionAsync(
+        DirectAcquisitionRequestContext requestContext)
+    {
+        ReleaseLock(requestContext.RequestFormatId);
+        downloadWorkspace.Delete(requestContext.RequestFormatId);
+        return Task.CompletedTask;
+    }
+
+    public void Dispose()
+    {
+        foreach (var requestFormatId in acquisitionLocks.Keys)
+            ReleaseLock(requestFormatId);
+    }
+
+    private void ReleaseLock(Guid requestFormatId)
+    {
+        if (acquisitionLocks.TryRemove(requestFormatId, out var workspaceLock))
+            workspaceLock.Dispose();
+    }
+
+    private async Task<IReadOnlyList<DirectAcquisitionFile>> FetchCoreAsync(
+        FulfillmentOption fulfillmentOption,
+        DirectAcquisitionRequestContext? requestContext,
+        Action<DirectAcquisitionTransferProgress>? reportProgress,
+        CancellationToken cancellationToken)
     {
         if (fulfillmentOption.MediaType != RequestMediaType.Audiobook)
             throw new InvalidOperationException("LibriVox provides audiobook files only.");
@@ -97,13 +175,33 @@ public sealed class LibriVoxProvider(
         if (!Uri.TryCreate(reference.ZipUrl, UriKind.Absolute, out var uri) || !IsAllowedRemoteUri(uri))
             throw new InvalidOperationException("The LibriVox download address is invalid.");
 
-        var directory = Path.Combine(Path.GetTempPath(), $"family-librarian-librivox-{Guid.NewGuid():N}");
+        var isResumable = requestContext is not null;
+        var directory = requestContext is { } context
+            ? downloadWorkspace.DirectoryFor(context.RequestFormatId)
+            : Path.Combine(Path.GetTempPath(), $"family-librarian-librivox-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         var archivePath = Path.Combine(directory, "recording.zip");
+        var extractionDirectory = Path.Combine(directory, "extracted");
+        LibriVoxDownloadWorkspace.DeleteDirectory(extractionDirectory);
+        Directory.CreateDirectory(extractionDirectory);
         var extracted = new List<string>();
+        long archiveBytes;
         try
         {
-            await DownloadArchiveAsync(uri, archivePath, cancellationToken);
+            archiveBytes = await DownloadArchiveAsync(
+                uri, archivePath, requestContext, fulfillmentOption.ProviderResultId, reportProgress, cancellationToken);
+        }
+        catch (InvalidDataException exception)
+        {
+            LibriVoxDownloadWorkspace.DeleteDirectory(extractionDirectory);
+            if (requestContext is { } invalidContext) downloadWorkspace.Delete(invalidContext.RequestFormatId);
+            else TryDeleteDirectory(directory);
+            throw new InvalidOperationException("The audiobook archive failed safety checks or could not be processed.", exception);
+        }
+        reportProgress?.Invoke(new DirectAcquisitionTransferProgress(
+            archiveBytes, archiveBytes, "Preparing audiobook", IsTransferBaseline: true));
+        try
+        {
             using var archiveFile = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
             using var archive = new ZipArchive(archiveFile, ZipArchiveMode.Read, leaveOpen: false);
             if (archive.Entries.Count > importPolicy.MaxAudiobookBundleTracks + 100)
@@ -136,7 +234,7 @@ public sealed class LibriVoxProvider(
 
             for (var index = 0; index < audioEntries.Count; index++)
             {
-                var outputPath = Path.Combine(directory, $"track-{index + 1:000}.mp3");
+                var outputPath = Path.Combine(extractionDirectory, $"track-{index + 1:000}.mp3");
                 await using var source = audioEntries[index].Open();
                 await using var output = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
                 await CopyBoundedAsync(source, output, audioEntries[index].Length, cancellationToken);
@@ -145,53 +243,357 @@ public sealed class LibriVoxProvider(
         }
         catch (Exception exception)
         {
-            TryDeleteDirectory(directory);
-            if (exception is InvalidDataException or IOException or UnauthorizedAccessException or OverflowException)
+            LibriVoxDownloadWorkspace.DeleteDirectory(extractionDirectory);
+            if (!isResumable) TryDeleteDirectory(directory);
+            if (exception is InvalidDataException or UnauthorizedAccessException or OverflowException)
+            {
+                if (requestContext is { } invalidContext) downloadWorkspace.Delete(invalidContext.RequestFormatId);
                 throw new InvalidOperationException("The LibriVox archive failed safety checks or could not be processed.", exception);
+            }
+            if (exception is InvalidOperationException && requestContext is { } invalidOperationContext)
+                downloadWorkspace.Delete(invalidOperationContext.RequestFormatId);
             throw;
         }
 
-        File.Delete(archivePath);
+        if (!isResumable) File.Delete(archivePath);
         return extracted.Select((path, index) => new DirectAcquisitionFile(
-            new DeleteOnDisposeFileStream(path, extracted.Count == index + 1 ? directory : null),
+            new DeleteOnDisposeFileStream(path, extracted.Count == index + 1
+                ? isResumable ? extractionDirectory : directory
+                : null),
             $"librivox-{SanitizeId(fulfillmentOption.ProviderResultId)}-{index + 1:000}.mp3")).ToArray();
     }
 
-    private async Task DownloadArchiveAsync(Uri uri, string destination, CancellationToken cancellationToken)
+    private async Task<long> DownloadArchiveAsync(
+        Uri uri,
+        string destination,
+        DirectAcquisitionRequestContext? requestContext,
+        string providerResultId,
+        Action<DirectAcquisitionTransferProgress>? reportProgress,
+        CancellationToken cancellationToken)
     {
-        for (var redirect = 0; redirect <= 5; redirect++)
+        var partialPath = destination + ".part";
+        var manifestPath = destination + ".resume.json";
+        var manifest = TryReadManifest(manifestPath);
+        var resumable = requestContext is { } context && manifest is not null &&
+            manifest.RequestId == context.RequestId && manifest.RequestFormatId == context.RequestFormatId &&
+            string.Equals(manifest.ProviderResultId, providerResultId, StringComparison.Ordinal) &&
+            string.Equals(manifest.OriginalUri, uri.AbsoluteUri, StringComparison.Ordinal) &&
+            Uri.TryCreate(manifest.DownloadUri, UriKind.Absolute, out var manifestUri) && IsAllowedRemoteUri(manifestUri);
+
+        if (File.Exists(destination))
         {
-            using var response = await downloadClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            if ((int)response.StatusCode is >= 300 and < 400)
+            var length = new FileInfo(destination).Length;
+            if (resumable && length is > 0 and <= MaximumZipBytes &&
+                (manifest!.TotalBytes is null || manifest.TotalBytes == length))
             {
-                var location = response.Headers.Location ?? throw new HttpRequestException("The LibriVox archive redirect had no destination.");
-                uri = location.IsAbsoluteUri ? location : new Uri(uri, location);
-                if (!IsAllowedRemoteUri(uri)) throw new HttpRequestException("The LibriVox archive redirected to an untrusted host.");
-                continue;
+                reportProgress?.Invoke(new DirectAcquisitionTransferProgress(
+                    length, manifest.TotalBytes ?? length, "Preparing audiobook", IsTransferBaseline: true));
+                return length;
             }
-            response.EnsureSuccessStatusCode();
-            if (response.Content.Headers.ContentLength is > MaximumZipBytes)
-                throw new InvalidDataException("The LibriVox archive exceeds the download-size limit.");
-            await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await using var target = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-            await CopyBoundedAsync(source, target, MaximumZipBytes, cancellationToken);
-            return;
+            TryDeleteFile(destination);
         }
-        throw new HttpRequestException("The LibriVox archive exceeded the redirect limit.");
+
+        long offset = 0;
+        if (resumable && File.Exists(partialPath))
+        {
+            offset = new FileInfo(partialPath).Length;
+            resumable = offset > 0 && offset <= MaximumZipBytes &&
+                (manifest!.ETag is not null || manifest.LastModifiedUtc is not null);
+            if (resumable && manifest!.TotalBytes is { } total && offset > total) resumable = false;
+            if (resumable && manifest!.TotalBytes == offset)
+            {
+                File.Move(partialPath, destination, overwrite: true);
+                reportProgress?.Invoke(new DirectAcquisitionTransferProgress(
+                    offset, offset, "Preparing audiobook", IsTransferBaseline: true));
+                return offset;
+            }
+        }
+
+        if (!resumable)
+        {
+            offset = 0;
+            TryDeleteFile(partialPath);
+            TryDeleteFile(manifestPath);
+            manifest = null;
+        }
+
+        for (var freshRetry = 0; freshRetry < 2; freshRetry++)
+        {
+            var isResumeRequest = resumable && manifest is not null;
+            var requestUri = isResumeRequest ? new Uri(manifest!.DownloadUri) : uri;
+            var restartFromBeginning = false;
+            if (isResumeRequest)
+            {
+                reportProgress?.Invoke(new DirectAcquisitionTransferProgress(
+                    offset, manifest!.TotalBytes, "Downloading", IsTransferBaseline: true));
+            }
+            for (var redirect = 0; redirect <= 5; redirect++)
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+                if (isResumeRequest)
+                {
+                    request.Headers.Range = new RangeHeaderValue(offset, null);
+                    request.Headers.IfRange = manifest!.ETag is { } etag
+                        ? new RangeConditionHeaderValue(EntityTagHeaderValue.Parse(etag))
+                        : new RangeConditionHeaderValue(manifest!.LastModifiedUtc!.Value);
+                }
+
+                HttpResponseMessage response;
+                try
+                {
+                    response = await downloadClient.SendAsync(
+                        request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                }
+                catch (Exception exception) when (requestContext is not null && !cancellationToken.IsCancellationRequested &&
+                    exception is HttpRequestException or TaskCanceledException)
+                {
+                    throw new ResumableDownloadInterruptedException(
+                        "The audiobook archive connection was interrupted; the partial file was retained.", exception);
+                }
+                using (response)
+                {
+                if ((int)response.StatusCode is >= 300 and < 400)
+                {
+                    var location = response.Headers.Location ?? throw new HttpRequestException("The audiobook archive redirect had no destination.");
+                    requestUri = location.IsAbsoluteUri ? location : new Uri(requestUri, location);
+                    if (!IsAllowedRemoteUri(requestUri))
+                        throw new HttpRequestException("The audiobook archive redirected to an untrusted host.");
+                    if (isResumeRequest)
+                    {
+                        // A redirect can select a different mirror. Do not append until a fresh full response
+                        // establishes the validator and final URL for that mirror.
+                        TryDeleteFile(partialPath);
+                        TryDeleteFile(manifestPath);
+                        reportProgress?.Invoke(new DirectAcquisitionTransferProgress(0, null, "Restarting download", IsTransferBaseline: true));
+                        resumable = false;
+                        manifest = null;
+                        offset = 0;
+                        restartFromBeginning = true;
+                        break;
+                    }
+                    continue;
+                }
+
+                if (isResumeRequest && response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
+                {
+                    if (manifest!.TotalBytes == offset && File.Exists(partialPath))
+                    {
+                        File.Move(partialPath, destination, overwrite: true);
+                        return offset;
+                    }
+                    TryDeleteFile(partialPath);
+                    TryDeleteFile(manifestPath);
+                    reportProgress?.Invoke(new DirectAcquisitionTransferProgress(0, null, "Restarting download", IsTransferBaseline: true));
+                    resumable = false;
+                    manifest = null;
+                    offset = 0;
+                    restartFromBeginning = true;
+                    break;
+                }
+
+                if (isResumeRequest && response.StatusCode is HttpStatusCode.Unauthorized or
+                    HttpStatusCode.Forbidden or HttpStatusCode.NotFound)
+                {
+                    // The saved mirror URL may have expired. Resolve the catalog URL again before giving up.
+                    TryDeleteFile(partialPath);
+                    TryDeleteFile(manifestPath);
+                    reportProgress?.Invoke(new DirectAcquisitionTransferProgress(0, null, "Restarting download", IsTransferBaseline: true));
+                    resumable = false;
+                    manifest = null;
+                    offset = 0;
+                    restartFromBeginning = true;
+                    break;
+                }
+
+                var append = false;
+                long? totalBytes;
+                if (response.StatusCode == HttpStatusCode.PartialContent)
+                {
+                    var range = response.Content.Headers.ContentRange;
+                    var validRange = isResumeRequest && range is { Unit: "bytes" } && range.From == offset &&
+                        range.Length is > 0 && range.To is { } rangeEnd && rangeEnd >= offset &&
+                        response.Content.Headers.ContentLength == rangeEnd - offset + 1 &&
+                        (manifest!.TotalBytes is null || manifest.TotalBytes == range.Length);
+                    var changedEntityTag = manifest?.ETag is { } priorEtag && response.Headers.ETag is { } returnedEtag &&
+                        (returnedEtag.IsWeak || !string.Equals(priorEtag, returnedEtag.ToString(), StringComparison.Ordinal));
+                    var changedLastModified = manifest?.ETag is null && manifest?.LastModifiedUtc is { } priorModified &&
+                        response.Content.Headers.LastModified is { } returnedModified && priorModified != returnedModified;
+                    if (!validRange || changedEntityTag || changedLastModified)
+                    {
+                        TryDeleteFile(partialPath);
+                        TryDeleteFile(manifestPath);
+                        reportProgress?.Invoke(new DirectAcquisitionTransferProgress(0, null, "Restarting download", IsTransferBaseline: true));
+                        resumable = false;
+                        manifest = null;
+                        offset = 0;
+                        restartFromBeginning = true;
+                        break;
+                    }
+                    append = true;
+                    totalBytes = range!.Length;
+                }
+                else if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    // A 200 after If-Range means the source declined the resume or the entity changed.
+                    // Its body is the complete replacement, so truncate and use this response safely.
+                    append = false;
+                    offset = 0;
+                    totalBytes = response.Content.Headers.ContentLength;
+                }
+                else
+                {
+                    if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
+                        throw new ResumableDownloadInterruptedException(
+                            $"The audiobook source returned HTTP {(int)response.StatusCode}; saved bytes were retained.");
+                    response.EnsureSuccessStatusCode();
+                    throw new HttpRequestException($"Unexpected HTTP status {(int)response.StatusCode} for the audiobook archive.");
+                }
+
+                if (totalBytes is > MaximumZipBytes)
+                {
+                    TryDeleteFile(partialPath);
+                    TryDeleteFile(manifestPath);
+                    throw new InvalidDataException("The audiobook archive exceeds the download-size limit.");
+                }
+
+                var returnedEtagValue = response.Headers.ETag is { IsWeak: false } responseEtag
+                    ? responseEtag.ToString()
+                    : null;
+                var updatedManifest = new ResumeManifest(
+                    requestContext?.RequestId ?? Guid.Empty,
+                    requestContext?.RequestFormatId ?? Guid.Empty,
+                    providerResultId,
+                    uri.AbsoluteUri,
+                    requestUri.AbsoluteUri,
+                    returnedEtagValue,
+                    response.Content.Headers.LastModified,
+                    totalBytes,
+                    DateTimeOffset.UtcNow);
+                var startingBytes = append ? offset : 0;
+                reportProgress?.Invoke(new DirectAcquisitionTransferProgress(
+                    startingBytes, totalBytes, "Downloading", IsTransferBaseline: true));
+                Stream sourceStream;
+                try
+                {
+                    sourceStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                }
+                catch (Exception exception) when (requestContext is not null && !cancellationToken.IsCancellationRequested &&
+                    exception is IOException or HttpRequestException or TaskCanceledException)
+                {
+                    throw new ResumableDownloadInterruptedException(
+                        "The audiobook archive stream could not be opened; saved bytes were retained.", exception);
+                }
+                await using var source = sourceStream;
+                await using var target = new FileStream(
+                    partialPath,
+                    append ? FileMode.Append : FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None,
+                    128 * 1024,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan);
+                // For a full replacement, truncate the old bytes before publishing the new validator.
+                // If the process stops between these operations, the zero-length partial is discarded.
+                if (requestContext is not null && !append) WriteManifest(manifestPath, updatedManifest);
+                long copied;
+                try
+                {
+                    copied = await CopyBoundedAsync(
+                        source,
+                        target,
+                        MaximumZipBytes - startingBytes,
+                        cancellationToken,
+                        bytes => reportProgress?.Invoke(new DirectAcquisitionTransferProgress(
+                            startingBytes + bytes, totalBytes, "Downloading")),
+                        TimeSpan.FromMinutes(2));
+                }
+                catch (Exception exception) when (requestContext is not null && !cancellationToken.IsCancellationRequested &&
+                    exception is IOException or TaskCanceledException)
+                {
+                    throw new ResumableDownloadInterruptedException(
+                        "The audiobook archive transfer stalled or ended early; the partial file was retained.", exception);
+                }
+                var completeLength = checked(startingBytes + copied);
+                if (totalBytes is { } expected && completeLength != expected)
+                    throw new ResumableDownloadInterruptedException(
+                        "The audiobook archive transfer ended before the expected byte count; saved bytes were retained.");
+                if (requestContext is not null)
+                {
+                    WriteManifest(manifestPath, updatedManifest with { TotalBytes = totalBytes ?? completeLength, UpdatedAtUtc = DateTimeOffset.UtcNow });
+                }
+                File.Move(partialPath, destination, overwrite: true);
+                reportProgress?.Invoke(new DirectAcquisitionTransferProgress(
+                    completeLength, totalBytes ?? completeLength, "Preparing audiobook"));
+                return completeLength;
+                }
+            }
+
+            if (!restartFromBeginning) break;
+        }
+
+        throw new HttpRequestException("The audiobook archive could not be resumed safely after a server response mismatch.");
     }
 
-    private static async Task CopyBoundedAsync(Stream source, Stream destination, long maximumBytes, CancellationToken cancellationToken)
+    private static async Task<long> CopyBoundedAsync(
+        Stream source,
+        Stream destination,
+        long maximumBytes,
+        CancellationToken cancellationToken,
+        Action<long>? reportProgress = null,
+        TimeSpan? readIdleTimeout = null)
     {
         var buffer = new byte[128 * 1024];
         long copied = 0;
+        using var readTimeout = readIdleTimeout is { } idleTimeout
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : null;
         while (true)
         {
-            var read = await source.ReadAsync(buffer, cancellationToken);
-            if (read == 0) return;
+            if (readTimeout is not null) readTimeout.CancelAfter(readIdleTimeout!.Value);
+            int read;
+            try
+            {
+                read = await source.ReadAsync(buffer, readTimeout?.Token ?? cancellationToken);
+            }
+            catch (OperationCanceledException exception) when (readTimeout?.IsCancellationRequested == true &&
+                !cancellationToken.IsCancellationRequested)
+            {
+                throw new ResumableDownloadInterruptedException("The audiobook archive transfer was idle for too long.", exception);
+            }
+            if (readTimeout is not null) readTimeout.CancelAfter(Timeout.InfiniteTimeSpan);
+            if (read == 0) return copied;
             copied = checked(copied + read);
             if (copied > maximumBytes) throw new InvalidDataException("The LibriVox archive exceeded its size limit.");
             await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            reportProgress?.Invoke(copied);
         }
+    }
+
+    private static ResumeManifest? TryReadManifest(string manifestPath)
+    {
+        try
+        {
+            return File.Exists(manifestPath)
+                ? JsonSerializer.Deserialize<ResumeManifest>(File.ReadAllText(manifestPath))
+                : null;
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static void WriteManifest(string manifestPath, ResumeManifest manifest)
+    {
+        var temporaryPath = manifestPath + ".tmp";
+        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(manifest));
+        File.Move(temporaryPath, manifestPath, overwrite: true);
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static void ValidateEntryPath(string name)
@@ -228,6 +630,17 @@ public sealed class LibriVoxProvider(
     }
 
     private sealed record DownloadReference(string ZipUrl);
+
+    private sealed record ResumeManifest(
+        Guid RequestId,
+        Guid RequestFormatId,
+        string ProviderResultId,
+        string OriginalUri,
+        string DownloadUri,
+        string? ETag,
+        DateTimeOffset? LastModifiedUtc,
+        long? TotalBytes,
+        DateTimeOffset UpdatedAtUtc);
 
     private sealed class DeleteOnDisposeFileStream(string path, string? cleanupDirectory) : FileStream(
         path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan)

@@ -331,6 +331,16 @@ public sealed class AutomaticRequestFulfillmentService(
                 $"The file could not be processed: {exception.Message}");
         }
 
+        if (result.Outcome == ManualImportOutcome.TransferInterrupted)
+        {
+            var retryAt = clock.UtcNow.AddMinutes(2);
+            attempts.Add(new ProviderAttempt(
+                request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Failed,
+                result.Error!, clock.UtcNow, nextEligibleCheckAtUtc: retryAt));
+            await attempts.SaveChangesAsync(cancellationToken);
+            return false;
+        }
+
         if (result.Outcome == ManualImportOutcome.AcquisitionInProgress)
         {
             // Protocol v2: the provider accepted a durable job rather than
@@ -559,10 +569,13 @@ public sealed class AutomaticRequestFulfillmentService(
     /// <see cref="BookRequest.StatusChangedAtUtc"/>, which is what lets this
     /// bypass the cooldown immediately instead of waiting out the full period.
     /// </summary>
-    private bool HasRecentAttempt(ProviderAttempt? attempt, BookRequest request) =>
-        attempt is not null &&
-        attempt.AttemptedAtUtc >= request.StatusChangedAtUtc &&
-        attempt.AttemptedAtUtc >= clock.UtcNow - RetryCooldown;
+    private bool HasRecentAttempt(ProviderAttempt? attempt, BookRequest request)
+    {
+        if (attempt is null || attempt.AttemptedAtUtc < request.StatusChangedAtUtc) return false;
+        if (attempt.NextEligibleCheckAtUtc is { } nextEligibleCheckAtUtc)
+            return nextEligibleCheckAtUtc > clock.UtcNow;
+        return attempt.AttemptedAtUtc >= clock.UtcNow - RetryCooldown;
+    }
 
     private async Task MarkForReviewAsync(
         BookRequest request,

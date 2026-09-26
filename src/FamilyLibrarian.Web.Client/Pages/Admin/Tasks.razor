@@ -5,8 +5,10 @@
 @using FamilyLibrarian.Contracts.Operations
 @using FamilyLibrarian.Contracts.Acquisition
 @using FamilyLibrarian.Contracts.Publishing
+@using FamilyLibrarian.Contracts.Requests
 @using FamilyLibrarian.Web.Client.Operations
 @inject AdminTasksApiClient TasksApi
+@inject AdminRequestsApiClient RequestsApi
 
 <PageTitle>Tasks · Family Librarian</PageTitle>
 
@@ -81,6 +83,12 @@
                                                        ExternalActionUri="@format.ExternalActionUri" />
                                 }
                             </MudStack>
+                            @foreach (var interaction in WaitingInteractionsForRequest(request.Request.Id))
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Warning">
+                                    @(interaction.ProviderId): @(interaction.Message ?? "Waiting for administrator action.")
+                                </MudText>
+                            }
                             <MudText Typo="Typo.caption">
                                 @request.RequesterDisplayName · requested @request.Request.RequestedAtUtc.ToLocalTime().ToString("g")
                             </MudText>
@@ -231,11 +239,21 @@
 
     private string? FormatDescription(AdminBookRequestResponse request, BookRequestFormatResponse format) =>
         ActiveAcquisitions.FirstOrDefault(activity => activity.RequestFormatId == format.FormatId) is { } activity
-            ? $"{activity.Stage} via {activity.ProviderDisplayName}"
+            ? AdminAcquisitionProgressText.Describe(activity)
             : HasReviewCandidates(request, format.FormatId) ? "Source review needed"
+            : WaitingInteractionForFormat(request.Request.Id, format.FormatId) is not null ? "Provider action needed"
             : format.ProgressDescription ?? (format.Status == "Requested" ? "Awaiting next check" : null);
 
+    private AdminProviderInteractionAttentionResponse? WaitingInteractionForFormat(Guid requestId, Guid formatId) =>
+        attention?.WaitingProviderInteractions.FirstOrDefault(interaction =>
+            interaction.RequestId == requestId && interaction.RequestFormatId == formatId);
+
+    private IEnumerable<AdminProviderInteractionAttentionResponse> WaitingInteractionsForRequest(Guid requestId) =>
+        attention?.WaitingProviderInteractions.Where(interaction => interaction.RequestId == requestId)
+            ?? Enumerable.Empty<AdminProviderInteractionAttentionResponse>();
+
     private AdminTasksResponse? snapshot;
+    private AdminRequestAttentionResponse? attention;
     private string? errorMessage;
 
     protected override async Task OnInitializedAsync()
@@ -253,6 +271,14 @@
             if (snapshot is null)
             {
                 errorMessage = "The task dashboard did not return a response. Please try again.";
+            }
+            try
+            {
+                attention = await RequestsApi.GetAttentionAsync();
+            }
+            catch (HttpRequestException)
+            {
+                attention = null;
             }
         }
         catch (HttpRequestException)

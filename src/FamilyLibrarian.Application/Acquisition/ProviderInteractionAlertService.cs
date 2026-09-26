@@ -450,10 +450,14 @@ public sealed class ProviderInteractionAlertService(
                 var link = $"{options.PublicOrigin}/interaction#{token}";
                 var titleText = title is null ? "a book" : $"\"{title}\"";
                 var moreText = extra > 0 ? $" and {extra} more" : "";
+                var reason = first?.InteractionMessage;
+                if (string.IsNullOrWhiteSpace(reason))
+                    reason = "The provider needs an administrator to continue this download.";
                 return (
-                    $"A book download needs a quick human check ({alert.ProviderDisplayName}). Waiting: {titleText}{moreText}. Verify now: {link}",
-                    $"📚 A book download needs a quick human check ({Encode(alert.ProviderDisplayName)}). Waiting: {Encode(titleText)}{Encode(moreText)}. " +
-                    $"<a href=\"{Encode(link)}\">Verify now</a> — this link works once.");
+                    $"A book download needs an administrator ({alert.ProviderDisplayName}). Waiting: {titleText}{moreText}. Reason: {reason} Verify now: {link} Reply FALLBACK to this alert to apply the provider-configured alternative to the oldest listed request; it may use provider account quota or subscription access.",
+                    $"📚 A book download needs an administrator ({Encode(alert.ProviderDisplayName)}). Waiting: {Encode(titleText)}{Encode(moreText)}. " +
+                    $"Reason: {Encode(reason)} <a href=\"{Encode(link)}\">Verify now</a> — this link works once. " +
+                    "Reply FALLBACK to this alert to apply the provider-configured alternative to the oldest listed request; it may use provider account quota or subscription access.");
 
             case AlertMessageState.ClaimedOther:
                 var claimer = alert.ClaimedByDisplayName ?? "Another administrator";

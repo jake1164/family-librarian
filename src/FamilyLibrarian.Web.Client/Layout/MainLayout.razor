@@ -225,7 +225,7 @@
             <MudButton Variant="Variant.Text" Color="Color.Info" Size="Size.Small"
                        Href="admin/requests" StartIcon="@Icons.Material.Filled.Downloading">
                 @(activeAcquisitions.Count == 1
-                    ? $"{activeAcquisitions[0].Stage}: {activeAcquisitions[0].WorkTitle ?? "request"}"
+                    ? AdminAcquisitionProgressText.FooterLabel(activeAcquisitions[0])
                     : $"{activeAcquisitions.Count} local acquisitions active")
             </MudButton>
         }
