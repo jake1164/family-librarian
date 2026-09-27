@@ -430,9 +430,8 @@ public sealed class ExternalProviderAutomaticReviewFallbackEndpointTests
 }
 
 /// <summary>
-/// A high-confidence (Identifier-basis) match that fails during the fetch
-/// itself must be recorded as <c>Failed</c> and sent to review, not
-/// silently dropped or retried forever within the same pass.
+/// A high-confidence (Identifier-basis) match that fails after durable submit
+/// must be recorded as <c>Failed</c> and sent to review by the background poller.
 /// </summary>
 [TestClass]
 public sealed class ExternalProviderAutomaticAcquisitionFailureEndpointTests
@@ -504,10 +503,16 @@ public sealed class ExternalProviderAutomaticAcquisitionFailureEndpointTests
             Assert.IsTrue(await rechecks.ProcessDueAsync(CancellationToken.None) >= 1);
         }
 
+        await using (var pollScope = factory.Services.CreateAsyncScope())
+        {
+            var polling = pollScope.ServiceProvider.GetRequiredService<AcquisitionJobPollingService>();
+            Assert.AreEqual(1, await polling.ProcessDueAsync(CancellationToken.None));
+        }
+
         var attempts = await admin.GetFromJsonAsync<ProviderAttemptResponse[]>(
             $"/api/v1/admin/requests/{request.Id}/provider-attempts");
         Assert.IsNotNull(attempts);
-        var attempt = attempts.Single();
+        var attempt = attempts.Single(candidate => candidate.Outcome == "Failed");
         Assert.AreEqual("failing-fetch-external", attempt.ProviderId);
         Assert.AreEqual("Failed", attempt.Outcome);
 
@@ -797,8 +802,8 @@ file sealed class WrongTitleExternalProviderClient : IExternalProviderClient
 
 /// <summary>
 /// Returns a single, genuinely title/author-corroborating candidate for
-/// "Project Hail Mary" (an Identifier-basis match), but fails the fetch step
-/// itself.
+/// "Project Hail Mary" (an Identifier-basis match), then completes without
+/// returning the requested file so the background job must fail into review.
 /// </summary>
 file sealed class FailingFetchExternalProviderClient : IExternalProviderClient
 {
@@ -842,15 +847,17 @@ file sealed class FailingFetchExternalProviderClient : IExternalProviderClient
     public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
         string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
         CancellationToken cancellationToken) =>
-        throw new HttpRequestException("Simulated upstream failure while starting the acquisition.");
+        Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
+            "failing-fetch-job", ProviderAcquisitionJobLifecycleState.Completed, null, 0));
 
     public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult(new ExternalProviderJobStatus(
+            jobId, ProviderAcquisitionJobLifecycleState.Completed, null, null, null, null, 0));
 
     public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult<IReadOnlyList<ExternalProviderOutput>>([]);
 
     public Task<ExternalProviderArtifact> GetOutputAsync(
         string baseUrl, string? apiKey, string jobId, string outputId,

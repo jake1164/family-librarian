@@ -28,7 +28,11 @@ public sealed class ProviderAcquisitionJob
         string candidateReference,
         string? candidateRevision,
         string? acquireToken,
-        DateTimeOffset createdAtUtc)
+        DateTimeOffset createdAtUtc,
+        Guid? acquireRequestId = null,
+        FamilyLibrarian.Domain.Providers.ExternalProviderAcquisitionMode acquisitionMode =
+            FamilyLibrarian.Domain.Providers.ExternalProviderAcquisitionMode.FreeOnly,
+        bool isAutomaticAcquisition = false)
     {
         if (requestId == Guid.Empty)
         {
@@ -65,6 +69,9 @@ public sealed class ProviderAcquisitionJob
         CandidateReference = candidateReference.Trim();
         CandidateRevision = string.IsNullOrWhiteSpace(candidateRevision) ? null : candidateRevision.Trim();
         AcquireToken = acquireToken;
+        AcquireRequestId = acquireRequestId is { } id && id != Guid.Empty ? id : Guid.NewGuid();
+        AcquisitionMode = acquisitionMode;
+        IsAutomaticAcquisition = isAutomaticAcquisition;
         LifecycleState = ProviderAcquisitionJobLifecycleTransitions.InitialState;
         // Poll immediately — the caller submits and the poller picks it up
         // on its very next pass rather than waiting a full interval.
@@ -91,11 +98,20 @@ public sealed class ProviderAcquisitionJob
     /// <summary>The provider's own job id, set once <c>POST /acquire</c> is accepted.</summary>
     public string? ProviderJobId { get; private set; }
 
+    /// <summary>Local acquisition created from this provider job's complete output set.</summary>
+    public Guid? LocalAcquisitionJobId { get; private set; }
+
     public string CandidateReference { get; private set; } = null!;
 
     public string? CandidateRevision { get; private set; }
 
     public string? AcquireToken { get; private set; }
+
+    public Guid AcquireRequestId { get; private set; }
+
+    public FamilyLibrarian.Domain.Providers.ExternalProviderAcquisitionMode AcquisitionMode { get; private set; }
+
+    public bool IsAutomaticAcquisition { get; private set; }
 
     public ProviderAcquisitionJobLifecycleState LifecycleState { get; private set; }
 
@@ -191,9 +207,26 @@ public sealed class ProviderAcquisitionJob
             throw new ArgumentException("A provider job id is required.", nameof(providerJobId));
         }
 
+        if (ProviderJobId is { } existingJobId && !string.Equals(existingJobId, providerJobId.Trim(), StringComparison.Ordinal))
+            throw new InvalidOperationException("The provider returned a different job ID for an existing idempotency key.");
+
         ProviderJobId = providerJobId.Trim();
-        ApplyState(initialState, phase: null, atUtc);
+        // A remote "completed" response means the provider finished its
+        // work; FL still has to fetch, validate, stage and secure the outputs.
+        // Keep the local job nonterminal until that entire path commits so a
+        // malformed or missing output can be recorded as a local failure.
+        ApplyState(initialState == ProviderAcquisitionJobLifecycleState.Completed
+            ? ProviderAcquisitionJobLifecycleState.Running
+            : initialState, phase: null, atUtc);
         NextPollAtUtc = nextPollAtUtc ?? atUtc;
+        UpdatedAtUtc = atUtc;
+    }
+
+    public void Reschedule(DateTimeOffset nextPollAtUtc, DateTimeOffset atUtc)
+    {
+        if (IsTerminal(LifecycleState))
+            throw new InvalidOperationException("A terminal provider job cannot be rescheduled.");
+        NextPollAtUtc = nextPollAtUtc;
         UpdatedAtUtc = atUtc;
     }
 
@@ -284,6 +317,16 @@ public sealed class ProviderAcquisitionJob
         UpdatedAtUtc = atUtc;
     }
 
+    public void SetLocalAcquisition(Guid acquisitionJobId, DateTimeOffset atUtc)
+    {
+        if (acquisitionJobId == Guid.Empty)
+            throw new ArgumentException("A local acquisition job ID is required.", nameof(acquisitionJobId));
+        if (LocalAcquisitionJobId is { } existing && existing != acquisitionJobId)
+            throw new InvalidOperationException("The provider job is already linked to a different local acquisition.");
+        LocalAcquisitionJobId = acquisitionJobId;
+        UpdatedAtUtc = atUtc;
+    }
+
     public void SetExtensions(string? extensionsJson, DateTimeOffset atUtc)
     {
         ExtensionsJson = extensionsJson;
@@ -301,11 +344,21 @@ public sealed class ProviderAcquisitionJob
         string? uriScheme,
         string? checksumsJson,
         DateTimeOffset? retentionExpiresAtUtc,
-        DateTimeOffset atUtc)
+        DateTimeOffset atUtc,
+        int? sequence = null)
     {
+        var existing = _outputs.SingleOrDefault(output => string.Equals(output.OutputId, outputId, StringComparison.Ordinal));
+        if (existing is not null)
+        {
+            existing.Update(kind, role, filename, contentType, sizeBytes, uri, uriScheme, checksumsJson,
+                retentionExpiresAtUtc, sequence);
+            UpdatedAtUtc = atUtc;
+            return existing;
+        }
+
         var output = new ProviderAcquisitionJobOutput(
             Id, outputId, kind, role, filename, contentType, sizeBytes, uri, uriScheme, checksumsJson,
-            retentionExpiresAtUtc, atUtc);
+            retentionExpiresAtUtc, atUtc, sequence);
         _outputs.Add(output);
         UpdatedAtUtc = atUtc;
         return output;
@@ -360,6 +413,7 @@ public enum ProviderAcquisitionJobLifecycleState
 /// <summary>Protocol v2 §8a's three output kinds.</summary>
 public enum ProviderOutputKind
 {
+    Unknown,
     File,
     Uri,
     Descriptor

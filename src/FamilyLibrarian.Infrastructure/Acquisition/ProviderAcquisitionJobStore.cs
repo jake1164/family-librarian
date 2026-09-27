@@ -26,6 +26,7 @@ public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProvid
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
 
         return await database.ProviderAcquisitionJobs
+            .Include(job => job.Outputs)
             .Where(job => job.NextPollAtUtc != null && job.NextPollAtUtc <= asOfUtc)
             .OrderBy(job => job.NextPollAtUtc)
             .Take(maximumCount)

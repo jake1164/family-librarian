@@ -651,6 +651,7 @@ GET /acquire/{jobId}/outputs/{outputId}
 | `uri` | **yes when `kind = uri`** | The actual provider-specific URI, e.g. `"custom-scheme:opaque-reference"`. There is no `GET .../outputs/{outputId}` call for a `uri`-kind output — nothing to fetch from you; the value lives entirely in this field. |
 | `uriScheme` | **yes when `kind = uri`** | e.g. `custom-scheme`. Family Librarian dispatches a `uri` output only to a handler it has explicitly registered for that scheme — there is no generic "fetch whatever URI the provider gives us" behavior, deliberately, to avoid handing an SSRF-shaped fetch primitive to a third-party provider. An unregistered/unrecognized scheme means the output is surfaced but not automatically acted on. |
 | `role` | no | An open string — `primary`, `ebook`, `audio-part`, `cover`, `metadata`, `checksum`, `archive`, `supplementary`, `descriptor`, `other`, or anything else meaningful. An unrecognized role must not break the client. |
+| `sequence` | no | Positive, one-based integer defining the playback order of a `kind: "file"`, `role: "audio-part"` output. Its scope is all audio parts in one completed job, with no numbering reset within that job. Providers omit it for every other kind or role, including descriptors. When supplied, every audio part has it and the values are unique and contiguous from 1. Clients tolerate its absence but reject invalid or partial sequences rather than substituting another order. |
 | `filename` / `contentType` / `sizeBytes` | no, but populate for `file`/`descriptor` kinds | |
 | `checksums` | no (array, possibly empty) | `{algorithm, value}` pairs, extensible — not a fixed field per hash type. Family Librarian independently computes its own checksum of whatever it actually downloads; yours is a cross-check, not a substitute. Checksums prove file identity/integrity, not book identity. |
 | `retention` | no | `expiresAt`, if this specific output has a different retention window than the manifest-level `outputRetentionSeconds`. |
@@ -661,6 +662,26 @@ descriptor alongside nothing else. This replaces v1's assumption of exactly
 one file per job. A legacy single-artifact `GET /acquire/{jobId}/artifact`
 endpoint may still be exposed for a transitional period if convenient, but a
 v2-negotiated client always prefers `/outputs`.
+
+For multi-track audiobooks, providers should return one `audio-part` file per
+track and should include `sequence` on every track. A provider that cannot
+establish the complete membership and safe order must not report a prepared
+audiobook. The client rejects a mixed, duplicate, zero-based, or gapped sequence
+without staging any track; the provider must not substitute filename or listing
+order after reporting invalid values. Listing order, output IDs, file size,
+and lexical filename order are not playback-order signals. Clients may display
+outputs in the order received but must not treat that order as playback order.
+Older clients ignore the additive field. Providers must keep the sequence stable
+for the completed job and across retries/restarts.
+
+For legacy jobs with no `sequence` on any audio part, Family Librarian accepts
+only filenames whose basename begins with an ASCII positive integer followed
+immediately by `-` or `_` and a nonempty title (for example, `01-Chapter.mp3`).
+The numbers must form a unique contiguous set starting at 1; they are parsed
+numerically, never sorted lexically. This is a narrow compatibility fallback,
+not a provider ordering method. A provider that sends complete `sequence`
+values never depends on it. Other unsequenced sets are rejected rather than
+guessed from `Part N` labels or incidental numbers in filenames.
 
 **Fetching a `file`/`descriptor` output's bytes:**
 `GET /acquire/{jobId}/outputs/{outputId}` responds `200 OK` with the real

@@ -285,6 +285,17 @@ public static class DependencyInjection
         }
 
         services.AddSingleton(manualImportPolicy);
+        var externalProviderOutputPolicy = new ExternalProviderOutputPolicy();
+        configuration.GetSection(ExternalProviderOutputPolicy.SectionName).Bind(externalProviderOutputPolicy);
+        if (!externalProviderOutputPolicy.IsValid)
+        {
+            throw new InvalidOperationException(
+                $"{ExternalProviderOutputPolicy.SectionName} configuration is invalid: output count, " +
+                "file size, job size, filename length and read inactivity timeout must be positive, " +
+                "and MaxJobBytes must be at least MaxFileBytes.");
+        }
+
+        services.AddSingleton(externalProviderOutputPolicy);
         services.AddScoped<AcquisitionStagingService>();
         services.AddScoped<ManualImportService>();
         services.AddScoped<DirectAcquisitionService>();

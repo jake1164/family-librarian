@@ -61,7 +61,8 @@ public sealed class DirectAcquisitionService(
         string providerResultId,
         CancellationToken cancellationToken,
         bool confirmLowConfidenceMatch = false,
-        bool allowDownloadTimeDrmValidation = false)
+        bool allowDownloadTimeDrmValidation = false,
+        bool isAutomaticAcquisition = false)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
@@ -249,27 +250,10 @@ public sealed class DirectAcquisitionService(
         }
 
         var idempotencyKey = Guid.NewGuid().ToString("N");
+        var acquireRequestId = Guid.NewGuid();
         var acquireRequest = new ExternalAcquireRequest(
-            Guid.NewGuid(), externalOption.ProviderResultId, externalOption.CandidateRevision, externalOption.AcquireToken,
+            acquireRequestId, externalOption.ProviderResultId, externalOption.CandidateRevision, externalOption.AcquireToken,
             format.MediaType, externalProvider.AcquisitionMode);
-
-        ExternalProviderAcquireSubmission submission;
-        try
-        {
-            submission = await externalProviderClient.SubmitAcquireAsync(
-                externalProvider.BaseUrl, apiKey, acquireRequest, idempotencyKey, cancellationToken);
-        }
-        catch (Exception exception) when (exception is HttpRequestException or TimeoutException or TaskCanceledException)
-        {
-            return ManualImportResult.Invalid($"The acquisition could not be started: {exception.Message}");
-        }
-
-        if (submission.Outcome == ProviderAcquireOutcome.CandidateChanged)
-        {
-            return ManualImportResult.Invalid(
-                "That candidate has changed upstream since it was found. Search again for a fresh result.");
-        }
-
         var now = clock.UtcNow;
         var job = new ProviderAcquisitionJob(
             request.Id,
@@ -281,14 +265,50 @@ public sealed class DirectAcquisitionService(
             externalOption.ProviderResultId,
             externalOption.CandidateRevision,
             externalOption.AcquireToken,
-            now);
+            now,
+            acquireRequestId,
+            externalProvider.AcquisitionMode,
+            isAutomaticAcquisition);
+        providerAcquisitionJobs.Add(job);
+        await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
+
+        // Persist the stable request ID and idempotency key before POST. If the
+        // host stops after the provider accepts but before FL receives a reply,
+        // the poller can safely replay the same request after restart.
+        ExternalProviderAcquireSubmission submission;
+        try
+        {
+            submission = await externalProviderClient.SubmitAcquireAsync(
+                externalProvider.BaseUrl, apiKey, acquireRequest, idempotencyKey, cancellationToken);
+        }
+        catch (ExternalProviderSubmissionConflictException exception)
+        {
+            job.RecordFailure("IDEMPOTENCY_CONFLICT", exception.Message, false, null, null, clock.UtcNow);
+            await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
+            return ManualImportResult.Invalid("The provider could not confirm the original acquisition request. Review provider activity before retrying.");
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TimeoutException or TaskCanceledException)
+        {
+            job.Reschedule(now.AddSeconds(30), clock.UtcNow);
+            await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
+            return ManualImportResult.AcquisitionInProgress(job.Id);
+        }
+
+        if (submission.Outcome == ProviderAcquireOutcome.CandidateChanged)
+        {
+            job.RecordFailure("CANDIDATE_CHANGED", "That candidate has changed upstream since it was found.",
+                false, null, null, clock.UtcNow);
+            await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
+            return ManualImportResult.Invalid(
+                "That candidate has changed upstream. Search again for a fresh result.");
+        }
+
         job.RecordSubmission(
             submission.JobId!,
             submission.State!.Value,
             now.AddSeconds(submission.PollAfterSeconds ?? 2),
             now);
 
-        providerAcquisitionJobs.Add(job);
         await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
 
         return ManualImportResult.AcquisitionInProgress(job.Id);

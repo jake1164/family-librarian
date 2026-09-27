@@ -484,33 +484,35 @@ public sealed class LibriVoxProvider(
                         "The audiobook archive stream could not be opened; saved bytes were retained.", exception);
                 }
                 await using var source = sourceStream;
-                await using var target = new FileStream(
+                // For a full replacement, truncate the old bytes before publishing the new validator.
+                // If the process stops between these operations, the zero-length partial is discarded.
+                if (requestContext is not null && !append) WriteManifest(manifestPath, updatedManifest);
+                long copied;
+                await using (var target = new FileStream(
                     partialPath,
                     append ? FileMode.Append : FileMode.Create,
                     FileAccess.Write,
                     FileShare.None,
                     128 * 1024,
-                    FileOptions.Asynchronous | FileOptions.SequentialScan);
-                // For a full replacement, truncate the old bytes before publishing the new validator.
-                // If the process stops between these operations, the zero-length partial is discarded.
-                if (requestContext is not null && !append) WriteManifest(manifestPath, updatedManifest);
-                long copied;
-                try
+                    FileOptions.Asynchronous | FileOptions.SequentialScan))
                 {
-                    copied = await CopyBoundedAsync(
-                        source,
-                        target,
-                        MaximumZipBytes - startingBytes,
-                        cancellationToken,
-                        bytes => reportProgress?.Invoke(new DirectAcquisitionTransferProgress(
-                            startingBytes + bytes, totalBytes, "Downloading")),
-                        TimeSpan.FromMinutes(2));
-                }
-                catch (Exception exception) when (requestContext is not null && !cancellationToken.IsCancellationRequested &&
-                    exception is IOException or TaskCanceledException)
-                {
-                    throw new ResumableDownloadInterruptedException(
-                        "The audiobook archive transfer stalled or ended early; the partial file was retained.", exception);
+                    try
+                    {
+                        copied = await CopyBoundedAsync(
+                            source,
+                            target,
+                            MaximumZipBytes - startingBytes,
+                            cancellationToken,
+                            bytes => reportProgress?.Invoke(new DirectAcquisitionTransferProgress(
+                                startingBytes + bytes, totalBytes, "Downloading")),
+                            TimeSpan.FromMinutes(2));
+                    }
+                    catch (Exception exception) when (requestContext is not null && !cancellationToken.IsCancellationRequested &&
+                        exception is IOException or TaskCanceledException)
+                    {
+                        throw new ResumableDownloadInterruptedException(
+                            "The audiobook archive transfer stalled or ended early; the partial file was retained.", exception);
+                    }
                 }
                 var completeLength = checked(startingBytes + copied);
                 if (totalBytes is { } expected && completeLength != expected)

@@ -11,10 +11,7 @@ public sealed class AutomatedSecurityPipelineTests
     {
         var assetId = Guid.NewGuid();
         var approvals = new RecordingPolicyApprovalService();
-        var pipeline = new AutomatedSecurityPipeline(
-            new DeterministicEvaluationRunner(SecurityEvaluationStatus.Passed),
-            approvals,
-            new DeterministicIdentityVerificationService());
+        var pipeline = CreatePipeline(approvals, SecurityEvaluationStatus.Passed);
 
         var result = await pipeline.EvaluateAsync(assetId, CancellationToken.None);
 
@@ -27,10 +24,7 @@ public sealed class AutomatedSecurityPipelineTests
     public async Task AReviewRequiredEvaluationIsNotApprovedByPolicy()
     {
         var approvals = new RecordingPolicyApprovalService();
-        var pipeline = new AutomatedSecurityPipeline(
-            new DeterministicEvaluationRunner(SecurityEvaluationStatus.ReviewRequired),
-            approvals,
-            new DeterministicIdentityVerificationService());
+        var pipeline = CreatePipeline(approvals, SecurityEvaluationStatus.ReviewRequired);
 
         var result = await pipeline.EvaluateAsync(Guid.NewGuid(), CancellationToken.None);
 
@@ -42,10 +36,7 @@ public sealed class AutomatedSecurityPipelineTests
     public async Task AnUnmatchedIdentityDoesNotFailTheSecurityEvaluation()
     {
         var approvals = new RecordingPolicyApprovalService(ApprovalResult.IdentityUnmatched());
-        var pipeline = new AutomatedSecurityPipeline(
-            new DeterministicEvaluationRunner(SecurityEvaluationStatus.Passed),
-            approvals,
-            new DeterministicIdentityVerificationService());
+        var pipeline = CreatePipeline(approvals, SecurityEvaluationStatus.Passed);
 
         var result = await pipeline.EvaluateAsync(Guid.NewGuid(), CancellationToken.None);
 
@@ -59,8 +50,7 @@ public sealed class AutomatedSecurityPipelineTests
         var assetId = Guid.NewGuid();
         var approvals = new RecordingPolicyApprovalService();
         var identity = new DeterministicIdentityVerificationService(AssetIdentityVerificationResult.Match("test"));
-        var pipeline = new AutomatedSecurityPipeline(
-            new DeterministicEvaluationRunner(SecurityEvaluationStatus.Passed), approvals, identity);
+        var pipeline = CreatePipeline(approvals, SecurityEvaluationStatus.Passed, identity);
 
         var result = await pipeline.RetryIdentityAsync(assetId, CancellationToken.None);
 
@@ -69,6 +59,13 @@ public sealed class AutomatedSecurityPipelineTests
         Assert.AreEqual(assetId, approvals.AssetId);
         Assert.AreEqual("clean-security-evaluation-v1", approvals.PolicyName);
     }
+
+    private static AutomatedSecurityPipeline CreatePipeline(
+        RecordingPolicyApprovalService approvals,
+        SecurityEvaluationStatus status,
+        DeterministicIdentityVerificationService? identity = null) =>
+        new(new DeterministicEvaluationRunner(status), approvals,
+            identity ?? new DeterministicIdentityVerificationService());
 
     private sealed class DeterministicEvaluationRunner(SecurityEvaluationStatus status) : ISecurityEvaluationRunner
     {

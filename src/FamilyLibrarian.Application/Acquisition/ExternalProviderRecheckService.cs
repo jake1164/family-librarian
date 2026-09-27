@@ -173,7 +173,8 @@ public sealed class ExternalProviderRecheckService(
                                 provider.ProviderId,
                                 automaticMatches[0].ProviderResultId,
                                 cancellationToken,
-                                allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(automaticMatches[0]));
+                                allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(automaticMatches[0]),
+                                isAutomaticAcquisition: true);
 
                             if (acquireResult.Outcome == ManualImportOutcome.Success)
                             {

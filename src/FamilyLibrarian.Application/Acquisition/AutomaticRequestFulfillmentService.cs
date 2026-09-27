@@ -51,6 +51,18 @@ public sealed class AutomaticRequestFulfillmentService(
 {
     private const int BatchSize = 20;
 
+    /// <summary>Completes the existing review flow when an automatic provider job fails after submit.</summary>
+    public async Task RecordExternalAcquisitionFailureAsync(
+        Guid requestId, string reason, CancellationToken cancellationToken)
+    {
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null)
+            return;
+
+        await MarkForReviewAsync(request, RequestReviewCategory.SecurityOrIdentityFailure, reason, cancellationToken);
+        await requests.SaveChangesAsync(cancellationToken);
+    }
+
     /// <summary>
     /// How long to wait before asking the same provider about the same format
     /// again after it found nothing. A free catalog's contents change slowly,
@@ -310,7 +322,8 @@ public sealed class AutomaticRequestFulfillmentService(
                 option.ProviderId,
                 option.ProviderResultId,
                 cancellationToken,
-                confirmLowConfidenceMatch);
+                confirmLowConfidenceMatch,
+                isAutomaticAcquisition: true);
         }
         catch (Exception exception) when (exception is IOException or HttpRequestException or TaskCanceledException or InvalidOperationException)
         {

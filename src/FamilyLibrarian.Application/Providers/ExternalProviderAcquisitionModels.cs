@@ -26,6 +26,9 @@ public enum ProviderAcquireOutcome
     CandidateChanged
 }
 
+/// <summary>A replay conflicted with a different request under the same idempotency key.</summary>
+public sealed class ExternalProviderSubmissionConflictException(string message) : Exception(message);
+
 public sealed record ExternalProviderAcquireSubmission(
     ProviderAcquireOutcome Outcome,
     string? JobId,
@@ -71,4 +74,5 @@ public sealed record ExternalProviderOutput(
     string? Uri,
     string? UriScheme,
     string? ChecksumsJson,
-    DateTimeOffset? RetentionExpiresAtUtc);
+    DateTimeOffset? RetentionExpiresAtUtc,
+    int? Sequence = null);

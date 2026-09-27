@@ -24,7 +24,8 @@ public sealed class ProviderAcquisitionJobOutput
         string? uriScheme,
         string? checksumsJson,
         DateTimeOffset? retentionExpiresAtUtc,
-        DateTimeOffset createdAtUtc)
+        DateTimeOffset createdAtUtc,
+        int? sequence = null)
     {
         if (providerAcquisitionJobId == Guid.Empty)
         {
@@ -53,6 +54,7 @@ public sealed class ProviderAcquisitionJobOutput
         UriScheme = uriScheme;
         ChecksumsJson = checksumsJson;
         RetentionExpiresAtUtc = retentionExpiresAtUtc;
+        Sequence = sequence;
         CreatedAtUtc = createdAtUtc;
     }
 
@@ -86,5 +88,40 @@ public sealed class ProviderAcquisitionJobOutput
 
     public DateTimeOffset? RetentionExpiresAtUtc { get; private set; }
 
+    public int? Sequence { get; private set; }
+
+    public Guid? MediaAssetId { get; private set; }
+
     public DateTimeOffset CreatedAtUtc { get; private set; }
+
+    internal void Update(
+        ProviderOutputKind kind, string? role, string? filename, string? contentType, long? sizeBytes,
+        string? uri, string? uriScheme, string? checksumsJson, DateTimeOffset? retentionExpiresAtUtc,
+        int? sequence)
+    {
+        Kind = kind;
+        Role = string.IsNullOrWhiteSpace(role) ? null : role.Trim();
+        Filename = filename;
+        ContentType = contentType;
+        SizeBytes = sizeBytes;
+        Uri = uri;
+        UriScheme = uriScheme;
+        ChecksumsJson = checksumsJson;
+        RetentionExpiresAtUtc = retentionExpiresAtUtc;
+        Sequence = sequence;
+    }
+
+    public void LinkAsset(Guid mediaAssetId)
+    {
+        if (mediaAssetId == Guid.Empty)
+            throw new ArgumentException("A media asset ID is required.", nameof(mediaAssetId));
+        if (MediaAssetId is { } existing && existing != mediaAssetId)
+            throw new InvalidOperationException("A provider output is already linked to another media asset.");
+        MediaAssetId = mediaAssetId;
+    }
+
+    public void ClearAssetLink()
+    {
+        MediaAssetId = null;
+    }
 }

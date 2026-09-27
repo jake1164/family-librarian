@@ -807,9 +807,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(job => job.ProviderInstanceId).HasColumnName("provider_instance_id").HasMaxLength(256);
             entity.Property(job => job.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(256).IsRequired();
             entity.Property(job => job.ProviderJobId).HasColumnName("provider_job_id").HasMaxLength(512);
+            entity.Property(job => job.LocalAcquisitionJobId).HasColumnName("local_acquisition_job_id");
             entity.Property(job => job.CandidateReference).HasColumnName("candidate_reference").HasMaxLength(512).IsRequired();
             entity.Property(job => job.CandidateRevision).HasColumnName("candidate_revision").HasMaxLength(512);
             entity.Property(job => job.AcquireToken).HasColumnName("acquire_token").HasColumnType("text");
+            entity.Property(job => job.AcquireRequestId).HasColumnName("acquire_request_id");
+            entity.Property(job => job.AcquisitionMode).HasColumnName("acquisition_mode").HasConversion<string>().HasMaxLength(32);
+            entity.Property(job => job.IsAutomaticAcquisition).HasColumnName("is_automatic_acquisition");
             entity.Property(job => job.LifecycleState).HasColumnName("lifecycle_state").HasConversion<string>().HasMaxLength(32);
             entity.Property(job => job.Phase).HasColumnName("phase").HasMaxLength(64);
             entity.Property(job => job.InteractionType).HasColumnName("interaction_type").HasMaxLength(64);
@@ -850,6 +854,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(job => job.RequestFormatId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AcquisitionJob>()
+                .WithMany()
+                .HasForeignKey(job => job.LocalAcquisitionJobId)
+                .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<ExternalProvider>()
                 .WithMany()
                 .HasForeignKey(job => job.ExternalProviderId)
@@ -879,7 +887,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(output => output.UriScheme).HasColumnName("uri_scheme").HasMaxLength(32);
             entity.Property(output => output.ChecksumsJson).HasColumnName("checksums_json").HasColumnType("jsonb");
             entity.Property(output => output.RetentionExpiresAtUtc).HasColumnName("retention_expires_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(output => output.Sequence).HasColumnName("sequence");
+            entity.Property(output => output.MediaAssetId).HasColumnName("media_asset_id");
             entity.Property(output => output.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.HasIndex(output => new { output.ProviderAcquisitionJobId, output.OutputId }).IsUnique();
+            entity.HasIndex(output => output.MediaAssetId).IsUnique().HasFilter("media_asset_id IS NOT NULL");
+            entity.HasOne<MediaAsset>().WithMany().HasForeignKey(output => output.MediaAssetId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<ProviderAttempt>(entity =>

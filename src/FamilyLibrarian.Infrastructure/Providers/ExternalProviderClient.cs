@@ -498,6 +498,8 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
             {
                 return ExternalProviderAcquireSubmission.CandidateChanged;
             }
+            throw new ExternalProviderSubmissionConflictException(
+                "The provider rejected the idempotency-key replay because it does not match the original request.");
         }
 
         response.EnsureSuccessStatusCode();
@@ -604,13 +606,8 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         foreach (var node in outputsNode)
         {
             var outputId = node?["id"]?.GetValue<string>();
-            if (string.IsNullOrWhiteSpace(outputId))
-            {
-                continue;
-            }
-
             results.Add(new ExternalProviderOutput(
-                outputId,
+                outputId ?? string.Empty,
                 ParseOutputKind(node!["kind"]?.GetValue<string>()),
                 node["role"]?.GetValue<string>(),
                 node["filename"]?.GetValue<string>(),
@@ -619,7 +616,8 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
                 node["uri"]?.GetValue<string>(),
                 node["uriScheme"]?.GetValue<string>(),
                 node["checksums"]?.ToJsonString(),
-                node["retention"]?["expiresAt"]?.GetValue<DateTimeOffset?>()));
+                node["retention"]?["expiresAt"]?.GetValue<DateTimeOffset?>(),
+                node["sequence"]?.GetValue<int?>()));
         }
 
         return results;
@@ -680,6 +678,25 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         }
     }
 
+    public async Task<bool> TryDeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey);
+        try
+        {
+            using var response = await client.DeleteAsync($"acquire/{Uri.EscapeDataString(jobId)}", cancellationToken);
+            return response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
     private static ProviderAcquisitionJobLifecycleState ParseLifecycleState(string? value) =>
         value?.ToLowerInvariant() switch
         {
@@ -697,9 +714,10 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
 
     private static ProviderOutputKind ParseOutputKind(string? value) => value?.ToLowerInvariant() switch
     {
+        "file" => ProviderOutputKind.File,
         "uri" => ProviderOutputKind.Uri,
         "descriptor" => ProviderOutputKind.Descriptor,
-        _ => ProviderOutputKind.File
+        _ => ProviderOutputKind.Unknown
     };
 
     /// <summary>Prefers the standard <c>Retry-After</c> header; falls back to the body-level <c>pollAfterSeconds</c> hint (protocol v2 §8).</summary>

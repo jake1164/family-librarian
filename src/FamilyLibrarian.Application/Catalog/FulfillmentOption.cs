@@ -291,7 +291,12 @@ public sealed record DirectAcquisitionTransferProgress(
 /// </remarks>
 public interface IAutomaticDirectAcquisitionProvider : IDirectAcquisitionProvider;
 
-public sealed record DirectAcquisitionFile(Stream Content, string Filename);
+public sealed record DirectAcquisitionFile(
+    Stream Content,
+    string Filename,
+    string? ExternalOutputId = null,
+    long? MaxSizeBytes = null,
+    Func<CancellationToken, Task>? ValidateAsync = null);
 
 /// <summary>Advertises matches in a linked owned library (e.g. Calibre-Web). No concrete implementation ships in M8.</summary>
 public interface IOwnedLibraryProvider

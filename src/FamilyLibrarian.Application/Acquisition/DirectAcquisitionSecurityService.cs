@@ -17,7 +17,8 @@ public sealed class DirectAcquisitionSecurityService(
         string providerResultId,
         CancellationToken cancellationToken,
         bool confirmLowConfidenceMatch = false,
-        bool allowDownloadTimeDrmValidation = false)
+        bool allowDownloadTimeDrmValidation = false,
+        bool isAutomaticAcquisition = false)
     {
         var result = await acquisitions.AcquireAsync(
             requestId,
@@ -26,17 +27,15 @@ public sealed class DirectAcquisitionSecurityService(
             providerResultId,
             cancellationToken,
             confirmLowConfidenceMatch,
-            allowDownloadTimeDrmValidation);
+            allowDownloadTimeDrmValidation,
+            isAutomaticAcquisition);
 
         if (result.Outcome == ManualImportOutcome.Success)
         {
-            // A bundle (e.g. a chaptered Gutenberg audiobook) stages several
-            // sibling assets at once; each gets its own independent scan and
-            // approval attempt, exactly like a single-file acquisition.
-            foreach (var assetId in result.MediaAssetIds)
-            {
-                await securityPipeline.EvaluateAsync(assetId, cancellationToken);
-            }
+            if (result.MediaAssetIds.Count == 1)
+                await securityPipeline.EvaluateAsync(result.MediaAssetIds[0], cancellationToken);
+            else
+                await securityPipeline.EvaluateBundleAsync(result.MediaAssetIds, cancellationToken);
         }
 
         return result;

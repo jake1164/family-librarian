@@ -81,6 +81,14 @@ public interface IExternalProviderClient
     /// <summary><c>DELETE /acquire/{jobId}</c> — release retained resources; best-effort.</summary>
     Task DeleteAcquireAsync(
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken);
+
+    /// <summary>Reports whether cleanup was acknowledged so the durable poller can retry it.</summary>
+    async Task<bool> TryDeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
+    {
+        await DeleteAcquireAsync(baseUrl, apiKey, jobId, cancellationToken);
+        return true;
+    }
 }
 
 /// <summary>

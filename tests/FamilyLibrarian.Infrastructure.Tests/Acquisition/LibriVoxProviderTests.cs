@@ -18,6 +18,7 @@ using Microsoft.Extensions.Options;
 namespace FamilyLibrarian.Infrastructure.Tests.Acquisition;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class LibriVoxProviderTests
 {
     private static readonly string[] ExpectedProjectIds = ["17", "18"];
