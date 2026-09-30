@@ -131,7 +131,10 @@ public sealed class ProviderRegistry : IProviderRegistry
                 // This credential-free public-domain source becomes searchable
                 // after its daily RDF catalogue import completes. Files still
                 // pass the full quarantine, malware, format, and identity pipeline.
-                DefaultEnabled: true,
+                // On by default; a deployment can turn it off at boot with
+                // MetadataProviders:Gutenberg:Enabled=false (the catalogue import
+                // starts with the host, so the admin API alone is too late).
+                DefaultEnabled: configuration.GetValue("MetadataProviders:Gutenberg:Enabled", true),
                 SetupInstructions:
                     "Family Librarian imports Project Gutenberg's RDF catalogue " +
                     "daily and searches its local PostgreSQL cache. Downloads are " +
@@ -150,7 +153,8 @@ public sealed class ProviderRegistry : IProviderRegistry
                 // Like Project Gutenberg above, this is an anonymous, credential-free
                 // public-domain built-in source; a fresh install should be able to
                 // fulfil an audiobook request from it without any admin setup.
-                DefaultEnabled: true,
+                // MetadataProviders:LibriVox:Enabled=false turns it off at boot.
+                DefaultEnabled: configuration.GetValue("MetadataProviders:LibriVox:Enabled", true),
                 SetupInstructions:
                     "Searches the public LibriVox audiobook catalog. Selected recordings are downloaded " +
                     "as a whole-book archive and each MP3 track passes Family Librarian's normal validation.",
