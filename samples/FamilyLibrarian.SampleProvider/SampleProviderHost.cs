@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
+using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -393,34 +395,61 @@ internal sealed record SampleOutput(string Id, string Role, string Filename, str
 /// </summary>
 internal static class SampleEpub
 {
+    /// <summary>
+    /// A minimal but structurally valid EPUB: a readable ZIP with the stored
+    /// "mimetype" entry first, a container pointing at an OPF package, and
+    /// package metadata carrying the title and author. Family Librarian's own
+    /// EpubValidator and identity verifier both read exactly these, so a
+    /// fixture missing any of them is rejected for a reason unrelated to what
+    /// the lab case under test is exercising.
+    /// </summary>
     public static byte[] Build(string title, string author)
     {
         using var stream = new MemoryStream();
-        WriteStoredEntry(stream, "mimetype", "application/epub+zip");
-        WriteStoredEntry(
-            stream, "sample.txt",
-            $"Fetched from the Family Librarian sample provider.\nTitle: {title}\nAuthor: {author}\n");
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            // OCF requires "mimetype" to be the first entry, stored uncompressed.
+            WriteEntry(archive, "mimetype", "application/epub+zip", CompressionLevel.NoCompression);
+            WriteEntry(
+                archive, "META-INF/container.xml",
+                """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+                  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+                </container>
+                """);
+            WriteEntry(
+                archive, "OEBPS/content.opf",
+                $"""
+                <?xml version="1.0" encoding="UTF-8"?>
+                <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id">
+                  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:identifier id="book-id">urn:uuid:family-librarian-sample-provider</dc:identifier>
+                    <dc:title>{SecurityElement.Escape(title)}</dc:title>
+                    <dc:creator>{SecurityElement.Escape(author)}</dc:creator>
+                    <dc:language>en</dc:language>
+                  </metadata>
+                  <manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
+                  <spine><itemref idref="chapter"/></spine>
+                </package>
+                """);
+            WriteEntry(
+                archive, "OEBPS/chapter.xhtml",
+                $"""
+                <?xml version="1.0" encoding="UTF-8"?>
+                <html xmlns="http://www.w3.org/1999/xhtml"><head><title>{SecurityElement.Escape(title)}</title></head>
+                <body><p>Fetched from the Family Librarian sample provider.</p></body></html>
+                """);
+        }
+
         return stream.ToArray();
     }
 
-    private static void WriteStoredEntry(Stream stream, string entryName, string content)
+    private static void WriteEntry(
+        ZipArchive archive, string name, string content, CompressionLevel level = CompressionLevel.Optimal)
     {
-        var nameBytes = Encoding.ASCII.GetBytes(entryName);
-        var contentBytes = Encoding.UTF8.GetBytes(content);
-
-        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
-        writer.Write(0x04034B50u);
-        writer.Write((ushort)20);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write((ushort)0);
-        writer.Write(0u);
-        writer.Write((uint)contentBytes.Length);
-        writer.Write((uint)contentBytes.Length);
-        writer.Write((ushort)nameBytes.Length);
-        writer.Write((ushort)0);
-        writer.Write(nameBytes);
-        writer.Write(contentBytes);
+        var entry = archive.CreateEntry(name, level);
+        using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        writer.Write(content);
     }
 }
