@@ -104,25 +104,6 @@ public sealed class ExternalProviderAdminService(
         return ExternalProviderCommandResult.Success(ToStatus(provider));
     }
 
-    public async Task<ExternalProviderCommandResult> SetAcquisitionModeAsync(
-        Guid id, ExternalProviderAcquisitionMode acquisitionMode, CancellationToken cancellationToken)
-    {
-        var provider = await store.FindAsync(id, cancellationToken);
-        if (provider is null)
-        {
-            return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
-        }
-
-        provider.SetAcquisitionMode(acquisitionMode, currentUser.UserId, clock.UtcNow);
-        await store.SaveChangesAsync(cancellationToken);
-
-        await audit.WriteAsync(
-            AuditActions.ExternalProviderAcquisitionModeChanged, AuditSubjectTypes.ExternalProvider, id.ToString(),
-            new { provider.ProviderId, AcquisitionMode = acquisitionMode.ToString() }, cancellationToken);
-
-        return ExternalProviderCommandResult.Success(ToStatus(provider));
-    }
-
     public async Task<ExternalProviderCommandResult> SetDetailsAsync(
         Guid id, string displayName, string baseUrl, CancellationToken cancellationToken)
     {
@@ -331,7 +312,6 @@ public sealed class ExternalProviderAdminService(
         provider.IsEnabled,
         provider.RecheckSchedule.ToString(),
         provider.AutoAcquireEnabled,
-        provider.AcquisitionMode.ToString(),
         provider.HasApiKey,
         provider.ApiKeyHint,
         provider.ApiKeySetAtUtc,
@@ -357,7 +337,6 @@ public sealed record ExternalProviderStatus(
     bool IsEnabled,
     string RecheckSchedule,
     bool AutoAcquireEnabled,
-    string AcquisitionMode,
     bool HasApiKey,
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,

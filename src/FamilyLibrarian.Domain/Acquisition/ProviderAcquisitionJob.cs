@@ -30,8 +30,6 @@ public sealed class ProviderAcquisitionJob
         string? acquireToken,
         DateTimeOffset createdAtUtc,
         Guid? acquireRequestId = null,
-        FamilyLibrarian.Domain.Providers.ExternalProviderAcquisitionMode acquisitionMode =
-            FamilyLibrarian.Domain.Providers.ExternalProviderAcquisitionMode.FreeOnly,
         bool isAutomaticAcquisition = false)
     {
         if (requestId == Guid.Empty)
@@ -70,7 +68,6 @@ public sealed class ProviderAcquisitionJob
         CandidateRevision = string.IsNullOrWhiteSpace(candidateRevision) ? null : candidateRevision.Trim();
         AcquireToken = acquireToken;
         AcquireRequestId = acquireRequestId is { } id && id != Guid.Empty ? id : Guid.NewGuid();
-        AcquisitionMode = acquisitionMode;
         IsAutomaticAcquisition = isAutomaticAcquisition;
         LifecycleState = ProviderAcquisitionJobLifecycleTransitions.InitialState;
         // Poll immediately — the caller submits and the poller picks it up
@@ -108,8 +105,6 @@ public sealed class ProviderAcquisitionJob
     public string? AcquireToken { get; private set; }
 
     public Guid AcquireRequestId { get; private set; }
-
-    public FamilyLibrarian.Domain.Providers.ExternalProviderAcquisitionMode AcquisitionMode { get; private set; }
 
     public bool IsAutomaticAcquisition { get; private set; }
 

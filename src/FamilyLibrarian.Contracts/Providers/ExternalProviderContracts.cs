@@ -8,7 +8,6 @@ public sealed record ExternalProviderResponse(
     bool IsEnabled,
     string RecheckSchedule,
     bool AutoAcquireEnabled,
-    string AcquisitionMode,
     bool HasApiKey,
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,
@@ -42,9 +41,6 @@ public sealed record SetExternalProviderRecheckScheduleRequest(string RecheckSch
 /// that way may be fetched without review.
 /// </summary>
 public sealed record SetExternalProviderAutoAcquireEnabledRequest(bool Enabled);
-
-/// <summary>One of <c>SubscriptionFirst</c>, <c>FreeFirst</c>, <c>SubscriptionOnly</c>, or <c>FreeOnly</c>.</summary>
-public sealed record SetExternalProviderAcquisitionModeRequest(string AcquisitionMode);
 
 public sealed record SetExternalProviderApiKeyRequest(string ApiKey);
 

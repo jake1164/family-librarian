@@ -1,5 +1,4 @@
 using FamilyLibrarian.Domain.Acquisition;
-using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Providers;
@@ -10,8 +9,7 @@ public sealed record ExternalAcquireRequest(
     string CandidateReference,
     string? CandidateRevision,
     string? AcquireToken,
-    RequestMediaType MediaType,
-    ExternalProviderAcquisitionMode AcquisitionMode = ExternalProviderAcquisitionMode.FreeOnly);
+    RequestMediaType MediaType);
 
 public enum ProviderAcquireOutcome
 {

@@ -85,7 +85,7 @@ public sealed class AcquisitionJobPollingService(
             {
                 var submission = await client.SubmitAcquireAsync(provider.BaseUrl, apiKey,
                     new ExternalAcquireRequest(job.AcquireRequestId, job.CandidateReference, job.CandidateRevision,
-                        job.AcquireToken, format.MediaType, job.AcquisitionMode), job.IdempotencyKey, cancellationToken);
+                        job.AcquireToken, format.MediaType), job.IdempotencyKey, cancellationToken);
                 if (submission.Outcome == ProviderAcquireOutcome.CandidateChanged)
                 {
                     await RecordFailureAsync(job, "CANDIDATE_CHANGED", "The candidate changed before acquisition.",

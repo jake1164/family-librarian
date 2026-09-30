@@ -253,7 +253,7 @@ public sealed class DirectAcquisitionService(
         var acquireRequestId = Guid.NewGuid();
         var acquireRequest = new ExternalAcquireRequest(
             acquireRequestId, externalOption.ProviderResultId, externalOption.CandidateRevision, externalOption.AcquireToken,
-            format.MediaType, externalProvider.AcquisitionMode);
+            format.MediaType);
         var now = clock.UtcNow;
         var job = new ProviderAcquisitionJob(
             request.Id,
@@ -267,7 +267,6 @@ public sealed class DirectAcquisitionService(
             externalOption.AcquireToken,
             now,
             acquireRequestId,
-            externalProvider.AcquisitionMode,
             isAutomaticAcquisition);
         providerAcquisitionJobs.Add(job);
         await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);

@@ -1,6 +1,5 @@
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Domain.Acquisition;
-using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.SampleProvider;
@@ -236,19 +235,19 @@ public sealed class ExternalProviderClientTests
     }
 
     [TestMethod]
-    public async Task SubmitAcquireSendsTheConfiguredProviderNativeAcquisitionMode()
+    public async Task SubmitAcquireSendsNoProviderSpecificPolicyBecauseTheProviderOwnsItsSettings()
     {
         var handler = new CapturingAcquireHandler();
         var client = new ExternalProviderClient(new RecordingHttpClientFactory(handler));
         var request = new ExternalAcquireRequest(
-            Guid.NewGuid(), "candidate", null, null, RequestMediaType.Ebook,
-            ExternalProviderAcquisitionMode.SubscriptionFirst);
+            Guid.NewGuid(), "candidate", null, null, RequestMediaType.Ebook);
 
         await client.SubmitAcquireAsync(
             "http://provider.test", null, request, Guid.NewGuid().ToString("N"), CancellationToken.None);
 
         Assert.IsNotNull(handler.Payload);
-        Assert.AreEqual("subscription-first", handler.Payload!["acquisitionMode"]!.GetValue<string>());
+        Assert.IsFalse(handler.Payload!.ContainsKey("acquisitionMode"));
+        Assert.AreEqual("ebook", handler.Payload["mediaType"]!.GetValue<string>());
     }
 
     [TestMethod]

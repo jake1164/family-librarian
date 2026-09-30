@@ -370,8 +370,7 @@ Request:
   "candidateReference": "abc123",
   "candidateRevision": null,
   "acquireToken": null,
-  "mediaType": "ebook",
-  "acquisitionMode": "free-only"
+  "mediaType": "ebook"
 }
 ```
 
@@ -394,14 +393,13 @@ accepted it for, reject with `409`.
 are sent back unchanged. If you never return them, you will never receive
 them here either, and nothing about this section applies to you.
 
-`acquisitionMode` is always one of `subscription-first`, `free-first`,
-`subscription-only`, or `free-only`. It is the administrator's persisted
-choice for the provider's own subscription/quota and free-interactive paths;
-it is not a purchase authorization, and providers retain their own quota
-accounting. A provider that cannot use the selected path because quota is
-exhausted should keep the job queued or running and provide a suitable
-`pollAfterSeconds`. It must use `waiting` with an `interaction` object only
-when an administrator must perform a human action.
+Provider-specific acquisition policy (for example which of a provider's own
+subscription, quota, or transport paths to prefer) is **not** part of this
+request. It is the provider's own setting, edited in the provider's own admin
+UI (see `managementUrl`, §4). A provider that cannot use a path because its own
+quota is exhausted should keep the job queued or running and provide a
+suitable `pollAfterSeconds`. It must use `waiting` with an `interaction` object
+only when an administrator must perform a human action.
 
 ### Staleness: `candidateRevision` mismatch
 
@@ -800,9 +798,11 @@ risks guessing wrong:
 - **Full collection-member enumeration** (a provider *may* still describe
   that a release is a collection via `release.isCollection`/`partCount` —
   just not required to list every member's own title/author).
-- **A generic provider-configuration-schema or administrative-actions API.**
-  Expose your own `managementUrl`/`documentationUrl` (§4) if you have an
-  admin surface; Family Librarian will link to it rather than modeling it.
+- **A provider-configuration-schema or administrative-actions API.** Provider
+  settings are owned by the provider, which is their only source of truth.
+  Expose your own `managementUrl`/`documentationUrl` (§4) for your admin
+  surface; Family Librarian links to it and neither stores nor renders your
+  settings.
 - **Provider concurrency-limit negotiation.**
 
 Each of these has a reachable path in later via the `extensions` namespace
