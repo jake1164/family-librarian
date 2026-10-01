@@ -486,7 +486,7 @@
                             }
                             @if (provider.CachedHealthStatus is not null)
                             {
-                                <MudTooltip Text="@(ReasonFor(provider, "general") ?? string.Empty)" Disabled="@(ReasonFor(provider, "general") is null)">
+                                <MudTooltip Text="@(AllReasons(provider) ?? string.Empty)" Disabled="@(AllReasons(provider) is null)">
                                     <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedHealthStatus)">
                                         Health: @provider.CachedHealthStatus
                                     </MudChip>
@@ -636,6 +636,21 @@
                 yield return (group, value);
             }
         }
+    }
+
+    // Health is the summary chip, so its tooltip carries every reported reason,
+    // each prefixed with the operation it concerns ("general" issues unprefixed).
+    private static string? AllReasons(ExternalProviderResponse provider)
+    {
+        var messages = provider.CachedHealthIssues
+            .Select(issue => issue.Operation switch
+            {
+                "search" => $"Search: {issue.Message}",
+                "acquire" => $"Acquire: {issue.Message}",
+                _ => issue.Message
+            })
+            .ToList();
+        return messages.Count == 0 ? null : string.Join(" ", messages);
     }
 
     // The provider's own reason (protocol v2 §5 "issues") for one operation, as
