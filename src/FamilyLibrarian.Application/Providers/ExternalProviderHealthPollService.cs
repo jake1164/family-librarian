@@ -47,9 +47,9 @@ public sealed class ExternalProviderHealthPollService(
                 var health = await candidateChecker.CheckHealthAsync(provider, cancellationToken);
                 provider.RecordHealthCheck(
                     health.IsFullyOperational,
-                    health.IsFullyOperational
+                    health.Search == ProviderOperationalStatus.Available && health.Acquire == ProviderOperationalStatus.Available
                         ? "Reachable on periodic background check."
-                        : "Reachable on periodic background check, but search or acquire was reported unavailable.",
+                        : $"Reachable on periodic background check, but search is {health.Search.ToString().ToLowerInvariant()} and acquire is {health.Acquire.ToString().ToLowerInvariant()}.",
                     health.Status.ToString(), health.Search.ToString(), health.Acquire.ToString(), clock.UtcNow);
                 changed = true;
                 await NotifyIfDegradedAsync(provider, wasOperational, cancellationToken);

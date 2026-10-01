@@ -97,6 +97,50 @@ public sealed class SystemReadinessEndpointTests
         Assert.AreEqual(SystemReadinessCategories.Source, component.Category);
     }
 
+    [TestMethod]
+    public async Task AnEnabledExternalProviderWithADegradedOperationDegradesReadinessAndNamesWhy()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        var create = await client.PostAsJsonAsync(
+            "/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest(
+                "degraded-ops-provider", "Degraded Ops Provider", "http://degraded-ops.test"));
+        Assert.AreEqual(HttpStatusCode.OK, create.StatusCode);
+        var created = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(created);
+        var enable = await client.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{created.Id}/enabled",
+            new SetExternalProviderEnabledRequest(true));
+        Assert.AreEqual(HttpStatusCode.OK, enable.StatusCode);
+
+        // Same shape the background poll records for a provider that answers
+        // but has nothing usable to search: the test "succeeded" because
+        // search is Degraded rather than Unavailable.
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var provider = await database.ExternalProviders.SingleAsync(p => p.Id == created.Id);
+            provider.RecordHealthCheck(
+                succeeded: true,
+                message: "Reachable on periodic background check.",
+                healthStatus: "Degraded",
+                searchOperationStatus: "Degraded",
+                acquireOperationStatus: "Available",
+                checkedAtUtc: DateTimeOffset.UtcNow);
+            await database.SaveChangesAsync();
+        }
+
+        var readiness = await client.GetFromJsonAsync<SystemReadinessResponse>("/api/v1/system/readiness");
+        Assert.IsNotNull(readiness);
+        Assert.IsFalse(readiness.Healthy);
+        var component = readiness.DegradedComponents.SingleOrDefault(c => c.Name == "Degraded Ops Provider");
+        Assert.IsNotNull(component, "A provider reporting a degraded operation must appear in the breakdown.");
+        StringAssert.Contains(component.Detail, "Search is degraded.");
+        Assert.IsFalse(component.Detail!.Contains("Acquire", StringComparison.Ordinal));
+    }
+
     private static async Task<HttpClient> CreateAdminClientWithTokenAsync(WebTestFixture fixture)
     {
         var client = await fixture.CreateAdminClientAsync();
