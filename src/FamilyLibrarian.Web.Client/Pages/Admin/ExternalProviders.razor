@@ -486,25 +486,33 @@
                             }
                             @if (provider.CachedHealthStatus is not null)
                             {
-                                <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedHealthStatus)">
-                                    Health: @provider.CachedHealthStatus
-                                </MudChip>
+                                <MudTooltip Text="@(ReasonFor(provider, "general") ?? string.Empty)" Disabled="@(ReasonFor(provider, "general") is null)">
+                                    <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedHealthStatus)">
+                                        Health: @provider.CachedHealthStatus
+                                    </MudChip>
+                                </MudTooltip>
                             }
                             @if (provider.CachedSearchOperationStatus is not null)
                             {
-                                <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedSearchOperationStatus)">
-                                    Search: @provider.CachedSearchOperationStatus
-                                </MudChip>
+                                <MudTooltip Text="@(ReasonFor(provider, "search") ?? string.Empty)" Disabled="@(ReasonFor(provider, "search") is null)">
+                                    <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedSearchOperationStatus)">
+                                        Search: @provider.CachedSearchOperationStatus
+                                    </MudChip>
+                                </MudTooltip>
                             }
                             @if (provider.CachedAcquireOperationStatus is not null)
                             {
-                                <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedAcquireOperationStatus)">
-                                    Acquire: @provider.CachedAcquireOperationStatus
-                                </MudChip>
+                                <MudTooltip Text="@(ReasonFor(provider, "acquire") ?? string.Empty)" Disabled="@(ReasonFor(provider, "acquire") is null)">
+                                    <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedAcquireOperationStatus)">
+                                        Acquire: @provider.CachedAcquireOperationStatus
+                                    </MudChip>
+                                </MudTooltip>
                             }
-                            @foreach (var capability in (provider.CachedCapabilities ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries))
+                            @foreach (var (group, capability) in ParseCapabilities(provider.CachedCapabilities))
                             {
-                                <MudChip T="string" Size="Size.Small" Color="Color.Info">@capability</MudChip>
+                                <MudTooltip Text="@group" Disabled="@(group.Length == 0)">
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Info">@capability</MudChip>
+                                </MudTooltip>
                             }
                         </MudStack>
                         <ProviderHealthIssueList Issues="@provider.CachedHealthIssues" />
@@ -613,6 +621,34 @@
     /// Shared coloring for the health/operations chips (protocol v2 §5):
     /// healthy/available -> success, degraded -> warning, unhealthy/unavailable -> error.
     /// </summary>
+    // CachedCapabilities is stored as "mediaTypes:ebook,audiobook;operations:search,acquire;
+    // features:x" (ExternalProviderAdminService.SerializeCapabilities): groups are
+    // ';'-separated, values ','-separated. A value with no "group:" prefix gets an empty group.
+    private static IEnumerable<(string Group, string Value)> ParseCapabilities(string? stored)
+    {
+        foreach (var segment in (stored ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var colon = segment.IndexOf(':');
+            var group = colon < 0 ? string.Empty : segment[..colon].Trim();
+            var values = colon < 0 ? segment : segment[(colon + 1)..];
+            foreach (var value in values.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                yield return (group, value);
+            }
+        }
+    }
+
+    // The provider's own reason (protocol v2 §5 "issues") for one operation, as
+    // plain text for a chip tooltip; null when it reported none.
+    private static string? ReasonFor(ExternalProviderResponse provider, string operation)
+    {
+        var messages = provider.CachedHealthIssues
+            .Where(issue => issue.Operation == operation)
+            .Select(issue => issue.Message)
+            .ToList();
+        return messages.Count == 0 ? null : string.Join(" ", messages);
+    }
+
     private static Color HealthColor(string? status) => status switch
     {
         "Healthy" or "Available" => Color.Success,
