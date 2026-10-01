@@ -167,6 +167,50 @@ code alone:
 | `status` | no (defaults to `healthy` if body omitted and status is `2xx`) | One of `healthy`, `degraded`, `unhealthy`. Coarse overall judgment — a provider is free to report this loosely; Family Librarian treats `operations` as the more specific signal when the two disagree. |
 | `operations.search` / `operations.acquire` | no | One of `available`, `degraded`, `unavailable`. A missing key inherits from `status` under this fixed mapping: `healthy` → `available`, `degraded` → `degraded`, `unhealthy` → `unavailable`. This split exists because a provider's local search can keep working while its upstream acquisition path is down — for example, a metadata-index provider whose local database answers searches while its upstream retrieval path is rate-limited or offline. Report it accurately; don't collapse to a single boolean. |
 
+### Optional: explaining *why* (`issues`)
+
+A `degraded` or `unavailable` result tells an administrator *that* something is
+wrong, not *what*. A provider may add one optional top-level array so Family
+Librarian can show the cause next to the status:
+
+```json
+{
+  "status": "degraded",
+  "operations": { "search": "degraded", "acquire": "unavailable" },
+  "issues": [
+    { "operation": "search", "code": "no-sources-configured", "message": "No search source is enabled." },
+    { "operation": "acquire", "code": "downloader-auth", "message": "The configured download client rejected the credentials." }
+  ]
+}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `issues` | no | Array of reasons. Omit it (or send `[]`) when there is nothing to explain. |
+| `issues[].operation` | yes | `search`, `acquire`, or `general` (the provider as a whole). An entry with any other value is ignored. |
+| `issues[].code` | no | Short, stable, provider-defined identifier (open string, e.g. `downloader-auth`). Family Librarian never branches on it; it is shown to the administrator as-is. |
+| `issues[].message` | yes | Human-readable **plain text**. An entry without a non-blank string `message` is ignored. |
+
+Rules:
+
+- **Entirely optional and additive.** A provider that omits `issues` behaves
+  exactly as before. This is not a protocol version bump, a v2 provider without
+  it stays valid, and no manifest capability flag is needed: Family Librarian
+  calls `/health` regardless and simply shows nothing when the field is absent.
+- Unknown fields and unknown `operation` values are ignored, never an error. A
+  malformed `issues` value (not an array, non-object entries, non-string text)
+  is dropped without affecting the rest of the health result.
+- **Never put secrets in `message` or `code`**: no credentials, API keys,
+  tokens, signed URLs, or URLs that embed credentials. State the cause ("the
+  key was rejected"), not the value.
+- Family Librarian treats the text as untrusted. It keeps at most **5** issues,
+  truncates each `message` to **300** characters and each `code` to **64**,
+  removes control and invisible-formatting characters, shows the result to
+  administrators only, renders it strictly as text (never markup), and does not
+  write it to logs. Keep messages short and actionable.
+- The reasons are replaced on every health check, so a later response without
+  `issues` clears any previous reason.
+
 Respond `2xx` whenever you can meaningfully answer the question at all —
 including `{"status": "degraded", ...}` — and describe the actual trouble in
 the body. Reserve a non-`2xx` response (or a connection failure) for "I could

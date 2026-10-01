@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using FamilyLibrarian.Contracts.Operations;
 using FamilyLibrarian.Contracts.Providers;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.EntityFrameworkCore;
@@ -139,6 +140,62 @@ public sealed class SystemReadinessEndpointTests
         Assert.IsNotNull(component, "A provider reporting a degraded operation must appear in the breakdown.");
         StringAssert.Contains(component.Detail, "Search is degraded.");
         Assert.IsFalse(component.Detail!.Contains("Acquire", StringComparison.Ordinal));
+    }
+
+    private static async Task<ExternalProviderResponse> CreateEnabledProviderAsync(
+        HttpClient client, string id)
+    {
+        var create = await client.PostAsJsonAsync(
+            "/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest(id, id, $"http://{id}.test"));
+        Assert.AreEqual(HttpStatusCode.OK, create.StatusCode);
+        var created = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(created);
+        var enable = await client.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{created.Id}/enabled",
+            new SetExternalProviderEnabledRequest(true));
+        Assert.AreEqual(HttpStatusCode.OK, enable.StatusCode);
+        return created;
+    }
+
+    private static async Task RecordHealthAsync(
+        WebTestFixture fixture, Guid id, IReadOnlyList<ProviderHealthIssue>? issues)
+    {
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var provider = await database.ExternalProviders.SingleAsync(p => p.Id == id);
+        provider.RecordHealthCheck(
+            succeeded: true, message: "Reachable on periodic background check.",
+            healthStatus: "Degraded", searchOperationStatus: "Degraded",
+            acquireOperationStatus: "Available", checkedAtUtc: DateTimeOffset.UtcNow, issues);
+        await database.SaveChangesAsync();
+    }
+
+    [TestMethod]
+    public async Task ReadinessDetailUsesTheProvidersOwnReasonAndFallsBackWhenAbsent()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+        var created = await CreateEnabledProviderAsync(client, "reasoned-provider");
+
+        await RecordHealthAsync(fixture, created.Id,
+            [new ProviderHealthIssue("search", "no-indexers", "No enabled indexer supports search.")]);
+        var withReason = await client.GetFromJsonAsync<SystemReadinessResponse>("/api/v1/system/readiness");
+        var component = withReason!.DegradedComponents.Single(c => c.Name == "reasoned-provider");
+        Assert.AreEqual("Search: No enabled indexer supports search.", component.Detail);
+
+        // Persistence round-trip through PostgreSQL, and the admin-only response contract.
+        var listed = await client.GetFromJsonAsync<List<ExternalProviderResponse>>("/api/v1/admin/external-providers/");
+        var issue = listed!.Single(p => p.Id == created.Id).CachedHealthIssues.Single();
+        Assert.AreEqual("no-indexers", issue.Code);
+
+        // A later probe reporting none clears it, and the generic text returns.
+        await RecordHealthAsync(fixture, created.Id, null);
+        var fallback = await client.GetFromJsonAsync<SystemReadinessResponse>("/api/v1/system/readiness");
+        StringAssert.Contains(
+            fallback!.DegradedComponents.Single(c => c.Name == "reasoned-provider").Detail, "Search is degraded.");
+        listed = await client.GetFromJsonAsync<List<ExternalProviderResponse>>("/api/v1/admin/external-providers/");
+        Assert.AreEqual(0, listed!.Single(p => p.Id == created.Id).CachedHealthIssues.Count);
     }
 
     private static async Task<HttpClient> CreateAdminClientWithTokenAsync(WebTestFixture fixture)

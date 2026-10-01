@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Domain.Accounts;
@@ -18,6 +19,7 @@ using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace FamilyLibrarian.Infrastructure.Persistence;
 
@@ -662,6 +664,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         });
     }
 
+    private static List<ProviderHealthIssue> DeserializeHealthIssues(string? json) =>
+        string.IsNullOrWhiteSpace(json)
+            ? []
+            : JsonSerializer.Deserialize<List<ProviderHealthIssue>>(json, (JsonSerializerOptions?)null) ?? [];
+
     private static void ConfigureProviders(ModelBuilder builder)
     {
         builder.Entity<ProviderSetting>(entity =>
@@ -708,6 +715,19 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(provider => provider.CachedHealthStatus).HasColumnName("cached_health_status").HasMaxLength(32);
             entity.Property(provider => provider.CachedSearchOperationStatus).HasColumnName("cached_search_operation_status").HasMaxLength(32);
             entity.Property(provider => provider.CachedAcquireOperationStatus).HasColumnName("cached_acquire_operation_status").HasMaxLength(32);
+            // Provider-authored, already bounded (<= 5 issues) by the health client;
+            // stored as one JSON array so the column carries no per-issue schema.
+            entity.Property(provider => provider.CachedHealthIssues)
+                .HasColumnName("cached_health_issues")
+                .HasColumnType("text")
+                .HasDefaultValueSql("'[]'")
+                .HasConversion(
+                    issues => JsonSerializer.Serialize(issues, (JsonSerializerOptions?)null),
+                    json => DeserializeHealthIssues(json),
+                    new ValueComparer<IReadOnlyList<ProviderHealthIssue>>(
+                        (left, right) => left!.SequenceEqual(right!),
+                        issues => issues.Aggregate(0, (hash, issue) => HashCode.Combine(hash, issue)),
+                        issues => issues.ToList()));
             entity.Property(provider => provider.CachedManagementUrl).HasColumnName("cached_management_url").HasMaxLength(1_024);
             entity.Property(provider => provider.CachedDocumentationUrl).HasColumnName("cached_documentation_url").HasMaxLength(1_024);
             entity.Property(provider => provider.LastTestedAtUtc).HasColumnName("last_tested_at_utc").HasColumnType("timestamp with time zone");

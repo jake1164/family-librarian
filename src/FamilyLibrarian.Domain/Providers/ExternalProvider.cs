@@ -125,6 +125,14 @@ public sealed class ExternalProvider
     /// <summary>One of <c>Available</c>/<c>Degraded</c>/<c>Unavailable</c>.</summary>
     public string? CachedAcquireOperationStatus { get; private set; }
 
+    /// <summary>
+    /// The provider's own explanation of a non-available result, from the
+    /// optional protocol v2 §5 <c>issues</c> array. Replaced wholesale by every
+    /// probe, so it is empty whenever the latest probe reported none and a
+    /// stale reason never outlives the condition it described.
+    /// </summary>
+    public IReadOnlyList<ProviderHealthIssue> CachedHealthIssues { get; private set; } = [];
+
     public string? CachedManagementUrl { get; private set; }
 
     public string? CachedDocumentationUrl { get; private set; }
@@ -213,7 +221,8 @@ public sealed class ExternalProvider
         string? acquireOperationStatus = null,
         string? managementUrl = null,
         string? documentationUrl = null,
-        bool manifestReached = false)
+        bool manifestReached = false,
+        IReadOnlyList<ProviderHealthIssue>? healthIssues = null)
     {
         LastTestedAtUtc = testedAtUtc;
         LastTestSucceeded = succeeded;
@@ -234,6 +243,7 @@ public sealed class ExternalProvider
             CachedHealthStatus = healthStatus;
             CachedSearchOperationStatus = searchOperationStatus;
             CachedAcquireOperationStatus = acquireOperationStatus;
+            CachedHealthIssues = healthIssues ?? [];
             CachedManagementUrl = managementUrl;
             CachedDocumentationUrl = documentationUrl;
 
@@ -270,7 +280,8 @@ public sealed class ExternalProvider
         string? healthStatus,
         string? searchOperationStatus,
         string? acquireOperationStatus,
-        DateTimeOffset checkedAtUtc)
+        DateTimeOffset checkedAtUtc,
+        IReadOnlyList<ProviderHealthIssue>? healthIssues = null)
     {
         LastTestedAtUtc = checkedAtUtc;
         LastTestSucceeded = succeeded;
@@ -278,6 +289,7 @@ public sealed class ExternalProvider
         CachedHealthStatus = healthStatus;
         CachedSearchOperationStatus = searchOperationStatus;
         CachedAcquireOperationStatus = acquireOperationStatus;
+        CachedHealthIssues = healthIssues ?? [];
     }
 
     private void ResetTestResult()

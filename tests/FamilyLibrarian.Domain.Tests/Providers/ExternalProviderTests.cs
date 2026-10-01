@@ -8,6 +8,30 @@ public sealed class ExternalProviderTests
     private static readonly DateTimeOffset Now = new(2026, 8, 11, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
+    public void HealthIssuesAreReplacedByEveryProbeSoAStaleReasonNeverLingers()
+    {
+        var provider = new ExternalProvider("example-source", "Example", "https://example.test", Now);
+        var issues = new[] { new ProviderHealthIssue("search", "no-indexers", "No indexer.") };
+
+        provider.RecordTestResult(
+            false, "x", "2", "operations:search", null, Now, healthStatus: "Degraded",
+            searchOperationStatus: "Degraded", acquireOperationStatus: "Available",
+            manifestReached: true, healthIssues: issues);
+        CollectionAssert.AreEqual(issues, provider.CachedHealthIssues.ToArray());
+
+        provider.RecordHealthCheck(true, "x", "Healthy", "Available", "Available", Now);
+        Assert.AreEqual(0, provider.CachedHealthIssues.Count);
+
+        provider.RecordHealthCheck(false, "x", "Degraded", "Degraded", "Available", Now, issues);
+        CollectionAssert.AreEqual(issues, provider.CachedHealthIssues.ToArray());
+
+        provider.RecordTestResult(
+            true, "x", "2", "operations:search", null, Now, healthStatus: "Healthy",
+            searchOperationStatus: "Available", acquireOperationStatus: "Available", manifestReached: true);
+        Assert.AreEqual(0, provider.CachedHealthIssues.Count);
+    }
+
+    [TestMethod]
     public void ADegradedHealthResultStillUpdatesTheCachedHealthSearchAndAcquireStatus()
     {
         var provider = new ExternalProvider("libgen", "LibGen", "https://libgen.example", Now);

@@ -122,5 +122,8 @@ internal static class ExternalProviderEndpoints
         status.CachedDocumentationUrl,
         status.LastTestedAtUtc,
         status.LastTestSucceeded,
-        status.LastTestMessage);
+        status.LastTestMessage,
+        status.CachedHealthIssues
+            .Select(issue => new ExternalProviderHealthIssueResponse(issue.Operation, issue.Code, issue.Message))
+            .ToList());
 }

@@ -507,6 +507,7 @@
                                 <MudChip T="string" Size="Size.Small" Color="Color.Info">@capability</MudChip>
                             }
                         </MudStack>
+                        <ProviderHealthIssueList Issues="@provider.CachedHealthIssues" />
                         @if (!string.IsNullOrWhiteSpace(provider.CachedInstanceId))
                         {
                             <MudText Typo="Typo.caption" Class="mt-1">

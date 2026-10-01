@@ -1,3 +1,4 @@
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Providers;
@@ -132,8 +133,17 @@ public enum ProviderOperationalStatus
 
 /// <summary>Protocol v2 §5's structured health body, with the search/acquire operations split.</summary>
 public sealed record ExternalProviderHealth(
-    ProviderHealthStatus Status, ProviderOperationalStatus Search, ProviderOperationalStatus Acquire)
+    ProviderHealthStatus Status,
+    ProviderOperationalStatus Search,
+    ProviderOperationalStatus Acquire,
+    IReadOnlyList<ProviderHealthIssue>? Issues = null)
 {
+    /// <summary>
+    /// The provider's optional, already-sanitized reasons for a non-available
+    /// result (protocol v2 §5 <c>issues</c>); empty when it reported none.
+    /// </summary>
+    public IReadOnlyList<ProviderHealthIssue> ReportedIssues => Issues ?? [];
+
     public static readonly ExternalProviderHealth Unreachable =
         new(ProviderHealthStatus.Unhealthy, ProviderOperationalStatus.Unavailable, ProviderOperationalStatus.Unavailable);
 

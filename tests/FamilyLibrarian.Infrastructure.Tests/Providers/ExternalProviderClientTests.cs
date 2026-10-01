@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.SampleProvider;
@@ -83,6 +84,103 @@ public sealed class ExternalProviderClientTests
         Assert.IsTrue(health.IsHealthy);
         Assert.AreEqual(ProviderOperationalStatus.Available, health.Search);
         Assert.AreEqual(ProviderOperationalStatus.Available, health.Acquire);
+    }
+
+    private static async Task<ExternalProviderHealth> GetHealthFromBodyAsync(string body)
+    {
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(new StaticSearchHandler(body)));
+        return await client.GetHealthAsync("http://provider.test", apiKey: null, CancellationToken.None);
+    }
+
+    [TestMethod]
+    public async Task HealthParsesReportedIssues()
+    {
+        var health = await GetHealthFromBodyAsync(
+            """
+            {"status":"degraded","operations":{"search":"degraded","acquire":"available"},
+             "issues":[
+               {"operation":"search","code":"no-indexers","message":"No enabled indexer supports search."},
+               {"operation":"GENERAL","message":"  Upstream\r\nis slow. "}]}
+            """);
+
+        Assert.AreEqual(ProviderOperationalStatus.Degraded, health.Search);
+        Assert.AreEqual(2, health.ReportedIssues.Count);
+        Assert.AreEqual(new ProviderHealthIssue("search", "no-indexers", "No enabled indexer supports search."), health.ReportedIssues[0]);
+        Assert.AreEqual(new ProviderHealthIssue("general", null, "Upstream is slow."), health.ReportedIssues[1]);
+    }
+
+    [TestMethod]
+    public async Task HealthWithoutIssuesIsTheUnchangedPreChangeBody()
+    {
+        var health = await GetHealthFromBodyAsync(
+            """{"status":"degraded","operations":{"search":"available","acquire":"unavailable"}}""");
+
+        Assert.AreEqual(ProviderOperationalStatus.Available, health.Search);
+        Assert.AreEqual(ProviderOperationalStatus.Unavailable, health.Acquire);
+        Assert.AreEqual(0, health.ReportedIssues.Count);
+
+        var bare = await GetHealthFromBodyAsync(string.Empty);
+        Assert.IsTrue(bare.IsFullyOperational);
+        Assert.AreEqual(0, bare.ReportedIssues.Count);
+    }
+
+    [TestMethod]
+    [DataRow("""{"status":"degraded","issues":"not an array"}""")]
+    [DataRow("""{"status":"degraded","issues":{"operation":"search","message":"x"}}""")]
+    [DataRow("""{"status":"degraded","issues":[1,"two",null,[],{"operation":7,"message":"x"},{"operation":"search"},{"operation":"search","message":{"a":1}},{"operation":"search","message":"   "}]}""")]
+    public async Task MalformedIssuesAreIgnoredAndNeverFailTheHealthProbe(string body)
+    {
+        var health = await GetHealthFromBodyAsync(body);
+
+        Assert.AreEqual(ProviderHealthStatus.Degraded, health.Status);
+        Assert.AreEqual(0, health.ReportedIssues.Count);
+    }
+
+    [TestMethod]
+    public async Task UnknownIssueOperationsAndFieldsAreIgnored()
+    {
+        var health = await GetHealthFromBodyAsync(
+            """
+            {"status":"degraded","issues":[
+              {"operation":"delete-everything","message":"dropped"},
+              {"operation":"acquire","message":"kept","severity":"high","extensions":{"a":1}}]}
+            """);
+
+        Assert.AreEqual(1, health.ReportedIssues.Count);
+        Assert.AreEqual("acquire", health.ReportedIssues[0].Operation);
+        Assert.AreEqual("kept", health.ReportedIssues[0].Message);
+    }
+
+    [TestMethod]
+    public async Task OversizedIssuesAreCapped()
+    {
+        var entries = string.Join(",", Enumerable.Range(0, 20).Select(index =>
+            $$"""{"operation":"search","code":"{{new string('c', 200)}}","message":"{{new string('m', 5_000)}}{{index}}"}"""));
+
+        var health = await GetHealthFromBodyAsync($$"""{"status":"degraded","issues":[{{entries}}]}""");
+
+        Assert.AreEqual(ExternalProviderClient.MaxHealthIssues, health.ReportedIssues.Count);
+        Assert.IsTrue(health.ReportedIssues.All(issue =>
+            issue.Message.Length == ExternalProviderClient.MaxHealthIssueMessageLength
+            && issue.Code!.Length == ExternalProviderClient.MaxHealthIssueCodeLength));
+    }
+
+    [TestMethod]
+    public async Task IssueControlAndFormatCharactersAreStrippedAndMarkupIsLeftAsLiteralText()
+    {
+        // ‮ is a bidi override (a Unicode "format" char), \u0007 a bell,
+        // \u0000 a NUL, and \t/\n are whitespace controls. A message holding an
+        // unpaired surrogate escape cannot be decoded at all and is dropped.
+        var health = await GetHealthFromBodyAsync(
+            """
+            {"status":"degraded","issues":[
+              {"operation":"search","code":"a\u0007b","message":"x\u0000‮y\tz\n<b>w</b>"},
+              {"operation":"search","message":"lone \ud800 surrogate"}]}
+            """);
+
+        Assert.AreEqual(1, health.ReportedIssues.Count);
+        Assert.AreEqual("ab", health.ReportedIssues[0].Code);
+        Assert.AreEqual("xy z <b>w</b>", health.ReportedIssues[0].Message);
     }
 
     [TestMethod]

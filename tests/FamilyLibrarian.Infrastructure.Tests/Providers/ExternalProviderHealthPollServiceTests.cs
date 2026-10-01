@@ -98,6 +98,33 @@ public sealed class ExternalProviderHealthPollServiceTests
     }
 
     [TestMethod]
+    public async Task AReportedReasonIsStoredInTheMessageAndTheNotificationAndClearsOnRecovery()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("reasoned-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Add(provider);
+        context.Client.Health = Healthy;
+        await context.Service.CheckAllEnabledAsync(CancellationToken.None);
+
+        context.Client.Health = new ExternalProviderHealth(
+            ProviderHealthStatus.Degraded,
+            ProviderOperationalStatus.Unavailable,
+            ProviderOperationalStatus.Available,
+            [new ProviderHealthIssue("search", "no-indexers", "No enabled indexer supports search.")]);
+        await context.Service.CheckAllEnabledAsync(CancellationToken.None);
+
+        Assert.AreEqual(1, provider.CachedHealthIssues.Count);
+        Assert.Contains("No enabled indexer supports search.", provider.LastTestMessage!, StringComparison.Ordinal);
+        Assert.Contains("No enabled indexer supports search.", context.Repository.Events.Single().Detail!, StringComparison.Ordinal);
+
+        // A later probe that reports none must not leave the stale reason behind.
+        context.Client.Health = Healthy;
+        await context.Service.CheckAllEnabledAsync(CancellationToken.None);
+        Assert.AreEqual(0, provider.CachedHealthIssues.Count);
+    }
+
+    [TestMethod]
     public async Task ANeverTestedProviderGoingHealthyDoesNotNotify()
     {
         var context = new TestContext();

@@ -226,10 +226,11 @@ public sealed class ExternalProviderAdminService(
                 health.IsFullyOperational,
                 health.IsFullyOperational
                     ? $"Reached {manifest.Name} (protocol v{negotiatedVersion})."
-                    : health.IsHealthy
+                    : (health.IsHealthy
                         ? $"The manifest was reachable, but {manifest.Name} reported its search or acquire " +
                             "capability as unavailable — see the health/search/acquire chips below."
-                        : "The manifest was reachable, but the health check did not report healthy.",
+                        : "The manifest was reachable, but the health check did not report healthy.")
+                        + ProviderHealthIssueText.AsSuffix(health.ReportedIssues),
                 negotiatedVersion,
                 SerializeCapabilities(manifest.Capabilities),
                 currentUser.UserId,
@@ -240,7 +241,8 @@ public sealed class ExternalProviderAdminService(
                 health.Acquire.ToString(),
                 manifest.ManagementUrl,
                 manifest.DocumentationUrl,
-                manifestReached: true);
+                manifestReached: true,
+                healthIssues: health.ReportedIssues);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
@@ -326,7 +328,8 @@ public sealed class ExternalProviderAdminService(
         provider.CachedDocumentationUrl,
         provider.LastTestedAtUtc,
         provider.LastTestSucceeded,
-        provider.LastTestMessage);
+        provider.LastTestMessage,
+        provider.CachedHealthIssues);
 }
 
 public sealed record ExternalProviderStatus(
@@ -351,7 +354,8 @@ public sealed record ExternalProviderStatus(
     string? CachedDocumentationUrl,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
-    string? LastTestMessage);
+    string? LastTestMessage,
+    IReadOnlyList<ProviderHealthIssue> CachedHealthIssues);
 
 public sealed record ExternalProviderCommandResult(
     ExternalProviderCommandOutcome Outcome, ExternalProviderStatus? Status, string? Error)

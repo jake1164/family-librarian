@@ -22,7 +22,16 @@ public sealed record ExternalProviderResponse(
     string? CachedDocumentationUrl,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
-    string? LastTestMessage);
+    string? LastTestMessage,
+    IReadOnlyList<ExternalProviderHealthIssueResponse> CachedHealthIssues);
+
+/// <summary>
+/// A provider-reported reason behind a degraded/unavailable result. Untrusted,
+/// plain text: render as text only. Admin-only (this response is only served
+/// to administrators).
+/// </summary>
+/// <param name="Operation"><c>search</c>, <c>acquire</c>, or <c>general</c>.</param>
+public sealed record ExternalProviderHealthIssueResponse(string Operation, string? Code, string Message);
 
 public sealed record CreateExternalProviderRequest(string ProviderId, string DisplayName, string BaseUrl);
 

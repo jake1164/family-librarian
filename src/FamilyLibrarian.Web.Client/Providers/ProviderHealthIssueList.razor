@@ -1,0 +1,39 @@
+@using FamilyLibrarian.Contracts.Providers
+@* Provider-reported reasons behind a degraded/unavailable result (protocol v2 §5
+   "issues"). Admin-only text. The message is provider-authored and untrusted: it is
+   only ever emitted through Razor's HTML-encoding @ expressions, never as a
+   MarkupString. *@
+@if (Issues.Count > 0)
+{
+    <ul class="mt-1 mb-0 pl-5" aria-label="Reported by the provider" data-testid="provider-health-issues">
+        @foreach (var issue in Issues)
+        {
+            <li>
+                <MudText Typo="Typo.caption">
+                    @if (OperationLabel(issue.Operation) is { } label)
+                    {
+                        <strong>@label: </strong>
+                    }
+                    @issue.Message
+                    @if (!string.IsNullOrWhiteSpace(issue.Code))
+                    {
+                        <span> (@issue.Code)</span>
+                    }
+                </MudText>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    [Parameter]
+    public IReadOnlyList<ExternalProviderHealthIssueResponse> Issues { get; set; } = [];
+
+    // "general" issues apply to the provider as a whole, so they carry no prefix.
+    private static string? OperationLabel(string operation) => operation switch
+    {
+        "search" => "Search",
+        "acquire" => "Acquire",
+        _ => null
+    };
+}

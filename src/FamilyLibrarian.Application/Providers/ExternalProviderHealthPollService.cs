@@ -49,8 +49,10 @@ public sealed class ExternalProviderHealthPollService(
                     health.IsFullyOperational,
                     health.Search == ProviderOperationalStatus.Available && health.Acquire == ProviderOperationalStatus.Available
                         ? "Reachable on periodic background check."
-                        : $"Reachable on periodic background check, but search is {health.Search.ToString().ToLowerInvariant()} and acquire is {health.Acquire.ToString().ToLowerInvariant()}.",
-                    health.Status.ToString(), health.Search.ToString(), health.Acquire.ToString(), clock.UtcNow);
+                        : $"Reachable on periodic background check, but search is {health.Search.ToString().ToLowerInvariant()} and acquire is {health.Acquire.ToString().ToLowerInvariant()}."
+                            + ProviderHealthIssueText.AsSuffix(health.ReportedIssues),
+                    health.Status.ToString(), health.Search.ToString(), health.Acquire.ToString(), clock.UtcNow,
+                    health.ReportedIssues);
                 changed = true;
                 await NotifyIfDegradedAsync(provider, wasOperational, cancellationToken);
             }

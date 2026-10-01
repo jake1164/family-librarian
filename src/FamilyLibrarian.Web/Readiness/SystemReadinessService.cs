@@ -63,9 +63,7 @@ public sealed class SystemReadinessService(
                 degraded.Add(new DegradedSystemComponentResponse(
                     SystemReadinessCategories.Source,
                     provider.DisplayName,
-                    operationsDetail is null
-                        ? provider.LastTestMessage
-                        : $"{operationsDetail} Open the provider's management page for the cause."));
+                    DescribeDetail(provider, operationsDetail)));
             }
         }
 
@@ -84,6 +82,25 @@ public sealed class SystemReadinessService(
         }
 
         return new SystemReadinessResponse(degraded.Count == 0, degraded);
+    }
+
+    /// <summary>
+    /// Prefers the provider's own reported reasons (protocol v2 §5 <c>issues</c>)
+    /// over a generic sentence: they are what actually tells an admin what to
+    /// fix. Falls back to the operation-status text, then to the last test
+    /// message, when the provider reported none.
+    /// </summary>
+    private static string? DescribeDetail(ExternalProvider provider, string? operationsDetail)
+    {
+        if (ProviderHealthIssueText.Describe(provider.CachedHealthIssues) is { } reported
+            && (operationsDetail is not null || provider.LastTestSucceeded == false))
+        {
+            return reported;
+        }
+
+        return operationsDetail is null
+            ? provider.LastTestMessage
+            : $"{operationsDetail} Open the provider's management page for the cause.";
     }
 
     /// <summary>

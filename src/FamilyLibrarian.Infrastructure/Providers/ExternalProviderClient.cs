@@ -1,9 +1,12 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json.Nodes;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Providers;
@@ -23,6 +26,13 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     // architecture review: an admin-registered external provider is still
     // third-party code, and only the download path already had a size bound.
     private const long MaxJsonResponseBytes = 10 * 1024 * 1024;
+
+    // Bounds for the optional /health "issues" array (protocol v2 §5). The text
+    // is provider-authored and untrusted; it is capped so a misbehaving
+    // provider cannot bloat the stored row or the admin UI.
+    internal const int MaxHealthIssues = 5;
+    internal const int MaxHealthIssueMessageLength = 300;
+    internal const int MaxHealthIssueCodeLength = 64;
 
     public async Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, CancellationToken cancellationToken)
@@ -121,7 +131,8 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
             return new ExternalProviderHealth(
                 status,
                 ParseOperationalStatus(json?["operations"]?["search"]?.GetValue<string>(), inherited),
-                ParseOperationalStatus(json?["operations"]?["acquire"]?.GetValue<string>(), inherited));
+                ParseOperationalStatus(json?["operations"]?["acquire"]?.GetValue<string>(), inherited),
+                ParseHealthIssues(json?["issues"]));
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
@@ -131,6 +142,99 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
             // same way a non-2xx response already does above.
             return ExternalProviderHealth.Unreachable;
         }
+    }
+
+    /// <summary>
+    /// Tolerant by design: the field is optional and advisory, so anything
+    /// malformed (a non-array, a non-object entry, a non-string message, an
+    /// unknown <c>operation</c>) is dropped rather than failing the health
+    /// probe. Never throws.
+    /// </summary>
+    internal static IReadOnlyList<ProviderHealthIssue> ParseHealthIssues(JsonNode? node)
+    {
+        if (node is not JsonArray array)
+        {
+            return [];
+        }
+
+        var issues = new List<ProviderHealthIssue>();
+        foreach (var item in array)
+        {
+            if (issues.Count >= MaxHealthIssues)
+            {
+                break;
+            }
+
+            if (item is not JsonObject entry)
+            {
+                continue;
+            }
+
+            var operation = (ReadString(entry["operation"]) ?? string.Empty).Trim().ToLowerInvariant();
+            var message = SanitizeText(ReadString(entry["message"]), MaxHealthIssueMessageLength);
+            if (!ProviderHealthIssue.IsKnownOperation(operation) || message is null)
+            {
+                continue;
+            }
+
+            issues.Add(new ProviderHealthIssue(
+                operation, SanitizeText(ReadString(entry["code"]), MaxHealthIssueCodeLength), message));
+        }
+
+        return issues;
+
+        static string? ReadString(JsonNode? value)
+        {
+            try
+            {
+                return value is JsonValue json && json.TryGetValue<string>(out var text) ? text : null;
+            }
+            catch (InvalidOperationException)
+            {
+                // An unpaired-surrogate escape cannot be decoded to a string.
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whitespace controls become a single space; all other control and Unicode
+    /// format characters (e.g. bidi overrides) are removed; the result is
+    /// trimmed and capped. Null when nothing printable is left.
+    /// </summary>
+    private static string? SanitizeText(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        // Enumerated as runes so a cap can never split a surrogate pair and a
+        // lone surrogate becomes U+FFFD; either would otherwise make the text
+        // unserializable when persisted.
+        var builder = new StringBuilder(Math.Min(value.Length, maxLength));
+        foreach (var rune in value.EnumerateRunes())
+        {
+            if (builder.Length + rune.Utf16SequenceLength > maxLength)
+            {
+                break;
+            }
+
+            if (Rune.IsWhiteSpace(rune))
+            {
+                if (builder.Length > 0 && builder[^1] != ' ')
+                {
+                    builder.Append(' ');
+                }
+            }
+            else if (!Rune.IsControl(rune) && Rune.GetUnicodeCategory(rune) != UnicodeCategory.Format)
+            {
+                builder.Append(rune.ToString());
+            }
+        }
+
+        var text = builder.ToString().Trim();
+        return text.Length == 0 ? null : text;
     }
 
     private static ProviderHealthStatus ParseHealthStatus(string? value) => value?.ToLowerInvariant() switch
