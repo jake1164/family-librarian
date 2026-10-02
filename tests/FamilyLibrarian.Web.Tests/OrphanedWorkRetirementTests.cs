@@ -34,7 +34,10 @@ public sealed class OrphanedWorkRetirementTests
         Assert.IsNull(await repository.FindWorkByIsbn13Async(["9788542243659"], CancellationToken.None));
 
         // A new request for the same book can now create its own Work under the same provider id.
+        // Same ISBN as the retired Work's edition: unique catalog-wide, so this
+        // only saves if the retired Work let go of it.
         var fresh = new Work("Threshing Day", null, null, null, PublicationStatus.Unknown, Now);
+        fresh.AddEdition(new Edition(fresh.Id, "Dia da Ceifa", EditionFormat.Unknown, "9788542243659", null, Now));
         verify.Works.Add(fresh);
         verify.ExternalReferences.Add(new ExternalReference(
             "openlibrary", ExternalReferenceEntityType.Work, fresh.Id, "OL45870364W", Now));
@@ -42,6 +45,28 @@ public sealed class OrphanedWorkRetirementTests
         var found = await repository.FindWorkByExternalReferenceAsync(
             "openlibrary", "OL45870364W", CancellationToken.None);
         Assert.AreEqual(fresh.Id, found!.Id);
+    }
+
+    [TestMethod]
+    public async Task AWorkRetiredByAnEarlierVersionStillReleasesItsEditionIsbn()
+    {
+        var connection = await NewDatabaseAsync();
+        await using var database = Open(connection);
+        var userId = await SeedUserAsync(database);
+        var work = await SeedWorkAsync(database, "Dia da Ceifa", "OL45870364W");
+        await SeedRequestAsync(database, userId, work, cancel: true);
+        // Retired but still holding its edition, as the first version left it.
+        work.Retire(Now);
+        await database.SaveChangesAsync();
+
+        await new OrphanedWorkRetirement(database).RetireAsync(Now, CancellationToken.None);
+
+        await using var verify = Open(connection);
+        Assert.AreEqual(0, await verify.Editions.CountAsync(edition => edition.WorkId == work.Id));
+        var fresh = new Work("Threshing Day", null, null, null, PublicationStatus.Unknown, Now);
+        fresh.AddEdition(new Edition(fresh.Id, "Dia da Ceifa", EditionFormat.Unknown, "9788542243659", null, Now));
+        verify.Works.Add(fresh);
+        await verify.SaveChangesAsync();
     }
 
     [TestMethod]
