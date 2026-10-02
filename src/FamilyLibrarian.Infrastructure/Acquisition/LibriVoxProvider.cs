@@ -31,7 +31,9 @@ public sealed class LibriVoxProvider(
     private readonly ConcurrentDictionary<Guid, FileStream> acquisitionLocks = new();
     public string Id => ProviderRegistry.LibriVoxProviderId;
 
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(true);
+    /// <summary>Not ready while the source is disabled, so the automatic loop skips it without recording a lookup.</summary>
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken) =>
+        ProviderState.IsUsableAsync(registry, settingsStore, Id, cancellationToken);
 
     public async Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
         Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)
@@ -47,8 +49,7 @@ public sealed class LibriVoxProvider(
         BookIdentity identity, RequestMediaType mediaType, CancellationToken cancellationToken)
     {
         if (mediaType != RequestMediaType.Audiobook || string.IsNullOrWhiteSpace(identity.Title)) return [];
-        var descriptor = registry.Find(Id);
-        if (descriptor is null || !ProviderState.IsUsable(descriptor, await settingsStore.FindAsync(Id, cancellationToken))) return [];
+        if (!await IsReadyAsync(cancellationToken)) return [];
 
         // Deliberately title-only: some combined title+author queries return HTTP 500.
         var recordings = await api.SearchByTitleAsync(identity.Title, cancellationToken);

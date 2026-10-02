@@ -45,9 +45,16 @@ public sealed class GutenbergProvider(
 
     public string Id => ProviderRegistry.GutenbergProviderId;
 
-    /// <summary>Not ready while the local RDF catalogue is still (re)importing — see <see cref="IDirectAcquisitionProvider.IsReadyAsync"/>.</summary>
+    /// <summary>
+    /// Not ready while the source is disabled, or while the local RDF catalogue is
+    /// still (re)importing — see <see cref="IDirectAcquisitionProvider.IsReadyAsync"/>.
+    /// </summary>
     public async Task<bool> IsReadyAsync(CancellationToken cancellationToken) =>
+        await IsEnabledAsync(cancellationToken) &&
         (await catalog.GetStatusAsync(cancellationToken)).IsReady;
+
+    private Task<bool> IsEnabledAsync(CancellationToken cancellationToken) =>
+        ProviderState.IsUsableAsync(registry, settingsStore, Id, cancellationToken);
 
     public async Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
         Guid workId,
@@ -88,9 +95,7 @@ public sealed class GutenbergProvider(
             return [];
         }
 
-        var descriptor = registry.Find(Id);
-        if (descriptor is null || !ProviderState.IsUsable(
-                descriptor, await settingsStore.FindAsync(Id, cancellationToken)))
+        if (!await IsEnabledAsync(cancellationToken))
         {
             return [];
         }

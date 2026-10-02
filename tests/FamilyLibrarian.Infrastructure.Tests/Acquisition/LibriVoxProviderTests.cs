@@ -180,8 +180,33 @@ public sealed class LibriVoxProviderTests
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => provider.FetchAsync(option, CancellationToken.None));
     }
 
-    private static LibriVoxProvider CreateProvider(LibriVoxApiClient api, HttpClient downloadClient) => new(
-        api, downloadClient, new FakeRegistry(), new FakeSettingsStore(), new FakeWorkLookup(),
+    [TestMethod]
+    public async Task DisabledProviderIsNotReadyAndNeverCallsTheApi()
+    {
+        var handler = new StubHandler(_ => BooksResponse(RecordingJson("17", "Moby Dick", "English")));
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://librivox.org/") };
+        var provider = CreateProvider(new LibriVoxApiClient(client, new LibriVoxRequestThrottle()), new HttpClient(), enabled: false);
+
+        var ready = await provider.IsReadyAsync(CancellationToken.None);
+        var options = await provider.FindDirectAcquisitionsAsync(
+            new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.IsFalse(ready);
+        Assert.AreEqual(0, options.Count);
+        Assert.IsNull(handler.LastRequest);
+    }
+
+    [TestMethod]
+    public async Task EnabledProviderIsReady()
+    {
+        using var client = new HttpClient(new StubHandler(_ => BooksResponse())) { BaseAddress = new Uri("https://librivox.org/") };
+        var provider = CreateProvider(new LibriVoxApiClient(client, new LibriVoxRequestThrottle()), new HttpClient());
+
+        Assert.IsTrue(await provider.IsReadyAsync(CancellationToken.None));
+    }
+
+    private static LibriVoxProvider CreateProvider(LibriVoxApiClient api, HttpClient downloadClient, bool enabled = true) => new(
+        api, downloadClient, new FakeRegistry(enabled), new FakeSettingsStore(), new FakeWorkLookup(),
         new DeterministicBookMatcher(), new ManualImportPolicy(),
         new LibriVoxDownloadWorkspace(Options.Create(new StorageOptions { RootPath = Path.GetTempPath() })));
 
@@ -228,10 +253,10 @@ public sealed class LibriVoxProviderTests
         }
     }
 
-    private sealed class FakeRegistry : IProviderRegistry
+    private sealed class FakeRegistry(bool enabled = true) : IProviderRegistry
     {
         private readonly ProviderDescriptor descriptor = new(
-            ProviderRegistry.LibriVoxProviderId, "LibriVox", new HashSet<ProviderCapability>(), false, false, true);
+            ProviderRegistry.LibriVoxProviderId, "LibriVox", new HashSet<ProviderCapability>(), false, false, enabled);
         public IReadOnlyList<ProviderDescriptor> GetInstalledProviders() => [descriptor];
         public ProviderDescriptor? Find(string providerId) => providerId == descriptor.Id ? descriptor : null;
     }

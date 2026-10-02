@@ -51,4 +51,24 @@ public static class ProviderState
         ProviderDescriptor descriptor,
         ProviderSetting? setting) =>
         IsEnabled(descriptor, setting) && HasCredential(descriptor, setting);
+
+    /// <summary>
+    /// Resolves a provider by id and applies <see cref="IsUsable"/> to its stored
+    /// setting. Every use of a provider -- lookup, download, catalogue sync --
+    /// goes through this so a disabled provider is never contacted or updated.
+    /// An id the registry does not know is not usable.
+    /// </summary>
+    public static async Task<bool> IsUsableAsync(
+        IProviderRegistry registry,
+        IProviderSettingsStore settingsStore,
+        string providerId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(settingsStore);
+
+        var descriptor = registry.Find(providerId);
+        return descriptor is not null &&
+               IsUsable(descriptor, await settingsStore.FindAsync(providerId, cancellationToken));
+    }
 }

@@ -39,6 +39,17 @@ public sealed class GutenbergProviderTests
     }
 
     [TestMethod]
+    public async Task DisabledIsNotReadyEvenWhenTheCatalogueIsImported()
+    {
+        var context = new TestContext();
+        Assert.IsTrue(await context.Provider.IsReadyAsync(CancellationToken.None));
+
+        context.Registry.Descriptor = UsableDescriptor with { DefaultEnabled = false };
+
+        Assert.IsFalse(await context.Provider.IsReadyAsync(CancellationToken.None));
+    }
+
+    [TestMethod]
     public async Task BlankTitleReturnsEmptyWithoutCallingTheCatalog()
     {
         var context = new TestContext();
