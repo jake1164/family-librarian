@@ -362,7 +362,17 @@
         Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.Security | LiveUpdateTopics.Publishing,
             () => LoadAsync(preserveDraft: true));
 
-    protected override Task OnParametersSetAsync() => LoadAsync();
+    private Guid loadedRequestId;
+
+    // Cascading parameters (e.g. the layout's active-acquisitions list) also
+    // trigger OnParametersSet; only a route change should do a full reload.
+    // Live updates already refresh in place via Observe.
+    protected override Task OnParametersSetAsync()
+    {
+        if (loadedRequestId == RequestId) return Task.CompletedTask;
+        loadedRequestId = RequestId;
+        return LoadAsync();
+    }
 
     private async Task LoadAsync(bool preserveDraft = false)
     {
