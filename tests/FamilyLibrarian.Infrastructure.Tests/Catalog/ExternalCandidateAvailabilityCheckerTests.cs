@@ -187,6 +187,119 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         Assert.IsFalse(options.Any(option => option.ProviderResultId == "french-epub"));
     }
 
+    private static readonly BookIdentity Fahrenheit = new("Fahrenheit 451", "Ray Bradbury", []);
+
+    private static TestContext CoalescingContext(params string[] providerIds)
+    {
+        var context = new TestContext(coalesce: true);
+        foreach (var providerId in providerIds)
+        {
+            var provider = NewProvider(providerId);
+            provider.SetEnabled(true, null, Now);
+            context.Store.Providers.Add(provider);
+        }
+
+        context.Client.Candidates = [Candidate("ref-1", "epub", ExternalProviderDrmStatus.None)];
+        return context;
+    }
+
+    [TestMethod]
+    public async Task ConcurrentIdenticalSearchesShareOneProviderCall()
+    {
+        var context = CoalescingContext("free-source");
+        context.Client.BlockSearches = true;
+        context.Client.RequiredConcurrentCalls = 1;
+
+        var lookups = Enumerable.Range(0, 6)
+            .Select(_ => context.Checker.FindAsync(
+                new BookIdentity("Fahrenheit 451", "Ray Bradbury", []), RequestMediaType.Ebook, CancellationToken.None))
+            .ToArray();
+        await context.Client.RequiredCallsStarted.Task;
+        context.Client.ReleaseSearches.SetResult();
+        var results = await Task.WhenAll(lookups);
+
+        Assert.AreEqual(1, context.Client.CallCount);
+        Assert.IsTrue(results.All(options => options.Single().ProviderResultId == "ref-1"));
+    }
+
+    [TestMethod]
+    public async Task ARepeatedSearchReusesTheRecentResultButMediaTypeIsKeptSeparate()
+    {
+        var context = CoalescingContext("free-source");
+
+        await context.Checker.FindAsync(Fahrenheit, RequestMediaType.Ebook, CancellationToken.None);
+        await context.Checker.FindAsync(
+            new BookIdentity("  fahrenheit   451 ", "RAY BRADBURY", []), RequestMediaType.Ebook, CancellationToken.None);
+        Assert.AreEqual(1, context.Client.CallCount);
+
+        await context.Checker.FindAsync(Fahrenheit, RequestMediaType.Audiobook, CancellationToken.None);
+        await context.Checker.FindAsync(
+            new BookIdentity("Fahrenheit 451", "Ray Bradbury", ["9781451673319"]), RequestMediaType.Ebook, CancellationToken.None);
+        Assert.AreEqual(3, context.Client.CallCount);
+    }
+
+    [TestMethod]
+    public async Task AFailedSearchIsNotCachedSoTheNextCallerAsksAgain()
+    {
+        var context = CoalescingContext("flaky-source");
+        context.Client.Throw = true;
+
+        var failed = await context.Checker.FindAsync(Fahrenheit, RequestMediaType.Ebook, CancellationToken.None);
+        context.Client.Throw = false;
+        var recovered = await context.Checker.FindAsync(Fahrenheit, RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(0, failed.Count);
+        Assert.AreEqual(1, recovered.Count);
+        Assert.AreEqual(2, context.Client.CallCount);
+    }
+
+    [TestMethod]
+    public async Task AcquisitionLookupsAlwaysSeeAFreshProviderResponse()
+    {
+        var context = CoalescingContext("free-source");
+        var provider = context.Store.Providers.Single();
+
+        await context.Checker.FindForProviderAsync(provider, Fahrenheit, RequestMediaType.Ebook, CancellationToken.None);
+        await context.Checker.FindForProviderAsync(provider, Fahrenheit, RequestMediaType.Ebook, CancellationToken.None);
+
+        Assert.AreEqual(2, context.Client.CallCount);
+    }
+
+    [TestMethod]
+    public async Task OneCallerLeavingDoesNotCancelTheSearchAnotherCallerIsStillWaitingOn()
+    {
+        var context = CoalescingContext("free-source");
+        context.Client.BlockSearches = true;
+        context.Client.RequiredConcurrentCalls = 1;
+        using var leaving = new CancellationTokenSource();
+
+        var leaver = context.Checker.FindAsync(Fahrenheit, RequestMediaType.Ebook, leaving.Token);
+        var stayer = context.Checker.FindAsync(Fahrenheit, RequestMediaType.Ebook, CancellationToken.None);
+        await context.Client.RequiredCallsStarted.Task;
+        await leaving.CancelAsync();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => leaver);
+        context.Client.ReleaseSearches.SetResult();
+
+        Assert.AreEqual("ref-1", (await stayer).Single().ProviderResultId);
+        Assert.AreEqual(1, context.Client.CallCount);
+    }
+
+    [TestMethod]
+    public async Task TheProviderCallIsCancelledOnceEveryCallerHasLeft()
+    {
+        var context = CoalescingContext("free-source");
+        context.Client.BlockSearches = true;
+        context.Client.RequiredConcurrentCalls = 1;
+        using var only = new CancellationTokenSource();
+
+        var lookup = context.Checker.FindAsync(Fahrenheit, RequestMediaType.Ebook, only.Token);
+        await context.Client.RequiredCallsStarted.Task;
+        await only.CancelAsync();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => lookup);
+
+        await context.Client.SearchCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private static ExternalProviderCandidate Candidate(
         string providerReference, string sourceFormat, ExternalProviderDrmStatus drmStatus, string? language = null) =>
         new(
@@ -203,7 +316,7 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
 
     private sealed class TestContext
     {
-        public TestContext()
+        public TestContext(bool coalesce = false)
         {
             Store = new FakeExternalProviderStore();
             Client = new FakeExternalProviderClient();
@@ -213,7 +326,8 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
                                 new ExternalProviderMatchVerifier(
                     new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver()),
                     new DeterministicBookMatcher()),
-                new NoOpCredentialProtector());
+                new NoOpCredentialProtector(),
+                coalesce ? new ExternalSearchCoalescer(TimeProvider.System) : null);
         }
 
         public FakeExternalProviderStore Store { get; }
@@ -263,6 +377,8 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         public TaskCompletionSource RequiredCallsStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource ReleaseSearches { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SearchCancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ExternalProviderSearchRequest? LastSearchRequest { get; private set; }
 
@@ -318,7 +434,15 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
 
             if (BlockSearches)
             {
-                await ReleaseSearches.Task.WaitAsync(cancellationToken);
+                try
+                {
+                    await ReleaseSearches.Task.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    SearchCancelled.TrySetResult();
+                    throw;
+                }
             }
 
             if (Throw)

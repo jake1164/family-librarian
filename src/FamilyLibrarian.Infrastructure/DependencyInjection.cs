@@ -653,6 +653,9 @@ public static class DependencyInjection
         // the request's identity via the same IBookMatchService/IBookMatcher
         // singletons above -- stateless itself, so a singleton too.
         services.AddSingleton<ExternalProviderMatchVerifier>();
+        // Singleton so concurrent availability runs (one per search result)
+        // share one provider call per identical book/media-type search.
+        services.AddSingleton<ExternalSearchCoalescer>();
         services.AddScoped<ExternalCandidateAvailabilityChecker>();
         services.AddScoped<ICandidateAvailabilityService, CandidateAvailabilityService>();
 

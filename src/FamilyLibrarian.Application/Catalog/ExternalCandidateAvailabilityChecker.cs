@@ -20,7 +20,8 @@ public sealed class ExternalCandidateAvailabilityChecker(
     Providers.IExternalProviderStore externalProviders,
     Providers.IExternalProviderClient externalProviderClient,
     Providers.ExternalProviderMatchVerifier matchVerifier,
-    ICredentialProtector protector)
+    ICredentialProtector protector,
+    ExternalSearchCoalescer? coalescer = null)
 {
     /// <summary>
     /// A provider whose search call fails is silently skipped — same
@@ -82,7 +83,16 @@ public sealed class ExternalCandidateAvailabilityChecker(
     {
         try
         {
-            return await FindForProviderAsync(provider, identity, mediaType, cancellationToken);
+            // This is the browsing path (search badges, work pages), where
+            // several callers routinely ask the same provider the same thing.
+            // Acquisition and rechecks call FindForProviderAsync directly and
+            // always get a fresh response.
+            return coalescer is null
+                ? await FindForProviderAsync(provider, identity, mediaType, cancellationToken)
+                : await coalescer.GetOrAddAsync(
+                    ExternalSearchCoalescer.CreateKey(provider, identity, mediaType),
+                    token => FindForProviderAsync(provider, identity, mediaType, token),
+                    cancellationToken);
         }
         catch (HttpRequestException)
         {
