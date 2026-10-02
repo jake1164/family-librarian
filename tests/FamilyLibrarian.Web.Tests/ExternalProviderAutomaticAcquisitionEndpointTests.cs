@@ -526,6 +526,140 @@ public sealed class ExternalProviderAutomaticAcquisitionFailureEndpointTests
 }
 
 /// <summary>
+/// A provider that is unreachable during a scheduled recheck (for example it
+/// is restarting) must record a specific, secret-free reason and be retried
+/// within minutes instead of waiting out the Daily/Weekly schedule.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderUnreachableRecheckEndpointTests
+{
+    private static WebTestFixture? _fixture;
+
+    [ClassInitialize]
+    public static async Task InitializeAsync(TestContext testContext)
+    {
+        ArgumentNullException.ThrowIfNull(testContext);
+        _fixture = await WebTestFixture.CreateAsync();
+    }
+
+    [ClassCleanup]
+    public static async Task CleanupAsync()
+    {
+        if (_fixture is not null)
+        {
+            await _fixture.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task AnUnreachableProviderIsRecordedWithAReasonAndRetriedSoon()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(new UnreachableSearchExternalProviderClient());
+            });
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await ExternalProviderAutomaticFixtureSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(admin);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+
+        var create = await admin.PostAsJsonAsync(
+            "/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest("unreachable-external", "Unreachable External", "http://fake-external.test"));
+        var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(provider);
+        (await admin.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true)))
+            .EnsureSuccessStatusCode();
+        (await admin.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule",
+            new SetExternalProviderRecheckScheduleRequest("Daily")))
+            .EnsureSuccessStatusCode();
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/project-hail-mary/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var rechecks = scope.ServiceProvider.GetRequiredService<ExternalProviderRecheckService>();
+            Assert.IsTrue(await rechecks.ProcessDueAsync(CancellationToken.None) >= 1);
+        }
+
+        var attempts = await admin.GetFromJsonAsync<ProviderAttemptResponse[]>(
+            $"/api/v1/admin/requests/{request.Id}/provider-attempts");
+        Assert.IsNotNull(attempts);
+        var attempt = attempts.Single(candidate => candidate.ProviderId == "unreachable-external");
+        Assert.AreEqual("Failed", attempt.Outcome);
+        StringAssert.Contains(attempt.Summary, "unavailable");
+        StringAssert.Contains(attempt.Summary, "ConnectionRefused");
+        Assert.IsFalse(attempt.Summary.Contains("fake-external.test", StringComparison.Ordinal));
+        Assert.IsNotNull(attempt.NextEligibleCheckAtUtc);
+        Assert.IsTrue(
+            attempt.NextEligibleCheckAtUtc.Value - attempt.AttemptedAtUtc <= TimeSpan.FromMinutes(30),
+            "A transient outage must be retried within minutes, not on the daily schedule.");
+    }
+}
+
+file sealed class UnreachableSearchExternalProviderClient : IExternalProviderClient
+{
+    public Task<ExternalProviderManifest> GetManifestAsync(
+        string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
+        Task.FromResult(new ExternalProviderManifest(
+            ["2"], "2", null, "unreachable-external", "Unreachable External", "1.0.0",
+            new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null));
+
+    public Task<ExternalProviderHealth> GetHealthAsync(
+        string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
+        Task.FromResult(new ExternalProviderHealth(
+            ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available));
+
+    public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
+        string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
+        CancellationToken cancellationToken) =>
+        throw new HttpRequestException(
+            "Connection refused (fake-external.test:80)",
+            new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionRefused));
+
+    public Task<ExternalProviderArtifact> AcquireAsync(
+        string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
+        CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
+        CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ExternalProviderArtifact> GetOutputAsync(
+        string baseUrl, string? apiKey, string jobId, string outputId,
+        CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task CancelAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task DeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+}
+
+/// <summary>
 /// Exercises the requester-safe review flow from one external search through
 /// the real host and PostgreSQL projection. The provider returns four records,
 /// but only two distinct requester-visible editions; no acquire/download call

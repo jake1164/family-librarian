@@ -40,6 +40,7 @@ public sealed class ExternalProviderRecheckService(
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan TransientRetryDelay = TimeSpan.FromMinutes(15);
 
     public async Task<int> ProcessDueAsync(CancellationToken cancellationToken)
     {
@@ -228,10 +229,29 @@ public sealed class ExternalProviderRecheckService(
                     {
                         throw;
                     }
-                    catch (Exception exception) when (exception is HttpRequestException or CryptographicException)
+                    catch (HttpRequestException exception) when (IsTransientProviderOutage(exception))
+                    {
+                        // The provider was unreachable or momentarily
+                        // overloaded (for example while it restarts during a
+                        // redeploy). Retry soon instead of waiting out a
+                        // daily/weekly schedule for a problem that clears in
+                        // minutes.
+                        AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                            $"The provider was unavailable ({DescribeHttpFailure(exception)}); retrying in " +
+                            $"{TransientRetryDelay.TotalMinutes:0} minutes.",
+                            clock.UtcNow + TransientRetryDelay);
+                    }
+                    catch (HttpRequestException exception)
                     {
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
-                            "The provider lookup failed and will be retried on its configured schedule.", nextCheck);
+                            $"The provider lookup failed ({DescribeHttpFailure(exception)}) and will be retried on its configured schedule.",
+                            nextCheck);
+                    }
+                    catch (CryptographicException)
+                    {
+                        AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                            "The provider lookup failed (the saved API key could not be decrypted; re-enter it) and will be retried on its configured schedule.",
+                            nextCheck);
                     }
                     finally
                     {
@@ -246,6 +266,22 @@ public sealed class ExternalProviderRecheckService(
 
         return checks;
     }
+
+    /// <summary>No HTTP status means the request never completed (refused, reset, DNS); 502-504 mean the provider or its gateway was briefly down.</summary>
+    private static bool IsTransientProviderOutage(HttpRequestException exception) =>
+        exception.StatusCode is null or System.Net.HttpStatusCode.BadGateway
+            or System.Net.HttpStatusCode.ServiceUnavailable or System.Net.HttpStatusCode.GatewayTimeout;
+
+    /// <summary>
+    /// A short, secret-free reason for the admin banner. Deliberately avoids
+    /// the exception message, which can embed the provider URL.
+    /// </summary>
+    private static string DescribeHttpFailure(HttpRequestException exception) =>
+        exception.StatusCode is { } status
+            ? $"HTTP {(int)status} {status}"
+            : exception.InnerException is System.Net.Sockets.SocketException socket
+                ? $"could not connect: {socket.SocketErrorCode}"
+                : "network error before a response was received";
 
     private static bool IsDue(ProviderAttempt? latest, BookRequest request, DateTimeOffset now) =>
         // A cancellation followed by "Ask again" begins a new request cycle.
