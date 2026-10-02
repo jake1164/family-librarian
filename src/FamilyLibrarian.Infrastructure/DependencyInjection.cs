@@ -202,6 +202,7 @@ public static class DependencyInjection
 
         services.AddScoped<IClock, SystemClock>();
         services.AddScoped<ICatalogRepository, CatalogRepository>();
+        services.AddScoped<OrphanedWorkRetirement>();
         services.AddScoped<CatalogWorkResolver>();
         services.AddScoped<IWorkFulfillmentOptionsService, WorkFulfillmentOptionsService>();
 

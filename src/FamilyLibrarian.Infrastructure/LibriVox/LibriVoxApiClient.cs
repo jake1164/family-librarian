@@ -35,6 +35,14 @@ public sealed class LibriVoxApiClient(HttpClient httpClient, LibriVoxRequestThro
 
         using (var completedResponse = response ?? throw new InvalidOperationException("The LibriVox request completed without an HTTP response."))
         {
+            // LibriVox answers a title with no catalog entry as HTTP 404
+            // ({"error":"Audiobooks could not be found"}), not an empty list.
+            // That is "no match for this book", not a source outage.
+            if (completedResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return [];
+            }
+
             completedResponse.EnsureSuccessStatusCode();
             if (completedResponse.Content.Headers.ContentLength is > MaximumResponseBytes)
             {

@@ -12,7 +12,7 @@ public sealed class CatalogRepository(AppDbContext database) : ICatalogRepositor
         CancellationToken cancellationToken) =>
         QueryWorks()
             .SingleOrDefaultAsync(
-                work => database.ExternalReferences.Any(reference =>
+                work => !work.IsRetired && database.ExternalReferences.Any(reference =>
                     reference.EntityType == ExternalReferenceEntityType.Work &&
                     reference.EntityId == work.Id &&
                     reference.ProviderId == providerId &&
@@ -24,7 +24,7 @@ public sealed class CatalogRepository(AppDbContext database) : ICatalogRepositor
         CancellationToken cancellationToken) =>
         QueryWorks()
             .SingleOrDefaultAsync(
-                work => work.Editions.Any(edition =>
+                work => !work.IsRetired && work.Editions.Any(edition =>
                     edition.Isbn13 != null && isbn13s.Contains(edition.Isbn13)),
                 cancellationToken);
 

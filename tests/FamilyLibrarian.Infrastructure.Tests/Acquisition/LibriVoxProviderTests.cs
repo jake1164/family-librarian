@@ -25,6 +25,22 @@ public sealed class LibriVoxProviderTests
     private static readonly string[] SoloReaderNames = ["Jane Reader"];
     private static readonly string[] CollaborativeReaderNames = ["Jane Reader", "John Doe"];
     [TestMethod]
+    public async Task ApiSearchTreatsHttp404AsNoMatchRatherThanASourceFailure()
+    {
+        // LibriVox answers an unknown title with 404, not an empty list.
+        var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)
+        {
+            Content = new StringContent("{\"error\":\"Audiobooks could not be found\"}", Encoding.UTF8, "application/json")
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://librivox.org/") };
+        var api = new LibriVoxApiClient(client, new LibriVoxRequestThrottle());
+
+        var results = await api.SearchByTitleAsync("Threshing Day", CancellationToken.None);
+
+        Assert.AreEqual(0, results.Count);
+    }
+
+    [TestMethod]
     public async Task ApiSearchUsesTitleOnlyAndParsesExtendedRecordingEvidence()
     {
         var handler = new StubHandler(_ => BooksResponse(RecordingJson("17", "Moby Dick", "English")));

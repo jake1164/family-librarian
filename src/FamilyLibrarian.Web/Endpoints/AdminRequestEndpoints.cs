@@ -320,6 +320,9 @@ internal static class AdminRequestEndpoints
         };
     }
 
+    // Enough recent lookups to see a run of failures for every provider.
+    private const int RecentAttemptWindow = 300;
+
     private static async Task<IResult> GetAttentionAsync(
         IRequestRepository requests,
         IProviderAttemptRepository attempts,
@@ -327,13 +330,14 @@ internal static class AdminRequestEndpoints
         IExternalProviderStore externalProviders,
         ProviderInteractionService providerInteractions,
         ICurrentUser currentUser,
+        IClock clock,
         CancellationToken cancellationToken)
     {
         // All stores here are scoped over the same AppDbContext. EF Core does
         // not allow concurrent operations on that context, so keep these small
         // administrative projections sequential rather than fanning them out.
         var needsReviewCount = await requests.CountForAdminAsync(RequestStatus.NeedsReview, cancellationToken);
-        var latestAttempts = await attempts.ListLatestByProviderAsync(cancellationToken);
+        var recentAttempts = await attempts.ListRecentForHealthAsync(RecentAttemptWindow, cancellationToken);
         var registeredExternalProviders = await externalProviders.ListAsync(cancellationToken);
         var waitingInteractions = await providerInteractions.ListAsync(currentUser.UserId, cancellationToken);
 
@@ -344,8 +348,7 @@ internal static class AdminRequestEndpoints
             displayNames[provider.ProviderId] = provider.DisplayName;
         }
 
-        var providerIssues = latestAttempts
-            .Where(attempt => attempt.IssueKind is not null)
+        var providerIssues = ProviderSourceHealth.CurrentIssues(recentAttempts, clock.UtcNow)
             // Historic provider activity stays available on the request's
             // timeline, but only currently installed/registered providers can
             // be an active source-health issue.

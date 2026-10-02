@@ -138,14 +138,38 @@ public sealed class AdminRequestQueueEndpointTests
         {
             var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var formatId = created.Formats.Single().FormatId;
+            // One failure is a glitch or one bad book, not a source problem.
             database.ProviderAttempts.Add(new ProviderAttempt(
                 created.Id,
                 formatId,
                 "gutendex",
                 ProviderAttemptOutcome.Failed,
                 "The automatic provider could not be reached; automatic retry is disabled for this source.",
-                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow.AddMinutes(-3),
                 nextEligibleCheckAtUtc: null));
+            await database.SaveChangesAsync();
+        }
+
+        var afterOneFailure = await (await admin.GetAsync("/api/v1/admin/requests/attention"))
+            .Content.ReadFromJsonAsync<AdminRequestAttentionResponse>();
+        Assert.IsFalse(afterOneFailure!.ProviderIssues.Any(issue => issue.ProviderId == "gutendex"));
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var formatId = created.Formats.Single().FormatId;
+            foreach (var minutesAgo in new[] { 2, 0 })
+            {
+                database.ProviderAttempts.Add(new ProviderAttempt(
+                    created.Id,
+                    formatId,
+                    "gutendex",
+                    ProviderAttemptOutcome.Failed,
+                    "The automatic provider could not be reached; automatic retry is disabled for this source.",
+                    DateTimeOffset.UtcNow.AddMinutes(-minutesAgo),
+                    nextEligibleCheckAtUtc: null));
+            }
+
             await database.SaveChangesAsync();
         }
 
