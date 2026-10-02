@@ -31,6 +31,9 @@ public sealed class AudiobookshelfSettingsService(
     /// require a passing test. Returns the reason when not ready, or
     /// <see langword="null"/> when ready.
     /// </summary>
+    public async Task<bool> IsEnabledAsync(CancellationToken cancellationToken) =>
+        (await store.FindAsync(cancellationToken))?.IsEnabled == true;
+
     public async Task<string?> GetRequestReadinessErrorAsync(CancellationToken cancellationToken)
     {
         var settings = await store.FindAsync(cancellationToken);

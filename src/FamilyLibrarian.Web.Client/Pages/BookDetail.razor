@@ -289,29 +289,51 @@
                         }
                     </MudStack>
                 }
+                else if (!EbookOffered && !AudiobookOffered)
+                {
+                    <MudAlert Severity="Severity.Info">
+                        Requests aren't open right now. An administrator needs to turn on ebook or audiobook delivery.
+                    </MudAlert>
+                }
                 else
                 {
                     <fieldset class="pa-0" style="border: 0;">
                         <legend class="mud-typography mud-typography-body2">Which format would you like?</legend>
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
-                            <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@isSubmitting" />
-                            @if (wantsEbook)
-                            {
-                                @if (kindleTarget is { IsEnabled: true })
+                        @if (EbookOffered)
+                        {
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
+                                <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@(isSubmitting || !IsEbookReady)" />
+                                @if (wantsEbook)
                                 {
-                                    <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
+                                    @if (kindleTarget is { IsEnabled: true })
+                                    {
+                                        <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.caption">
+                                            Kindle delivery is not configured.
+                                            <MudLink Href="settings/ebook-delivery">Configure Kindle</MudLink>
+                                        </MudText>
+                                    }
                                 }
-                                else
-                                {
-                                    <MudText Typo="Typo.caption">
-                                        Kindle delivery is not configured.
-                                        <MudLink Href="settings/ebook-delivery">Configure Kindle</MudLink>
-                                    </MudText>
-                                }
-                            }
-                        </MudStack>
-                        <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@isSubmitting" />
+                            </MudStack>
+                        }
+                        @if (AudiobookOffered)
+                        {
+                            <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@(isSubmitting || !IsAudiobookReady)" />
+                        }
                     </fieldset>
+
+                    @* Enabled but not ready (unhealthy/untested/scanner down) is temporary, so say why. *@
+                    @if (requestFormats?.Ebook is { IsEnabled: true, IsReady: false } ebookReadiness)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">Ebook: @ebookReadiness.Reason</MudText>
+                    }
+                    @if (requestFormats?.Audiobook is { IsEnabled: true, IsReady: false } audiobookReadiness)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">Audiobook: @audiobookReadiness.Reason</MudText>
+                    }
 
                     <MudTextField @bind-Value="note"
                                   Label="Anything we should know? (optional)"
@@ -440,10 +462,43 @@
     private readonly Dictionary<string, Guid> resolvedSeriesIdsByName = new(StringComparer.OrdinalIgnoreCase);
     private bool isTogglingSeriesFollow;
 
+    private RequestFormatsResponse? requestFormats;
+
     private bool HasFormatSelected => wantsEbook || wantsAudiobook;
+
+    // Unknown (the lookup failed) offers both: the server still enforces what
+    // can actually be requested, so a failed lookup never hides a valid choice.
+    private bool EbookOffered => requestFormats?.Ebook.IsEnabled ?? true;
+    private bool AudiobookOffered => requestFormats?.Audiobook.IsEnabled ?? true;
+
+    // Version requests go to librarian review, which the server does not gate
+    // on destination health.
+    private bool IsEbookReady => !string.IsNullOrWhiteSpace(versionKind) || requestFormats?.Ebook is not { IsReady: false };
+    private bool IsAudiobookReady => !string.IsNullOrWhiteSpace(versionKind) || requestFormats?.Audiobook is not { IsReady: false };
+
+    private void ApplyFormatDefaults()
+    {
+        wantsEbook = requestFormats?.Ebook is not { IsReady: false };
+        // Audiobook is only preselected when ebook is not an option.
+        wantsAudiobook = !wantsEbook && requestFormats?.Audiobook is { IsReady: true };
+    }
+
+    private async Task LoadRequestFormatsAsync()
+    {
+        try
+        {
+            requestFormats = await Catalog.GetRequestFormatsAsync();
+        }
+        catch (HttpRequestException)
+        {
+            requestFormats = null;
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
+        var formatsLoad = LoadRequestFormatsAsync();
+
         try
         {
             kindleTarget = await DeliveryTargets.GetMyKindleTargetAsync();
@@ -464,6 +519,8 @@
             // Informational only -- a failed lookup just shows every follow
             // button as "not yet following" rather than failing the page.
         }
+
+        await formatsLoad;
     }
 
     private bool IsFollowingSeriesNamed(string name) =>
@@ -517,8 +574,7 @@
     {
         StopAvailabilityLoad();
         coverFailed = false;
-        wantsEbook = true;
-        wantsAudiobook = false;
+        ApplyFormatDefaults();
         note = null;
         errorMessage = null;
         versionKind = string.Empty;

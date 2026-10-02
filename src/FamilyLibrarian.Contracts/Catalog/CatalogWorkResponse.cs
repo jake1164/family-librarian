@@ -44,7 +44,15 @@ public sealed record WorkFulfillmentOptionsResponse(
 /// Whether a user may request this format right now — a null value means
 /// readiness wasn't computed (e.g. an older client), not that it's unready.
 /// </summary>
-public sealed record FormatReadinessResponse(bool IsReady, string? Reason);
+public sealed record FormatReadinessResponse(bool IsReady, string? Reason, bool IsEnabled = true);
+
+/// <summary>
+/// Which formats a requester may be offered. Independent of any Work, so a page
+/// can show it before a search candidate has been saved to the catalog.
+/// </summary>
+public sealed record RequestFormatsResponse(
+    FormatReadinessResponse Ebook,
+    FormatReadinessResponse Audiobook);
 
 /// <summary>
 /// Site-root links for the CWA and Audiobookshelf destinations, for a plain

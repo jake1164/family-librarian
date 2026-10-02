@@ -79,6 +79,12 @@ public sealed class CatalogApiClient(HttpClient httpClient, AntiforgeryTokenProv
             $"api/v1/catalog/works/{workId}",
             cancellationToken);
 
+    public async Task<RequestFormatsResponse?> GetRequestFormatsAsync(
+        CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<RequestFormatsResponse>(
+            "api/v1/catalog/request-formats",
+            cancellationToken);
+
     public async Task<WorkFulfillmentOptionsResponse> GetFulfillmentOptionsAsync(
         Guid workId,
         CancellationToken cancellationToken = default)

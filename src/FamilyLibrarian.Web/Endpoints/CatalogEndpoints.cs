@@ -30,6 +30,7 @@ internal static class CatalogEndpoints
         catalog.MapDelete("/search/runs/{runId:guid}", CancelCatalogSearchRunAsync);
         catalog.MapGet("/candidates/{providerId}/{externalId}", GetCatalogCandidateAsync);
         catalog.MapPost("/candidates/{providerId}/{externalId}/resolve", ResolveCatalogCandidateAsync);
+        catalog.MapGet("/request-formats", GetRequestFormatsAsync);
         catalog.MapGet("/works/{workId:guid}", GetCatalogWorkAsync);
         catalog.MapGet("/works/{workId:guid}/fulfillment-options", GetWorkFulfillmentOptionsAsync);
         catalog.MapPost("/availability", GetCandidateAvailabilityAsync);
@@ -375,7 +376,14 @@ internal static class CatalogEndpoints
     }
 
     private static FormatReadinessResponse ToFormatReadinessResponse(FormatReadiness readiness) =>
-        new(readiness.IsReady, readiness.Reason);
+        new(readiness.IsReady, readiness.Reason, readiness.IsEnabled);
+
+    private static async Task<IResult> GetRequestFormatsAsync(
+        IFormatReadinessService readiness,
+        CancellationToken cancellationToken) =>
+        Results.Ok(new RequestFormatsResponse(
+            ToFormatReadinessResponse(await readiness.CheckAsync(RequestMediaType.Ebook, cancellationToken)),
+            ToFormatReadinessResponse(await readiness.CheckAsync(RequestMediaType.Audiobook, cancellationToken))));
 
     private static FulfillmentOptionResponse ToFulfillmentOptionResponse(FulfillmentOption option) => new(
         option.ProviderId,

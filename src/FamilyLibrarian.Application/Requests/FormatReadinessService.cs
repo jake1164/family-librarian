@@ -15,11 +15,19 @@ public interface IFormatReadinessService
     Task<FormatReadiness> CheckAsync(RequestMediaType mediaType, CancellationToken cancellationToken);
 }
 
-public sealed record FormatReadiness(bool IsReady, string? Reason)
+/// <summary>
+/// <see cref="IsEnabled"/> is the admin's on/off switch for the format's
+/// destination; <see cref="IsReady"/> additionally requires it to be configured,
+/// passing its test, and the scanner to be healthy. A format that is enabled but
+/// not ready is temporarily unavailable; one that is not enabled is not offered.
+/// </summary>
+public sealed record FormatReadiness(bool IsReady, string? Reason, bool IsEnabled = true)
 {
     public static FormatReadiness Ready { get; } = new(true, null);
 
     public static FormatReadiness NotReady(string reason) => new(false, reason);
+
+    public static FormatReadiness Disabled(string reason) => new(false, reason, IsEnabled: false);
 }
 
 public sealed class FormatReadinessService(
@@ -29,6 +37,19 @@ public sealed class FormatReadinessService(
 {
     public async Task<FormatReadiness> CheckAsync(RequestMediaType mediaType, CancellationToken cancellationToken)
     {
+        // Enabled is checked first: a format nobody turned on is not offered at
+        // all, so it must not be reported as a scanner problem.
+        var (isEnabled, disabledReason) = mediaType switch
+        {
+            RequestMediaType.Ebook => (await cwaSettings.IsEnabledAsync(cancellationToken), "CWA is not enabled."),
+            RequestMediaType.Audiobook => (await audiobookshelfSettings.IsEnabledAsync(cancellationToken), "Audiobookshelf is not enabled."),
+            _ => throw new ArgumentOutOfRangeException(nameof(mediaType), mediaType, "Unknown request media type.")
+        };
+        if (!isEnabled)
+        {
+            return FormatReadiness.Disabled(disabledReason);
+        }
+
         if (!await boundaryGuard.CanAcceptNewArtifactAsync(cancellationToken))
         {
             return FormatReadiness.NotReady("The security scanner is currently unavailable.");

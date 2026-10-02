@@ -130,25 +130,28 @@ public sealed class BookRequestService(
                     : !request.RequiresManualFulfillment);
                 if (!isVersionRequest)
                 {
-                    var owned = new List<OwnedFormatOption>();
-                    foreach (var mediaType in requestedFormats.Where(format => shared is null || !shared.RequestsFormat(format)))
-                    {
-                        var options = await fulfillmentOptions.GetOptionsAsync(workId, mediaType, token);
-                        var match = options.FirstOrDefault(option => option.OptionKind == OptionKind.Owned);
-                        if (match is not null)
-                            owned.Add(new OwnedFormatOption(mediaType, match.ProviderId, match.ExternalActionUri));
-                    }
-                    if (owned.Count > 0) return CreateBookRequestResult.AlreadyOwned(owned);
-                }
+                    var newFormats = requestedFormats
+                        .Where(format => shared is null || !shared.RequestsFormat(format))
+                        .ToArray();
 
-                if (!isVersionRequest)
-                {
-                    foreach (var mediaType in requestedFormats.Where(format => shared is null || !shared.RequestsFormat(format)))
+                    // Readiness is a local settings read, so reject before any
+                    // owned-library network lookup.
+                    foreach (var mediaType in newFormats)
                     {
                         var check = await readiness.CheckAsync(mediaType, token);
                         if (!check.IsReady)
                             return CreateBookRequestResult.Invalid($"{mediaType} requests aren't available right now: {check.Reason}");
                     }
+
+                    var owned = new List<OwnedFormatOption>();
+                    foreach (var mediaType in newFormats)
+                    {
+                        var options = await fulfillmentOptions.GetOwnedOptionsAsync(workId, mediaType, token);
+                        var match = options.FirstOrDefault(option => option.OptionKind == OptionKind.Owned);
+                        if (match is not null)
+                            owned.Add(new OwnedFormatOption(mediaType, match.ProviderId, match.ExternalActionUri));
+                    }
+                    if (owned.Count > 0) return CreateBookRequestResult.AlreadyOwned(owned);
                 }
 
                 if (shared is not null)
@@ -221,7 +224,7 @@ public sealed class BookRequestService(
                 if (participant.WantsAudiobook) formats.Add(RequestMediaType.Audiobook);
                 foreach (var mediaType in formats.Where(format => shared is null || !shared.RequestsFormat(format)))
                 {
-                    var options = await fulfillmentOptions.GetOptionsAsync(request.WorkId, mediaType, token);
+                    var options = await fulfillmentOptions.GetOwnedOptionsAsync(request.WorkId, mediaType, token);
                     if (options.Any(option => option.OptionKind == OptionKind.Owned))
                         return BookRequestCommandResult.Invalid("This format is already in the library. Use the book page if a different version is needed.");
                 }

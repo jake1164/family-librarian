@@ -326,6 +326,17 @@ public interface IWorkFulfillmentOptionsService
         Guid workId,
         RequestMediaType mediaType,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Only the <see cref="OptionKind.Owned"/> matches from linked owned
+    /// libraries. Request creation needs just this; asking every availability,
+    /// store, direct-acquisition and external provider as well would make a
+    /// submit wait on unrelated network searches.
+    /// </summary>
+    Task<IReadOnlyList<FulfillmentOption>> GetOwnedOptionsAsync(
+        Guid workId,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -341,6 +352,16 @@ public sealed class WorkFulfillmentOptionsService(
     ExternalCandidateAvailabilityChecker externalProviderChecker,
     IWorkLookup workLookup) : IWorkFulfillmentOptionsService
 {
+    public async Task<IReadOnlyList<FulfillmentOption>> GetOwnedOptionsAsync(
+        Guid workId,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken)
+    {
+        var options = new List<FulfillmentOption>();
+        await AddOwnedOptionsAsync(options, workId, mediaType, cancellationToken);
+        return options;
+    }
+
     public async Task<IReadOnlyList<FulfillmentOption>> GetOptionsAsync(
         Guid workId,
         RequestMediaType mediaType,
@@ -399,21 +420,7 @@ public sealed class WorkFulfillmentOptionsService(
             }
         }
 
-        foreach (var provider in ownedLibraryProviders)
-        {
-            try
-            {
-                options.AddRange(await provider.FindOwnedMatchesAsync(workId, mediaType, cancellationToken));
-            }
-            catch (HttpRequestException)
-            {
-                // Owned-library status is optional page enrichment.
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // A provider timeout degrades to an unknown owned status.
-            }
-        }
+        await AddOwnedOptionsAsync(options, workId, mediaType, cancellationToken);
 
         try
         {
@@ -430,6 +437,29 @@ public sealed class WorkFulfillmentOptionsService(
         }
 
         return options;
+    }
+
+    private async Task AddOwnedOptionsAsync(
+        List<FulfillmentOption> options,
+        Guid workId,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken)
+    {
+        foreach (var provider in ownedLibraryProviders)
+        {
+            try
+            {
+                options.AddRange(await provider.FindOwnedMatchesAsync(workId, mediaType, cancellationToken));
+            }
+            catch (HttpRequestException)
+            {
+                // Owned-library status is optional page enrichment.
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // A provider timeout degrades to an unknown owned status.
+            }
+        }
     }
 
     /// <summary>

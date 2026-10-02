@@ -102,6 +102,41 @@ public sealed class FormatReadinessEndpointTests
         Assert.IsTrue(options.AudiobookReadiness!.IsReady);
     }
 
+    [TestMethod]
+    public async Task RequestFormatsDistinguishANotEnabledFormatFromAnEnabledButUnreadyOne()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IFormatReadinessService>();
+                services.AddSingleton<IFormatReadinessService>(new EnabledVersusUnreadyReadinessService());
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+
+        var response = await client.GetAsync("/api/v1/catalog/request-formats");
+
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        var formats = await response.Content.ReadFromJsonAsync<RequestFormatsResponse>();
+        Assert.IsNotNull(formats);
+        // Not enabled: the UI must not offer it at all.
+        Assert.IsFalse(formats.Ebook.IsEnabled);
+        Assert.IsFalse(formats.Ebook.IsReady);
+        // Enabled but unhealthy: still offered, with the reason shown.
+        Assert.IsTrue(formats.Audiobook.IsEnabled);
+        Assert.IsFalse(formats.Audiobook.IsReady);
+    }
+
+    private sealed class EnabledVersusUnreadyReadinessService : IFormatReadinessService
+    {
+        public Task<FormatReadiness> CheckAsync(RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            Task.FromResult(mediaType == RequestMediaType.Ebook
+                ? FormatReadiness.Disabled("CWA is not enabled.")
+                : FormatReadiness.NotReady("Audiobookshelf is unreachable in this test."));
+    }
+
     private static FamilyLibrarianAppFactory CreateFactory(WebTestFixture fixture, RequestMediaType notReadyMediaType) =>
         new(
             fixture.ConnectionString,
