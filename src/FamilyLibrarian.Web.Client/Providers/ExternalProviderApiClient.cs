@@ -48,6 +48,12 @@ public sealed class ExternalProviderApiClient(HttpClient httpClient, Antiforgery
             HttpMethod.Put, $"{ProvidersPath}/{id}/auto-acquire",
             new SetExternalProviderAutoAcquireEnabledRequest(enabled), cancellationToken);
 
+    public Task<ExternalProviderResult> SetProviderAutomaticAttemptLimitAsync(
+        Guid id, int limit, CancellationToken cancellationToken = default) =>
+        SendProviderAsync(
+            HttpMethod.Put, $"{ProvidersPath}/{id}/automatic-attempt-limit",
+            new SetExternalProviderAutomaticAttemptLimitRequest(limit), cancellationToken);
+
     public Task<ExternalProviderResult> SetProviderApiKeyAsync(
         Guid id, string apiKey, CancellationToken cancellationToken = default) =>
         SendProviderAsync(

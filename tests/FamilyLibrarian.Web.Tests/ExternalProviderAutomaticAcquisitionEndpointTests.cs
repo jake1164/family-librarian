@@ -516,6 +516,19 @@ public sealed class ExternalProviderAutomaticAcquisitionFailureEndpointTests
         Assert.AreEqual("failing-fetch-external", attempt.ProviderId);
         Assert.AreEqual("Failed", attempt.Outcome);
 
+        // PROVIDER-7 changed *when* this reaches a librarian, not whether it
+        // does. A failed copy is now ruled out and the next ranked candidate
+        // is tried first; this provider only ever offers the one candidate, so
+        // the following pass finds everything already tried and escalates. The
+        // original concern this test was written for -- "not silently retry
+        // forever" -- is what that escalation and the per-provider attempt
+        // limit together guarantee.
+        await using (var secondScope = factory.Services.CreateAsyncScope())
+        {
+            var rechecks = secondScope.ServiceProvider.GetRequiredService<ExternalProviderRecheckService>();
+            await rechecks.ProcessDueAsync(CancellationToken.None);
+        }
+
         await using var verificationScope = factory.Services.CreateAsyncScope();
         var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
         var persisted = await database.BookRequests.SingleAsync(bookRequest => bookRequest.Id == request.Id);

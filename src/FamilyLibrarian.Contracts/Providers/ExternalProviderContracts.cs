@@ -8,6 +8,7 @@ public sealed record ExternalProviderResponse(
     bool IsEnabled,
     string RecheckSchedule,
     bool AutoAcquireEnabled,
+    int AutomaticAttemptLimit,
     bool HasApiKey,
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,
@@ -50,6 +51,13 @@ public sealed record SetExternalProviderRecheckScheduleRequest(string RecheckSch
 /// that way may be fetched without review.
 /// </summary>
 public sealed record SetExternalProviderAutoAcquireEnabledRequest(bool Enabled);
+
+/// <summary>
+/// How many candidates unattended acquisition may download and fail to verify
+/// for one requested format before it stops and waits for a librarian. Set to
+/// 1 for a source with a limited download allowance.
+/// </summary>
+public sealed record SetExternalProviderAutomaticAttemptLimitRequest(int Limit);
 
 public sealed record SetExternalProviderApiKeyRequest(string ApiKey);
 

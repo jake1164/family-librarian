@@ -419,21 +419,40 @@ public sealed class AcquisitionJobPollingService(
                 string.Equals(attempt.ProviderId, job.ProviderId, StringComparison.OrdinalIgnoreCase) &&
                 attempt.Summary.StartsWith("CANDIDATE_CHANGED:", StringComparison.Ordinal));
         job.RecordFailure(errorCode, errorMessage, retryable, retryAfterSeconds, detailsJson, now);
-        attempts.Add(new ProviderAttempt(
-            job.RequestId, job.RequestFormatId, job.ProviderId, ProviderAttemptOutcome.Failed,
-            candidateChanged ? $"CANDIDATE_CHANGED: {errorMessage ?? "The candidate changed upstream."}" :
-                errorMessage ?? "The acquisition failed.", now,
-            nextEligibleCheckAtUtc: candidateChanged && !alreadyRetriedStaleCandidate ? now : null));
-        await jobs.SaveChangesAsync(cancellationToken);
-        await attempts.SaveChangesAsync(cancellationToken);
 
+        var advancedToNextCandidate = false;
         if (job.IsAutomaticAcquisition && (!candidateChanged || alreadyRetriedStaleCandidate))
-            await automaticFulfillment.RecordExternalAcquisitionFailureAsync(
+        {
+            // The attempt budget belongs to the provider that was asked, so it
+            // is read from the provider row rather than assumed. A provider
+            // that has since been deleted falls back to the registration
+            // default, which still bounds the loop.
+            var failedProvider = await externalProviders.FindAsync(job.ExternalProviderId, cancellationToken);
+            advancedToNextCandidate = await automaticFulfillment.RecordExternalAcquisitionFailureAsync(
                 job.RequestId,
+                job.RequestFormatId,
+                job.ProviderId,
+                job.CandidateReference,
+                failedProvider?.AutomaticAttemptLimit ?? Domain.Providers.ExternalProvider.DefaultAutomaticAttemptLimit,
                 candidateChanged
                     ? "The provider reported that this copy changed twice. A librarian must refresh the source before another automatic attempt."
                     : errorMessage ?? "The automatic copy could not be acquired.",
                 cancellationToken);
+        }
+
+        attempts.Add(new ProviderAttempt(
+            job.RequestId, job.RequestFormatId, job.ProviderId, ProviderAttemptOutcome.Failed,
+            candidateChanged ? $"CANDIDATE_CHANGED: {errorMessage ?? "The candidate changed upstream."}" :
+                advancedToNextCandidate
+                    ? $"{errorMessage ?? "The acquisition failed."} Trying the next ranked candidate."
+                    : errorMessage ?? "The acquisition failed.", now,
+            // Either kind of advance wants a prompt recheck: the next attempt
+            // is a different record, not a repeat of what just failed.
+            nextEligibleCheckAtUtc: (candidateChanged && !alreadyRetriedStaleCandidate) || advancedToNextCandidate
+                ? now
+                : null));
+        await jobs.SaveChangesAsync(cancellationToken);
+        await attempts.SaveChangesAsync(cancellationToken);
 
         if (wasWaitingForInteraction)
         {

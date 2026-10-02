@@ -103,4 +103,37 @@ public sealed class ExternalProviderTests
         Assert.AreEqual("Available", provider.CachedSearchOperationStatus);
         Assert.AreEqual("Available", provider.CachedAcquireOperationStatus);
     }
+
+    [TestMethod]
+    public void ANewProviderStartsWithTheDefaultAutomaticAttemptLimit()
+    {
+        var provider = new ExternalProvider("example-source", "Example Source", "https://source.invalid", Now);
+
+        Assert.AreEqual(ExternalProvider.DefaultAutomaticAttemptLimit, provider.AutomaticAttemptLimit);
+        Assert.AreEqual(3, provider.AutomaticAttemptLimit);
+    }
+
+    [TestMethod]
+    public void AMeteredSourceCanBeLimitedToASingleAutomaticAttempt()
+    {
+        // The setting an administrator uses for a source with a limited
+        // download allowance: spend one download, then ask a person.
+        var provider = new ExternalProvider("example-source", "Example Source", "https://source.invalid", Now);
+
+        provider.SetAutomaticAttemptLimit(1, actorUserId: null, Now);
+
+        Assert.AreEqual(1, provider.AutomaticAttemptLimit);
+    }
+
+    [TestMethod]
+    public void AnAutomaticAttemptLimitOutsideTheAllowedRangeIsRejected()
+    {
+        var provider = new ExternalProvider("example-source", "Example Source", "https://source.invalid", Now);
+
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+            () => provider.SetAutomaticAttemptLimit(0, actorUserId: null, Now));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+            () => provider.SetAutomaticAttemptLimit(
+                ExternalProvider.MaximumAutomaticAttemptLimit + 1, actorUserId: null, Now));
+    }
 }

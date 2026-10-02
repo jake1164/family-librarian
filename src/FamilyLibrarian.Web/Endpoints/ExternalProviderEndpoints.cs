@@ -23,6 +23,7 @@ internal static class ExternalProviderEndpoints
         adminExternalProviders.MapPut("/{id:guid}/enabled", SetExternalProviderEnabledAsync);
         adminExternalProviders.MapPut("/{id:guid}/recheck-schedule", SetExternalProviderRecheckScheduleAsync);
         adminExternalProviders.MapPut("/{id:guid}/auto-acquire", SetExternalProviderAutoAcquireEnabledAsync);
+        adminExternalProviders.MapPut("/{id:guid}/automatic-attempt-limit", SetExternalProviderAutomaticAttemptLimitAsync);
         adminExternalProviders.MapPut("/{id:guid}/api-key", SetExternalProviderApiKeyAsync);
         adminExternalProviders.MapDelete("/{id:guid}/api-key", ClearExternalProviderApiKeyAsync);
         adminExternalProviders.MapPost("/{id:guid}/test", TestExternalProviderAsync);
@@ -69,6 +70,11 @@ internal static class ExternalProviderEndpoints
         CancellationToken cancellationToken) =>
         ToExternalProviderResult(await service.SetAutoAcquireEnabledAsync(id, request.Enabled, cancellationToken));
 
+    private static async Task<IResult> SetExternalProviderAutomaticAttemptLimitAsync(
+        Guid id, SetExternalProviderAutomaticAttemptLimitRequest request, ExternalProviderAdminService service,
+        CancellationToken cancellationToken) =>
+        ToExternalProviderResult(await service.SetAutomaticAttemptLimitAsync(id, request.Limit, cancellationToken));
+
     private static async Task<IResult> SetExternalProviderApiKeyAsync(
         Guid id, SetExternalProviderApiKeyRequest request, ExternalProviderAdminService service,
         CancellationToken cancellationToken) =>
@@ -108,6 +114,7 @@ internal static class ExternalProviderEndpoints
         status.IsEnabled,
         status.RecheckSchedule,
         status.AutoAcquireEnabled,
+        status.AutomaticAttemptLimit,
         status.HasApiKey,
         status.ApiKeyHint,
         status.ApiKeySetAtUtc,

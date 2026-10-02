@@ -366,6 +366,44 @@ Implication for you: the more accurately and completely you populate
 used without friction. There's no benefit to guessing a single "best" result
 when you're unsure — return everything plausible (§6's ambiguity note).
 
+### 7.0a If all you have is a release name
+
+A source that indexes releases rather than books often cannot populate `work`
+at all. That is a supported shape, and you should **not** invent a
+`work.title` to fill the gap — populating a field from something the source
+did not establish is worse than leaving it absent.
+
+When `work.title` is absent or empty, Family Librarian reads `release.name`
+as identity evidence. It does not parse a title out of that string; it already
+knows what it asked for, so it instead checks whether the name *asserts* the
+requested work, which requires all of:
+
+- the expected title's words appearing together, and
+- the expected author's words appearing together, and
+- **every remaining token being accounted for** as a recognized release
+  annotation — a format or container token, a scope tag such as `retail` or
+  `repack`, a bracketed group tag, an edition qualifier such as
+  `60th Anniversary Edition`, a four-digit year, or a `read by <name>` credit.
+
+Any leftover word that is not one of those keeps the candidate reviewable.
+This is what separates `Fahrenheit 451 by Ray Bradbury EPUB` (confirmed) from
+`Ray Bradbury - A Pleasure to Burn-Fahrenheit 451 Stories` (refused) — the
+second contains the requested title *and* the requested author and is still a
+different book.
+
+Two consequences worth knowing when you compose a release name:
+
+- **A language word in the name is read as a language assertion**, not
+  stripped as noise. `…2012.Spanish.Retail.EPUB…` is treated as a Spanish
+  edition and excluded from an English request. This is deliberate: for a
+  release-name-only source that is the only place the language appears.
+- **A `read by <name>` / `narrated by <name>` credit is read as narration
+  evidence**, and is the only narration evidence such a source provides.
+
+Populating structured `work` evidence when you genuinely have it is still
+strictly better: it is checked first, and it does not depend on your naming
+conventions matching any of the annotations above.
+
 ### 7.1 Candidate evidence and selection loop
 
 This is deliberately a conversation, not a provider-side verdict:
@@ -396,6 +434,23 @@ This is deliberately a conversation, not a provider-side verdict:
    opaque revision/token. The provider must acquire that selection or return
    `CANDIDATE_CHANGED`/`404`; it must never silently substitute a different
    release.
+6. If that acquisition later fails its post-download checks — your job
+   reports a terminal failure, the file fails a security scan, or the bytes
+   turn out not to be the requested book — FL rules that one
+   `providerReference` out and submits the **next** candidate from its own
+   ranking, up to a per-provider attempt limit an administrator configures
+   (default 3). More than one acceptable candidate existing is never by itself
+   a reason for FL to stop and ask a person; only running out of attempts, or
+   running out of untried candidates, is.
+
+   Two things follow for a provider. First, a job in `waiting` with an
+   `interaction` object is **not** a failure and never consumes an attempt —
+   FL keeps waiting for the administrator action you asked for, so a source
+   whose unmetered path needs human intervention is not penalized for using
+   it. Second, if your source has a limited download allowance, say so in
+   your documentation: FL cannot see your remaining quota (§8 keeps that your
+   business) and an administrator is expected to set the attempt limit to 1
+   for such a source.
 
 Provider ranking may order a response for usability, but it is discovery
 information only. It never changes FL's evidence decision. Conversely, FL

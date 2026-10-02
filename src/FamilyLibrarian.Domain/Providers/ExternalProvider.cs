@@ -40,6 +40,7 @@ public sealed class ExternalProvider
         IsEnabled = false;
         RecheckSchedule = ProviderRecheckSchedule.Manual;
         AutoAcquireEnabled = false;
+        AutomaticAttemptLimit = DefaultAutomaticAttemptLimit;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
     }
@@ -77,6 +78,35 @@ public sealed class ExternalProvider
     /// <c>ExternalProviderRecheckService</c>, not here.
     /// </summary>
     public bool AutoAcquireEnabled { get; private set; }
+
+    /// <summary>The attempt budget a newly registered provider starts with.</summary>
+    public const int DefaultAutomaticAttemptLimit = 3;
+
+    public const int MinimumAutomaticAttemptLimit = 1;
+
+    public const int MaximumAutomaticAttemptLimit = 10;
+
+    /// <summary>
+    /// How many distinct candidates unattended acquisition may download and
+    /// fail to verify for one requested format before the request stops and
+    /// waits for a librarian (PROVIDER-7).
+    /// </summary>
+    /// <remarks>
+    /// The honest bound on a retry loop that spends real downloads. Family
+    /// Librarian deliberately does not model a provider's own quota: protocol
+    /// v2 §8 makes a provider's subscription/quota path its own business and
+    /// instructs it to keep a job queued rather than report a quota failure,
+    /// so FL cannot see a remaining allowance and must not pretend to. An
+    /// administrator who knows a source is metered sets this to
+    /// <see cref="MinimumAutomaticAttemptLimit"/>, which spends one download
+    /// and then reviews.
+    /// <para>
+    /// A candidate a *requester* set aside via "keep looking" is not an
+    /// attempt and never consumes this budget — see
+    /// <c>DeclinedCandidateReason</c>.
+    /// </para>
+    /// </remarks>
+    public int AutomaticAttemptLimit { get; private set; } = DefaultAutomaticAttemptLimit;
 
     public string? ProtectedApiKey { get; private set; }
 
@@ -171,6 +201,19 @@ public sealed class ExternalProvider
     public void SetAutoAcquireEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
     {
         AutoAcquireEnabled = isEnabled;
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void SetAutomaticAttemptLimit(int limit, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        if (limit is < MinimumAutomaticAttemptLimit or > MaximumAutomaticAttemptLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(limit), limit,
+                $"The automatic attempt limit must be between {MinimumAutomaticAttemptLimit} and {MaximumAutomaticAttemptLimit}.");
+        }
+
+        AutomaticAttemptLimit = limit;
         Touch(actorUserId, updatedAtUtc);
     }
 

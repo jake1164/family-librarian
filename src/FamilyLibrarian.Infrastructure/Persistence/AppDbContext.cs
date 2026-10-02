@@ -593,6 +593,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(candidate => candidate.ProviderId).HasColumnName("provider_id").HasMaxLength(128);
             entity.Property(candidate => candidate.ProviderResultId).HasColumnName("provider_result_id").HasMaxLength(256);
             entity.Property(candidate => candidate.DeclinedAtUtc).HasColumnName("declined_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(candidate => candidate.Reason).HasColumnName("reason").HasConversion<string>().HasMaxLength(32);
+            entity.Property(candidate => candidate.FailureReason).HasColumnName("failure_reason").HasMaxLength(512);
 
             entity.HasIndex(candidate => new { candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId });
 
@@ -704,6 +706,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(provider => provider.IsEnabled).HasColumnName("is_enabled");
             entity.Property(provider => provider.RecheckSchedule).HasColumnName("recheck_schedule").HasConversion<string>().HasMaxLength(32);
             entity.Property(provider => provider.AutoAcquireEnabled).HasColumnName("auto_acquire_enabled");
+            entity.Property(provider => provider.AutomaticAttemptLimit).HasColumnName("automatic_attempt_limit");
             entity.Property(provider => provider.ProtectedApiKey).HasColumnName("protected_api_key").HasMaxLength(4_096);
             entity.Property(provider => provider.ApiKeyFormatVersion).HasColumnName("api_key_format_version");
             entity.Property(provider => provider.ApiKeyHint).HasColumnName("api_key_hint").HasMaxLength(8);

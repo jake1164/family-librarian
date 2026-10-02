@@ -414,6 +414,18 @@
                     title/author-only match still always requires review regardless of this setting.
                 </MudText>
 
+                <MudNumericField T="int" Value="provider.AutomaticAttemptLimit" Disabled="@providersBusy"
+                                 Min="1" Max="10" Step="1" Immediate="false"
+                                 Label="Candidates to try before asking a librarian"
+                                 ValueChanged="@(limit => SetProviderAutomaticAttemptLimitAsync(provider.Id, limit))" />
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    When an automatically downloaded copy fails its post-download checks — malware, a malformed
+                    file, or content that turns out not to be the requested book — FL rules that copy out and tries
+                    the next best candidate, up to this many times. Set this to 1 for a source with a limited
+                    download allowance: FL cannot see a provider's remaining quota, so this is the only limit it can
+                    enforce. A candidate a requester set aside with "keep looking" is free and never counts here.
+                </MudText>
+
                 <MudText Typo="Typo.caption" Class="mb-2">
                     Provider-specific options (for example how a source uses its own quota or download methods) are
                     managed in the provider's own admin page, linked below when the provider offers one.
@@ -1070,6 +1082,26 @@
         try
         {
             var result = await Api.SetProviderAutoAcquireEnabledAsync(id, enabled);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task SetProviderAutomaticAttemptLimitAsync(Guid id, int limit)
+    {
+        providersBusy = true;
+        try
+        {
+            var result = await Api.SetProviderAutomaticAttemptLimitAsync(id, limit);
             if (!result.Succeeded)
             {
                 Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);

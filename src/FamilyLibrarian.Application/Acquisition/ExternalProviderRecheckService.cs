@@ -116,8 +116,44 @@ public sealed class ExternalProviderRecheckService(
                             work.Title, work.PrimaryAuthor, work.Isbn13s,
                             work.Authors, work.Series, work.Language, work.PublicationYear, work.Publisher,
                             work.AlternateTitles);
+                        // Candidates already ruled out for this format must not
+                        // be nominated again -- a requester's "keep looking",
+                        // and any candidate a previous unattended attempt
+                        // downloaded and failed to verify. Passing them to the
+                        // checker is what makes the retry loop advance: the
+                        // confirmed single candidate is chosen from what is
+                        // left, so the next pass picks the next-ranked record
+                        // rather than re-nominating the one that just failed.
+                        var formatDeclines = request.DeclinedCandidates
+                            .Where(declined => declined.RequestFormatId == format.Id &&
+                                string.Equals(declined.ProviderId, provider.ProviderId, StringComparison.OrdinalIgnoreCase))
+                            .ToArray();
+                        var ruledOut = formatDeclines
+                            .Select(declined => declined.ProviderResultId)
+                            .ToHashSet(StringComparer.Ordinal);
+                        var alreadyTried = formatDeclines
+                            .Any(declined => declined.Reason == DeclinedCandidateReason.AutomaticVerificationFailed);
+
                         var options = await candidateChecker.FindForProviderAsync(
-                            provider, identity, format.MediaType, searchCancellation.Token);
+                            provider, identity, format.MediaType, searchCancellation.Token, ruledOut);
+                        var searchFoundSomething = options.Count > 0;
+                        options = options
+                            .Where(option => !ruledOut.Contains(option.ProviderResultId))
+                            .ToArray();
+
+                        // Everything this source offers has now been tried and
+                        // failed. That is emphatically not "nothing found": it
+                        // must reach a librarian rather than leave the request
+                        // sitting in the automatic queue retrying a source with
+                        // nothing left to give.
+                        if (options.Count == 0 && searchFoundSomething && alreadyTried)
+                        {
+                            var exhaustedReason = DescribeExhaustedAttempts(request, format, provider);
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                                exhaustedReason, nextEligibleCheckAtUtc: null);
+                            await MarkForReviewAsync(request, work.Title, exhaustedReason, cancellationToken);
+                            break;
+                        }
 
                         if (options.Count == 0)
                         {
@@ -126,8 +162,20 @@ public sealed class ExternalProviderRecheckService(
                             continue;
                         }
 
+                        // An unrecognized audiobook container is excluded; an
+                        // *absent* one is not. A source that reports only a
+                        // release name frequently cannot state a container at
+                        // all, and dropping those candidates made this service
+                        // record "no match" for a search that had in fact
+                        // returned usable results -- a factually wrong summary
+                        // that also hid the results from review. The ranker
+                        // puts an unknown container last, and the
+                        // post-download audio structural validator remains the
+                        // gate on whether the bytes are a usable audiobook.
                         var reviewableOptions = format.MediaType == RequestMediaType.Audiobook
-                            ? options.Where(option => AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format)).ToArray()
+                            ? options.Where(option =>
+                                string.IsNullOrWhiteSpace(option.Format) ||
+                                AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format)).ToArray()
                             : options;
                         reviewableOptions = CollapseEquivalentReviewOptions(reviewableOptions);
                         if (reviewableOptions.Count == 0)
@@ -136,6 +184,8 @@ public sealed class ExternalProviderRecheckService(
                                 "The provider reported only audiobook formats excluded from automatic acquisition.", nextCheck);
                             continue;
                         }
+
+                        reviewableOptions = ExternalCandidateRanker.Rank(reviewableOptions, format.MediaType).ToArray();
 
                         // Identifier evidence is strongest, but identical normalized title and
                         // observed-author records are also a deterministic single-work choice.
@@ -166,9 +216,25 @@ public sealed class ExternalProviderRecheckService(
                             automaticMatches = audiobookSelection.Winner is { } winner ? [winner] : [];
                         }
 
+                        // The attempt budget is spent: stop downloading and let
+                        // a librarian see every candidate that already failed,
+                        // rather than walking further down a list that may be
+                        // costing real transfers against a metered source.
+                        var failuresSoFar = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId);
+                        if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled &&
+                            failuresSoFar >= provider.AutomaticAttemptLimit)
+                        {
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
+                                DescribeExhaustedAttempts(request, format, provider), nextEligibleCheckAtUtc: null);
+                            await MarkForCandidateReviewAsync(
+                                request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
+                                DescribeExhaustedAttempts(request, format, provider), cancellationToken);
+                            break;
+                        }
+
                         if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled)
                         {
-                            var acquireResult = await security.AcquireAndEvaluateAsync(
+                            var (acquireResult, identityFailure) = await security.AcquireEvaluateAndVerifyAsync(
                                 request.Id,
                                 format.Id,
                                 provider.ProviderId,
@@ -176,6 +242,31 @@ public sealed class ExternalProviderRecheckService(
                                 cancellationToken,
                                 allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(automaticMatches[0]),
                                 isAutomaticAcquisition: true);
+
+                            // A clean download of the wrong book is the exact
+                            // case the retry loop exists for, so it is routed
+                            // through the same advance path as a failed one
+                            // rather than being reported as an acquisition.
+                            if (acquireResult.Outcome == ManualImportOutcome.Success && identityFailure is not null)
+                            {
+                                request.RecordAutomaticCandidateFailure(
+                                    format.Id, provider.ProviderId, automaticMatches[0].ProviderResultId,
+                                    identityFailure, clock.UtcNow);
+                                var identityExhausted =
+                                    request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) >=
+                                    provider.AutomaticAttemptLimit;
+                                AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                                    identityExhausted
+                                        ? identityFailure
+                                        : $"{identityFailure} Trying the next ranked candidate.",
+                                    nextEligibleCheckAtUtc: identityExhausted ? null : clock.UtcNow);
+                                if (identityExhausted)
+                                {
+                                    await MarkForReviewAsync(request, work.Title, identityFailure, cancellationToken);
+                                }
+
+                                break;
+                            }
 
                             if (acquireResult.Outcome == ManualImportOutcome.Success)
                             {
@@ -198,11 +289,32 @@ public sealed class ExternalProviderRecheckService(
                                 break;
                             }
 
+                            // This candidate is spent. Rule it out and let the
+                            // next pass advance to the next ranked record --
+                            // one bad copy is not a reason to stop looking, it
+                            // is a reason to try the next one. Only once the
+                            // provider's attempt budget is gone does this
+                            // become a librarian's problem.
+                            var failureReason = acquireResult.Error ?? "The automatic copy could not be acquired.";
+                            request.RecordAutomaticCandidateFailure(
+                                format.Id, provider.ProviderId, automaticMatches[0].ProviderResultId,
+                                failureReason, clock.UtcNow);
+                            var exhausted = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) >=
+                                provider.AutomaticAttemptLimit;
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
-                                acquireResult.Error ?? "The automatic copy could not be acquired.", nextEligibleCheckAtUtc: null);
-                            await MarkForReviewAsync(
-                                request, work.Title, acquireResult.Error ?? "The automatic copy could not be acquired.",
-                                cancellationToken);
+                                exhausted
+                                    ? failureReason
+                                    : $"{failureReason} Trying the next ranked candidate.",
+                                // Retry promptly: the next candidate is a
+                                // different record, not a repeat of the lookup
+                                // that just failed, so the daily/weekly
+                                // schedule is the wrong wait here.
+                                nextEligibleCheckAtUtc: exhausted ? null : clock.UtcNow);
+                            if (exhausted)
+                            {
+                                await MarkForReviewAsync(request, work.Title, failureReason, cancellationToken);
+                            }
+
                             break;
                         }
 
@@ -316,8 +428,18 @@ public sealed class ExternalProviderRecheckService(
                 option.RequiresLanguageConfirmation,
                 option.RequiresReleaseConfirmation,
                 NormalizeReviewFact(option.DrmStatus),
-                NormalizeReviewFact(option.ReleaseConcern)))
-            .Select(group => group.First())
+                NormalizeReviewFact(option.ReleaseConcern),
+                // Provenance is a real distinction, not a duplicate: a retail
+                // release and an untagged one are different things to both a
+                // librarian comparing them and the ranker choosing between
+                // them.
+                NormalizeReviewFact(option.Quality)))
+            // The group's best member, not its first. Response order used to
+            // decide this, which could discard the one candidate carrying the
+            // confirmed MatchBasis and leave the format with nothing eligible
+            // for automatic acquisition at all -- turning a confirmed match
+            // into a review purely through collapsing.
+            .Select(group => ExternalCandidateRanker.Rank(group, group.Key.MediaType)[0])
             .ToArray();
 
     private static string? NormalizeReviewFact(string? value) => string.IsNullOrWhiteSpace(value)
@@ -348,7 +470,8 @@ public sealed class ExternalProviderRecheckService(
         bool RequiresLanguageConfirmation,
         bool RequiresReleaseConfirmation,
         string? DrmStatus,
-        string? ReleaseConcern);
+        string? ReleaseConcern,
+        string? Quality);
 
     private async Task<AudiobookNarrationPreference> GetNarrationPreferenceAsync(
         Guid requesterUserId, CancellationToken cancellationToken)
@@ -430,6 +553,33 @@ public sealed class ExternalProviderRecheckService(
             await notifications.RecordPreferenceAmbiguityAsync(
                 requesterId, request.Id, workTitle, reason, cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Names what was already downloaded and rejected, so the review says why
+    /// it stopped rather than only that something failed.
+    /// </summary>
+    private static string DescribeExhaustedAttempts(
+        BookRequest request, RequestFormat format, ExternalProvider provider)
+    {
+        var failures = request.DeclinedCandidates
+            .Where(declined => declined.RequestFormatId == format.Id &&
+                declined.Reason == DeclinedCandidateReason.AutomaticVerificationFailed &&
+                string.Equals(declined.ProviderId, provider.ProviderId, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        var distinctReasons = failures
+            .Select(failure => failure.FailureReason)
+            .Where(reason => !string.IsNullOrWhiteSpace(reason))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var summary = failures.Length == 1
+            ? "One automatically acquired copy failed its post-download checks"
+            : $"{failures.Length} automatically acquired copies failed their post-download checks";
+        return distinctReasons.Length > 0
+            ? $"{summary} ({string.Join("; ", distinctReasons)}). A librarian must choose a source."
+            : $"{summary}. A librarian must choose a source.";
     }
 
     private static string DescribeCandidateReviewReason(

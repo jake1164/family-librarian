@@ -104,6 +104,43 @@ public sealed class ExternalProviderAdminService(
         return ExternalProviderCommandResult.Success(ToStatus(provider));
     }
 
+    /// <summary>
+    /// Sets how many candidates unattended acquisition may download and fail
+    /// to verify for one format before the request waits for a librarian.
+    /// </summary>
+    /// <remarks>
+    /// An administrator who knows a source is metered sets this to 1, which
+    /// spends one download and then reviews. Family Librarian cannot read a
+    /// provider's own remaining allowance (protocol v2 §8 keeps quota the
+    /// provider's business), so this setting is the only honest bound.
+    /// </remarks>
+    public async Task<ExternalProviderCommandResult> SetAutomaticAttemptLimitAsync(
+        Guid id, int limit, CancellationToken cancellationToken)
+    {
+        if (limit is < ExternalProvider.MinimumAutomaticAttemptLimit or > ExternalProvider.MaximumAutomaticAttemptLimit)
+        {
+            return ExternalProviderCommandResult.Invalid(
+                $"The automatic attempt limit must be between {ExternalProvider.MinimumAutomaticAttemptLimit} " +
+                $"and {ExternalProvider.MaximumAutomaticAttemptLimit}.");
+        }
+
+        var provider = await store.FindAsync(id, cancellationToken);
+        if (provider is null)
+        {
+            return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
+        }
+
+        provider.SetAutomaticAttemptLimit(limit, currentUser.UserId, clock.UtcNow);
+        await store.SaveChangesAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            AuditActions.ExternalProviderAutomaticAttemptLimitChanged,
+            AuditSubjectTypes.ExternalProvider, id.ToString(),
+            new { provider.ProviderId, Limit = limit }, cancellationToken);
+
+        return ExternalProviderCommandResult.Success(ToStatus(provider));
+    }
+
     public async Task<ExternalProviderCommandResult> SetDetailsAsync(
         Guid id, string displayName, string baseUrl, CancellationToken cancellationToken)
     {
@@ -314,6 +351,7 @@ public sealed class ExternalProviderAdminService(
         provider.IsEnabled,
         provider.RecheckSchedule.ToString(),
         provider.AutoAcquireEnabled,
+        provider.AutomaticAttemptLimit,
         provider.HasApiKey,
         provider.ApiKeyHint,
         provider.ApiKeySetAtUtc,
@@ -340,6 +378,7 @@ public sealed record ExternalProviderStatus(
     bool IsEnabled,
     string RecheckSchedule,
     bool AutoAcquireEnabled,
+    int AutomaticAttemptLimit,
     bool HasApiKey,
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,

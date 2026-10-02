@@ -139,22 +139,36 @@ public sealed class DeterministicBookMatcher : IBookMatcher
             return false;
         }
 
-        var comparableWords = NormalizeWords(candidateTitle);
+        return HasDerivativeOrCombinedWorkMarker(candidateTitle);
+    }
+
+    /// <summary>
+    /// The raw-text negative evidence shared by title matching and external
+    /// release-name verification: a known derivative marker, a <c>/</c>
+    /// combined-work separator, or a spaced ampersand. Separated from
+    /// <see cref="IsUnwantedVariant"/> only so the release-name verifier
+    /// applies the identical rule rather than a second copy of it; callers
+    /// that need the exact-title escape must still go through
+    /// <see cref="IsUnwantedVariant"/>.
+    /// </summary>
+    internal static bool HasDerivativeOrCombinedWorkMarker(string value)
+    {
+        var comparableWords = NormalizeWords(value);
         return DerivativeTitleMarkers.Any(marker =>
                 comparableWords.Contains(marker, StringComparison.OrdinalIgnoreCase)) ||
-            candidateTitle.Contains('/', StringComparison.Ordinal) ||
-            Regex.IsMatch(candidateTitle, @"\s&\s");
+            value.Contains('/', StringComparison.Ordinal) ||
+            Regex.IsMatch(value, @"\s&\s");
     }
 
     private static readonly string[] LeadingArticles = ["The ", "A ", "An "];
     private static readonly string[] TrailingArticles = [", The", ", A", ", An"];
 
-    private static string NormalizeTitle(string value) => new(RemoveArticleVariants(value)
+    internal static string NormalizeTitle(string value) => new(RemoveArticleVariants(value)
         .Normalize(NormalizationForm.FormKC)
         .Where(char.IsLetterOrDigit)
         .ToArray());
 
-    private static string RemoveArticleVariants(string value)
+    internal static string RemoveArticleVariants(string value)
     {
         var trimmed = value.Replace("&", " and ", StringComparison.Ordinal).Trim();
 
@@ -178,7 +192,7 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         return trimmed;
     }
 
-    private static string NormalizeWords(string value)
+    internal static string NormalizeWords(string value)
     {
         var normalized = value.Normalize(NormalizationForm.FormKC);
         var builder = new StringBuilder(normalized.Length);
@@ -200,7 +214,7 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         return builder.ToString().TrimEnd();
     }
 
-    private static HashSet<string> AuthorTokens(string value)
+    internal static HashSet<string> AuthorTokens(string value)
     {
         var tokens = new HashSet<string>(StringComparer.Ordinal);
         var token = new StringBuilder();

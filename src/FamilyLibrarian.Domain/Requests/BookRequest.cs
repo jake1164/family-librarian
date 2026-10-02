@@ -284,6 +284,46 @@ public sealed class BookRequest
         TransitionTo(RequestStatus.PendingAcquisition, actorUserId, "The requester chose to keep looking for a better match.", atUtc);
     }
 
+    /// <summary>
+    /// Records that unattended acquisition fetched one candidate and it failed
+    /// a post-download check, so the next automatic pass advances to the next
+    /// ranked candidate instead of re-downloading the same bad file
+    /// (PROVIDER-7).
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does not change <see cref="Status"/>. A single failed
+    /// candidate is not a reason to stop: the caller decides whether the
+    /// provider's attempt budget is now spent and only then moves the request
+    /// to review. Recorded with
+    /// <see cref="DeclinedCandidateReason.AutomaticVerificationFailed"/> so it
+    /// is countable against that budget and distinguishable from a requester's
+    /// free "keep looking".
+    /// </remarks>
+    public void RecordAutomaticCandidateFailure(
+        Guid requestFormatId, string providerId, string providerResultId, string? failureReason, DateTimeOffset atUtc)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerResultId);
+
+        _declinedCandidates.RemoveAll(declined =>
+            declined.RequestFormatId == requestFormatId &&
+            declined.ProviderId == providerId &&
+            declined.ProviderResultId == providerResultId);
+        _declinedCandidates.Add(new DeclinedRequestCandidate(
+            Id, requestFormatId, providerId, providerResultId, atUtc,
+            DeclinedCandidateReason.AutomaticVerificationFailed, failureReason));
+    }
+
+    /// <summary>
+    /// How many distinct candidates unattended acquisition has already
+    /// downloaded and failed to verify for one format from one provider.
+    /// </summary>
+    public int CountAutomaticCandidateFailures(Guid requestFormatId, string providerId) =>
+        _declinedCandidates.Count(declined =>
+            declined.RequestFormatId == requestFormatId &&
+            declined.Reason == DeclinedCandidateReason.AutomaticVerificationFailed &&
+            string.Equals(declined.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
+
     public void Join(
         Guid userId,
         IEnumerable<RequestMediaType> mediaTypes,

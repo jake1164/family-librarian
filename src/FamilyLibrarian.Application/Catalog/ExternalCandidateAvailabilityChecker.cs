@@ -117,9 +117,15 @@ public sealed class ExternalCandidateAvailabilityChecker(
     /// — a caller re-deriving a single option to fetch needs the real error,
     /// while <see cref="FindAsync"/>'s own aggregation loop degrades it.
     /// </summary>
+    /// <param name="excludedProviderResultIds">
+    /// Provider results the caller has already tried and ruled out, so the
+    /// confirmed single candidate is nominated from what is left. Null/empty
+    /// for every browsing caller, which has nothing to exclude.
+    /// </param>
     public async Task<IReadOnlyList<FulfillmentOption>> FindForProviderAsync(
         Domain.Providers.ExternalProvider provider, BookIdentity identity,
-        RequestMediaType mediaType, CancellationToken cancellationToken)
+        RequestMediaType mediaType, CancellationToken cancellationToken,
+        IReadOnlySet<string>? excludedProviderResultIds = null)
     {
         var apiKey = provider.HasApiKey
             ? protector.Unprotect(
@@ -193,18 +199,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 Providers.ExternalEbookFormatTier.Possible).ToArray();
         }
 
-        // A duplicate provider record is not a meaningful choice when every
-        // candidate spells the same title and observed author exactly. Pick
-        // one only after FL's own language/release/format filters have run;
-        // format preference is FL policy, response order only breaks ties.
-        var selectedStrictCandidate = candidatesWithVerdicts
-            .Where(candidate => candidate.MatchVerdict.Basis == Matching.BookMatchBasis.StrictTitleAuthor)
-            .OrderBy(candidate => Providers.ExternalEbookFormatPolicy.AcquisitionPreference(
-                candidate.Candidate.Release?.Format))
-            .FirstOrDefault();
-        var selectedStrictReference = selectedStrictCandidate.Candidate?.ProviderReference;
-
-        return candidatesWithVerdicts.Select(candidate =>
+        var options = candidatesWithVerdicts.Select(candidate =>
         {
             var sourceCandidate = candidate.Candidate;
             return new FulfillmentOption(
@@ -215,9 +210,16 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 MediaType: mediaType,
                 OptionKind: OptionKind.DirectAcquisition,
                 AcquisitionMethod: AcquisitionMethod.DirectDownload,
-                Format: sourceCandidate.Format,
-                Language: sourceCandidate.Edition?.Language,
-                Quality: null,
+                // A release-name-only source states its container and its
+                // language nowhere else, so the verifier's reading of the
+                // release name is the fallback for both. Structured evidence
+                // still wins whenever the provider supplied it.
+                Format: sourceCandidate.Format ?? candidate.MatchVerdict.ReleaseNameFormat,
+                Language: sourceCandidate.Edition?.Language ?? candidate.MatchVerdict.ReleaseNameLanguage,
+                Quality: sourceCandidate.Release?.QualityTags
+                    .FirstOrDefault(tag => string.Equals(tag, "retail", StringComparison.OrdinalIgnoreCase)) is not null
+                    ? "retail"
+                    : null,
                 Availability: null,
                 Cost: 0m,
                 Currency: null,
@@ -230,11 +232,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 },
                 ExternalActionUri: null,
                 ProviderData: sourceCandidate.ProviderReference,
-                MatchBasis: candidate.Candidate.ProviderReference == selectedStrictReference
-                    ? Matching.BookMatchBasis.StrictTitleAuthor
-                    : candidate.MatchVerdict.Basis == Matching.BookMatchBasis.StrictTitleAuthor
-                        ? null
-                        : candidate.MatchVerdict.Basis,
+                MatchBasis: candidate.MatchVerdict.Basis,
                 RequiresLanguageConfirmation: candidate.MatchVerdict.RequiresLanguageConfirmation,
                 Title: sourceCandidate.Title,
                 Author: sourceCandidate.Author,
@@ -248,8 +246,68 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 PartCount: sourceCandidate.Release?.PartCount,
                 IsAbridged: sourceCandidate.Release?.IsAbridged,
                 IsUnabridged: sourceCandidate.Release?.IsUnabridged,
-                AdminInspectionUri: sourceCandidate.InspectionUri);
+                AdminInspectionUri: sourceCandidate.InspectionUri,
+                // A "read by <name>" credit in the release name is, for a
+                // release-name-only source, the only narration evidence that
+                // exists. Reported as Human only when a reader is actually
+                // named -- absence stays Unknown and is never inferred.
+                NarrationKind: mediaType == RequestMediaType.Audiobook &&
+                    candidate.MatchVerdict.ReleaseNameNarrator is not null
+                        ? NarrationKind.Human
+                        : null,
+                Narrator: mediaType == RequestMediaType.Audiobook
+                    ? candidate.MatchVerdict.ReleaseNameNarrator
+                    : null,
+                NarrationEvidence: mediaType == RequestMediaType.Audiobook &&
+                    candidate.MatchVerdict.ReleaseNameNarrator is not null
+                        ? "The release name credits a named reader."
+                        : null);
         }).ToArray();
+
+        return SelectOneStrictCandidate(options, mediaType, excludedProviderResultIds);
+    }
+
+    /// <summary>
+    /// Several records can spell the same title and observed author exactly.
+    /// That is a duplicate, not a meaningful choice, so exactly one keeps the
+    /// confirmed <see cref="Matching.BookMatchBasis.StrictTitleAuthor"/> basis
+    /// that makes it eligible for unattended acquisition and the rest fall
+    /// back to reviewable.
+    /// </summary>
+    /// <remarks>
+    /// The winner comes from <see cref="Providers.ExternalCandidateRanker"/>
+    /// rather than response order, so the choice is reproducible: the provider
+    /// may return the same set in a different order on the next search, and a
+    /// retry loop that advances through candidates needs the ordering to be
+    /// the same each time it looks.
+    /// <para>
+    /// <paramref name="excludedProviderResultIds"/> is how the acquisition
+    /// path says "these were already tried and failed": without it, declining
+    /// the winner would leave the next search nominating that same record and
+    /// the request with no confirmed candidate at all.
+    /// </para>
+    /// </remarks>
+    private static IReadOnlyList<FulfillmentOption> SelectOneStrictCandidate(
+        IReadOnlyList<FulfillmentOption> options,
+        RequestMediaType mediaType,
+        IReadOnlySet<string>? excludedProviderResultIds)
+    {
+        var strictWinner = Providers.ExternalCandidateRanker.SelectBest(
+            options.Where(option =>
+                option.MatchBasis == Matching.BookMatchBasis.StrictTitleAuthor &&
+                excludedProviderResultIds?.Contains(option.ProviderResultId) != true),
+            mediaType);
+        if (strictWinner is null)
+        {
+            return options;
+        }
+
+        return options
+            .Select(option => option.MatchBasis == Matching.BookMatchBasis.StrictTitleAuthor &&
+                    !string.Equals(option.ProviderResultId, strictWinner.ProviderResultId, StringComparison.Ordinal)
+                ? option with { MatchBasis = null }
+                : option)
+            .ToArray();
     }
 
     /// <summary>

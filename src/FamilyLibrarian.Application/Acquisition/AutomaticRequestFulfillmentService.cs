@@ -51,16 +51,43 @@ public sealed class AutomaticRequestFulfillmentService(
 {
     private const int BatchSize = 20;
 
-    /// <summary>Completes the existing review flow when an automatic provider job fails after submit.</summary>
-    public async Task RecordExternalAcquisitionFailureAsync(
-        Guid requestId, string reason, CancellationToken cancellationToken)
+    /// <summary>
+    /// Completes the existing review flow when an automatic provider job fails
+    /// after submit -- but first rules the failed candidate out so the next
+    /// scheduled pass can advance to the next ranked one (PROVIDER-7).
+    /// </summary>
+    /// <returns>
+    /// True when the provider's attempt budget still has room, meaning the
+    /// request was left in the automatic queue to try the next candidate
+    /// rather than moved to review. The caller uses this to schedule a prompt
+    /// recheck: the next attempt is a different record, not a repeat of the
+    /// lookup that just failed.
+    /// </returns>
+    public async Task<bool> RecordExternalAcquisitionFailureAsync(
+        Guid requestId, Guid requestFormatId, string providerId, string candidateReference,
+        int automaticAttemptLimit, string reason, CancellationToken cancellationToken)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
-            return;
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(providerId) && !string.IsNullOrWhiteSpace(candidateReference))
+        {
+            request.RecordAutomaticCandidateFailure(
+                requestFormatId, providerId, candidateReference, reason, clock.UtcNow);
+
+            if (request.CountAutomaticCandidateFailures(requestFormatId, providerId) < automaticAttemptLimit)
+            {
+                // One bad copy is not a reason to stop. Leave the request in
+                // the automatic queue with this candidate ruled out.
+                await requests.SaveChangesAsync(cancellationToken);
+                return true;
+            }
+        }
 
         await MarkForReviewAsync(request, RequestReviewCategory.SecurityOrIdentityFailure, reason, cancellationToken);
         await requests.SaveChangesAsync(cancellationToken);
+        return false;
     }
 
     /// <summary>

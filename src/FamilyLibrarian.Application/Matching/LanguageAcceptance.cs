@@ -30,6 +30,34 @@ public static class LanguageAcceptance
         string.Equals(Normalize(language), Normalize(string.IsNullOrWhiteSpace(acceptedLanguage)
             ? "en" : acceptedLanguage), StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// True when <paramref name="word"/> is a recognized English *name* of a
+    /// language ("Spanish", "German"), resolving it to its two-letter code.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately restricted to full names. A release name is a stream of
+    /// unlabeled tokens, and short ISO codes collide badly with ordinary words
+    /// and name particles there ("de", "it", "no"), so accepting them would
+    /// invent a language assertion the source never made. A token this rejects
+    /// simply stays unexplained, which is the safe outcome.
+    /// </remarks>
+    public static bool TryResolveLanguageName(string word, out string languageCode)
+    {
+        languageCode = string.Empty;
+        if (string.IsNullOrWhiteSpace(word) || word.Length < 4)
+        {
+            return false;
+        }
+
+        if (!Aliases.TryGetValue(word.Trim(), out var resolved))
+        {
+            return false;
+        }
+
+        languageCode = resolved;
+        return true;
+    }
+
     private static string Normalize(string language)
     {
         var value = language.Trim();
