@@ -203,19 +203,14 @@ public sealed class DirectAcquisitionService(
         // attempt is still in the contest here, it wins that basis again and
         // the candidate actually being fetched is demoted to "low confidence",
         // refusing a fetch the retry loop had already decided on.
-        var ruledOutForFormat = request.DeclinedCandidates
-            .Where(declined => declined.RequestFormatId == format.Id &&
-                declined.Reason == Domain.Requests.DeclinedCandidateReason.AutomaticVerificationFailed &&
-                string.Equals(declined.ProviderId, providerId, StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(declined.ProviderResultId, providerResultId, StringComparison.Ordinal))
-            .Select(declined => declined.ProviderResultId)
-            .ToHashSet(StringComparer.Ordinal);
+        var exclusions = Providers.ExternalCandidateExclusions.From(
+            request.DeclinedCandidates, providerId, format.Id, exceptResultId: providerResultId);
 
         IReadOnlyList<FulfillmentOption> externalOptions;
         try
         {
             externalOptions = await externalCandidateChecker.FindForProviderAsync(
-                externalProvider, identity, format.MediaType, cancellationToken, ruledOutForFormat);
+                externalProvider, identity, format.MediaType, cancellationToken, exclusions);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
@@ -282,7 +277,8 @@ public sealed class DirectAcquisitionService(
             externalOption.AcquireToken,
             now,
             acquireRequestId,
-            isAutomaticAcquisition);
+            isAutomaticAcquisition,
+            Providers.ExternalReleaseFingerprint.Compute(externalOption.ReleaseName, externalOption.SizeBytes));
         providerAcquisitionJobs.Add(job);
         await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
 

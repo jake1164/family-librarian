@@ -117,15 +117,16 @@ public sealed class ExternalCandidateAvailabilityChecker(
     /// — a caller re-deriving a single option to fetch needs the real error,
     /// while <see cref="FindAsync"/>'s own aggregation loop degrades it.
     /// </summary>
-    /// <param name="excludedProviderResultIds">
-    /// Provider results the caller has already tried and ruled out, so the
-    /// confirmed single candidate is nominated from what is left. Null/empty
-    /// for every browsing caller, which has nothing to exclude.
+    /// <param name="exclusions">
+    /// Candidates the caller has already tried and ruled out, including any
+    /// record that is the same release as one that failed, so the confirmed
+    /// single candidate is nominated from what is left. Null for every
+    /// browsing caller, which has nothing to exclude.
     /// </param>
     public async Task<IReadOnlyList<FulfillmentOption>> FindForProviderAsync(
         Domain.Providers.ExternalProvider provider, BookIdentity identity,
         RequestMediaType mediaType, CancellationToken cancellationToken,
-        IReadOnlySet<string>? excludedProviderResultIds = null)
+        Providers.ExternalCandidateExclusions? exclusions = null)
     {
         var apiKey = provider.HasApiKey
             ? protector.Unprotect(
@@ -247,6 +248,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 IsAbridged: sourceCandidate.Release?.IsAbridged,
                 IsUnabridged: sourceCandidate.Release?.IsUnabridged,
                 AdminInspectionUri: sourceCandidate.InspectionUri,
+                ReleaseName: sourceCandidate.Release?.Name,
                 // A "read by <name>" credit in the release name is, for a
                 // release-name-only source, the only narration evidence that
                 // exists. Reported as Human only when a reader is actually
@@ -264,7 +266,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
                         : null);
         }).ToArray();
 
-        return SelectOneStrictCandidate(options, mediaType, excludedProviderResultIds);
+        return SelectOneStrictCandidate(options, mediaType, exclusions);
     }
 
     /// <summary>
@@ -281,21 +283,21 @@ public sealed class ExternalCandidateAvailabilityChecker(
     /// retry loop that advances through candidates needs the ordering to be
     /// the same each time it looks.
     /// <para>
-    /// <paramref name="excludedProviderResultIds"/> is how the acquisition
-    /// path says "these were already tried and failed": without it, declining
-    /// the winner would leave the next search nominating that same record and
-    /// the request with no confirmed candidate at all.
+    /// <paramref name="exclusions"/> is how the acquisition path says "these
+    /// were already tried and failed": without it, declining the winner would
+    /// leave the next search nominating that same record -- or an identical
+    /// re-posting of it -- and the request with no confirmed candidate at all.
     /// </para>
     /// </remarks>
     private static IReadOnlyList<FulfillmentOption> SelectOneStrictCandidate(
         IReadOnlyList<FulfillmentOption> options,
         RequestMediaType mediaType,
-        IReadOnlySet<string>? excludedProviderResultIds)
+        Providers.ExternalCandidateExclusions? exclusions)
     {
         var strictWinner = Providers.ExternalCandidateRanker.SelectBest(
             options.Where(option =>
                 option.MatchBasis == Matching.BookMatchBasis.StrictTitleAuthor &&
-                excludedProviderResultIds?.Contains(option.ProviderResultId) != true),
+                exclusions?.Excludes(option) != true),
             mediaType);
         if (strictWinner is null)
         {

@@ -39,6 +39,9 @@ public enum PreferenceAmbiguityResolutionOutcome
     Conflict
 }
 
+/// <summary>What happened to the retry budget when an automatic provider job failed.</summary>
+public sealed record ExternalFailureOutcome(bool AdvancesToNextCandidate, int FailuresSoFar, int AttemptLimit);
+
 public sealed class AutomaticRequestFulfillmentService(
     IRequestRepository requests,
     IProviderAttemptRepository attempts,
@@ -57,37 +60,40 @@ public sealed class AutomaticRequestFulfillmentService(
     /// scheduled pass can advance to the next ranked one (PROVIDER-7).
     /// </summary>
     /// <returns>
-    /// True when the provider's attempt budget still has room, meaning the
+    /// Whether the provider's attempt budget still had room, meaning the
     /// request was left in the automatic queue to try the next candidate
-    /// rather than moved to review. The caller uses this to schedule a prompt
+    /// rather than moved to review, plus the counts the ledger needs to say
+    /// "attempt 2 of 3". The caller uses the first to schedule a prompt
     /// recheck: the next attempt is a different record, not a repeat of the
     /// lookup that just failed.
     /// </returns>
-    public async Task<bool> RecordExternalAcquisitionFailureAsync(
+    public async Task<ExternalFailureOutcome> RecordExternalAcquisitionFailureAsync(
         Guid requestId, Guid requestFormatId, string providerId, string candidateReference,
-        int automaticAttemptLimit, string reason, CancellationToken cancellationToken)
+        string? candidateFingerprint, int automaticAttemptLimit, string reason, CancellationToken cancellationToken)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
-            return false;
+            return new ExternalFailureOutcome(false, 0, automaticAttemptLimit);
 
+        var failures = 0;
         if (!string.IsNullOrWhiteSpace(providerId) && !string.IsNullOrWhiteSpace(candidateReference))
         {
             request.RecordAutomaticCandidateFailure(
-                requestFormatId, providerId, candidateReference, reason, clock.UtcNow);
+                requestFormatId, providerId, candidateReference, reason, clock.UtcNow, candidateFingerprint);
+            failures = request.CountAutomaticCandidateFailures(requestFormatId, providerId);
 
-            if (request.CountAutomaticCandidateFailures(requestFormatId, providerId) < automaticAttemptLimit)
+            if (failures < automaticAttemptLimit)
             {
                 // One bad copy is not a reason to stop. Leave the request in
                 // the automatic queue with this candidate ruled out.
                 await requests.SaveChangesAsync(cancellationToken);
-                return true;
+                return new ExternalFailureOutcome(true, failures, automaticAttemptLimit);
             }
         }
 
         await MarkForReviewAsync(request, RequestReviewCategory.SecurityOrIdentityFailure, reason, cancellationToken);
         await requests.SaveChangesAsync(cancellationToken);
-        return false;
+        return new ExternalFailureOutcome(false, failures, automaticAttemptLimit);
     }
 
     /// <summary>

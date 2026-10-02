@@ -123,7 +123,12 @@ public sealed record FulfillmentOption(
     IReadOnlyList<string>? SectionTitles = null,
     IReadOnlyList<string>? NarratorNames = null,
     IReadOnlyList<string>? SourceGenres = null,
-    Uri? CoverArtUri = null);
+    Uri? CoverArtUri = null,
+    // The provider's raw release name, retained only to describe an
+    // automatic attempt in the administrator-only provider-activity ledger and
+    // to recognize the same release posted twice. Untrusted text: it is never
+    // shown to a requester and never used as a ranking input.
+    string? ReleaseName = null);
 
 /// <summary>
 /// Deterministic classification of an audiobook candidate's narration, as

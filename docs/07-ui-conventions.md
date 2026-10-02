@@ -62,9 +62,47 @@ request lifecycle yet. This mapping has its own functions on
 separate from `StatusColor`/`StatusLabel` rather than folded into that
 switch. Media-type icon still comes from the shared `MediaTypeVisuals.Icon`.
 
+## Provider activity outcomes
+
+The provider-activity ledger (a request's admin detail page and the Tasks
+dashboard) records one row per automatic lookup. Its outcomes are their own
+vocabulary — they are not a request or format status — so they have their own
+mapping on `MediaTypeVisuals` (`AttemptOutcomeColor`, `AttemptOutcomeLabel`,
+`AttemptOutcomeHint`, `AttemptOutcomeIcon`) and are drawn only through
+`ProviderAttemptChip`. They follow the same colour rule as everything else:
+
+| Outcome | Chip | Meaning |
+| --- | --- | --- |
+| `Submitted` | blue, "In progress" | A copy is being fetched. Nothing needs doing. |
+| `Retrying` | blue, "Trying next copy" | A copy failed its checks and the next best one is already being tried. Nothing needs doing. |
+| `Acquired` | green | A copy was fetched and sent to the security checks. |
+| `CandidatesFound` | blue | Possible copies were found; a librarian chooses. |
+| `NoMatch` | grey, "Nothing found" | The source had nothing; it is asked again later. |
+| `Blocked` | amber | A setting stopped the lookup; check the source's configuration. |
+| `Failed` | red | A real failure that needs a librarian. |
+
+The rule worth protecting is that **red means a person must act**. The retry
+loop deliberately moves on from a bad copy by itself, so that step is
+`Retrying`, never `Failed`; only an exhausted attempt budget, or a failure
+outside the automatic loop, is `Failed`. Drawing the intermediate step in red
+taught administrators to ignore red. Each chip also carries an icon and a
+tooltip that says in words whether anything needs doing, so the state is not
+carried by colour alone.
+
+The requester-safe format chip follows the same idea: while an automatic job
+has failed but the request is still in the automatic queue, the progress code
+is `AcquisitionRetrying` (blue, generic text) rather than `AcquisitionFailed`
+(red). `AcquisitionFailed` remains for a failed job that is not being retried.
+
+Ledger wording for the retry loop lives in `AutomaticAttemptNarrative`, not in
+the pages: each line says which attempt it is ("Attempt 2 of 3"), whether
+anything needs doing, and what happens next. A fetch row names the release
+(provider-supplied, so it is cleaned, length-bounded and only ever rendered as
+text, and it appears in the administrator-only ledger, never to a requester).
+
 ## Use the shared components, not a hand-rolled `MudChip`
 
-Three components in
+Four components in
 [`FamilyLibrarian.Web.Client/Requests/`](../src/FamilyLibrarian.Web.Client/Requests/)
 cover every case:
 
@@ -73,6 +111,7 @@ cover every case:
 | `FormatStatusChip` | One request format (Ebook/Audiobook + its status) | icon (media type) + chip colored by status + tooltip; clickable once a safe `ExternalActionUri` is set |
 | `RequestStatusChip` | A whole request's status (no single media type) | chip colored by status, short label by default |
 | `MediaTypeChip` | A media type with no status attached (e.g. a provider lookup) | neutral/outlined chip + icon + tooltip |
+| `ProviderAttemptChip` | One provider-activity ledger row's outcome | chip colored by outcome + icon + tooltip saying whether anything needs doing |
 
 ```razor
 @* One request's format list *@

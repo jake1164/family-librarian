@@ -103,4 +103,26 @@ public sealed class AutomaticCandidateFailureTests
         Assert.AreEqual(DeclinedCandidateReason.RequesterDeclined, request.DeclinedCandidates.Single().Reason);
         Assert.AreEqual(0, request.CountAutomaticCandidateFailures(formatId, "prowlarr"));
     }
+
+    [TestMethod]
+    public void TheReleaseFingerprintIsKeptWithTheFailure()
+    {
+        var request = NewRequest(out var formatId);
+
+        request.RecordAutomaticCandidateFailure(
+            formatId, "prowlarr", "c_one", "Not the requested book.", Now, releaseFingerprint: "ABC123");
+
+        Assert.AreEqual("ABC123", request.DeclinedCandidates.Single().ReleaseFingerprint);
+    }
+
+    [TestMethod]
+    public void AFailureWithoutAFingerprintStillCountsAgainstTheBudget()
+    {
+        var request = NewRequest(out var formatId);
+
+        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_one", "Failed.", Now);
+
+        Assert.IsNull(request.DeclinedCandidates.Single().ReleaseFingerprint);
+        Assert.AreEqual(1, request.CountAutomaticCandidateFailures(formatId, "prowlarr"));
+    }
 }

@@ -116,7 +116,7 @@
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
                                 <MudLink Href="@($"admin/requests/{attempt.RequestId}")">@attempt.WorkTitle</MudLink>
                                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.ProviderId</MudChip>
-                                <MudChip T="string" Size="Size.Small" Color="@AttemptColor(attempt.Outcome)">@attempt.Outcome</MudChip>
+                                <ProviderAttemptChip Outcome="@attempt.Outcome" />
                                 <MediaTypeChip MediaType="@attempt.MediaType" />
                             </MudStack>
                             <MudText Typo="Typo.body2">@attempt.Summary</MudText>
@@ -288,14 +288,6 @@
     }
 
 
-
-    private static Color AttemptColor(string outcome) => outcome switch
-    {
-        "Acquired" => Color.Success,
-        "Failed" or "Blocked" => Color.Error,
-        "CandidatesFound" => Color.Info,
-        _ => Color.Default
-    };
 
     private static Color PublishingColor(string status) => status switch
     {

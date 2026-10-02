@@ -83,7 +83,17 @@ public sealed class ExternalProviderRetryLoopEndpointTests
             "The retail-tagged release outranks the untagged one and must be tried first.");
 
         // Its job fails after submit.
+        var wakeUp = factory.Services.GetRequiredService<FamilyLibrarian.Web.Acquisition.AutomaticFulfillmentSignal>();
+        Assert.IsFalse(
+            await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None),
+            "Nothing has failed yet, so nothing should have asked for a pass.");
         await RetryLoopSupport.RunPollingAsync(factory);
+
+        // The failure must wake the fulfillment worker, or the next candidate
+        // waits for its two-minute sweep -- the lag this signal exists to remove.
+        Assert.IsTrue(
+            await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None),
+            "Ruling out a failed copy must ask the worker to run now.");
 
         await using (var scope = factory.Services.CreateAsyncScope())
         {
@@ -110,12 +120,36 @@ public sealed class ExternalProviderRetryLoopEndpointTests
 
         await RetryLoopSupport.RunPollingAsync(factory);
 
+        CollectionAssert.DoesNotContain(
+            client.SubmittedCandidates, RetryLoopExternalProviderClient.TwinReference,
+            "The same release posted under another reference must not be fetched after it failed.");
+        CollectionAssert.AreEqual(
+            new[] { RetryLoopExternalProviderClient.FailingReference, RetryLoopExternalProviderClient.SucceedingReference },
+            client.SubmittedCandidates);
+
         var attempts = await admin.GetFromJsonAsync<ProviderAttemptResponse[]>(
             $"/api/v1/admin/requests/{request.Id}/provider-attempts");
         Assert.IsNotNull(attempts);
+
+        // A step the loop is handling is "Retrying", not "Failed": nothing is
+        // wrong that a person must fix, and the ledger must not say otherwise.
+        var retrying = attempts.Single(attempt => attempt.Outcome == "Retrying");
+        Assert.Contains("Attempt 1 of 3", retrying.Summary);
+        Assert.Contains("Nothing needs doing", retrying.Summary);
+        Assert.IsFalse(
+            attempts.Any(attempt => attempt.Outcome == "Failed"),
+            "One bad copy followed by a good one is not a failure anywhere in the ledger.");
+
+        // The row for a fetch names the release, so the history reads as a
+        // sequence of specific copies rather than identical "submitted" lines.
         Assert.IsTrue(
-            attempts.Any(attempt => attempt.Summary.Contains("next ranked candidate", StringComparison.Ordinal)),
-            "The provider-activity ledger must say the loop advanced, not merely that something failed.");
+            attempts.Any(attempt => attempt.Outcome == "Submitted" &&
+                attempt.Summary.Contains("(retail) (epub)", StringComparison.Ordinal)),
+            "The submitted row must identify which release was fetched.");
+        Assert.IsTrue(
+            attempts.Any(attempt => attempt.Outcome == "Submitted" &&
+                attempt.Summary.Contains("Attempt 2 of 3", StringComparison.Ordinal)),
+            "The second fetch must say it is attempt 2 of 3.");
     }
 }
 
@@ -259,7 +293,11 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
     private readonly Dictionary<string, string> _jobCandidates = new(StringComparer.Ordinal);
     private int _jobCounter;
 
+    public const string TwinReference = "c_retail_twin";
+
     public string? LastSubmittedCandidate { get; private set; }
+
+    public List<string> SubmittedCandidates { get; } = [];
 
     public Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
@@ -278,20 +316,25 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
         IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
             ?
             [
-                ReleaseOnly(SucceedingReference, "The Hobbit by J. R. R. Tolkien EPUB", retail: false),
-                ReleaseOnly(FailingReference, "J. R. R. Tolkien - The Hobbit (retail) (epub)", retail: true)
+                ReleaseOnly(SucceedingReference, "The Hobbit by J. R. R. Tolkien EPUB", retail: false, size: 1_000_000),
+                ReleaseOnly(FailingReference, "J. R. R. Tolkien - The Hobbit (retail) (epub)", retail: true, size: 1_200_000),
+                // The very same release posted again under another reference:
+                // same name (differently punctuated), same bytes. Trying it
+                // after the first failed would spend an attempt on a copy that
+                // is certain to fail the same way.
+                ReleaseOnly(TwinReference, "J.R.R.Tolkien-The.Hobbit.(retail).(epub)", retail: true, size: 1_200_000)
             ]
             : [];
         return Task.FromResult(candidates);
     }
 
-    private static ExternalProviderCandidate ReleaseOnly(string reference, string releaseName, bool retail) =>
+    private static ExternalProviderCandidate ReleaseOnly(string reference, string releaseName, bool retail, long size) =>
         new(
             reference,
             ExternalProviderWorkEvidence.Empty,
             Edition: null,
             Release: new ExternalProviderReleaseEvidence(
-                releaseName, "epub", 1_200_000, IsCollection: false, PartCount: 1, IsSample: false,
+                releaseName, "epub", size, IsCollection: false, PartCount: 1, IsSample: false,
                 IsAbridged: null, IsUnabridged: null, QualityTags: retail ? ["retail"] : [], AgeDays: 100,
                 DrmStatus: ExternalProviderDrmStatus.None));
 
@@ -306,6 +349,7 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
         CancellationToken cancellationToken)
     {
         LastSubmittedCandidate = request.CandidateReference;
+        SubmittedCandidates.Add(request.CandidateReference);
         var jobId = $"retry-job-{++_jobCounter}";
         _jobCandidates[jobId] = request.CandidateReference;
         return Task.FromResult(ExternalProviderAcquireSubmission.Accepted(

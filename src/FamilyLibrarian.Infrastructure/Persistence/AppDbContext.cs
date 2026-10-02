@@ -595,6 +595,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(candidate => candidate.DeclinedAtUtc).HasColumnName("declined_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(candidate => candidate.Reason).HasColumnName("reason").HasConversion<string>().HasMaxLength(32);
             entity.Property(candidate => candidate.FailureReason).HasColumnName("failure_reason").HasMaxLength(512);
+            entity.Property(candidate => candidate.ReleaseFingerprint).HasColumnName("release_fingerprint").HasMaxLength(64);
 
             entity.HasIndex(candidate => new { candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId });
 
@@ -835,6 +836,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(job => job.AcquireToken).HasColumnName("acquire_token").HasColumnType("text");
             entity.Property(job => job.AcquireRequestId).HasColumnName("acquire_request_id");
             entity.Property(job => job.IsAutomaticAcquisition).HasColumnName("is_automatic_acquisition");
+            entity.Property(job => job.CandidateFingerprint).HasColumnName("candidate_fingerprint").HasMaxLength(64);
             entity.Property(job => job.LifecycleState).HasColumnName("lifecycle_state").HasConversion<string>().HasMaxLength(32);
             entity.Property(job => job.Phase).HasColumnName("phase").HasMaxLength(64);
             entity.Property(job => job.InteractionType).HasColumnName("interaction_type").HasMaxLength(64);

@@ -36,7 +36,8 @@ public sealed class ExternalProviderRecheckService(
     IWorkLookup workLookup,
     IClock clock,
     NotificationService notifications,
-    IUserAccountStore accounts)
+    IUserAccountStore accounts,
+    IAutomaticFulfillmentSignal? fulfillmentSignal = null)
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
@@ -124,22 +125,17 @@ public sealed class ExternalProviderRecheckService(
                         // confirmed single candidate is chosen from what is
                         // left, so the next pass picks the next-ranked record
                         // rather than re-nominating the one that just failed.
-                        var formatDeclines = request.DeclinedCandidates
-                            .Where(declined => declined.RequestFormatId == format.Id &&
-                                string.Equals(declined.ProviderId, provider.ProviderId, StringComparison.OrdinalIgnoreCase))
-                            .ToArray();
-                        var ruledOut = formatDeclines
-                            .Select(declined => declined.ProviderResultId)
-                            .ToHashSet(StringComparer.Ordinal);
-                        var alreadyTried = formatDeclines
-                            .Any(declined => declined.Reason == DeclinedCandidateReason.AutomaticVerificationFailed);
+                        var exclusions = ExternalCandidateExclusions.From(
+                            request.DeclinedCandidates, provider.ProviderId, format.Id);
+                        var alreadyTried = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) > 0;
 
                         var options = await candidateChecker.FindForProviderAsync(
-                            provider, identity, format.MediaType, searchCancellation.Token, ruledOut);
+                            provider, identity, format.MediaType, searchCancellation.Token, exclusions);
                         var searchFoundSomething = options.Count > 0;
-                        options = options
-                            .Where(option => !ruledOut.Contains(option.ProviderResultId))
-                            .ToArray();
+                        // By ID, and by release: a copy that failed is not
+                        // tried again just because the same posting turns up
+                        // under another reference.
+                        options = options.Where(option => !exclusions.Excludes(option)).ToArray();
 
                         // Everything this source offers has now been tried and
                         // failed. That is emphatically not "nothing found": it
@@ -249,22 +245,9 @@ public sealed class ExternalProviderRecheckService(
                             // rather than being reported as an acquisition.
                             if (acquireResult.Outcome == ManualImportOutcome.Success && identityFailure is not null)
                             {
-                                request.RecordAutomaticCandidateFailure(
-                                    format.Id, provider.ProviderId, automaticMatches[0].ProviderResultId,
-                                    identityFailure, clock.UtcNow);
-                                var identityExhausted =
-                                    request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) >=
-                                    provider.AutomaticAttemptLimit;
-                                AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
-                                    identityExhausted
-                                        ? identityFailure
-                                        : $"{identityFailure} Trying the next ranked candidate.",
-                                    nextEligibleCheckAtUtc: identityExhausted ? null : clock.UtcNow);
-                                if (identityExhausted)
-                                {
-                                    await MarkForReviewAsync(request, work.Title, identityFailure, cancellationToken);
-                                }
-
+                                await RecordAutomaticFailureAsync(
+                                    request, format, provider, work.Title, automaticMatches[0], identityFailure,
+                                    cancellationToken);
                                 break;
                             }
 
@@ -284,7 +267,11 @@ public sealed class ExternalProviderRecheckService(
                                 // completion -- this is progress, not a
                                 // failure, so it must not route to review.
                                 AddAttempt(request, format, provider, ProviderAttemptOutcome.Submitted,
-                                    "A high-confidence copy acquisition was submitted and is being tracked to completion.",
+                                    AutomaticAttemptNarrative.Starting(
+                                        AutomaticAttemptNarrative.DescribeCandidate(
+                                            automaticMatches[0].ReleaseName, automaticMatches[0].Title,
+                                            automaticMatches[0].Format, automaticMatches[0].SizeBytes),
+                                        failuresSoFar + 1, provider.AutomaticAttemptLimit),
                                     nextEligibleCheckAtUtc: null);
                                 break;
                             }
@@ -295,26 +282,10 @@ public sealed class ExternalProviderRecheckService(
                             // is a reason to try the next one. Only once the
                             // provider's attempt budget is gone does this
                             // become a librarian's problem.
-                            var failureReason = acquireResult.Error ?? "The automatic copy could not be acquired.";
-                            request.RecordAutomaticCandidateFailure(
-                                format.Id, provider.ProviderId, automaticMatches[0].ProviderResultId,
-                                failureReason, clock.UtcNow);
-                            var exhausted = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) >=
-                                provider.AutomaticAttemptLimit;
-                            AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
-                                exhausted
-                                    ? failureReason
-                                    : $"{failureReason} Trying the next ranked candidate.",
-                                // Retry promptly: the next candidate is a
-                                // different record, not a repeat of the lookup
-                                // that just failed, so the daily/weekly
-                                // schedule is the wrong wait here.
-                                nextEligibleCheckAtUtc: exhausted ? null : clock.UtcNow);
-                            if (exhausted)
-                            {
-                                await MarkForReviewAsync(request, work.Title, failureReason, cancellationToken);
-                            }
-
+                            await RecordAutomaticFailureAsync(
+                                request, format, provider, work.Title, automaticMatches[0],
+                                acquireResult.Error ?? "The automatic copy could not be acquired.",
+                                cancellationToken);
                             break;
                         }
 
@@ -553,6 +524,45 @@ public sealed class ExternalProviderRecheckService(
             await notifications.RecordPreferenceAmbiguityAsync(
                 requesterId, request.Id, workTitle, reason, cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Rules out one automatically fetched copy that failed after download and
+    /// either lines up the next candidate or, once the provider's attempt
+    /// budget is spent, hands the request to a librarian.
+    /// </summary>
+    /// <remarks>
+    /// One place for the bookkeeping every failure shares, so the identity
+    /// mismatch and the plain fetch failure cannot drift apart. A step that
+    /// advances is recorded as <see cref="ProviderAttemptOutcome.Retrying"/>,
+    /// not <see cref="ProviderAttemptOutcome.Failed"/>: nothing needs doing yet,
+    /// and the ledger should not read as though something does.
+    /// </remarks>
+    private async Task RecordAutomaticFailureAsync(
+        BookRequest request, RequestFormat format, ExternalProvider provider, string workTitle,
+        FulfillmentOption option, string reason, CancellationToken cancellationToken)
+    {
+        request.RecordAutomaticCandidateFailure(
+            format.Id, provider.ProviderId, option.ProviderResultId, reason, clock.UtcNow,
+            ExternalReleaseFingerprint.Compute(option.ReleaseName, option.SizeBytes));
+        var failures = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId);
+
+        if (failures >= provider.AutomaticAttemptLimit)
+        {
+            AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                AutomaticAttemptNarrative.Exhausted(reason, failures, provider.AutomaticAttemptLimit),
+                nextEligibleCheckAtUtc: null);
+            await MarkForReviewAsync(request, workTitle, reason, cancellationToken);
+            return;
+        }
+
+        // Retry promptly: the next candidate is a different record, not a
+        // repeat of the lookup that just failed, so the daily/weekly schedule
+        // is the wrong wait here -- and so is the next worker sweep.
+        AddAttempt(request, format, provider, ProviderAttemptOutcome.Retrying,
+            AutomaticAttemptNarrative.Advancing(reason, failures, provider.AutomaticAttemptLimit),
+            nextEligibleCheckAtUtc: clock.UtcNow);
+        fulfillmentSignal?.Request();
     }
 
     /// <summary>

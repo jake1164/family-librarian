@@ -512,9 +512,10 @@ public sealed class ExternalProviderAutomaticAcquisitionFailureEndpointTests
         var attempts = await admin.GetFromJsonAsync<ProviderAttemptResponse[]>(
             $"/api/v1/admin/requests/{request.Id}/provider-attempts");
         Assert.IsNotNull(attempts);
-        var attempt = attempts.Single(candidate => candidate.Outcome == "Failed");
+        // The first failure is a step in the retry loop, not yet a failure.
+        var attempt = attempts.Single(candidate => candidate.Outcome == "Retrying");
         Assert.AreEqual("failing-fetch-external", attempt.ProviderId);
-        Assert.AreEqual("Failed", attempt.Outcome);
+        Assert.AreEqual("Retrying", attempt.Outcome);
 
         // PROVIDER-7 changed *when* this reaches a librarian, not whether it
         // does. A failed copy is now ruled out and the next ranked candidate

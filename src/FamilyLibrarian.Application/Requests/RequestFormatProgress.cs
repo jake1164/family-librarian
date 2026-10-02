@@ -35,11 +35,12 @@ public static class RequestFormatProgress
         LibraryImportStatus? libraryImportStatus,
         AudiobookshelfDeliveryStatus? deliveryStatus,
         ProviderAcquisitionJobLifecycleState? providerJobState = null,
-        string? providerJobPhase = null)
+        string? providerJobPhase = null,
+        bool providerJobAdvancingToNextCandidate = false)
     {
         if (assetState is null && providerJobState is not null)
         {
-            return DescribeProviderJob(providerJobState.Value, providerJobPhase);
+            return DescribeProviderJob(providerJobState.Value, providerJobPhase, providerJobAdvancingToNextCandidate);
         }
 
         return assetState switch
@@ -83,8 +84,17 @@ public static class RequestFormatProgress
     /// ordinary in-progress work.
     /// </summary>
     private static RequestFormatProgressView DescribeProviderJob(
-        ProviderAcquisitionJobLifecycleState state, string? phase) => state switch
+        ProviderAcquisitionJobLifecycleState state, string? phase, bool advancingToNextCandidate) => state switch
     {
+        // An automatic copy failed its checks but the request is still in the
+        // automatic queue: Family Librarian is already moving to the next best
+        // copy and nothing needs a person. Without this the chip said "needs
+        // the librarian's attention" for the minutes between the failure and
+        // the next attempt -- an alarm about a step that was working as
+        // designed. Generic on purpose: this view is also read by requesters.
+        ProviderAcquisitionJobLifecycleState.Failed when advancingToNextCandidate => Stage(
+            "AcquisitionRetrying",
+            "That copy didn't pass its checks. Trying the next best copy; nothing needs doing."),
         ProviderAcquisitionJobLifecycleState.Waiting => Stage(
             "AwaitingProviderAction",
             "A librarian is working with the provider to continue this request."),

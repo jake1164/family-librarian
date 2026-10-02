@@ -42,7 +42,8 @@ public sealed class DeclinedRequestCandidate
     internal DeclinedRequestCandidate(
         Guid requestId, Guid requestFormatId, string providerId, string providerResultId, DateTimeOffset declinedAtUtc,
         DeclinedCandidateReason reason = DeclinedCandidateReason.RequesterDeclined,
-        string? failureReason = null)
+        string? failureReason = null,
+        string? releaseFingerprint = null)
     {
         RequestId = requestId;
         RequestFormatId = requestFormatId;
@@ -51,6 +52,7 @@ public sealed class DeclinedRequestCandidate
         DeclinedAtUtc = declinedAtUtc;
         Reason = reason;
         FailureReason = failureReason;
+        ReleaseFingerprint = releaseFingerprint;
     }
 
     public Guid Id { get; private set; } = Guid.NewGuid();
@@ -73,4 +75,12 @@ public sealed class DeclinedRequestCandidate
     /// something failed. Null for a requester decline.
     /// </summary>
     public string? FailureReason { get; private set; }
+
+    /// <summary>
+    /// A hash of the failed release's normalized name and size, so another
+    /// record that is the same release posted again is not tried (and does not
+    /// spend an attempt) after this one failed. Null when the provider gave no
+    /// name or no size, in which case nothing can be called equivalent.
+    /// </summary>
+    public string? ReleaseFingerprint { get; private set; }
 }

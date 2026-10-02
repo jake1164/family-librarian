@@ -109,4 +109,50 @@ public sealed class RequestFormatProgressTests
         Assert.IsNotNull(result);
         Assert.AreEqual("AwaitingSecurityScan", result.Code);
     }
+
+    [TestMethod]
+    public void AFailedJobThatIsAdvancingToTheNextCopyIsNotPresentedAsAFailure()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null,
+            securityStatus: null,
+            libraryImportStatus: null,
+            deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Failed,
+            providerJobAdvancingToNextCandidate: true);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AcquisitionRetrying", result.Code);
+        Assert.Contains("nothing needs doing", result.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("librarian", result.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [TestMethod]
+    public void AFailedJobNotBeingRetriedStillNeedsTheLibrariansAttention()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null,
+            securityStatus: null,
+            libraryImportStatus: null,
+            deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Failed);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AcquisitionFailed", result.Code);
+    }
+
+    [TestMethod]
+    public void TheAdvancingFlagDoesNotChangeAJobThatHasNotFailed()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null,
+            securityStatus: null,
+            libraryImportStatus: null,
+            deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Running,
+            providerJobAdvancingToNextCandidate: true);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AcquisitionInProgress", result.Code);
+    }
 }

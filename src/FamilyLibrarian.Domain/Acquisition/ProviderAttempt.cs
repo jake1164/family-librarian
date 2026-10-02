@@ -97,7 +97,20 @@ public enum ProviderAttemptOutcome
     /// </summary>
     Submitted,
     Failed,
-    Blocked
+    Blocked,
+
+    /// <summary>
+    /// One automatically fetched copy failed its checks and Family Librarian
+    /// is moving on to the next ranked candidate (PROVIDER-7).
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <see cref="Failed"/>: nothing is wrong that a person
+    /// must fix. It is a recoverable step in a bounded loop, so it has no
+    /// <see cref="ProviderAttempt.IssueKind"/> and is not drawn as an error.
+    /// The terminal case -- the attempt limit is spent -- is still recorded as
+    /// <see cref="Failed"/>.
+    /// </remarks>
+    Retrying
 }
 
 /// <summary>The kind of administrator action an unsuccessful provider attempt needs.</summary>

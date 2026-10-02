@@ -30,7 +30,8 @@ public sealed class ProviderAcquisitionJob
         string? acquireToken,
         DateTimeOffset createdAtUtc,
         Guid? acquireRequestId = null,
-        bool isAutomaticAcquisition = false)
+        bool isAutomaticAcquisition = false,
+        string? candidateFingerprint = null)
     {
         if (requestId == Guid.Empty)
         {
@@ -69,6 +70,7 @@ public sealed class ProviderAcquisitionJob
         AcquireToken = acquireToken;
         AcquireRequestId = acquireRequestId is { } id && id != Guid.Empty ? id : Guid.NewGuid();
         IsAutomaticAcquisition = isAutomaticAcquisition;
+        CandidateFingerprint = string.IsNullOrWhiteSpace(candidateFingerprint) ? null : candidateFingerprint;
         LifecycleState = ProviderAcquisitionJobLifecycleTransitions.InitialState;
         // Poll immediately — the caller submits and the poller picks it up
         // on its very next pass rather than waiting a full interval.
@@ -107,6 +109,13 @@ public sealed class ProviderAcquisitionJob
     public Guid AcquireRequestId { get; private set; }
 
     public bool IsAutomaticAcquisition { get; private set; }
+
+    /// <summary>
+    /// Hash of the submitted release's normalized name and size, carried so a
+    /// later failure of this job can rule out an identical re-posting without
+    /// needing the original search result again.
+    /// </summary>
+    public string? CandidateFingerprint { get; private set; }
 
     public ProviderAcquisitionJobLifecycleState LifecycleState { get; private set; }
 

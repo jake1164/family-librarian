@@ -443,6 +443,14 @@ This is deliberately a conversation, not a provider-side verdict:
    a reason for FL to stop and ask a person; only running out of attempts, or
    running out of untried candidates, is.
 
+   Two further things are worth knowing. FL also skips a record that is the
+   same release as one that failed — the same normalized release name and the
+   same size — so a source that lists one posting twice does not cost a second
+   attempt on bytes certain to fail the same way; populate `release.name` and
+   `release.sizeBytes` honestly and this works without any provider support.
+   And when a copy fails, FL starts the next one at once rather than waiting
+   for its next scheduled pass.
+
    Two things follow for a provider. First, a job in `waiting` with an
    `interaction` object is **not** a failure and never consumes an attempt —
    FL keeps waiting for the administrator action you asked for, so a source

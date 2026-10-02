@@ -135,7 +135,7 @@
                         <MudListItem T="string">
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
                                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.ProviderId</MudChip>
-                                <MudChip T="string" Size="Size.Small" Color="@ProviderAttemptColor(attempt.Outcome)">@attempt.Outcome</MudChip>
+                                <ProviderAttemptChip Outcome="@attempt.Outcome" />
                             </MudStack>
                             <MudText Typo="Typo.body2">@attempt.Summary</MudText>
                             <MudText Typo="Typo.caption">
@@ -714,15 +714,6 @@
         "NotAvailable" or "Cancelled" => Color.Error,
         "NeedsReview" => Color.Warning,
         _ => Color.Primary
-    };
-
-    private static Color ProviderAttemptColor(string outcome) => outcome switch
-    {
-        "Acquired" => Color.Success,
-        "CandidatesFound" => Color.Info,
-        "NoMatch" => Color.Default,
-        "Blocked" => Color.Warning,
-        _ => Color.Error
     };
 
     private void StopFulfillmentOptionsLoad()

@@ -300,7 +300,8 @@ public sealed class BookRequest
     /// free "keep looking".
     /// </remarks>
     public void RecordAutomaticCandidateFailure(
-        Guid requestFormatId, string providerId, string providerResultId, string? failureReason, DateTimeOffset atUtc)
+        Guid requestFormatId, string providerId, string providerResultId, string? failureReason, DateTimeOffset atUtc,
+        string? releaseFingerprint = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(providerId);
         ArgumentException.ThrowIfNullOrWhiteSpace(providerResultId);
@@ -311,7 +312,7 @@ public sealed class BookRequest
             declined.ProviderResultId == providerResultId);
         _declinedCandidates.Add(new DeclinedRequestCandidate(
             Id, requestFormatId, providerId, providerResultId, atUtc,
-            DeclinedCandidateReason.AutomaticVerificationFailed, failureReason));
+            DeclinedCandidateReason.AutomaticVerificationFailed, failureReason, releaseFingerprint));
     }
 
     /// <summary>

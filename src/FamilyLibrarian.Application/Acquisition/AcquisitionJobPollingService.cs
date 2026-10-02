@@ -32,7 +32,8 @@ public sealed class AcquisitionJobPollingService(
     ManualImportPolicy importPolicy,
     ICredentialProtector protector,
     IAuditWriter audit,
-    IClock clock)
+    IClock clock,
+    IAutomaticFulfillmentSignal? fulfillmentSignal = null)
 {
     private const int BatchSize = 25;
 
@@ -421,6 +422,7 @@ public sealed class AcquisitionJobPollingService(
         job.RecordFailure(errorCode, errorMessage, retryable, retryAfterSeconds, detailsJson, now);
 
         var advancedToNextCandidate = false;
+        ExternalFailureOutcome? automaticOutcome = null;
         if (job.IsAutomaticAcquisition && (!candidateChanged || alreadyRetriedStaleCandidate))
         {
             // The attempt budget belongs to the provider that was asked, so it
@@ -428,24 +430,45 @@ public sealed class AcquisitionJobPollingService(
             // that has since been deleted falls back to the registration
             // default, which still bounds the loop.
             var failedProvider = await externalProviders.FindAsync(job.ExternalProviderId, cancellationToken);
-            advancedToNextCandidate = await automaticFulfillment.RecordExternalAcquisitionFailureAsync(
+            var reason = candidateChanged
+                ? "The provider reported that this copy changed twice. A librarian must refresh the source before another automatic attempt."
+                : errorMessage ?? "The automatic copy could not be acquired.";
+            automaticOutcome = await automaticFulfillment.RecordExternalAcquisitionFailureAsync(
                 job.RequestId,
                 job.RequestFormatId,
                 job.ProviderId,
                 job.CandidateReference,
+                job.CandidateFingerprint,
                 failedProvider?.AutomaticAttemptLimit ?? Domain.Providers.ExternalProvider.DefaultAutomaticAttemptLimit,
-                candidateChanged
-                    ? "The provider reported that this copy changed twice. A librarian must refresh the source before another automatic attempt."
-                    : errorMessage ?? "The automatic copy could not be acquired.",
+                reason,
                 cancellationToken);
+            advancedToNextCandidate = automaticOutcome.AdvancesToNextCandidate;
+        }
+
+        // A step that moves on to the next candidate is progress, not an
+        // error: it is recorded as Retrying so it neither reads as a failure
+        // nor counts as an operational issue. Only a spent budget (or a
+        // failure outside the automatic loop) is a Failed row.
+        var outcome = advancedToNextCandidate ? ProviderAttemptOutcome.Retrying : ProviderAttemptOutcome.Failed;
+        string summary;
+        if (candidateChanged && !alreadyRetriedStaleCandidate)
+        {
+            summary = $"CANDIDATE_CHANGED: {errorMessage ?? "The candidate changed upstream."}";
+        }
+        else if (automaticOutcome is { } automatic && automatic.FailuresSoFar > 0)
+        {
+            var failureReason = errorMessage ?? "The acquisition failed.";
+            summary = advancedToNextCandidate
+                ? AutomaticAttemptNarrative.Advancing(failureReason, automatic.FailuresSoFar, automatic.AttemptLimit)
+                : AutomaticAttemptNarrative.Exhausted(failureReason, automatic.FailuresSoFar, automatic.AttemptLimit);
+        }
+        else
+        {
+            summary = errorMessage ?? "The acquisition failed.";
         }
 
         attempts.Add(new ProviderAttempt(
-            job.RequestId, job.RequestFormatId, job.ProviderId, ProviderAttemptOutcome.Failed,
-            candidateChanged ? $"CANDIDATE_CHANGED: {errorMessage ?? "The candidate changed upstream."}" :
-                advancedToNextCandidate
-                    ? $"{errorMessage ?? "The acquisition failed."} Trying the next ranked candidate."
-                    : errorMessage ?? "The acquisition failed.", now,
+            job.RequestId, job.RequestFormatId, job.ProviderId, outcome, summary, now,
             // Either kind of advance wants a prompt recheck: the next attempt
             // is a different record, not a repeat of what just failed.
             nextEligibleCheckAtUtc: (candidateChanged && !alreadyRetriedStaleCandidate) || advancedToNextCandidate
@@ -453,6 +476,13 @@ public sealed class AcquisitionJobPollingService(
                 : null));
         await jobs.SaveChangesAsync(cancellationToken);
         await attempts.SaveChangesAsync(cancellationToken);
+
+        // Wake the fulfillment worker so the next candidate starts now rather
+        // than at its next two-minute sweep.
+        if (advancedToNextCandidate)
+        {
+            fulfillmentSignal?.Request();
+        }
 
         if (wasWaitingForInteraction)
         {

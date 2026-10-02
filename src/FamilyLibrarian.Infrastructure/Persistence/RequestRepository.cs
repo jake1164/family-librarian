@@ -270,7 +270,7 @@ public sealed class RequestRepository(
                 job.LifecycleState != ProviderAcquisitionJobLifecycleState.Completed &&
                 job.LifecycleState != ProviderAcquisitionJobLifecycleState.Cancelled)
             .Select(job => new ProviderJobProgressRow(
-                job.RequestFormatId, job.LifecycleState, job.Phase, job.CreatedAtUtc))
+                job.RequestFormatId, job.LifecycleState, job.Phase, job.CreatedAtUtc, job.IsAutomaticAcquisition))
             .ToArrayAsync(cancellationToken);
         var latestProviderJobs = providerJobs
             .GroupBy(job => job.RequestFormatId)
@@ -374,7 +374,7 @@ public sealed class RequestRepository(
                         if (!latestAssets.TryGetValue(format.Id, out var asset))
                         {
                             return latestProviderJobs.TryGetValue(format.Id, out var providerJob)
-                                ? WithProviderJobProgress(format, providerJob)
+                                ? WithProviderJobProgress(format, providerJob, request.Status)
                                 : format;
                         }
 
@@ -479,13 +479,14 @@ public sealed class RequestRepository(
                 {
                     Formats = request.Formats
                         .Select(format => latestProviderJobs.TryGetValue(format.Id, out var providerJob)
-                            ? WithProviderJobProgress(format, providerJob)
+                            ? WithProviderJobProgress(format, providerJob, request.Status)
                             : format)
                         .ToArray()
                 })
                 .ToArray();
 
-    private static RequestFormatView WithProviderJobProgress(RequestFormatView format, ProviderJobProgressRow providerJob) =>
+    private static RequestFormatView WithProviderJobProgress(
+        RequestFormatView format, ProviderJobProgressRow providerJob, RequestStatus requestStatus) =>
         format with
         {
             Progress = RequestFormatProgress.Describe(
@@ -494,7 +495,14 @@ public sealed class RequestRepository(
                 libraryImportStatus: null,
                 deliveryStatus: null,
                 providerJobState: providerJob.LifecycleState,
-                providerJobPhase: providerJob.Phase),
+                providerJobPhase: providerJob.Phase,
+                // The retry loop only leaves a request pending after an
+                // automatic job fails when it is about to try another copy;
+                // an exhausted budget moves it to review. A failed job on a
+                // request that is not pending, or one a librarian started by
+                // hand, genuinely needs attention and keeps the red chip.
+                providerJobAdvancingToNextCandidate:
+                    providerJob.IsAutomaticAcquisition && requestStatus == RequestStatus.PendingAcquisition),
             // Provider interaction control is an administrator-only,
             // server-brokered workflow. Never turn a provider URL into a
             // requester-visible link while its job is active.
@@ -713,7 +721,8 @@ public sealed class RequestRepository(
         Guid RequestFormatId,
         ProviderAcquisitionJobLifecycleState LifecycleState,
         string? Phase,
-        DateTimeOffset CreatedAtUtc);
+        DateTimeOffset CreatedAtUtc,
+        bool IsAutomaticAcquisition);
 
     private sealed record MediaAssetProgressRow(
         Guid AssetId,
