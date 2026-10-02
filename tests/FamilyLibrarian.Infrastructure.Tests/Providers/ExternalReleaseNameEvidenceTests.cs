@@ -175,4 +175,32 @@ public sealed class ExternalReleaseNameEvidenceTests
 
         Assert.IsFalse(verdict.AssertsExpectedTitle);
     }
+
+    [TestMethod]
+    public void ExpectedSeriesNameAndNumberExplainTheirTokensInTheReleaseName()
+    {
+        var series = new[] { new BookSeries("The Empyrean", "3.5") };
+
+        var verdict = ExternalReleaseNameEvidence.Evaluate(
+            "Rebecca.Yarros-The.Empyrean.3.5-Threshing.Day",
+            ["Threshing Day"], "Rebecca Yarros", series);
+        var withoutSeries = ExternalReleaseNameEvidence.Evaluate(
+            "Rebecca.Yarros-The.Empyrean.3.5-Threshing.Day",
+            ["Threshing Day"], "Rebecca Yarros");
+
+        Assert.IsTrue(verdict.IsStrictWorkAssertion);
+        Assert.IsFalse(withoutSeries.IsStrictWorkAssertion);
+    }
+
+    [TestMethod]
+    public void AReleaseOfADifferentSeriesVolumeStaysUnexplained()
+    {
+        var series = new[] { new BookSeries("The Empyrean", "3.5") };
+
+        var verdict = ExternalReleaseNameEvidence.Evaluate(
+            "Rebecca.Yarros-The.Empyrean.3-Threshing.Day",
+            ["Threshing Day"], "Rebecca Yarros", series);
+
+        Assert.IsFalse(verdict.IsStrictWorkAssertion);
+    }
 }

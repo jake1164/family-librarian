@@ -134,8 +134,10 @@ public sealed class ExternalCandidateAvailabilityChecker(
             : null;
 
         var isbn13 = identity.Isbn13Candidates.FirstOrDefault();
+        // Search on the title without its subtitle so a long catalog title still
+        // finds the release; the verification below still uses the full identity.
         var work = new Providers.ExternalProviderWorkEvidence(
-            identity.Title,
+            Providers.ExternalSearchTitle.Build(identity.Title),
             Subtitle: null,
             Authors: identity.Authors ?? (identity.Author is null
                 ? []

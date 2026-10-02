@@ -556,6 +556,41 @@ public sealed class OpenLibraryBookMetadataProviderTests
     }
 
     [TestMethod]
+    public async Task GetDetailsAsyncIgnoresAnArbitraryUntaggedEditionTitle()
+    {
+        // Live OL45870364W: a key: lookup returns an arbitrary edition
+        // ("Dia da Ceifa", no language tag) because nothing matched a query.
+        using var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("editions.json", StringComparison.Ordinal))
+            {
+                return JsonResponse("""{ "entries": [] }""");
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL45870364W",
+                      "title": "Threshing Day",
+                      "author_name": ["Rebecca Yarros"],
+                      "editions": { "docs": [ { "key": "/books/OL62616037M", "title": "Dia da Ceifa" } ] }
+                    }
+                  ]
+                }
+                """);
+        });
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var candidate = await provider.GetDetailsAsync("OL45870364W", CancellationToken.None);
+
+        Assert.IsNotNull(candidate);
+        Assert.AreEqual("Threshing Day", candidate.Title);
+    }
+
+    [TestMethod]
     public async Task SearchAsyncPropagatesProviderHttpFailure()
     {
         using var handler = new StubHttpMessageHandler((_, _) =>

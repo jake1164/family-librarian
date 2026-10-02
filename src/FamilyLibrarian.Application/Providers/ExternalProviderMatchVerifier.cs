@@ -30,7 +30,8 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
             identity.Isbn13Candidates.FirstOrDefault(),
             candidates,
             identity.Language,
-            cancellationToken);
+            cancellationToken,
+            identity.Series);
 
     /// <summary>
     /// Returns one verdict per candidate, keyed by <see cref="ExternalProviderCandidate.ProviderReference"/>.
@@ -53,7 +54,7 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
     private async Task<IReadOnlyDictionary<string, ExternalProviderMatchVerdict>> VerifyAsync(
         string title, IReadOnlyList<string>? alternateTitles, string? author, string? isbn13,
         IReadOnlyList<ExternalProviderCandidate> candidates, string? acceptedLanguage,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, IReadOnlyList<BookSeries>? series = null)
     {
         if (candidates.Count == 0)
         {
@@ -74,7 +75,7 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
         foreach (var candidate in candidates)
         {
             releaseNames[candidate.ProviderReference] =
-                ExternalReleaseNameEvidence.Evaluate(candidate.Release?.Name, expectedTitles, author);
+                ExternalReleaseNameEvidence.Evaluate(candidate.Release?.Name, expectedTitles, author, series);
         }
 
         var candidateBooks = candidates

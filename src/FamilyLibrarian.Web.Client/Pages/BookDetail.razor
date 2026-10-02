@@ -588,21 +588,15 @@
         sentAttemptId = null;
         availability = null;
 
-        // Search already fetched this candidate a moment ago: show it immediately
-        // instead of leaving the page blank while we re-fetch full details.
+        // The detail lookup can legitimately return a different title/cover than
+        // the search card (e.g. a preferred-language edition replacing a foreign
+        // work title). Showing the card first made the page visibly flip a second
+        // after opening, so keep the loading state and only use the card as a
+        // fallback if the fetch fails.
         var cached = FindCachedCandidate();
-        if (cached is not null)
-        {
-            book = cached;
-            isLoading = false;
-            isRefreshing = true;
-        }
-        else
-        {
-            book = null;
-            isLoading = true;
-            isRefreshing = false;
-        }
+        book = null;
+        isLoading = true;
+        isRefreshing = false;
 
         try
         {
@@ -621,12 +615,9 @@
         }
         catch (HttpRequestException)
         {
-            // A transient failure keeps showing the cached summary rather than
-            // blanking a page the user already saw content on.
-            if (cached is null)
-            {
-                book = null;
-            }
+            // A transient failure falls back to the search card's summary rather
+            // than blanking the page.
+            book = cached;
         }
         finally
         {

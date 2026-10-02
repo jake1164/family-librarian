@@ -74,7 +74,7 @@ public sealed class OpenLibraryBookMetadataProvider(
 
         var document = response?.Documents?.SingleOrDefault(document =>
             string.Equals(GetWorkId(document.Key), externalId, StringComparison.Ordinal));
-        var candidate = document is null ? null : ToCandidate(document);
+        var candidate = document is null ? null : ToCandidate(document, trustUntaggedEditionTitle: false);
         if (candidate is null)
         {
             return null;
@@ -167,7 +167,7 @@ public sealed class OpenLibraryBookMetadataProvider(
         }
 
         var candidates = response.Documents
-            .Select(ToCandidate)
+            .Select(document => ToCandidate(document, trustUntaggedEditionTitle: true))
             .Where(candidate => candidate is not null)
             .Cast<BookCandidate>()
             .ToArray();
@@ -203,7 +203,12 @@ public sealed class OpenLibraryBookMetadataProvider(
             PreferredLanguage,
             StringComparison.OrdinalIgnoreCase);
 
-    private BookCandidate? ToCandidate(OpenLibrarySearchDocument document)
+    // trustUntaggedEditionTitle: in a text search the included edition is the one
+    // that matched the query, so its title is relevant even without a language
+    // tag. A key: lookup has nothing to match, so Open Library returns an arbitrary
+    // edition (observed: a Portuguese edition for OL45870364W) and only a
+    // confirmed preferred-language edition may override the work title.
+    private BookCandidate? ToCandidate(OpenLibrarySearchDocument document, bool trustUntaggedEditionTitle)
     {
         var externalId = GetWorkId(document.Key);
         var title = document.Title?.Trim();
@@ -245,6 +250,7 @@ public sealed class OpenLibraryBookMetadataProvider(
         // of just keeping the one real edition's own.
         var editionConfirmedOtherLanguage = primaryEditionLanguage is not null && !useEditionFields;
         var displayTitle = primaryEdition is not null && !editionConfirmedOtherLanguage &&
+            (trustUntaggedEditionTitle || useEditionFields) &&
             !string.IsNullOrWhiteSpace(primaryEdition.Title)
                 ? primaryEdition.Title.Trim()
                 : title;

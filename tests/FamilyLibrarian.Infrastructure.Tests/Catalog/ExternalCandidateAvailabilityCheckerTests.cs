@@ -64,6 +64,22 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
     }
 
     [TestMethod]
+    public async Task TheProviderIsSearchedWithoutTheSubtitle()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("free-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+
+        await context.Checker.FindAsync(
+            new BookIdentity(
+                "Threshing Day: Return to the Empyrean world with thirteen stories", "Rebecca Yarros", []),
+            RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual("Threshing Day", context.Client.LastSearchRequest!.Work.Title);
+    }
+
+    [TestMethod]
     public async Task ACollectionCandidateIsFlaggedForReleaseConfirmation()
     {
         var context = new TestContext();

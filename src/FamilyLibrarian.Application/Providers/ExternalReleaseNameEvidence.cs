@@ -102,7 +102,8 @@ public static class ExternalReleaseNameEvidence
     /// the first one that produces an assertion wins.
     /// </param>
     public static ReleaseNameVerdict Evaluate(
-        string? releaseName, IReadOnlyList<string> expectedTitles, string? expectedAuthor)
+        string? releaseName, IReadOnlyList<string> expectedTitles, string? expectedAuthor,
+        IReadOnlyList<BookSeries>? expectedSeries = null)
     {
         ArgumentNullException.ThrowIfNull(expectedTitles);
 
@@ -123,7 +124,7 @@ public static class ExternalReleaseNameEvidence
         ReleaseNameVerdict? best = null;
         foreach (var expectedTitle in expectedTitles.Where(title => !string.IsNullOrWhiteSpace(title)))
         {
-            var verdict = EvaluateOne(releaseName, expectedTitle, expectedAuthor);
+            var verdict = EvaluateOne(releaseName, expectedTitle, expectedAuthor, expectedSeries);
             if (verdict.IsStrictWorkAssertion)
             {
                 return verdict;
@@ -142,7 +143,8 @@ public static class ExternalReleaseNameEvidence
     }
 
     private static ReleaseNameVerdict EvaluateOne(
-        string releaseName, string expectedTitle, string? expectedAuthor)
+        string releaseName, string expectedTitle, string? expectedAuthor,
+        IReadOnlyList<BookSeries>? expectedSeries)
     {
         var withoutGroupTag = TrailingGroupTag.Replace(releaseName, string.Empty);
         var tokens = Tokenize(withoutGroupTag);
@@ -156,6 +158,8 @@ public static class ExternalReleaseNameEvidence
         var assertsTitle = ConsumeRun(tokens, consumed, TitleRunVariants(expectedTitle));
         var assertsAuthor = expectedAuthor is not null &&
             ConsumeRun(tokens, consumed, [WordTokens(expectedAuthor)]);
+
+        ConsumeSeries(tokens, consumed, expectedSeries);
 
         var narrator = ConsumeNarrator(tokens, consumed);
         string? language = null;
@@ -219,6 +223,32 @@ public static class ExternalReleaseNameEvidence
 
         return new ReleaseNameVerdict(
             assertsTitle, assertsAuthor, language, narrator, format, unexplained, RejectionReason: null);
+    }
+
+    /// <summary>
+    /// Accounts for the requested work's own series name and number
+    /// (<c>The.Empyrean.3.5-Threshing.Day</c>), which a release name routinely
+    /// carries. The number is only explained when the series name itself is
+    /// present, and only when it equals the expected position, so a release of a
+    /// different volume keeps its number unexplained and stays unaccepted.
+    /// </summary>
+    private static void ConsumeSeries(
+        List<ReleaseNameToken> tokens, bool[] consumed, IReadOnlyList<BookSeries>? expectedSeries)
+    {
+        foreach (var series in expectedSeries ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(series.Name) ||
+                !ConsumeRun(tokens, consumed, TitleRunVariants(series.Name)))
+            {
+                continue;
+            }
+
+            var position = WordTokens(series.Position ?? string.Empty);
+            if (position.Length > 0)
+            {
+                ConsumeRun(tokens, consumed, [position]);
+            }
+        }
     }
 
     /// <summary>
