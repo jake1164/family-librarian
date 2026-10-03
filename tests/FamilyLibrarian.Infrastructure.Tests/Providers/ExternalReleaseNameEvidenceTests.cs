@@ -193,6 +193,23 @@ public sealed class ExternalReleaseNameEvidenceTests
     }
 
     [TestMethod]
+    public void ACatalogSeriesNameMissingItsArticleStillExplainsTheReleasesLeadingArticle()
+    {
+        // The catalog's series record is routinely just the bare series name
+        // ("Empyrean"), while a release still carries the branding article
+        // ("The.Empyrean"). The leading "The" must not be left unexplained.
+        var series = new[] { new BookSeries("Empyrean", "3.5") };
+
+        var verdict = ExternalReleaseNameEvidence.Evaluate(
+            "Rebecca.Yarros-The.Empyrean.3.5-Threshing.Day",
+            ["Threshing Day"], "Rebecca Yarros", series);
+
+        Assert.IsTrue(
+            verdict.IsStrictWorkAssertion,
+            $"unexplained: [{string.Join(", ", verdict.UnexplainedTokens)}]");
+    }
+
+    [TestMethod]
     public void AReleaseOfADifferentSeriesVolumeStaysUnexplained()
     {
         var series = new[] { new BookSeries("The Empyrean", "3.5") };

@@ -238,7 +238,7 @@ public static class ExternalReleaseNameEvidence
         foreach (var series in expectedSeries ?? [])
         {
             if (string.IsNullOrWhiteSpace(series.Name) ||
-                !ConsumeRun(tokens, consumed, TitleRunVariants(series.Name)))
+                !ConsumeRun(tokens, consumed, SeriesNameRunVariants(series.Name)))
             {
                 continue;
             }
@@ -249,6 +249,30 @@ public static class ExternalReleaseNameEvidence
                 ConsumeRun(tokens, consumed, [position]);
             }
         }
+    }
+
+    /// <summary>
+    /// Series name runs to look for: <see cref="TitleRunVariants"/>'s handling,
+    /// plus the reverse direction. A catalog's series name is routinely
+    /// recorded without its branding article (<c>Empyrean</c>) while a release
+    /// still carries it (<c>The.Empyrean.3.5-Threshing.Day</c>); without a
+    /// "The"-prefixed variant that leading token is left unexplained forever
+    /// and an otherwise fully-matching release is never auto-acquired.
+    /// </summary>
+    private static List<string[]> SeriesNameRunVariants(string seriesName)
+    {
+        var variants = TitleRunVariants(seriesName);
+
+        // Tried before the bare name: a release that does carry the article
+        // should consume it rather than leaving it as an unexplained "THE"
+        // token, which ConsumeRun's first-match-wins search would otherwise
+        // never reach because the shorter, article-less variant matches first.
+        if (variants[0] is not ["THE", ..])
+        {
+            variants.Insert(0, ["THE", .. variants[0]]);
+        }
+
+        return variants;
     }
 
     /// <summary>
