@@ -437,6 +437,79 @@ public sealed class CatalogWorkResolverTests
         Assert.AreEqual(existing.Id, repository.ExternalReferences.Single().EntityId);
     }
 
+    /// <summary>
+    /// The live complaint: searching "threshing day" returned three rows that
+    /// were all the same book, with nothing to tell a requester which to pick
+    /// -- and whichever they picked became the work title that then matched
+    /// no source at all.
+    /// </summary>
+    [TestMethod]
+    public void GroupMatchingCandidatesMergesEditionPackagingOfOneWork()
+    {
+        var plain = Yarros("Threshing Day", "ol-1");
+        var collection = Yarros("Threshing Day (Wing and Claw Collection)", "ol-2");
+        var marketing = Yarros(
+            "Threshing Day: Return to the Empyrean world with thirteen stories starring your favourite Fourth Wing characters.",
+            "gb-1");
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([plain, collection, marketing], "threshing day");
+
+        Assert.HasCount(1, grouped);
+        Assert.HasCount(3, grouped[0].MergedSources);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesMergesAnnotatedAndIllustratedPackaging()
+    {
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates(
+            [
+                Alcott("Little Women", "a"),
+                Alcott("Little Women: ( Illustrated Edition)", "b"),
+                Alcott("Little Women: An Annotated Edition", "c"),
+                Alcott("Little Women: Large Print", "d")
+            ],
+            "little women");
+
+        Assert.HasCount(1, grouped);
+    }
+
+    /// <summary>
+    /// The other half of the rule: an omnibus, a combined edition and an
+    /// adaptation are genuinely different products and must stay separate
+    /// even though they all begin with the requested title.
+    /// </summary>
+    [TestMethod]
+    public void GroupMatchingCandidatesKeepsDifferentProductsApart()
+    {
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates(
+            [
+                Alcott("Little Women", "a"),
+                Alcott("Little Women: the Trilogy Little Women Little Men Jo's Boys", "b"),
+                Alcott("LITTLE WOMEN - Complete Edition: Little Women, Good Wives, Little Men & Jo's Boys", "c"),
+                Alcott("Little Women: Adapted for the Stage", "d")
+            ],
+            "little women");
+
+        Assert.HasCount(4, grouped);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesKeepsADifferentAuthorsSameTitleBookApart()
+    {
+        var alcott = Alcott("Little Women", "a");
+        var lawlor = Alcott("Little Women", "b") with { Authors = ["Laurie Lawlor"] };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([alcott, lawlor], "little women");
+
+        Assert.HasCount(2, grouped);
+    }
+
+    private static BookCandidate Yarros(string title, string externalId) =>
+        CreateCandidate(title, externalId) with { Authors = ["Rebecca Yarros"], Editions = [], Series = [] };
+
+    private static BookCandidate Alcott(string title, string externalId) =>
+        CreateCandidate(title, externalId) with { Authors = ["Louisa May Alcott"], Editions = [], Series = [] };
+
     private static BookCandidate CreateCandidate(
         string title = "Project Hail Mary",
         string externalId = "work-1") => new(

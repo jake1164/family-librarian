@@ -157,7 +157,7 @@ public sealed class BookRequest
         RequestReviewCategory category,
         string reason,
         DateTimeOffset atUtc,
-        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string Title, string? Author, string? Language, string? Details, string? AdminInspectionUri)>? candidates = null)
+        IReadOnlyList<RequestReviewCandidateInput>? candidates = null)
     {
         if (category == RequestReviewCategory.PreferenceAmbiguity)
         {
@@ -185,7 +185,8 @@ public sealed class BookRequest
                 var candidate = candidates[index];
                 _reviewCandidates.Add(new RequestReviewCandidate(
                     Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
-                    candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri, index, atUtc));
+                    candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
+                    candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc));
             }
         }
 
@@ -201,7 +202,7 @@ public sealed class BookRequest
     public void RefreshPreferenceReview(
         string reason,
         DateTimeOffset atUtc,
-        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string Title, string? Author, string? Language, string? Details, string? AdminInspectionUri)> candidates)
+        IReadOnlyList<RequestReviewCandidateInput> candidates)
     {
         if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
         {
@@ -219,7 +220,8 @@ public sealed class BookRequest
             var candidate = candidates[index];
             _reviewCandidates.Add(new RequestReviewCandidate(
                 Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
-                candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri, index, atUtc));
+                candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
+                candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc));
         }
 
         StatusChangedAtUtc = atUtc;

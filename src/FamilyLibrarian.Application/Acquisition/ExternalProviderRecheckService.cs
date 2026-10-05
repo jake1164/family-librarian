@@ -505,19 +505,21 @@ public sealed class ExternalProviderRecheckService(
         // The stored review may collapse records that are identical to the
         // requester, so do not report the raw provider result count as though
         // it were the number of choices a person will see.
+        // Every candidate keeps the title and author its own source claimed.
+        // Storing workTitle/workAuthor here instead was the defect that made a
+        // review of twenty-three unrelated records -- "The Threshing Floor",
+        // "The Threshing Circle", a paper on galaxy threshing -- render as
+        // twenty-three identical rows reading "Threshing Day by Rebecca
+        // Yarros", with no way for a librarian to tell them apart or to see
+        // that none of them was the requested book.
         request.MarkNeedsReview(
             RequestReviewCategory.PreferenceAmbiguity,
             reason,
             clock.UtcNow,
-            options.Select(option => (
-                format.Id,
-                option.ProviderId,
-                option.ProviderResultId,
-                workTitle,
-                workAuthor,
-                option.Language,
-                RequestReviewCandidatePresentation.BuildDetails(option),
-                option.AdminInspectionUri?.ToString())).ToArray());
+            options
+                .Select(option => RequestReviewCandidateRecord.WithCatalogFallback(
+                    RequestReviewCandidateRecord.From(format.Id, option), workTitle, workAuthor))
+                .ToArray());
         await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
         foreach (var requesterId in request.ActiveRequesterIds)
         {

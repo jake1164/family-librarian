@@ -52,11 +52,11 @@ public sealed class LibriVoxProvider(
         if (!await IsReadyAsync(cancellationToken)) return [];
 
         // Deliberately title-only: some combined title+author queries return HTTP 500.
-        var recordings = await api.SearchByTitleAsync(identity.Title, cancellationToken);
+        var recordings = await api.SearchByTitleAsync(WorkTitleCore.Reduce(identity.Title, identity.Author), cancellationToken);
         var options = new List<FulfillmentOption>();
         foreach (var recording in recordings)
         {
-            if (!matcher.TitleMatches(identity.Title, recording.Title)) continue;
+            if (!matcher.TitleMatches(identity.Title, recording.Title, identity.Author)) continue;
             var matchedAuthor = recording.Authors.FirstOrDefault(author =>
                 string.IsNullOrWhiteSpace(identity.Author) || matcher.AuthorMatches(identity.Author, author));
             if (!string.IsNullOrWhiteSpace(identity.Author) && matchedAuthor is null) continue;

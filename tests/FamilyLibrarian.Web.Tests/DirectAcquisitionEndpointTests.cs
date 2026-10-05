@@ -285,7 +285,7 @@ public sealed class DirectAcquisitionEndpointTests
                 RequestReviewCategory.PreferenceAmbiguity,
                 "Multiple plausible editions were found.",
                 DateTimeOffset.UtcNow,
-                [(audiobookFormatId, "gutendex", "stale-audio-record", "The Hobbit", "J. R. R. Tolkien", "en", "MP3 audiobook · 2 parts", null)]);
+                [new RequestReviewCandidateInput(audiobookFormatId, "gutendex", "stale-audio-record", "The Hobbit", "J. R. R. Tolkien", "en", "MP3 audiobook · 2 parts", null, null, false)]);
             await database.SaveChangesAsync();
         }
 
@@ -513,11 +513,14 @@ public sealed class DirectAcquisitionEndpointTests
             Assert.AreEqual(2, candidates.Length);
             Assert.AreEqual("1234-Ebook-0", candidates[0].ProviderResultId);
             Assert.AreEqual("1234-Ebook-1", candidates[1].ProviderResultId);
-            // The requester sees FL's canonical work title, never a raw
-            // provider title. Neutral edition facts make the choices
-            // distinguishable without exposing source metadata.
-            Assert.AreEqual("The Hobbit", candidates[0].Title);
-            Assert.AreEqual("The Hobbit", candidates[1].Title);
+            // Each candidate keeps the title its own source claimed. Storing
+            // FL's canonical work title here instead is what let a review of
+            // unrelated records render as repeated copies of the requested
+            // book; neutral edition facts still carry the rest of the
+            // distinction without exposing source metadata.
+            Assert.AreEqual("The Hobbit (Edition 1)", candidates[0].Title);
+            Assert.AreEqual("The Hobbit (Edition 2)", candidates[1].Title);
+            Assert.IsFalse(candidates[0].TitleIsRequestFallback);
             Assert.AreEqual("J. R. R. Tolkien", candidates[0].Author);
             Assert.AreEqual("EPUB · Published 2014 · Example Press · 1.5 MB", candidates[0].Details);
             Assert.AreEqual("EPUB · Published 2016 · Archive House · 2 MB", candidates[1].Details);

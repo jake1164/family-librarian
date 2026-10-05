@@ -186,7 +186,10 @@ public sealed record AdminRequestReviewCandidateResponse(
     string? Author,
     string? Language,
     string? Details,
-    string? InspectionUri);
+    string? InspectionUri,
+    string? ReleaseName = null,
+    bool TitleIsRequestFallback = false,
+    bool NamesRequestedWork = false);
 
 public sealed record RequestParticipantResponse(string DisplayName, string Email, string? Note, bool Withdrawn);
 

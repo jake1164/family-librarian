@@ -84,19 +84,28 @@ public static class BookCandidateGrouper
             return $"provider:{candidate.ProviderId}:{candidate.ExternalId}";
         }
 
-        var normalizedTitle = NormalizeTitleForGrouping(candidate.Title);
-        var normalizedAuthor = NormalizeAuthorForGrouping(GetFirstAuthor(candidate));
+        var firstAuthor = GetFirstAuthor(candidate);
+        var normalizedTitle = NormalizeTitleForGrouping(candidate.Title, firstAuthor);
+        var normalizedAuthor = NormalizeAuthorForGrouping(firstAuthor);
         var languageGroup = GetLanguageGroup(candidate.Language);
         return $"work:{normalizedTitle}:{normalizedAuthor}:{languageGroup}";
     }
 
-    private static string NormalizeTitleForGrouping(string title)
+    private static string NormalizeTitleForGrouping(string title, string? firstAuthor)
     {
-        // A leading article is real observed provider inconsistency, not a
-        // different book -- e.g. one provider's "Gray Man" and another's "The
-        // Gray Man" for the same Mark Greaney novel -- so it's dropped the same
-        // way GetTextMatch already drops it for search-relevance ranking.
-        var normalized = CatalogText.NormalizeForMatch(title);
+        // Edition packaging is dropped first, so the three Open Library/Google
+        // Books rows for one book -- "Threshing Day", "Threshing Day (Wing and
+        // Claw Collection)", "Threshing Day: Return to the Empyrean world with
+        // thirteen stories..." -- become one result instead of three choices a
+        // requester has no way to decide between. Whichever row is most
+        // complete represents the group and MergedSources keeps every
+        // provider's record linkable.
+        //
+        // WorkTitleCore refuses to reduce a qualifier that changes the product,
+        // so an omnibus ("Little Women: the Trilogy"), a combined edition, or
+        // an adaptation still stands as its own result.
+        var normalized = CatalogText.NormalizeForMatch(
+            Matching.WorkTitleCore.Reduce(title, firstAuthor));
         foreach (var article in new[] { "the ", "an ", "a " })
         {
             if (normalized.StartsWith(article, StringComparison.Ordinal))
@@ -147,6 +156,7 @@ public static class BookCandidateGrouper
 
     private static string? GetFirstAuthor(BookCandidate candidate) =>
         candidate.Authors.Count == 0 ? null : candidate.Authors[0];
+
 
     public static BookCandidateMatchKind GetMatchKind(BookCandidate candidate, string searchText)
     {

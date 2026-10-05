@@ -242,9 +242,9 @@ public sealed class BookRequestTests
             "Choose an edition.",
             CreatedAt.AddHours(1),
             [
-                (formatId, "provider-a", "opaque-a", "The Martian", "Andy Weir", "en", "EPUB · Published 2014 · Example Press", null),
-                (formatId, "provider-a", "opaque-b", "the   martian", "Weir, Andy", "EN", "epub · published 2014 · example press", null),
-                (formatId, "provider-a", "opaque-c", "The Martian", "Andy Weir", "en", "EPUB · Published 2015 · Archive House", null)
+                new RequestReviewCandidateInput(formatId, "provider-a", "opaque-a", "The Martian", "Andy Weir", "en", "EPUB · Published 2014 · Example Press", null, null, false),
+                new RequestReviewCandidateInput(formatId, "provider-a", "opaque-b", "the   martian", "Weir, Andy", "EN", "epub · published 2014 · example press", null, null, false),
+                new RequestReviewCandidateInput(formatId, "provider-a", "opaque-c", "The Martian", "Andy Weir", "en", "EPUB · Published 2015 · Archive House", null, null, false)
             ]);
 
         Assert.HasCount(3, request.ReviewCandidates);
@@ -263,14 +263,14 @@ public sealed class BookRequestTests
             RequestReviewCategory.PreferenceAmbiguity,
             "Multiple plausible editions were found.",
             CreatedAt.AddHours(1),
-            [(formatId, "gutendex", "9147", "Moby Dick", "Herman Melville", "en", null, null)]);
+            [new RequestReviewCandidateInput(formatId, "gutendex", "9147", "Moby Dick", "Herman Melville", "en", null, null, null, false)]);
 
         request.RefreshPreferenceReview(
             "Project Gutenberg found 2 eligible records. Its leading record (#28794, 5,505 downloads) is only 1.8× the runner-up (#9147, 3,064). Automatic selection requires at least 1,000 downloads and a 3× lead.",
             CreatedAt.AddHours(2),
             [
-                (formatId, "gutendex", "9147", "Moby Dick", "Herman Melville", "en", "MP3 audiobook · 155 parts · 3,064 source downloads", null),
-                (formatId, "gutendex", "28794", "Moby Dick", "Herman Melville", "en", "MP3 audiobook · 44 parts · 5,505 source downloads", null)
+                new RequestReviewCandidateInput(formatId, "gutendex", "9147", "Moby Dick", "Herman Melville", "en", "MP3 audiobook · 155 parts · 3,064 source downloads", null, null, false),
+                new RequestReviewCandidateInput(formatId, "gutendex", "28794", "Moby Dick", "Herman Melville", "en", "MP3 audiobook · 44 parts · 5,505 source downloads", null, null, false)
             ]);
 
         Assert.AreEqual(RequestStatus.NeedsReview, request.Status);

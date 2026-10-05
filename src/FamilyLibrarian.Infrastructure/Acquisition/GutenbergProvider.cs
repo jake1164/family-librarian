@@ -100,8 +100,14 @@ public sealed class GutenbergProvider(
             return [];
         }
 
+        // The local catalogue matches on a normalized substring, so a catalog
+        // title carrying edition packaging ("Moby Dick (Illustrated Classics)",
+        // "Moby Dick by Herman Melville") returns nothing at all -- Gutenberg
+        // reported "no high-confidence copy" for books it holds outright. The
+        // work-identifying core is searched instead; acceptance below is
+        // unchanged and still requires a title and author match.
         var candidates = await catalog.SearchAsync(new GutenbergCatalogSearchQuery(
-            identity.Title,
+            WorkTitleCore.Reduce(identity.Title, identity.Author),
             mediaType,
             RequireEpub: mediaType == RequestMediaType.Ebook,
             Take: 30), cancellationToken);
@@ -125,7 +131,7 @@ public sealed class GutenbergProvider(
                 .Where(person => person.Role == GutenbergPersonRole.Author)
                 .FirstOrDefault(person => !string.IsNullOrWhiteSpace(identity.Author) &&
                     bookMatcher.AuthorMatches(identity.Author, person.Name));
-            if (!bookMatcher.TitleMatches(identity.Title, candidate.Title) ||
+            if (!bookMatcher.TitleMatches(identity.Title, candidate.Title, identity.Author) ||
                 (!string.IsNullOrWhiteSpace(identity.Author) && matchedAuthor is null))
             {
                 continue;

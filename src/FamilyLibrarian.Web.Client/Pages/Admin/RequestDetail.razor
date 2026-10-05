@@ -177,17 +177,57 @@
                         @ReviewSummary(reviewCandidates.Count)
                     </MudText>
                     <MudText Typo="Typo.caption">@ReviewReason(request.Request.NeedsReview, reviewCandidates.Count)</MudText>
+                    @if (reviewCandidates.All(candidate => !CandidateMatchesRequest(candidate)))
+                    {
+                        <MudAlert Severity="Severity.Warning" Dense="true">
+                            No source below names the requested work. Acquiring one of these overrides
+                            identity verification, so confirm the source record first.
+                        </MudAlert>
+                    }
                     @foreach (var candidate in reviewCandidates)
                     {
                         <MudPaper Outlined="true" Class="pa-3">
                             <MudStack Spacing="1">
-                                <MudText Typo="Typo.body1">@AdminCandidateLabel(candidate)</MudText>
-                                <MudText Typo="Typo.caption">Source: @AdminSourceLabel(candidate)</MudText>
+                                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                                    <MudText Typo="Typo.subtitle1">@AdminCandidateLabel(candidate)</MudText>
+                                    @if (candidate.TitleIsRequestFallback)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                                            Source named no title — showing the requested one
+                                        </MudChip>
+                                    }
+                                    else if (!CandidateMatchesRequest(candidate))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                                            Does not match "@request.Request.WorkTitle"
+                                        </MudChip>
+                                    }
+                                </MudStack>
+                                @if (!string.IsNullOrWhiteSpace(candidate.Details))
+                                {
+                                    <MudText Typo="Typo.body2">@candidate.Details</MudText>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.ReleaseName))
+                                {
+                                    <MudText Typo="Typo.caption" Style="font-family: var(--mud-typography-monospace-family, monospace); word-break: break-all;">
+                                        Release: @candidate.ReleaseName
+                                    </MudText>
+                                }
+                                <MudText Typo="Typo.body2">
+                                    <strong>From @AdminProviderName(candidate)</strong>
+                                    <span> — record @candidate.ProviderResultId</span>
+                                </MudText>
                                 @if (!string.IsNullOrWhiteSpace(candidate.InspectionUri))
                                 {
                                     <a href="@candidate.InspectionUri" target="_blank" rel="noopener noreferrer">
-                                        Open source record
+                                        Open this record on @AdminProviderName(candidate)
                                     </a>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption">
+                                        @AdminProviderName(candidate) published no record page for this result.
+                                    </MudText>
                                 }
                                 <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Success"
                                            Disabled="@isBusy"
@@ -659,13 +699,19 @@
                 : $"{candidate.Title} ({candidate.Language})") +
         (string.IsNullOrWhiteSpace(candidate.Details) ? string.Empty : $" — {candidate.Details}");
 
-    private static string AdminSourceLabel(AdminRequestReviewCandidateResponse candidate)
-    {
-        var source = candidate.ProviderId.Equals("gutendex", StringComparison.OrdinalIgnoreCase)
+    private static string AdminProviderName(AdminRequestReviewCandidateResponse candidate) =>
+        candidate.ProviderId.Equals("gutendex", StringComparison.OrdinalIgnoreCase)
             ? "Project Gutenberg"
             : candidate.ProviderId;
-        return $"{source} record #{candidate.ProviderResultId}";
-    }
+
+    /// <summary>
+    /// The server's verdict on whether this candidate's own claimed title
+    /// names the requested work. Computed host-side (WorkTitlePlausibility) so
+    /// the WebAssembly client never carries a second copy of the matching
+    /// rules that could drift from the ones acquisition actually enforces.
+    /// </summary>
+    private static bool CandidateMatchesRequest(AdminRequestReviewCandidateResponse candidate) =>
+        candidate.NamesRequestedWork;
 
     private static string ReviewSummary(int candidateCount) => candidateCount == 1
         ? "One source record needs your review. Inspect its source page and media details before acquiring it."

@@ -714,7 +714,9 @@ public sealed class RequestRepository(
                     candidate.Author,
                     candidate.Language,
                     candidate.Details,
-                    candidate.AdminInspectionUri))
+                    candidate.AdminInspectionUri,
+                    candidate.ReleaseName,
+                    candidate.TitleIsRequestFallback))
                 .ToList());
 
     private sealed record ProviderJobProgressRow(

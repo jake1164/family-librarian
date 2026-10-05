@@ -15,6 +15,7 @@ public sealed class RequestReviewCandidate
     internal RequestReviewCandidate(
         Guid requestId, Guid requestFormatId, string providerId, string providerResultId, string title,
         string? author, string? language, string? details, string? adminInspectionUri,
+        string? releaseName, bool titleIsRequestFallback,
         int displayOrder, DateTimeOffset createdAtUtc)
     {
         RequestId = requestId;
@@ -26,6 +27,8 @@ public sealed class RequestReviewCandidate
         Language = language;
         Details = details;
         AdminInspectionUri = adminInspectionUri;
+        ReleaseName = releaseName;
+        TitleIsRequestFallback = titleIsRequestFallback;
         DisplayOrder = displayOrder;
         CreatedAtUtc = createdAtUtc;
     }
@@ -56,6 +59,24 @@ public sealed class RequestReviewCandidate
     /// never expose it.
     /// </summary>
     public string? AdminInspectionUri { get; private set; }
+
+    /// <summary>
+    /// The source's own raw release name, retained exclusively for an
+    /// administrator. For an indexer-backed source this is frequently the only
+    /// field that distinguishes one record from another -- without it a review
+    /// of nine releases of the same book showed nine identical rows differing
+    /// only in byte size. Requester projections must never expose it.
+    /// </summary>
+    public string? ReleaseName { get; private set; }
+
+    /// <summary>
+    /// True when <see cref="Title"/> came from the request rather than from
+    /// the source, because the source named no title of its own. Reviews used
+    /// to store the requested title for <em>every</em> candidate, which made a
+    /// list of unrelated books read as confirmed copies of the requested one;
+    /// recording the substitution keeps that from being invisible again.
+    /// </summary>
+    public bool TitleIsRequestFallback { get; private set; }
 
     public int DisplayOrder { get; private set; }
 

@@ -237,10 +237,8 @@ public sealed class AutomaticRequestFulfillmentService(
                         await MarkForReviewAsync(
                             request, RequestReviewCategory.PreferenceAmbiguity,
                             selection.DecisionReason, cancellationToken,
-                            selection.CandidatesRequiringNarrationConfirmation.Select(option => (format.Id, option.ProviderId, option.ProviderResultId,
-                                option.Title, option.Author, option.Language,
-                                RequestReviewCandidatePresentation.BuildDetails(option),
-                                option.AdminInspectionUri?.ToString()))
+                            selection.CandidatesRequiringNarrationConfirmation.Select(option =>
+                                RequestReviewCandidateRecord.From(format.Id, option))
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
@@ -264,10 +262,8 @@ public sealed class AutomaticRequestFulfillmentService(
                         await MarkForReviewAsync(
                             request, RequestReviewCategory.PreferenceAmbiguity,
                             DescribeSameProviderAmbiguity(autoEligible), cancellationToken,
-                            autoEligible.Select(option => (format.Id, option.ProviderId, option.ProviderResultId,
-                                option.Title, option.Author, option.Language,
-                                RequestReviewCandidatePresentation.BuildDetails(option),
-                                option.AdminInspectionUri?.ToString()))
+                            autoEligible.Select(option =>
+                                RequestReviewCandidateRecord.From(format.Id, option))
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
@@ -299,10 +295,8 @@ public sealed class AutomaticRequestFulfillmentService(
                         await MarkForReviewAsync(
                             request, RequestReviewCategory.PreferenceAmbiguity,
                             "A copy was found, but not in English.", cancellationToken,
-                            languageExcluded.Select(option => (format.Id, option.ProviderId, option.ProviderResultId,
-                                option.Title, option.Author, option.Language,
-                                RequestReviewCandidatePresentation.BuildDetails(option),
-                                option.AdminInspectionUri?.ToString()))
+                            languageExcluded.Select(option =>
+                                RequestReviewCandidateRecord.From(format.Id, option))
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
@@ -628,7 +622,7 @@ public sealed class AutomaticRequestFulfillmentService(
         RequestReviewCategory category,
         string reason,
         CancellationToken cancellationToken,
-        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string? Title, string? Author, string? Language, string? Details, string? AdminInspectionUri)>? candidateOptions = null)
+        IReadOnlyList<RequestReviewCandidateInput>? candidateOptions = null)
     {
         var refreshLegacyReview = category == RequestReviewCategory.PreferenceAmbiguity &&
                                   candidateOptions is { Count: > 0 } &&
@@ -641,15 +635,17 @@ public sealed class AutomaticRequestFulfillmentService(
         var view = await requests.FindAdminViewAsync(request.Id, cancellationToken);
         var workTitle = view?.Request.WorkTitle ?? request.WorkId.ToString();
 
-        // The title/author are FL's canonical catalog facts, never raw labels
-        // from the provider. A raw release title can carry filename/source
-        // debris; the neutral details below are the only provider evidence a
-        // requester needs to distinguish an edition.
+        // A candidate keeps the title and author the *source* claimed. This
+        // used to overwrite both with FL's own catalog facts so a requester
+        // never saw raw provider debris -- but it also meant a list of
+        // unrelated records rendered as repeated copies of the requested
+        // book, which is a worse failure than untidy text: both the requester
+        // and the librarian need to see that a source is offering something
+        // else. The catalog title is still the fallback when a source named
+        // nothing at all, and RequestReviewCandidateRecord flags that case.
         var workAuthor = view?.Request.Authors is { Count: > 0 } authors ? authors[0] : null;
         var candidates = candidateOptions?
-            .Select(option => (option.RequestFormatId, option.ProviderId, option.ProviderResultId,
-                Title: workTitle, Author: workAuthor, option.Language,
-                option.Details, option.AdminInspectionUri))
+            .Select(option => RequestReviewCandidateRecord.WithCatalogFallback(option, workTitle, workAuthor))
             .ToArray();
         if (refreshLegacyReview)
         {

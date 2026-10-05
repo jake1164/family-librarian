@@ -1,3 +1,5 @@
+using FamilyLibrarian.Application.Matching;
+
 namespace FamilyLibrarian.Application.Providers;
 
 /// <summary>
@@ -6,42 +8,22 @@ namespace FamilyLibrarian.Application.Providers;
 /// <remarks>
 /// Metadata providers often return a marketing title ("Threshing Day: Return to
 /// the Empyrean world with thirteen stories...") that no release is named
-/// after, so searching it verbatim finds nothing. This only widens what is
-/// <em>searched</em>. Acceptance still verifies results against the full
-/// catalog title and author (see <see cref="ExternalProviderMatchVerifier"/>),
-/// so a shorter query can surface more candidates but never loosens what is
-/// accepted.
+/// after, so searching it verbatim finds nothing.
+/// <para>
+/// This is deliberately the same reduction acceptance uses
+/// (<see cref="WorkTitleCore"/>). It used to be a second, private copy of the
+/// rule, which made the two halves work against each other: the search widened
+/// to "Moby Dick" while <see cref="ExternalProviderMatchVerifier"/> still
+/// compared against "Moby Dick (Illustrated Classics)", so widening the query
+/// only surfaced candidates that verification was then guaranteed to reject.
+/// </para>
+/// <para>
+/// Widening the query still never loosens what is <em>accepted</em>:
+/// acceptance continues to require author agreement and to rank a reduced-title
+/// match below an exact one.
+/// </para>
 /// </remarks>
 public static class ExternalSearchTitle
 {
-    private static readonly string[] SubtitleSeparators = [":", " - ", " – ", " — ", " ("];
-
-    public static string Build(string title)
-    {
-        if (string.IsNullOrWhiteSpace(title))
-        {
-            return title;
-        }
-
-        var trimmed = title.Trim();
-        var cut = SubtitleSeparators
-            .Select(separator => trimmed.IndexOf(separator, StringComparison.Ordinal))
-            .Where(index => index > 0)
-            .DefaultIfEmpty(-1)
-            .Min();
-        if (cut < 0)
-        {
-            return trimmed;
-        }
-
-        var core = trimmed[..cut].Trim();
-        var remainder = trimmed[cut..];
-
-        // "Dune: Messiah" -> "Dune" would search a far broader, different
-        // title, so a one-word core is only trusted when what it drops is a
-        // long subtitle rather than a short distinguishing part of the title.
-        var coreWords = core.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-        var remainderWords = remainder.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-        return coreWords >= 2 || remainderWords >= 4 ? core : trimmed;
-    }
+    public static string Build(string title) => WorkTitleCore.Reduce(title);
 }

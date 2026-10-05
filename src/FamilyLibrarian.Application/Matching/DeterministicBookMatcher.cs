@@ -40,19 +40,38 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         string title, string? author, IReadOnlyList<CandidateBook> candidates, string? acceptedLanguage = null)
     {
         var matches = candidates
-            .Where(candidate => TitleMatches(title, candidate.Title) && AuthorMatches(author, candidate.Author))
+            .Where(candidate => TitleMatches(title, candidate.Title, author) && AuthorMatches(author, candidate.Author))
             .ToArray();
 
         return ResolveUnique(matches, acceptedLanguage);
     }
 
-    public bool TitleMatches(string expectedTitle, string candidateTitle)
+    public bool TitleMatches(string expectedTitle, string candidateTitle, string? expectedAuthor = null)
     {
         if (string.IsNullOrWhiteSpace(expectedTitle) || string.IsNullOrWhiteSpace(candidateTitle))
         {
             return false;
         }
 
+        if (TitlePrefixMatches(expectedTitle, candidateTitle))
+        {
+            return true;
+        }
+
+        // The expected title is the catalog's, and a catalog title carries
+        // edition packaging the source's release title does not -- the whole
+        // reason "Moby Dick (Illustrated Classics)" matched nothing while
+        // "Moby Dick; Or, The Whale" sat in the index. Compare the
+        // work-identifying core too. Author agreement is still required
+        // separately by every caller, so this widens what can be compared
+        // without letting a bare title decide identity.
+        var expectedCore = WorkTitleCore.Reduce(expectedTitle, expectedAuthor);
+        return !string.Equals(expectedCore, expectedTitle.Trim(), StringComparison.Ordinal) &&
+            TitlePrefixMatches(expectedCore, candidateTitle);
+    }
+
+    private static bool TitlePrefixMatches(string expectedTitle, string candidateTitle)
+    {
         var normalizedExpected = NormalizeTitle(expectedTitle);
         var normalizedCandidate = NormalizeTitle(candidateTitle);
         return normalizedExpected.Length > 0 &&
@@ -81,6 +100,29 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         if (string.Equals(normalizedExpectedTitle, NormalizeTitle(candidateTitle), StringComparison.OrdinalIgnoreCase))
         {
             return AuthorTokensEqual(expectedAuthor, candidateAuthor);
+        }
+
+        // The same exactness, with edition packaging removed from the
+        // *expected* title only. A catalog title is FL's own record of what
+        // was requested and routinely carries an imprint or an embedded
+        // author ("Moby Dick (Illustrated Classics)", "Moby Dick by Herman
+        // Melville"); without this, requesting any such title made the work
+        // permanently unacquirable even with the plain record in hand.
+        //
+        // The candidate's title is deliberately NOT reduced here. An extra
+        // subtitle on the *source* side is unverified third-party text and
+        // stays in the weaker, confirmation-requiring TitleAuthor tier --
+        // "The Hobbit: A Novel" is probably the right book, "Debt of Honor /
+        // Executive Orders" is not, and nothing here can tell them apart.
+        // The author must still be exactly token-equal, so this remains an
+        // equality rule rather than a prefix one.
+        var expectedCore = NormalizeTitle(WorkTitleCore.Reduce(expectedTitle, expectedAuthor));
+        if (expectedCore.Length > 0 &&
+            expectedCore.Length != normalizedExpectedTitle.Length &&
+            string.Equals(expectedCore, NormalizeTitle(candidateTitle), StringComparison.OrdinalIgnoreCase) &&
+            AuthorTokensEqual(expectedAuthor, candidateAuthor))
+        {
+            return true;
         }
 
         // A common source-record spelling embeds the author in the title

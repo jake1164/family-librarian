@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
@@ -650,7 +651,13 @@ internal static class AdminRequestEndpoints
             candidate.Author,
             candidate.Language,
             candidate.Details,
-            ResolveInspectionUri(candidate))).ToArray());
+            ResolveInspectionUri(candidate),
+            candidate.ReleaseName,
+            candidate.TitleIsRequestFallback,
+            !candidate.TitleIsRequestFallback && WorkTitlePlausibility.NamesRequestedWork(
+                request.Request.WorkTitle,
+                request.Request.Authors is { Count: > 0 } authors ? authors[0] : null,
+                candidate.Title))).ToArray());
 
     private static string? ResolveInspectionUri(AdminRequestReviewCandidateView candidate)
 {

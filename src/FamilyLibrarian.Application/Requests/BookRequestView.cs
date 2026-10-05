@@ -91,7 +91,9 @@ public sealed record AdminRequestReviewCandidateView(
     string? Author,
     string? Language,
     string? Details,
-    string? InspectionUri);
+    string? InspectionUri,
+    string? ReleaseName = null,
+    bool TitleIsRequestFallback = false);
 
 public sealed record RequestParticipantView(string DisplayName, string Email, string? Note, bool Withdrawn);
 

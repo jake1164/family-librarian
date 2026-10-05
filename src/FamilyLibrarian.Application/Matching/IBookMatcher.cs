@@ -25,9 +25,18 @@ public interface IBookMatcher
     /// Determines whether observed metadata can identify the expected title.
     /// The comparison normalizes Unicode, punctuation, and article placement,
     /// accepts a candidate title with an additional subtitle, and rejects known
-    /// derivative or combined-work variants.
+    /// derivative or combined-work variants. A catalog title carrying edition
+    /// packaging is also compared on its work-identifying core (see
+    /// <see cref="WorkTitleCore"/>).
     /// </summary>
-    bool TitleMatches(string expectedTitle, string candidateTitle);
+    /// <param name="expectedAuthor">
+    /// Optional, and never used to decide the title comparison itself -- only
+    /// to let <see cref="WorkTitleCore"/> drop a trailing
+    /// <c>by &lt;author&gt;</c> that agrees with it. Callers that check the
+    /// author separately should still pass it so "Moby Dick by Herman
+    /// Melville" reduces, while "Death by Black Hole" does not.
+    /// </param>
+    bool TitleMatches(string expectedTitle, string candidateTitle, string? expectedAuthor = null);
 
     /// <summary>
     /// True only for an exact normalized title and observed, token-equivalent

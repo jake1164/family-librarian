@@ -99,7 +99,7 @@ public sealed class ExternalReleaseFingerprintAndExclusionsTests
         var request = NewRequest(out var formatId);
         request.MarkNeedsReview(
             RequestReviewCategory.PreferenceAmbiguity, "Two editions.", Now,
-            [(formatId, "prowlarr", "c_declined", "Fahrenheit 451", "Ray Bradbury", "en", null, null)]);
+            [new RequestReviewCandidateInput(formatId, "prowlarr", "c_declined", "Fahrenheit 451", "Ray Bradbury", "en", null, null, null, false)]);
         request.DismissReviewPreference(null, Now);
 
         var exclusions = ExternalCandidateExclusions.From(request.DeclinedCandidates, "prowlarr", formatId);

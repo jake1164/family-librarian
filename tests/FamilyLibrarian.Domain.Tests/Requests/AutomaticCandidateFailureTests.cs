@@ -95,7 +95,7 @@ public sealed class AutomaticCandidateFailureTests
         var request = NewRequest(out var formatId);
         request.MarkNeedsReview(
             RequestReviewCategory.PreferenceAmbiguity, "Two editions.", Now,
-            [(formatId, "prowlarr", "c_one", "Fahrenheit 451", "Ray Bradbury", "en", null, null)]);
+            [new RequestReviewCandidateInput(formatId, "prowlarr", "c_one", "Fahrenheit 451", "Ray Bradbury", "en", null, null, null, false)]);
 
         request.DismissReviewPreference(null, Now);
 
