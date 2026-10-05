@@ -68,6 +68,13 @@ release text, language, edition, DRM, format, narration and byte-validation
 gates remain in force. Affinity breakdowns retain the requested and detected
 names and each component's exact/initial/fuzzy/unknown evidence.
 
+Release packaging such as `Book.1m4b` may join the book number and format.
+FL recognizes a trailing allowlisted format suffix even when its separator
+is absent, then evaluates the preceding text independently. A `Book` marker
+still requires a positive integer and preserves contradictions with a known
+series position. Unknown suffixes and other unexplained text remain reviewable.
+Format recognition remains separate from container/byte validation.
+
 Numbered audiobook fragments (`Part 2`, `1.of.2`, `2 of 2`) are completeness
 evidence distinct from work identity and from tracks inside one complete
 release. A one-file report does not make a numbered fragment the complete

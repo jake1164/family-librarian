@@ -150,7 +150,7 @@ public static class ExternalReleaseNameEvidence
     {
         var part = ExternalAudiobookPartEvidence.Read(releaseName);
         var withoutGroupTag = TrailingGroupTag.Replace(part.Name, string.Empty);
-        var tokens = Tokenize(withoutGroupTag);
+        var tokens = Tokenize(SeparateTrailingFormat(withoutGroupTag));
         if (tokens.Count == 0)
         {
             return ReleaseNameVerdict.None;
@@ -258,6 +258,24 @@ public static class ExternalReleaseNameEvidence
         return new ReleaseNameVerdict(
             assertsTitle, assertsAuthor, language, narrator, format, unexplained, RejectionReason: null,
             AuthorAffinity: affinity, Part: part.Evidence);
+    }
+
+    // A trailing known format is packaging even when its separator is missing.
+    // The preceding text still has to be explained independently; recognizing
+    // a suffix never erases a wrong title, book number or unknown qualifier.
+    private static string SeparateTrailingFormat(string name)
+    {
+        var trimmed = name.TrimEnd();
+        foreach (var suffix in FormatTokens.OrderByDescending(token => token.Length))
+        {
+            if (!trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var start = trimmed.Length - suffix.Length;
+            if (start > 0 && char.IsLetterOrDigit(trimmed[start - 1]))
+                return trimmed.Insert(start, " ");
+            return name;
+        }
+        return name;
     }
 
     /// <summary>

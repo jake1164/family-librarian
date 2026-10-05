@@ -12,6 +12,50 @@ namespace FamilyLibrarian.Infrastructure.Tests.Providers;
 [TestClass]
 public sealed class ExternalReleaseNameEvidenceTests
 {
+    [TestMethod]
+    public void JoinedBookNumberAndFormatInTheLiveNameAreExplained()
+    {
+        var verdict = ExternalReleaseNameEvidence.Evaluate(
+            "req.Fourth.Wing.Fourth.Wing.Book.1m4b", ["Fourth Wing"], "Rebecca Yarros");
+        Assert.IsTrue(verdict.IsStrictWorkAssertion);
+        Assert.IsTrue(verdict.AssertsExpectedTitle);
+        Assert.IsFalse(verdict.AssertsExpectedAuthor);
+        Assert.HasCount(0, verdict.UnexplainedTokens);
+        Assert.AreEqual("m4b", verdict.AssertedFormat);
+    }
+
+    [TestMethod]
+    [DataRow("Book.0m4b")]
+    [DataRow("Book.1m4bx")]
+    [DataRow("Book.1unknown")]
+    [DataRow("Book.m4b")]
+    [DataRow("Book.999999999999999m4b")]
+    public void InvalidJoinedBookPackagingIsNotSwallowed(string packaging) =>
+        Assert.IsFalse(ExternalReleaseNameEvidence.Evaluate(
+            $"Fourth.Wing.{packaging}", ["Fourth Wing"], "Rebecca Yarros").IsStrictWorkAssertion);
+
+    [TestMethod]
+    public void TerminalFormatIsRecognizedIndependentlyOfBookNumberPackaging()
+    {
+        var verdict = ExternalReleaseNameEvidence.Evaluate("Fourth.Wingm4b", ["Fourth Wing"], "Rebecca Yarros");
+        Assert.AreEqual("m4b", verdict.AssertedFormat);
+        Assert.IsTrue(verdict.IsStrictWorkAssertion);
+        var unrelated = ExternalReleaseNameEvidence.Evaluate("Other.Bookm4b", ["Fourth Wing"], "Rebecca Yarros");
+        Assert.AreEqual("m4b", unrelated.AssertedFormat);
+        Assert.IsFalse(unrelated.IsStrictWorkAssertion);
+    }
+
+    [TestMethod]
+    public void JoinedFormatDoesNotEraseContradictorySeriesOrExtraTitleEvidence()
+    {
+        Assert.IsFalse(ExternalReleaseNameEvidence.Evaluate("Fourth.Wing.Book.2m4b", ["Fourth Wing"],
+            "Rebecca Yarros", [new BookSeries("Empyrean", "1")]).IsStrictWorkAssertion);
+        Assert.IsFalse(ExternalReleaseNameEvidence.Evaluate("Fourth.Wing.Other.Stories.Book.1m4b",
+            ["Fourth Wing"], "Rebecca Yarros").IsStrictWorkAssertion);
+        Assert.IsTrue(ExternalReleaseNameEvidence.Evaluate("Fourth.Wing.Book.1m4b", ["Fourth Wing"],
+            "Rebecca Yarros", [new BookSeries("Empyrean", "1")]).IsStrictWorkAssertion);
+    }
+
     private const string Title = "Fahrenheit 451";
     private const string Author = "Ray Bradbury";
 

@@ -10,6 +10,24 @@ namespace FamilyLibrarian.Infrastructure.Tests.Catalog;
 [TestClass]
 public sealed class ExternalCandidateAvailabilityCheckerTests
 {
+    [TestMethod]
+    public async Task ExactLiveJoinedFormatNameSuppliesStrictTitleAndAudiobookFormat()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("example-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        context.Client.Candidates = [new ExternalProviderCandidate("joined-format", ExternalProviderWorkEvidence.Empty,
+            Release: new ExternalProviderReleaseEvidence("req.Fourth.Wing.Fourth.Wing.Book.1m4b",
+                null, 1_200_000_000, false, 1, false, null, null, [], null))];
+        var option = (await context.Checker.FindAsync(new BookIdentity("Fourth Wing", "Rebecca Yarros", []),
+            RequestMediaType.Audiobook, CancellationToken.None)).Single();
+        Assert.AreEqual(BookMatchBasis.StrictTitle, option.MatchBasis);
+        Assert.AreEqual("m4b", option.Format);
+        Assert.IsFalse(option.RequiresReleaseConfirmation);
+        Assert.IsTrue(option.HasPlausibleTitle);
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
