@@ -293,7 +293,7 @@ public static class DependencyInjection
             throw new InvalidOperationException(
                 $"{ExternalProviderOutputPolicy.SectionName} configuration is invalid: output count, " +
                 "file size, job size, filename length and read inactivity timeout must be positive, " +
-                "and MaxJobBytes must be at least MaxFileBytes.");
+                "MaxJobBytes must be at least MaxFileBytes, and MinFreeDiskBytes must not be negative.");
         }
 
         services.AddSingleton(externalProviderOutputPolicy);

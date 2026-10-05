@@ -85,6 +85,21 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
         return new StagedFile(storedFilename, totalBytesRead, checksum, detectedMimeType);
     }
 
+    // DriveInfo.AvailableFreeSpace (not TotalFreeSpace) because it honours the
+    // disk quota of the account the host runs as.
+    public long? GetAvailableFreeBytes()
+    {
+        try
+        {
+            Directory.CreateDirectory(_options.RootPath);
+            return new DriveInfo(Path.GetFullPath(_options.RootPath)).AvailableFreeSpace;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
     private static void TryDelete(string path)
     {
         try { File.Delete(path); }

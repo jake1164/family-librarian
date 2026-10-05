@@ -28,6 +28,15 @@ public sealed class FileSystemAssetStagingStoreTests
     }
 
     [TestMethod]
+    public void ReportsAvailableFreeBytesForTheStorageVolume()
+    {
+        var free = CreateStore().GetAvailableFreeBytes();
+
+        Assert.IsNotNull(free);
+        Assert.IsGreaterThan(0L, free.Value);
+    }
+
+    [TestMethod]
     public async Task AWrittenFileIsChecksummedAndDetectedCorrectly()
     {
         var store = CreateStore();

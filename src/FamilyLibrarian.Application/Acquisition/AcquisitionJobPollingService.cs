@@ -28,7 +28,8 @@ public sealed class AcquisitionJobPollingService(
     AutomaticRequestFulfillmentService automaticFulfillment,
     AcquisitionStagingService staging,
     AutomatedSecurityPipeline securityPipeline,
-    ExternalProviderOutputPolicy outputPolicy,
+    ExternalProviderOutputPolicy configuredOutputPolicy,
+    IAssetStagingStore stagingStore,
     ManualImportPolicy importPolicy,
     ICredentialProtector protector,
     IAuditWriter audit,
@@ -36,6 +37,14 @@ public sealed class AcquisitionJobPollingService(
     IAutomaticFulfillmentSignal? fulfillmentSignal = null)
 {
     private const int BatchSize = 25;
+    private static readonly TimeSpan DiskSpaceRecheckDelay = TimeSpan.FromMinutes(15);
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1L << 30 => $"{bytes / (double)(1L << 30):0.##} GiB",
+        >= 1L << 20 => $"{bytes / (double)(1L << 20):0.##} MiB",
+        _ => $"{bytes:N0} bytes"
+    };
 
     public async Task<int> ProcessDueAsync(CancellationToken cancellationToken)
     {
@@ -237,25 +246,33 @@ public sealed class AcquisitionJobPollingService(
                 false, null, null, wasWaitingForInteraction, cancellationToken);
             return;
         }
+        var outputPolicy = configuredOutputPolicy.ForMediaType(format.MediaType);
         IReadOnlyList<ExternalProviderOutput> selected;
+        var declaredTotal = 0L;
         try
         {
             selected = ExternalProviderOutputSelector.Select(outputs, format.MediaType,
                 importPolicy, outputPolicy);
-            var declaredTotal = 0L;
             if (outputs.Any(output =>
                     ExternalProviderOutputSelector.NormalizeFilename(output.Filename) is { } filename &&
                     (filename.Length > outputPolicy.MaxFilenameLength || filename.Any(char.IsControl))))
                 throw new InvalidExternalProviderOutputException("The provider returned an invalid filename.");
             foreach (var output in outputs)
             {
-                if (output.SizeBytes is < 0 || output.SizeBytes > outputPolicy.MaxFileBytes)
-                    throw new InvalidExternalProviderOutputException("The provider output metadata exceeds configured size limits.");
+                if (output.SizeBytes is < 0)
+                    throw new InvalidExternalProviderOutputException(
+                        $"The provider reported an invalid size ({output.SizeBytes} bytes) for output '{output.OutputId}'.");
+                if (output.SizeBytes > outputPolicy.MaxFileBytes)
+                    throw new InvalidExternalProviderOutputException(
+                        $"Output '{output.OutputId}' is {FormatBytes(output.SizeBytes.Value)}, over the " +
+                        $"{FormatBytes(outputPolicy.MaxFileBytes)} per-file limit for {format.MediaType} downloads.");
                 if (output.SizeBytes.HasValue)
                 {
                     declaredTotal = checked(declaredTotal + output.SizeBytes.Value);
                     if (declaredTotal > outputPolicy.MaxJobBytes)
-                        throw new InvalidExternalProviderOutputException("The provider output metadata exceeds configured size limits.");
+                        throw new InvalidExternalProviderOutputException(
+                            $"The provider outputs total at least {FormatBytes(declaredTotal)}, over the " +
+                            $"{FormatBytes(outputPolicy.MaxJobBytes)} per-download limit for {format.MediaType} downloads.");
                 }
             }
         }
@@ -263,6 +280,28 @@ public sealed class AcquisitionJobPollingService(
         {
             await RecordFailureAsync(job, "CONTENT_UNAVAILABLE", exception.Message, false, null, null,
                 wasWaitingForInteraction, cancellationToken);
+            return;
+        }
+        catch (OverflowException)
+        {
+            await RecordFailureAsync(job, "CONTENT_UNAVAILABLE", "The provider reported output sizes too large to total.",
+                false, null, null, wasWaitingForInteraction, cancellationToken);
+            return;
+        }
+
+        // Not the provider's fault and not specific to this copy, so it neither
+        // fails the attempt nor advances to the next candidate (which needs the
+        // same space): the job waits and is re-checked once space is freed.
+        if (outputPolicy.MinFreeDiskBytes > 0 && stagingStore.GetAvailableFreeBytes() is { } freeBytes &&
+            freeBytes - outputPolicy.MinFreeDiskBytes < declaredTotal)
+        {
+            var message = $"Waiting for disk space: this download needs about {FormatBytes(declaredTotal)} plus " +
+                $"{FormatBytes(outputPolicy.MinFreeDiskBytes)} headroom, but only {FormatBytes(freeBytes)} is free.";
+            job.ApplyStatus(
+                job.LifecycleState, job.Phase, job.InteractionType, job.InteractionMessage, job.InteractionExpiresAtUtc,
+                job.InteractionResumeSupported, job.InteractionActionUrl, job.ProgressPercent, job.ProgressBytesCompleted,
+                job.ProgressBytesTotal, message, clock.UtcNow.Add(DiskSpaceRecheckDelay), clock.UtcNow);
+            await jobs.SaveChangesAsync(cancellationToken);
             return;
         }
 
@@ -334,7 +373,7 @@ public sealed class AcquisitionJobPollingService(
         }
         catch (OverflowException)
         {
-            await RecordFailureAsync(job, "CONTENT_UNAVAILABLE", "The provider output metadata exceeds configured size limits.",
+            await RecordFailureAsync(job, "CONTENT_UNAVAILABLE", "The provider reported output sizes too large to total.",
                 false, null, null, wasWaitingForInteraction, cancellationToken);
             return;
         }

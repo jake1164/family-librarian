@@ -97,7 +97,7 @@ public sealed class ExternalProviderOutputStream : Stream
         }
         _bytesRead = checked(_bytesRead + read);
         if (_bytesRead > _maxFileBytes)
-            throw new InvalidExternalProviderOutputException("The provider output exceeds the configured per-file limit.");
+            throw new InvalidExternalProviderOutputException($"The provider sent more than the {_maxFileBytes}-byte per-file limit.");
         _budget.Add(read);
         foreach (var hash in _hashes.Values)
             hash.AppendData(buffer);
