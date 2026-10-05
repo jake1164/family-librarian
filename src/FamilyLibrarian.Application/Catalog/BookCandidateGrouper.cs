@@ -40,6 +40,7 @@ public static class BookCandidateGrouper
         {
             return groupedCandidates
                 .OrderByDescending(GetLanguageRank)
+                .ThenBy(GetCreditCount)
                 .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(candidate => GetFirstAuthor(candidate), StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -49,10 +50,26 @@ public static class BookCandidateGrouper
             .OrderByDescending(candidate => GetMatchKind(candidate, searchText))
             .ThenByDescending(candidate => GetTokenOverlapScore(candidate, searchText))
             .ThenByDescending(GetLanguageRank)
+            .ThenBy(GetCreditCount)
             .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
             .ThenBy(candidate => GetFirstAuthor(candidate), StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
+
+    /// <summary>
+    /// A plain edition credits only the author; an adaptation, retelling,
+    /// graphic novel, or illustrated-for-young-readers edition credits an
+    /// adapter/illustrator alongside (often before) the author -- e.g. "Archie
+    /// Oliver, Herman Melville" or "Bill Sienkiewicz, Herman Melville" for two
+    /// different Moby Dick comics. Those tie the plain edition on every match
+    /// signal above (same exact title, same author token), so without this
+    /// they sort purely alphabetically by first-author -- which buried the
+    /// one-author "Moby Dick, Herman Melville" behind five adaptations whose
+    /// credited adapter's name happened to start before "H". This is a
+    /// ranking signal only: fewer credits is not matching evidence and never
+    /// decides a merge (see <see cref="GetMatchKey"/>) or an acquisition.
+    /// </summary>
+    private static int GetCreditCount(BookCandidate candidate) => candidate.Authors.Count;
 
     // No per-user/global language preference exists yet, so this is a fixed
     // default rather than a setting. Unknown-language candidates are treated

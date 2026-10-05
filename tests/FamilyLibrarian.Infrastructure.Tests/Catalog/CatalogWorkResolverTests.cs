@@ -510,6 +510,31 @@ public sealed class CatalogWorkResolverTests
     private static BookCandidate Alcott(string title, string externalId) =>
         CreateCandidate(title, externalId) with { Authors = ["Louisa May Alcott"], Editions = [], Series = [] };
 
+    /// <summary>
+    /// The live complaint: searching "moby dick" ranked five adaptations/comics
+    /// -- each crediting an adapter or illustrator alongside Melville -- ahead
+    /// of the plain, single-author edition, because every one of them tied on
+    /// title match and fell through to alphabetical-by-first-author
+    /// ("Academic Industries" / "Archie Oliver" / "Bill Sienkiewicz" all sort
+    /// before "Herman Melville"). The plain edition must rank first.
+    /// </summary>
+    [TestMethod]
+    public void GroupMatchingCandidatesRanksThePlainEditionAboveCreditedAdaptations()
+    {
+        var plain = Melville("Moby Dick", ["Herman Melville"], "globe-fearon");
+        var comic1 = Melville("Moby Dick", ["Archie Oliver", "Herman Melville"], "playmore");
+        var comic2 = Melville("Moby Dick", ["Bill Sienkiewicz", "Herman Melville"], "berkley");
+        var youngReaders = Melville("Moby Dick", ["Janet Lorimer", "Herman Melville"], "saalfield");
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates(
+            [comic2, youngReaders, comic1, plain], "moby dick");
+
+        Assert.AreEqual("globe-fearon", grouped[0].ExternalId);
+    }
+
+    private static BookCandidate Melville(string title, IReadOnlyList<string> authors, string externalId) =>
+        CreateCandidate(title, externalId) with { Authors = authors, Editions = [], Series = [] };
+
     private static BookCandidate CreateCandidate(
         string title = "Project Hail Mary",
         string externalId = "work-1") => new(
