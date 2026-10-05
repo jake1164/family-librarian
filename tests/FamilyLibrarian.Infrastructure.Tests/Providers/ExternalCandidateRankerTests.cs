@@ -13,6 +13,26 @@ namespace FamilyLibrarian.Infrastructure.Tests.Providers;
 [TestClass]
 public sealed class ExternalCandidateRankerTests
 {
+    [TestMethod]
+    public void TitleAndAuthorEvidenceDominateFormatAndQuality()
+    {
+        var typo = Candidate("z", basis: null, format: "mp3") with
+        {
+            HasPlausibleTitle = true, AuthorAffinity = AuthorAffinity.Evaluate("Rebecca Yarros", "Rececca Yarros")
+        };
+        var unknown = Candidate("a", basis: null, format: "m4b", quality: "retail") with
+        {
+            HasPlausibleTitle = true, AuthorAffinity = AuthorAffinity.Evaluate("Rebecca Yarros", null)
+        };
+        var wrongTitle = Candidate("b", basis: null, format: "m4b", quality: "retail") with
+        {
+            AuthorAffinity = AuthorAffinity.Evaluate("Rebecca Yarros", "Rebecca Yarros")
+        };
+        var conflict = unknown with { ProviderResultId = "c", AuthorAffinity = AuthorAffinity.Evaluate("Rebecca Yarros", "Stephen King") };
+        var ranked = ExternalCandidateRanker.Rank([wrongTitle, conflict, unknown, typo], RequestMediaType.Audiobook);
+        Assert.AreEqual("z,a,c,b", string.Join(',', ranked.Select(candidate => candidate.ProviderResultId)));
+    }
+
     private static FulfillmentOption Candidate(
         string resultId,
         BookMatchBasis? basis = BookMatchBasis.StrictTitleAuthor,

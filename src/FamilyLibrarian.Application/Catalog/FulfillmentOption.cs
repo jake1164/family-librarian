@@ -127,8 +127,10 @@ public sealed record FulfillmentOption(
     // The provider's raw release name, retained only to describe an
     // automatic attempt in the administrator-only provider-activity ledger and
     // to recognize the same release posted twice. Untrusted text: it is never
-    // shown to a requester and never used as a ranking input.
-    string? ReleaseName = null);
+    // shown to a requester. Derived local identity evidence drives ranking.
+    string? ReleaseName = null,
+    Matching.AuthorAffinityResult? AuthorAffinity = null,
+    bool HasPlausibleTitle = false);
 
 /// <summary>
 /// Deterministic classification of an audiobook candidate's narration, as

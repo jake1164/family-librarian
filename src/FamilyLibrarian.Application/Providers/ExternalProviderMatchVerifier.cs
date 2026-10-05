@@ -76,6 +76,20 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
         {
             releaseNames[candidate.ProviderReference] =
                 ExternalReleaseNameEvidence.Evaluate(candidate.Release?.Name, expectedTitles, author, series);
+            var release = releaseNames[candidate.ProviderReference];
+            var structuredAffinity = AuthorAffinity.Evaluate(author, candidate.Author);
+            var affinity = structuredAffinity.Kind == AuthorAffinityKind.Unknown
+                ? release.AuthorAffinity : structuredAffinity;
+            if (structuredAffinity.Kind is not (AuthorAffinityKind.Unknown or AuthorAffinityKind.Conflict) &&
+                release.AuthorAffinity?.Score > structuredAffinity.Score)
+                affinity = release.AuthorAffinity;
+            if (release.AuthorAffinity?.Kind == AuthorAffinityKind.Conflict)
+                affinity = release.AuthorAffinity;
+            releaseNames[candidate.ProviderReference] = release with
+            {
+                AuthorAffinity = affinity,
+                StructuredTitlePlausible = TitleMatchesAnyExpectedTitle(title, alternateTitles, candidate.Title)
+            };
         }
 
         var candidateBooks = candidates
@@ -102,7 +116,8 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
             {
                 var matched = candidates.First(
                     candidate => candidate.ProviderReference == identifierResult.MatchedId);
-                if (TitleMatchesAnyExpectedTitle(title, alternateTitles, EffectiveTitle(matched)) &&
+                if (releaseNames[matched.ProviderReference].AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
+                    TitleMatchesAnyExpectedTitle(title, alternateTitles, EffectiveTitle(matched)) &&
                     (author is null || matcher.AuthorMatches(author, matched.Author)))
                 {
                     return BuildVerdicts(
@@ -121,8 +136,13 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
             .Where(candidate =>
                 LanguageAcceptance.IsAcceptedOrUnspecified(
                     EffectiveLanguage(candidate, releaseNames[candidate.ProviderReference]), acceptedLanguage) &&
+                releaseNames[candidate.ProviderReference].AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
                 (StrictTitleAuthorMatchesAnyExpectedTitle(title, alternateTitles, author, candidate.Title, candidate.Author) ||
-                 releaseNames[candidate.ProviderReference].IsStrictWorkAssertion))
+                 releaseNames[candidate.ProviderReference].IsStrictWorkAssertion ||
+                 (releaseNames[candidate.ProviderReference].AuthorAffinity?.SupportsAutomaticIdentity == true &&
+                  ExpectedTitles(title, alternateTitles).Any(expected =>
+                      IsExactTitle(expected, candidate.Title)) &&
+                  !DeterministicBookMatcher.HasDerivativeOrCombinedWorkMarker(candidate.Title))))
             .Select(candidate => candidate.ProviderReference)
             .ToHashSet(StringComparer.Ordinal);
         if (strictMatches.Count > 0)
@@ -186,8 +206,17 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
         {
             ReleaseNameLanguage = releaseName.AssertedLanguage,
             ReleaseNameNarrator = releaseName.AssertedNarrator,
-            ReleaseNameFormat = releaseName.AssertedFormat
+            ReleaseNameFormat = releaseName.AssertedFormat,
+            AuthorAffinity = releaseName.AuthorAffinity,
+            HasPlausibleTitle = releaseName.AssertsExpectedTitle || releaseName.StructuredTitlePlausible
         };
+
+    private static bool IsExactTitle(string expected, string candidate)
+    {
+        var normalized = DeterministicBookMatcher.NormalizeTitle(expected);
+        return normalized.Length > 0 && string.Equals(normalized,
+            DeterministicBookMatcher.NormalizeTitle(candidate), StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool HasIdentifier(ExternalProviderCandidate candidate, string scheme, string expectedValue) =>
         candidate.Work.Identifiers
@@ -253,7 +282,9 @@ public sealed record ExternalProviderMatchVerdict(
     bool RequiresLanguageConfirmation,
     string? ReleaseNameLanguage = null,
     string? ReleaseNameNarrator = null,
-    string? ReleaseNameFormat = null)
+    string? ReleaseNameFormat = null,
+    AuthorAffinityResult? AuthorAffinity = null,
+    bool HasPlausibleTitle = false)
 {
     public static readonly ExternalProviderMatchVerdict Unconfirmed = new(null, false);
 }

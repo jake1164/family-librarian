@@ -38,6 +38,8 @@ public static class ExternalCandidateRanker
 
         return candidates
             .OrderBy(IdentityRank)
+            .ThenByDescending(candidate => candidate.HasPlausibleTitle)
+            .ThenByDescending(candidate => candidate.AuthorAffinity?.Score ?? 0)
             .ThenBy(ReleaseConcernRank)
             .ThenBy(candidate => FormatRank(candidate, mediaType))
             .ThenBy(NarrationRank)

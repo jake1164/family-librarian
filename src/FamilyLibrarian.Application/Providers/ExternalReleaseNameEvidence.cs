@@ -156,8 +156,11 @@ public static class ExternalReleaseNameEvidence
         var consumed = new bool[tokens.Count];
 
         var assertsTitle = ConsumeRun(tokens, consumed, TitleRunVariants(expectedTitle));
+        var titleConsumed = consumed.ToArray();
         var assertsAuthor = expectedAuthor is not null &&
             ConsumeRun(tokens, consumed, [WordTokens(expectedAuthor)]);
+        var exactAuthorEvidence = string.Join(' ', tokens
+            .Where((_, index) => consumed[index] && !titleConsumed[index]).Select(token => token.Original));
 
         ConsumeSeries(tokens, consumed, expectedSeries);
 
@@ -216,13 +219,23 @@ public static class ExternalReleaseNameEvidence
             }
         }
 
+        var remainingAuthor = string.Join(' ', tokens.Where((_, index) => !consumed[index]).Select(token => token.Original));
+        var affinity = AuthorAffinity.Evaluate(expectedAuthor, assertsAuthor ? exactAuthorEvidence : remainingAuthor, structured: false);
+        if (!assertsAuthor && affinity.Kind is not (AuthorAffinityKind.Unknown or AuthorAffinityKind.Conflict))
+        {
+            for (var index = 0; index < tokens.Count; index++)
+                if (!consumed[index] && AuthorAffinity.IsSupportingToken(expectedAuthor, tokens[index].Text))
+                    consumed[index] = true;
+            assertsAuthor = affinity.SupportsAutomaticIdentity;
+        }
+
         var unexplained = tokens
             .Where((_, index) => !consumed[index])
             .Select(token => token.Text)
             .ToArray();
 
         return new ReleaseNameVerdict(
-            assertsTitle, assertsAuthor, language, narrator, format, unexplained, RejectionReason: null);
+            assertsTitle, assertsAuthor, language, narrator, format, unexplained, RejectionReason: null, AuthorAffinity: affinity);
     }
 
     /// <summary>
@@ -467,7 +480,9 @@ public sealed record ReleaseNameVerdict(
     string? AssertedNarrator,
     string? AssertedFormat,
     IReadOnlyList<string> UnexplainedTokens,
-    string? RejectionReason)
+    string? RejectionReason,
+    AuthorAffinityResult? AuthorAffinity = null,
+    bool StructuredTitlePlausible = false)
 {
     public static readonly ReleaseNameVerdict None = new(false, false, null, null, null, [], null);
 

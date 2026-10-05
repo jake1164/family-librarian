@@ -38,6 +38,34 @@ contract rather than a specific vendor.
 
 ## 2. Provider Design Principles
 
+External acquisition retrieval and local confidence are separate. A provider
+may search broadly by title and persisted title aliases, retaining results with
+missing or imperfect authors. FL evaluates structured author evidence and the
+remaining release-name evidence after its existing title, series, narration,
+language and packaging checks. It does not guess that text before a dash is an
+author.
+
+Local author affinity uses the existing Unicode KC word normalizer, invariant
+case, punctuation/whitespace boundaries, comma-order handling, and harmless
+Jr/Sr/II/III/IV suffix removal. Its ordered supporting weights are exact full
+name (100), compatible full name or first initial plus exact surname (90),
+fuzzy first plus exact surname (80), surname only (70), exact first plus fuzzy
+surname (60), first only (50), both fuzzy (40), unknown (0), conflict (-100).
+Typo evidence permits one insertion, deletion or substitution per component
+only when both tokens have at least five and at most 64 characters. There is no substring
+matching or arbitrary initial matching.
+
+These weights order candidates after existing identity confidence and title
+plausibility, before release/format/quality tiebreakers. They are not an additive
+download threshold. Full exact/compatible or one-exact-one-fuzzy evidence can
+corroborate an exact structured title or a fully explained release name using
+the existing strict confidence tier. Partial, both-fuzzy and unknown authors
+remain reviewable; conflicts cannot qualify as strict identity. Unexplained
+release text, language, edition, DRM, format, narration and byte-validation
+gates remain in force. Affinity breakdowns retain the requested and detected
+names and each component's exact/initial/fuzzy/unknown evidence. Multipart
+grouping is outside this rule.
+
 1. Providers declare capabilities.
 2. Providers do not receive database credentials.
 3. Secrets belong to the provider/integration configuration that needs them.

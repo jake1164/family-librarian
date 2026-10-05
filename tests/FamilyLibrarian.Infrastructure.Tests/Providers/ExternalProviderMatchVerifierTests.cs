@@ -160,6 +160,63 @@ public sealed class ExternalProviderMatchVerifierTests
         Assert.AreEqual(BookMatchBasis.TitleAuthor, verdicts["ref-1"].Basis);
     }
 
+    [TestMethod]
+    public async Task BroadRetrievalKeepsEveryAuthorRepresentationForLocalEvaluation()
+    {
+        var names = new[]
+        {
+            "Rebecca Yarros-The Empyrean-Fourth Wing Part 2-Extended",
+            "Fourth.Wing.by.Rececca.Yarros",
+            "req.Fourth.Wing.Fourth.Wing.Book.1.m4b",
+            "Fourth Wing - Stephen King"
+        };
+        var candidates = names.Select((name, index) => new ExternalProviderCandidate(
+            $"ref-{index}", new ExternalProviderWorkEvidence(string.Empty, null, [], [], []),
+            Release: new ExternalProviderReleaseEvidence(name, "m4b", null, false, 1, false, null, null, [], null))).ToArray();
+        var verdicts = await NewVerifier().VerifyAsync("Fourth Wing", "Rebecca Yarros", null, candidates, CancellationToken.None);
+        Assert.HasCount(4, verdicts);
+        Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["ref-1"].Basis);
+        Assert.IsNull(verdicts["ref-0"].Basis, "Multipart/extended evidence must still require review.");
+        Assert.IsNull(verdicts["ref-2"].Basis);
+        Assert.IsNull(verdicts["ref-3"].Basis);
+        Assert.IsTrue(verdicts["ref-1"].AuthorAffinity!.Score > verdicts["ref-2"].AuthorAffinity!.Score);
+        Assert.AreEqual(AuthorAffinityKind.Unknown, verdicts["ref-2"].AuthorAffinity!.Kind);
+        Assert.AreEqual(AuthorAffinityKind.Conflict, verdicts["ref-3"].AuthorAffinity!.Kind);
+    }
+
+    [TestMethod]
+    public async Task StructuredConflictCannotBeOverriddenByAnExactReleaseName()
+    {
+        var candidate = ExternalProviderCandidate.FromSimple("conflict", "Fourth Wing", "Stephen King", "m4b", 1000)
+            with { Release = new ExternalProviderReleaseEvidence("Fourth Wing - Rebecca Yarros", "m4b", null, false, 1, false, null, null, [], null) };
+        var verdicts = await NewVerifier().VerifyAsync("Fourth Wing", "Rebecca Yarros", null, [candidate], CancellationToken.None);
+        Assert.IsNull(verdicts["conflict"].Basis);
+        Assert.AreEqual(AuthorAffinityKind.Conflict, verdicts["conflict"].AuthorAffinity!.Kind);
+    }
+
+    [TestMethod]
+    public async Task IncompleteStructuredAuthorCanUseReleaseEvidenceButConflictsStillRequireReview()
+    {
+        var partial = ExternalProviderCandidate.FromSimple("partial", "Fourth Wing", "Rebecca", "m4b", 1000)
+            with { Release = new ExternalProviderReleaseEvidence("Fourth Wing - R. Yarros", "m4b", null, false, 1, false, null, null, [], null) };
+        var conflict = partial with { ProviderReference = "conflict", Release = partial.Release! with { Name = "Fourth Wing - Stephen King" } };
+        var verdicts = await NewVerifier().VerifyAsync("Fourth Wing", "Rebecca Yarros", null, [partial, conflict], CancellationToken.None);
+        Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["partial"].Basis);
+        Assert.IsTrue(verdicts["partial"].HasPlausibleTitle);
+        Assert.IsNull(verdicts["conflict"].Basis);
+        Assert.AreEqual(AuthorAffinityKind.Conflict, verdicts["conflict"].AuthorAffinity!.Kind);
+    }
+
+    [TestMethod]
+    public async Task IdentifierEvidenceCannotOverrideConflictingAuthorEvidence()
+    {
+        var candidate = CandidateWithIsbn("conflict", "Fourth Wing", "Rebecca Yarros Stephen King", "9780618260300");
+        var verdicts = await NewVerifier().VerifyAsync("Fourth Wing", "Rebecca Yarros", "9780618260300", [candidate], CancellationToken.None);
+        Assert.AreNotEqual(BookMatchBasis.Identifier, verdicts["conflict"].Basis);
+        Assert.AreNotEqual(BookMatchBasis.StrictTitleAuthor, verdicts["conflict"].Basis);
+        Assert.AreEqual(AuthorAffinityKind.Conflict, verdicts["conflict"].AuthorAffinity!.Kind);
+    }
+
     private static ExternalProviderCandidate CandidateWithIsbn(
         string providerReference, string title, string author, string isbn13) =>
         new(

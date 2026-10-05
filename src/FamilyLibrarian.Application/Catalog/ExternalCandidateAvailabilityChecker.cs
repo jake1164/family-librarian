@@ -251,6 +251,8 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 IsUnabridged: sourceCandidate.Release?.IsUnabridged,
                 AdminInspectionUri: sourceCandidate.InspectionUri,
                 ReleaseName: sourceCandidate.Release?.Name,
+                AuthorAffinity: candidate.MatchVerdict.AuthorAffinity,
+                HasPlausibleTitle: candidate.MatchVerdict.HasPlausibleTitle,
                 // A "read by <name>" credit in the release name is, for a
                 // release-name-only source, the only narration evidence that
                 // exists. Reported as Human only when a reader is actually
