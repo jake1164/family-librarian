@@ -40,6 +40,8 @@ public static class BookCandidateGrouper
         {
             return groupedCandidates
                 .OrderByDescending(GetLanguageRank)
+                .ThenBy(GetAdaptationSignal)
+                .ThenByDescending(HasDescriptiveEvidence)
                 .ThenBy(GetCreditCount)
                 .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(candidate => GetFirstAuthor(candidate), StringComparer.OrdinalIgnoreCase)
@@ -50,25 +52,61 @@ public static class BookCandidateGrouper
             .OrderByDescending(candidate => GetMatchKind(candidate, searchText))
             .ThenByDescending(candidate => GetTokenOverlapScore(candidate, searchText))
             .ThenByDescending(GetLanguageRank)
+            .ThenBy(GetAdaptationSignal)
+            .ThenByDescending(HasDescriptiveEvidence)
             .ThenBy(GetCreditCount)
             .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
             .ThenBy(candidate => GetFirstAuthor(candidate), StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
+    // Live evidence (searching "moby dick") showed author-count alone is too
+    // weak a signal: a legitimate scholarly edition with an editor's
+    // introduction ("Herman Melville, Nigel Cliff") and an actual comic-book
+    // adaptation ("Bill Sienkiewicz, Herman Melville") both credit two people,
+    // so credit count alone cannot tell them apart, and plenty of real
+    // adaptations credit only one name too ("T. W. Robinson, Herman
+    // Melville" -- two credits; "Will Eisner" alone -- one credit, still a
+    // comic). What distinguishes them is what the source itself says. Markers
+    // are the same vocabulary as DeterministicBookMatcher.DerivativeTitleMarkers
+    // plus terms that show up in a *description* rather than a title --
+    // "Retells in graphic novel format...", "...abridged, simplified and
+    // condensed for young readers...", "Presented in comic book format." were
+    // the literal descriptions on four of the nine candidates tied for first
+    // place on this exact search. This is deliberately ranking-only: an
+    // adaptation still appears, just not ahead of the edition that isn't one.
+    // It must never feed identity matching -- a requester who explicitly
+    // wants the graphic novel is not wrong to want it.
+    private static readonly string[] AdaptationRankingMarkers =
+    [
+        "abridged", "abridgement", "retold", "retelling", "adapted", "adaptation",
+        "graphic novel", "comic book", "simplified", "condensed for young readers",
+        "young readers", "study guide", "companion to", "summary of",
+        "cliffsnotes", "cliff notes", "sparknotes",
+    ];
+
+    private static int GetAdaptationSignal(BookCandidate candidate)
+    {
+        var haystack = Matching.DeterministicBookMatcher.NormalizeWords(
+            $"{candidate.Title} {candidate.Description}");
+        return AdaptationRankingMarkers.Any(marker =>
+            haystack.Contains(marker, StringComparison.OrdinalIgnoreCase))
+            ? 1
+            : 0;
+    }
+
     /// <summary>
-    /// A plain edition credits only the author; an adaptation, retelling,
-    /// graphic novel, or illustrated-for-young-readers edition credits an
-    /// adapter/illustrator alongside (often before) the author -- e.g. "Archie
-    /// Oliver, Herman Melville" or "Bill Sienkiewicz, Herman Melville" for two
-    /// different Moby Dick comics. Those tie the plain edition on every match
-    /// signal above (same exact title, same author token), so without this
-    /// they sort purely alphabetically by first-author -- which buried the
-    /// one-author "Moby Dick, Herman Melville" behind five adaptations whose
-    /// credited adapter's name happened to start before "H". This is a
-    /// ranking signal only: fewer credits is not matching evidence and never
-    /// decides a merge (see <see cref="GetMatchKey"/>) or an acquisition.
+    /// Whether the source gave any descriptive text at all. Several of the
+    /// candidates tied on every signal above carry no description, no cover,
+    /// and no marker -- bare metadata stubs that are indistinguishable from a
+    /// well-catalogued edition by text alone. Preferring the one a source
+    /// actually bothered to describe is a better bet than falling straight to
+    /// alphabetical, though it is still only a bet: a stub can be the right
+    /// book too.
     /// </summary>
+    private static bool HasDescriptiveEvidence(BookCandidate candidate) =>
+        !string.IsNullOrWhiteSpace(candidate.Description);
+
     private static int GetCreditCount(BookCandidate candidate) => candidate.Authors.Count;
 
     // No per-user/global language preference exists yet, so this is a fixed
