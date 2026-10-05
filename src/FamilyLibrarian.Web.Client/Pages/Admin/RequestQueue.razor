@@ -198,7 +198,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.Sources, LoadAsync);
+        Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.Sources, () => LoadAsync(showSpinner: false));
         await RefreshLiveAsync();
         await LoadDirectAcquisitionProvidersAsync();
     }
@@ -250,9 +250,10 @@
         await LoadAsync();
     }
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool showSpinner = true)
     {
-        isLoading = true;
+        // Live (SignalR) refreshes swap data in place; the spinner would blank the list and flash.
+        isLoading = showSpinner;
         errorMessage = null;
         try
         {

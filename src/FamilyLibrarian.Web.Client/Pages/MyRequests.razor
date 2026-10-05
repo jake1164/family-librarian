@@ -67,7 +67,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        Observe(LiveUpdateTopics.Requests, LoadAsync);
+        Observe(LiveUpdateTopics.Requests, () => LoadAsync(showSpinner: false));
         await RefreshLiveAsync();
     }
 
@@ -202,9 +202,10 @@
         _ => transition
     };
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool showSpinner = true)
     {
-        isLoading = true;
+        // Live (SignalR) refreshes swap data in place; the spinner would blank the list and flash.
+        isLoading = showSpinner;
         errorMessage = null;
 
         try
