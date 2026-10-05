@@ -21,7 +21,8 @@ namespace FamilyLibrarian.Application.Providers;
 /// token accounted for?" — never "which substring here is the title?".
 /// Guessing which part of <c>Ray.Bradbury-Fahrenheit.451</c> is the title is
 /// unnecessary and unsafe; confirming that it contains exactly the expected
-/// title, the expected author, and nothing else is neither.
+/// title and explained supporting evidence avoids that guess. Author presence
+/// is optional; conflicting author evidence prevents automatic selection.
 /// <para>
 /// The load-bearing rule is <see cref="ReleaseNameVerdict.UnexplainedTokens"/>:
 /// after the matched title, the matched author, and allowlisted release noise
@@ -115,7 +116,8 @@ public static class ExternalReleaseNameEvidence
         // The same raw-text negative evidence ordinary title matching applies
         // (derivative markers, a '/' combined-work separator, a spaced
         // ampersand), reusing that rule rather than restating it here.
-        if (DeterministicBookMatcher.HasDerivativeOrCombinedWorkMarker(releaseName))
+        if (DeterministicBookMatcher.HasDerivativeOrCombinedWorkMarker(
+                ExternalAudiobookPartEvidence.Read(releaseName).Name))
         {
             return ReleaseNameVerdict.Rejected(
                 "The release name names a derivative or combined work, not the single title requested.");
@@ -146,7 +148,8 @@ public static class ExternalReleaseNameEvidence
         string releaseName, string expectedTitle, string? expectedAuthor,
         IReadOnlyList<BookSeries>? expectedSeries)
     {
-        var withoutGroupTag = TrailingGroupTag.Replace(releaseName, string.Empty);
+        var part = ExternalAudiobookPartEvidence.Read(releaseName);
+        var withoutGroupTag = TrailingGroupTag.Replace(part.Name, string.Empty);
         var tokens = Tokenize(withoutGroupTag);
         if (tokens.Count == 0)
         {
@@ -156,6 +159,9 @@ public static class ExternalReleaseNameEvidence
         var consumed = new bool[tokens.Count];
 
         var assertsTitle = ConsumeRun(tokens, consumed, TitleRunVariants(expectedTitle));
+        // Some source titles repeat the requested title. Each repetition is
+        // accounted for by the same evidence, not interpreted as another work.
+        while (assertsTitle && ConsumeRun(tokens, consumed, TitleRunVariants(expectedTitle))) { }
         var titleConsumed = consumed.ToArray();
         var assertsAuthor = expectedAuthor is not null &&
             ConsumeRun(tokens, consumed, [WordTokens(expectedAuthor)]);
@@ -177,6 +183,21 @@ public static class ExternalReleaseNameEvidence
 
             var token = tokens[index];
             var text = token.Text;
+
+            if (index == 0 && text == "REQ" && assertsTitle)
+            {
+                consumed[index] = true;
+                continue;
+            }
+
+            if (text == "BOOK" && index + 1 < tokens.Count &&
+                int.TryParse(tokens[index + 1].Text, out var bookNumber) && bookNumber > 0 &&
+                (expectedSeries is null || expectedSeries.Count == 0 ||
+                 expectedSeries.Any(series => series.Position == tokens[index + 1].Text)))
+            {
+                consumed[index] = consumed[index + 1] = true;
+                continue;
+            }
 
             if (FormatTokens.Contains(text))
             {
@@ -226,7 +247,7 @@ public static class ExternalReleaseNameEvidence
             for (var index = 0; index < tokens.Count; index++)
                 if (!consumed[index] && AuthorAffinity.IsSupportingToken(expectedAuthor, tokens[index].Text))
                     consumed[index] = true;
-            assertsAuthor = affinity.SupportsAutomaticIdentity;
+            assertsAuthor = affinity.HasStrongSupport;
         }
 
         var unexplained = tokens
@@ -235,7 +256,8 @@ public static class ExternalReleaseNameEvidence
             .ToArray();
 
         return new ReleaseNameVerdict(
-            assertsTitle, assertsAuthor, language, narrator, format, unexplained, RejectionReason: null, AuthorAffinity: affinity);
+            assertsTitle, assertsAuthor, language, narrator, format, unexplained, RejectionReason: null,
+            AuthorAffinity: affinity, Part: part.Evidence);
     }
 
     /// <summary>
@@ -482,7 +504,8 @@ public sealed record ReleaseNameVerdict(
     IReadOnlyList<string> UnexplainedTokens,
     string? RejectionReason,
     AuthorAffinityResult? AuthorAffinity = null,
-    bool StructuredTitlePlausible = false)
+    bool StructuredTitlePlausible = false,
+    ExternalAudiobookPartEvidence? Part = null)
 {
     public static readonly ReleaseNameVerdict None = new(false, false, null, null, null, [], null);
 
@@ -490,13 +513,10 @@ public sealed record ReleaseNameVerdict(
         new(false, false, null, null, null, [], reason);
 
     /// <summary>
-    /// The only state that may stand in for structured title/author evidence:
-    /// the name asserts both the expected title and the expected author, and
-    /// every remaining token is accounted for. Title-only is reviewable
-    /// evidence, never grounds for an unattended download — per the same
-    /// same-title/missing-author rule the deterministic matcher applies.
+    /// Exact title evidence with every remaining token accounted for. Missing
+    /// or weak author evidence is a ranking concern; explicit conflict is not.
     /// </summary>
     public bool IsStrictWorkAssertion =>
-        AssertsExpectedTitle && AssertsExpectedAuthor &&
+        AssertsExpectedTitle && AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
         UnexplainedTokens.Count == 0 && RejectionReason is null;
 }

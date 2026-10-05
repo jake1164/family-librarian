@@ -63,7 +63,7 @@ public static class ExternalCandidateRanker
     private static int IdentityRank(Catalog.FulfillmentOption candidate) => candidate.MatchBasis switch
     {
         Matching.BookMatchBasis.Identifier => 0,
-        Matching.BookMatchBasis.StrictTitleAuthor => 1,
+        Matching.BookMatchBasis.StrictTitleAuthor or Matching.BookMatchBasis.StrictTitle => 1,
         Matching.BookMatchBasis.TitleAuthor => 2,
         _ => 3
     };

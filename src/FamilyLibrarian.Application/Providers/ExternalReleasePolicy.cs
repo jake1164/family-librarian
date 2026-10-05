@@ -15,7 +15,8 @@ public static class ExternalReleasePolicy
     public const string UnknownDrmConfirmationReason =
         "The provider could not confirm that this ebook source is DRM-free.";
 
-    public static ExternalReleaseVerdict Evaluate(ExternalProviderReleaseEvidence? release, RequestMediaType mediaType)
+    public static ExternalReleaseVerdict Evaluate(ExternalProviderReleaseEvidence? release, RequestMediaType mediaType,
+        ExternalAudiobookPartEvidence? audiobookPart = null)
     {
         if (mediaType == RequestMediaType.Ebook)
         {
@@ -36,6 +37,12 @@ public static class ExternalReleasePolicy
             {
                 return ExternalReleaseVerdict.Rejected(
                     $"'{release.Format ?? "unknown"}' is not an accepted ebook source format.");
+            }
+
+            if (audiobookPart is not null && audiobookPart.Total != 1)
+            {
+                return ExternalReleaseVerdict.ReviewRequired(
+                    $"{audiobookPart.Description}. This is a numbered fragment, not a confirmed complete ebook.");
             }
 
             if (release.IsCollection == true)
@@ -62,6 +69,12 @@ public static class ExternalReleasePolicy
             }
 
             return ExternalReleaseVerdict.Acceptable;
+        }
+
+        if (audiobookPart is not null && audiobookPart.Total != 1)
+        {
+            return ExternalReleaseVerdict.ReviewRequired(
+                $"{audiobookPart.Description}. This is one fragment of the audiobook; the complete set must be verified before acquisition.");
         }
 
         if (release is null)

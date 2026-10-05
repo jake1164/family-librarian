@@ -13,6 +13,60 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
     private static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
+    public async Task AuthorlessExactTitlesParticipateInDeterministicAutomaticSelection()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("example-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        context.Client.Candidates = [Candidate("b", "epub", ExternalProviderDrmStatus.None), Candidate("a", "epub", ExternalProviderDrmStatus.None)];
+        context.Client.Candidates = context.Client.Candidates.Select(candidate => candidate with
+            { Work = candidate.Work with { Authors = [] } }).ToArray();
+        var options = await context.Checker.FindAsync(new BookIdentity("Moby Dick", "Herman Melville", []),
+            RequestMediaType.Ebook, CancellationToken.None);
+        Assert.AreEqual(1, options.Count(option => option.MatchBasis == BookMatchBasis.StrictTitle));
+        Assert.AreEqual("a", options.Single(option => option.MatchBasis == BookMatchBasis.StrictTitle).ProviderResultId);
+        Assert.IsFalse(options.Any(option => option.RequiresReleaseConfirmation));
+    }
+
+    [TestMethod]
+    public async Task ATitleConfirmedFragmentRemainsIncompleteEvenWhenTheSourceReportsOneFile()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("example-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        context.Client.Candidates = [new ExternalProviderCandidate("part-two", ExternalProviderWorkEvidence.Empty,
+            Release: new ExternalProviderReleaseEvidence("Moby.Dick.2.of.2", "m4b", 500_000,
+                false, 1, false, null, null, [], null))];
+        var option = (await context.Checker.FindAsync(new BookIdentity("Moby Dick", "Herman Melville", []),
+            RequestMediaType.Audiobook, CancellationToken.None)).Single();
+        Assert.AreEqual(BookMatchBasis.StrictTitle, option.MatchBasis);
+        Assert.IsTrue(option.HasPlausibleTitle);
+        Assert.IsTrue(option.RequiresReleaseConfirmation);
+        Assert.AreEqual(2, option.AudiobookPart!.Number);
+        StringAssert.Contains(option.ReleaseConcern!, "Part 2 of 2");
+        StringAssert.Contains(FamilyLibrarian.Application.Requests.RequestReviewCandidatePresentation.BuildDetails(option)!, "Part 2 of 2");
+    }
+
+    [TestMethod]
+    public async Task ACompleteAuthorlessCopyIsNotDemotedByAStrongAuthorFragment()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("example-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        var complete = Candidate("complete", "m4b", ExternalProviderDrmStatus.None);
+        var fragment = Candidate("fragment", "m4b", ExternalProviderDrmStatus.None);
+        context.Client.Candidates = [complete with { Work = complete.Work with { Authors = [] } },
+            fragment with { Release = fragment.Release! with { Name = "Moby Dick Part 2 of 2" } }];
+        var options = await context.Checker.FindAsync(new BookIdentity("Moby Dick", "Herman Melville", []),
+            RequestMediaType.Audiobook, CancellationToken.None);
+        Assert.AreEqual(BookMatchBasis.StrictTitle, options.Single(option => option.ProviderResultId == "complete").MatchBasis);
+        Assert.IsTrue(options.Single(option => option.ProviderResultId == "fragment").RequiresReleaseConfirmation);
+    }
+
+    [TestMethod]
     public async Task NoEnabledProvidersReturnsEmptyWithoutCallingTheClient()
     {
         var context = new TestContext();

@@ -276,7 +276,9 @@
                                     @if (candidate.TitleIsRequestFallback)
                                     {
                                         <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
-                                            Source named no title — showing the requested one
+                                            @(string.IsNullOrWhiteSpace(candidate.ReleaseName)
+                                                ? "Source named no title — showing the requested one"
+                                                : "Source supplied a release name; no separate work title")
                                         </MudChip>
                                     }
                                     else if (!CandidateMatchesRequest(candidate))

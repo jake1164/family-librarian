@@ -744,7 +744,11 @@ internal static class AdminRequestEndpoints
             !candidate.TitleIsRequestFallback && WorkTitlePlausibility.NamesRequestedWork(
                 request.Request.WorkTitle,
                 request.Request.Authors is { Count: > 0 } authors ? authors[0] : null,
-                candidate.Title))).ToArray());
+                candidate.Title) ||
+            ExternalReleaseNameEvidence.Evaluate(candidate.ReleaseName,
+                [request.Request.WorkTitle],
+                request.Request.Authors is { Count: > 0 } releaseAuthors ? releaseAuthors[0] : null)
+                .AssertsExpectedTitle)).ToArray());
 
     private static string? ResolveInspectionUri(AdminRequestReviewCandidateView candidate)
 {

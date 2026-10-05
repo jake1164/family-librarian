@@ -170,7 +170,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
         var candidatesWithVerdicts = candidates.Select(candidate =>
         {
             var verdict = verdicts.GetValueOrDefault(candidate.ProviderReference, Providers.ExternalProviderMatchVerdict.Unconfirmed);
-            var releaseVerdict = Providers.ExternalReleasePolicy.Evaluate(candidate.Release, mediaType);
+            var releaseVerdict = Providers.ExternalReleasePolicy.Evaluate(candidate.Release, mediaType, verdict.AudiobookPart);
             return (Candidate: candidate, MatchVerdict: verdict, ReleaseVerdict: releaseVerdict);
         })
             .Where(candidate => !candidate.ReleaseVerdict.IsRejected)
@@ -253,6 +253,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 ReleaseName: sourceCandidate.Release?.Name,
                 AuthorAffinity: candidate.MatchVerdict.AuthorAffinity,
                 HasPlausibleTitle: candidate.MatchVerdict.HasPlausibleTitle,
+                AudiobookPart: mediaType == RequestMediaType.Audiobook ? candidate.MatchVerdict.AudiobookPart : null,
                 // A "read by <name>" credit in the release name is, for a
                 // release-name-only source, the only narration evidence that
                 // exists. Reported as Human only when a reader is actually
@@ -270,6 +271,13 @@ public sealed class ExternalCandidateAvailabilityChecker(
                         : null);
         }).ToArray();
 
+        if (mediaType == RequestMediaType.Audiobook)
+        {
+            options = options.Select(option => option.AudiobookPart is null ? option : option with
+            {
+                ReleaseConcern = $"{option.ReleaseConcern} {Providers.ExternalAudiobookPartSetAssessment.For(option, options).Description}"
+            }).ToArray();
+        }
         return SelectOneStrictCandidate(options, mediaType, exclusions);
     }
 
@@ -300,7 +308,9 @@ public sealed class ExternalCandidateAvailabilityChecker(
     {
         var strictWinner = Providers.ExternalCandidateRanker.SelectBest(
             options.Where(option =>
-                option.MatchBasis == Matching.BookMatchBasis.StrictTitleAuthor &&
+                (option.MatchBasis is Matching.BookMatchBasis.StrictTitleAuthor or Matching.BookMatchBasis.StrictTitle) &&
+                (!option.RequiresReleaseConfirmation || option.ReleaseConcern == Providers.ExternalReleasePolicy.UnknownDrmConfirmationReason) &&
+                !option.RequiresLanguageConfirmation &&
                 exclusions?.Excludes(option) != true),
             mediaType);
         if (strictWinner is null)
@@ -309,7 +319,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
         }
 
         return options
-            .Select(option => option.MatchBasis == Matching.BookMatchBasis.StrictTitleAuthor &&
+            .Select(option => (option.MatchBasis is Matching.BookMatchBasis.StrictTitleAuthor or Matching.BookMatchBasis.StrictTitle) &&
                     !string.Equals(option.ProviderResultId, strictWinner.ProviderResultId, StringComparison.Ordinal)
                 ? option with { MatchBasis = null }
                 : option)

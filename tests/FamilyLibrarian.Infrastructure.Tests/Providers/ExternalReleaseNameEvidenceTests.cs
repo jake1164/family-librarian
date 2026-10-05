@@ -108,15 +108,15 @@ public sealed class ExternalReleaseNameEvidenceTests
     }
 
     [TestMethod]
-    public void AMissingAuthorKeepsTheAssertionShortOfStrict()
+    public void AMissingAuthorDoesNotPreventAnExactTitleAssertion()
     {
-        // Same-title/missing-author is ambiguous, not a match -- the same rule
-        // the deterministic matcher applies to structured metadata.
+        // External acquisition uses author for rank, independently of the
+        // destination matcher which retains its own title/author policy.
         var verdict = ExternalReleaseNameEvidence.Evaluate("Fahrenheit 451 EPUB", [Title], Author);
 
         Assert.IsTrue(verdict.AssertsExpectedTitle);
         Assert.IsFalse(verdict.AssertsExpectedAuthor);
-        Assert.IsFalse(verdict.IsStrictWorkAssertion);
+        Assert.IsTrue(verdict.IsStrictWorkAssertion);
     }
 
     [TestMethod]

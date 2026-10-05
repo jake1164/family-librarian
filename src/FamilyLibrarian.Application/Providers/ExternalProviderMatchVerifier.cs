@@ -111,14 +111,15 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
                     EffectiveLanguage(candidate, releaseNames[candidate.ProviderReference])))
                 .ToArray();
             var identifierResult = await matchService.ResolveUniqueAsync(
-                title, author, identifierCandidates, cancellationToken, acceptedLanguage);
+                title, null, identifierCandidates, cancellationToken, acceptedLanguage);
             if (identifierResult.Decision == BookMatchDecision.Match)
             {
                 var matched = candidates.First(
                     candidate => candidate.ProviderReference == identifierResult.MatchedId);
                 if (releaseNames[matched.ProviderReference].AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
                     TitleMatchesAnyExpectedTitle(title, alternateTitles, EffectiveTitle(matched)) &&
-                    (author is null || matcher.AuthorMatches(author, matched.Author)))
+                    (ExpectedTitles(title, alternateTitles).Any(expected => IsExactTitle(expected, matched.Title)) ||
+                     releaseNames[matched.ProviderReference].IsStrictWorkAssertion))
                 {
                     return BuildVerdicts(
                         candidates, releaseNames, identifierResult.MatchedId, BookMatchBasis.Identifier,
@@ -127,11 +128,9 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
             }
         }
 
-        // Structured strict equivalence, or -- for a release-name-only source
-        // -- a name that asserts the expected title *and* author with every
-        // remaining token accounted for. A title-only assertion deliberately
-        // does not qualify: same-title/missing-author is ambiguous, not a
-        // match (design findings §10).
+        // Exact title evidence establishes identity independently of author
+        // support. Author affinity orders copies; contradictory author evidence
+        // still prevents automatic selection. Raw names must explain every token.
         var strictMatches = candidates
             .Where(candidate =>
                 LanguageAcceptance.IsAcceptedOrUnspecified(
@@ -139,8 +138,7 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
                 releaseNames[candidate.ProviderReference].AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
                 (StrictTitleAuthorMatchesAnyExpectedTitle(title, alternateTitles, author, candidate.Title, candidate.Author) ||
                  releaseNames[candidate.ProviderReference].IsStrictWorkAssertion ||
-                 (releaseNames[candidate.ProviderReference].AuthorAffinity?.SupportsAutomaticIdentity == true &&
-                  ExpectedTitles(title, alternateTitles).Any(expected =>
+                 (ExpectedTitles(title, alternateTitles).Any(expected =>
                       IsExactTitle(expected, candidate.Title)) &&
                   !DeterministicBookMatcher.HasDerivativeOrCombinedWorkMarker(candidate.Title))))
             .Select(candidate => candidate.ProviderReference)
@@ -151,7 +149,10 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
                 candidate => candidate.ProviderReference,
                 candidate => strictMatches.Contains(candidate.ProviderReference)
                     ? WithReleaseFacts(
-                        new ExternalProviderMatchVerdict(BookMatchBasis.StrictTitleAuthor, RequiresLanguageConfirmation: false),
+                        new ExternalProviderMatchVerdict(
+                            releaseNames[candidate.ProviderReference].AuthorAffinity?.HasStrongSupport == true
+                                ? BookMatchBasis.StrictTitleAuthor : BookMatchBasis.StrictTitle,
+                            RequiresLanguageConfirmation: false),
                         releaseNames[candidate.ProviderReference])
                     : WithReleaseFacts(
                         ExternalProviderMatchVerdict.Unconfirmed, releaseNames[candidate.ProviderReference]),
@@ -208,7 +209,8 @@ public sealed class ExternalProviderMatchVerifier(IBookMatchService matchService
             ReleaseNameNarrator = releaseName.AssertedNarrator,
             ReleaseNameFormat = releaseName.AssertedFormat,
             AuthorAffinity = releaseName.AuthorAffinity,
-            HasPlausibleTitle = releaseName.AssertsExpectedTitle || releaseName.StructuredTitlePlausible
+            HasPlausibleTitle = releaseName.AssertsExpectedTitle || releaseName.StructuredTitlePlausible,
+            AudiobookPart = releaseName.Part
         };
 
     private static bool IsExactTitle(string expected, string candidate)
@@ -284,7 +286,8 @@ public sealed record ExternalProviderMatchVerdict(
     string? ReleaseNameNarrator = null,
     string? ReleaseNameFormat = null,
     AuthorAffinityResult? AuthorAffinity = null,
-    bool HasPlausibleTitle = false)
+    bool HasPlausibleTitle = false,
+    ExternalAudiobookPartEvidence? AudiobookPart = null)
 {
     public static readonly ExternalProviderMatchVerdict Unconfirmed = new(null, false);
 }

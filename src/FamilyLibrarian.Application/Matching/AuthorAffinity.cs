@@ -7,7 +7,7 @@ public sealed record AuthorAffinityResult(
     AuthorAffinityKind Kind, int Score, string? WantedAuthor, string? DetectedAuthor,
     string FirstNameMatch, string LastNameMatch)
 {
-    public bool SupportsAutomaticIdentity => Kind is AuthorAffinityKind.Exact or AuthorAffinityKind.Compatible
+    public bool HasStrongSupport => Kind is AuthorAffinityKind.Exact or AuthorAffinityKind.Compatible
         or AuthorAffinityKind.LastExactFirstFuzzy or AuthorAffinityKind.FirstExactLastFuzzy;
 }
 

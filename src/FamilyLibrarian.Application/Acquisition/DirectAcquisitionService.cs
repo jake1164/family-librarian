@@ -224,7 +224,7 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.Invalid("That option is no longer available.");
         }
 
-        if (externalOption.MatchBasis is not (BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor) &&
+        if (externalOption.MatchBasis is not (BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle) &&
             !confirmLowConfidenceMatch)
         {
             return ManualImportResult.LowConfidenceMatchConfirmationRequired();
@@ -285,7 +285,7 @@ public sealed class DirectAcquisitionService(
             // neither needed confirmLowConfidenceMatch to pass the check
             // above, i.e. a librarian overriding an unconfirmed match.
             identityPreConfirmed: externalOption.MatchBasis
-                is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor);
+                is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle);
         providerAcquisitionJobs.Add(job);
         await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
 

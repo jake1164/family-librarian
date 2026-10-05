@@ -130,7 +130,8 @@ public sealed record FulfillmentOption(
     // shown to a requester. Derived local identity evidence drives ranking.
     string? ReleaseName = null,
     Matching.AuthorAffinityResult? AuthorAffinity = null,
-    bool HasPlausibleTitle = false);
+    bool HasPlausibleTitle = false,
+    ExternalAudiobookPartEvidence? AudiobookPart = null);
 
 /// <summary>
 /// Deterministic classification of an audiobook candidate's narration, as

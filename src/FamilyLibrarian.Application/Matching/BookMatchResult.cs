@@ -31,7 +31,10 @@ public enum BookMatchBasis
 {
     Identifier,
     StrictTitleAuthor,
-    TitleAuthor
+    TitleAuthor,
+    // External acquisition only: exact title evidence without an author
+    // prerequisite. Destination/owned-library matching keeps its own policy.
+    StrictTitle
 }
 
 /// <summary>

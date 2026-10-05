@@ -177,11 +177,33 @@ public sealed class ExternalProviderMatchVerifierTests
         Assert.HasCount(4, verdicts);
         Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["ref-1"].Basis);
         Assert.IsNull(verdicts["ref-0"].Basis, "Multipart/extended evidence must still require review.");
-        Assert.IsNull(verdicts["ref-2"].Basis);
+        Assert.AreEqual(BookMatchBasis.StrictTitle, verdicts["ref-2"].Basis);
         Assert.IsNull(verdicts["ref-3"].Basis);
         Assert.IsTrue(verdicts["ref-1"].AuthorAffinity!.Score > verdicts["ref-2"].AuthorAffinity!.Score);
         Assert.AreEqual(AuthorAffinityKind.Unknown, verdicts["ref-2"].AuthorAffinity!.Kind);
         Assert.AreEqual(AuthorAffinityKind.Conflict, verdicts["ref-3"].AuthorAffinity!.Kind);
+    }
+
+    [TestMethod]
+    [DataRow(null)]
+    [DataRow("Yarros")]
+    [DataRow("Rebecca")]
+    [DataRow("Rebeca Yaros")]
+    public async Task ExactTitleDoesNotRequireSupportingAuthor(string? detectedAuthor)
+    {
+        var candidate = new ExternalProviderCandidate("copy", new ExternalProviderWorkEvidence(
+            "Fourth Wing", null, detectedAuthor is null ? [] : [new BookAuthor(detectedAuthor, "author")], [], []));
+        var verdicts = await NewVerifier().VerifyAsync("Fourth Wing", "Rebecca Yarros", null, [candidate], CancellationToken.None);
+        Assert.AreEqual(BookMatchBasis.StrictTitle, verdicts["copy"].Basis);
+    }
+
+    [TestMethod]
+    public async Task MatchingIdentifierDoesNotRequireAnAuthor()
+    {
+        var candidate = new ExternalProviderCandidate("copy", new ExternalProviderWorkEvidence(
+            "Fourth Wing", null, [], [], [new BookIdentifier("isbn13", "9781649374042")]));
+        var verdicts = await NewVerifier().VerifyAsync("Fourth Wing", "Rebecca Yarros", "9781649374042", [candidate], CancellationToken.None);
+        Assert.AreEqual(BookMatchBasis.Identifier, verdicts["copy"].Basis);
     }
 
     [TestMethod]

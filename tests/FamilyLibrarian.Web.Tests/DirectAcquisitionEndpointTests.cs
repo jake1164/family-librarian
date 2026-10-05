@@ -405,6 +405,30 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     [TestMethod]
+    public async Task AdminReviewRecognizesATitleInAReleaseNameEvenForStoredFallbackLabels()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: false));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var request = await database.BookRequests.Include(item => item.Formats).SingleAsync(item => item.Id == requestId);
+            request.MarkNeedsReview(RequestReviewCategory.PreferenceAmbiguity, "Review the release.", DateTimeOffset.UtcNow,
+                [new RequestReviewCandidateInput(formatId, "example-source", "part-two", "The Hobbit", null, "en",
+                    "Part 2 of 2", null, "req.The.Hobbit.The.Hobbit.2.of.2.m4b", true)]);
+            await database.SaveChangesAsync();
+        }
+        using var admin = await CreateTokenClientAsync(factory, isAdmin: true);
+        var view = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{requestId}");
+        Assert.IsNotNull(view);
+        Assert.IsTrue(view.ReviewCandidates!.Single().NamesRequestedWork);
+        Assert.IsTrue(view.ReviewCandidates!.Single().TitleIsRequestFallback,
+            "Recognizing a release title must not fabricate structured source metadata.");
+    }
+
+    [TestMethod]
     public async Task ALanguageExcludedResultRoutesToThePreferenceAmbiguityFlowNotifyingTheRequesterAndAdmin()
     {
         var fixture = WebTestFixture.Require(_fixture);

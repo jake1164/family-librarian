@@ -45,7 +45,11 @@ public static class RequestReviewCandidatePresentation
             facts.Add(FormatSize(option.SizeBytes.Value));
         }
 
-        if (option.PartCount is > 1)
+        if (option.AudiobookPart is { } part)
+        {
+            facts.Add(part.Description);
+        }
+        else if (option.PartCount is > 1)
         {
             facts.Add($"{option.PartCount.Value.ToString(CultureInfo.InvariantCulture)} parts");
         }

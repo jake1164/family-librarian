@@ -57,14 +57,30 @@ matching or arbitrary initial matching.
 
 These weights order candidates after existing identity confidence and title
 plausibility, before release/format/quality tiebreakers. They are not an additive
-download threshold. Full exact/compatible or one-exact-one-fuzzy evidence can
-corroborate an exact structured title or a fully explained release name using
-the existing strict confidence tier. Partial, both-fuzzy and unknown authors
-remain reviewable; conflicts cannot qualify as strict identity. Unexplained
+download threshold. An exact structured title or a fully explained release name
+can establish strict external-acquisition identity without supporting author
+evidence (`StrictTitle`). Full exact/compatible or one-exact-one-fuzzy author
+evidence retains the `StrictTitleAuthor` basis. Partial, both-fuzzy and unknown
+authors affect ranking, rather than forcing identity review; known conflicts
+cannot qualify as strict identity. Owned-library/destination matching retains
+its separate title/author policy. Unexplained
 release text, language, edition, DRM, format, narration and byte-validation
 gates remain in force. Affinity breakdowns retain the requested and detected
-names and each component's exact/initial/fuzzy/unknown evidence. Multipart
-grouping is outside this rule.
+names and each component's exact/initial/fuzzy/unknown evidence.
+
+Numbered audiobook fragments (`Part 2`, `1.of.2`, `2 of 2`) are completeness
+evidence distinct from work identity and from tracks inside one complete
+release. A one-file report does not make a numbered fragment the complete
+audiobook. The local evaluator retains the part number and declared total and
+routes fragments to completeness review, with missing/duplicate numbers and
+companion availability described separately. Companion assessment uses the
+requested work and numbering, not equality of raw release names or presence
+of an author in each name. Known language, format, reader and edition-marker
+conflicts prevent a set from being described as compatible. A set containing
+every number remains review evidence: numbering alone cannot establish the
+same audiobook edition. Cross-record set acquisition is not implemented by
+this assessment; each acquisition currently submits one provider reference.
+It must not claim a partial or ambiguous set is a complete audiobook.
 
 1. Providers declare capabilities.
 2. Providers do not receive database credentials.

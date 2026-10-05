@@ -190,7 +190,7 @@ public sealed class ExternalProviderRecheckService(
                         // failure reaches review rather than triggering a fallback download.
                         var automaticMatches = reviewableOptions
                             .Where(option =>
-                                (option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor) &&
+                                (option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle) &&
                                 !option.RequiresLanguageConfirmation &&
                                 (!option.RequiresReleaseConfirmation || IsUnknownDrmOnlyConcern(option)))
                             .ToArray();
@@ -399,6 +399,8 @@ public sealed class ExternalProviderRecheckService(
                 NormalizeReviewFact(option.Publisher),
                 option.SizeBytes,
                 option.PartCount,
+                option.AudiobookPart?.Number,
+                option.AudiobookPart?.Total,
                 option.ProviderPopularity,
                 option.IsAbridged,
                 option.IsUnabridged,
@@ -441,6 +443,8 @@ public sealed class ExternalProviderRecheckService(
         string? Publisher,
         long? SizeBytes,
         int? PartCount,
+        int? PartNumber,
+        int? PartTotal,
         int? ProviderPopularity,
         bool? IsAbridged,
         bool? IsUnabridged,
@@ -632,12 +636,19 @@ public sealed class ExternalProviderRecheckService(
         bool autoAcquireEnabled)
     {
         var hasConfirmedWorkIdentity = options.Any(option =>
-            option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor);
+            option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle);
 
         if (!hasConfirmedWorkIdentity)
         {
+            if (options.Any(option => option.HasPlausibleTitle))
+                return "The release names include the requested title, but other identity or release details need a librarian review before acquisition.";
             return "Possible copies were found, but their titles could not be confirmed as the requested work. A librarian must verify the source before acquisition.";
         }
+
+        var releaseConcerns = options.Where(option => option.RequiresReleaseConfirmation)
+            .Select(option => option.ReleaseConcern).Where(reason => !string.IsNullOrWhiteSpace(reason)).Distinct().ToArray();
+        if (releaseConcerns.Length > 0)
+            return $"Matching titles were found. {string.Join(" ", releaseConcerns)}";
 
         return autoAcquireEnabled
             ? "Several matching copies need a librarian comparison before acquisition."
