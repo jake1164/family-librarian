@@ -191,6 +191,29 @@ public sealed record AdminRequestReviewCandidateResponse(
     bool TitleIsRequestFallback = false,
     bool NamesRequestedWork = false);
 
+/// <summary>
+/// One raw result from an on-demand live search against a single
+/// admin-registered external provider (debug tooling, ADMIN-DEBUG-1). This is
+/// never persisted and never gates acquisition -- it exists so a librarian can
+/// see what a provider actually returned, and whether the matcher accepted it,
+/// without waiting on that provider's recheck schedule.
+/// </summary>
+public sealed record AdminProviderDebugCandidateResponse(
+    string ProviderResultId,
+    string Title,
+    string? Author,
+    string? Language,
+    string? Format,
+    long? SizeBytes,
+    int? PublicationYear,
+    string? Publisher,
+    string? ReleaseName,
+    string? MatchBasis,
+    bool RequiresLanguageConfirmation,
+    bool RequiresReleaseConfirmation,
+    string? ReleaseConcern,
+    string? InspectionUri);
+
 public sealed record RequestParticipantResponse(string DisplayName, string Email, string? Note, bool Withdrawn);
 
 public sealed record BookRequestStatusHistoryResponse(

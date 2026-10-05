@@ -278,7 +278,14 @@ public sealed class DirectAcquisitionService(
             now,
             acquireRequestId,
             isAutomaticAcquisition,
-            Providers.ExternalReleaseFingerprint.Compute(externalOption.ReleaseName, externalOption.SizeBytes));
+            Providers.ExternalReleaseFingerprint.Compute(externalOption.ReleaseName, externalOption.SizeBytes),
+            // The automatic path never reaches here without one of these two
+            // bases (see the gate above autoEligible in
+            // AutomaticRequestFulfillmentService); a manual acquisition with
+            // neither needed confirmLowConfidenceMatch to pass the check
+            // above, i.e. a librarian overriding an unconfirmed match.
+            identityPreConfirmed: externalOption.MatchBasis
+                is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor);
         providerAcquisitionJobs.Add(job);
         await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
 

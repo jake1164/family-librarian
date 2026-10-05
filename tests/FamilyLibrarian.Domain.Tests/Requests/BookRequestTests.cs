@@ -254,6 +254,77 @@ public sealed class BookRequestTests
             request.ReviewCandidates.Select(candidate => candidate.Details).ToArray());
     }
 
+    /// <summary>
+    /// The live bug: two formats of the same request can each complete their
+    /// own lookup in the same background pass. Whichever gets there first
+    /// correctly calls <see cref="BookRequest.MarkNeedsReview"/> and flips the
+    /// status; the second format's own candidates must then be added, not
+    /// silently dropped (the old behavior for any caller that only checked
+    /// for <see cref="RequestStatus.PendingAcquisition"/>) or wipe the first
+    /// format's candidates (what <see cref="BookRequest.RefreshPreferenceReview"/>
+    /// would do, since it replaces the whole list).
+    /// </summary>
+    [TestMethod]
+    public void AddReviewCandidatesForFormatAddsASecondFormatWithoutDisturbingTheFirst()
+    {
+        var request = Create(RequestMediaType.Ebook, RequestMediaType.Audiobook);
+        var ebookFormatId = request.Formats.Single(format => format.MediaType == RequestMediaType.Ebook).Id;
+        var audiobookFormatId = request.Formats.Single(format => format.MediaType == RequestMediaType.Audiobook).Id;
+
+        request.MarkNeedsReview(
+            RequestReviewCategory.PreferenceAmbiguity,
+            "Found 23 candidate(s); choose a reviewed candidate before acquisition.",
+            CreatedAt.AddHours(1),
+            [new RequestReviewCandidateInput(
+                ebookFormatId, "annas", "ebook-ref", "Day of the Dead", "Rebecca Pettiford", "en", null, null, null, false)]);
+
+        request.AddReviewCandidatesForFormat(
+            audiobookFormatId,
+            "Found 1 candidate(s); choose a reviewed candidate before acquisition.",
+            CreatedAt.AddHours(1).AddSeconds(2),
+            [new RequestReviewCandidateInput(
+                audiobookFormatId, "prowlarr", "audio-ref", "Threshing Day", "Rebecca Yarros", "en", null, null, null, false)]);
+
+        Assert.HasCount(2, request.ReviewCandidates);
+        Assert.IsTrue(request.ReviewCandidates.Any(candidate =>
+            candidate.RequestFormatId == ebookFormatId && candidate.ProviderResultId == "ebook-ref"));
+        Assert.IsTrue(request.ReviewCandidates.Any(candidate =>
+            candidate.RequestFormatId == audiobookFormatId && candidate.ProviderResultId == "audio-ref"));
+    }
+
+    [TestMethod]
+    public void AddReviewCandidatesForFormatIsANoOpWhenThatFormatAlreadyHasCandidates()
+    {
+        var request = Create(RequestMediaType.Ebook);
+        var formatId = request.Formats.Single().Id;
+        request.MarkNeedsReview(
+            RequestReviewCategory.PreferenceAmbiguity,
+            "Found 1 candidate(s).",
+            CreatedAt.AddHours(1),
+            [new RequestReviewCandidateInput(formatId, "annas", "ref-1", "Title", "Author", "en", null, null, null, false)]);
+
+        request.AddReviewCandidatesForFormat(
+            formatId,
+            "A retry landed here after success.",
+            CreatedAt.AddHours(2),
+            [new RequestReviewCandidateInput(formatId, "annas", "ref-2", "Title", "Author", "en", null, null, null, false)]);
+
+        Assert.HasCount(1, request.ReviewCandidates);
+        Assert.AreEqual("ref-1", request.ReviewCandidates.Single().ProviderResultId);
+    }
+
+    [TestMethod]
+    public void AddReviewCandidatesForFormatThrowsWhenNotAlreadyAPreferenceReview()
+    {
+        var request = Create(RequestMediaType.Ebook);
+        var formatId = request.Formats.Single().Id;
+
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            request.AddReviewCandidatesForFormat(
+                formatId, "reason", CreatedAt.AddHours(1),
+                [new RequestReviewCandidateInput(formatId, "annas", "ref", "Title", "Author", "en", null, null, null, false)]));
+    }
+
     [TestMethod]
     public void RefreshPreferenceReviewReplacesLegacyEvidenceWithoutReopeningTheRequest()
     {

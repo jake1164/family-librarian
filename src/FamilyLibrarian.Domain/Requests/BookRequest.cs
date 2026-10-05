@@ -232,6 +232,74 @@ public sealed class BookRequest
     }
 
     /// <summary>
+    /// Adds review candidates for a format not yet represented in an existing
+    /// preference-ambiguity review, leaving candidates already stored for any
+    /// other format untouched.
+    /// </summary>
+    /// <remarks>
+    /// Two different formats of the same request can each complete their own
+    /// automatic lookup in the same background pass. The first to find
+    /// candidates calls <see cref="MarkNeedsReview"/> and flips the status;
+    /// without this, the second format's own candidates would then either be
+    /// silently dropped (a caller that only checks for
+    /// <see cref="RequestStatus.PendingAcquisition"/> before recording
+    /// anything) or wipe the first format's candidates entirely (a caller
+    /// that instead used <see cref="RefreshPreferenceReview"/>, which
+    /// replaces the whole list rather than appending to it). Observed live:
+    /// an external provider's attempt log said "Found 1 candidate(s); choose
+    /// a reviewed candidate" for a candidate that was never actually stored
+    /// anywhere, because a different format's provider had claimed the
+    /// transition a second earlier in the same pass.
+    /// </remarks>
+    public void AddReviewCandidatesForFormat(
+        Guid requestFormatId,
+        string reason,
+        DateTimeOffset atUtc,
+        IReadOnlyList<RequestReviewCandidateInput> candidates)
+    {
+        if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
+        {
+            throw new InvalidOperationException(
+                "Only an existing preference-ambiguity review can have a format's candidates added to it.");
+        }
+
+        if (candidates.Count == 0)
+        {
+            throw new ArgumentException("At least one candidate is required.", nameof(candidates));
+        }
+
+        if (candidates.Any(candidate => candidate.RequestFormatId != requestFormatId))
+        {
+            throw new ArgumentException(
+                "Every candidate must belong to the format being added.", nameof(candidates));
+        }
+
+        if (_reviewCandidates.Any(candidate => candidate.RequestFormatId == requestFormatId))
+        {
+            // Nothing to do: a previous pass already recorded this format's
+            // candidates (e.g. a retry landed here after success).
+            return;
+        }
+
+        var nextDisplayOrder = _reviewCandidates.Count == 0
+            ? 0
+            : _reviewCandidates.Max(candidate => candidate.DisplayOrder) + 1;
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            var candidate = candidates[index];
+            _reviewCandidates.Add(new RequestReviewCandidate(
+                Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
+                candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
+                candidate.ReleaseName, candidate.TitleIsRequestFallback, nextDisplayOrder + index, atUtc));
+        }
+
+        UpdatedAtUtc = atUtc;
+        _statusHistory.Add(new RequestStatusHistory(
+            Id, RequestStatus.NeedsReview, RequestStatus.NeedsReview, actorUserId: null,
+            CleanNote(reason, MaxReasonLength, nameof(reason)), atUtc));
+    }
+
+    /// <summary>
     /// The requester (or an admin -- additive, not exclusive) accepts a
     /// specific <see cref="RequestReviewCandidate"/> from a
     /// <see cref="RequestReviewCategory.PreferenceAmbiguity"/> review ("get it

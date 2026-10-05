@@ -4,9 +4,12 @@
 @using FamilyLibrarian.Web.Client.Acquisition
 @using FamilyLibrarian.Web.Client.Catalog
 @using FamilyLibrarian.Contracts.Acquisition
+@using FamilyLibrarian.Web.Client.Providers
+@using FamilyLibrarian.Contracts.Providers
 @inject AdminRequestsApiClient Requests
 @inject MediaAssetsApiClient MediaAssets
 @inject CatalogApiClient Catalog
+@inject ExternalProviderApiClient ExternalProviders
 @inject ISnackbar Snackbar
 
 <PageTitle>Review request · Family Librarian</PageTitle>
@@ -148,6 +151,86 @@
                         </MudListItem>
                     }
                 </MudList>
+            }
+
+            @if (externalProviders.Count > 0)
+            {
+                <MudDivider Class="my-3" />
+                <MudText Typo="Typo.subtitle2">Debug: search a provider right now</MudText>
+                <MudText Typo="Typo.caption" Class="mb-2">
+                    Asks one provider immediately, outside its recheck schedule. Shows its raw results and whether
+                    the matcher accepted them -- nothing here is saved or acquired.
+                </MudText>
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                    <MudSelect T="Guid" @bind-Value="debugFormatId" Label="Format" Dense="true" Style="min-width: 160px;">
+                        @foreach (var format in request!.Request.Formats)
+                        {
+                            <MudSelectItem T="Guid" Value="@format.FormatId">@format.MediaType</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="string" @bind-Value="debugProviderId" Label="Provider" Dense="true" Style="min-width: 160px;">
+                        @foreach (var provider in externalProviders)
+                        {
+                            <MudSelectItem T="string" Value="@provider.ProviderId">@provider.DisplayName</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                               Disabled="@(isDebugSearching || debugFormatId == Guid.Empty || string.IsNullOrEmpty(debugProviderId))"
+                               OnClick="RunDebugSearchAsync">
+                        @(isDebugSearching ? "Searching…" : "Run live search")
+                    </MudButton>
+                </MudStack>
+                @if (!string.IsNullOrWhiteSpace(debugSearchError))
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">@debugSearchError</MudAlert>
+                }
+                else if (debugSearchResults is not null)
+                {
+                    <MudText Typo="Typo.caption" Class="mt-2">
+                        @(debugSearchResults.Count == 0
+                            ? "This provider returned nothing for this work right now."
+                            : $"{debugSearchResults.Count} raw result(s) from this provider:")
+                    </MudText>
+                    @foreach (var candidate in debugSearchResults)
+                    {
+                        <MudPaper Outlined="true" Class="pa-2 mt-1">
+                            <MudStack Spacing="0">
+                                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                                    <MudText Typo="Typo.body2"><strong>@candidate.Title</strong>@(string.IsNullOrWhiteSpace(candidate.Author) ? "" : $" — {candidate.Author}")</MudText>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                             Color="@(candidate.MatchBasis is null ? Color.Default : Color.Success)">
+                                        @(candidate.MatchBasis ?? "No confirmed match")
+                                    </MudChip>
+                                    @if (candidate.RequiresLanguageConfirmation)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Wrong language</MudChip>
+                                    }
+                                    @if (candidate.RequiresReleaseConfirmation)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Release needs confirmation</MudChip>
+                                    }
+                                </MudStack>
+                                <MudText Typo="Typo.caption">
+                                    @DescribeDebugCandidate(candidate)
+                                </MudText>
+                                @if (!string.IsNullOrWhiteSpace(candidate.ReleaseName))
+                                {
+                                    <MudText Typo="Typo.caption" Style="font-family: var(--mud-typography-monospace-family, monospace); word-break: break-all;">
+                                        Release: @candidate.ReleaseName
+                                    </MudText>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.ReleaseConcern))
+                                {
+                                    <MudText Typo="Typo.caption">@candidate.ReleaseConcern</MudText>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.InspectionUri))
+                                {
+                                    <a href="@candidate.InspectionUri" target="_blank" rel="noopener noreferrer">Open source record</a>
+                                }
+                            </MudStack>
+                        </MudPaper>
+                    }
+                }
             }
         </MudPaper>
 
@@ -393,6 +476,12 @@
     private bool isBusy;
     private string? errorMessage;
     private string? providerActivityError;
+    private IReadOnlyList<ExternalProviderResponse> externalProviders = [];
+    private Guid debugFormatId;
+    private string? debugProviderId;
+    private bool isDebugSearching;
+    private string? debugSearchError;
+    private IReadOnlyList<AdminProviderDebugCandidateResponse>? debugSearchResults;
     private CancellationTokenSource? fulfillmentLoadCancellation;
     private Guid? pendingConfirmFormatId;
     private FulfillmentOptionResponse? pendingConfirmOption;
@@ -476,7 +565,84 @@
             // must not take down the whole page render.
         }
 
+        if (!preserveDraft)
+        {
+            try
+            {
+                externalProviders = (await ExternalProviders.GetProvidersAsync())
+                    .Where(provider => provider.IsEnabled)
+                    .ToArray();
+                if (debugFormatId == Guid.Empty && request.Request.Formats.Count > 0)
+                {
+                    debugFormatId = request.Request.Formats[0].FormatId;
+                }
+                if (debugProviderId is null && externalProviders.Count > 0)
+                {
+                    debugProviderId = externalProviders[0].ProviderId;
+                }
+            }
+            catch (HttpRequestException)
+            {
+                // Best-effort: the debug panel just won't offer a provider
+                // list this load. Everything else on the page still works.
+            }
+        }
+
         StartFulfillmentOptionsLoad(request.Request.WorkId);
+    }
+
+    private async Task RunDebugSearchAsync()
+    {
+        if (debugFormatId == Guid.Empty || string.IsNullOrWhiteSpace(debugProviderId))
+        {
+            return;
+        }
+
+        isDebugSearching = true;
+        debugSearchError = null;
+        debugSearchResults = null;
+        try
+        {
+            var outcome = await Requests.DebugSearchProviderAsync(RequestId, debugFormatId, debugProviderId);
+            if (outcome.Succeeded)
+            {
+                debugSearchResults = outcome.Candidates;
+            }
+            else
+            {
+                debugSearchError = outcome.Error;
+            }
+        }
+        finally
+        {
+            isDebugSearching = false;
+        }
+    }
+
+    private static string DescribeDebugCandidate(AdminProviderDebugCandidateResponse candidate)
+    {
+        var facts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(candidate.Format)) facts.Add(candidate.Format.ToUpperInvariant());
+        if (!string.IsNullOrWhiteSpace(candidate.Language)) facts.Add(candidate.Language);
+        if (candidate.PublicationYear is > 0) facts.Add($"Published {candidate.PublicationYear}");
+        if (!string.IsNullOrWhiteSpace(candidate.Publisher)) facts.Add(candidate.Publisher);
+        if (candidate.SizeBytes is > 0) facts.Add(FormatDebugSize(candidate.SizeBytes.Value));
+        facts.Add($"ref: {candidate.ProviderResultId}");
+        return string.Join(" · ", facts);
+    }
+
+    private static string FormatDebugSize(long sizeBytes)
+    {
+        const long kibibyte = 1024;
+        const long mebibyte = kibibyte * 1024;
+        const long gibibyte = mebibyte * 1024;
+        return sizeBytes switch
+        {
+            >= gibibyte => $"{sizeBytes / (double)gibibyte:0.#} GB",
+            >= mebibyte => $"{sizeBytes / (double)mebibyte:0.#} MB",
+            >= kibibyte => $"{sizeBytes / (double)kibibyte:0.#} KB",
+            _ => $"{sizeBytes} bytes"
+        };
     }
 
     private void StartFulfillmentOptionsLoad(Guid workId)

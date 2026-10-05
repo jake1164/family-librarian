@@ -220,11 +220,16 @@ public sealed class ExternalProviderRecheckService(
                         if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled &&
                             failuresSoFar >= provider.AutomaticAttemptLimit)
                         {
-                            AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
-                                DescribeExhaustedAttempts(request, format, provider), nextEligibleCheckAtUtc: null);
-                            await MarkForCandidateReviewAsync(
+                            var exhaustedReason = DescribeExhaustedAttempts(request, format, provider);
+                            var exhaustedRecorded = await MarkForCandidateReviewAsync(
                                 request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
-                                DescribeExhaustedAttempts(request, format, provider), cancellationToken);
+                                exhaustedReason, cancellationToken);
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
+                                exhaustedRecorded
+                                    ? exhaustedReason
+                                    : $"{exhaustedReason} This request is already under review for a different " +
+                                      "reason; it will be reconsidered once that is resolved.",
+                                nextEligibleCheckAtUtc: null);
                             break;
                         }
 
@@ -289,12 +294,15 @@ public sealed class ExternalProviderRecheckService(
                             break;
                         }
 
-                        AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
-                            $"Found {reviewableOptions.Count} candidate(s); choose a reviewed candidate before acquisition.",
-                            nextEligibleCheckAtUtc: null);
-                        await MarkForCandidateReviewAsync(
+                        var recorded = await MarkForCandidateReviewAsync(
                             request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
                             DescribeCandidateReviewReason(reviewableOptions, provider.AutoAcquireEnabled), cancellationToken);
+                        AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
+                            recorded
+                                ? $"Found {reviewableOptions.Count} candidate(s); choose a reviewed candidate before acquisition."
+                                : $"Found {reviewableOptions.Count} candidate(s), but this request is already under " +
+                                  "review for a different reason; it will be reconsidered once that is resolved.",
+                            nextEligibleCheckAtUtc: null);
                         break;
                     }
                     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested &&
@@ -487,7 +495,14 @@ public sealed class ExternalProviderRecheckService(
     /// a dead end: the user can see that a provider found something but FL has
     /// discarded the only references that could be safely sent back to it.
     /// </summary>
-    private async Task MarkForCandidateReviewAsync(
+    /// <returns>
+    /// Whether the candidates were actually recorded. False means the caller
+    /// must not log an attempt summary that promises a reviewable candidate --
+    /// e.g. a different format's lookup already put this request under review
+    /// for an unrelated reason in the same pass, and there is nothing this
+    /// provider can add to that.
+    /// </returns>
+    private async Task<bool> MarkForCandidateReviewAsync(
         BookRequest request,
         RequestFormat format,
         ExternalProvider provider,
@@ -497,11 +512,6 @@ public sealed class ExternalProviderRecheckService(
         string reason,
         CancellationToken cancellationToken)
     {
-        if (request.Status != RequestStatus.PendingAcquisition)
-        {
-            return;
-        }
-
         // The stored review may collapse records that are identical to the
         // requester, so do not report the raw provider result count as though
         // it were the number of choices a person will see.
@@ -512,20 +522,43 @@ public sealed class ExternalProviderRecheckService(
         // twenty-three identical rows reading "Threshing Day by Rebecca
         // Yarros", with no way for a librarian to tell them apart or to see
         // that none of them was the requested book.
-        request.MarkNeedsReview(
-            RequestReviewCategory.PreferenceAmbiguity,
-            reason,
-            clock.UtcNow,
-            options
-                .Select(option => RequestReviewCandidateRecord.WithCatalogFallback(
-                    RequestReviewCandidateRecord.From(format.Id, option), workTitle, workAuthor))
-                .ToArray());
+        var candidates = options
+            .Select(option => RequestReviewCandidateRecord.WithCatalogFallback(
+                RequestReviewCandidateRecord.From(format.Id, option), workTitle, workAuthor))
+            .ToArray();
+
+        if (request.Status == RequestStatus.PendingAcquisition)
+        {
+            request.MarkNeedsReview(RequestReviewCategory.PreferenceAmbiguity, reason, clock.UtcNow, candidates);
+        }
+        else if (request.Status == RequestStatus.NeedsReview &&
+                 request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity &&
+                 request.ReviewCandidates.All(candidate => candidate.RequestFormatId != format.Id))
+        {
+            // A different format's lookup already put this request under
+            // review in this same background pass (two external providers,
+            // or this same provider against the request's other format, can
+            // both complete within one ProcessDueAsync call). Add this
+            // format's own candidates instead of silently dropping them -- or
+            // wiping the other format's with RefreshPreferenceReview, which
+            // replaces the whole list rather than appending to it.
+            request.AddReviewCandidatesForFormat(format.Id, reason, clock.UtcNow, candidates);
+        }
+        else
+        {
+            // Under review for an unrelated reason, or this format's
+            // candidates are already stored. Nothing to record.
+            return false;
+        }
+
         await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
         foreach (var requesterId in request.ActiveRequesterIds)
         {
             await notifications.RecordPreferenceAmbiguityAsync(
                 requesterId, request.Id, workTitle, reason, cancellationToken);
         }
+
+        return true;
     }
 
     /// <summary>

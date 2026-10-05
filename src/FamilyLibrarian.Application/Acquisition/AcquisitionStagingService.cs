@@ -241,7 +241,12 @@ public sealed class AcquisitionStagingService(
                 now,
                 bundleId: bundleId,
                 bundleSequence: bundleId is null ? null : index + 1,
-                bundleTrackCount: bundleId is null ? null : staged.Count);
+                bundleTrackCount: bundleId is null ? null : staged.Count,
+                // Default true (manual import, and StageBundleAsync's other
+                // caller -- a built-in provider, which verifies title/author
+                // itself before ever offering a candidate) is correct as-is;
+                // only an external provider's job carries a real answer.
+                identityPreConfirmed: providerJob?.IdentityPreConfirmed ?? true);
 
             acquisitions.AddAsset(asset);
             if (providerJob is not null && acceptedFiles[index].ExternalOutputId is { } outputId)

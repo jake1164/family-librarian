@@ -35,7 +35,8 @@ public sealed class MediaAsset
         DateTimeOffset createdAtUtc,
         Guid? bundleId = null,
         int? bundleSequence = null,
-        int? bundleTrackCount = null)
+        int? bundleTrackCount = null,
+        bool identityPreConfirmed = true)
     {
         if (workId == Guid.Empty)
         {
@@ -97,6 +98,7 @@ public sealed class MediaAsset
         BundleId = bundleId;
         BundleSequence = bundleSequence;
         BundleTrackCount = bundleTrackCount;
+        IdentityPreConfirmed = identityPreConfirmed;
     }
 
     public Guid Id { get; private set; } = Guid.NewGuid();
@@ -150,6 +152,30 @@ public sealed class MediaAsset
     /// difference from genuinely the wrong book.
     /// </summary>
     public string? IdentityMismatchReason { get; private set; }
+
+    /// <summary>
+    /// Whether the title/author identity was already confirmed by structured
+    /// evidence (ISBN, or an exact title+author match) <em>before</em> this
+    /// file was fetched -- true for every built-in-provider acquisition
+    /// (Gutenberg/LibriVox verify title/author with their own matcher before
+    /// ever offering a candidate) and for a manual upload (an admin chose the
+    /// specific file). False only for an admin-registered external provider's
+    /// candidate that needed <c>confirmLowConfidenceMatch</c> to be fetched at
+    /// all -- title/author alone, no stronger evidence.
+    /// </summary>
+    /// <remarks>
+    /// The application layer's identity verifier only covers EPUB/KEPUB
+    /// content today (a known, documented scope limit, not a secret gap).
+    /// For every other format, "no verifier supports this file"
+    /// used to be treated as a pass unconditionally -- which was safe for a
+    /// pre-confirmed match (nothing left to prove) but meant a knowingly
+    /// unconfirmed MOBI/AZW3 from an external provider sailed straight to the
+    /// library with nothing having actually checked it. This field lets the
+    /// verification dispatcher tell the two cases apart instead of treating
+    /// "cannot check" as "checked and fine" for the one case where that
+    /// mattered.
+    /// </remarks>
+    public bool IdentityPreConfirmed { get; private set; } = true;
 
     public DateTimeOffset CreatedAtUtc { get; private set; }
 

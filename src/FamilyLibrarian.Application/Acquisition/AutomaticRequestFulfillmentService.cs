@@ -617,7 +617,12 @@ public sealed class AutomaticRequestFulfillmentService(
         return attempt.AttemptedAtUtc >= clock.UtcNow - RetryCooldown;
     }
 
-    private async Task MarkForReviewAsync(
+    /// <returns>
+    /// Whether anything was actually recorded. False only when the request is
+    /// already under review for an unrelated reason and this format's own
+    /// candidates genuinely cannot be added to it.
+    /// </returns>
+    private async Task<bool> MarkForReviewAsync(
         BookRequest request,
         RequestReviewCategory category,
         string reason,
@@ -627,9 +632,27 @@ public sealed class AutomaticRequestFulfillmentService(
         var refreshLegacyReview = category == RequestReviewCategory.PreferenceAmbiguity &&
                                   candidateOptions is { Count: > 0 } &&
                                   IsLegacyCollapsedPreferenceReview(request);
-        if (request.Status != RequestStatus.PendingAcquisition && !refreshLegacyReview)
+
+        // A different format of this same request can complete its own
+        // lookup earlier in the same ProcessPendingAsync pass and already
+        // have flipped the status to NeedsReview/PreferenceAmbiguity. That
+        // format's candidates must be added, not silently dropped (the old
+        // behavior here) or have RefreshPreferenceReview wipe them out
+        // (that method replaces the whole candidate list, not just this
+        // format's slice).
+        var candidateFormatId = candidateOptions is { Count: > 0 }
+            ? candidateOptions.Select(option => option.RequestFormatId).First()
+            : (Guid?)null;
+        var addToExistingReview = !refreshLegacyReview &&
+            category == RequestReviewCategory.PreferenceAmbiguity &&
+            candidateFormatId is not null &&
+            request.Status == RequestStatus.NeedsReview &&
+            request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity &&
+            request.ReviewCandidates.All(candidate => candidate.RequestFormatId != candidateFormatId);
+
+        if (request.Status != RequestStatus.PendingAcquisition && !refreshLegacyReview && !addToExistingReview)
         {
-            return;
+            return false;
         }
 
         var view = await requests.FindAdminViewAsync(request.Id, cancellationToken);
@@ -651,6 +674,11 @@ public sealed class AutomaticRequestFulfillmentService(
         {
             request.RefreshPreferenceReview(reason, clock.UtcNow, candidates!);
         }
+        else if (addToExistingReview)
+        {
+            request.AddReviewCandidatesForFormat(
+                candidateFormatId!.Value, reason, clock.UtcNow, candidates!);
+        }
         else
         {
             request.MarkNeedsReview(category, reason, clock.UtcNow, candidates);
@@ -670,6 +698,8 @@ public sealed class AutomaticRequestFulfillmentService(
                 await notifications.RecordPreferenceAmbiguityAsync(requesterId, request.Id, workTitle, reason, cancellationToken);
             }
         }
+
+        return true;
     }
 
     private static string DescribeProviderFailure(Exception exception) => exception switch

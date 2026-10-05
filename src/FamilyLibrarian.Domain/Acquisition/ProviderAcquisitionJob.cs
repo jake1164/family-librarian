@@ -31,7 +31,8 @@ public sealed class ProviderAcquisitionJob
         DateTimeOffset createdAtUtc,
         Guid? acquireRequestId = null,
         bool isAutomaticAcquisition = false,
-        string? candidateFingerprint = null)
+        string? candidateFingerprint = null,
+        bool identityPreConfirmed = false)
     {
         if (requestId == Guid.Empty)
         {
@@ -71,6 +72,7 @@ public sealed class ProviderAcquisitionJob
         AcquireRequestId = acquireRequestId is { } id && id != Guid.Empty ? id : Guid.NewGuid();
         IsAutomaticAcquisition = isAutomaticAcquisition;
         CandidateFingerprint = string.IsNullOrWhiteSpace(candidateFingerprint) ? null : candidateFingerprint;
+        IdentityPreConfirmed = identityPreConfirmed;
         LifecycleState = ProviderAcquisitionJobLifecycleTransitions.InitialState;
         // Poll immediately — the caller submits and the poller picks it up
         // on its very next pass rather than waiting a full interval.
@@ -116,6 +118,14 @@ public sealed class ProviderAcquisitionJob
     /// needing the original search result again.
     /// </summary>
     public string? CandidateFingerprint { get; private set; }
+
+    /// <summary>
+    /// Carries the submitting candidate's confirmed-identity state across
+    /// this job's async gap, so the <see cref="MediaAsset"/> created once it
+    /// completes can be marked the same way -- see
+    /// <see cref="MediaAsset.IdentityPreConfirmed"/> for why this matters.
+    /// </summary>
+    public bool IdentityPreConfirmed { get; private set; }
 
     public ProviderAcquisitionJobLifecycleState LifecycleState { get; private set; }
 

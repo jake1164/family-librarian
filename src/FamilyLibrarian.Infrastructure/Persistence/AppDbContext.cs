@@ -840,6 +840,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(job => job.AcquireRequestId).HasColumnName("acquire_request_id");
             entity.Property(job => job.IsAutomaticAcquisition).HasColumnName("is_automatic_acquisition");
             entity.Property(job => job.CandidateFingerprint).HasColumnName("candidate_fingerprint").HasMaxLength(64);
+            entity.Property(job => job.IdentityPreConfirmed)
+                .HasColumnName("identity_pre_confirmed").HasDefaultValue(false);
             entity.Property(job => job.LifecycleState).HasColumnName("lifecycle_state").HasConversion<string>().HasMaxLength(32);
             entity.Property(job => job.Phase).HasColumnName("phase").HasMaxLength(64);
             entity.Property(job => job.InteractionType).HasColumnName("interaction_type").HasMaxLength(64);
@@ -966,6 +968,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(asset => asset.SourceAcquisitionCandidateId).HasColumnName("source_acquisition_candidate_id");
             entity.Property(asset => asset.StorageState).HasColumnName("storage_state").HasConversion<string>().HasMaxLength(32);
             entity.Property(asset => asset.IdentityMismatchReason).HasColumnName("identity_mismatch_reason").HasMaxLength(1_024);
+            entity.Property(asset => asset.IdentityPreConfirmed)
+                .HasColumnName("identity_pre_confirmed").HasDefaultValue(true);
             entity.Property(asset => asset.BundleId).HasColumnName("bundle_id");
             entity.Property(asset => asset.BundleSequence).HasColumnName("bundle_sequence");
             entity.Property(asset => asset.BundleTrackCount).HasColumnName("bundle_track_count");

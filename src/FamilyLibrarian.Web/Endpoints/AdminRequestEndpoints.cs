@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Acquisition;
@@ -38,6 +39,9 @@ internal static class AdminRequestEndpoints
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-interaction", GetProviderInteractionForRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-attempts", ListProviderAttemptsAsync);
+        adminRequests.MapGet(
+            "/{requestId:guid}/formats/{formatId:guid}/providers/{providerId}/debug-search",
+            DebugSearchProviderAsync);
         adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
         adminRequests.MapPost("/{requestId:guid}/needs-review/resolve", AdminResolveNeedsReviewAsync);
         adminRequests.MapPut("/{requestId:guid}/note", SetAdminRequestNoteAsync);
@@ -402,6 +406,89 @@ internal static class AdminRequestEndpoints
                 attempt.AttemptedAtUtc,
                 attempt.NextEligibleCheckAtUtc))
             .ToArray());
+    }
+
+    /// <summary>
+    /// ADMIN-DEBUG-1: asks one admin-registered external provider right now,
+    /// outside its recheck schedule, and returns its raw results plus the
+    /// matcher's verdict on each one. Nothing here is persisted and nothing
+    /// is acquired -- this exists only so a librarian can see what a source
+    /// actually returned (and why the matcher did or didn't accept it)
+    /// without waiting on <see cref="ExternalProviderRecheckService"/>'s own
+    /// Daily/Weekly cadence, which can otherwise leave a request showing no
+    /// provider activity at all for a provider that is enabled but on a
+    /// schedule, or on Manual.
+    /// </summary>
+    private static async Task<IResult> DebugSearchProviderAsync(
+        Guid requestId,
+        Guid formatId,
+        string providerId,
+        IRequestRepository requests,
+        IExternalProviderStore externalProviders,
+        IWorkLookup workLookup,
+        ExternalCandidateAvailabilityChecker candidateChecker,
+        CancellationToken cancellationToken)
+    {
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null)
+        {
+            return Results.NotFound();
+        }
+
+        var format = request.Formats.SingleOrDefault(candidate => candidate.Id == formatId);
+        if (format is null)
+        {
+            return Results.NotFound();
+        }
+
+        var provider = await externalProviders.FindByProviderIdAsync(providerId, cancellationToken);
+        if (provider is null)
+        {
+            return Results.NotFound();
+        }
+
+        var work = await workLookup.FindAsync(request.WorkId, cancellationToken);
+        if (work is null)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["request"] = ["The requested work is no longer available for provider lookup."]
+            });
+        }
+
+        var identity = new BookIdentity(
+            work.Title, work.PrimaryAuthor, work.Isbn13s,
+            work.Authors, work.Series, work.Language, work.PublicationYear, work.Publisher,
+            work.AlternateTitles);
+
+        IReadOnlyList<FulfillmentOption> options;
+        try
+        {
+            options = await candidateChecker.FindForProviderAsync(
+                provider, identity, format.MediaType, cancellationToken);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            return Results.Problem(
+                detail: $"{provider.DisplayName} could not be reached: {exception.Message}",
+                statusCode: StatusCodes.Status502BadGateway);
+        }
+
+        return Results.Ok(options.Select(option => new AdminProviderDebugCandidateResponse(
+            option.ProviderResultId,
+            option.Title ?? string.Empty,
+            option.Author,
+            option.Language,
+            option.Format,
+            option.SizeBytes,
+            option.PublicationYear,
+            option.Publisher,
+            option.ReleaseName,
+            option.MatchBasis?.ToString(),
+            option.RequiresLanguageConfirmation,
+            option.RequiresReleaseConfirmation,
+            option.ReleaseConcern,
+            option.AdminInspectionUri?.ToString())).ToArray());
     }
 
     private static async Task<IResult> ChangeAdminRequestStatusAsync(
