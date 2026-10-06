@@ -133,6 +133,22 @@ public sealed class SecurityEvaluationServiceTests
     }
 
     [TestMethod]
+    public async Task AReviewRequiredAssetCanBeRescannedAndPassesOnceTheScannerCompletes()
+    {
+        var context = new TestContext();
+        var asset = context.SeedReviewRequiredProcessingAsset();
+
+        var result = await context.CreateService(new AlwaysCleanScanner())
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(SecurityEvaluationOutcome.Success, result.Outcome);
+        Assert.AreEqual(SecurityEvaluationStatus.Passed, result.Status);
+        Assert.AreEqual(2, context.Repository.AddedEvaluations.Count);
+        CollectionAssert.Contains(
+            context.Audit.Entries.Select(entry => entry.Action).ToArray(), AuditActions.AssetRescanRequested);
+    }
+
+    [TestMethod]
     public async Task ARecentPendingEvaluationInProcessingIsLeftAlone()
     {
         var context = new TestContext();
@@ -241,6 +257,20 @@ public sealed class SecurityEvaluationServiceTests
             StagingStore.Seed(asset.StoredFilename, MediaAssetStorageState.Processing);
             asset.TransitionStorageState(MediaAssetStorageState.Processing, Now);
             Repository.AddEvaluation(new SecurityEvaluation(asset.Id, "v1", Now));
+            return asset;
+        }
+
+        /// <summary>An asset whose scanner could not finish (e.g. a clamd limit hit), waiting on an administrator.</summary>
+        public MediaAsset SeedReviewRequiredProcessingAsset()
+        {
+            var asset = SeedAsset();
+            StagingStore.Seed(asset.StoredFilename, MediaAssetStorageState.Processing);
+            asset.TransitionStorageState(MediaAssetStorageState.Processing, Now);
+            var evaluation = new SecurityEvaluation(asset.Id, "v1", Now);
+            evaluation.RecordScanResult(
+                "clamav", true, ScanResultStatus.Error, "Not fully scanned: Heuristics.Limits.Exceeded.MaxScanTime", null, Now);
+            evaluation.Evaluate(Now);
+            Repository.AddEvaluation(evaluation);
             return asset;
         }
 

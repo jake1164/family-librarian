@@ -141,7 +141,7 @@ else
                                    Color="Color.Primary"
                                    Disabled="@(busyAssetId is not null)"
                                    OnClick="@(() => EvaluateAsync(asset))">
-                            Retry security scan
+                            @(CanRescan(asset) ? "Rescan" : "Retry security scan")
                         </MudButton>
                     }
                     @if (CanDecide(asset))
@@ -287,8 +287,14 @@ else
         asset.LatestEvaluation is { Status: "Pending" } pending &&
         DateTimeOffset.UtcNow - pending.CreatedAtUtc >= StalledScanAge;
 
+    // A review-required scan is one the scanner could not finish (for example
+    // clamd hit a time or size limit). Besides approving or rejecting it by
+    // hand, an administrator can run the scan again once the cause is fixed.
+    private static bool CanRescan(MediaAssetAdminResponse asset) =>
+        asset.StorageState == "Processing" && asset.LatestEvaluation is { Status: "ReviewRequired" };
+
     private static bool CanEvaluate(MediaAssetAdminResponse asset) =>
-        asset.StorageState == "Quarantine" || IsScanStalled(asset);
+        asset.StorageState == "Quarantine" || IsScanStalled(asset) || CanRescan(asset);
 
     private static bool CanDecide(MediaAssetAdminResponse asset) =>
         asset.StorageState == "Processing" &&

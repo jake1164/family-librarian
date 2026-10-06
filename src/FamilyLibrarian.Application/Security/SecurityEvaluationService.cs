@@ -158,12 +158,21 @@ public sealed class SecurityEvaluationService(
     private static readonly TimeSpan AbandonedEvaluationAge = TimeSpan.FromMinutes(15);
 
     /// <summary>
-    /// Returns an asset stranded in Processing with a Pending evaluation to
-    /// Quarantine so it can be evaluated again.
+    /// Returns an asset in Processing to Quarantine so it can be evaluated
+    /// again: either a scan that never recorded a result (abandoned), or one
+    /// the scanner could not finish (review required -- e.g. a clamd limit hit)
+    /// that an administrator asked to run again instead of deciding by hand.
     /// </summary>
     private async Task RecoverAbandonedEvaluationAsync(MediaAsset asset, CancellationToken cancellationToken)
     {
         var latest = await repository.FindLatestEvaluationAsync(asset.Id, cancellationToken);
+        if (latest is { Status: SecurityEvaluationStatus.ReviewRequired })
+        {
+            await RecoverToQuarantineAsync(
+                asset, "A rescan was requested.", "RescanRequested", AuditActions.AssetRescanRequested);
+            return;
+        }
+
         if (latest is not { Status: SecurityEvaluationStatus.Pending } ||
             clock.UtcNow - latest.CreatedAtUtc < AbandonedEvaluationAge)
         {
@@ -176,7 +185,8 @@ public sealed class SecurityEvaluationService(
             "Abandoned");
     }
 
-    private async Task RecoverToQuarantineAsync(MediaAsset asset, string reason, string auditReason)
+    private async Task RecoverToQuarantineAsync(
+        MediaAsset asset, string reason, string auditReason, string auditAction = AuditActions.AssetEvaluationFailed)
     {
         await stagingStore.MoveAsync(
             MediaAssetStorageState.Processing, MediaAssetStorageState.Quarantine, asset.StoredFilename, CancellationToken.None);
@@ -185,7 +195,7 @@ public sealed class SecurityEvaluationService(
         await repository.SaveChangesAsync(CancellationToken.None);
 
         await audit.WriteAsync(
-            AuditActions.AssetEvaluationFailed,
+            auditAction,
             AuditSubjectTypes.MediaAsset,
             asset.Id.ToString(),
             new { AssetId = asset.Id, Reason = auditReason },

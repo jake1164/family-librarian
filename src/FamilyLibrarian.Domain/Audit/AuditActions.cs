@@ -29,6 +29,7 @@ public static class AuditActions
 
     public const string AssetEvaluated = "asset.evaluated";
     public const string AssetEvaluationFailed = "asset.evaluation_failed";
+    public const string AssetRescanRequested = "asset.rescan_requested";
     public const string AssetIdentityVerified = "asset.identity_verified";
     public const string AssetIdentityUnmatched = "asset.identity_unmatched";
     public const string AssetIdentityOverridden = "asset.identity_overridden";
