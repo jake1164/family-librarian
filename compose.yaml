@@ -42,9 +42,9 @@ services:
     environment:
       # CLAMD_CONF_<Key> writes <Key> into /etc/clamav/clamd.conf — see
       # https://github.com/Cisco-Talos/clamav-docker. The image's own default
-      # StreamMaxLength/MaxFileSize (100M as of ClamAV 1.4, not the 25M the
-      # sample config's comment might suggest) sits under
-      # ClamAV cannot scan files over ~2 GB (clamd.conf.sample, MaxFileSize), so
+      # StreamMaxLength/MaxFileSize default to 100M as of ClamAV 1.4 (not the
+      # 25M the sample config's comment might suggest), far too low for
+      # audiobooks. ClamAV cannot scan files over ~2 GB (clamd.conf.sample, MaxFileSize), so
       # 2000M is the practical ceiling. ExternalProviderOutputPolicy caps
       # audiobook files at 1996 MiB so every accepted file fits under it; keep
       # the two in step. A file over the ceiling would fail the scan closed and
@@ -57,11 +57,11 @@ services:
       # not the input file itself. ClamAV's own documentation warns against
       # setting this equal to — or disabling — the input-size limits.
       CLAMD_CONF_MaxScanSize: 4000M
-      # A limit-exceeded scan now reports through the same FOUND/threat-name
-      # path as a real detection (Heuristics.Limits.Exceeded.*) instead of a
-      # bare protocol error — ParseScanResponse already treats FOUND as
-      # Detected, so this makes an oversized file a distinguishable result
-      # with no application code change required.
+      # A limit-exceeded scan is reported through the FOUND line
+      # (Heuristics.Limits.Exceeded.*) instead of a bare protocol error.
+      # ClamAvMalwareScanner maps that prefix to a scanner Error (review
+      # required), never to a malware detection, so an oversized file is held
+      # for an administrator instead of being destroyed.
       CLAMD_CONF_AlertExceedsMax: "yes"
     healthcheck:
       # freshclam's virus-database download can take minutes on a cold image;
