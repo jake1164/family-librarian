@@ -41,6 +41,8 @@ builder.Services.AddSingleton<AvailabilityRunCoordinator>();
 builder.Services.AddHostedService<AvailabilityRunHostedService>();
 builder.Services.AddSingleton<CatalogSearchRunCoordinator>();
 builder.Services.AddHostedService<CatalogSearchRunHostedService>();
+builder.Services.AddSingleton<SecurityEvaluationScheduler>();
+builder.Services.AddHostedService<SecurityEvaluationHostedService>();
 builder.Services.AddSingleton<AutomaticFulfillmentSignal>();
 builder.Services.AddSingleton<IAutomaticFulfillmentSignal>(
     services => services.GetRequiredService<AutomaticFulfillmentSignal>());

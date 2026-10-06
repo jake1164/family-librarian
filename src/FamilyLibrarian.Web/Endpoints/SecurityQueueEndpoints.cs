@@ -1,6 +1,8 @@
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Security;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Contracts.Acquisition;
+using FamilyLibrarian.Web.Acquisition;
 using FamilyLibrarian.Contracts.Security;
 
 namespace FamilyLibrarian.Web.Endpoints;
@@ -81,27 +83,36 @@ internal static class SecurityQueueEndpoints
         entry.Asset.IdentityMismatchReason,
         entry.Asset.ScanFailureReason);
 
+    /// <summary>
+    /// Queues the scan and returns at once. A large file takes minutes to
+    /// scan, and a scan run inside this request died with it; the page follows
+    /// progress through SignalR live updates instead.
+    /// </summary>
     private static async Task<IResult> EvaluateMediaAssetAsync(
         Guid assetId,
-        AutomatedSecurityPipeline securityPipeline,
+        ISecurityEvaluationRepository repository,
+        SecurityEvaluationScheduler queue,
         CancellationToken cancellationToken)
     {
-        var result = await securityPipeline.EvaluateAsync(assetId, cancellationToken);
-
-        return result.Outcome switch
+        var asset = await repository.FindAssetAsync(assetId, cancellationToken);
+        if (asset is null)
         {
-            SecurityEvaluationOutcome.Success => Results.Ok(new SecurityEvaluationResponse(
-                result.EvaluationId!.Value,
-                assetId,
-                result.Status!.Value.ToString(),
-                result.CreatedAtUtc!.Value,
-                result.CompletedAtUtc)),
-            SecurityEvaluationOutcome.NotFound => Results.NotFound(),
-            _ => Results.ValidationProblem(new Dictionary<string, string[]>
+            return Results.NotFound();
+        }
+
+        // Processing is allowed through: a scan that stalled there is recovered
+        // by the evaluation service, which re-checks how long it has been idle.
+        if (asset.StorageState is not (MediaAssetStorageState.Quarantine or MediaAssetStorageState.Processing))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["asset"] = [result.Error ?? "That asset could not be evaluated."]
-            })
-        };
+                ["asset"] = ["Only a quarantined asset can be evaluated."]
+            });
+        }
+
+        // Already queued or scanning: the request is satisfied as it stands.
+        queue.TryEnqueue(assetId);
+        return Results.Accepted();
     }
 
     private static async Task<IResult> ApproveMediaAssetAsync(
