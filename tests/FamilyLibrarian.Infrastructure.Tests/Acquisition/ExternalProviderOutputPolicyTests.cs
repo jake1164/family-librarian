@@ -17,6 +17,19 @@ public sealed class ExternalProviderOutputPolicyTests
     }
 
     [TestMethod]
+    public void NoAcceptedFileIsLargerThanClamdCanScan()
+    {
+        // compose.yaml sets clamd's StreamMaxLength/MaxFileSize to 2000M, and
+        // ClamAV cannot scan files over ~2 GB at all. A file the policy admits
+        // but clamd cannot scan would sit in Quarantine forever.
+        const long clamdCeilingBytes = 2000L * 1024 * 1024;
+        var policy = new ExternalProviderOutputPolicy();
+
+        Assert.IsLessThanOrEqualTo(clamdCeilingBytes, policy.ForMediaType(RequestMediaType.Audiobook).MaxFileBytes);
+        Assert.IsLessThanOrEqualTo(clamdCeilingBytes, policy.ForMediaType(RequestMediaType.Ebook).MaxFileBytes);
+    }
+
+    [TestMethod]
     public void ResolvedPolicyKeepsTheSharedSettings()
     {
         var policy = new ExternalProviderOutputPolicy { MinFreeDiskBytes = 42, MaxFilenameLength = 7 };

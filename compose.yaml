@@ -44,12 +44,14 @@ services:
       # https://github.com/Cisco-Talos/clamav-docker. The image's own default
       # StreamMaxLength/MaxFileSize (100M as of ClamAV 1.4, not the 25M the
       # sample config's comment might suggest) sits under
-      # The independent external-provider output policy permits 1 GiB files.
-      # Keep clamd's stream and per-file ceilings above that cap so a file is
-      # scanned in full instead of silently skipped as clean.
-      CLAMD_CONF_StreamMaxLength: 1100M
-      CLAMD_CONF_MaxFileSize: 1100M
-      CLAMD_CONF_PCREMaxFileSize: 1100M
+      # ClamAV cannot scan files over ~2 GB (clamd.conf.sample, MaxFileSize), so
+      # 2000M is the practical ceiling. ExternalProviderOutputPolicy caps
+      # audiobook files at 1996 MiB so every accepted file fits under it; keep
+      # the two in step. A file over the ceiling would fail the scan closed and
+      # stay in Quarantine with the reason shown, never skipped as clean.
+      CLAMD_CONF_StreamMaxLength: 2000M
+      CLAMD_CONF_MaxFileSize: 2000M
+      CLAMD_CONF_PCREMaxFileSize: 2000M
       # Deliberately higher than the input caps above: this bounds total work
       # across everything one scan expands into (e.g. an archive's contents),
       # not the input file itself. ClamAV's own documentation warns against

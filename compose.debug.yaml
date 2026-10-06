@@ -37,10 +37,10 @@ services:
     ports:
       - "127.0.0.1:3310:3310"
     environment:
-      CLAMD_CONF_StreamMaxLength: 600M
-      CLAMD_CONF_MaxFileSize: 600M
-      CLAMD_CONF_PCREMaxFileSize: 600M
-      CLAMD_CONF_MaxScanSize: 1000M
+      CLAMD_CONF_StreamMaxLength: 2000M
+      CLAMD_CONF_MaxFileSize: 2000M
+      CLAMD_CONF_PCREMaxFileSize: 2000M
+      CLAMD_CONF_MaxScanSize: 2G
       CLAMD_CONF_AlertExceedsMax: "yes"
     healthcheck:
       test: ["CMD", "clamdscan", "--ping", "1"]

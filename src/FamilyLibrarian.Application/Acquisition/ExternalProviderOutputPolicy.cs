@@ -49,7 +49,11 @@ public sealed class ExternalProviderOutputPolicy
     public ExternalProviderOutputLimits? Audiobook { get; set; } = new()
     {
         MaxOutputCount = 256,
-        MaxFileBytes = 4L * 1024 * 1024 * 1024,
+        // Just under clamd's practical ~2 GB scan ceiling (compose.yaml sets
+        // 2000M): a larger file could be downloaded but never scanned, so it is
+        // refused up front instead. Raise only together with a scanner that
+        // can handle bigger files.
+        MaxFileBytes = 1996L * 1024 * 1024,
         MaxJobBytes = 8L * 1024 * 1024 * 1024
     };
 
