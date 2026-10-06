@@ -16,4 +16,5 @@ public sealed record MediaAssetAdminView(
     MediaAssetStorageState StorageState,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
-    string? IdentityMismatchReason = null);
+    string? IdentityMismatchReason = null,
+    string? ScanFailureReason = null);

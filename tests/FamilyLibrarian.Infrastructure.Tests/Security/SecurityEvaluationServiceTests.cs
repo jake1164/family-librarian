@@ -56,6 +56,7 @@ public sealed class SecurityEvaluationServiceTests
 
         Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
         Assert.AreEqual(MediaAssetStorageState.Quarantine, context.StagingStore.ZoneOf(asset.StoredFilename));
+        StringAssert.Contains(asset.ScanFailureReason, "Simulated connection reset mid-stream.");
 
         // Persisted Processing, then persisted the recovery back to Quarantine.
         Assert.AreEqual(2, context.Repository.SaveCount);

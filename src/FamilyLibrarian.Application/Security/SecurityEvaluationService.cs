@@ -48,6 +48,7 @@ public sealed class SecurityEvaluationService(
         await stagingStore.MoveAsync(
             MediaAssetStorageState.Quarantine, MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
         asset.TransitionStorageState(MediaAssetStorageState.Processing, now);
+        asset.SetScanFailureReason(null);
 
         // Persisted immediately, not batched with everything below: from here
         // on, a scanner or validator can throw (see ClamAvMalwareScannerTests
@@ -103,6 +104,7 @@ public sealed class SecurityEvaluationService(
             await stagingStore.MoveAsync(
                 MediaAssetStorageState.Processing, MediaAssetStorageState.Quarantine, asset.StoredFilename, cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Quarantine, clock.UtcNow);
+            asset.SetScanFailureReason(DescribeFailure(exception));
             await repository.SaveChangesAsync(cancellationToken);
 
             await audit.WriteAsync(
@@ -144,6 +146,17 @@ public sealed class SecurityEvaluationService(
 
         return SecurityEvaluationResult.Success(
             evaluation.Id, evaluation.Status, evaluation.CreatedAtUtc, evaluation.CompletedAtUtc);
+    }
+
+    private const int MaxFailureReasonLength = 1_024;
+
+    private static string DescribeFailure(Exception exception)
+    {
+        var detail = exception is OperationCanceledException
+            ? "The scan was cancelled or timed out before it finished."
+            : exception.Message;
+        var reason = $"Scan interrupted ({exception.GetType().Name}): {detail}";
+        return reason.Length <= MaxFailureReasonLength ? reason : reason[..MaxFailureReasonLength];
     }
 
     private async Task DestroyDetectedFileAsync(MediaAsset asset, CancellationToken cancellationToken)

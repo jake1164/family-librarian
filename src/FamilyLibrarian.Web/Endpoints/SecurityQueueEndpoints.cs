@@ -78,7 +78,8 @@ internal static class SecurityQueueEndpoints
             entry.LatestEvaluation.Approvals.Select(approval => new SecurityApprovalResponse(
                 approval.Decision.ToString(), approval.ActorType.ToString(), approval.Reason, approval.DecidedAtUtc))
                 .ToArray()),
-        entry.Asset.IdentityMismatchReason);
+        entry.Asset.IdentityMismatchReason,
+        entry.Asset.ScanFailureReason);
 
     private static async Task<IResult> EvaluateMediaAssetAsync(
         Guid assetId,

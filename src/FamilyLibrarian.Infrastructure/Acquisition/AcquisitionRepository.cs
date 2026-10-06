@@ -45,7 +45,8 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
                 asset.StorageState,
                 asset.CreatedAtUtc,
                 asset.UpdatedAtUtc,
-                asset.IdentityMismatchReason);
+                asset.IdentityMismatchReason,
+                asset.ScanFailureReason);
 
         return await query.ToArrayAsync(cancellationToken);
     }
@@ -73,7 +74,8 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
                 asset.StorageState,
                 asset.CreatedAtUtc,
                 asset.UpdatedAtUtc,
-                asset.IdentityMismatchReason);
+                asset.IdentityMismatchReason,
+                asset.ScanFailureReason);
 
         return await query.Take(maximumCount).ToArrayAsync(cancellationToken);
     }

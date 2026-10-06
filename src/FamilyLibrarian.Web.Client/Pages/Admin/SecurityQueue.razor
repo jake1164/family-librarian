@@ -76,6 +76,14 @@ else
                         </MudText>
                     </MudAlert>
                 }
+                @if (asset.StorageState == "Quarantine")
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined">
+                        <MudText Typo="Typo.body2">
+                            @QuarantineExplanation(asset)
+                        </MudText>
+                    </MudAlert>
+                }
                 @if (asset.LatestEvaluation is not null)
                 {
                     <MudText Typo="Typo.body2" Class="mt-2">
@@ -253,6 +261,11 @@ else
         _ when asset.LatestEvaluation is { Status: "Pending" } => "ScanIncomplete",
         _ => asset.LatestEvaluation?.Status ?? "NotScanned"
     };
+
+    private static string QuarantineExplanation(MediaAssetAdminResponse asset) =>
+        !string.IsNullOrWhiteSpace(asset.ScanFailureReason) ? asset.ScanFailureReason
+        : asset.LatestEvaluation is null ? "Waiting for its first security scan."
+        : "The last scan did not complete and no reason was recorded. Retry the scan; if it fails again, check the host logs.";
 
     private static bool CanEvaluate(MediaAssetAdminResponse asset) => asset.StorageState == "Quarantine";
 

@@ -968,6 +968,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(asset => asset.SourceAcquisitionCandidateId).HasColumnName("source_acquisition_candidate_id");
             entity.Property(asset => asset.StorageState).HasColumnName("storage_state").HasConversion<string>().HasMaxLength(32);
             entity.Property(asset => asset.IdentityMismatchReason).HasColumnName("identity_mismatch_reason").HasMaxLength(1_024);
+            entity.Property(asset => asset.ScanFailureReason).HasColumnName("scan_failure_reason").HasMaxLength(1_024);
             entity.Property(asset => asset.IdentityPreConfirmed)
                 .HasColumnName("identity_pre_confirmed").HasDefaultValue(true);
             entity.Property(asset => asset.BundleId).HasColumnName("bundle_id");

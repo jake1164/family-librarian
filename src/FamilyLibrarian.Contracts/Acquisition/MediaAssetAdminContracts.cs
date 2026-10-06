@@ -16,6 +16,7 @@ public sealed record MediaAssetAdminResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     SecurityEvaluationDetailResponse? LatestEvaluation,
-    string? IdentityMismatchReason = null);
+    string? IdentityMismatchReason = null,
+    string? ScanFailureReason = null);
 
 public sealed record MediaAssetAdminListResponse(IReadOnlyList<MediaAssetAdminResponse> Assets);

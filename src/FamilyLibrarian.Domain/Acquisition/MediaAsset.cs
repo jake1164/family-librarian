@@ -203,4 +203,15 @@ public sealed class MediaAsset
     /// prior hold must never linger and be read as current).
     /// </summary>
     public void SetIdentityMismatchReason(string? reason) => IdentityMismatchReason = reason;
+
+    /// <summary>
+    /// Why the most recent security evaluation was interrupted and the asset
+    /// returned to <see cref="MediaAssetStorageState.Quarantine"/>. Cleared when
+    /// the next evaluation begins so a stale failure is never read as current.
+    /// Without it a librarian sees "Retry required" with no cause short of
+    /// digging through the audit log.
+    /// </summary>
+    public string? ScanFailureReason { get; private set; }
+
+    public void SetScanFailureReason(string? reason) => ScanFailureReason = reason;
 }
