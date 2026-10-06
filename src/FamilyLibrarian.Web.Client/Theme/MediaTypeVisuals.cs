@@ -58,8 +58,8 @@ public static class MediaTypeVisuals
     public static Color AttemptOutcomeColor(string outcome) => outcome switch
     {
         "Acquired" => Color.Success,
-        "Submitted" or "Retrying" or "CandidatesFound" => Color.Info,
-        "Blocked" => Color.Warning,
+        "Submitted" or "Retrying" or "CandidatesFound" or "Resumed" => Color.Info,
+        "Blocked" or "Paused" => Color.Warning,
         "Failed" => Color.Error,
         _ => Color.Default
     };
@@ -73,6 +73,8 @@ public static class MediaTypeVisuals
         "Retrying" => "Trying next copy",
         "Failed" => "Failed",
         "Blocked" => "Blocked",
+        "Paused" => "Paused",
+        "Resumed" => "Resumed",
         _ => outcome
     };
 
@@ -90,6 +92,8 @@ public static class MediaTypeVisuals
         "Retrying" => "A copy didn't work out and the next best one is already being tried. Nothing needs doing.",
         "Failed" => "This did not work and a librarian needs to look at it.",
         "Blocked" => "A setting stopped this lookup. Check the source's configuration.",
+        "Paused" => "Acquisition is paused. Check the provider's reported reason.",
+        "Resumed" => "The provider's pause has cleared.",
         _ => outcome
     };
 
@@ -104,6 +108,8 @@ public static class MediaTypeVisuals
         "Retrying" => Icons.Material.Filled.Sync,
         "Failed" => Icons.Material.Filled.Error,
         "Blocked" => Icons.Material.Filled.Block,
+        "Paused" => Icons.Material.Filled.Pause,
+        "Resumed" => Icons.Material.Filled.PlayArrow,
         "CandidatesFound" => Icons.Material.Filled.Search,
         "NoMatch" => Icons.Material.Filled.SearchOff,
         _ => Icons.Material.Filled.Info
@@ -142,7 +148,7 @@ public static class MediaTypeVisuals
         "SecurityCheckFailed" or "PublishingNeedsAttention" or "AcquisitionFailed" => Color.Error,
         // Moving on to the next copy is the system working, not a failure.
         "AcquisitionRetrying" => Color.Info,
-        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" or "AwaitingProviderAction" => Color.Warning,
+        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" or "AwaitingProviderAction" or "AcquisitionPaused" => Color.Warning,
         "Available" => Color.Success,
         _ => Color.Info
     };

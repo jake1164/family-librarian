@@ -79,7 +79,12 @@ public sealed record AdminBookRequestView(
     string RequesterEmail,
     IReadOnlyList<RequestStatusHistoryView> StatusHistory,
     IReadOnlyList<RequestParticipantView>? Participants = null,
-    IReadOnlyList<AdminRequestReviewCandidateView>? ReviewCandidates = null);
+    IReadOnlyList<AdminRequestReviewCandidateView>? ReviewCandidates = null,
+    IReadOnlyList<AdminProviderJobProgressView>? ProviderJobs = null);
+
+/// <summary>Provider diagnostics are returned only through administrator request views.</summary>
+public sealed record AdminProviderJobProgressView(
+    Guid RequestFormatId, string ProviderId, string? Phase, double? Percent, string? Message);
 
 /// <summary>Administrative candidate evidence, including source inspection only available to a librarian.</summary>
 public sealed record AdminRequestReviewCandidateView(

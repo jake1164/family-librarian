@@ -575,6 +575,15 @@ Any `2xx` status containing a `jobId`:
 | `pollAfterSeconds` | no | The body-level form of the polling-cadence hint described just below — equivalent to a `Retry-After` header when you'd rather put it in the JSON. Provide either, both, or neither. |
 | `error` | present when `state = failed` | See below. |
 
+For an operational pause, keep the job nonterminal (`running` or `queued`),
+set `phase` to `paused` or `paused-<reason>`, and supply a short, secret-free
+plain-text `progress.message`. For example, `paused-disk-space` can report
+available space and the configured minimum. This is separate from a `waiting`
+job requiring human verification. Family Librarian shows the diagnostic only
+to administrators, shows requesters a generic paused status, and records pause
+and recovery transitions in provider activity without repeating every poll.
+When the pause clears, report the current phase and clear the stale message.
+
 There is no fixed end-to-end time budget. A job may legitimately run for
 minutes or hours (large transfers, repair/extract work, a slow browser-gated
 download, a large audiobook) — design for that rather than assuming a short

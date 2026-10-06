@@ -9,6 +9,23 @@ namespace FamilyLibrarian.Infrastructure.Tests.Requests;
 public sealed class RequestFormatProgressTests
 {
     [TestMethod]
+    [DataRow("paused")]
+    [DataRow("paused-disk-space")]
+    [DataRow("PAUSED-maintenance")]
+    public void ProviderPauseHasRequesterSafeProgress(string phase)
+    {
+        var result = RequestFormatProgress.Describe(null, null, null, null,
+            ProviderAcquisitionJobLifecycleState.Running, phase);
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AcquisitionPaused", result.Code);
+        Assert.DoesNotContain("disk", result.Description, StringComparison.OrdinalIgnoreCase);
+        var resumed = RequestFormatProgress.Describe(null, null, null, null,
+            ProviderAcquisitionJobLifecycleState.Running, "downloading");
+        Assert.IsNotNull(resumed);
+        Assert.AreEqual("AcquisitionInProgress", resumed.Code);
+    }
+
+    [TestMethod]
     public void SecurityStagesHaveRequesterSafeProgress()
     {
         var cases = new (MediaAssetStorageState AssetState, SecurityEvaluationStatus? SecurityStatus, string Code)[]

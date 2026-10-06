@@ -170,7 +170,11 @@ public sealed record AdminBookRequestResponse(
     string RequesterEmail,
     IReadOnlyList<BookRequestStatusHistoryResponse> StatusHistory,
     IReadOnlyList<RequestParticipantResponse>? Participants = null,
-    IReadOnlyList<AdminRequestReviewCandidateResponse>? ReviewCandidates = null);
+    IReadOnlyList<AdminRequestReviewCandidateResponse>? ReviewCandidates = null,
+    IReadOnlyList<AdminProviderJobProgressResponse>? ProviderJobs = null);
+
+public sealed record AdminProviderJobProgressResponse(
+    Guid RequestFormatId, string ProviderId, string? Phase, double? Percent, string? Message);
 
 /// <summary>
 /// Administrator-only evidence for a review candidate. <see cref="InspectionUri"/>

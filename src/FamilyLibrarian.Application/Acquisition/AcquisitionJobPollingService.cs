@@ -153,6 +153,7 @@ public sealed class AcquisitionJobPollingService(
 
         if (status.State != ProviderAcquisitionJobLifecycleState.Completed)
         {
+            RecordPauseTransition(job, status, job.Phase);
             job.ApplyStatus(
                 status.State,
                 status.Phase,
@@ -168,10 +169,34 @@ public sealed class AcquisitionJobPollingService(
                 clock.UtcNow.AddSeconds(status.PollAfterSeconds ?? 2),
                 clock.UtcNow);
             await jobs.SaveChangesAsync(cancellationToken);
+            await attempts.SaveChangesAsync(cancellationToken);
             return;
         }
 
+        var previousPhase = job.Phase;
         await CompleteAsync(job, provider, apiKey, status, wasWaitingForInteraction, cancellationToken);
+        if (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Completed)
+            RecordPauseTransition(job, status, previousPhase);
+        await attempts.SaveChangesAsync(cancellationToken);
+    }
+
+    private void RecordPauseTransition(ProviderAcquisitionJob job, ExternalProviderJobStatus status, string? previousPhase)
+    {
+        var wasPaused = ProviderJobPause.IsPaused(previousPhase);
+        var isPaused = (status.State is ProviderAcquisitionJobLifecycleState.Running or ProviderAcquisitionJobLifecycleState.Queued) &&
+            ProviderJobPause.IsPaused(status.Phase);
+        if (wasPaused == isPaused)
+            return;
+        // Waiting for a human is a different workflow, not a resumed transfer.
+        if (!isPaused && status.State is not (ProviderAcquisitionJobLifecycleState.Running or
+                ProviderAcquisitionJobLifecycleState.Queued or ProviderAcquisitionJobLifecycleState.Completed))
+            return;
+        attempts.Add(new ProviderAttempt(job.RequestId, job.RequestFormatId, job.ProviderId,
+            isPaused ? ProviderAttemptOutcome.Paused : ProviderAttemptOutcome.Resumed,
+            isPaused ? (string.IsNullOrWhiteSpace(status.Progress?.Message)
+                    ? "The provider paused acquisition; check the provider." : status.Progress.Message)
+                : "The provider's acquisition pause has cleared.",
+            clock.UtcNow, nextEligibleCheckAtUtc: null));
     }
 
     private async Task CompleteAsync(

@@ -596,9 +596,25 @@ public sealed class RequestRepository(
             requests.Select(request => request.Request).ToArray(),
             cancellationToken);
         var progressByRequestId = progress.ToDictionary(request => request.Id);
+        var requestIds = requests.Select(request => request.Request.Id).ToArray();
+        var providerJobs = await database.ProviderAcquisitionJobs.AsNoTracking()
+            .Where(job => requestIds.Contains(job.RequestId) &&
+                (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Running ||
+                 job.LifecycleState == ProviderAcquisitionJobLifecycleState.Queued))
+            .Select(job => new
+            {
+                job.RequestId, job.RequestFormatId, job.ProviderId, job.Phase,
+                job.ProgressPercent, job.ProgressMessage
+            }).ToArrayAsync(cancellationToken);
 
         return requests
-            .Select(request => request with { Request = progressByRequestId[request.Request.Id] })
+            .Select(request => request with
+            {
+                Request = progressByRequestId[request.Request.Id],
+                ProviderJobs = providerJobs.Where(job => job.RequestId == request.Request.Id)
+                    .Select(job => new AdminProviderJobProgressView(job.RequestFormatId, job.ProviderId,
+                        job.Phase, job.ProgressPercent, job.ProgressMessage)).ToArray()
+            })
             .ToArray();
     }
 

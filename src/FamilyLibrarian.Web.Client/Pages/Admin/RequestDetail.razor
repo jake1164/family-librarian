@@ -78,6 +78,15 @@
                 }
                 <MudText Typo="Typo.caption">Asked @request.Request.RequestedAtUtc.ToLocalTime().ToString("f")</MudText>
                 <MudText Typo="Typo.body2">@request.Request.RequesterCount active requester(s) share this fulfillment.</MudText>
+                @foreach (var job in request.ProviderJobs ?? [])
+                {
+                    @if (!string.IsNullOrWhiteSpace(job.Message))
+                    {
+                        <MudAlert Severity="@(string.Equals(job.Phase, "paused", StringComparison.OrdinalIgnoreCase) || job.Phase?.StartsWith("paused-", StringComparison.OrdinalIgnoreCase) == true ? Severity.Warning : Severity.Info)">
+                            @FormatName(job.RequestFormatId) via @job.ProviderId: @job.Message
+                        </MudAlert>
+                    }
+                }
                 @if (waitingInteraction is not null)
                 {
                     @* HUMAN-ACQ-1 D7: already claimed by another admin (in-app or

@@ -79,6 +79,7 @@ public sealed class ProviderAttempt
             ConfiguredTrackLimitMarker, StringComparison.OrdinalIgnoreCase) =>
             ProviderAttemptIssueKind.Configuration,
         ProviderAttemptOutcome.Failed => ProviderAttemptIssueKind.Operational,
+        ProviderAttemptOutcome.Paused => ProviderAttemptIssueKind.Operational,
         _ => null
     };
 }
@@ -110,7 +111,9 @@ public enum ProviderAttemptOutcome
     /// The terminal case -- the attempt limit is spent -- is still recorded as
     /// <see cref="Failed"/>.
     /// </remarks>
-    Retrying
+    Retrying,
+    Paused,
+    Resumed
 }
 
 /// <summary>The kind of administrator action an unsuccessful provider attempt needs.</summary>

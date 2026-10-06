@@ -86,6 +86,9 @@ public static class RequestFormatProgress
     private static RequestFormatProgressView DescribeProviderJob(
         ProviderAcquisitionJobLifecycleState state, string? phase, bool advancingToNextCandidate) => state switch
     {
+        ProviderAcquisitionJobLifecycleState.Running or ProviderAcquisitionJobLifecycleState.Queued
+            when ProviderJobPause.IsPaused(phase) => Stage(
+                "AcquisitionPaused", "Acquisition is paused and needs the librarian's attention."),
         // An automatic copy failed its checks but the request is still in the
         // automatic queue: Family Librarian is already moving to the next best
         // copy and nothing needs a person. Without this the chip said "needs

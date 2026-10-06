@@ -304,6 +304,84 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         Assert.IsNotNull(confirmedResult);
     }
 
+    [TestMethod]
+    public async Task ProviderPauseAppearsOnlyForAdminsAndHistoryRecordsTransitionsOnce()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var fake = new FakeExternalProviderClient("pause-external")
+        {
+            Status = new ExternalProviderJobStatus("fake-job-1", ProviderAcquisitionJobLifecycleState.Running,
+                "paused-disk-space", null, new ProviderProgress(97, null, null,
+                    "Downloader paused: insufficient disk space. 0.39 GiB available; minimum 500 MiB."), null, 0)
+        };
+        await using var factory = new FamilyLibrarianAppFactory(fixture.ConnectionString, services =>
+        {
+            services.RemoveAll<IExternalProviderClient>();
+            services.AddSingleton<IExternalProviderClient>(fake);
+        });
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        var create = await admin.PostAsJsonAsync("/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest("pause-external", "Pause External", "http://pause-external.test"));
+        create.EnsureSuccessStatusCode();
+        var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(provider);
+        var enable = await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{provider.Id}/enabled",
+            new SetExternalProviderEnabledRequest(true));
+        enable.EnsureSuccessStatusCode();
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", null);
+        resolve.EnsureSuccessStatusCode();
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(await fixture.CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
+        created.EnsureSuccessStatusCode();
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+        var format = request.Formats.Single();
+        var acquire = await admin.PostAsync(
+            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/pause-external/fake-hobbit-1?confirmLowConfidenceMatch=true", null);
+        Assert.AreEqual(HttpStatusCode.Accepted, acquire.StatusCode);
+        var acquisition = await acquire.Content.ReadFromJsonAsync<ManualAcquisitionInProgressResponse>();
+        Assert.IsNotNull(acquisition);
+
+        async Task PollAsync()
+        {
+            await using var pollScope = factory.Services.CreateAsyncScope();
+            var db = pollScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var tracked = await db.ProviderAcquisitionJobs.SingleAsync(j => j.Id == acquisition.ProviderAcquisitionJobId);
+            tracked.Reschedule(DateTimeOffset.UtcNow.AddSeconds(-1), DateTimeOffset.UtcNow);
+            await db.SaveChangesAsync();
+            await pollScope.ServiceProvider.GetRequiredService<AcquisitionJobPollingService>().ProcessDueAsync(CancellationToken.None);
+        }
+        await PollAsync();
+        await PollAsync();
+        var detail = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{request.Id}");
+        Assert.IsNotNull(detail);
+        Assert.AreEqual("AcquisitionPaused", detail.Request.Formats.Single().ProgressCode);
+        Assert.IsNotNull(detail.ProviderJobs);
+        Assert.Contains("minimum 500 MiB", detail.ProviderJobs.Single().Message!);
+        var familyJson = await admin.GetStringAsync($"/api/v1/requests/{request.Id}");
+        Assert.DoesNotContain("minimum 500 MiB", familyJson);
+        Assert.DoesNotContain("providerJobs", familyJson, StringComparison.OrdinalIgnoreCase);
+
+        fake.Status = fake.Status with { Phase = "downloading", Progress = new ProviderProgress(98, null, null, null) };
+        await PollAsync();
+        await PollAsync();
+        detail = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{request.Id}");
+        Assert.IsNotNull(detail);
+        Assert.AreEqual("AcquisitionInProgress", detail.Request.Formats.Single().ProgressCode);
+        Assert.IsNotNull(detail.ProviderJobs);
+        Assert.IsNull(detail.ProviderJobs.Single().Message);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var events = await database.ProviderAttempts.Where(a => a.RequestId == request.Id).ToArrayAsync();
+        Assert.AreEqual(1, events.Count(a => a.Outcome == ProviderAttemptOutcome.Paused));
+        Assert.AreEqual(1, events.Count(a => a.Outcome == ProviderAttemptOutcome.Resumed));
+        Assert.Contains("insufficient disk space", events.Single(a => a.Outcome == ProviderAttemptOutcome.Paused).Summary);
+    }
+
     private static async Task SignInAsync(HttpClient client, string email, string password)
     {
         var response = await client.PostAsJsonAsync(
@@ -312,12 +390,13 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     }
 
     /// <summary>Always finds "the-hobbit"-matching searches and fetches a real, minimal, valid EPUB.</summary>
-    private sealed class FakeExternalProviderClient : IExternalProviderClient
+    private sealed class FakeExternalProviderClient(string providerId = "fake-external") : IExternalProviderClient
     {
+        public ExternalProviderJobStatus? Status { get; set; }
         public Task<ExternalProviderManifest> GetManifestAsync(
             string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderManifest(
-                ["2"], "2", null, "fake-external", "Fake External", "1.0.0",
+                ["2"], "2", null, providerId, "Fake External", "1.0.0",
                 new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null));
 
         public Task<ExternalProviderHealth> GetHealthAsync(
@@ -346,11 +425,11 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
             CancellationToken cancellationToken) =>
             Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
-                "fake-job-1", ProviderAcquisitionJobLifecycleState.Completed, phase: null, pollAfterSeconds: 0));
+                "fake-job-1", Status?.State ?? ProviderAcquisitionJobLifecycleState.Completed, phase: null, pollAfterSeconds: 0));
 
         public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
             string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
-            Task.FromResult(new ExternalProviderJobStatus(
+            Task.FromResult(Status ?? new ExternalProviderJobStatus(
                 jobId, ProviderAcquisitionJobLifecycleState.Completed, Phase: null, Interaction: null, Progress: null,
                 Error: null, PollAfterSeconds: null));
 

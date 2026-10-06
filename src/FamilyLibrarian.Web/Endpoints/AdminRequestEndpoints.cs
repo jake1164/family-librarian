@@ -748,7 +748,9 @@ internal static class AdminRequestEndpoints
             ExternalReleaseNameEvidence.Evaluate(candidate.ReleaseName,
                 [request.Request.WorkTitle],
                 request.Request.Authors is { Count: > 0 } releaseAuthors ? releaseAuthors[0] : null)
-                .AssertsExpectedTitle)).ToArray());
+                .AssertsExpectedTitle)).ToArray(),
+        request.ProviderJobs?.Select(job => new AdminProviderJobProgressResponse(
+            job.RequestFormatId, job.ProviderId, job.Phase, job.Percent, job.Message)).ToArray());
 
     private static string? ResolveInspectionUri(AdminRequestReviewCandidateView candidate)
 {
