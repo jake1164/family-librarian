@@ -56,7 +56,7 @@ services:
       # across everything one scan expands into (e.g. an archive's contents),
       # not the input file itself. ClamAV's own documentation warns against
       # setting this equal to — or disabling — the input-size limits.
-      CLAMD_CONF_MaxScanSize: 2G
+      CLAMD_CONF_MaxScanSize: 4000M
       # A limit-exceeded scan now reports through the same FOUND/threat-name
       # path as a real detection (Heuristics.Limits.Exceeded.*) instead of a
       # bare protocol error — ParseScanResponse already treats FOUND as
