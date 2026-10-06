@@ -151,8 +151,8 @@ public sealed class AssetIdentityVerificationService(
     /// upload, or an external-provider candidate strong enough to need no
     /// override) has nothing left to prove, so this still passes. An
     /// unconfirmed external-provider match has nothing confirming it at all
-    /// -- EPUB/KEPUB is the only format with its own verifier today, so a
-    /// MOBI/AZW3/etc. candidate that only cleared the pre-download gate via
+    /// -- only EPUB/KEPUB and M4B have their own verifiers today, so a
+    /// MOBI/AZW3/MP3/etc. candidate that only cleared the pre-download gate via
     /// <c>confirmLowConfidenceMatch</c> would otherwise reach a library
     /// shelf, correctly labeled with someone else's book, with nothing
     /// having actually checked it.

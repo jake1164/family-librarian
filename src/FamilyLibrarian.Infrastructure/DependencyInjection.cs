@@ -332,6 +332,7 @@ public static class DependencyInjection
         services.AddSingleton<IAssetValidator, MobiEncryptionValidator>();
         services.AddSingleton<IAssetValidator, AudioValidator>();
         services.AddScoped<IAssetIdentityVerifier, EpubAssetIdentityVerifier>();
+        services.AddScoped<IAssetIdentityVerifier, M4bAssetIdentityVerifier>();
 
         services.AddScoped<IAcquisitionBoundaryGuard, AcquisitionBoundaryGuard>();
         services.AddScoped<ISecurityEvaluationRepository, SecurityEvaluationRepository>();
