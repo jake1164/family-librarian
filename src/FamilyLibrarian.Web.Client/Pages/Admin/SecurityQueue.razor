@@ -55,7 +55,12 @@ else
                     <MudText Typo="Typo.h6">@asset.WorkTitle</MudText>
                     <MediaTypeChip MediaType="@asset.MediaType" />
                     <MudSpacer />
-                    <RequestStatusChip Status="@asset.StorageState" />
+                    @* A stalled scan is one fact, not two: "Processing" + "Scanning" would
+                       contradict the "Scan stalled" chip, so the storage chip is dropped. *@
+                    @if (!IsScanStalled(asset))
+                    {
+                        <RequestStatusChip Status="@asset.StorageState" />
+                    }
                     <RequestStatusChip Status="@ScanStatus(asset)" />
                 </MudStack>
 
@@ -260,6 +265,7 @@ else
 
     private static string ScanStatus(MediaAssetAdminResponse asset) => asset.StorageState switch
     {
+        "Processing" when IsScanStalled(asset) => "ScanStalled",
         "Quarantine" => asset.LatestEvaluation is null ? "AwaitingScan" : "ScanInterrupted",
         "Processing" when asset.LatestEvaluation is null or { Status: "Pending" } => "Scanning",
         _ when asset.LatestEvaluation is { Status: "Pending" } => "ScanIncomplete",

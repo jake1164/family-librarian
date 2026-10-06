@@ -134,7 +134,7 @@ public static class MediaTypeVisuals
     {
         "Available" or "Trusted" or "Archived" or "Passed" => Color.Success,
         "Quarantine" or "Processing" or "Scanning" or "AwaitingScan" => Color.Info,
-        "Unmatched" or "ReviewRequired" or "ScanInterrupted" or "ScanIncomplete" => Color.Warning,
+        "Unmatched" or "ReviewRequired" or "ScanInterrupted" or "ScanIncomplete" or "ScanStalled" => Color.Warning,
         "Rejected" or "Destroyed" or "Failed" => Color.Error,
         "NeedsReview" => Color.Warning,
         "NotAvailable" => Color.Error,
@@ -162,6 +162,7 @@ public static class MediaTypeVisuals
         "AwaitingScan" => "Awaiting scan",
         "NotScanned" => "No scan recorded",
         "ScanInterrupted" => "Retry required",
+        "ScanStalled" => "Scan stalled",
         "ScanIncomplete" => "Scan incomplete",
         "ReviewRequired" => "Review required",
         "Passed" => "Scan passed",

@@ -29,8 +29,8 @@ The rule:
   type so the distinction isn't icon-only for screen readers.
 
 Security scan/storage statuses use the same `MediaTypeVisuals` mapping and
-`RequestStatusChip`: scanning/waiting is blue, interrupted/review-required is
-amber, passed/trusted is green, and failed/deleted is red.
+`RequestStatusChip`: scanning/waiting is blue, interrupted/stalled/review-required is
+amber (a stalled scan replaces the "Processing" storage chip rather than sitting beside it), passed/trusted is green, and failed/deleted is red.
 
 This mapping lives in one place —
 [`Theme/MediaTypeVisuals.cs`](../src/FamilyLibrarian.Web.Client/Theme/MediaTypeVisuals.cs)
