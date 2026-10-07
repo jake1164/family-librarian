@@ -44,6 +44,8 @@ public sealed partial class CatalogSearchRunHostedService(
     {
         try
         {
+            if (run.HasPreviousPage && run.Snapshot().Any(result => result.ProviderId == provider.Id && result.Succeeded && !result.HasMore))
+                return;
             var page = await provider.SearchAsync(run.Query, token);
             run.Add(provider.Id, provider.DisplayName, true, page.Candidates, page.HasMore);
         }

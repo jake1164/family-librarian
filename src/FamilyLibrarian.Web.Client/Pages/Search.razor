@@ -90,7 +90,8 @@
                     }
                     <MudStack Spacing="1" Class="flex-grow-1" Style="min-width: 0;">
                         <MudLink Typo="Typo.h6" Class="search-result-title" Href="@DetailsHref(result)">@result.Title</MudLink>
-                        <MudText Typo="Typo.body2" Color="Color.Secondary">@string.Join(", ", result.Authors)</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">@(result.Authors.Count > 1 ? "Contributors: " : string.Empty)@string.Join(", ", result.Authors)</MudText>
+                        <CandidateVersionSummary Candidate="@result" />
                         @if (result.Series.FirstOrDefault(series => series.IsPrimary) is { } series)
                         {
                             <MudText Typo="Typo.caption" Color="Color.Secondary">
@@ -107,7 +108,10 @@
                         }
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-1" Wrap="Wrap.Wrap">
                             <ProviderChip ProviderName="@result.ProviderName" SourceUrl="@result.SourceUrl" />
-                            <AvailabilityBadges Availability="@SearchState.AvailabilityByResultKey.GetValueOrDefault(ResultKey(result))" />
+                            @if (result.VersionKind is "Novel" or "Unspecified")
+                            {
+                                <AvailabilityBadges Availability="@SearchState.AvailabilityByResultKey.GetValueOrDefault(ResultKey(result))" />
+                            }
                             @if (SecondaryDetails(result) is { Length: > 0 } secondaryDetails)
                             {
                                 <MudText Typo="Typo.caption" Color="Color.Secondary">@secondaryDetails</MudText>
@@ -117,7 +121,7 @@
                                 <MudButton Variant="Variant.Outlined"
                                            Size="Size.Small"
                                            Href="@DetailsHref(result)">
-                                    @result.Editions.Count more editions
+                                    Compare @result.Editions.Count editions
                                 </MudButton>
                             }
                         </MudStack>
@@ -217,7 +221,7 @@
             SearchState.BeginNewSearch();
             availabilityStartedKeys.Clear();
             var availabilityStarted = false;
-            var started = await Catalog.StartSearchAsync(query, currentPage, token);
+            var started = await Catalog.StartSearchAsync(query, currentPage, cancellationToken: token);
             thisRunId = started.RunId;
             activeSearchRunId = started.RunId;
             while (true)
@@ -236,7 +240,11 @@
                 StartAvailabilityLoad(results, cancelPreviousBatch: !availabilityStarted);
                 availabilityStarted = true;
                 await InvokeAsync(StateHasChanged);
-                if (run.IsComplete) break;
+                if (run.IsComplete)
+                {
+                    SearchState.CompletedRunId = started.RunId;
+                    break;
+                }
                 await Task.Delay(TimeSpan.FromMilliseconds(350), token);
             }
         }
@@ -271,29 +279,44 @@
     private async Task LoadMoreAsync()
     {
         isLoadingMore = true;
+        searchCancellation ??= new CancellationTokenSource();
+        var token = searchCancellation.Token;
         errorMessage = null;
         showOtherMatches = true;
 
         try
         {
-            var response = await Catalog.SearchAsync(searchText.Trim(), currentPage + 1);
-            results = results
-                .Concat(response.Results)
-                .DistinctBy(ResultKey)
-                .ToArray();
-            unavailableProviders = unavailableProviders
-                .Concat(response.Providers
-                    .Where(provider => !provider.Succeeded)
-                    .Select(provider => provider.ProviderName))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            currentPage = response.Page;
-            hasMore = response.HasMore;
+            if (SearchState.CompletedRunId is not { } previousRunId)
+            {
+                errorMessage = "This search has expired. Search again to load more results.";
+                return;
+            }
+            var started = await Catalog.StartSearchAsync(SearchState.SearchText, currentPage + 1,
+                previousRunId: previousRunId, cancellationToken: token);
+            activeSearchRunId = started.RunId;
+            while (true)
+            {
+                var run = await Catalog.GetSearchRunAsync(started.RunId, token);
+                results = run.Search.Results;
+                unavailableProviders = run.Search.Providers.Where(provider => !provider.Succeeded)
+                    .Select(provider => provider.ProviderName).ToArray();
+                currentPage = run.Search.Page;
+                hasMore = run.Search.HasMore;
+                await InvokeAsync(StateHasChanged);
+                if (run.IsComplete)
+                {
+                    SearchState.CompletedRunId = started.RunId;
+                    activeSearchRunId = null;
+                    break;
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(350), token);
+            }
         }
         catch (HttpRequestException)
         {
-            errorMessage = "More catalog results are unavailable. Please try again.";
+            errorMessage = "More results could not be loaded. Search again if this search has expired.";
         }
+        catch (OperationCanceledException) { return; }
         finally
         {
             isLoadingMore = false;
@@ -334,6 +357,7 @@
         availabilityCancellation ??= new CancellationTokenSource();
         var token = availabilityCancellation.Token;
         var uncached = resultsToCheck
+            .Where(result => result.VersionKind is "Novel" or "Unspecified")
             .Where(result => !SearchState.AvailabilityByResultKey.ContainsKey(ResultKey(result)))
             .Where(result => availabilityStartedKeys.Add(ResultKey(result)))
             .ToArray();

@@ -10,6 +10,22 @@ namespace FamilyLibrarian.Infrastructure.Tests.Metadata;
 public sealed class OpenLibraryBookMetadataProviderTests
 {
     [TestMethod]
+    public async Task SearchPreservesCollectionWorkTitleWhenMatchedEditionHasOnlyTheNovelTitle()
+    {
+        using var handler = new StubHttpMessageHandler((_, _) => JsonResponse(
+            """
+            {"num_found":1,"docs":[{"key":"/works/OL28185143W","title":"Fahrenheit 451 (Fahrenheit 451 / Playground / Rock Cried Out)","author_name":["Ray Bradbury"],"editions":{"docs":[{"title":"Fahrenheit 451","language":["eng"],"publisher":["Example publisher"],"isbn":["9780006546061"]}]}}]}
+            """));
+        using var client = CreateHttpClient(handler);
+        var candidate = (await CreateProvider(client).SearchAsync(new BookSearchQuery("Fahrenheit 451"), CancellationToken.None)).Candidates.Single();
+        Assert.AreEqual("Fahrenheit 451", candidate.Title);
+        StringAssert.Contains(candidate.WorkTitle!, "Playground / Rock Cried Out");
+        Assert.AreEqual("Collection", BookCandidateVersion.Assess(candidate).Kind);
+        Assert.AreEqual("en", candidate.Editions.Single().Language);
+        Assert.AreEqual("Example publisher", candidate.Editions.Single().Publisher);
+    }
+
+    [TestMethod]
     public async Task SearchAsyncNormalizesWorkAndEditionEvidence()
     {
         Uri? requestedUri = null;

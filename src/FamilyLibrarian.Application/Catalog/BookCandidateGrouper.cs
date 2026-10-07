@@ -22,9 +22,8 @@ public static class BookCandidateGrouper
                     .ThenBy(candidate => candidate.ExternalId, StringComparer.Ordinal)
                     .ToArray();
 
-                // The most complete candidate represents the group in the results
-                // list, but every provider that reported this same work is kept
-                // as a merged source so the UI can still link out to each of them.
+                // Keep the representative metadata, all compatible editions, and
+                // every source. Content-kind conflicts were separated by the key.
                 var sources = ordered
                     .Select(candidate => new BookCandidateSource(
                         candidate.ProviderId,
@@ -32,7 +31,12 @@ public static class BookCandidateGrouper
                         candidate.ExternalId,
                         candidate.SourceUrl))
                     .ToArray();
-                return ordered[0] with { MergedSources = sources };
+                return ordered[0] with
+                {
+                    MergedSources = sources,
+                    AssessedVersion = BookCandidateVersion.Assess(ordered[0]),
+                    Editions = ordered.SelectMany(candidate => candidate.Editions).Distinct().ToArray()
+                };
             })
             .ToArray();
 
@@ -40,7 +44,7 @@ public static class BookCandidateGrouper
         {
             return groupedCandidates
                 .OrderByDescending(GetLanguageRank)
-                .ThenBy(GetAdaptationSignal)
+                .ThenBy(candidate => BookCandidateVersion.Rank(candidate, searchText))
                 .ThenByDescending(HasDescriptiveEvidence)
                 .ThenBy(GetCreditCount)
                 .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
@@ -52,47 +56,12 @@ public static class BookCandidateGrouper
             .OrderByDescending(candidate => GetMatchKind(candidate, searchText))
             .ThenByDescending(candidate => GetTokenOverlapScore(candidate, searchText))
             .ThenByDescending(GetLanguageRank)
-            .ThenBy(GetAdaptationSignal)
+            .ThenBy(candidate => BookCandidateVersion.Rank(candidate, searchText))
             .ThenByDescending(HasDescriptiveEvidence)
             .ThenBy(GetCreditCount)
             .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
             .ThenBy(candidate => GetFirstAuthor(candidate), StringComparer.OrdinalIgnoreCase)
             .ToArray();
-    }
-
-    // Live evidence (searching "moby dick") showed author-count alone is too
-    // weak a signal: a legitimate scholarly edition with an editor's
-    // introduction ("Herman Melville, Nigel Cliff") and an actual comic-book
-    // adaptation ("Bill Sienkiewicz, Herman Melville") both credit two people,
-    // so credit count alone cannot tell them apart, and plenty of real
-    // adaptations credit only one name too ("T. W. Robinson, Herman
-    // Melville" -- two credits; "Will Eisner" alone -- one credit, still a
-    // comic). What distinguishes them is what the source itself says. Markers
-    // are the same vocabulary as DeterministicBookMatcher.DerivativeTitleMarkers
-    // plus terms that show up in a *description* rather than a title --
-    // "Retells in graphic novel format...", "...abridged, simplified and
-    // condensed for young readers...", "Presented in comic book format." were
-    // the literal descriptions on four of the nine candidates tied for first
-    // place on this exact search. This is deliberately ranking-only: an
-    // adaptation still appears, just not ahead of the edition that isn't one.
-    // It must never feed identity matching -- a requester who explicitly
-    // wants the graphic novel is not wrong to want it.
-    private static readonly string[] AdaptationRankingMarkers =
-    [
-        "abridged", "abridgement", "retold", "retelling", "adapted", "adaptation",
-        "graphic novel", "comic book", "simplified", "condensed for young readers",
-        "young readers", "study guide", "companion to", "summary of",
-        "cliffsnotes", "cliff notes", "sparknotes",
-    ];
-
-    private static int GetAdaptationSignal(BookCandidate candidate)
-    {
-        var haystack = Matching.DeterministicBookMatcher.NormalizeWords(
-            $"{candidate.Title} {candidate.Description}");
-        return AdaptationRankingMarkers.Any(marker =>
-            haystack.Contains(marker, StringComparison.OrdinalIgnoreCase))
-            ? 1
-            : 0;
     }
 
     /// <summary>
@@ -107,7 +76,8 @@ public static class BookCandidateGrouper
     private static bool HasDescriptiveEvidence(BookCandidate candidate) =>
         !string.IsNullOrWhiteSpace(candidate.Description);
 
-    private static int GetCreditCount(BookCandidate candidate) => candidate.Authors.Count;
+    private static int GetCreditCount(BookCandidate candidate) =>
+        candidate.Authors.Count == 0 ? int.MaxValue : candidate.Authors.Count;
 
     // No per-user/global language preference exists yet, so this is a fixed
     // default rather than a setting. Unknown-language candidates are treated
@@ -134,16 +104,20 @@ public static class BookCandidateGrouper
         // or, The Whale") since that needs fuzzier title matching than this
         // static grouping key can do. Language is kept as its own bucket so a
         // foreign-language edition never merges behind (and hides) an English one.
-        if (string.IsNullOrWhiteSpace(candidate.Title))
+        // Unknown language stays separate, and known derivative/collection
+        // evidence constrains grouping before representative selection.
+        if (string.IsNullOrWhiteSpace(candidate.Title) || candidate.Authors.Count == 0)
         {
             return $"provider:{candidate.ProviderId}:{candidate.ExternalId}";
         }
 
         var firstAuthor = GetFirstAuthor(candidate);
-        var normalizedTitle = NormalizeTitleForGrouping(candidate.Title, firstAuthor);
+        var normalizedTitle = NormalizeTitleForGrouping(candidate.WorkTitle ?? candidate.Title, firstAuthor);
         var normalizedAuthor = NormalizeAuthorForGrouping(firstAuthor);
         var languageGroup = GetLanguageGroup(candidate.Language);
-        return $"work:{normalizedTitle}:{normalizedAuthor}:{languageGroup}";
+        var version = BookCandidateVersion.Assess(candidate);
+        var versionGroup = version.Kind is "Novel" or "Unspecified" ? "book" : version.Kind;
+        return $"work:{normalizedTitle}:{normalizedAuthor}:{languageGroup}:{versionGroup}";
     }
 
     private static string NormalizeTitleForGrouping(string title, string? firstAuthor)
@@ -175,7 +149,7 @@ public static class BookCandidateGrouper
     private static string GetLanguageGroup(string? language) =>
         string.IsNullOrWhiteSpace(language) ||
         string.Equals(language, DefaultPreferredLanguage, StringComparison.OrdinalIgnoreCase)
-            ? DefaultPreferredLanguage
+            ? (string.IsNullOrWhiteSpace(language) ? "unknown" : DefaultPreferredLanguage)
             : language.Trim().ToLowerInvariant();
 
     private static string NormalizeAuthorForGrouping(string? author)
@@ -205,9 +179,9 @@ public static class BookCandidateGrouper
         (string.IsNullOrWhiteSpace(candidate.Publisher) ? 0 : 1) +
         (candidate.PageCount is null ? 0 : 1) +
         (candidate.Subjects.Count == 0 ? 0 : 1) +
-        candidate.Authors.Count +
-        candidate.Editions.Count +
-        candidate.Series.Count;
+        (candidate.Authors.Count == 0 ? 0 : 1) +
+        (candidate.Editions.Count == 0 ? 0 : 1) +
+        (candidate.Series.Count == 0 ? 0 : 1);
 
     private static string? GetFirstAuthor(BookCandidate candidate) =>
         candidate.Authors.Count == 0 ? null : candidate.Authors[0];

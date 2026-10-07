@@ -61,12 +61,16 @@
                         {
                             <ProviderChip ProviderName="@source.ProviderName" SourceUrl="@source.SourceUrl" />
                         }
-                        <AvailabilityBadges LegacyAvailability="@availability" />
+                        @if (book.VersionKind is "Novel" or "Unspecified")
+                        {
+                            <AvailabilityBadges LegacyAvailability="@availability" />
+                        }
                     </MudStack>
 
                     <div>
                         <MudText Typo="Typo.h3">@book.Title</MudText>
-                        <MudText Typo="Typo.h6">@string.Join(", ", book.Authors)</MudText>
+                        <MudText Typo="Typo.h6">@(book.Authors.Count > 1 ? "Contributors: " : string.Empty)@string.Join(", ", book.Authors)</MudText>
+                        <CandidateVersionSummary Candidate="@book" />
                     </div>
 
                     <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
@@ -150,7 +154,7 @@
         <MudPaper Class="pa-4" Outlined="true">
             <MudText Typo="Typo.h6" Class="mb-1">Known editions</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
-                These are the edition details reported by @book.ProviderName for this catalog record.
+                Compare the title, language, publisher, and ISBN to identify the edition you want.
             </MudText>
 
             @if (book.Editions.Count == 0)
@@ -165,6 +169,10 @@
                         <MudPaper Outlined="true" Class="pa-3">
                             <MudStack Spacing="1">
                                 <MudText Typo="Typo.subtitle1">@edition.Title</MudText>
+                                @if (!string.IsNullOrWhiteSpace(edition.Language) || !string.IsNullOrWhiteSpace(edition.Publisher))
+                                {
+                                    <MudText Typo="Typo.caption">@edition.Language · @edition.Publisher</MudText>
+                                }
                                 <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
                                     <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
                                         @FormatLabel(edition.Format)
@@ -190,10 +198,9 @@
         </MudPaper>
 
         <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-            Matching titles from different sources are merged into one catalog record automatically
-            when they agree on title, author, and language — the chips above link to every source
-            that was merged into this one. Contributor names, subtitles, formats, dates, or a
-            different language can still indicate a separate catalog record.
+            Choose the book and version you want, then choose Ebook or Audiobook below.
+            Study guides, adaptations, shortened versions, and combined volumes are separate choices.
+            “Version unknown” means the source has not provided enough information to identify the version.
         </MudAlert>
 
         @if (HasOwnedOption(availability?.Ebook) || HasOwnedOption(availability?.Audiobook))
@@ -606,10 +613,8 @@
             // it never has merged-source info -- carry forward what search
             // already found (from the cached copy) rather than silently
             // dropping the other sources this record was merged from.
-            if (fresh is { Sources.Count: 0 } && cached is { Sources.Count: > 0 })
-            {
-                fresh = fresh with { Sources = cached.Sources };
-            }
+            if (fresh is not null)
+                fresh = CatalogSearchState.PreserveGroupedEditions(fresh, cached);
 
             book = fresh;
         }
@@ -627,7 +632,15 @@
 
         if (book is not null)
         {
-            StartAvailabilityLoad(book);
+            if (book.VersionKind is "Novel" or "Unspecified")
+                StartAvailabilityLoad(book);
+            else
+            {
+                versionKind = "Edition";
+                versionDetails = $"{book.VersionLabel}: {book.Title}. Source record: {book.ProviderName} / {book.ExternalId}.";
+                wantsEbook = EbookOffered;
+                wantsAudiobook = !wantsEbook && AudiobookOffered;
+            }
         }
     }
 

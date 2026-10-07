@@ -19,3 +19,6 @@ TestResults/
 # Syncthing local metadata
 .stfolder/
 .stignore
+
+# Generated Windows cache directory with an unexpanded environment variable
+/%SystemDrive%/

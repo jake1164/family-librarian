@@ -217,3 +217,17 @@ separately in a keyboard-accessible disclosure with semantic definition lists.
 Unknown series positions are written as “unknown”; unclassified descriptors,
 contradictions and conditions are shown as encoded text. This diagnostic
 projection excludes operational acquire tokens and arbitrary provider extensions.
+
+## Search version explanations
+
+Search and book details share `CandidateVersionSummary`: neutral text describing
+source-supported version differences, language (including unknown), and missing
+author metadata. These descriptions are not status chips or identity approvals.
+A novel label does not promise an unabridged edition. Multiple supplied names
+are labelled Contributors when roles are not reported. Editions show their
+reported language/publisher alongside title, format and ISBN. Collections retain
+the work title even when a matched edition has a shorter title.
+
+Guides, adaptations, shortened versions and combined volumes default to the
+existing edition-review request flow. Generic availability is not shown for
+these identified related versions. Unknown records stay visible for inspection.

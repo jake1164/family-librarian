@@ -274,7 +274,11 @@ internal static class CatalogEndpoints
         if (string.IsNullOrWhiteSpace(searchText) || searchText.Length is < 2 or > 200 || request.Page is < 1 or > BookSearchQuery.MaximumPage)
             return Results.ValidationProblem(new Dictionary<string, string[]> { ["query"] = ["Enter a query of 2–200 characters and a valid page number."] });
         if (currentUser.UserId is not { } userId) return Results.Unauthorized();
-        var run = coordinator.Start(userId, new BookSearchQuery(searchText, request.Page));
+        if (request.PreviousRunId is { } previousId &&
+            (!coordinator.TryGet(userId, previousId, out var previous) || previous is null || !previous.IsComplete ||
+             previous.Query.Text != searchText || previous.Query.Page + 1 != request.Page))
+            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Search expired", detail: "Search again to load more results.");
+        var run = coordinator.Start(userId, new BookSearchQuery(searchText, request.Page), request.PreviousRunId);
         return run is null ? Results.StatusCode(StatusCodes.Status503ServiceUnavailable) :
             Results.Accepted($"/api/v1/catalog/search/runs/{run.Id}", new CatalogSearchRunStartedResponse(run.Id));
     }
@@ -289,8 +293,8 @@ internal static class CatalogEndpoints
             return Results.NotFound();
         var providerResults = run.Snapshot();
         var candidates = BookCandidateGrouper.GroupMatchingCandidates(
-            providerResults.Where(result => result.Succeeded).SelectMany(result => result.Candidates).ToArray(), q ?? run.Query.Text)
-            .Select(candidate => ToResponse(candidate, q ?? run.Query.Text)).ToArray();
+            providerResults.SelectMany(result => result.Candidates).ToArray(), run.Query.Text)
+            .Select(candidate => ToResponse(candidate, run.Query.Text)).ToArray();
         var response = new CatalogSearchResponse(candidates,
             providerResults.Select(result => new CatalogProviderSearchStatusResponse(result.ProviderId, result.ProviderName, result.Succeeded)).ToArray(),
             run.Query.Page, providerResults.Any(result => result.Succeeded && result.HasMore));
@@ -453,7 +457,7 @@ internal static class CatalogEndpoints
         candidate.ProviderId,
         candidate.ProviderName,
         candidate.ExternalId,
-        candidate.Title,
+        BookCandidateVersion.Assess(candidate).Kind == "Collection" ? candidate.WorkTitle ?? candidate.Title : candidate.Title,
         candidate.Authors,
         candidate.Description,
         candidate.CoverUrl,
@@ -462,7 +466,7 @@ internal static class CatalogEndpoints
             edition.Title,
             edition.Isbn13,
             edition.Format,
-            edition.PublicationDate)).ToArray(),
+            edition.PublicationDate, edition.Language, edition.Publisher)).ToArray(),
         candidate.Series.Select(series => new CatalogSeriesResponse(
             series.Name,
             series.PositionLabel,
@@ -476,7 +480,11 @@ internal static class CatalogEndpoints
             source.ProviderId,
             source.ProviderName,
             source.ExternalId,
-            source.SourceUrl)).ToArray());
+            source.SourceUrl)).ToArray(),
+        candidate.Language,
+        BookCandidateVersion.Assess(candidate).Kind,
+        BookCandidateVersion.Assess(candidate).Label,
+        BookCandidateVersion.Assess(candidate).Explanation);
 
     private static async Task<CatalogWorkResponse> ToWorkResponseAsync(
         Domain.Catalog.Work work,

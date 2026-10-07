@@ -276,7 +276,7 @@ public sealed class OpenLibraryBookMetadataProvider(
         CancellationToken cancellationToken) =>
         httpClient.GetFromJsonAsync<OpenLibrarySearchResponse>(
             $"search.json?q={Uri.EscapeDataString(query)}" +
-            $"&fields={Uri.EscapeDataString(fields)}" +
+            $"&fields={Uri.EscapeDataString(fields)}&lang={PreferredLanguage}" +
             $"&limit={limit.ToString(CultureInfo.InvariantCulture)}" +
             $"&page={page.ToString(CultureInfo.InvariantCulture)}",
             cancellationToken);
@@ -378,7 +378,8 @@ public sealed class OpenLibraryBookMetadataProvider(
                 .Take(MaximumSubjects)
                 .ToArray(),
             SourceUrl: $"https://openlibrary.org/works/{externalId}",
-            Language: language);
+            Language: language,
+            WorkTitle: title);
     }
 
     private static BookEditionCandidate[] GetEditions(
@@ -421,7 +422,8 @@ public sealed class OpenLibraryBookMetadataProvider(
         return isbn13 is null && string.Equals(title, workTitle, StringComparison.Ordinal)
             && publicationDate is null && string.Equals(format, "Unknown format", StringComparison.Ordinal)
                 ? null
-                : new BookEditionCandidate(title, isbn13, format, publicationDate);
+                : new BookEditionCandidate(title, isbn13, format, publicationDate,
+                    LanguageCodeNormalizer.Normalize(FirstString(edition.Languages)), FirstString(edition.Publishers));
     }
 
     private static BookEditionCandidate[] ToEditionCandidates(
@@ -450,7 +452,9 @@ public sealed class OpenLibraryBookMetadataProvider(
         return isbn13 is null && string.Equals(title, workTitle, StringComparison.Ordinal)
             && string.Equals(format, "Unknown format", StringComparison.Ordinal)
                 ? null
-                : new BookEditionCandidate(title, isbn13, format, TryParseExactDate(entry.PublishDate));
+                : new BookEditionCandidate(title, isbn13, format, TryParseExactDate(entry.PublishDate),
+                    LanguageCodeNormalizer.Normalize(GetLanguageCode(entry.Languages is { Count: > 0 } languages ? languages[0].Key : null)),
+                    entry.Publishers is { Count: > 0 } publishers ? publishers[0] : null);
     }
 
     private static string? FirstNormalizedIsbn13(IEnumerable<string>? values)

@@ -16,7 +16,9 @@ public sealed record BookCandidate(
     IReadOnlyList<string>? Subjects = null,
     string? SourceUrl = null,
     string? Language = null,
-    IReadOnlyList<BookCandidateSource>? MergedSources = null)
+    IReadOnlyList<BookCandidateSource>? MergedSources = null,
+    string? WorkTitle = null,
+    BookCandidateVersion? AssessedVersion = null)
 {
     public IReadOnlyList<string> Subjects { get; init; } = Subjects ?? [];
 
@@ -42,7 +44,9 @@ public sealed record BookEditionCandidate(
     string Title,
     string? Isbn13,
     string Format,
-    DateOnly? PublicationDate);
+    DateOnly? PublicationDate,
+    string? Language = null,
+    string? Publisher = null);
 
 public sealed record BookSeriesCandidate(
     string Name,

@@ -174,6 +174,16 @@ Can additionally:
   - clear Ebook and Audiobook indicators;
   - the appropriate simple action for each format: for example, **Get Ebook**,
     **Get Audiobook**, **Read**, **Listen**, or **Send to device**.
+- Preserve work identity separately from the edition title matched by a provider.
+- Explain source-supported version differences (novel, study guide or criticism,
+  graphic adaptation, retelling, shortened version, collection); unknown version
+  and language remain explicit. Contributor lists do not imply author roles.
+- Never hide a novel behind a collection or adaptation with the same short title.
+  Compatible grouped editions remain available for comparison.
+- Loading more results carries prior raw candidates into server-side grouping and
+  ranking. Search continuations are bound to the requesting user and query.
+- Identified related versions default to an explicit edition request for librarian
+  review; they do not borrow general-title availability badges.
 - Allow admin correction when provider data is wrong or ambiguous.
 
 The family catalogue is a catalogue of Works, not separate search-result rows

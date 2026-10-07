@@ -18,10 +18,10 @@ public sealed class CatalogApiClient(HttpClient httpClient, AntiforgeryTokenProv
         return response ?? new CatalogSearchResponse([], []);
     }
 
-    public async Task<CatalogSearchRunStartedResponse> StartSearchAsync(string searchText, int page, CancellationToken cancellationToken = default)
+    public async Task<CatalogSearchRunStartedResponse> StartSearchAsync(string searchText, int page, Guid? previousRunId = null, CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/catalog/search/runs")
-        { Content = JsonContent.Create(new CatalogSearchRequest(searchText, page)) };
+        { Content = JsonContent.Create(new CatalogSearchRequest(searchText, page, previousRunId)) };
         await antiforgery.AttachAsync(request, cancellationToken);
         using var response = await httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();

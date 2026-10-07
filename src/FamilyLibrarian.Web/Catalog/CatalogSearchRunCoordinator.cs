@@ -10,10 +10,21 @@ public sealed class CatalogSearchRunCoordinator
     private readonly Channel<CatalogSearchRun> queue = Channel.CreateBounded<CatalogSearchRun>(
         new BoundedChannelOptions(100) { FullMode = BoundedChannelFullMode.Wait });
 
-    public CatalogSearchRun? Start(Guid ownerId, BookSearchQuery query)
+    public CatalogSearchRun? Start(Guid ownerId, BookSearchQuery query, Guid? previousRunId = null)
     {
         Prune();
+        CatalogSearchRun? previous = null;
+        if (previousRunId is { } previousId &&
+            (!TryGet(ownerId, previousId, out previous) || previous is null || !previous.IsComplete ||
+             previous.Query.Text != query.Text || previous.Query.Page + 1 != query.Page))
+            return null;
         var run = new CatalogSearchRun(ownerId, query);
+        if (previous is not null)
+        {
+            run.HasPreviousPage = true;
+            foreach (var result in previous.Snapshot())
+                run.Add(result.ProviderId, result.ProviderName, result.Succeeded, result.Candidates, result.HasMore);
+        }
         runs[run.Id] = run;
         if (queue.Writer.TryWrite(run)) return run;
         run.Cancel();
@@ -52,12 +63,23 @@ public sealed class CatalogSearchRun(Guid ownerId, BookSearchQuery query) : IDis
     public Guid OwnerId { get; } = ownerId;
     public BookSearchQuery Query { get; } = query;
     public CancellationToken CancellationToken => cancellation.Token;
+    public bool HasPreviousPage { get; set; }
     public bool IsComplete { get; private set; }
     public DateTimeOffset? CompletedAtUtc { get; private set; }
 
     public void Add(string id, string name, bool succeeded, IReadOnlyList<BookCandidate> candidates, bool hasMore)
     {
-        lock (sync) results.Add((id, name, succeeded, candidates, hasMore));
+        lock (sync)
+        {
+            var index = results.FindIndex(result => result.ProviderId == id);
+            if (index >= 0)
+            {
+                candidates = results[index].Candidates.Concat(candidates)
+                    .DistinctBy(candidate => (candidate.ProviderId, candidate.ExternalId)).ToArray();
+                results[index] = (id, name, succeeded, candidates, hasMore);
+            }
+            else results.Add((id, name, succeeded, candidates, hasMore));
+        }
     }
 
     public IReadOnlyList<(string ProviderId, string ProviderName, bool Succeeded, IReadOnlyList<BookCandidate> Candidates, bool HasMore)> Snapshot()
