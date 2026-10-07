@@ -1247,9 +1247,13 @@ For deterministic title identity, FL compares a candidate against the Work's
 canonical title and any distinct titles recorded on that same Work's catalog
 editions. These edition titles are catalog-owned evidence (for example, an
 original-language title), not provider labels or guessed translations. A
-candidate must still pass the strict title-and-author, language, release, DRM,
-and Safe-format checks before unattended acquisition; an author-only or broad
-title match remains reviewable. EPUB package identity verification uses the
+candidate must still pass decisive deterministic work identity, language, release,
+DRM and Safe-format checks before unattended acquisition. Exact release title
+phrases tolerate neutral extra descriptors; unknown author/series metadata is
+not a contradiction. Work identity and typed edition/completeness conditions
+are assessed separately. Author-only or unresolved title evidence remains
+reviewable. See docs/03-provider-api-contracts.md for the evidence model and
+complete numbered-audiobook grouping policy. EPUB package identity verification uses the
 same title set after download. M4B audiobooks are verified the same way from
 their embedded iTunes-style tags: the title (`nam`/`alb`) must match, and the
 author/artist tags (`ART`/`aART`/`wrt`), when present, must include a match;

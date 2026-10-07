@@ -52,10 +52,17 @@ public static partial class ExternalReleaseNameEvidence
         // Credits give name boundaries; arbitrary residual words never become a conflicting author.
         var affinity = AuthorAffinity.Evaluate(expectedAuthor, null);
         var credit = AuthorCredit().Match(name);
-        if (credit.Success)
+        if (credit.Success && !consumed[ReleaseTitleMatcher.Tokens(name[..credit.Index]).Length])
         {
-            var creditTokens = ReleaseTitleMatcher.Tokens(credit.Groups["name"].Value);
-            var count = creditTokens.Length >= 2 && creditTokens[0].Length == 1 && creditTokens.Length >= 3 ? 3 : Math.Min(2, creditTokens.Length);
+            var creditTokens = ReleaseTitleMatcher.Tokens(credit.Groups["name"].Value)
+                .TakeWhile(token => !Formats.Contains(token) && !Packaging.Contains(token)).ToArray();
+            var supported = Enumerable.Range(1, creditTokens.Length)
+                .Select(length => (Length: length, Evidence: AuthorAffinity.Evaluate(expectedAuthor, string.Join(' ', creditTokens.Take(length)))))
+                .Where(candidate => candidate.Evidence.HasStrongSupport)
+                .OrderByDescending(candidate => candidate.Evidence.Score).ThenBy(candidate => candidate.Length).FirstOrDefault();
+            // Complete supporting names win over trailing descriptors. Otherwise
+            // retain the explicit two-component credit, including a disagreement.
+            var count = supported.Evidence is not null ? supported.Length : Math.Min(2, creditTokens.Length);
             if (count > 0)
             {
                 var detected = string.Join(' ', creditTokens.Take(count));
@@ -68,7 +75,7 @@ public static partial class ExternalReleaseNameEvidence
             for (var start = 0; start < tokens.Length; start++)
             {
                 if (consumed[start]) continue;
-                for (var length = Math.Min(3, tokens.Length - start); length >= 1; length--)
+                for (var length = Math.Min(Math.Min(8, Math.Max(3, ReleaseTitleMatcher.Tokens(expectedAuthor ?? string.Empty).Length + 1)), tokens.Length - start); length >= 1; length--)
                 {
                     if (Enumerable.Range(start, length).Any(index => consumed[index])) continue;
                     var detected = string.Join(' ', tokens.Skip(start).Take(length));
@@ -77,7 +84,7 @@ public static partial class ExternalReleaseNameEvidence
                     affinity = support;
                 }
             }
-            // Only an explicit, isolated two-word trailing name can contradict without a by credit.
+            // An isolated trailing name sharing a requested component can expose an active disagreement.
             var tail = TrailingAuthor().Match(name);
             if (!affinity.HasStrongSupport && tail.Success && ReleaseTitleMatcher.Tokens(tail.Groups["name"].Value)
                 .Any(token => AuthorAffinity.IsSupportingToken(expectedAuthor, token)))
@@ -177,7 +184,7 @@ public static partial class ExternalReleaseNameEvidence
             affinity, Part: part.Evidence, TitleEvidence: title, SeriesEvidence: seriesEvidence,
             Conditions: conditions, StructuralQualifiers: qualifiers,
             RawReleaseTitle: releaseName, NormalizedRelease: string.Join(' ', ReleaseTitleMatcher.Tokens(releaseName)),
-            Tokens: ReleaseTitleMatcher.Tokens(releaseName),
+            Tokens: ReleaseTitleMatcher.Tokens(releaseName), IdentityTokens: tokens,
             ReleaseBase: title?.IsPositive == true ? string.Join(' ', tokens.Take(title.Start)
                 .Where(token => !AuthorAffinity.IsSupportingToken(expectedAuthor, token) && token != "REQ")
                 .Concat(tokens.Skip(title.Start).Take(title.Length))) : null);
@@ -212,7 +219,7 @@ public static partial class ExternalReleaseNameEvidence
     private static partial Regex SeriesPrefix();
     [GeneratedRegex(@"(?<![\p{L}\p{N}])(?:READ|NARRATED|PERFORMED)[\W_]+BY[\W_]+(?<name>[\p{L}]+(?:[ .]+[\p{L}]+)*)(?:[)\]]|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
     private static partial Regex NarratorCredit();
-    [GeneratedRegex(@"(?<![\p{L}\p{N}])(?<!READ[. ])(?<!NARRATED[. ])(?<!PERFORMED[. ])BY[\W_]+(?<name>[\p{L}]+(?:[\W_]+[\p{L}]+){0,2})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])(?<!READ[. ])(?<!NARRATED[. ])(?<!PERFORMED[. ])BY[\W_]+(?<name>[\p{L}]+(?![\p{L}\p{N}])(?:[\W_]+[\p{L}]+(?![\p{L}\p{N}])){0,7})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
     private static partial Regex AuthorCredit();
     [GeneratedRegex(@"\s[-–—]\s(?<name>[\p{L}]+[ .]+[\p{L}]+)\s*$", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex TrailingAuthor();
@@ -220,7 +227,7 @@ public static partial class ExternalReleaseNameEvidence
     private static partial Regex BookNumber();
     [GeneratedRegex(@"(?<![\p{L}\p{N}])(?:SUMMARY[\W_]+OF|STUDY[\W_]+GUIDE|COMPANION[\W_]+TO|WORKBOOK[\W_]+FOR|ANALYSIS[\W_]+OF|CLIFFSNOTES|CLIFF[\W_]+NOTES|SPARKNOTES|EXCERPT|SAMPLE(?:[\W_]+CHAPTER)?|PREVIEW|ABRIDGED|UNABRIDGED|OMNIBUS|BOX(?:ED)?[\W_]+SET|COLLECTION|STORIES|BOOKS[\W_]+\d+[\W_]+\d+|GRAPHICAUDIO|GRAPHIC[\W_]+NOVEL|DRAMATIZED|FULL[\W_]+CAST|RADIO[\W_]+(?:AUDIO[\W_]+)?DRAMA|EXTENDED)(?![\p{L}\p{N}])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
     private static partial Regex StructuralQualifiers();
-    [GeneratedRegex(@"(?<![\p{L}\p{N}])(?:PART|PT|DISC|CD)[\W_]+\d", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])(?:(?:PART|PT|DISC|CD)[\W_]+\d|\d+[\W_]+OF[\W_]+\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
     private static partial Regex PartLikeMarker();
     [GeneratedRegex(@"(?<![\p{L}\p{N}])BOOK[\W_]", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
     private static partial Regex BookLikeMarker();
@@ -234,10 +241,11 @@ public sealed record ReleaseNameVerdict(
     ExternalAudiobookPartEvidence? Part = null,
     ReleaseTitleEvidence? TitleEvidence = null, IReadOnlyList<SeriesIdentityEvidence>? SeriesEvidence = null,
     IReadOnlyList<ReleaseCondition>? Conditions = null, IReadOnlyList<string>? StructuralQualifiers = null,
-    string? RawReleaseTitle = null, string? NormalizedRelease = null, IReadOnlyList<string>? Tokens = null, string? ReleaseBase = null)
+    string? RawReleaseTitle = null, string? NormalizedRelease = null, IReadOnlyList<string>? Tokens = null, string? ReleaseBase = null,
+    IReadOnlyList<string>? IdentityTokens = null)
 {
     public static readonly ReleaseNameVerdict None = new(false, false, null, null, null, [], null);
     public bool IsStrictWorkAssertion => AssertsExpectedTitle && AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
-        RejectionReason is null && (Conditions?.Count ?? 0) == 0 &&
+        RejectionReason is null && Conditions?.Any(condition => condition.Kind != ReleaseConditionKind.CompanionParts) != true &&
         (TitleEvidence?.State != IdentityEvidenceState.Fuzzy || AuthorAffinity?.HasStrongSupport == true);
 }

@@ -209,3 +209,11 @@ imply it as a defect or guess a kind the provider's own evidence did not state.
    picks it up automatically.
 3. Update this file's status-color list above if the new status doesn't fit
    an existing bucket.
+
+## Candidate identity diagnostics
+
+Administrator live-search diagnostics display identity and acquisition evidence
+separately in a keyboard-accessible disclosure with semantic definition lists.
+Unknown series positions are written as “unknown”; unclassified descriptors,
+contradictions and conditions are shown as encoded text. This diagnostic
+projection excludes operational acquire tokens and arbitrary provider extensions.

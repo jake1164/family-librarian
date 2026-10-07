@@ -76,8 +76,10 @@ public sealed class ReleaseNameOnlyCandidateVerificationTests
 
         // ...and the two different products are not, even though both contain
         // the requested title and the requested author.
-        Assert.IsNull(verdicts["c_stories"].Basis);
-        Assert.IsNull(verdicts["c_graphic"].Basis);
+        Assert.AreEqual(WorkIdentityDecision.MatchWithConditions, verdicts["c_stories"].IdentityAssessment!.Decision);
+        Assert.IsTrue(verdicts["c_stories"].IdentityAssessment!.Conditions.Count > 0);
+        Assert.AreEqual(WorkIdentityDecision.MatchWithConditions, verdicts["c_graphic"].IdentityAssessment!.Decision);
+        Assert.IsTrue(verdicts["c_graphic"].IdentityAssessment!.Conditions.Count > 0);
     }
 
     [TestMethod]

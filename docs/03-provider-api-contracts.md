@@ -55,25 +55,57 @@ Typo evidence permits one insertion, deletion or substitution per component
 only when both tokens have at least five and at most 64 characters. There is no substring
 matching or arbitrary initial matching.
 
-These weights order candidates after existing identity confidence and title
-plausibility, before release/format/quality tiebreakers. They are not an additive
-download threshold. An exact structured title or a fully explained release name
-can establish strict external-acquisition identity without supporting author
-evidence (`StrictTitle`). Full exact/compatible or one-exact-one-fuzzy author
-evidence retains the `StrictTitleAuthor` basis. Partial, both-fuzzy and unknown
-authors affect ranking, rather than forcing identity review; known conflicts
-cannot qualify as strict identity. Owned-library/destination matching retains
-its separate title/author policy. Unexplained
-release text, language, edition, DRM, format, narration and byte-validation
-gates remain in force. Affinity breakdowns retain the requested and detected
-names and each component's exact/initial/fuzzy/unknown evidence.
+These weights order candidates after categorical identity evidence and before
+release/format/quality tiebreakers. They are not an additive download threshold.
+The external acquisition resolver produces a server-side
+`CandidateIdentityAssessment`: requested and source bibliographic metadata,
+unchanged raw release title, Unicode KC/invariant word tokens, local title
+window (whose indices refer to the retained partless identity tokens), author
+affinity, comparable series positions, language evidence,
+structural/edition conditions, multipart evidence, unclassified descriptors,
+contradictions, reasons and a categorical decision. The separate work-identity property remains `Match` for `MatchWithConditions`;
+acquisition suitability holds the unresolved conditions. Operational acquire tokens
+and administrator origin summaries are excluded from this assessment.
 
-Release packaging such as `Book.1m4b` may join the book number and format.
-FL recognizes a trailing allowlisted format suffix even when its separator
-is absent, then evaluates the preceding text independently. A `Book` marker
-still requires a positive integer and preserves contradictions with a known
-series position. Unknown suffixes and other unexplained text remain reviewable.
-Format recognition remains separate from container/byte validation.
+The decisions are `Match`, `MatchWithConditions`, `Mismatch` and
+`Ambiguous`. Unknown is not conflict; extra descriptors are neutral and retained.
+Exact contiguous normalized title phrases are strong evidence anywhere in a
+release name. Ordered significant-token comparison varies only grammatical
+words. Local fuzzy comparison permits one character edit in one title token,
+requires an exact distinctive anchor and strong author support, and never fuzzes
+single-word or very short titles. Very short exact titles also need independent
+author support. Structured work titles take precedence; unexplained structured
+subtitles remain reviewable rather than becoming exact work assertions.
+
+`StrictTitle` establishes external work identity without an author prerequisite;
+strong full/compatible/one-component-typo author support yields
+`StrictTitleAuthor`. Author credits and supporting local name tokens are used;
+arbitrary residual descriptors are never compared as a whole author name.
+Explicit author conflicts prevent strict identity. Owned-library/destination
+matching keeps its separate policy and is unchanged by the release matcher.
+
+Series positions conflict only when catalog and candidate contain comparable
+positions for the same series. Numeric positions compare invariantly (`03`
+and `3` agree; `3.5` and `4` disagree). Inferred release prefixes retain
+unknown requested positions without rejecting them. A single catalog series
+also allows comparison with an explicit `Book N` label. Joined trailing format
+packaging such as `Book.1m4b` remains supported. Malformed book/part numbering
+requires structural review, independently of title identity.
+
+Acquisition suitability is separate: `EligibleForChecks`, `IdentityReview`,
+`NeedsCompanionParts`, `EditionReview`, or `Blocked`. Collections, samples,
+abridgements, graphic/dramatized editions and incomplete parts retain positive
+work evidence but carry typed conditions that prevent unattended individual
+acquisition. Explicit language, format, DRM, narration, quality, destination,
+scan and artifact-identity checks remain deterministic. A language assertion
+is not discarded because it appears in brackets. Unclassified publisher/uploader
+labels do not imply an edition change by themselves.
+
+Optional future semantic resolvers can consume this assessment after
+`DeterministicCandidateIdentityResolver.Assess` and before an ambiguous result
+is mapped to human review. They must preserve deterministic facts and cannot
+approve acquisition. No semantic resolver, AI setting or model dependency ships
+with this phase; deterministic operation is a complete supported mode.
 
 Numbered audiobook fragments (`Part 2`, `1.of.2`, `2 of 2`) are completeness
 evidence distinct from work identity and from tracks inside one complete
@@ -81,9 +113,11 @@ release. A one-file report does not make a numbered fragment the complete
 audiobook. The local evaluator retains the part number and declared total and
 routes fragments to completeness review, with missing/duplicate numbers and
 companion availability described separately. Companion assessment uses the
-requested work and numbering, not equality of raw release names or presence
-of an author in each name. Known language, format, reader and edition-marker
-conflicts prevent a set from being described as compatible. A set containing
+requested work, numbering and a compatible normalized release base (prefix through the matched title, with supporting
+author tokens removed), without requiring each member to repeat author, format
+or genre metadata. Explicit candidate series positions must also agree across
+parts even if the requested position is unknown. Known language, format,
+reader and edition-marker conflicts prevent a set from being described as compatible. A set containing
 every number remains review evidence by default: numbering alone cannot
 establish the same audiobook edition. It must not claim a partial or
 ambiguous set is a complete audiobook.
@@ -93,9 +127,8 @@ set fetched without review, but only when one provider returns exactly one
 compatible record for every number `1..N` (`2 <= N <= 8`), each record's only
 release concern is that it is a fragment (no sample, collection, abridged or
 DRM concern, no language confirmation), each has a plausible title and no
-author conflict, at least one is strictly title matched and the rest are
-strictly matched or strongly author-supported. Each part is submitted as its
-own provider job (`PartSetId`, `PartNumber`, `PartTotal`) and re-derived on the
+author conflict. Every member has decisive title evidence; author support cannot
+substitute for an unresolved title. Each part is submitted as its own provider job (`PartSetId`, `PartNumber`, `PartTotal`) and re-derived on the
 server from a fresh search, so a stale or tampered member list is refused. Each
 part must arrive as exactly one file, is scanned on arrival, and is staged as
 track `n` of `N` in one bundle. Nothing is approved until every part is staged

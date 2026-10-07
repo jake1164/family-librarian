@@ -12,6 +12,22 @@ public sealed record AudiobookPartSetSelection(IReadOnlyList<FulfillmentOption> 
 {
     public string ProviderId => Parts[0].ProviderId;
 
+    public WorkIdentityDecision WorkIdentity => Parts.Any(part => part.IdentityAssessment?.Decision == WorkIdentityDecision.Mismatch)
+        ? WorkIdentityDecision.Mismatch : Parts.All(part => part.HasPlausibleTitle)
+            ? WorkIdentityDecision.Match : WorkIdentityDecision.Ambiguous;
+
+    public bool IsComplete => Parts.Count == Total && Parts.Select(part => part.AudiobookPart!.Number)
+        .Order().SequenceEqual(Enumerable.Range(1, Total));
+
+    public long? TotalSizeBytes => Parts.All(part => part.SizeBytes is not null)
+        ? Parts.Sum(part => part.SizeBytes!.Value) : null;
+
+    public CandidateAcquisitionAssessment AcquisitionAssessment =>
+        new(IsComplete && WorkIdentity == WorkIdentityDecision.Match ? AcquisitionSuitability.EligibleForChecks
+            : AcquisitionSuitability.NeedsCompanionParts,
+            [IsComplete ? "Every numbered companion is present and compatible; normal file safety checks still apply."
+                : "The numbered companion set is incomplete."]);
+
     public int Total => Parts[0].AudiobookPart!.Total!.Value;
 
     public IReadOnlyList<string> MemberResultIds { get; } = Parts.Select(part => part.ProviderResultId).ToArray();

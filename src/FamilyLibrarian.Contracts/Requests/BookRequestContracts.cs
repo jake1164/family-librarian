@@ -217,7 +217,20 @@ public sealed record AdminProviderDebugCandidateResponse(
     bool RequiresLanguageConfirmation,
     bool RequiresReleaseConfirmation,
     string? ReleaseConcern,
-    string? InspectionUri);
+    string? InspectionUri,
+    AdminCandidateIdentityEvidenceResponse? IdentityEvidence = null);
+
+public sealed record AdminCandidateSeriesEvidenceResponse(
+    string State, string Name, string? RequestedPosition, string? ReleasePosition);
+
+/// <summary>Safe bibliographic projection, available only in administrator diagnostics.</summary>
+public sealed record AdminCandidateIdentityEvidenceResponse(
+    string WorkIdentity, string AcquisitionSuitability, string RequestedTitle, string? RequestedAuthor,
+    string TitleEvidence, string? MatchedTitlePhrase, string AuthorEvidence, string? DetectedAuthor,
+    string LanguageEvidence, string? NormalizedRelease, IReadOnlyList<string> Tokens,
+    IReadOnlyList<AdminCandidateSeriesEvidenceResponse> Series, IReadOnlyList<string> UnclassifiedTokens,
+    IReadOnlyList<string> Contradictions, IReadOnlyList<string> Conditions, IReadOnlyList<string> Reasons,
+    int? PartNumber, int? PartTotal);
 
 public sealed record RequestParticipantResponse(string DisplayName, string Email, string? Note, bool Withdrawn);
 

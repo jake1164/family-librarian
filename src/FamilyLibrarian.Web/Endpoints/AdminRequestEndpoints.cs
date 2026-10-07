@@ -495,7 +495,7 @@ internal static class AdminRequestEndpoints
     private static AdminCandidateIdentityEvidenceResponse? ToIdentityEvidenceResponse(FulfillmentOption option)
     {
         if (option.IdentityAssessment is not { } evidence) return null;
-        return new(evidence.Decision.ToString(), option.AcquisitionAssessment?.Suitability.ToString() ?? "IdentityReview",
+        return new(evidence.WorkIdentity.ToString(), option.AcquisitionAssessment?.Suitability.ToString() ?? "IdentityReview",
             evidence.RequestedMetadata.Title, evidence.RequestedMetadata.Author,
             evidence.TitleEvidence.State.ToString(), evidence.TitleEvidence.Observed,
             evidence.AuthorEvidence.Kind.ToString(), evidence.AuthorEvidence.DetectedAuthor,

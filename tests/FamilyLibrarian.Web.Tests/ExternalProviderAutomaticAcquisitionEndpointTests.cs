@@ -810,6 +810,20 @@ public sealed class ExternalProviderReviewCandidatePresentationEndpointTests
         Assert.AreEqual("Example indexer · usenet · 679 grabs", persisted[0].AdminSourceSummary);
         Assert.AreEqual(persisted[0].AdminSourceSummary, adminView.ReviewCandidates[0].SourceSummary);
         Assert.IsNull(adminView.ReviewCandidates[1].SourceSummary);
+        var debugUri = $"/api/v1/admin/requests/{request.Id}/formats/{request.Formats.Single().FormatId}/providers/presentation-external/debug-search";
+        var diagnostics = await requester.GetFromJsonAsync<AdminProviderDebugCandidateResponse[]>(debugUri);
+        Assert.IsNotNull(diagnostics);
+        var identityEvidence = diagnostics.Single(candidate => candidate.ProviderResultId == "opaque-duplicate-a").IdentityEvidence;
+        Assert.IsNotNull(identityEvidence);
+        Assert.AreEqual("Match", identityEvidence.WorkIdentity);
+        Assert.AreEqual("EligibleForChecks", identityEvidence.AcquisitionSuitability);
+        Assert.AreEqual("Exact", identityEvidence.TitleEvidence);
+        Assert.HasCount(0, identityEvidence.Contradictions);
+        using var anonymous = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        Assert.AreEqual(System.Net.HttpStatusCode.Unauthorized, (await anonymous.GetAsync(debugUri)).StatusCode);
+        Assert.IsFalse(rawResponse.Contains("identityEvidence", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(rawResponse.Contains("normalizedRelease", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(rawResponse.Contains("unclassifiedTokens", StringComparison.OrdinalIgnoreCase));
     }
 }
 

@@ -173,6 +173,7 @@ public sealed class CandidateIdentityAssessmentTests
         var source = Release($"Fourth Wing by Rebecca Yarros [{qualifier}]");
         var assessment = DeterministicCandidateIdentityResolver.Assess(requested, source);
         Assert.AreEqual(WorkIdentityDecision.MatchWithConditions, assessment.Decision);
+        Assert.AreEqual(WorkIdentityDecision.Match, assessment.WorkIdentity);
         Assert.HasCount(0, assessment.Contradictions);
         Assert.IsTrue(ExternalReleasePolicy.Evaluate(source.Release, RequestMediaType.Audiobook, assessment.ReleaseEvidence.Part, assessment).RequiresConfirmation);
     }
@@ -229,12 +230,17 @@ public sealed class CandidateIdentityAssessmentTests
         var set = AudiobookPartSetSelector.TrySelect([two, one]);
         Assert.IsNotNull(set);
         Assert.AreEqual(2, set.Total);
+        Assert.IsTrue(set.IsComplete);
+        Assert.AreEqual(WorkIdentityDecision.Match, set.WorkIdentity);
+        Assert.AreEqual(1_100_200_000L, set.TotalSizeBytes);
+        Assert.AreEqual(AcquisitionSuitability.EligibleForChecks, set.AcquisitionAssessment.Suitability);
         Assert.AreEqual("one,two", string.Join(',', set.MemberResultIds));
         Assert.AreEqual(AuthorAffinityKind.Unknown, two.AuthorAffinity!.Kind);
         Assert.IsNull(AudiobookPartSetSelector.TrySelect([two]));
         var assessment = ExternalAudiobookPartSetAssessment.For(two, [two]);
         CollectionAssert.AreEqual(MissingOne, assessment.MissingParts.ToArray());
         Assert.AreEqual(WorkIdentityDecision.MatchWithConditions, two.IdentityAssessment!.Decision);
+        Assert.AreEqual(WorkIdentityDecision.Match, two.IdentityAssessment.WorkIdentity);
     }
 
     [TestMethod]
@@ -258,6 +264,70 @@ public sealed class CandidateIdentityAssessmentTests
         Assert.IsNull(AudiobookPartSetSelector.TrySelect([one, two with { ProviderId = "other-source" }]));
     }
 
+    [TestMethod]
+    [DataRow("Part 3 of 2")]
+    [DataRow("0 of 2")]
+    [DataRow("3 of 2")]
+    [DataRow("Part 1 of 2 Part 2 of 2")]
+    public void MalformedMultipartCannotBecomeAnAutomaticWholeBook(string marker)
+    {
+        var source = Release($"Threshing Day {marker}");
+        var assessment = DeterministicCandidateIdentityResolver.Assess(Threshing, source);
+        Assert.AreEqual(WorkIdentityDecision.MatchWithConditions, assessment.Decision);
+        Assert.IsTrue(ExternalReleasePolicy.Evaluate(source.Release, RequestMediaType.Audiobook, identityAssessment: assessment).RequiresConfirmation);
+    }
+
+    [TestMethod]
+    public void CatalogEditionPackagingStillUsesTheExistingWorkTitleCore()
+    {
+        var requested = Threshing with { Title = "Threshing Day: Return to the Empyrean world with thirteen stories" };
+        Assert.AreEqual(WorkIdentityDecision.Match, DeterministicCandidateIdentityResolver.Assess(requested,
+            Release("Rebecca.Yarros-The.Empyrean.3.5-Threshing.Day")).Decision);
+    }
+
+    [TestMethod]
+    public void StructuredByCreditMustAccountForTheWholeTitleHeadAndCannotOverrideConflict()
+    {
+        var source = ExternalProviderCandidate.FromSimple("source", "Threshing Day Extra Book by Rebecca Yarros", "Rebecca Yarros", "m4b", 1000);
+        Assert.AreEqual(WorkIdentityDecision.Ambiguous, DeterministicCandidateIdentityResolver.Assess(Threshing, source).Decision);
+        source = source with { Work = source.Work with { Title = "Threshing Day by David Yarros" } };
+        Assert.AreEqual(WorkIdentityDecision.Mismatch, DeterministicCandidateIdentityResolver.Assess(Threshing, source).Decision);
+    }
+
+    [TestMethod]
+    public void InitialAuthorCreditsDoNotConsumeTrailingDescriptorsAsNameComponents()
+    {
+        var assessment = Assess("Threshing.Day.by.R.Yarros.fantasy.romance.m4b");
+        Assert.AreEqual(WorkIdentityDecision.Match, assessment.Decision);
+        Assert.AreEqual(AuthorAffinityKind.Compatible, assessment.AuthorEvidence.Kind);
+        CollectionAssert.AreEqual(GenreTokens, assessment.ReleaseEvidence.UnexplainedTokens.ToArray());
+    }
+
+    [TestMethod]
+    [DataRow("The Hobbit by J. R. R. Tolkien EPUB")]
+    [DataRow("J. R. R. Tolkien - The Hobbit (retail) (epub)")]
+    [DataRow("J.R.R.Tolkien-The.Hobbit.(retail).(epub)")]
+    public void MultiInitialAuthorCreditPreservesTheFullNameAndAllowsTheRetryCopy(string name)
+    {
+        var requested = new BookIdentity("The Hobbit", "J. R. R. Tolkien", []);
+        var assessment = DeterministicCandidateIdentityResolver.Assess(requested, Release(name));
+        Assert.AreEqual(WorkIdentityDecision.Match, assessment.WorkIdentity);
+        Assert.AreEqual(AuthorAffinityKind.Exact, assessment.AuthorEvidence.Kind);
+        Assert.HasCount(0, assessment.Contradictions);
+        Assert.IsTrue(assessment.AuthorEvidence.DetectedAuthor!.Contains("Tolkien", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [TestMethod]
+    public void LocalWindowIndicesReferToRetainedIdentityTokensAfterPartExtraction()
+    {
+        var assessment = DeterministicCandidateIdentityResolver.Assess(Onyx, Release("Part 1 of 2 Onyx Storm by Rebecca Yarros"));
+        var title = assessment.TitleEvidence;
+        Assert.AreEqual("ONYX STORM", string.Join(' ', assessment.ReleaseEvidence.IdentityTokens!.Skip(title.Start).Take(title.Length)));
+        Assert.AreEqual("PART", assessment.ReleaseEvidence.Tokens![0]);
+        Assert.AreEqual(WorkIdentityDecision.Match, assessment.WorkIdentity);
+        Assert.AreEqual(WorkIdentityDecision.MatchWithConditions, assessment.Decision);
+    }
+
     private static FulfillmentOption Option(string name, string reference)
     {
         var assessment = DeterministicCandidateIdentityResolver.Assess(Onyx, Release(name, reference));
@@ -265,6 +335,7 @@ public sealed class CandidateIdentityAssessmentTests
         return new("example-source", reference, Guid.Empty, null, RequestMediaType.Audiobook,
             OptionKind.DirectAcquisition, AcquisitionMethod.DirectDownload, assessment.ReleaseEvidence.AssertedFormat, null, null, null,
             0m, null, null, "none", null, null,
+            SizeBytes: 550_100_000,
             MatchBasis: assessment.Decision == WorkIdentityDecision.Mismatch ? null : BookMatchBasis.StrictTitle,
             AuthorAffinity: assessment.AuthorEvidence, HasPlausibleTitle: assessment.TitleEvidence.IsPositive,
             ReleaseName: name, AudiobookPart: part, RequiresReleaseConfirmation: true,

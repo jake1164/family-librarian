@@ -375,36 +375,39 @@ at all. That is a supported shape, and you should **not** invent a
 `work.title` to fill the gap — populating a field from something the source
 did not establish is worse than leaving it absent.
 
-When `work.title` is absent or empty, Family Librarian reads `release.name`
-as identity evidence. It does not parse a title out of that string; it already
-knows what it asked for, so it instead checks whether the name *asserts* the
-requested work, which requires all of:
+When `work.title` is absent or empty, Family Librarian uses `release.name`
+as identity evidence. A separate structured title is optional and its absence
+never forces review by itself. Exact contiguous normalized title phrases are
+strong evidence; ordered grammatical variants and conservative local typo
+windows provide additional evidence. A local typo needs strong author support.
+Very short titles require independent supporting author evidence and never use
+substring or fuzzy matches.
 
-- the expected title's words appearing together, and
-- the expected author's words appearing together, and
-- **every remaining token being accounted for** as a recognized release
-  annotation — a format or container token, a scope tag such as `retail` or
-  `repack`, a bracketed group tag, an edition qualifier such as
-  `60th Anniversary Edition`, a four-digit year, or a `read by <name>` credit.
+Release words not classified as identity or known structure remain neutral
+unclassified descriptors. They are retained alongside the raw name and tokens
+for explanation and future optional semantic resolution. There is no requirement
+to explain every word, and no broad genre/uploader ignore dictionary.
 
-Any leftover word that is not one of those keeps the candidate reviewable.
-This is what separates `Fahrenheit 451 by Ray Bradbury EPUB` (confirmed) from
-`Ray Bradbury - A Pleasure to Burn-Fahrenheit 451 Stories` (refused) — the
-second contains the requested title *and* the requested author and is still a
-different book.
+Missing authors and unknown series positions are not contradictions. Explicit
+author conflicts or comparable conflicting series positions prevent automatic
+identity confirmation. Language names, even in brackets, remain assertions:
+`Spanish` is not discarded as packaging on an English request.
 
-Two consequences worth knowing when you compose a release name:
+Title identity is distinct from acquisition suitability. `Part 2 of 2`,
+collections, samples, abridgements, graphic adaptations and dramatizations can
+contain the requested work but require completeness or edition review. Separate
+compatible numbered audiobook records can form a complete logical candidate
+through the existing all-or-nothing multipart acquisition flow. Every part must
+have decisive title evidence; duplicate numbers, incompatible release bases,
+series positions, totals, languages, formats or edition markers block automatic
+grouping. Each part need not repeat the author or format metadata.
 
-- **A language word in the name is read as a language assertion**, not
-  stripped as noise. `…2012.Spanish.Retail.EPUB…` is treated as a Spanish
-  edition and excluded from an English request. This is deliberate: for a
-  release-name-only source that is the only place the language appears.
-- **A `read by <name>` / `narrated by <name>` credit is read as narration
-  evidence**, and is the only narration evidence such a source provides.
-
-Populating structured `work` evidence when you genuinely have it is still
-strictly better: it is checked first, and it does not depend on your naming
-conventions matching any of the annotations above.
+Structured work/edition evidence takes precedence over inference whenever it is
+available. Source metadata remains evidence rather than acquisition authorization:
+normal format/DRM/language/narration/quality and post-download validation gates
+still apply. Administrator live-search diagnostics expose the categorical work
+identity, suitability, individual evidence and unresolved conditions; family APIs
+do not expose raw provider diagnostics or operational acquire handles.
 
 ### 7.1 Candidate evidence and selection loop
 

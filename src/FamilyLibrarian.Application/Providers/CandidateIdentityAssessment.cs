@@ -18,12 +18,23 @@ public sealed record CandidateIdentityAssessment(
     IdentityEvidenceState LanguageEvidence, IReadOnlyList<string> Contradictions,
     IReadOnlyList<ReleaseCondition> Conditions, WorkIdentityDecision Decision, IReadOnlyList<string> Reasons)
 {
+    public WorkIdentityDecision WorkIdentity => Decision == WorkIdentityDecision.MatchWithConditions
+        ? WorkIdentityDecision.Match : Decision;
+
     public bool HasStrongTitle => TitleEvidence.IsPositive &&
         (ReleaseTitleMatcher.Tokens(TitleEvidence.Expected).Sum(token => token.Length) > 3 || AuthorEvidence.HasStrongSupport) &&
         (TitleEvidence.State != IdentityEvidenceState.Fuzzy || AuthorEvidence.HasStrongSupport) &&
         (string.IsNullOrWhiteSpace(SourceMetadata.Title) ||
          ReleaseTitleMatcher.Tokens(SourceMetadata.Title).Length == TitleEvidence.Length ||
-         SourceMetadata.Title.Contains(" by ", StringComparison.OrdinalIgnoreCase));
+         HasExactStructuredAuthorSuffix());
+
+    private bool HasExactStructuredAuthorSuffix()
+    {
+        var marker = SourceMetadata.Title.LastIndexOf(" by ", StringComparison.OrdinalIgnoreCase);
+        return marker > 0 && TitleEvidence.Start == 0 &&
+            ReleaseTitleMatcher.Tokens(SourceMetadata.Title[..marker]).Length == TitleEvidence.Length &&
+            AuthorAffinity.Evaluate(RequestedMetadata.Author, SourceMetadata.Title[(marker + 4)..]).HasStrongSupport;
+    }
 }
 
 /// <summary>Extraction and deterministic classification only; it cannot authorize acquisition.</summary>
@@ -31,7 +42,9 @@ public static class DeterministicCandidateIdentityResolver
 {
     public static CandidateIdentityAssessment Assess(BookIdentity requested, ExternalProviderCandidate source)
     {
-        var titles = new[] { requested.Title }.Concat(requested.AlternateTitles ?? []).Distinct(StringComparer.Ordinal).ToArray();
+        var requestedTitles = new[] { requested.Title }.Concat(requested.AlternateTitles ?? []).ToArray();
+        var titles = requestedTitles.Concat(requestedTitles.Select(value => WorkTitleCore.Reduce(value, requested.Author)))
+            .Distinct(StringComparer.Ordinal).ToArray();
         var release = ExternalReleaseNameEvidence.Evaluate(source.Release?.Name, titles, requested.Author, requested.Series);
         var title = string.IsNullOrWhiteSpace(source.Title) ? release.TitleEvidence : titles
             .Select(expected => ReleaseTitleMatcher.Evaluate(expected, ReleaseTitleMatcher.Tokens(source.Title)))
@@ -39,11 +52,16 @@ public static class DeterministicCandidateIdentityResolver
         title ??= new(IdentityEvidenceState.Unknown, requested.Title, null, -1, 0, "No title or release name supplied.");
         if (!string.IsNullOrWhiteSpace(source.Title) && !title.IsPositive)
             title = title with { State = IdentityEvidenceState.Conflicting, Observed = source.Title, Reason = "Structured source title does not identify the requested work." };
+        var structuredName = string.IsNullOrWhiteSpace(source.Title) ? ReleaseNameVerdict.None :
+            ExternalReleaseNameEvidence.Evaluate(source.Title, titles, requested.Author, requested.Series);
         var structuredAuthors = source.Work.Authors.Where(person => person.Role is null ||
             person.Role.Equals("author", StringComparison.OrdinalIgnoreCase) || person.Role.Equals("coauthor", StringComparison.OrdinalIgnoreCase)).ToArray();
         var affinity = structuredAuthors.Length > 0
             ? structuredAuthors.Select(person => AuthorAffinity.Evaluate(requested.Author, person.Name)).OrderByDescending(value => value.Score).First()
             : release.AuthorAffinity ?? AuthorAffinity.Evaluate(requested.Author, null);
+        if (affinity.Kind != AuthorAffinityKind.Conflict && structuredName.AuthorAffinity is { } titleAffinity && titleAffinity.Score > affinity.Score)
+            affinity = titleAffinity;
+        if (structuredName.AuthorAffinity?.Kind == AuthorAffinityKind.Conflict) affinity = structuredName.AuthorAffinity;
         if (affinity.Kind != AuthorAffinityKind.Conflict && release.AuthorAffinity is { } releaseAffinity && releaseAffinity.Score > affinity.Score)
             affinity = releaseAffinity;
         // Never discard a conflicting explicit release credit just because structured metadata agrees.
@@ -69,7 +87,7 @@ public static class DeterministicCandidateIdentityResolver
         contradictions.AddRange(seriesEvidence.Where(value => value.State == IdentityEvidenceState.Conflicting)
             .Select(value => $"Series {value.Name} position conflicts: requested {value.ExpectedPosition}, observed {value.ObservedPosition}."));
         if (languageState == IdentityEvidenceState.Conflicting) contradictions.Add($"Language conflicts: requested {requested.Language ?? "default accepted language"}, observed {language}.");
-        var conditions = (release.Conditions ?? []).ToList();
+        var conditions = (release.Conditions ?? []).Concat(structuredName.Conditions ?? []).Distinct().ToList();
         if (source.Release?.IsCollection == true) conditions.Add(new(ReleaseConditionKind.EditionReview, "Structured release is a collection."));
         if (source.Release?.IsSample == true) conditions.Add(new(ReleaseConditionKind.EditionReview, "Structured release is a sample."));
         if (source.Release?.IsAbridged == true && source.Release.IsUnabridged != true) conditions.Add(new(ReleaseConditionKind.EditionReview, "Structured release is abridged."));
