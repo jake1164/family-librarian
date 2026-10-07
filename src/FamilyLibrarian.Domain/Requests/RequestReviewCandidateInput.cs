@@ -28,4 +28,5 @@ public sealed record RequestReviewCandidateInput(
     string? Details,
     string? AdminInspectionUri,
     string? ReleaseName,
-    bool TitleIsRequestFallback);
+    bool TitleIsRequestFallback,
+    string? AdminSourceSummary = null);

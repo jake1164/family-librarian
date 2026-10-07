@@ -263,6 +263,47 @@ public sealed class ExternalProviderClientTests
     }
 
     [TestMethod]
+    [DataRow(" Example indexer · usenet · 679 grabs ", "Example indexer · usenet · 679 grabs")]
+    [DataRow(null, null)]
+    [DataRow("", null)]
+    [DataRow(" \r\n\t\u0000 ", null)]
+    [DataRow("Example\r\n indexer\t ·  usenet\u0000\u0007", "Example indexer · usenet")]
+    [DataRow("<script>alert(1)</script> & <b>origin</b>", "<script>alert(1)</script> & <b>origin</b>")]
+    public async Task SearchNormalizesAdministratorSourceSummary(string? supplied, string? expected)
+    {
+        var candidate = new System.Text.Json.Nodes.JsonObject
+        {
+            ["providerReference"] = "origin",
+            ["work"] = new System.Text.Json.Nodes.JsonObject { ["title"] = "Example" }
+        };
+        if (supplied is not null)
+        {
+            candidate["sourceSummary"] = supplied;
+        }
+
+        var payload = new System.Text.Json.Nodes.JsonObject
+        {
+            ["candidates"] = new System.Text.Json.Nodes.JsonArray(candidate)
+        };
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(new StaticSearchHandler(payload.ToJsonString())));
+        var results = await client.SearchAsync("http://provider.test", null,
+            new ExternalProviderSearchRequest(Guid.NewGuid(), RequestMediaType.Ebook,
+                new ExternalProviderWorkEvidence("Any", null, [], [], [])), CancellationToken.None);
+        Assert.AreEqual(expected, results.Single().SourceSummary);
+    }
+
+    [TestMethod]
+    public async Task SearchTruncatesAdministratorSourceSummary()
+    {
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(new StaticSearchHandler(
+            "{\"candidates\":[{\"providerReference\":\"long\",\"sourceSummary\":\"" + new string('x', 140) + "\"}]}")));
+        var results = await client.SearchAsync("http://provider.test", null,
+            new ExternalProviderSearchRequest(Guid.NewGuid(), RequestMediaType.Ebook,
+                new ExternalProviderWorkEvidence("Any", null, [], [], [])), CancellationToken.None);
+        Assert.AreEqual(new string('x', 120), results.Single().SourceSummary);
+    }
+
+    [TestMethod]
     public async Task SearchAcceptsOnlySafeProviderInspectionUris()
     {
         var handler = new StaticSearchHandler("""

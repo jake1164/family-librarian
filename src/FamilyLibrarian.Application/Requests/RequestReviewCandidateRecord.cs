@@ -31,7 +31,8 @@ public static class RequestReviewCandidateRecord
             RequestReviewCandidatePresentation.BuildDetails(option),
             option.AdminInspectionUri?.ToString(),
             Trimmed(option.ReleaseName),
-            sourceTitle is null);
+            sourceTitle is null,
+            option.AdminSourceSummary);
     }
 
     /// <summary>

@@ -55,12 +55,8 @@ public static class AudiobookPartSetSelector
             }
 
             var assessment = ExternalAudiobookPartSetAssessment.For(anchor, eligible);
-            // Every part needs its own title/author support, but a release name
-            // carrying leftover words ("... 1 of 2 by Rebecca Yaros fantasy
-            // romance") never reaches a strict title basis on its own. One
-            // strictly matched part anchors the set; the rest may rest on strong
-            // author support, and every part's own tags are verified after
-            // download regardless.
+            // Every member needs independently decisive title evidence. Missing
+            // author or packaging details cannot substitute for a contradiction.
             if (assessment.HasEveryNumber && assessment.Parts.Count == group.Key.Total &&
                 assessment.Parts.Any(part => IsStrictBasis(part.MatchBasis)))
             {
@@ -84,7 +80,7 @@ public static class AudiobookPartSetSelector
         option.FragmentOnlyConcern &&
         !option.RequiresLanguageConfirmation &&
         option.HasPlausibleTitle &&
-        (IsStrictBasis(option.MatchBasis) || option.AuthorAffinity?.HasStrongSupport == true) &&
+        IsStrictBasis(option.MatchBasis) &&
         option.AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
         (string.IsNullOrWhiteSpace(option.Format) || AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format)) &&
         !string.Equals(option.DrmStatus, "encrypted", StringComparison.OrdinalIgnoreCase) &&

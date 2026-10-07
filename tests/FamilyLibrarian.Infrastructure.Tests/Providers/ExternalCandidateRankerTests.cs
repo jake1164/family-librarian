@@ -14,6 +14,21 @@ namespace FamilyLibrarian.Infrastructure.Tests.Providers;
 public sealed class ExternalCandidateRankerTests
 {
     [TestMethod]
+    public void OriginTextCannotChangeRankingOrTheSelectedCandidate()
+    {
+        var candidates = new[] { Candidate("b"), Candidate("a", BookMatchBasis.Identifier), Candidate("c", BookMatchBasis.TitleAuthor) };
+        var withOrigin = candidates.Select((candidate, index) => candidate with
+        {
+            AdminSourceSummary = index == 2 ? "Best source · 999999 grabs" : "Unpopular source · 0 grabs"
+        }).ToArray();
+        CollectionAssert.AreEqual(
+            ExternalCandidateRanker.Rank(candidates, RequestMediaType.Ebook).Select(candidate => candidate.ProviderResultId).ToArray(),
+            ExternalCandidateRanker.Rank(withOrigin, RequestMediaType.Ebook).Select(candidate => candidate.ProviderResultId).ToArray());
+        Assert.AreEqual(ExternalCandidateRanker.SelectBest(candidates, RequestMediaType.Ebook)!.ProviderResultId,
+            ExternalCandidateRanker.SelectBest(withOrigin, RequestMediaType.Ebook)!.ProviderResultId);
+    }
+
+    [TestMethod]
     public void TitleAndAuthorEvidenceDominateFormatAndQuality()
     {
         var typo = Candidate("z", basis: null, format: "mp3") with

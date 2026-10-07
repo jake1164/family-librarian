@@ -193,7 +193,8 @@ public sealed record AdminRequestReviewCandidateResponse(
     string? InspectionUri,
     string? ReleaseName = null,
     bool TitleIsRequestFallback = false,
-    bool NamesRequestedWork = false);
+    bool NamesRequestedWork = false,
+    string? SourceSummary = null);
 
 /// <summary>
 /// One raw result from an on-demand live search against a single

@@ -47,7 +47,7 @@ public sealed class ReleaseNameOnlyCandidateVerificationTests
             [ReleaseOnly("c_collection", "Ray Bradbury - A Pleasure to Burn-Fahrenheit 451 Stories (retail) (epub)")],
             CancellationToken.None);
 
-        Assert.AreNotEqual(BookMatchBasis.StrictTitleAuthor, verdicts["c_collection"].Basis);
+        Assert.AreEqual(WorkIdentityDecision.MatchWithConditions, verdicts["c_collection"].IdentityAssessment!.Decision);
         Assert.AreNotEqual(BookMatchBasis.Identifier, verdicts["c_collection"].Basis);
     }
 

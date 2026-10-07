@@ -63,15 +63,17 @@ public sealed class ExternalProviderAutomaticAcquisitionEndpointTests
     }
 
     [TestMethod]
-    public async Task AScheduledExternalLookupWithASingleIdentifierMatchAcquiresAutomatically()
+    [DataRow(null)]
+    [DataRow("Example indexer · usenet · 679 grabs")]
+    public async Task AScheduledExternalLookupWithASingleIdentifierMatchAcquiresAutomatically(string? sourceSummary)
     {
-        var fixture = WebTestFixture.Require(_fixture);
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
         await using var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
             services =>
             {
                 services.RemoveAll<IExternalProviderClient>();
-                services.AddSingleton<IExternalProviderClient>(new FakeHobbitExternalProviderClient());
+                services.AddSingleton<IExternalProviderClient>(new FakeHobbitExternalProviderClient { SourceSummary = sourceSummary });
             });
 
         using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -777,6 +779,16 @@ public sealed class ExternalProviderReviewCandidatePresentationEndpointTests
             providerClient.SearchCalls,
             "Reading the review must reuse persisted evidence, not search the provider again.");
         Assert.AreEqual(0, providerClient.AcquireCalls, "Review enrichment must not download a candidate.");
+        Assert.IsFalse(rawResponse.Contains("sourceSummary", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(rawResponse.Contains("Example indexer", StringComparison.OrdinalIgnoreCase));
+        foreach (var dto in typeof(BookRequestResponse).Assembly.GetTypes().Where(type =>
+                     type.Namespace == typeof(BookRequestResponse).Namespace &&
+                     !type.Name.StartsWith("Admin", StringComparison.Ordinal)))
+        {
+            Assert.IsFalse(dto.GetProperties().Any(property =>
+                property.Name.Contains("SourceSummary", StringComparison.OrdinalIgnoreCase)),
+                $"Provider origin must never appear on family/requester DTO {dto.Name}.");
+        }
 
         await using var verificationScope = factory.Services.CreateAsyncScope();
         var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -795,6 +807,9 @@ public sealed class ExternalProviderReviewCandidatePresentationEndpointTests
         Assert.HasCount(2, adminView.ReviewCandidates);
         Assert.AreEqual("presentation-external", adminView.ReviewCandidates[0].ProviderId);
         Assert.AreEqual("https://source.example.test/md5/opaque-duplicate-a", adminView.ReviewCandidates[0].InspectionUri);
+        Assert.AreEqual("Example indexer · usenet · 679 grabs", persisted[0].AdminSourceSummary);
+        Assert.AreEqual(persisted[0].AdminSourceSummary, adminView.ReviewCandidates[0].SourceSummary);
+        Assert.IsNull(adminView.ReviewCandidates[1].SourceSummary);
     }
 }
 
@@ -811,6 +826,8 @@ file static class ExternalProviderAutomaticFixtureSupport
 /// <summary>Always finds "the-hobbit"-matching searches and fetches a real, minimal, valid EPUB.</summary>
 file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
 {
+    public string? SourceSummary { get; init; }
+
     public Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
         Task.FromResult(new ExternalProviderManifest(
@@ -837,7 +854,7 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
                         "en", null, null, request.Edition?.Identifiers ?? []),
                     new ExternalProviderReleaseEvidence(
                         null, "epub", null, false, 1, false, null, null, [], null,
-                        ExternalProviderDrmStatus.None))
+                        ExternalProviderDrmStatus.None), SourceSummary: SourceSummary)
             ]
             : [];
         return Task.FromResult(candidates);
@@ -1058,7 +1075,8 @@ file sealed class PresentationExternalProviderClient : IExternalProviderClient
                 new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),
                 new ExternalProviderReleaseEvidence(null, "epub", 1_572_864, false, 1, false, null, null, [], null,
                     ExternalProviderDrmStatus.None),
-                InspectionUri: new Uri("https://source.example.test/md5/opaque-duplicate-a")),
+                InspectionUri: new Uri("https://source.example.test/md5/opaque-duplicate-a"),
+                SourceSummary: "Example indexer · usenet · 679 grabs"),
             new ExternalProviderCandidate(
                 "opaque-duplicate-b", work,
                 new ExternalProviderEditionEvidence("en", 2014, "Example Press", identifiers),

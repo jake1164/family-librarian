@@ -170,10 +170,10 @@ public sealed class ExternalCandidateAvailabilityChecker(
         var candidatesWithVerdicts = candidates.Select(candidate =>
         {
             var verdict = verdicts.GetValueOrDefault(candidate.ProviderReference, Providers.ExternalProviderMatchVerdict.Unconfirmed);
-            var releaseVerdict = Providers.ExternalReleasePolicy.Evaluate(candidate.Release, mediaType, verdict.AudiobookPart);
+            var releaseVerdict = Providers.ExternalReleasePolicy.Evaluate(candidate.Release, mediaType, verdict.AudiobookPart, verdict.IdentityAssessment);
             // The same release without its part marker: if that is acceptable,
             // being a fragment is the *only* thing wrong with it.
-            var partlessVerdict = Providers.ExternalReleasePolicy.Evaluate(candidate.Release, mediaType, audiobookPart: null);
+            var partlessVerdict = Providers.ExternalReleasePolicy.Evaluate(candidate.Release, mediaType, audiobookPart: null, verdict.IdentityAssessment);
             var fragmentOnly = mediaType == RequestMediaType.Audiobook &&
                 verdict.AudiobookPart is { Total: > 1 } &&
                 releaseVerdict.RequiresConfirmation &&
@@ -257,11 +257,23 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 IsAbridged: sourceCandidate.Release?.IsAbridged,
                 IsUnabridged: sourceCandidate.Release?.IsUnabridged,
                 AdminInspectionUri: sourceCandidate.InspectionUri,
+                AdminSourceSummary: sourceCandidate.SourceSummary,
                 ReleaseName: sourceCandidate.Release?.Name,
                 AuthorAffinity: candidate.MatchVerdict.AuthorAffinity,
                 HasPlausibleTitle: candidate.MatchVerdict.HasPlausibleTitle,
                 AudiobookPart: mediaType == RequestMediaType.Audiobook ? candidate.MatchVerdict.AudiobookPart : null,
                 FragmentOnlyConcern: candidate.FragmentOnly,
+                IdentityAssessment: candidate.MatchVerdict.IdentityAssessment,
+                AcquisitionAssessment: new Providers.CandidateAcquisitionAssessment(
+                    candidate.MatchVerdict.IdentityAssessment?.Decision == Matching.WorkIdentityDecision.Mismatch
+                        ? Providers.AcquisitionSuitability.Blocked
+                        : candidate.MatchVerdict.IdentityAssessment?.Decision == Matching.WorkIdentityDecision.Ambiguous
+                            ? Providers.AcquisitionSuitability.IdentityReview
+                            : candidate.FragmentOnly ? Providers.AcquisitionSuitability.NeedsCompanionParts
+                            : candidate.ReleaseVerdict.RequiresConfirmation ? Providers.AcquisitionSuitability.EditionReview
+                            : Providers.AcquisitionSuitability.EligibleForChecks,
+                    (candidate.MatchVerdict.IdentityAssessment?.Contradictions ?? [])
+                        .Concat(candidate.MatchVerdict.IdentityAssessment?.Conditions.Select(condition => condition.Reason) ?? []).ToArray()),
                 // A "read by <name>" credit in the release name is, for a
                 // release-name-only source, the only narration evidence that
                 // exists. Reported as Human only when a reader is actually

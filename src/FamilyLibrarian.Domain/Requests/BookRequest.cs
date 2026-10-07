@@ -186,7 +186,7 @@ public sealed class BookRequest
                 _reviewCandidates.Add(new RequestReviewCandidate(
                     Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
                     candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
-                    candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc));
+                    candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc, candidate.AdminSourceSummary));
             }
         }
 
@@ -221,7 +221,7 @@ public sealed class BookRequest
             _reviewCandidates.Add(new RequestReviewCandidate(
                 Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
                 candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
-                candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc));
+                candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc, candidate.AdminSourceSummary));
         }
 
         StatusChangedAtUtc = atUtc;
@@ -290,7 +290,7 @@ public sealed class BookRequest
             _reviewCandidates.Add(new RequestReviewCandidate(
                 Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
                 candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
-                candidate.ReleaseName, candidate.TitleIsRequestFallback, nextDisplayOrder + index, atUtc));
+                candidate.ReleaseName, candidate.TitleIsRequestFallback, nextDisplayOrder + index, atUtc, candidate.AdminSourceSummary));
         }
 
         UpdatedAtUtc = atUtc;

@@ -16,7 +16,7 @@ public static class ExternalReleasePolicy
         "The provider could not confirm that this ebook source is DRM-free.";
 
     public static ExternalReleaseVerdict Evaluate(ExternalProviderReleaseEvidence? release, RequestMediaType mediaType,
-        ExternalAudiobookPartEvidence? audiobookPart = null)
+        ExternalAudiobookPartEvidence? audiobookPart = null, CandidateIdentityAssessment? identityAssessment = null)
     {
         if (mediaType == RequestMediaType.Ebook)
         {
@@ -38,6 +38,9 @@ public static class ExternalReleasePolicy
                 return ExternalReleaseVerdict.Rejected(
                     $"'{release.Format ?? "unknown"}' is not an accepted ebook source format.");
             }
+
+            if (StructuralConcern(identityAssessment) is { } ebookConcern)
+                return ExternalReleaseVerdict.ReviewRequired(ebookConcern);
 
             if (audiobookPart is not null && audiobookPart.Total != 1)
             {
@@ -70,6 +73,9 @@ public static class ExternalReleasePolicy
 
             return ExternalReleaseVerdict.Acceptable;
         }
+
+        if (StructuralConcern(identityAssessment) is { } concern)
+            return ExternalReleaseVerdict.ReviewRequired(concern);
 
         if (audiobookPart is not null && audiobookPart.Total != 1)
         {
@@ -107,6 +113,13 @@ public static class ExternalReleasePolicy
 
         return ExternalReleaseVerdict.Acceptable;
     }
+    private static string? StructuralConcern(CandidateIdentityAssessment? assessment)
+    {
+        var conditions = assessment?.Conditions.Where(condition => condition.Kind != ReleaseConditionKind.CompanionParts)
+            .Select(condition => condition.Reason).ToArray();
+        return conditions is { Length: > 0 } ? string.Join(" ", conditions) : null;
+    }
+
 }
 
 public sealed record ExternalReleaseVerdict(bool IsRejected, bool RequiresConfirmation, string? Reason)

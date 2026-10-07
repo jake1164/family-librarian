@@ -107,17 +107,16 @@ public sealed class ExternalReleaseNameEvidenceTests
         var verdict = Evaluate("Fahrenheit 451 / Ray Bradbury / BBC Radio Audio Drama");
 
         Assert.IsFalse(verdict.IsStrictWorkAssertion);
-        Assert.IsNotNull(verdict.RejectionReason);
+        Assert.IsTrue(verdict.Conditions!.Count > 0, "A dramatization is an acquisition condition, not a title contradiction.");
     }
 
     [TestMethod]
-    public void AnUnexplainedBroadcasterTagIsRefusedRatherThanTreatedAsNoise()
+    public void AnUnclassifiedBroadcasterTagIsRetainedWithoutInventingAnEdition()
     {
-        // "(BBC)" is a parenthesised annotation, but parentheses earn no pass:
-        // a BBC production of Fahrenheit 451 is a dramatization, not the book.
+        // A broadcaster label alone does not establish a dramatization.
         var verdict = Evaluate("Ray Bradbury - Fahrenheit 451 (BBC)");
 
-        Assert.IsFalse(verdict.IsStrictWorkAssertion);
+        Assert.IsTrue(verdict.IsStrictWorkAssertion);
         Assert.Contains("BBC", verdict.UnexplainedTokens);
     }
 
@@ -233,7 +232,7 @@ public sealed class ExternalReleaseNameEvidenceTests
             ["Threshing Day"], "Rebecca Yarros");
 
         Assert.IsTrue(verdict.IsStrictWorkAssertion);
-        Assert.IsFalse(withoutSeries.IsStrictWorkAssertion);
+        Assert.IsTrue(withoutSeries.IsStrictWorkAssertion, "A missing catalog series position is not a contradiction.");
     }
 
     [TestMethod]

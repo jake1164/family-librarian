@@ -172,6 +172,13 @@ compare them and expose the provider/source inspection evidence only in the
 administrator panel. Do not collapse source records before persistence: the
 administrator must see every record, its human-facing source and record
 identifier, and the neutral media facts needed to compare it.
+
+Administrator request-review provenance may include the optional provider-authored
+`sourceSummary` beside the source name and record identifier. It is bounded plain
+text, rendered with normal Razor HTML encoding; it is never a decision signal or
+requester/family content. Inspection anchors use primary color and an underline
+so they remain visibly recognizable as links.
+
 For a legacy review saved before those records were retained, suppress any
 one-row requester action rather than presenting a false choice; the admin view
 may show a stable built-in-catalogue record page when the stored record ID is

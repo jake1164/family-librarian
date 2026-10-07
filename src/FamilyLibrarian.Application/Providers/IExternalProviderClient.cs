@@ -192,7 +192,8 @@ public sealed record ExternalProviderCandidate(
     string? CandidateRevision = null,
     string? AcquireToken = null,
     string? ExtensionsJson = null,
-    Uri? InspectionUri = null)
+    Uri? InspectionUri = null,
+    string? SourceSummary = null)
 {
     public string Title => Work.Title;
 

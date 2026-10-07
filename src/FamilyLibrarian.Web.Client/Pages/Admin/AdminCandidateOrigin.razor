@@ -1,0 +1,27 @@
+@* Administrator-only provenance. Provider text is encoded by Razor. *@
+<MudText Typo="Typo.body2">
+    <strong>From @ProviderName</strong>
+    @if (!string.IsNullOrWhiteSpace(SourceSummary))
+    {
+        <span> — @SourceSummary</span>
+    }
+    <span> — record @ProviderResultId</span>
+</MudText>
+@if (!string.IsNullOrWhiteSpace(InspectionUri))
+{
+    <a href="@InspectionUri" target="_blank" rel="noopener noreferrer"
+       style="color: var(--mud-palette-primary); text-decoration: underline;">
+        Open this record on @ProviderName
+    </a>
+}
+else
+{
+    <MudText Typo="Typo.caption">@ProviderName published no record page for this result.</MudText>
+}
+
+@code {
+    [Parameter, EditorRequired] public string ProviderName { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string ProviderResultId { get; set; } = string.Empty;
+    [Parameter] public string? SourceSummary { get; set; }
+    [Parameter] public string? InspectionUri { get; set; }
+}

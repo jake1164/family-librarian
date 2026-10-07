@@ -103,6 +103,8 @@ public sealed record FulfillmentOption(
     // A provider-declared, non-download browser page for an administrator to
     // inspect a candidate. It is deliberately never part of a requester view.
     Uri? AdminInspectionUri = null,
+    // Untrusted origin text for administrator review only; never decision evidence.
+    string? AdminSourceSummary = null,
     // Audiobook narration evidence (AudiobookCandidateSelector). Null/Unknown
     // for every non-audiobook option and for a provider that does not (yet)
     // report narration -- that is a valid, expected state, never inferred.
@@ -136,7 +138,9 @@ public sealed record FulfillmentOption(
     // that it is one numbered fragment: the same release evaluated without its
     // part marker is acceptable (no sample, collection, abridged or DRM
     // concern). Only such fragments can join an automatic complete set.
-    bool FragmentOnlyConcern = false);
+    bool FragmentOnlyConcern = false,
+    CandidateIdentityAssessment? IdentityAssessment = null,
+    CandidateAcquisitionAssessment? AcquisitionAssessment = null);
 
 /// <summary>
 /// Deterministic classification of an audiobook candidate's narration, as

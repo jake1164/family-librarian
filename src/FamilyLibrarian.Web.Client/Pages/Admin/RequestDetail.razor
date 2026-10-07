@@ -307,22 +307,10 @@
                                         Release: @candidate.ReleaseName
                                     </MudText>
                                 }
-                                <MudText Typo="Typo.body2">
-                                    <strong>From @AdminProviderName(candidate)</strong>
-                                    <span> — record @candidate.ProviderResultId</span>
-                                </MudText>
-                                @if (!string.IsNullOrWhiteSpace(candidate.InspectionUri))
-                                {
-                                    <a href="@candidate.InspectionUri" target="_blank" rel="noopener noreferrer">
-                                        Open this record on @AdminProviderName(candidate)
-                                    </a>
-                                }
-                                else
-                                {
-                                    <MudText Typo="Typo.caption">
-                                        @AdminProviderName(candidate) published no record page for this result.
-                                    </MudText>
-                                }
+                                <AdminCandidateOrigin ProviderName="@AdminProviderName(candidate)"
+                                                      ProviderResultId="@candidate.ProviderResultId"
+                                                      SourceSummary="@candidate.SourceSummary"
+                                                      InspectionUri="@candidate.InspectionUri" />
                                 <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Success"
                                            Disabled="@isBusy"
                                            OnClick="() => ResolveNeedsReviewAsync(candidate.CandidateId)">

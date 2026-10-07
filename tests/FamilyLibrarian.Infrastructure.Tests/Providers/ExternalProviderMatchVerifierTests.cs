@@ -168,7 +168,7 @@ public sealed class ExternalProviderMatchVerifierTests
             "Rebecca Yarros-The Empyrean-Fourth Wing Part 2-Extended",
             "Fourth.Wing.by.Rececca.Yarros",
             "req.Fourth.Wing.Fourth.Wing.Book.1.m4b",
-            "Fourth Wing - Stephen King"
+            "Fourth Wing by Stephen King"
         };
         var candidates = names.Select((name, index) => new ExternalProviderCandidate(
             $"ref-{index}", new ExternalProviderWorkEvidence(string.Empty, null, [], [], []),
@@ -176,7 +176,7 @@ public sealed class ExternalProviderMatchVerifierTests
         var verdicts = await NewVerifier().VerifyAsync("Fourth Wing", "Rebecca Yarros", null, candidates, CancellationToken.None);
         Assert.HasCount(4, verdicts);
         Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["ref-1"].Basis);
-        Assert.IsNull(verdicts["ref-0"].Basis, "Multipart/extended evidence must still require review.");
+        Assert.AreEqual(WorkIdentityDecision.MatchWithConditions, verdicts["ref-0"].IdentityAssessment!.Decision, "Identity is positive; multipart/edition conditions still require review.");
         Assert.AreEqual(BookMatchBasis.StrictTitle, verdicts["ref-2"].Basis);
         Assert.IsNull(verdicts["ref-3"].Basis);
         Assert.IsTrue(verdicts["ref-1"].AuthorAffinity!.Score > verdicts["ref-2"].AuthorAffinity!.Score);
@@ -221,7 +221,7 @@ public sealed class ExternalProviderMatchVerifierTests
     {
         var partial = ExternalProviderCandidate.FromSimple("partial", "Fourth Wing", "Rebecca", "m4b", 1000)
             with { Release = new ExternalProviderReleaseEvidence("Fourth Wing - R. Yarros", "m4b", null, false, 1, false, null, null, [], null) };
-        var conflict = partial with { ProviderReference = "conflict", Release = partial.Release! with { Name = "Fourth Wing - Stephen King" } };
+        var conflict = partial with { ProviderReference = "conflict", Release = partial.Release! with { Name = "Fourth Wing by Stephen King" } };
         var verdicts = await NewVerifier().VerifyAsync("Fourth Wing", "Rebecca Yarros", null, [partial, conflict], CancellationToken.None);
         Assert.AreEqual(BookMatchBasis.StrictTitleAuthor, verdicts["partial"].Basis);
         Assert.IsTrue(verdicts["partial"].HasPlausibleTitle);

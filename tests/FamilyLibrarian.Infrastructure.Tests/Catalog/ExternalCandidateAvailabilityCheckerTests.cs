@@ -29,6 +29,40 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         Assert.IsTrue(option.HasPlausibleTitle);
     }
 
+    [TestMethod]
+    public async Task OriginIsCarriedOnlyAsAdminTextWithoutChangingVerificationOrSelection()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("example-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        var identity = new BookIdentity("Moby Dick", "Herman Melville", []);
+        var candidates = new[]
+        {
+            Candidate("exact", "epub", ExternalProviderDrmStatus.None),
+            Candidate("foreign", "epub", ExternalProviderDrmStatus.None, "fr"),
+            Candidate("encrypted", "azw3", ExternalProviderDrmStatus.Encrypted),
+            Candidate("collection", "epub", ExternalProviderDrmStatus.None) with
+            {
+                Release = Candidate("collection", "epub", ExternalProviderDrmStatus.None).Release! with { IsCollection = true }
+            }
+        };
+        context.Client.Candidates = candidates;
+        var original = await context.Checker.FindForProviderAsync(provider, identity, RequestMediaType.Ebook, CancellationToken.None);
+        context.Client.Candidates = candidates.Select(candidate => candidate with
+        {
+            SourceSummary = "Example indexer · usenet · 679 grabs"
+        }).ToArray();
+        var enriched = await context.Checker.FindForProviderAsync(provider, identity, RequestMediaType.Ebook, CancellationToken.None);
+        CollectionAssert.AreEqual(original.Select(option => option with { IdentityAssessment = null, AcquisitionAssessment = null }).ToArray(),
+            enriched.Select(option => option with { AdminSourceSummary = null, IdentityAssessment = null, AcquisitionAssessment = null }).ToArray());
+        Assert.AreEqual(System.Text.Json.JsonSerializer.Serialize(original.Select(option => option.IdentityAssessment)),
+            System.Text.Json.JsonSerializer.Serialize(enriched.Select(option => option.IdentityAssessment)));
+        Assert.AreEqual(System.Text.Json.JsonSerializer.Serialize(original.Select(option => option.AcquisitionAssessment)),
+            System.Text.Json.JsonSerializer.Serialize(enriched.Select(option => option.AcquisitionAssessment)));
+        Assert.IsTrue(enriched.All(option => option.AdminSourceSummary == "Example indexer · usenet · 679 grabs"));
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]

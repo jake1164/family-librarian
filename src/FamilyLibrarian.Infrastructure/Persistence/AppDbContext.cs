@@ -569,6 +569,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(candidate => candidate.Language).HasColumnName("language").HasMaxLength(32);
             entity.Property(candidate => candidate.Details).HasColumnName("details").HasMaxLength(512);
             entity.Property(candidate => candidate.AdminInspectionUri).HasColumnName("admin_inspection_uri").HasMaxLength(2048);
+            entity.Property(candidate => candidate.AdminSourceSummary).HasColumnName("admin_source_summary").HasMaxLength(120);
             entity.Property(candidate => candidate.ReleaseName).HasColumnName("release_name").HasMaxLength(1024);
             entity.Property(candidate => candidate.TitleIsRequestFallback)
                 .HasColumnName("title_is_request_fallback").HasDefaultValue(false);

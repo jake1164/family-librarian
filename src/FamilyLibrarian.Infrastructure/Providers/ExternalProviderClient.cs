@@ -311,7 +311,8 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
                 node["candidateRevision"]?.GetValue<string>(),
                 node["acquireToken"]?.GetValue<string>(),
                 node["extensions"]?.ToJsonString(),
-                ParseInspectionUri(node["inspectionUrl"]?.GetValue<string>())));
+                ParseInspectionUri(node["inspectionUrl"]?.GetValue<string>()),
+                ParseSourceSummary(node["sourceSummary"]?.GetValue<string>())));
         }
 
         return results;
@@ -433,6 +434,53 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         string.IsNullOrEmpty(uri.UserInfo)
             ? uri
             : null;
+
+    // Provider-authored origin text is presentation only. Whitespace becomes a
+    // single space; other controls are discarded. Razor encodes markup on display.
+    private static string? ParseSourceSummary(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        var text = new System.Text.StringBuilder(120);
+        var pendingSpace = false;
+        foreach (var character in value)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                pendingSpace = text.Length > 0;
+                continue;
+            }
+
+            if (char.IsControl(character))
+            {
+                continue;
+            }
+
+            if (pendingSpace)
+            {
+                text.Append(' ');
+                pendingSpace = false;
+            }
+
+            text.Append(character);
+            if (text.Length >= 120)
+            {
+                break;
+            }
+        }
+
+        var result = text.ToString(0, Math.Min(text.Length, 120)).TrimEnd();
+        // A UTF-16 truncation must not leave half of a supplementary character.
+        if (result.Length > 0 && char.IsHighSurrogate(result[^1]))
+        {
+            result = result[..^1];
+        }
+
+        return result.Length == 0 ? null : result;
+    }
 
     private static List<BookAuthor> ParseAuthors(JsonNode? authorsNode)
     {

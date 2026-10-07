@@ -16,7 +16,7 @@ public sealed class RequestReviewCandidate
         Guid requestId, Guid requestFormatId, string providerId, string providerResultId, string title,
         string? author, string? language, string? details, string? adminInspectionUri,
         string? releaseName, bool titleIsRequestFallback,
-        int displayOrder, DateTimeOffset createdAtUtc)
+        int displayOrder, DateTimeOffset createdAtUtc, string? adminSourceSummary = null)
     {
         RequestId = requestId;
         RequestFormatId = requestFormatId;
@@ -27,6 +27,7 @@ public sealed class RequestReviewCandidate
         Language = language;
         Details = details;
         AdminInspectionUri = adminInspectionUri;
+        AdminSourceSummary = adminSourceSummary;
         ReleaseName = releaseName;
         TitleIsRequestFallback = titleIsRequestFallback;
         DisplayOrder = displayOrder;
@@ -59,6 +60,9 @@ public sealed class RequestReviewCandidate
     /// never expose it.
     /// </summary>
     public string? AdminInspectionUri { get; private set; }
+
+    /// <summary>Untrusted origin text, exclusively for administrator review; never decision evidence.</summary>
+    public string? AdminSourceSummary { get; private set; }
 
     /// <summary>
     /// The source's own raw release name, retained exclusively for an

@@ -1,540 +1,243 @@
-using System.Text;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using FamilyLibrarian.Application.Matching;
 
 namespace FamilyLibrarian.Application.Providers;
 
-/// <summary>
-/// Reads identity evidence out of a provider's raw <c>release.name</c>
-/// (protocol v2 §7) for the common case of a source that reports a release
-/// name and nothing else — no <c>work</c> object, no structured title or
-/// author. Without this, such a candidate carries an empty
-/// <see cref="ExternalProviderWorkEvidence.Title"/>, which every matcher in
-/// <see cref="IBookMatcher"/> rejects outright, so a correct result is
-/// indistinguishable from a wrong one and no request can ever be fulfilled
-/// from that provider.
-/// </summary>
-/// <remarks>
-/// This is deliberately a <em>verifier</em>, not a parser. Family Librarian
-/// already knows the title and author it asked for, so the question put to a
-/// release name is "does this name assert the work I requested, with every
-/// token accounted for?" — never "which substring here is the title?".
-/// Guessing which part of <c>Ray.Bradbury-Fahrenheit.451</c> is the title is
-/// unnecessary and unsafe; confirming that it contains exactly the expected
-/// title and explained supporting evidence avoids that guess. Author presence
-/// is optional; conflicting author evidence prevents automatic selection.
-/// <para>
-/// The load-bearing rule is <see cref="ReleaseNameVerdict.UnexplainedTokens"/>:
-/// after the matched title, the matched author, and allowlisted release noise
-/// are removed, nothing may remain. A release name that merely <em>contains</em>
-/// the requested title and author is not the requested work —
-/// <c>Ray Bradbury - A Pleasure to Burn-Fahrenheit 451 Stories</c> contains
-/// both and is a different book. Only a fully explained name is treated as an
-/// assertion of identity.
-/// </para>
-/// <para>
-/// A release name is also the only place some facts appear at all, so a
-/// language or narrator word in it is <em>extracted and reported</em>, never
-/// discarded as noise. Stripping "Spanish" out of
-/// <c>…2012.Spanish.Retail.EPUB…</c> as though it were a release tag would
-/// turn a foreign-language edition into an unattended English acquisition.
-/// </para>
-/// </remarks>
-public static class ExternalReleaseNameEvidence
+public sealed record SeriesIdentityEvidence(
+    IdentityEvidenceState State, string Name, string? ExpectedPosition, string? ObservedPosition, string Reason);
+
+/// <summary>Extracts positive identity and known structure; unclassified text is neutral.</summary>
+public static partial class ExternalReleaseNameEvidence
 {
-    /// <summary>
-    /// Container/codec and file-type words. This is a <em>noise</em> list, not
-    /// an acceptance list, so it deliberately includes formats Family
-    /// Librarian will not acquire: the token still has to be recognized as a
-    /// format rather than left unexplained. Whether a format may actually be
-    /// fetched stays with <see cref="ExternalEbookFormatPolicy"/> and
-    /// <c>AudiobookFormatPolicy</c>.
-    /// </summary>
-    private static readonly HashSet<string> FormatTokens = new(StringComparer.Ordinal)
+    private static readonly HashSet<string> Formats = new(StringComparer.Ordinal)
     {
         "EPUB", "EPUBC", "MOBI", "AZW", "AZW1", "AZW3", "AZW4", "KFX", "KF8", "PRC", "KEPUB",
         "FB2", "FBZ", "LIT", "PDB", "PDF", "RTF", "TXT", "DOC", "DOCX", "DJVU", "CBZ", "CBR",
-        "M4B", "M4A", "MP3", "AAC", "OGG", "OGA", "OPUS", "FLAC", "WMA", "ALAC",
-        "ZIP", "RAR", "7Z", "ISO"
+        "M4B", "M4A", "MP3", "AAC", "OGG", "OGA", "OPUS", "FLAC", "WMA", "ALAC", "ZIP", "RAR", "7Z", "ISO"
     };
+    private static readonly HashSet<string> Packaging = new(StringComparer.Ordinal)
+    { "BY", "REQ", "RETAIL", "REPACK", "PROPER", "REMASTERED", "EBOOK", "EBOOKS", "AUDIOBOOK", "AUDIOBOOKS", "EDITION", "ANNIVERSARY", "REVISED", "REPRINT" };
 
-    /// <summary>Scope/provenance tags that say nothing about which work this is.</summary>
-    private static readonly HashSet<string> QualityTokens = new(StringComparer.Ordinal)
-    {
-        "RETAIL", "REPACK", "PROPER", "REMASTERED", "UNABRIDGED"
-    };
-
-    /// <summary>Words naming the medium rather than the work.</summary>
-    private static readonly HashSet<string> MediaTokens = new(StringComparer.Ordinal)
-    {
-        "EBOOK", "EBOOKS", "AUDIOBOOK", "AUDIOBOOKS"
-    };
-
-    /// <summary>
-    /// Edition qualifiers of the same work. Deliberately narrow: words like
-    /// "illustrated", "graphic", "adapted" or "dramatized" announce a
-    /// different product and must stay unexplained so the candidate is
-    /// refused rather than quietly accepted.
-    /// </summary>
-    private static readonly HashSet<string> EditionQualifierTokens = new(StringComparer.Ordinal)
-    {
-        "EDITION", "ANNIVERSARY", "REVISED", "REPRINT"
-    };
-
-    private static readonly HashSet<string> ConnectorTokens = new(StringComparer.Ordinal) { "BY" };
-
-    private static readonly HashSet<string> NarratorLeadTokens = new(StringComparer.Ordinal)
-    {
-        "READ", "NARRATED", "PERFORMED"
-    };
-
-    /// <summary>A scene-style trailing group tag: <c>…eBook-BitBook</c>, but never <c>Fahrenheit 451 - Ray Bradbury</c>.</summary>
-    private static readonly Regex TrailingGroupTag = new(
-        @"(?<=[^\s\-])-([A-Za-z0-9]{2,})$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
-    private static readonly Regex OrdinalToken = new(
-        @"^\d{1,3}(ST|ND|RD|TH)$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
-    /// <summary>
-    /// Evaluates <paramref name="releaseName"/> against the expected work.
-    /// </summary>
-    /// <param name="expectedTitles">
-    /// The canonical title plus any persisted edition-title aliases (PROVIDER-6);
-    /// the first one that produces an assertion wins.
-    /// </param>
-    public static ReleaseNameVerdict Evaluate(
-        string? releaseName, IReadOnlyList<string> expectedTitles, string? expectedAuthor,
-        IReadOnlyList<BookSeries>? expectedSeries = null)
+    public static ReleaseNameVerdict Evaluate(string? releaseName, IReadOnlyList<string> expectedTitles,
+        string? expectedAuthor, IReadOnlyList<BookSeries>? expectedSeries = null)
     {
         ArgumentNullException.ThrowIfNull(expectedTitles);
-
-        if (string.IsNullOrWhiteSpace(releaseName))
-        {
-            return ReleaseNameVerdict.None;
-        }
-
-        // The same raw-text negative evidence ordinary title matching applies
-        // (derivative markers, a '/' combined-work separator, a spaced
-        // ampersand), reusing that rule rather than restating it here.
-        if (DeterministicBookMatcher.HasDerivativeOrCombinedWorkMarker(
-                ExternalAudiobookPartEvidence.Read(releaseName).Name))
-        {
-            return ReleaseNameVerdict.Rejected(
-                "The release name names a derivative or combined work, not the single title requested.");
-        }
-
-        ReleaseNameVerdict? best = null;
-        foreach (var expectedTitle in expectedTitles.Where(title => !string.IsNullOrWhiteSpace(title)))
-        {
-            var verdict = EvaluateOne(releaseName, expectedTitle, expectedAuthor, expectedSeries);
-            if (verdict.IsStrictWorkAssertion)
-            {
-                return verdict;
-            }
-
-            // Keep the most informative near-miss so a caller can explain why
-            // a candidate was not auto-acquired.
-            best ??= verdict;
-            if (verdict.AssertsExpectedTitle && !best.AssertsExpectedTitle)
-            {
-                best = verdict;
-            }
-        }
-
-        return best ?? ReleaseNameVerdict.None;
-    }
-
-    private static ReleaseNameVerdict EvaluateOne(
-        string releaseName, string expectedTitle, string? expectedAuthor,
-        IReadOnlyList<BookSeries>? expectedSeries)
-    {
+        if (string.IsNullOrWhiteSpace(releaseName)) return ReleaseNameVerdict.None;
         var part = ExternalAudiobookPartEvidence.Read(releaseName);
-        var withoutGroupTag = TrailingGroupTag.Replace(part.Name, string.Empty);
-        var tokens = Tokenize(SeparateTrailingFormat(withoutGroupTag));
-        if (tokens.Count == 0)
+        var name = SeparateTrailingFormat(part.Name);
+        var tokens = ReleaseTitleMatcher.Tokens(name);
+        var consumed = new bool[tokens.Length];
+        var title = expectedTitles.Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => ReleaseTitleMatcher.Evaluate(value, tokens))
+            .OrderBy(value => value.State switch { IdentityEvidenceState.Exact => 0, IdentityEvidenceState.Compatible => 1, IdentityEvidenceState.Fuzzy => 2, _ => 3 })
+            .FirstOrDefault();
+        if (title?.IsPositive == true)
         {
-            return ReleaseNameVerdict.None;
+            Mark(title.Start, title.Length);
+            // Repeated title labels do not assert another work.
+            for (var start = 0; start + title.Length <= tokens.Length; start++)
+                if (tokens.Skip(start).Take(title.Length).SequenceEqual(tokens.Skip(title.Start).Take(title.Length)))
+                    Mark(start, title.Length);
         }
 
-        var consumed = new bool[tokens.Count];
+        string? narrator = null;
+        var narration = NarratorCredit().Match(name);
+        if (narration.Success)
+        {
+            narrator = narration.Groups["name"].Value.Trim();
+            ConsumePhrase(narration.Value);
+        }
 
-        var assertsTitle = ConsumeRun(tokens, consumed, TitleRunVariants(expectedTitle));
-        // Some source titles repeat the requested title. Each repetition is
-        // accounted for by the same evidence, not interpreted as another work.
-        while (assertsTitle && ConsumeRun(tokens, consumed, TitleRunVariants(expectedTitle))) { }
-        var titleConsumed = consumed.ToArray();
-        var assertsAuthor = expectedAuthor is not null &&
-            ConsumeRun(tokens, consumed, [WordTokens(expectedAuthor)]);
-        var exactAuthorEvidence = string.Join(' ', tokens
-            .Where((_, index) => consumed[index] && !titleConsumed[index]).Select(token => token.Original));
+        // Credits give name boundaries; arbitrary residual words never become a conflicting author.
+        var affinity = AuthorAffinity.Evaluate(expectedAuthor, null);
+        var credit = AuthorCredit().Match(name);
+        if (credit.Success)
+        {
+            var creditTokens = ReleaseTitleMatcher.Tokens(credit.Groups["name"].Value);
+            var count = creditTokens.Length >= 2 && creditTokens[0].Length == 1 && creditTokens.Length >= 3 ? 3 : Math.Min(2, creditTokens.Length);
+            if (count > 0)
+            {
+                var detected = string.Join(' ', creditTokens.Take(count));
+                affinity = AuthorAffinity.Evaluate(expectedAuthor, detected);
+                ConsumePhrase(detected);
+            }
+        }
+        if (affinity.Kind == AuthorAffinityKind.Unknown)
+        {
+            for (var start = 0; start < tokens.Length; start++)
+            {
+                if (consumed[start]) continue;
+                for (var length = Math.Min(3, tokens.Length - start); length >= 1; length--)
+                {
+                    if (Enumerable.Range(start, length).Any(index => consumed[index])) continue;
+                    var detected = string.Join(' ', tokens.Skip(start).Take(length));
+                    var support = AuthorAffinity.Evaluate(expectedAuthor, detected);
+                    if (support.Kind is AuthorAffinityKind.Conflict or AuthorAffinityKind.Unknown || support.Score <= affinity.Score) continue;
+                    affinity = support;
+                }
+            }
+            // Only an explicit, isolated two-word trailing name can contradict without a by credit.
+            var tail = TrailingAuthor().Match(name);
+            if (!affinity.HasStrongSupport && tail.Success && ReleaseTitleMatcher.Tokens(tail.Groups["name"].Value)
+                .Any(token => AuthorAffinity.IsSupportingToken(expectedAuthor, token)))
+            {
+                var detected = tail.Groups["name"].Value;
+                if (!ReleaseTitleMatcher.Tokens(detected).Any(token => Formats.Contains(token)) &&
+                    title?.IsPositive == true && !ReleaseTitleMatcher.Tokens(detected).Any(token =>
+                        ReleaseTitleMatcher.Tokens(title.Observed ?? string.Empty).Contains(token, StringComparer.Ordinal)))
+                    affinity = AuthorAffinity.Evaluate(expectedAuthor, detected);
+            }
+            if (affinity.Kind != AuthorAffinityKind.Unknown) ConsumePhrase(affinity.DetectedAuthor ?? string.Empty);
+        }
+        // Keep exact spelling/case when it is available in the raw release.
+        if (affinity.DetectedAuthor is { } detectedAuthor)
+        {
+            var authorRun = string.Join(@"[\W_]+", ReleaseTitleMatcher.Tokens(detectedAuthor).Select(Regex.Escape));
+            var observed = Regex.Match(name, authorRun, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            if (observed.Success) affinity = affinity with { DetectedAuthor = DeterministicBookMatcher.NormalizeWords(observed.Value) };
+        }
 
-        ConsumeSeries(tokens, consumed, expectedSeries);
+        var seriesEvidence = new List<SeriesIdentityEvidence>();
+        foreach (var series in expectedSeries ?? [])
+        {
+            var run = ReleaseTitleMatcher.Evaluate(series.Name, tokens);
+            if (!run.IsPositive) continue;
+            Mark(run.Start, run.Length);
+            var pattern = string.Join(@"[\W_]+", tokens.Skip(run.Start).Take(run.Length).Select(Regex.Escape));
+            var position = Regex.Match(name, $@"(?<![\p{{L}}\p{{N}}]){pattern}[\W_]+(?:BOOK[\W_]+)?(?<position>\d+(?:\.\d+)?)(?![\p{{L}}\p{{N}}])",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            var observed = position.Success ? position.Groups["position"].Value : null;
+            var comparable = !string.IsNullOrWhiteSpace(series.Position) && observed is not null;
+            var state = !comparable ? IdentityEvidenceState.Unknown : PositionsEqual(series.Position!, observed!)
+                ? IdentityEvidenceState.Exact : IdentityEvidenceState.Conflicting;
+            seriesEvidence.Add(new(state, series.Name, series.Position, observed,
+                comparable ? "Comparable catalog and release series positions." : "A missing position is not disagreement."));
+            if (observed is not null) Mark(run.Start + run.Length, Math.Min(ReleaseTitleMatcher.Tokens(observed).Length, tokens.Length - run.Start - run.Length));
+        }
+        if (seriesEvidence.Count == 0 && title?.IsPositive == true && title.Start > 0)
+        {
+            var titlePattern = string.Join(@"[\W_]+", tokens.Skip(title.Start).Take(title.Length).Select(Regex.Escape));
+            var titleMatch = Regex.Match(name, titlePattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            var prefix = titleMatch.Success ? name[..titleMatch.Index] : string.Empty;
+            if (!string.IsNullOrWhiteSpace(affinity.DetectedAuthor))
+            {
+                var authorPattern = string.Join(@"[\W_]+", ReleaseTitleMatcher.Tokens(affinity.DetectedAuthor).Select(Regex.Escape));
+                prefix = Regex.Replace(prefix, authorPattern, string.Empty, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            }
+            var inferred = SeriesPrefix().Match(prefix.Trim(' ', '.', '-', '[', ']', '_'));
+            if (inferred.Success)
+            {
+                var seriesName = DeterministicBookMatcher.NormalizeWords(inferred.Groups["name"].Value);
+                var position = inferred.Groups["position"].Value;
+                seriesEvidence.Add(new(IdentityEvidenceState.Unknown, seriesName, null, position,
+                    "Release series prefix retained; requested comparable position is unknown."));
+                ConsumePhrase(inferred.Value);
+            }
+        }
+        // Book N is comparable only with one known series position. It is not a part marker.
+        var bookNumber = BookNumber().Match(name);
+        if (bookNumber.Success)
+        {
+            var observed = bookNumber.Groups["position"].Value;
+            var expected = expectedSeries is { Count: 1 } ? expectedSeries[0].Position : null;
+            var state = string.IsNullOrWhiteSpace(expected) ? IdentityEvidenceState.Unknown :
+                PositionsEqual(expected, observed) ? IdentityEvidenceState.Exact : IdentityEvidenceState.Conflicting;
+            seriesEvidence.Add(new(state, expectedSeries is { Count: 1 } ? expectedSeries[0].Name : "Unspecified series", expected, observed, "Explicit book-number packaging."));
+            ConsumePhrase(bookNumber.Value);
+        }
 
-        var narrator = ConsumeNarrator(tokens, consumed);
+        var qualifiers = StructuralQualifiers().Matches(name).Select(match =>
+            DeterministicBookMatcher.NormalizeWords(match.Value).ToUpperInvariant()).Distinct(StringComparer.Ordinal)
+            .Where(value => title?.Observed is null || !(" " + title.Observed + " ").Contains(" " + value + " ", StringComparison.Ordinal)).ToArray();
+        var conditions = qualifiers.Where(value => value != "UNABRIDGED").Select(value => new ReleaseCondition(ReleaseConditionKind.EditionReview, $"Release qualifier requires completeness or edition review: {value}.")).ToList();
+        if (part.Name.Contains('/', StringComparison.Ordinal) || Regex.IsMatch(name, @"\s&\s", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+            conditions.Add(new(ReleaseConditionKind.EditionReview, "Combined-work or slash-separated release needs review."));
+        if (part.Evidence is { Total: not 1 } fragment) conditions.Add(new(ReleaseConditionKind.CompanionParts, $"{fragment.Description}: companion completeness must be resolved."));
+        if (part.Evidence is null && PartLikeMarker().IsMatch(name)) conditions.Add(new(ReleaseConditionKind.MalformedStructure, "Part numbering is malformed or ambiguous."));
+        if (BookLikeMarker().IsMatch(name) && !bookNumber.Success) conditions.Add(new(ReleaseConditionKind.MalformedStructure, "Book-number packaging is not interpretable."));
+        foreach (var qualifier in qualifiers) ConsumePhrase(qualifier);
+
         string? language = null;
         string? format = null;
-
-        for (var index = 0; index < tokens.Count; index++)
+        for (var index = 0; index < tokens.Length; index++)
         {
-            if (consumed[index])
-            {
-                continue;
-            }
-
+            if (consumed[index]) continue;
             var token = tokens[index];
-            var text = token.Text;
-
-            if (index == 0 && text == "REQ" && assertsTitle)
-            {
-                consumed[index] = true;
-                continue;
-            }
-
-            if (text == "BOOK" && index + 1 < tokens.Count &&
-                int.TryParse(tokens[index + 1].Text, out var bookNumber) && bookNumber > 0 &&
-                (expectedSeries is null || expectedSeries.Count == 0 ||
-                 expectedSeries.Any(series => series.Position == tokens[index + 1].Text)))
-            {
-                consumed[index] = consumed[index + 1] = true;
-                continue;
-            }
-
-            if (FormatTokens.Contains(text))
-            {
-                format ??= text.ToLowerInvariant();
-                consumed[index] = true;
-                continue;
-            }
-
-            if (QualityTokens.Contains(text) || MediaTokens.Contains(text) ||
-                EditionQualifierTokens.Contains(text) || ConnectorTokens.Contains(text) ||
-                OrdinalToken.IsMatch(text) || IsYear(text))
-            {
-                consumed[index] = true;
-                continue;
-            }
-
-            // A token inside square brackets is a release-group/format-list
-            // annotation by convention. Parenthesised tokens get no such pass:
-            // "(60th Anniversary)" and "(read by Christopher Hurt)" are
-            // explained by the rules above, while "(BBC)" must stay
-            // unexplained so a radio dramatization is not mistaken for the book.
-            if (token.WasBracketed)
-            {
-                consumed[index] = true;
-                continue;
-            }
-
-            if (LanguageAcceptance.TryResolveLanguageName(text, out var resolvedLanguage))
-            {
-                language ??= resolvedLanguage;
-                consumed[index] = true;
-                continue;
-            }
-
-            // A possessive remnant left by "Ray Bradbury's Fahrenheit 451"
-            // once the author run itself has been matched.
-            if (text == "S" && index > 0 && consumed[index - 1])
-            {
-                consumed[index] = true;
-            }
+            // Brackets do not hide contradictory language or edition assertions.
+            if (LanguageAcceptance.TryResolveLanguageName(token, out var resolved)) { language ??= resolved; consumed[index] = true; }
+            else if (Formats.Contains(token)) { format ??= token.ToLowerInvariant(); consumed[index] = true; }
+            else if (Packaging.Contains(token) || Regex.IsMatch(token, @"^(?:\d{1,3}(?:ST|ND|RD|TH)|(?:1[4-9]|20)\d{2})$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) consumed[index] = true;
+            else if (token == "S" && index > 0 && consumed[index - 1]) consumed[index] = true;
         }
+        var contradiction = seriesEvidence.FirstOrDefault(value => value.State == IdentityEvidenceState.Conflicting);
+        return new(title?.IsPositive == true, affinity.HasStrongSupport, language, narrator, format,
+            tokens.Where((_, index) => !consumed[index]).ToArray(),
+            contradiction is null ? null : $"Series position conflicts: requested {contradiction.ExpectedPosition}, observed {contradiction.ObservedPosition}.",
+            affinity, Part: part.Evidence, TitleEvidence: title, SeriesEvidence: seriesEvidence,
+            Conditions: conditions, StructuralQualifiers: qualifiers,
+            RawReleaseTitle: releaseName, NormalizedRelease: string.Join(' ', ReleaseTitleMatcher.Tokens(releaseName)),
+            Tokens: ReleaseTitleMatcher.Tokens(releaseName),
+            ReleaseBase: title?.IsPositive == true ? string.Join(' ', tokens.Take(title.Start)
+                .Where(token => !AuthorAffinity.IsSupportingToken(expectedAuthor, token) && token != "REQ")
+                .Concat(tokens.Skip(title.Start).Take(title.Length))) : null);
 
-        var remainingAuthor = string.Join(' ', tokens.Where((_, index) => !consumed[index]).Select(token => token.Original));
-        var affinity = AuthorAffinity.Evaluate(expectedAuthor, assertsAuthor ? exactAuthorEvidence : remainingAuthor, structured: false);
-        if (!assertsAuthor && affinity.Kind is not (AuthorAffinityKind.Unknown or AuthorAffinityKind.Conflict))
+        void Mark(int start, int length) { for (var index = start; index < start + length; index++) consumed[index] = true; }
+        void ConsumePhrase(string value)
         {
-            for (var index = 0; index < tokens.Count; index++)
-                if (!consumed[index] && AuthorAffinity.IsSupportingToken(expectedAuthor, tokens[index].Text))
-                    consumed[index] = true;
-            assertsAuthor = affinity.HasStrongSupport;
+            var run = ReleaseTitleMatcher.Tokens(value);
+            for (var start = 0; run.Length > 0 && start + run.Length <= tokens.Length; start++)
+                if (run.SequenceEqual(tokens.Skip(start).Take(run.Length))) Mark(start, run.Length);
         }
-
-        var unexplained = tokens
-            .Where((_, index) => !consumed[index])
-            .Select(token => token.Text)
-            .ToArray();
-
-        return new ReleaseNameVerdict(
-            assertsTitle, assertsAuthor, language, narrator, format, unexplained, RejectionReason: null,
-            AuthorAffinity: affinity, Part: part.Evidence);
     }
 
-    // A trailing known format is packaging even when its separator is missing.
-    // The preceding text still has to be explained independently; recognizing
-    // a suffix never erases a wrong title, book number or unknown qualifier.
+    internal static bool PositionsEqual(string left, string right) =>
+        decimal.TryParse(left, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var l) &&
+        decimal.TryParse(right, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var r)
+            ? l == r : string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
+
     private static string SeparateTrailingFormat(string name)
     {
         var trimmed = name.TrimEnd();
-        foreach (var suffix in FormatTokens.OrderByDescending(token => token.Length))
+        foreach (var suffix in Formats.OrderByDescending(token => token.Length))
         {
-            if (!trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-                continue;
+            if (!trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
             var start = trimmed.Length - suffix.Length;
-            if (start > 0 && char.IsLetterOrDigit(trimmed[start - 1]))
-                return trimmed.Insert(start, " ");
-            return name;
+            return start > 0 && char.IsLetterOrDigit(trimmed[start - 1]) ? trimmed.Insert(start, " ") : name;
         }
         return name;
     }
 
-    /// <summary>
-    /// Accounts for the requested work's own series name and number
-    /// (<c>The.Empyrean.3.5-Threshing.Day</c>), which a release name routinely
-    /// carries. The number is only explained when the series name itself is
-    /// present, and only when it equals the expected position, so a release of a
-    /// different volume keeps its number unexplained and stays unaccepted.
-    /// </summary>
-    private static void ConsumeSeries(
-        List<ReleaseNameToken> tokens, bool[] consumed, IReadOnlyList<BookSeries>? expectedSeries)
-    {
-        foreach (var series in expectedSeries ?? [])
-        {
-            if (string.IsNullOrWhiteSpace(series.Name) ||
-                !ConsumeRun(tokens, consumed, SeriesNameRunVariants(series.Name)))
-            {
-                continue;
-            }
-
-            var position = WordTokens(series.Position ?? string.Empty);
-            if (position.Length > 0)
-            {
-                ConsumeRun(tokens, consumed, [position]);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Series name runs to look for: <see cref="TitleRunVariants"/>'s handling,
-    /// plus the reverse direction. A catalog's series name is routinely
-    /// recorded without its branding article (<c>Empyrean</c>) while a release
-    /// still carries it (<c>The.Empyrean.3.5-Threshing.Day</c>); without a
-    /// "The"-prefixed variant that leading token is left unexplained forever
-    /// and an otherwise fully-matching release is never auto-acquired.
-    /// </summary>
-    private static List<string[]> SeriesNameRunVariants(string seriesName)
-    {
-        var variants = TitleRunVariants(seriesName);
-
-        // Tried before the bare name: a release that does carry the article
-        // should consume it rather than leaving it as an unexplained "THE"
-        // token, which ConsumeRun's first-match-wins search would otherwise
-        // never reach because the shorter, article-less variant matches first.
-        if (variants[0] is not ["THE", ..])
-        {
-            variants.Insert(0, ["THE", .. variants[0]]);
-        }
-
-        return variants;
-    }
-
-    /// <summary>
-    /// The expected title as word runs to look for: as written, and with the
-    /// leading/trailing article handled the same way
-    /// <see cref="DeterministicBookMatcher"/> handles it, since a release name
-    /// routinely drops or moves it.
-    /// </summary>
-    private static List<string[]> TitleRunVariants(string expectedTitle)
-    {
-        var variants = new List<string[]> { WordTokens(expectedTitle) };
-        var withoutArticle = WordTokens(DeterministicBookMatcher.RemoveArticleVariants(expectedTitle));
-        if (withoutArticle.Length > 0 && !withoutArticle.SequenceEqual(variants[0]))
-        {
-            variants.Add(withoutArticle);
-        }
-
-        return variants;
-    }
-
-    /// <summary>
-    /// Marks the first contiguous, not-yet-consumed occurrence of any of
-    /// <paramref name="runs"/>. Contiguity is what makes this safe: the
-    /// expected words must appear together, not merely somewhere in the name.
-    /// </summary>
-    private static bool ConsumeRun(List<ReleaseNameToken> tokens, bool[] consumed, IReadOnlyList<string[]> runs)
-    {
-        foreach (var run in runs.Where(run => run.Length > 0))
-        {
-            for (var start = 0; start + run.Length <= tokens.Count; start++)
-            {
-                var matches = true;
-                for (var offset = 0; offset < run.Length; offset++)
-                {
-                    if (consumed[start + offset] || tokens[start + offset].Text != run[offset])
-                    {
-                        matches = false;
-                        break;
-                    }
-                }
-
-                if (!matches)
-                {
-                    continue;
-                }
-
-                for (var offset = 0; offset < run.Length; offset++)
-                {
-                    consumed[start + offset] = true;
-                }
-
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// Consumes a "read by &lt;name&gt;" / "narrated by &lt;name&gt;" phrase and
-    /// returns the credited reader. This is the only place audiobook narration
-    /// evidence exists for a source that reports nothing but a release name.
-    /// </summary>
-    private static string? ConsumeNarrator(List<ReleaseNameToken> tokens, bool[] consumed)
-    {
-        for (var index = 0; index < tokens.Count; index++)
-        {
-            if (consumed[index] || !NarratorLeadTokens.Contains(tokens[index].Text))
-            {
-                continue;
-            }
-
-            var cursor = index + 1;
-            if (cursor < tokens.Count && !consumed[cursor] && ConnectorTokens.Contains(tokens[cursor].Text))
-            {
-                cursor++;
-            }
-            else
-            {
-                // "Read" without "by" is not a narration credit.
-                continue;
-            }
-
-            var nameParts = new List<string>();
-            while (cursor < tokens.Count && !consumed[cursor] && IsPlainWord(tokens[cursor].Text) &&
-                   !FormatTokens.Contains(tokens[cursor].Text) && !QualityTokens.Contains(tokens[cursor].Text) &&
-                   !MediaTokens.Contains(tokens[cursor].Text))
-            {
-                nameParts.Add(tokens[cursor].Original);
-                cursor++;
-            }
-
-            if (nameParts.Count == 0)
-            {
-                continue;
-            }
-
-            for (var mark = index; mark < cursor; mark++)
-            {
-                consumed[mark] = true;
-            }
-
-            return string.Join(' ', nameParts);
-        }
-
-        return null;
-    }
-
-    private static bool IsPlainWord(string text) => text.Length > 0 && text.All(char.IsAsciiLetter);
-
-    private static bool IsYear(string text) =>
-        text.Length == 4 && text.All(char.IsAsciiDigit) &&
-        int.TryParse(text, out var year) && year is >= 1400 and <= 2100;
-
-    private static string[] WordTokens(string value) => Tokenize(value).Select(token => token.Text).ToArray();
-
-    /// <summary>
-    /// Splits on every non-alphanumeric run, which is what makes
-    /// <c>Ray.Bradbury-Fahrenheit.451</c> and
-    /// <c>Fahrenheit 451 - Ray Bradbury</c> the same token sequence. A
-    /// possessive apostrophe therefore leaves a bare <c>S</c> token, which the
-    /// classification pass absorbs once the author run before it has matched,
-    /// so "Ray Bradbury's Fahrenheit 451" still reads as an assertion.
-    /// Square-bracket depth is tracked because bracketed content is
-    /// conventionally a release annotation.
-    /// </summary>
-    private static List<ReleaseNameToken> Tokenize(string value)
-    {
-        var tokens = new List<ReleaseNameToken>();
-        var builder = new StringBuilder();
-        var bracketDepth = 0;
-        var startedInBracket = false;
-
-        void Flush()
-        {
-            if (builder.Length == 0)
-            {
-                return;
-            }
-
-            var original = builder.ToString();
-            tokens.Add(new ReleaseNameToken(original.ToUpperInvariant(), original, startedInBracket));
-            builder.Clear();
-        }
-
-        foreach (var character in value.Normalize(NormalizationForm.FormKC))
-        {
-            if (character == '[')
-            {
-                Flush();
-                bracketDepth++;
-                continue;
-            }
-
-            if (character == ']')
-            {
-                Flush();
-                bracketDepth = Math.Max(0, bracketDepth - 1);
-                continue;
-            }
-
-            if (char.IsLetterOrDigit(character))
-            {
-                if (builder.Length == 0)
-                {
-                    startedInBracket = bracketDepth > 0;
-                }
-
-                builder.Append(character);
-                continue;
-            }
-
-            Flush();
-        }
-
-        Flush();
-        return tokens;
-    }
-
-    private sealed record ReleaseNameToken(string Text, string Original, bool WasBracketed);
+    [GeneratedRegex(@"^(?<name>[\p{L}]+(?:[. _-]+[\p{L}]+){0,7})[. _-]+\[?(?<position>\d+(?:\.\d+)?)\]?$", RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex SeriesPrefix();
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])(?:READ|NARRATED|PERFORMED)[\W_]+BY[\W_]+(?<name>[\p{L}]+(?:[ .]+[\p{L}]+)*)(?:[)\]]|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex NarratorCredit();
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])(?<!READ[. ])(?<!NARRATED[. ])(?<!PERFORMED[. ])BY[\W_]+(?<name>[\p{L}]+(?:[\W_]+[\p{L}]+){0,2})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex AuthorCredit();
+    [GeneratedRegex(@"\s[-–—]\s(?<name>[\p{L}]+[ .]+[\p{L}]+)\s*$", RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex TrailingAuthor();
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])BOOK[\W_]+(?<position>[1-9]\d{0,3})(?![\p{L}\p{N}])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex BookNumber();
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])(?:SUMMARY[\W_]+OF|STUDY[\W_]+GUIDE|COMPANION[\W_]+TO|WORKBOOK[\W_]+FOR|ANALYSIS[\W_]+OF|CLIFFSNOTES|CLIFF[\W_]+NOTES|SPARKNOTES|EXCERPT|SAMPLE(?:[\W_]+CHAPTER)?|PREVIEW|ABRIDGED|UNABRIDGED|OMNIBUS|BOX(?:ED)?[\W_]+SET|COLLECTION|STORIES|BOOKS[\W_]+\d+[\W_]+\d+|GRAPHICAUDIO|GRAPHIC[\W_]+NOVEL|DRAMATIZED|FULL[\W_]+CAST|RADIO[\W_]+(?:AUDIO[\W_]+)?DRAMA|EXTENDED)(?![\p{L}\p{N}])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex StructuralQualifiers();
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])(?:PART|PT|DISC|CD)[\W_]+\d", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex PartLikeMarker();
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])BOOK[\W_]", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex BookLikeMarker();
 }
 
-/// <summary>
-/// What a release name asserts about the requested work. Reported facts only —
-/// anything the name did not establish stays null/empty rather than being
-/// filled in with a plausible value.
-/// </summary>
 public sealed record ReleaseNameVerdict(
-    bool AssertsExpectedTitle,
-    bool AssertsExpectedAuthor,
-    string? AssertedLanguage,
-    string? AssertedNarrator,
-    string? AssertedFormat,
-    IReadOnlyList<string> UnexplainedTokens,
-    string? RejectionReason,
-    AuthorAffinityResult? AuthorAffinity = null,
-    bool StructuredTitlePlausible = false,
-    ExternalAudiobookPartEvidence? Part = null)
+    bool AssertsExpectedTitle, bool AssertsExpectedAuthor,
+    string? AssertedLanguage, string? AssertedNarrator, string? AssertedFormat,
+    IReadOnlyList<string> UnexplainedTokens, string? RejectionReason,
+    AuthorAffinityResult? AuthorAffinity = null, bool StructuredTitlePlausible = false,
+    ExternalAudiobookPartEvidence? Part = null,
+    ReleaseTitleEvidence? TitleEvidence = null, IReadOnlyList<SeriesIdentityEvidence>? SeriesEvidence = null,
+    IReadOnlyList<ReleaseCondition>? Conditions = null, IReadOnlyList<string>? StructuralQualifiers = null,
+    string? RawReleaseTitle = null, string? NormalizedRelease = null, IReadOnlyList<string>? Tokens = null, string? ReleaseBase = null)
 {
     public static readonly ReleaseNameVerdict None = new(false, false, null, null, null, [], null);
-
-    public static ReleaseNameVerdict Rejected(string reason) =>
-        new(false, false, null, null, null, [], reason);
-
-    /// <summary>
-    /// Exact title evidence with every remaining token accounted for. Missing
-    /// or weak author evidence is a ranking concern; explicit conflict is not.
-    /// </summary>
-    public bool IsStrictWorkAssertion =>
-        AssertsExpectedTitle && AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
-        UnexplainedTokens.Count == 0 && RejectionReason is null;
+    public bool IsStrictWorkAssertion => AssertsExpectedTitle && AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
+        RejectionReason is null && (Conditions?.Count ?? 0) == 0 &&
+        (TitleEvidence?.State != IdentityEvidenceState.Fuzzy || AuthorAffinity?.HasStrongSupport == true);
 }

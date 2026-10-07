@@ -43,7 +43,7 @@ public sealed class AuthorAffinityTests
     [DataRow("Fourth Wing - Rebecca", AuthorAffinityKind.FirstOnly, true)]
     [DataRow("Fourth.Wing.Book.1.m4b", AuthorAffinityKind.Unknown, true)]
     [DataRow("req.Fourth.Wing.Fourth.Wing.Book.1.m4b", AuthorAffinityKind.Unknown, true)]
-    [DataRow("Fourth Wing - Stephen King", AuthorAffinityKind.Conflict, false)]
+    [DataRow("Fourth Wing by Stephen King", AuthorAffinityKind.Conflict, false)]
     [DataRow("Fourth Wing - Rebecca Ross", AuthorAffinityKind.Conflict, false)]
     [DataRow("Fourth Wing - David Yarros", AuthorAffinityKind.Conflict, false)]
     public void ReleaseEvidenceSeparatesAffinityFromAutomaticIdentity(string name, AuthorAffinityKind kind, bool strict)
