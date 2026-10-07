@@ -488,7 +488,24 @@ internal static class AdminRequestEndpoints
             option.RequiresLanguageConfirmation,
             option.RequiresReleaseConfirmation,
             option.ReleaseConcern,
-            option.AdminInspectionUri?.ToString())).ToArray());
+            option.AdminInspectionUri?.ToString(),
+            ToIdentityEvidenceResponse(option))).ToArray());
+    }
+
+    private static AdminCandidateIdentityEvidenceResponse? ToIdentityEvidenceResponse(FulfillmentOption option)
+    {
+        if (option.IdentityAssessment is not { } evidence) return null;
+        return new(evidence.Decision.ToString(), option.AcquisitionAssessment?.Suitability.ToString() ?? "IdentityReview",
+            evidence.RequestedMetadata.Title, evidence.RequestedMetadata.Author,
+            evidence.TitleEvidence.State.ToString(), evidence.TitleEvidence.Observed,
+            evidence.AuthorEvidence.Kind.ToString(), evidence.AuthorEvidence.DetectedAuthor,
+            evidence.LanguageEvidence.ToString(), evidence.ReleaseEvidence.NormalizedRelease,
+            evidence.ReleaseEvidence.Tokens ?? [],
+            evidence.SeriesEvidence.Select(series => new AdminCandidateSeriesEvidenceResponse(
+                series.State.ToString(), series.Name, series.ExpectedPosition, series.ObservedPosition)).ToArray(),
+            evidence.ReleaseEvidence.UnexplainedTokens, evidence.Contradictions,
+            evidence.Conditions.Select(condition => condition.Reason).ToArray(), evidence.Reasons,
+            evidence.ReleaseEvidence.Part?.Number, evidence.ReleaseEvidence.Part?.Total);
     }
 
     private static async Task<IResult> ChangeAdminRequestStatusAsync(

@@ -9,6 +9,8 @@ namespace FamilyLibrarian.Infrastructure.Tests.Providers;
 [TestClass]
 public sealed class CandidateIdentityAssessmentTests
 {
+    private static readonly string[] GenreTokens = ["FANTASY", "ROMANCE"];
+    private static readonly int[] MissingOne = [1];
     private static readonly BookIdentity Threshing = new("Threshing Day", "Rebecca Yarros", []);
     private static readonly BookIdentity Onyx = new("Onyx Storm", "Rebecca Yarros", [], Series: [new BookSeries("The Empyrean", "3")]);
     private static ExternalProviderCandidate Release(string name, string reference = "candidate") => new(reference,
@@ -50,7 +52,7 @@ public sealed class CandidateIdentityAssessmentTests
     {
         var assessment = Assess("Threshing.Day.fantasy.romance.m4b");
         Assert.AreEqual(AuthorAffinityKind.Unknown, assessment.AuthorEvidence.Kind);
-        CollectionAssert.AreEqual(new[] { "FANTASY", "ROMANCE" }, assessment.ReleaseEvidence.UnexplainedTokens.ToArray());
+        CollectionAssert.AreEqual(GenreTokens, assessment.ReleaseEvidence.UnexplainedTokens.ToArray());
         Assert.AreEqual(WorkIdentityDecision.Match, assessment.Decision);
     }
 
@@ -231,7 +233,7 @@ public sealed class CandidateIdentityAssessmentTests
         Assert.AreEqual(AuthorAffinityKind.Unknown, two.AuthorAffinity!.Kind);
         Assert.IsNull(AudiobookPartSetSelector.TrySelect([two]));
         var assessment = ExternalAudiobookPartSetAssessment.For(two, [two]);
-        CollectionAssert.AreEqual(new[] { 1 }, assessment.MissingParts.ToArray());
+        CollectionAssert.AreEqual(MissingOne, assessment.MissingParts.ToArray());
         Assert.AreEqual(WorkIdentityDecision.MatchWithConditions, two.IdentityAssessment!.Decision);
     }
 

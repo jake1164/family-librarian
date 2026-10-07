@@ -222,6 +222,7 @@
                                 <MudText Typo="Typo.caption">
                                     @DescribeDebugCandidate(candidate)
                                 </MudText>
+                                <AdminCandidateIdentityEvidence Evidence="candidate.IdentityEvidence" />
                                 @if (!string.IsNullOrWhiteSpace(candidate.ReleaseName))
                                 {
                                     <MudText Typo="Typo.caption" Style="font-family: var(--mud-typography-monospace-family, monospace); word-break: break-all;">
