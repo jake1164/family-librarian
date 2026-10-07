@@ -39,6 +39,12 @@ public interface IProviderAcquisitionJobStore
     /// </summary>
     Task<bool> HasLeftWaitingSinceAsync(Guid externalProviderId, DateTimeOffset sinceUtc, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Every member job of one automatic audiobook part set, in part order.
+    /// </summary>
+    Task<IReadOnlyList<ProviderAcquisitionJob>> ListByPartSetAsync(
+        Guid partSetId, CancellationToken cancellationToken);
+
     void Add(ProviderAcquisitionJob job);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);

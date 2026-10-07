@@ -34,7 +34,8 @@ public sealed class AcquisitionJobPollingService(
     ICredentialProtector protector,
     IAuditWriter audit,
     IClock clock,
-    IAutomaticFulfillmentSignal? fulfillmentSignal = null)
+    IAutomaticFulfillmentSignal? fulfillmentSignal = null,
+    AudiobookPartSetFailureService? partSetFailures = null)
 {
     private const int BatchSize = 25;
     private static readonly TimeSpan DiskSpaceRecheckDelay = TimeSpan.FromMinutes(15);
@@ -232,7 +233,9 @@ public sealed class AcquisitionJobPollingService(
                 return;
             }
 
-            await EvaluateAssetsAsync(alreadyStagedAssetIds, cancellationToken);
+            await EvaluateJobAssetsAsync(job, alreadyStagedAssetIds, cancellationToken);
+            if (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Failed)
+                return;
             job.ApplyStatus(status.State, status.Phase, null, null, null, null, null, null, null, null, null,
                 nextPollAtUtc: null, clock.UtcNow);
             await jobs.SaveChangesAsync(cancellationToken);
@@ -278,6 +281,13 @@ public sealed class AcquisitionJobPollingService(
         {
             selected = ExternalProviderOutputSelector.Select(outputs, format.MediaType,
                 importPolicy, outputPolicy);
+            // A part of an automatic set is exactly one file: the set's total
+            // track count was fixed when it was started. Refuse before
+            // downloading anything rather than after.
+            if (job.IsPartSetMember && selected.Count != 1)
+                throw new InvalidExternalProviderOutputException(
+                    $"Part {job.PartNumber} of {job.PartTotal} reported {selected.Count} usable files; " +
+                    "a part of an automatic set must be a single file.");
             if (outputs.Any(output =>
                     ExternalProviderOutputSelector.NormalizeFilename(output.Filename) is { } filename &&
                     (filename.Length > outputPolicy.MaxFilenameLength || filename.Any(char.IsControl))))
@@ -370,7 +380,10 @@ public sealed class AcquisitionJobPollingService(
         {
             stageResult = await staging.StageExternalBundleAsync(request, format,
                 ReadSelectedOutputs(cancellationToken), provider.ProviderId,
-                AuditActions.ExternalProviderAcquisitionStaged, job, cancellationToken);
+                AuditActions.ExternalProviderAcquisitionStaged, job, cancellationToken,
+                job.PartSetId is { } partSetId
+                    ? new AudiobookPartSetSlot(partSetId, job.PartNumber!.Value, job.PartTotal!.Value)
+                    : null);
         }
         catch (TimeoutException)
         {
@@ -433,7 +446,9 @@ public sealed class AcquisitionJobPollingService(
             return;
         }
 
-        await EvaluateAssetsAsync(stageResult.MediaAssetIds, cancellationToken);
+        await EvaluateJobAssetsAsync(job, stageResult.MediaAssetIds, cancellationToken);
+        if (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Failed)
+            return;
 
         job.ApplyStatus(
             status.State, status.Phase, null, null, null, null, null, null, null, null, null,
@@ -447,6 +462,51 @@ public sealed class AcquisitionJobPollingService(
                 new { job.Id, job.RequestId, job.RequestFormatId, job.ProviderId }, cancellationToken);
         }
 
+    }
+
+    /// <summary>
+    /// An ordinary job's assets are evaluated and approved at once. A part of
+    /// an automatic audiobook set is only scanned on arrival: nothing is
+    /// approved until every part has been staged, then the whole set is
+    /// evaluated together, so a bad part can never leave a trusted orphan and
+    /// the book publishes only when every part passes.
+    /// </summary>
+    private async Task EvaluateJobAssetsAsync(
+        ProviderAcquisitionJob job, IReadOnlyList<Guid> assetIds, CancellationToken cancellationToken)
+    {
+        if (job.PartSetId is not { } setId)
+        {
+            await EvaluateAssetsAsync(assetIds, cancellationToken);
+            return;
+        }
+
+        foreach (var assetId in assetIds)
+        {
+            var result = await securityPipeline.EvaluateWithoutApprovalAsync(assetId, cancellationToken);
+            if (result is { Outcome: Security.SecurityEvaluationOutcome.Success, Status: Domain.Security.SecurityEvaluationStatus.Failed })
+            {
+                await RecordFailureAsync(
+                    job, "SET_PART_FAILED", "The file failed its security checks.",
+                    retryable: false, retryAfterSeconds: null, detailsJson: null,
+                    wasWaitingForInteraction: false, cancellationToken);
+                return;
+            }
+        }
+
+        var members = await jobs.ListByPartSetAsync(setId, cancellationToken);
+        var stagedByPart = members
+            .OrderBy(member => member.PartNumber)
+            .Select(member => member.Outputs.Where(output => output.MediaAssetId.HasValue)
+                .Select(output => output.MediaAssetId!.Value).ToArray())
+            .ToArray();
+        if (members.Count != job.PartTotal || stagedByPart.Any(ids => ids.Length == 0))
+        {
+            // Other parts are still on their way; the last one to arrive
+            // evaluates the whole set.
+            return;
+        }
+
+        await securityPipeline.EvaluateBundleAsync(stagedByPart.SelectMany(ids => ids).ToArray(), cancellationToken);
     }
 
     private async Task EvaluateAssetsAsync(IReadOnlyList<Guid> assetIds, CancellationToken cancellationToken)
@@ -484,6 +544,23 @@ public sealed class AcquisitionJobPollingService(
                 string.Equals(attempt.ProviderId, job.ProviderId, StringComparison.OrdinalIgnoreCase) &&
                 attempt.Summary.StartsWith("CANDIDATE_CHANGED:", StringComparison.Ordinal));
         job.RecordFailure(errorCode, errorMessage, retryable, retryAfterSeconds, detailsJson, now);
+
+        // One part of an automatic set failing fails the whole set: the other
+        // parts stop, anything staged is destroyed and a librarian is asked.
+        // Deliberately outside the candidate-retry loop below -- advancing to a
+        // different single record would not be a substitute for a missing part.
+        if (job.IsPartSetMember && partSetFailures is not null)
+        {
+            await partSetFailures.FailAsync(job, errorMessage ?? "The acquisition failed.", cancellationToken);
+            attempts.Add(new ProviderAttempt(
+                job.RequestId, job.RequestFormatId, job.ProviderId, ProviderAttemptOutcome.Failed,
+                $"Part {job.PartNumber} of {job.PartTotal} of an audiobook set failed: " +
+                $"{errorMessage ?? "The acquisition failed."} The whole set was abandoned and the request needs a librarian.",
+                now, nextEligibleCheckAtUtc: null));
+            await jobs.SaveChangesAsync(cancellationToken);
+            await attempts.SaveChangesAsync(cancellationToken);
+            return;
+        }
 
         var advancedToNextCandidate = false;
         ExternalFailureOutcome? automaticOutcome = null;

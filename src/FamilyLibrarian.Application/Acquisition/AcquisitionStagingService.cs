@@ -144,10 +144,11 @@ public sealed class AcquisitionStagingService(
         string providerId,
         string auditAction,
         ProviderAcquisitionJob providerJob,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        AudiobookPartSetSlot? partSetSlot = null) =>
         StageBundleCoreAsync(
             request, format, files, providerId, auditAction,
-            candidateTitle: null, candidateAuthor: null, providerJob, cancellationToken);
+            candidateTitle: null, candidateAuthor: null, providerJob, cancellationToken, partSetSlot);
 
     private async Task<ManualImportResult> StageBundleCoreAsync(
         BookRequest request,
@@ -158,7 +159,8 @@ public sealed class AcquisitionStagingService(
         string? candidateTitle,
         string? candidateAuthor,
         ProviderAcquisitionJob? providerJob,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AudiobookPartSetSlot? partSetSlot = null)
     {
         if (!await boundaryGuard.CanAcceptNewArtifactAsync(cancellationToken))
         {
@@ -215,8 +217,19 @@ public sealed class AcquisitionStagingService(
             return ManualImportResult.Invalid("The provider returned no audiobook tracks.");
         }
 
+        // One part must be exactly one file: the set's total track count is
+        // fixed up front (one file per part), and a part that arrived as
+        // several would silently shift every later part's position.
+        if (partSetSlot is not null && staged.Count != 1)
+        {
+            await CleanUpAsync(quarantined, CancellationToken.None);
+            return ManualImportResult.Invalid(
+                $"Part {partSetSlot.Number} of {partSetSlot.Total} contained {staged.Count} files; " +
+                "a part of an automatic set must be a single file.");
+        }
+
         var now = clock.UtcNow;
-        var bundleId = staged.Count > 1 ? Guid.NewGuid() : (Guid?)null;
+        var bundleId = partSetSlot?.SetId ?? (staged.Count > 1 ? Guid.NewGuid() : (Guid?)null);
         var job = new AcquisitionJob(request.Id, format.MediaType, providerId, now);
         var assetIds = new List<Guid>(staged.Count);
 
@@ -240,8 +253,8 @@ public sealed class AcquisitionStagingService(
                 candidate.Id,
                 now,
                 bundleId: bundleId,
-                bundleSequence: bundleId is null ? null : index + 1,
-                bundleTrackCount: bundleId is null ? null : staged.Count,
+                bundleSequence: partSetSlot?.Number ?? (bundleId is null ? null : index + 1),
+                bundleTrackCount: partSetSlot?.Total ?? (bundleId is null ? null : staged.Count),
                 // Default true (manual import, and StageBundleAsync's other
                 // caller -- a built-in provider, which verifies title/author
                 // itself before ever offering a candidate) is correct as-is;

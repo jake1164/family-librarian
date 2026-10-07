@@ -49,6 +49,14 @@ public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProvid
                 job.LeftWaitingAtUtc >= sinceUtc,
             cancellationToken);
 
+    public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListByPartSetAsync(
+        Guid partSetId, CancellationToken cancellationToken) =>
+        await database.ProviderAcquisitionJobs
+            .Include(job => job.Outputs)
+            .Where(job => job.PartSetId == partSetId)
+            .OrderBy(job => job.PartNumber)
+            .ToArrayAsync(cancellationToken);
+
     public void Add(ProviderAcquisitionJob job) => database.ProviderAcquisitionJobs.Add(job);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);

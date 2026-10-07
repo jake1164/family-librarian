@@ -131,7 +131,12 @@ public sealed record FulfillmentOption(
     string? ReleaseName = null,
     Matching.AuthorAffinityResult? AuthorAffinity = null,
     bool HasPlausibleTitle = false,
-    ExternalAudiobookPartEvidence? AudiobookPart = null);
+    ExternalAudiobookPartEvidence? AudiobookPart = null,
+    // True when the only reason this audiobook needs release confirmation is
+    // that it is one numbered fragment: the same release evaluated without its
+    // part marker is acceptable (no sample, collection, abridged or DRM
+    // concern). Only such fragments can join an automatic complete set.
+    bool FragmentOnlyConcern = false);
 
 /// <summary>
 /// Deterministic classification of an audiobook candidate's narration, as

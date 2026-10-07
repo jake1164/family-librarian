@@ -842,6 +842,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(job => job.CandidateFingerprint).HasColumnName("candidate_fingerprint").HasMaxLength(64);
             entity.Property(job => job.IdentityPreConfirmed)
                 .HasColumnName("identity_pre_confirmed").HasDefaultValue(false);
+            entity.Property(job => job.PartSetId).HasColumnName("part_set_id");
+            entity.Property(job => job.PartNumber).HasColumnName("part_number");
+            entity.Property(job => job.PartTotal).HasColumnName("part_total");
             entity.Property(job => job.LifecycleState).HasColumnName("lifecycle_state").HasConversion<string>().HasMaxLength(32);
             entity.Property(job => job.Phase).HasColumnName("phase").HasMaxLength(64);
             entity.Property(job => job.InteractionType).HasColumnName("interaction_type").HasMaxLength(64);
@@ -873,6 +876,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasIndex(job => job.NextPollAtUtc);
             entity.HasIndex(job => new { job.ExternalProviderId, job.IdempotencyKey }).IsUnique();
             entity.HasIndex(job => new { job.RequestFormatId, job.LifecycleState });
+            entity.HasIndex(job => job.PartSetId);
 
             entity.HasOne<BookRequest>()
                 .WithMany()

@@ -171,7 +171,14 @@ public sealed class ExternalCandidateAvailabilityChecker(
         {
             var verdict = verdicts.GetValueOrDefault(candidate.ProviderReference, Providers.ExternalProviderMatchVerdict.Unconfirmed);
             var releaseVerdict = Providers.ExternalReleasePolicy.Evaluate(candidate.Release, mediaType, verdict.AudiobookPart);
-            return (Candidate: candidate, MatchVerdict: verdict, ReleaseVerdict: releaseVerdict);
+            // The same release without its part marker: if that is acceptable,
+            // being a fragment is the *only* thing wrong with it.
+            var partlessVerdict = Providers.ExternalReleasePolicy.Evaluate(candidate.Release, mediaType, audiobookPart: null);
+            var fragmentOnly = mediaType == RequestMediaType.Audiobook &&
+                verdict.AudiobookPart is { Total: > 1 } &&
+                releaseVerdict.RequiresConfirmation &&
+                !partlessVerdict.IsRejected && !partlessVerdict.RequiresConfirmation;
+            return (Candidate: candidate, MatchVerdict: verdict, ReleaseVerdict: releaseVerdict, FragmentOnly: fragmentOnly);
         })
             .Where(candidate => !candidate.ReleaseVerdict.IsRejected)
             .ToArray();
@@ -254,6 +261,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 AuthorAffinity: candidate.MatchVerdict.AuthorAffinity,
                 HasPlausibleTitle: candidate.MatchVerdict.HasPlausibleTitle,
                 AudiobookPart: mediaType == RequestMediaType.Audiobook ? candidate.MatchVerdict.AudiobookPart : null,
+                FragmentOnlyConcern: candidate.FragmentOnly,
                 // A "read by <name>" credit in the release name is, for a
                 // release-name-only source, the only narration evidence that
                 // exists. Reported as Human only when a reader is actually

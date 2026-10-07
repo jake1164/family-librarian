@@ -7,6 +7,7 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Acquisition;
 
@@ -36,8 +37,19 @@ public sealed class DirectAcquisitionService(
     IWorkLookup workLookup,
     AcquisitionStagingService staging,
     IClock clock,
-    ActiveAcquisitionTracker activityTracker)
+    ActiveAcquisitionTracker activityTracker) : IAudiobookPartSetMemberAcquirer
 {
+    public Task<ManualImportResult> AcquireMemberAsync(
+        Guid requestId,
+        Guid requestFormatId,
+        string providerId,
+        string providerResultId,
+        AudiobookPartSetMember member,
+        CancellationToken cancellationToken) =>
+        AcquireAsync(
+            requestId, requestFormatId, providerId, providerResultId, cancellationToken,
+            isAutomaticAcquisition: true, partSet: member);
+
     /// <param name="confirmLowConfidenceMatch">
     /// Required once an external provider's result is only
     /// <see cref="BookMatchBasis.TitleAuthor"/> (or unconfirmed/language-excluded)
@@ -62,7 +74,8 @@ public sealed class DirectAcquisitionService(
         CancellationToken cancellationToken,
         bool confirmLowConfidenceMatch = false,
         bool allowDownloadTimeDrmValidation = false,
-        bool isAutomaticAcquisition = false)
+        bool isAutomaticAcquisition = false,
+        AudiobookPartSetMember? partSet = null)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
@@ -224,7 +237,31 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.Invalid("That option is no longer available.");
         }
 
-        if (externalOption.MatchBasis is not (BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle) &&
+        // A part of an automatic set is only ever fetched as one member of a
+        // complete set that is re-derived here from the provider's own fresh
+        // answer. The caller's member list is a claim, not an authorization:
+        // the set must still be the same complete, compatible, strictly
+        // matched set, and this result must be exactly the part it names.
+        if (partSet is not null)
+        {
+            var selection = format.MediaType == RequestMediaType.Audiobook
+                ? AudiobookPartSetSelector.TrySelect(externalOptions)
+                : null;
+            if (selection is null ||
+                selection.Total != partSet.Total ||
+                !selection.HasSameMembers(partSet.MemberResultIds) ||
+                partSet.Number < 1 || partSet.Number > selection.Total ||
+                !string.Equals(selection.Parts[partSet.Number - 1].ProviderResultId, providerResultId, StringComparison.Ordinal))
+            {
+                return ManualImportResult.Invalid(
+                    "That audiobook part is no longer part of one complete set from this provider.");
+            }
+        }
+
+        // (A validated set member is exempt: the selector above already required
+        // each part to carry strict or strong-author support.)
+        if (partSet is null &&
+            externalOption.MatchBasis is not (BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle) &&
             !confirmLowConfidenceMatch)
         {
             return ManualImportResult.LowConfidenceMatchConfirmationRequired();
@@ -235,7 +272,7 @@ public sealed class DirectAcquisitionService(
         // abridged edition). Checked separately so the message tells the
         // admin what's actually wrong rather than reusing the identity-match
         // explanation for an unrelated concern.
-        if (externalOption.RequiresReleaseConfirmation && !confirmLowConfidenceMatch &&
+        if (externalOption.RequiresReleaseConfirmation && !confirmLowConfidenceMatch && partSet is null &&
             !(allowDownloadTimeDrmValidation && IsUnknownDrmOnlyConcern(externalOption)))
         {
             return ManualImportResult.ReleaseConfirmationRequired(externalOption.ReleaseConcern);
@@ -284,8 +321,16 @@ public sealed class DirectAcquisitionService(
             // AutomaticRequestFulfillmentService); a manual acquisition with
             // neither needed confirmLowConfidenceMatch to pass the check
             // above, i.e. a librarian overriding an unconfirmed match.
-            identityPreConfirmed: externalOption.MatchBasis
+            // A part of a set is matched on its release name alone, so its
+            // identity is never treated as already confirmed: the downloaded
+            // file's own tags have to say it is the requested book.
+            identityPreConfirmed: partSet is null && externalOption.MatchBasis
                 is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle);
+        if (partSet is not null)
+        {
+            job.AssignToPartSet(partSet.SetId, partSet.Number, partSet.Total);
+        }
+
         providerAcquisitionJobs.Add(job);
         await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
 

@@ -37,7 +37,8 @@ public sealed class ExternalProviderRecheckService(
     IClock clock,
     NotificationService notifications,
     IUserAccountStore accounts,
-    IAutomaticFulfillmentSignal? fulfillmentSignal = null)
+    IAutomaticFulfillmentSignal? fulfillmentSignal = null,
+    AudiobookPartSetAcquisitionService? partSets = null)
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
@@ -182,6 +183,43 @@ public sealed class ExternalProviderRecheckService(
                         }
 
                         reviewableOptions = ExternalCandidateRanker.Rank(reviewableOptions, format.MediaType).ToArray();
+
+                        // A provider that lists one audiobook as separately
+                        // numbered fragments ("1 of 2", "2 of 2") has no single
+                        // record that is the whole book. When every part of one
+                        // complete, compatible, strictly matched set is present,
+                        // fetch them all; anything weaker keeps the ordinary
+                        // review path below. The set is re-derived server-side
+                        // for each part, and publishes only if every part passes.
+                        if (format.MediaType == RequestMediaType.Audiobook && provider.AutoAcquireEnabled &&
+                            partSets is not null &&
+                            AudiobookPartSetSelector.TrySelect(reviewableOptions) is { } completeSet)
+                        {
+                            var started = await partSets.StartAsync(
+                                request.Id, format.Id, provider.ProviderId, completeSet, cancellationToken);
+                            if (started.Started)
+                            {
+                                AddAttempt(request, format, provider, ProviderAttemptOutcome.Submitted,
+                                    $"Fetching a complete {completeSet.Total}-part audiobook set. Each part is scanned and " +
+                                    "checked on its own, and the book is published only once every part passes.",
+                                    nextEligibleCheckAtUtc: null);
+                            }
+                            else
+                            {
+                                var setReason = $"A complete {completeSet.Total}-part audiobook set was found, but it " +
+                                    $"could not be fetched. {started.Error}";
+                                var setRecorded = await MarkForCandidateReviewAsync(
+                                    request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
+                                    setReason, cancellationToken);
+                                AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                                    setRecorded
+                                        ? setReason
+                                        : $"{setReason} This request is already under review for a different reason.",
+                                    nextEligibleCheckAtUtc: null);
+                            }
+
+                            break;
+                        }
 
                         // Identifier evidence is strongest, but identical normalized title and
                         // observed-author records are also a deterministic single-work choice.

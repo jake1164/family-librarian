@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
@@ -66,6 +67,40 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         StringAssert.Contains(option.ReleaseConcern!, "Part 2 of 2");
         StringAssert.Contains(FamilyLibrarian.Application.Requests.RequestReviewCandidatePresentation.BuildDetails(option)!, "Part 2 of 2");
     }
+
+    [TestMethod]
+    public async Task TheLiveOnyxStormPartsFormOneCompleteSetThatMayBeFetchedAutomatically()
+    {
+        // The exact release names a live Prowlarr search returned: part 1 carries
+        // a misspelt author and trailing genre words, part 2 is bare.
+        var context = new TestContext();
+        var provider = NewProvider("example-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        context.Client.Candidates =
+        [
+            new ExternalProviderCandidate("onyx-1", ExternalProviderWorkEvidence.Empty,
+                Release: new ExternalProviderReleaseEvidence(
+                    "The.Empyrean.[03].Onyx.Storm.1.of.2.by.Rebecca.Yaros.fantasy.romance.m4b",
+                    null, 550_100_000, false, 1, false, null, null, [], null)),
+            new ExternalProviderCandidate("onyx-2", ExternalProviderWorkEvidence.Empty,
+                Release: new ExternalProviderReleaseEvidence(
+                    "The.Empyrean.[03].Onyx.Storm.2.of.2",
+                    null, 584_700_000, false, 1, false, null, null, [], null))
+        ];
+
+        var options = await context.Checker.FindAsync(
+            new BookIdentity("Onyx Storm", "Rebecca Yarros", [], Series: [new BookSeries("Empyrean", "3")]),
+            RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.IsTrue(options.All(option => option.FragmentOnlyConcern), "being a fragment is the only concern");
+        var set = AudiobookPartSetSelector.TrySelect(options);
+        Assert.IsNotNull(set, "both live parts together are one complete set");
+        Assert.AreEqual(2, set.Total);
+        CollectionAssert.AreEqual(OnyxReferences, set.MemberResultIds.ToArray());
+    }
+
+    private static readonly string[] OnyxReferences = ["onyx-1", "onyx-2"];
 
     [TestMethod]
     public async Task ACompleteAuthorlessCopyIsNotDemotedByAStrongAuthorFragment()

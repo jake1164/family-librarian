@@ -84,10 +84,27 @@ companion availability described separately. Companion assessment uses the
 requested work and numbering, not equality of raw release names or presence
 of an author in each name. Known language, format, reader and edition-marker
 conflicts prevent a set from being described as compatible. A set containing
-every number remains review evidence: numbering alone cannot establish the
-same audiobook edition. Cross-record set acquisition is not implemented by
-this assessment; each acquisition currently submits one provider reference.
-It must not claim a partial or ambiguous set is a complete audiobook.
+every number remains review evidence by default: numbering alone cannot
+establish the same audiobook edition. It must not claim a partial or
+ambiguous set is a complete audiobook.
+
+A provider registered with automatic acquisition enabled may have a complete
+set fetched without review, but only when one provider returns exactly one
+compatible record for every number `1..N` (`2 <= N <= 8`), each record's only
+release concern is that it is a fragment (no sample, collection, abridged or
+DRM concern, no language confirmation), each has a plausible title and no
+author conflict, at least one is strictly title matched and the rest are
+strictly matched or strongly author-supported. Each part is submitted as its
+own provider job (`PartSetId`, `PartNumber`, `PartTotal`) and re-derived on the
+server from a fresh search, so a stale or tampered member list is refused. Each
+part must arrive as exactly one file, is scanned on arrival, and is staged as
+track `n` of `N` in one bundle. Nothing is approved until every part is staged
+and passes, then all are approved together and published as one ordered
+audiobook. Each file's own tags are identity-checked after download. If any
+part fails, the remaining jobs are cancelled, staged parts are destroyed and the
+request goes to review naming the part; there is no automatic fallback to a
+different set. Parts that yield several files, mixed providers and sets larger
+than eight remain review-only.
 
 1. Providers declare capabilities.
 2. Providers do not receive database credentials.

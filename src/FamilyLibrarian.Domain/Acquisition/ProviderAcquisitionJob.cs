@@ -127,6 +127,43 @@ public sealed class ProviderAcquisitionJob
     /// </summary>
     public bool IdentityPreConfirmed { get; private set; }
 
+    /// <summary>
+    /// When this job fetches one numbered part of a complete audiobook set,
+    /// the set's id; every member job shares it. Null for an ordinary job.
+    /// The set has no row of its own -- membership is just these three
+    /// columns, so it is as restart-safe as the jobs themselves.
+    /// </summary>
+    public Guid? PartSetId { get; private set; }
+
+    /// <summary>This job's 1-based part number within <see cref="PartSetId"/>.</summary>
+    public int? PartNumber { get; private set; }
+
+    /// <summary>How many parts make up the complete set.</summary>
+    public int? PartTotal { get; private set; }
+
+    public bool IsPartSetMember => PartSetId is not null;
+
+    /// <summary>
+    /// Marks this (not yet submitted) job as one numbered part of a set.
+    /// </summary>
+    public void AssignToPartSet(Guid setId, int number, int total)
+    {
+        if (setId == Guid.Empty)
+        {
+            throw new ArgumentException("A part set id is required.", nameof(setId));
+        }
+
+        if (total < 2 || number < 1 || number > total)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(number), $"Part {number} of {total} is not a valid position in a numbered set.");
+        }
+
+        PartSetId = setId;
+        PartNumber = number;
+        PartTotal = total;
+    }
+
     public ProviderAcquisitionJobLifecycleState LifecycleState { get; private set; }
 
     /// <summary>Open string — never validated against a closed vocabulary (protocol v2 §8).</summary>
@@ -303,6 +340,25 @@ public sealed class ProviderAcquisitionJob
         ErrorRetryable = retryable;
         ErrorRetryAfterSeconds = retryAfterSeconds;
         ErrorDetailsJson = detailsJson;
+        NextPollAtUtc = null;
+        UpdatedAtUtc = atUtc;
+    }
+
+    /// <summary>
+    /// Stops tracking this job because the audiobook set it belongs to has been
+    /// abandoned (another part failed, or the set could not be fully started).
+    /// A job that already finished is left exactly as it is.
+    /// </summary>
+    public void Cancel(string reason, DateTimeOffset atUtc)
+    {
+        if (IsTerminal(LifecycleState))
+        {
+            return;
+        }
+
+        ApplyState(ProviderAcquisitionJobLifecycleState.Cancelled, phase: null, atUtc);
+        ErrorCode = "PART_SET_ABANDONED";
+        ErrorMessage = reason.Length <= 1_024 ? reason : reason[..1_024];
         NextPollAtUtc = null;
         UpdatedAtUtc = atUtc;
     }

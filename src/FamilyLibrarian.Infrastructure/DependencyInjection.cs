@@ -300,6 +300,12 @@ public static class DependencyInjection
         services.AddScoped<AcquisitionStagingService>();
         services.AddScoped<ManualImportService>();
         services.AddScoped<DirectAcquisitionService>();
+        services.AddScoped<IAudiobookPartSetMemberAcquirer>(
+            provider => provider.GetRequiredService<DirectAcquisitionService>());
+        services.AddScoped<AudiobookPartSetAcquisitionService>();
+        services.AddScoped<IPartSetReviewRouter>(
+            provider => provider.GetRequiredService<AutomaticRequestFulfillmentService>());
+        services.AddScoped<AudiobookPartSetFailureService>();
         services.AddScoped<DirectAcquisitionSecurityService>();
         services.AddScoped<AutomaticRequestFulfillmentService>();
         services.AddScoped<ExternalProviderRecheckService>();

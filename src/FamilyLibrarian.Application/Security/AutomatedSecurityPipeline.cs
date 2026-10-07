@@ -33,6 +33,16 @@ public sealed class AutomatedSecurityPipeline(
     }
 
     /// <summary>
+    /// Scans and validates one asset but approves nothing. For a part of an
+    /// automatic audiobook set: it is checked as it arrives, yet nothing is
+    /// trusted until every part is present and passes
+    /// (<see cref="EvaluateBundleAsync"/>).
+    /// </summary>
+    public Task<SecurityEvaluationResult> EvaluateWithoutApprovalAsync(
+        Guid assetId, CancellationToken cancellationToken) =>
+        evaluations.EvaluateAsync(assetId, cancellationToken);
+
+    /// <summary>
     /// Evaluates every sibling before policy approval begins. This prevents a
     /// clean early track from becoming Trusted before a later track fails or
     /// cannot be scanned/identity-checked.

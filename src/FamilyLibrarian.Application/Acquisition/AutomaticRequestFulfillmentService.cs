@@ -50,9 +50,25 @@ public sealed class AutomaticRequestFulfillmentService(
     IClock clock,
     NotificationService notifications,
     ICurrentUser currentUser,
-    IUserAccountStore accounts)
+    IUserAccountStore accounts) : IPartSetReviewRouter
 {
     private const int BatchSize = 20;
+
+    /// <summary>
+    /// Sends a request to a librarian outright, for a failure that must not be
+    /// retried automatically (an audiobook set that could not be completed).
+    /// </summary>
+    public async Task SendToReviewAsync(Guid requestId, string reason, CancellationToken cancellationToken)
+    {
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null)
+        {
+            return;
+        }
+
+        await MarkForReviewAsync(request, RequestReviewCategory.SecurityOrIdentityFailure, reason, cancellationToken);
+        await requests.SaveChangesAsync(cancellationToken);
+    }
 
     /// <summary>
     /// Completes the existing review flow when an automatic provider job fails

@@ -249,6 +249,107 @@ public sealed class DirectAcquisitionServiceTests
         Assert.AreEqual(1, context.StagingStore.DeleteCount);
     }
 
+    private static readonly string[] SetMembers = ["part-1", "part-2"];
+
+    private static ExternalProviderCandidate PartCandidate(string reference, int number, int total) =>
+        new(
+            reference,
+            new ExternalProviderWorkEvidence(
+                "The Hobbit", null, [new BookAuthor("J. R. R. Tolkien", "author")], [], []),
+            Release: new ExternalProviderReleaseEvidence(
+                $"The.Hobbit.{number}.of.{total}", "m4b", 500_000, false, 1, false, null, null, [], null,
+                ExternalProviderDrmStatus.None));
+
+    private static (TestContext Context, BookRequest Request, RequestFormat Format) AudiobookSetContext(
+        params ExternalProviderCandidate[] candidates)
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Audiobook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates = candidates;
+        return (context, request, format);
+    }
+
+    [TestMethod]
+    public async Task AFragmentOnItsOwnStillNeedsReleaseConfirmation()
+    {
+        var (context, request, format) = AudiobookSetContext(
+            PartCandidate("part-1", 1, 2), PartCandidate("part-2", 2, 2));
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "part-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.ReleaseConfirmationRequired, result.Outcome);
+        Assert.AreEqual(0, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task AMemberOfACompleteSetIsSubmittedAsAJobOfThatSet()
+    {
+        var (context, request, format) = AudiobookSetContext(
+            PartCandidate("part-1", 1, 2), PartCandidate("part-2", 2, 2));
+        var setId = Guid.NewGuid();
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "part-2", CancellationToken.None,
+            isAutomaticAcquisition: true, partSet: new AudiobookPartSetMember(setId, 2, 2, SetMembers));
+
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, result.Outcome);
+        var job = context.ProviderAcquisitionJobs.Jobs.Single();
+        Assert.AreEqual(setId, job.PartSetId);
+        Assert.AreEqual(2, job.PartNumber);
+        Assert.AreEqual(2, job.PartTotal);
+        Assert.IsTrue(job.IsAutomaticAcquisition);
+        // A part is matched on its release name alone, so the downloaded
+        // file's own tags must still prove which book it is.
+        Assert.IsFalse(job.IdentityPreConfirmed);
+    }
+
+    [TestMethod]
+    public async Task ASetThatNoLongerHasEveryPartIsRefusedBeforeAnyJobExists()
+    {
+        var (context, request, format) = AudiobookSetContext(PartCandidate("part-1", 1, 2));
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "part-1", CancellationToken.None,
+            isAutomaticAcquisition: true, partSet: new AudiobookPartSetMember(Guid.NewGuid(), 1, 2, SetMembers));
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+        StringAssert.Contains(result.Error, "complete set");
+        Assert.AreEqual(0, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task AClaimedMemberListThatDiffersFromTheProvidersAnswerIsRefused()
+    {
+        var (context, request, format) = AudiobookSetContext(
+            PartCandidate("part-1", 1, 2), PartCandidate("part-2", 2, 2));
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "part-1", CancellationToken.None,
+            isAutomaticAcquisition: true,
+            partSet: new AudiobookPartSetMember(Guid.NewGuid(), 1, 2, ["part-1", "someone-elses-part"]));
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task APartClaimingTheWrongPositionIsRefused()
+    {
+        var (context, request, format) = AudiobookSetContext(
+            PartCandidate("part-1", 1, 2), PartCandidate("part-2", 2, 2));
+
+        // part-2 presented as part 1 would let a file be published in the wrong order.
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "part-2", CancellationToken.None,
+            isAutomaticAcquisition: true, partSet: new AudiobookPartSetMember(Guid.NewGuid(), 1, 2, SetMembers));
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
     private static ExternalProviderCandidate CandidateWithIsbn(
         string providerReference, string title, string author, string isbn13) =>
         new(
@@ -488,6 +589,11 @@ public sealed class DirectAcquisitionServiceTests
             Guid externalProviderId, DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
             Task.FromResult(Jobs.Any(job => job.ExternalProviderId == externalProviderId &&
                 job.LeftWaitingAtUtc is not null && job.LeftWaitingAtUtc >= sinceUtc));
+
+        public Task<IReadOnlyList<ProviderAcquisitionJob>> ListByPartSetAsync(
+            Guid partSetId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>(
+                Jobs.Where(job => job.PartSetId == partSetId).OrderBy(job => job.PartNumber).ToArray());
 
         public void Add(ProviderAcquisitionJob job) => Jobs.Add(job);
 
