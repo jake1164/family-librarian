@@ -362,7 +362,11 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         Assert.AreEqual("AcquisitionPaused", detail.Request.Formats.Single().ProgressCode);
         Assert.IsNotNull(detail.ProviderJobs);
         Assert.Contains("minimum 500 MiB", detail.ProviderJobs.Single().Message!);
-        var familyJson = await admin.GetStringAsync($"/api/v1/requests/{request.Id}");
+        // The requester's own projection. There is no GET /api/v1/requests/{id};
+        // asking for it used to return the SPA shell, which can never contain
+        // these strings, so the privacy check passed without testing anything.
+        var familyJson = await admin.GetStringAsync("/api/v1/me/requests");
+        StringAssert.Contains(familyJson, request.Id.ToString());
         Assert.DoesNotContain("minimum 500 MiB", familyJson);
         Assert.DoesNotContain("providerJobs", familyJson, StringComparison.OrdinalIgnoreCase);
 
