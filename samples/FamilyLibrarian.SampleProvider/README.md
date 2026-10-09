@@ -9,7 +9,9 @@ implementable, and to give a third party a working starting point in any languag
 Two canned public-domain candidates ("Pride and Prejudice", "Frankenstein"), an
 optional shared-secret bearer check, and a genuinely asynchronous `/acquire` (a
 3-second simulated delay before the job reports `Completed`) so a client has to do
-real polling, not just call a synchronous stub.
+real polling, not just call a synchronous stub. The delay is three "stages" of
+`SampleProvider:JobStageMilliseconds` (default `1000`); the repository's conformance
+tests shorten it so they observe the same state sequence without waiting for it.
 
 ## The protocol
 

@@ -194,7 +194,7 @@ public sealed class LibriVoxApiClient(HttpClient httpClient, LibriVoxRequestThro
 }
 
 /// <summary>Spaces LibriVox catalog calls across all in-process clients.</summary>
-public sealed class LibriVoxRequestThrottle : IDisposable
+public sealed class LibriVoxRequestThrottle(TimeProvider timeProvider) : IDisposable
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private DateTimeOffset nextRequestAtUtc;
@@ -204,9 +204,9 @@ public sealed class LibriVoxRequestThrottle : IDisposable
         await gate.WaitAsync(cancellationToken);
         try
         {
-            var delay = nextRequestAtUtc - DateTimeOffset.UtcNow;
-            if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken);
-            nextRequestAtUtc = DateTimeOffset.UtcNow.AddSeconds(3);
+            var delay = nextRequestAtUtc - timeProvider.GetUtcNow();
+            if (delay > TimeSpan.Zero) await Task.Delay(delay, timeProvider, cancellationToken);
+            nextRequestAtUtc = timeProvider.GetUtcNow().AddSeconds(3);
         }
         finally
         {

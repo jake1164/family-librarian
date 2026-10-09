@@ -25,11 +25,20 @@ public sealed class ExternalProviderClientTests
     private static WebApplication? _app;
     private static string _baseUrl = string.Empty;
 
+    // The sample provider's job timeline is measured in stages (waiting for two,
+    // running until four, or a plain job completing at three). The deployed
+    // default is a real second per stage; a quarter second still leaves a wide
+    // window to observe each state while keeping the polling tests fast. The
+    // client polls well inside one stage so it never oversleeps a transition.
+    private const int JobStageMilliseconds = 250;
+    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(50);
+
     [ClassInitialize]
     public static async Task InitializeAsync(TestContext testContext)
     {
         ArgumentNullException.ThrowIfNull(testContext);
-        _app = SampleProviderHost.Build(["--urls=http://127.0.0.1:0"]);
+        _app = SampleProviderHost.Build(
+            ["--urls=http://127.0.0.1:0", $"--SampleProvider:JobStageMilliseconds={JobStageMilliseconds}"]);
         await _app.StartAsync();
         _baseUrl = _app.Services.GetRequiredService<IServer>()
             .Features.Get<IServerAddressesFeature>()!.Addresses.First();
@@ -45,7 +54,7 @@ public sealed class ExternalProviderClientTests
         }
     }
 
-    private static ExternalProviderClient CreateClient() => new(new SimpleHttpClientFactory());
+    private static ExternalProviderClient CreateClient() => new(new SimpleHttpClientFactory(), PollInterval);
 
     [TestMethod]
     public async Task ManifestReportsTheDeclaredProtocolAndCapabilities()
@@ -414,7 +423,7 @@ public sealed class ExternalProviderClientTests
 
             if (status.State is not (ProviderAcquisitionJobLifecycleState.Completed or ProviderAcquisitionJobLifecycleState.Failed))
             {
-                await Task.Delay(200);
+                await Task.Delay(PollInterval);
             }
         }
         while (status.State is not (ProviderAcquisitionJobLifecycleState.Completed or ProviderAcquisitionJobLifecycleState.Failed)
@@ -446,7 +455,7 @@ public sealed class ExternalProviderClientTests
                 _baseUrl, null, submission.JobId!, CancellationToken.None);
             if (status.State != ProviderAcquisitionJobLifecycleState.Completed)
             {
-                await Task.Delay(200);
+                await Task.Delay(PollInterval);
             }
         }
         while (status.State != ProviderAcquisitionJobLifecycleState.Completed && DateTimeOffset.UtcNow < deadline);

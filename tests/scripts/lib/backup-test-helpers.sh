@@ -20,7 +20,7 @@ assert_command_fails() {
 # stdout; every other invocation — compose up/stop/exec pg_restore — exits 0
 # having done nothing, since restore-backup.sh's own docker calls are not
 # what these fast, stub-backed tests are verifying (the real Postgres
-# round trip in backup-restore-postgres.test.sh covers that). Set $3 to make
+# round trip is family-librarian-lab's BASE-04 case). Set $3 to make
 # the pg_dump invocation itself fail, to exercise create-backup.sh's error
 # handling.
 make_fake_docker() {

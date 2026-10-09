@@ -23,6 +23,12 @@ public static class SampleProviderHost
     public static WebApplication Build(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+        // One simulated job "stage" (see SampleJob.State). Defaults to a real
+        // second so a deployed sample provider, such as the lab's, exercises
+        // genuine polling cadence; the in-repo conformance tests shorten it
+        // so they prove the same state sequence without sleeping for it.
+        var jobStage = TimeSpan.FromMilliseconds(
+            builder.Configuration.GetValue("SampleProvider:JobStageMilliseconds", 1000));
         var app = builder.Build();
 
         var apiKey = Environment.GetEnvironmentVariable("SAMPLE_PROVIDER_API_KEY");
@@ -188,7 +194,7 @@ public static class SampleProviderHost
             }
 
             var jobId = Guid.NewGuid().ToString("N");
-            var job = new SampleJob(candidate, DateTimeOffset.UtcNow);
+            var job = new SampleJob(candidate, DateTimeOffset.UtcNow, jobStage);
             jobs[jobId] = job;
             if (!string.IsNullOrEmpty(idempotencyKey))
             {
@@ -314,7 +320,7 @@ internal sealed record SampleCandidate(
 /// sample/conformance-test process — <see cref="Cancelled"/> is the only
 /// field mutated after construction.
 /// </summary>
-internal sealed class SampleJob(SampleCandidate candidate, DateTimeOffset createdAtUtc)
+internal sealed class SampleJob(SampleCandidate candidate, DateTimeOffset createdAtUtc, TimeSpan stage)
 {
     public SampleCandidate Candidate { get; } = candidate;
 
@@ -332,8 +338,8 @@ internal sealed class SampleJob(SampleCandidate candidate, DateTimeOffset create
         {
             return elapsed switch
             {
-                _ when elapsed < TimeSpan.FromSeconds(2) => "waiting",
-                _ when elapsed < TimeSpan.FromSeconds(4) => "running",
+                _ when elapsed < stage * 2 => "waiting",
+                _ when elapsed < stage * 4 => "running",
                 _ => "completed"
             };
         }
@@ -341,7 +347,7 @@ internal sealed class SampleJob(SampleCandidate candidate, DateTimeOffset create
         // Ready after a short, genuine delay -- not synchronous -- so a real
         // client exercises real polling, not a stub that completes on the
         // first check.
-        return elapsed < TimeSpan.FromSeconds(3) ? "running" : "completed";
+        return elapsed < stage * 3 ? "running" : "completed";
     }
 
     public string? Phase(DateTimeOffset now) => State(now) switch

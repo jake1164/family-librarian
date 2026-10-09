@@ -33,7 +33,7 @@ public sealed class LibriVoxProviderTests
             Content = new StringContent("{\"error\":\"Audiobooks could not be found\"}", Encoding.UTF8, "application/json")
         });
         using var client = new HttpClient(handler) { BaseAddress = new Uri("https://librivox.org/") };
-        var api = new LibriVoxApiClient(client, new LibriVoxRequestThrottle());
+        var api = new LibriVoxApiClient(client, new LibriVoxRequestThrottle(TimeProvider.System));
 
         var results = await api.SearchByTitleAsync("Threshing Day", CancellationToken.None);
 
@@ -45,7 +45,7 @@ public sealed class LibriVoxProviderTests
     {
         var handler = new StubHandler(_ => BooksResponse(RecordingJson("17", "Moby Dick", "English")));
         using var client = new HttpClient(handler) { BaseAddress = new Uri("https://librivox.org/") };
-        var api = new LibriVoxApiClient(client, new LibriVoxRequestThrottle());
+        var api = new LibriVoxApiClient(client, new LibriVoxRequestThrottle(TimeProvider.System));
 
         var results = await api.SearchByTitleAsync("Moby Dick & the sea", CancellationToken.None);
 
@@ -79,12 +79,17 @@ public sealed class LibriVoxProviderTests
             return BooksResponse(RecordingJson("17", "Moby Dick", "English"));
         });
         using var client = new HttpClient(handler) { BaseAddress = new Uri("https://librivox.org/") };
-        var api = new LibriVoxApiClient(client, new LibriVoxRequestThrottle());
+        var clock = new ImmediateTimerTimeProvider();
+        var api = new LibriVoxApiClient(client, new LibriVoxRequestThrottle(clock));
 
         var results = await api.SearchByTitleAsync("Moby Dick", CancellationToken.None);
 
         Assert.AreEqual(1, results.Count);
         Assert.AreEqual(2, calls);
+        // The retry still waited its turn behind the throttle's 3-second
+        // spacing; the clock only spares the test from sleeping through it.
+        var spacing = clock.RequestedDelays.Single();
+        Assert.IsTrue(spacing > TimeSpan.FromSeconds(2) && spacing <= TimeSpan.FromSeconds(3), $"Unexpected spacing {spacing}.");
     }
 
     [TestMethod]
@@ -94,7 +99,7 @@ public sealed class LibriVoxProviderTests
         var second = RecordingJson("18", "Moby Dick", "English").Replace("Jane Reader", "John Reader", StringComparison.Ordinal);
         var handler = new StubHandler(_ => BooksResponse(first, second));
         using var apiHttp = new HttpClient(handler) { BaseAddress = new Uri("https://librivox.org/") };
-        var api = new LibriVoxApiClient(apiHttp, new LibriVoxRequestThrottle());
+        var api = new LibriVoxApiClient(apiHttp, new LibriVoxRequestThrottle(TimeProvider.System));
         using var downloadHttp = new HttpClient(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));
         var provider = CreateProvider(api, downloadHttp);
 
@@ -117,7 +122,7 @@ public sealed class LibriVoxProviderTests
     {
         var handler = new StubHandler(_ => BooksResponse(RecordingJson("17", "Moby Dick", "English")));
         using var apiHttp = new HttpClient(handler) { BaseAddress = new Uri("https://librivox.org/") };
-        var provider = CreateProvider(new LibriVoxApiClient(apiHttp, new LibriVoxRequestThrottle()),
+        var provider = CreateProvider(new LibriVoxApiClient(apiHttp, new LibriVoxRequestThrottle(TimeProvider.System)),
             new HttpClient(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound))));
 
         var option = (await provider.FindDirectAcquisitionsAsync(
@@ -135,7 +140,7 @@ public sealed class LibriVoxProviderTests
     {
         var handler = new StubHandler(_ => BooksResponse(CollaborativeRecordingJson("19", "Moby Dick")));
         using var apiHttp = new HttpClient(handler) { BaseAddress = new Uri("https://librivox.org/") };
-        var provider = CreateProvider(new LibriVoxApiClient(apiHttp, new LibriVoxRequestThrottle()),
+        var provider = CreateProvider(new LibriVoxApiClient(apiHttp, new LibriVoxRequestThrottle(TimeProvider.System)),
             new HttpClient(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound))));
 
         var option = (await provider.FindDirectAcquisitionsAsync(
@@ -159,7 +164,7 @@ public sealed class LibriVoxProviderTests
             Content = new ByteArrayContent(zip)
         });
         using var downloadHttp = new HttpClient(downloadHandler);
-        var provider = CreateProvider(new LibriVoxApiClient(apiHttp, new LibriVoxRequestThrottle()), downloadHttp);
+        var provider = CreateProvider(new LibriVoxApiClient(apiHttp, new LibriVoxRequestThrottle(TimeProvider.System)), downloadHttp);
         var option = (await provider.FindDirectAcquisitionsAsync(
             new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Audiobook, CancellationToken.None)).Single();
 
@@ -189,7 +194,7 @@ public sealed class LibriVoxProviderTests
         {
             Content = new ByteArrayContent(zip)
         }));
-        var provider = CreateProvider(new LibriVoxApiClient(apiHttp, new LibriVoxRequestThrottle()), downloadHttp);
+        var provider = CreateProvider(new LibriVoxApiClient(apiHttp, new LibriVoxRequestThrottle(TimeProvider.System)), downloadHttp);
         var option = (await provider.FindDirectAcquisitionsAsync(
             new BookIdentity("Moby Dick", "Herman Melville", []), RequestMediaType.Audiobook, CancellationToken.None)).Single();
 
@@ -201,7 +206,7 @@ public sealed class LibriVoxProviderTests
     {
         var handler = new StubHandler(_ => BooksResponse(RecordingJson("17", "Moby Dick", "English")));
         using var client = new HttpClient(handler) { BaseAddress = new Uri("https://librivox.org/") };
-        var provider = CreateProvider(new LibriVoxApiClient(client, new LibriVoxRequestThrottle()), new HttpClient(), enabled: false);
+        var provider = CreateProvider(new LibriVoxApiClient(client, new LibriVoxRequestThrottle(TimeProvider.System)), new HttpClient(), enabled: false);
 
         var ready = await provider.IsReadyAsync(CancellationToken.None);
         var options = await provider.FindDirectAcquisitionsAsync(
@@ -216,7 +221,7 @@ public sealed class LibriVoxProviderTests
     public async Task EnabledProviderIsReady()
     {
         using var client = new HttpClient(new StubHandler(_ => BooksResponse())) { BaseAddress = new Uri("https://librivox.org/") };
-        var provider = CreateProvider(new LibriVoxApiClient(client, new LibriVoxRequestThrottle()), new HttpClient());
+        var provider = CreateProvider(new LibriVoxApiClient(client, new LibriVoxRequestThrottle(TimeProvider.System)), new HttpClient());
 
         Assert.IsTrue(await provider.IsReadyAsync(CancellationToken.None));
     }
@@ -258,6 +263,34 @@ public sealed class LibriVoxProviderTests
 
     private static string CollaborativeRecordingJson(string id, string title) =>
         $$"""{"id":"{{id}}","title":"{{title}}","url_zip_file":"https://archive.org/download/example.zip","url_librivox":"https://librivox.org/example/","language":"English","copyright_year":"1851","num_sections":"2","totaltimesecs":3600,"authors":[{"id":"155","first_name":"Herman","last_name":"Melville"}],"sections":[{"title":"Chapter 1","readers":[{"reader_id":"168","display_name":"Jane Reader"}]},{"title":"Chapter 2","readers":[{"reader_id":"169","display_name":"John Doe"}]}],"genres":[{"id":"27","name":"Fiction"}],"coverart_thumbnail":"https://archive.org/cover.jpg"}""";
+
+    /// <summary>
+    /// Real wall-clock reads, but every timer fires straight away and records
+    /// the delay it was asked for, so a test can assert the throttle's spacing
+    /// without sleeping through it.
+    /// </summary>
+    private sealed class ImmediateTimerTimeProvider : TimeProvider
+    {
+        public List<TimeSpan> RequestedDelays { get; } = [];
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            RequestedDelays.Add(dueTime);
+            ThreadPool.QueueUserWorkItem(_ => callback(state));
+            return new FiredTimer();
+        }
+
+        private sealed class FiredTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => false;
+
+            public void Dispose()
+            {
+            }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
     {

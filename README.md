@@ -340,10 +340,13 @@ it in the Queue. It is intentionally inconclusive unless all three variables
 are set, so everyday unit and host-integration runs do not require a browser or
 credentials.
 
-CI installs Chromium, starts an isolated Compose deployment with CI-only
-bootstrap credentials, and runs this test together with the local browser
-regressions. The local command remains opt-in because a developer machine may
-not have Chromium installed or a free Compose port.
+Browser tests are tagged `TestCategory("Release")`. Checkin CI excludes them
+(`-- --filter "TestCategory!=Release"`) so every push stays a fast regression run.
+The release-tests workflow runs on release tags or on demand: it installs Chromium,
+starts an isolated Compose deployment with CI-only bootstrap credentials, and runs
+this test together with the local browser regressions. The local command remains
+opt-in because a developer machine may not have Chromium installed or a free
+Compose port.
 
 ```bash
 FAMILY_LIBRARIAN_E2E_BASE_URL=http://localhost:8080 \

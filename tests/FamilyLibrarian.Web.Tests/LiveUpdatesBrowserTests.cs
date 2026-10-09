@@ -13,7 +13,11 @@ using Microsoft.Playwright;
 
 namespace FamilyLibrarian.Web.Tests;
 
+// Release tier: needs Chromium (and, for the queue E2E, a deployed Compose
+// stack), so checkin CI excludes it and .github/workflows/release-tests.yml
+// runs it before a release.
 [TestClass]
+[TestCategory("Release")]
 public sealed class LiveUpdatesBrowserTests
 {
     [TestMethod]

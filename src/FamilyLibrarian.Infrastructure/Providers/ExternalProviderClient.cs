@@ -14,7 +14,7 @@ namespace FamilyLibrarian.Infrastructure.Providers;
 /// <summary>Speaks the versioned external-provider HTTP protocol described in the M13 plan.</summary>
 public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory) : IExternalProviderClient
 {
-    private static readonly TimeSpan AcquirePollInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan DefaultAcquirePollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan AcquireTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan ControlPlaneTimeout = TimeSpan.FromSeconds(20);
 
@@ -33,6 +33,17 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     internal const int MaxHealthIssues = 5;
     internal const int MaxHealthIssueMessageLength = 300;
     internal const int MaxHealthIssueCodeLength = 64;
+
+    private readonly TimeSpan _acquirePollInterval = DefaultAcquirePollInterval;
+
+    /// <summary>
+    /// Lets the conformance tests poll a fast sample-provider timeline without
+    /// sleeping the production interval. Internal, so DI (which only considers
+    /// public constructors) always uses the default.
+    /// </summary>
+    internal ExternalProviderClient(IHttpClientFactory httpClientFactory, TimeSpan acquirePollInterval)
+        : this(httpClientFactory) =>
+        _acquirePollInterval = acquirePollInterval;
 
     public async Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, CancellationToken cancellationToken)
@@ -868,7 +879,7 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     private static int? ParsePollAfterSeconds(HttpResponseMessage response, JsonNode json) =>
         (int?)response.Headers.RetryAfter?.Delta?.TotalSeconds ?? json["pollAfterSeconds"]?.GetValue<int?>();
 
-    private static async Task PollUntilCompletedAsync(HttpClient client, string jobPath, CancellationToken cancellationToken)
+    private async Task PollUntilCompletedAsync(HttpClient client, string jobPath, CancellationToken cancellationToken)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(AcquireTimeout);
@@ -893,7 +904,7 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
                         statusJson?["failureReason"]?.GetValue<string>() ?? "The provider reported the job failed.");
                 }
 
-                await Task.Delay(AcquirePollInterval, timeoutCts.Token);
+                await Task.Delay(_acquirePollInterval, timeoutCts.Token);
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
