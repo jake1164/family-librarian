@@ -9,9 +9,10 @@ This repository contains the current design documents for **Family Librarian**, 
 1. [Product & Architecture Specification](docs/01-product-architecture-spec.md)
 2. [Domain Model & Workflow Specification](docs/02-domain-workflows.md)
 3. [Provider Architecture & Internal Contracts](docs/03-provider-api-contracts.md)
-4. [Project Name Decision (archived shortlist)](docs/05-project-name-options.md)
+4. [External Provider HTTP Protocol (v2)](docs/04-external-provider-http-protocol.md)
 5. [Deployment, Backup, and Recovery](docs/06-deployment-and-recovery.md)
 6. [UI Conventions](docs/07-ui-conventions.md)
+7. [Book Matching Design Findings](docs/family-librarian-book-matching-design-findings.md)
 
 These documents are intended to be living specifications and should be updated as technical spikes and implementation decisions resolve open questions.
 

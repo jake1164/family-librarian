@@ -105,6 +105,24 @@ health recovers. If the scanner fails during ingress, retain the affected file i
 quarantine and do not publish it to CWA, Audiobookshelf, a download endpoint, or
 a notification.
 
+### ClamAV size and time limits
+
+The shipped `compose.yaml` raises clamd's defaults so large audiobooks scan
+successfully. Keep these values if you supply your own ClamAV configuration:
+
+| clamd setting | Value | Why |
+| --- | --- | --- |
+| `StreamMaxLength`, `MaxFileSize`, `PCREMaxFileSize` | `2000M` | ClamAV cannot scan files over about 2 GB. Family Librarian caps accepted audiobook files at 1996 MiB (`ExternalProviderOutputPolicy`) so every accepted file is scannable. |
+| `MaxScanSize` | `4000M` | Bounds total work across archive expansion; keep it above the input limits. |
+| `MaxScanTime` | `600000` (ms) | The 120 s default cuts off a 1-2 GB file. Keep it under the 15-minute abandoned-scan threshold. |
+| `AlertExceedsMax` | `yes` | A limit hit is reported as `Heuristics.Limits.Exceeded.*`, which Family Librarian treats as a scanner error (held for review), never as malware. |
+
+A file that exceeds a limit, or a scan that cannot finish, stays in Quarantine
+with the reason shown on **Security scans**. Administrators can use **Retry
+security scan** (queued server-side, so closing the browser does not cancel it)
+or **Rescan** for a scan that could not complete. A scan left pending for more
+than 15 minutes is treated as abandoned and returned to Quarantine.
+
 ## Deploy or upgrade
 
 1. Back up PostgreSQL before changing the image, Compose configuration, or
