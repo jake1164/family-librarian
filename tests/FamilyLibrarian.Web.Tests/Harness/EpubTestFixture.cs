@@ -22,7 +22,8 @@ public static class EpubTestFixture
 {
     public static byte[] BuildMinimalEpubBytes(
         string title = "The Hobbit",
-        string author = "J. R. R. Tolkien")
+        string author = "J. R. R. Tolkien",
+        bool withReadingOrder = true)
     {
         using var stream = new MemoryStream();
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
@@ -53,8 +54,16 @@ public static class EpubTestFixture
                     <dc:title>{title}</dc:title>
                     <dc:creator>{author}</dc:creator>
                   </metadata>
+                  {(withReadingOrder
+                    ? "<manifest><item id=\"c1\" href=\"chapter1.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c1\"/></spine>"
+                    : string.Empty)}
                 </package>
                 """);
+
+            if (withReadingOrder)
+            {
+                WriteTextEntry(archive, "OEBPS/chapter1.xhtml", "<html><body><p>Text.</p></body></html>");
+            }
         }
 
         return stream.ToArray();

@@ -216,6 +216,53 @@ public sealed class MediaAssetQueueEndpointTests
     }
 
     [TestMethod]
+    public async Task AnEpubWithAnEmptySpineIsRejectedBeforeApprovalAndTheDefectIsRecorded()
+    {
+        // E03: the title and author match the catalog and the scan is clean, so before M1-3a this
+        // reached Trusted and was published. Now the structural check fails the evaluation.
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        var (requestId, formatId) = await CreateEbookRequestAsync(client);
+
+        var upload = await client.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(EpubTestFixture.BuildMinimalEpubBytes(withReadingOrder: false), "book.epub"));
+        var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        Assert.IsNotNull(imported);
+
+        var queue = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
+        Assert.IsTrue(queue!.Assets.Any(asset => asset.AssetId == imported.MediaAssetId && asset.StorageState == "Rejected"),
+            "Existing behavior: a structurally invalid, non-malware file is retained as Rejected for the admin.");
+
+        var recent = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/recent?limit=100");
+        var rejected = recent!.Assets.Single(asset => asset.AssetId == imported.MediaAssetId);
+        Assert.AreEqual("Rejected", rejected.StorageState, "Never Trusted, never published.");
+        Assert.IsNotNull(rejected.LatestEvaluation);
+        Assert.AreEqual(nameof(SecurityEvaluationStatus.Failed), rejected.LatestEvaluation.Status);
+        Assert.IsEmpty(rejected.LatestEvaluation.Approvals, "Nothing, including policy approval, ran on a failed evaluation.");
+        var structure = rejected.LatestEvaluation.ValidationResults.Single(result => result.ValidatorId == "epub-structure");
+        Assert.IsFalse(structure.IsValid);
+        StringAssert.Contains(structure.Message, "reading order");
+
+        Assert.IsNotNull(rejected.Evidence);
+        Assert.AreEqual("Recorded", rejected.Evidence.Status);
+        var defect = rejected.Evidence.Items.Single(item => item.Code == "artifact.structure.defect_reported");
+        Assert.AreEqual("Structure", defect.Dimension);
+        Assert.AreEqual("Negative", defect.Polarity);
+        Assert.AreEqual("validator:epub-structure", defect.Source);
+        StringAssert.Contains(defect.Value, "reading order");
+        Assert.IsFalse(rejected.Evidence.Items.Any(item => item.Code == "artifact.structure.no_defect_reported"));
+        Assert.AreEqual("Unknown", rejected.Evidence.Items.Single(item => item.Dimension == "Completeness").Polarity,
+            "Completeness stays not assessed; the defect is a structural finding.");
+        Assert.IsFalse(rejected.Evidence.Items.Any(item => item.RecordKind == "identity-verification"),
+            "Identity verification is never reached for a failed evaluation.");
+    }
+
+    [TestMethod]
     public async Task RecentFilesRequireAdminAndLiveConnectionRequiresSignIn()
     {
         var fixture = WebTestFixture.Require(_fixture);

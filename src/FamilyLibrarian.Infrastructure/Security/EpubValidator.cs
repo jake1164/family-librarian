@@ -146,8 +146,115 @@ public sealed class EpubValidator : IAssetValidator
                     false, $"container.xml references '{rootfilePath}', which is not in the archive.");
             }
 
+            // E03: a package whose reading order lists nothing readable is not a usable book, whatever
+            // its metadata says. Deliberately narrow: only a package we could parse and whose spine is
+            // missing, empty, or lists no content document present in the archive is rejected. A package
+            // we cannot parse is left to the identity verifier exactly as before, and nothing here
+            // looks at how much content there is (no minimum chapter count or length).
+            if (await HasUsableSpineAsync(archive, rootfilePath, cancellationToken) == false)
+            {
+                return new ValidationOutcome(false, NoReadingOrderMessage);
+            }
+
             return new ValidationOutcome(true, null);
         }
+    }
+
+    internal const string NoReadingOrderMessage =
+        "The EPUB has no usable reading order: its spine is missing or empty, or lists no content document that is present in the archive.";
+
+    /// <summary>
+    /// <see langword="true"/> when at least one spine itemref resolves, through the manifest, to a file that
+    /// exists in the archive; <see langword="false"/> when the package parsed but none does;
+    /// <see langword="null"/> when the package file could not be read here (too large, or not XML).
+    /// </summary>
+    private static async Task<bool?> HasUsableSpineAsync(
+        ZipArchive archive, string rootfilePath, CancellationToken cancellationToken)
+    {
+        var package = archive.GetEntry(rootfilePath);
+        if (package is null || package.Length > MaxMetadataEntryBytes)
+        {
+            return null;
+        }
+
+        XDocument document;
+        try
+        {
+            await using var entryStream = package.Open();
+            var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, Async = true };
+            using var xmlReader = XmlReader.Create(entryStream, settings);
+            document = await XDocument.LoadAsync(xmlReader, LoadOptions.None, cancellationToken);
+        }
+        catch (XmlException)
+        {
+            return null;
+        }
+
+        var manifest = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var item in document.Descendants().Where(element => element.Name.LocalName == "item"))
+        {
+            var id = item.Attribute("id")?.Value;
+            var href = item.Attribute("href")?.Value;
+            if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(href))
+            {
+                manifest.TryAdd(id, href);
+            }
+        }
+
+        var directory = rootfilePath.Contains('/', StringComparison.Ordinal)
+            ? rootfilePath[..rootfilePath.LastIndexOf('/')]
+            : string.Empty;
+        foreach (var itemref in document.Descendants().Where(element => element.Name.LocalName == "itemref"))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // linear="no" items are still reading-order items; only presence matters here.
+            var idref = itemref.Attribute("idref")?.Value;
+            if (idref is not null && manifest.TryGetValue(idref, out var href) &&
+                ResolveArchivePath(directory, href) is { } path && archive.GetEntry(path) is { Name.Length: > 0 })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Resolves a manifest href against the package directory, or <see langword="null"/> when it does not name a local archive file.</summary>
+    private static string? ResolveArchivePath(string packageDirectory, string href)
+    {
+        var reference = href.Split('#', '?')[0];
+        if (reference.Length == 0 || reference.Contains("://", StringComparison.Ordinal) || reference.StartsWith('/'))
+        {
+            return null;
+        }
+
+        string decoded;
+        try
+        {
+            decoded = Uri.UnescapeDataString(reference);
+        }
+        catch (UriFormatException)
+        {
+            return null;
+        }
+
+        var segments = new List<string>(packageDirectory.Length == 0 ? [] : packageDirectory.Split('/'));
+        foreach (var segment in decoded.Split('/'))
+        {
+            if (segment is "" or ".") continue;
+            if (segment == "..")
+            {
+                if (segments.Count == 0) return null;
+                segments.RemoveAt(segments.Count - 1);
+                continue;
+            }
+
+            segments.Add(segment);
+        }
+
+        var path = string.Join('/', segments);
+        return path.Length == 0 || IsPathUnsafe(path) ? null : path;
     }
 
     /// <summary>

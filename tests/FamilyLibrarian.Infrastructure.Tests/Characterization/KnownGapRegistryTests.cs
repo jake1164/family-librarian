@@ -9,7 +9,7 @@ namespace FamilyLibrarian.Infrastructure.Tests.Characterization;
 [TestClass]
 public sealed class KnownGapRegistryTests
 {
-    private static readonly string[] ExpectedKnownGaps = ["A02", "A06", "C14", "E02", "E03"];
+    private static readonly string[] ExpectedKnownGaps = ["A02", "A06", "C14", "E02"];
 
     private static IEnumerable<CharacterizationCase> AllCases() =>
         CandidateAssessmentCharacterizationTests.Cases.Select(item => item.Case)

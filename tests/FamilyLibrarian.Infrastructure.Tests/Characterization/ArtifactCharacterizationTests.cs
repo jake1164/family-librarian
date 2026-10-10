@@ -49,7 +49,7 @@ public sealed class ArtifactCharacterizationTests
             async () => { using var e = Epub(Title, Author, "en", 135, 136); return $"identity={await EpubIdentityOf(e)}; structure={await EpubStructureOf(e)}"; }),
         (new("E02", "Three-chapter free sample with the right title/author", "identity=Match; structure=Valid", "identity=Unmatched (held for identity review: sample cue / very few chapters)"),
             async () => { using var e = Epub(Title, Author, "en", 3, 3); return $"identity={await EpubIdentityOf(e)}; structure={await EpubStructureOf(e)}"; }),
-        (new("E03", "Right title/author, empty spine (no readable content)", "identity=Match; structure=Valid", "structure=Invalid or identity=Unmatched (no readable content)"),
+        (new("E03", "Right title/author, empty spine (no readable content): M1-3a rejects it structurally", "identity=Match; structure=Invalid"),
             async () => { using var e = Epub(Title, Author, "en", 0, 0); return $"identity={await EpubIdentityOf(e)}; structure={await EpubStructureOf(e)}"; }),
         (new("E04", "Omnibus: collection title that contains the requested title", "identity=Unmatched"),
             async () => { using var e = Epub("The Ember Cycle Omnibus: The Lantern Road and Two Others", Author, "en", 90, 91); return $"identity={await EpubIdentityOf(e)}"; }),
