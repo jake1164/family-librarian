@@ -13,7 +13,7 @@ public sealed class ProviderAttemptRetryingTests
     private static readonly DateTimeOffset Now = new(2026, 10, 2, 12, 0, 0, TimeSpan.Zero);
 
     private static ProviderAttempt Attempt(ProviderAttemptOutcome outcome, string summary = "Something happened.") =>
-        new(Guid.NewGuid(), Guid.NewGuid(), "prowlarr", outcome, summary, Now, nextEligibleCheckAtUtc: Now);
+        new(Guid.NewGuid(), Guid.NewGuid(), "example-indexer", outcome, summary, Now, nextEligibleCheckAtUtc: Now);
 
     [TestMethod]
     public void AStepThatMovesOnToTheNextCopyIsNotAnAdministratorIssue()

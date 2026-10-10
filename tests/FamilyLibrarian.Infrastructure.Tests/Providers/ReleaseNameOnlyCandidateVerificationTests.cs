@@ -4,7 +4,7 @@ using FamilyLibrarian.Application.Providers;
 namespace FamilyLibrarian.Infrastructure.Tests.Providers;
 
 /// <summary>
-/// The exact shape a live Prowlarr <c>/search</c> returns (PROVIDER-7): no
+/// The exact shape a live an indexer <c>/search</c> returns (PROVIDER-7): no
 /// <c>work</c> object, no legacy flat title/author, nothing but
 /// <c>release.name</c> and a format. Before this, every such candidate carried
 /// an empty <c>Work.Title</c>, which every matcher rejects outright — so a

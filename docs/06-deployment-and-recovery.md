@@ -161,6 +161,91 @@ all EF Core migrations, do not downgrade a production database casually: a
 rollback executes migration `Down` operations and may lose data. See
 [Microsoft's migration deployment guidance](https://learn.microsoft.com/ef/core/managing-schemas/migrations/applying).
 
+## Versions
+
+The running Family Librarian version is shown in the status footer for every
+signed-in user. Release images take it from the git tag (`v1.0.0-alpha.5` shows as
+`1.0.0-alpha.5`, passed to the Dockerfile as the `APP_VERSION` build argument);
+a local build shows the `Version` in `Directory.Build.props`, so bump that value
+when you start a new release line.
+
+Each external provider's own version, as declared by its manifest, appears as a
+"Version" chip on **Sources**. It refreshes on **Test Connection** and on the
+periodic background health check (about every 15 minutes), so a provider
+upgrade shows up without any manual step.
+
+## Matrix chat notifications
+
+Matrix is an optional second notification channel beside SMTP. Every notification
+Family Librarian sends reaches a member through each channel they have set up.
+Nothing here is required; local sign-in and SMTP keep working without it.
+
+### Administrator setup
+
+1. Create a dedicated Matrix account for Family Librarian on your homeserver
+   (not a person's own account) and generate an access token for it, for example
+   in Element under **Settings → Help & About → Advanced**.
+2. Open **Settings → Communications** and fill in the **Matrix** card: the
+   homeserver URL (for example `https://matrix.example.org`), the bot's Matrix ID,
+   and the access token. The token is encrypted at rest like the SMTP password and
+   is never shown again; leave the field blank to keep the stored one.
+3. Choose **Test Matrix connection**. It confirms the bot can authenticate and
+   does not message anyone. A saved configuration must connect successfully
+   before it can be enabled.
+4. Turn the card's switch on.
+
+The bot account must be able to open direct-message rooms with your members and
+receive replies, so do not restrict it to a closed room list. Use a homeserver
+reachable from the Family Librarian container.
+
+### Member setup and use
+
+Each member opens **Settings → Matrix chat** (`/settings/matrix`), enters their
+Matrix ID, and chooses **Send verification code**. The bot direct-messages a
+one-time code; replying with that code in the chat completes the link. Requesting
+a new code replaces the old one, and the page can unlink the account again.
+
+Once linked, notifications arrive as chat messages. A "did your book arrive?"
+question after a Kindle send can be answered by replying `yes` or `no` in chat
+instead of the web page; answering twice is harmless. Quiet hours on the same
+page are described under the verification alert in
+[Reverse proxy and secrets](#reverse-proxy-and-secrets). Administrator human-check
+alerts also use this channel.
+
+### Troubleshooting
+
+- **Test fails:** check the homeserver URL (include `https://`), that the Bot
+  Matrix ID matches the token's account, and that the token has not been logged out.
+- **No verification code arrives:** the member must accept the bot's invitation;
+  confirm the Matrix ID is spelled `@user:server`.
+- **Replies are ignored:** replies are matched from the bot's sync loop; confirm the
+  Matrix card is still enabled and the application log shows no sync errors.
+
+## Hardcover metadata provider
+
+Hardcover is an optional book-information source that adds series, author, and
+edition details. It does not download files.
+
+Hardcover has no application-level API key, so Family Librarian uses an
+**administrator's own personal access token** for household lookups. Individual
+members do not need Hardcover accounts.
+
+1. Sign in to Hardcover and create a token on its API settings page.
+2. Grant only the `read:catalog:search` and `read:catalog:data` scopes. Do not
+   grant `all`; that gives full account access this integration never uses.
+3. In Family Librarian open **Metadata providers**, paste the token into the
+   Hardcover entry, save, and enable it. The token is encrypted at rest and
+   included in database backups.
+4. Use **Test connection** to confirm it works.
+
+Hardcover's free tier allows about 5,000 requests per day. Family Librarian
+caches lookups and backs off when Hardcover returns a rate-limit response, so a
+busy day degrades to the other metadata providers rather than failing searches.
+Placeholder or compilation entries in Hardcover's community catalog are filtered
+out. Series memberships and completion status feed the **Following** page.
+
+You can disable Hardcover at boot with `MetadataProviders__Hardcover__Enabled=false`.
+
 ## Targeted Kindle delivery
 
 Family Librarian uses CWA to send a specific library book to the opted-in

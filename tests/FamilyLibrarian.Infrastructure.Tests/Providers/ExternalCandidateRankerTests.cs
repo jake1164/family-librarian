@@ -58,7 +58,7 @@ public sealed class ExternalCandidateRankerTests
         RequestMediaType mediaType = RequestMediaType.Ebook,
         NarrationKind? narrationKind = null) =>
         new(
-            ProviderId: "prowlarr",
+            ProviderId: "example-indexer",
             ProviderResultId: resultId,
             WorkId: Guid.Empty,
             EditionId: null,

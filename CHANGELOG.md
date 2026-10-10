@@ -4,6 +4,67 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ---
 
+## [v1.0.0-alpha.5] — 2026-10-10
+
+External acquisition providers grow up: a documented provider protocol (v2) with durable jobs, multi-file audiobook downloads, human-check handoff to an administrator, and much more honest evidence when a book needs a librarian's decision.
+
+### External acquisition providers
+
+- Provider protocol v2: structured health and capability negotiation, durable jobs, and work/edition/release evidence; provider-specific options now live in each provider's own admin page instead of in Family Librarian
+- Providers can report *why* they are degraded or unavailable, and the reason is shown to administrators
+- Multi-output downloads: a provider can deliver a multi-part audiobook as a bundle that is transferred with size, checksum, and sequence checks and scanned as a whole before it is archived
+- Size policy for external downloads (output count, per-file, aggregate, and inactivity limits), and restart-safe recovery of in-flight provider jobs without duplicate downloads
+- Duplicate interactive searches against external providers are coalesced instead of repeated for every result on the page
+- Administrators get a debug search to ask a provider directly, outside its recheck schedule
+
+### Versions
+
+- The status footer shows the running Family Librarian version, taken from the release tag
+- **Sources** shows each external provider's own version (from its manifest) beside its protocol version, kept current by the periodic health check as well as Test Connection
+
+### Matching and review
+
+- Matching uses the work's identity rather than edition-shaped titles (for example "Moby Dick (Illustrated Classics)"), so legitimate candidates are no longer stranded in review
+- Release-name evidence, ranked candidate selection, and an automatic retry loop for providers that return only release names
+- Review screens keep every distinct provider record and show its provenance and the reason a librarian is needed; requesters are only asked to confirm when there is a single candidate
+- Mixed ebook and audiobook requests are fulfilled independently — a review on one format no longer blocks the other
+- Audiobook selection is quality-based rather than gated on download counts
+
+### Human checks
+
+- When a provider needs a person to pass a challenge (such as a CAPTCHA), the administrator is notified and can complete it remotely from the web UI or by replying in Matrix, including a FALLBACK reply
+- Admin queue, task list, and request detail show the provider-supplied reason; requesters still see only generic progress
+
+### Audiobooks and scanning
+
+- LibriVox is a built-in audiobook source with resumable downloads
+- Audiobook identity validation for `.m4b` and multi-part sets, with automatic scan recovery, rescan, and ClamAV size/time limits that no longer treat "too large" as malware
+- Admin pages show truthful acquisition stages, byte counts, and transfer rates; the queue can be paused
+
+**Container images**
+
+```text
+ghcr.io/jake1164/family-librarian:v1.0.0-alpha.5
+ghcr.io/jake1164/family-librarian:alpha
+```
+
+## [v1.0.0-alpha.4] — 2026-09-16
+
+Notifications reach people where they are: Matrix joins SMTP as an outbound channel, with a first two-way exchange.
+
+- Matrix as a second notification provider, with an admin settings card, a connection test, and a personal `/settings/matrix` page where each member links their Matrix ID using a one-time verification code
+- "Did your book arrive?" can be answered `yes`/`no` in a Matrix direct message, and is also now emailed over SMTP for the first time
+- Real-time updates over SignalR replace manual page refreshes for notifications and request status
+
+## [v1.0.0-alpha.3] — 2026-09-14
+
+Reading and series tracking, and a second metadata source.
+
+- **My Reading**: an automatic list of every available request with a "Mark read" action (native ratings were removed)
+- **Following**: follow a series or author, see a per-entry Read/Owned breakdown and whether you are caught up, and get notified when a new entry or work is detected
+- Hardcover added as a metadata provider, powered by an administrator's token, with series and edition data and 429-aware backoff
+- Search ranking tolerates typos and partial matches instead of falling back to alphabetical order
+
 ## [v1.0.0-alpha.2] — 2026-09-13
 
 Accuracy and self-service: automatic acquisition now enforces language instead of silently accepting a mismatched translation, and a book found only in another language (or with more than one plausible edition) is offered to the requester to decide, not routed straight to an admin queue.

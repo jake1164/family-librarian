@@ -8,7 +8,7 @@ public sealed class ProviderAcquisitionJobTests
     private static readonly DateTimeOffset Now = new(2026, 9, 24, 12, 0, 0, TimeSpan.Zero);
 
     private static ProviderAcquisitionJob NewJob() =>
-        new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "annas", null, "idem-key", "candidate-ref", null, null, Now);
+        new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "example-source", null, "idem-key", "candidate-ref", null, null, Now);
 
     private static ProviderAcquisitionJob NewWaitingJob()
     {

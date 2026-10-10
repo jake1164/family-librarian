@@ -365,6 +365,22 @@ public sealed class ExternalCandidateAvailabilityChecker(
     }
 
     /// <summary>
+    /// Reads the provider's manifest and returns its self-declared release version,
+    /// so the periodic probe can keep the Sources page's version current without a
+    /// manual Test Connection.
+    /// </summary>
+    public async Task<string> GetManifestVersionAsync(
+        Domain.Providers.ExternalProvider provider, CancellationToken cancellationToken)
+    {
+        var apiKey = provider.HasApiKey
+            ? protector.Unprotect(
+                Providers.ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
+            : null;
+
+        return (await externalProviderClient.GetManifestAsync(provider.BaseUrl, apiKey, cancellationToken)).Version;
+    }
+
+    /// <summary>
     /// True when <paramref name="provider"/>'s own last-observed health
     /// explicitly reported its search capability as unavailable (protocol v2
     /// §5's <c>operations.search</c>) — the admin-registered-provider

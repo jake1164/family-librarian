@@ -13,6 +13,7 @@ public sealed record ExternalProviderResponse(
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,
     string? CachedProtocolVersion,
+    string? CachedProviderVersion,
     string? CachedCapabilities,
     string? CachedInstanceId,
     bool InstanceReplacedSincePreviousTest,

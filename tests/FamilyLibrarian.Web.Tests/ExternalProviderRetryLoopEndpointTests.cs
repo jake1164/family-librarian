@@ -423,7 +423,7 @@ file static class RetryLoopSupport
 }
 
 /// <summary>
-/// Reports two release-name-only candidates for The Hobbit -- the live Prowlarr
+/// Reports two release-name-only candidates for The Hobbit -- the live an indexer
 /// shape, with no <c>work</c> object at all. The retail-tagged one outranks the
 /// other and always fails its job; the untagged one succeeds.
 /// </summary>

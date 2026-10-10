@@ -118,6 +118,9 @@ public sealed class ExternalProvider
 
     public string? CachedProtocolVersion { get; private set; }
 
+    /// <summary>The provider's own release version as declared by its manifest; informational only.</summary>
+    public string? CachedProviderVersion { get; private set; }
+
     /// <summary>Comma-separated, as declared by the provider's own manifest.</summary>
     public string? CachedCapabilities { get; private set; }
 
@@ -265,7 +268,8 @@ public sealed class ExternalProvider
         string? managementUrl = null,
         string? documentationUrl = null,
         bool manifestReached = false,
-        IReadOnlyList<ProviderHealthIssue>? healthIssues = null)
+        IReadOnlyList<ProviderHealthIssue>? healthIssues = null,
+        string? providerVersion = null)
     {
         LastTestedAtUtc = testedAtUtc;
         LastTestSucceeded = succeeded;
@@ -282,6 +286,7 @@ public sealed class ExternalProvider
         if (manifestReached)
         {
             CachedProtocolVersion = protocolVersion;
+            CachedProviderVersion = Truncate(providerVersion, 64);
             CachedCapabilities = capabilities;
             CachedHealthStatus = healthStatus;
             CachedSearchOperationStatus = searchOperationStatus;
@@ -333,6 +338,19 @@ public sealed class ExternalProvider
         CachedSearchOperationStatus = searchOperationStatus;
         CachedAcquireOperationStatus = acquireOperationStatus;
         CachedHealthIssues = healthIssues ?? [];
+    }
+
+    /// <summary>
+    /// Refreshes the provider's self-declared release version from a manifest read
+    /// outside Test Connection (the periodic health probe). A blank value is ignored
+    /// so a manifest that omits <c>version</c> never erases one already known.
+    /// </summary>
+    public void RecordProviderVersion(string? providerVersion)
+    {
+        if (!string.IsNullOrWhiteSpace(providerVersion))
+        {
+            CachedProviderVersion = Truncate(providerVersion, 64);
+        }
     }
 
     private void ResetTestResult()

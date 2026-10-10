@@ -1,3 +1,4 @@
+using System.Reflection;
 using FamilyLibrarian.Contracts.Operations;
 using FamilyLibrarian.Web.Readiness;
 
@@ -6,6 +7,13 @@ namespace FamilyLibrarian.Web.Endpoints;
 /// <summary>The plain healthy/degraded signal behind the status footer every signed-in user sees.</summary>
 internal static class SystemReadinessEndpoints
 {
+    // Stamped at build time (Directory.Build.props, overridden from the release
+    // tag by the Dockerfile). The SDK appends "+<commit>" to the informational
+    // version; that suffix is build noise in a footer.
+    private static readonly string AppVersion = typeof(SystemReadinessEndpoints).Assembly
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        .Split('+')[0] ?? "unknown";
+
     public static void MapSystemReadinessEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/system/readiness", GetReadinessAsync)
@@ -22,7 +30,7 @@ internal static class SystemReadinessEndpoints
     {
         var response = await readiness.GetReadinessAsync(cancellationToken);
         return Results.Ok(httpContext.User.IsInRole("Admin")
-            ? response
-            : new SystemReadinessResponse(response.Healthy, []));
+            ? response with { Version = AppVersion }
+            : new SystemReadinessResponse(response.Healthy, [], AppVersion));
     }
 }

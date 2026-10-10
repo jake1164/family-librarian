@@ -25,9 +25,9 @@ public sealed class AutomaticCandidateFailureTests
     {
         var request = NewRequest(out var formatId);
 
-        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_one", "Identity mismatch.", Now);
+        request.RecordAutomaticCandidateFailure(formatId, "example-indexer", "c_one", "Identity mismatch.", Now);
 
-        Assert.AreEqual(1, request.CountAutomaticCandidateFailures(formatId, "prowlarr"));
+        Assert.AreEqual(1, request.CountAutomaticCandidateFailures(formatId, "example-indexer"));
     }
 
     [TestMethod]
@@ -35,10 +35,10 @@ public sealed class AutomaticCandidateFailureTests
     {
         var request = NewRequest(out var formatId);
 
-        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_one", "Identity mismatch.", Now);
-        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_one", "Identity mismatch.", Now);
+        request.RecordAutomaticCandidateFailure(formatId, "example-indexer", "c_one", "Identity mismatch.", Now);
+        request.RecordAutomaticCandidateFailure(formatId, "example-indexer", "c_one", "Identity mismatch.", Now);
 
-        Assert.AreEqual(1, request.CountAutomaticCandidateFailures(formatId, "prowlarr"));
+        Assert.AreEqual(1, request.CountAutomaticCandidateFailures(formatId, "example-indexer"));
     }
 
     [TestMethod]
@@ -46,11 +46,11 @@ public sealed class AutomaticCandidateFailureTests
     {
         var request = NewRequest(out var formatId);
 
-        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_one", "Malware detected.", Now);
-        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_two", "Identity mismatch.", Now);
-        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_three", "Malformed EPUB.", Now);
+        request.RecordAutomaticCandidateFailure(formatId, "example-indexer", "c_one", "Malware detected.", Now);
+        request.RecordAutomaticCandidateFailure(formatId, "example-indexer", "c_two", "Identity mismatch.", Now);
+        request.RecordAutomaticCandidateFailure(formatId, "example-indexer", "c_three", "Malformed EPUB.", Now);
 
-        Assert.AreEqual(3, request.CountAutomaticCandidateFailures(formatId, "prowlarr"));
+        Assert.AreEqual(3, request.CountAutomaticCandidateFailures(formatId, "example-indexer"));
     }
 
     [TestMethod]
@@ -60,7 +60,7 @@ public sealed class AutomaticCandidateFailureTests
 
         request.RecordAutomaticCandidateFailure(formatId, "other-source", "c_one", "Identity mismatch.", Now);
 
-        Assert.AreEqual(0, request.CountAutomaticCandidateFailures(formatId, "prowlarr"));
+        Assert.AreEqual(0, request.CountAutomaticCandidateFailures(formatId, "example-indexer"));
     }
 
     [TestMethod]
@@ -68,7 +68,7 @@ public sealed class AutomaticCandidateFailureTests
     {
         var request = NewRequest(out var formatId);
 
-        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_one", "Not the requested book.", Now);
+        request.RecordAutomaticCandidateFailure(formatId, "example-indexer", "c_one", "Not the requested book.", Now);
 
         var declined = request.DeclinedCandidates.Single();
         Assert.AreEqual(DeclinedCandidateReason.AutomaticVerificationFailed, declined.Reason);
@@ -82,7 +82,7 @@ public sealed class AutomaticCandidateFailureTests
         // Whether the budget is spent is the caller's decision.
         var request = NewRequest(out var formatId);
 
-        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_one", "Identity mismatch.", Now);
+        request.RecordAutomaticCandidateFailure(formatId, "example-indexer", "c_one", "Identity mismatch.", Now);
 
         Assert.AreEqual(RequestStatus.PendingAcquisition, request.Status);
     }
@@ -95,13 +95,13 @@ public sealed class AutomaticCandidateFailureTests
         var request = NewRequest(out var formatId);
         request.MarkNeedsReview(
             RequestReviewCategory.PreferenceAmbiguity, "Two editions.", Now,
-            [new RequestReviewCandidateInput(formatId, "prowlarr", "c_one", "Fahrenheit 451", "Ray Bradbury", "en", null, null, null, false)]);
+            [new RequestReviewCandidateInput(formatId, "example-indexer", "c_one", "Fahrenheit 451", "Ray Bradbury", "en", null, null, null, false)]);
 
         request.DismissReviewPreference(null, Now);
 
         Assert.AreEqual(1, request.DeclinedCandidates.Count);
         Assert.AreEqual(DeclinedCandidateReason.RequesterDeclined, request.DeclinedCandidates.Single().Reason);
-        Assert.AreEqual(0, request.CountAutomaticCandidateFailures(formatId, "prowlarr"));
+        Assert.AreEqual(0, request.CountAutomaticCandidateFailures(formatId, "example-indexer"));
     }
 
     [TestMethod]
@@ -110,7 +110,7 @@ public sealed class AutomaticCandidateFailureTests
         var request = NewRequest(out var formatId);
 
         request.RecordAutomaticCandidateFailure(
-            formatId, "prowlarr", "c_one", "Not the requested book.", Now, releaseFingerprint: "ABC123");
+            formatId, "example-indexer", "c_one", "Not the requested book.", Now, releaseFingerprint: "ABC123");
 
         Assert.AreEqual("ABC123", request.DeclinedCandidates.Single().ReleaseFingerprint);
     }
@@ -120,9 +120,9 @@ public sealed class AutomaticCandidateFailureTests
     {
         var request = NewRequest(out var formatId);
 
-        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_one", "Failed.", Now);
+        request.RecordAutomaticCandidateFailure(formatId, "example-indexer", "c_one", "Failed.", Now);
 
         Assert.IsNull(request.DeclinedCandidates.Single().ReleaseFingerprint);
-        Assert.AreEqual(1, request.CountAutomaticCandidateFailures(formatId, "prowlarr"));
+        Assert.AreEqual(1, request.CountAutomaticCandidateFailures(formatId, "example-indexer"));
     }
 }

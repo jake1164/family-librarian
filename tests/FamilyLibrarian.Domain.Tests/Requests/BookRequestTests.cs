@@ -276,14 +276,14 @@ public sealed class BookRequestTests
             "Found 23 candidate(s); choose a reviewed candidate before acquisition.",
             CreatedAt.AddHours(1),
             [new RequestReviewCandidateInput(
-                ebookFormatId, "annas", "ebook-ref", "Day of the Dead", "Rebecca Pettiford", "en", null, null, null, false)]);
+                ebookFormatId, "example-source", "ebook-ref", "Day of the Dead", "Rebecca Pettiford", "en", null, null, null, false)]);
 
         request.AddReviewCandidatesForFormat(
             audiobookFormatId,
             "Found 1 candidate(s); choose a reviewed candidate before acquisition.",
             CreatedAt.AddHours(1).AddSeconds(2),
             [new RequestReviewCandidateInput(
-                audiobookFormatId, "prowlarr", "audio-ref", "Threshing Day", "Rebecca Yarros", "en", null, null, null, false)]);
+                audiobookFormatId, "example-indexer", "audio-ref", "Threshing Day", "Rebecca Yarros", "en", null, null, null, false)]);
 
         Assert.HasCount(2, request.ReviewCandidates);
         Assert.IsTrue(request.ReviewCandidates.Any(candidate =>
@@ -301,13 +301,13 @@ public sealed class BookRequestTests
             RequestReviewCategory.PreferenceAmbiguity,
             "Found 1 candidate(s).",
             CreatedAt.AddHours(1),
-            [new RequestReviewCandidateInput(formatId, "annas", "ref-1", "Title", "Author", "en", null, null, null, false)]);
+            [new RequestReviewCandidateInput(formatId, "example-source", "ref-1", "Title", "Author", "en", null, null, null, false)]);
 
         request.AddReviewCandidatesForFormat(
             formatId,
             "A retry landed here after success.",
             CreatedAt.AddHours(2),
-            [new RequestReviewCandidateInput(formatId, "annas", "ref-2", "Title", "Author", "en", null, null, null, false)]);
+            [new RequestReviewCandidateInput(formatId, "example-source", "ref-2", "Title", "Author", "en", null, null, null, false)]);
 
         Assert.HasCount(1, request.ReviewCandidates);
         Assert.AreEqual("ref-1", request.ReviewCandidates.Single().ProviderResultId);
@@ -322,7 +322,7 @@ public sealed class BookRequestTests
         Assert.ThrowsExactly<InvalidOperationException>(() =>
             request.AddReviewCandidatesForFormat(
                 formatId, "reason", CreatedAt.AddHours(1),
-                [new RequestReviewCandidateInput(formatId, "annas", "ref", "Title", "Author", "en", null, null, null, false)]));
+                [new RequestReviewCandidateInput(formatId, "example-source", "ref", "Title", "Author", "en", null, null, null, false)]));
     }
 
     [TestMethod]

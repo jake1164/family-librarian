@@ -3,7 +3,7 @@ using FamilyLibrarian.Application.Providers;
 namespace FamilyLibrarian.Infrastructure.Tests.Providers;
 
 /// <summary>
-/// Every case here is a real release name captured from a live Prowlarr
+/// Every case here is a real release name captured from a live an indexer
 /// <c>/search</c> response for "Fahrenheit 451" by Ray Bradbury on
 /// <c>toontown-int-srv2</c> (PROVIDER-7). The acceptances and the refusals are
 /// equally load-bearing: four of these names contain both the expected title

@@ -1,5 +1,7 @@
 <Project>
   <PropertyGroup>
+    <!-- Release version. The Dockerfile overrides it from the git tag (APP_VERSION). -->
+    <Version>1.0.0-alpha.5</Version>
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>14.0</LangVersion>
     <Nullable>enable</Nullable>

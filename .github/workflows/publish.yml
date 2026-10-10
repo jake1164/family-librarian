@@ -38,6 +38,7 @@ jobs:
         id: vars
         run: |
           TAG="${GITHUB_REF_NAME}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
           IMAGE="ghcr.io/${{ github.repository }}"
           echo "tags<<EOF" >> "$GITHUB_OUTPUT"
           echo "${IMAGE}:${TAG}" >> "$GITHUB_OUTPUT"
@@ -64,3 +65,5 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.vars.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ steps.vars.outputs.version }}

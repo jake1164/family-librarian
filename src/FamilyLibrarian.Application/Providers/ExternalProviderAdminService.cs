@@ -279,7 +279,8 @@ public sealed class ExternalProviderAdminService(
                 manifest.ManagementUrl,
                 manifest.DocumentationUrl,
                 manifestReached: true,
-                healthIssues: health.ReportedIssues);
+                healthIssues: health.ReportedIssues,
+                providerVersion: manifest.Version);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
@@ -356,6 +357,7 @@ public sealed class ExternalProviderAdminService(
         provider.ApiKeyHint,
         provider.ApiKeySetAtUtc,
         provider.CachedProtocolVersion,
+        provider.CachedProviderVersion,
         provider.CachedCapabilities,
         provider.CachedInstanceId,
         provider.InstanceReplacedSincePreviousTest,
@@ -383,6 +385,7 @@ public sealed record ExternalProviderStatus(
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,
     string? CachedProtocolVersion,
+    string? CachedProviderVersion,
     string? CachedCapabilities,
     string? CachedInstanceId,
     bool InstanceReplacedSincePreviousTest,
