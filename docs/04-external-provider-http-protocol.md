@@ -553,6 +553,14 @@ Any `2xx` status containing a `jobId`:
 
 `202 Accepted` is the convention — use it unless you have a reason not to.
 
+An initial response or an idempotent replay may report the job's current
+terminal state. Family Librarian keeps that job locally pending until its
+completion or failure bookkeeping finishes. Provider-originated `cancelled`
+counts as an unsuccessful acquisition: the failed copy is excluded from the
+automatic retry loop and fulfillment is woken to try the next candidate or
+request librarian review. This is distinct from an administrator cancelling
+tracking locally.
+
 ### Polling: `GET /acquire/{jobId}`
 
 ```json

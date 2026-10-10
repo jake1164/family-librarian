@@ -258,6 +258,22 @@ public sealed class ExternalProviderCancelledJobEndpointTests
             "cancelled-job-external");
 
     [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task ACancelledSubmissionAdvancesToTheNextCandidate(bool replayAfterLostResponse)
+    {
+        await using var ownFixture = await WebTestFixture.CreateAsync();
+        await AssertFailureAdvancesToNextCandidateAsync(
+            ownFixture, new RetryLoopExternalProviderClient
+            {
+                FailingJobState = ProviderAcquisitionJobLifecycleState.Cancelled,
+                FailingSubmissionIsTerminal = true,
+                LoseFirstSubmissionResponse = replayAfterLostResponse
+            },
+            "cancelled-submission-external");
+    }
+
+    [TestMethod]
     public async Task AProtocolBreakingStatusFailsTheJobInsteadOfBeingPolledForever()
     {
         await using var ownFixture = await WebTestFixture.CreateAsync();
@@ -297,6 +313,16 @@ public sealed class ExternalProviderCancelledJobEndpointTests
         await RetryLoopSupport.RunRecheckAsync(factory);
         Assert.AreEqual(RetryLoopExternalProviderClient.FailingReference, client.LastSubmittedCandidate);
 
+        if (client.LoseFirstSubmissionResponse)
+        {
+            await using var scope = factory.Services.CreateAsyncScope();
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var job = await database.ProviderAcquisitionJobs.SingleAsync(candidate => candidate.RequestId == request.Id);
+            Assert.IsNull(job.ProviderJobId, "A lost response must leave the durable submission available for replay.");
+            job.Reschedule(DateTimeOffset.UtcNow.AddSeconds(-1), DateTimeOffset.UtcNow);
+            await database.SaveChangesAsync();
+        }
+
         var wakeUp = factory.Services.GetRequiredService<FamilyLibrarian.Web.Acquisition.AutomaticFulfillmentSignal>();
         Assert.IsFalse(await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None));
         await RetryLoopSupport.RunPollingAsync(factory);
@@ -313,6 +339,22 @@ public sealed class ExternalProviderCancelledJobEndpointTests
                 .ToListAsync();
             Assert.HasCount(1, declined, "The failed copy must be ruled out so it is not retried.");
             Assert.AreEqual(RetryLoopExternalProviderClient.FailingReference, declined[0].ProviderResultId);
+            var failedJob = await database.ProviderAcquisitionJobs.SingleAsync(job => job.RequestId == request.Id);
+            Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Failed, failedJob.LifecycleState);
+            Assert.IsNull(failedJob.NextPollAtUtc, "A failed job must never remain due for polling.");
+            if (client.FailingJobState == ProviderAcquisitionJobLifecycleState.Cancelled)
+                Assert.AreEqual("PROVIDER_CANCELLED", failedJob.ErrorCode);
+            Assert.IsTrue(await database.ProviderAttempts.AnyAsync(attempt =>
+                attempt.RequestId == request.Id && attempt.Outcome == ProviderAttemptOutcome.Retrying),
+                "Advancing after a cancellation must record the retry attempt.");
+        }
+
+        if (client.LoseFirstSubmissionResponse)
+        {
+            Assert.HasCount(2, client.SubmittedRequestIds);
+            Assert.AreEqual(client.SubmittedRequestIds[0], client.SubmittedRequestIds[1]);
+            Assert.AreEqual(client.SubmittedIdempotencyKeys[0], client.SubmittedIdempotencyKeys[1]);
+            Assert.AreEqual(0, client.StatusPollCount, "A replayed cancelled response must be handled without another status request.");
         }
 
         await RetryLoopSupport.RunRecheckAsync(factory);
@@ -391,6 +433,7 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
     public const string SucceedingReference = "c_plain_succeeds";
 
     private readonly Dictionary<string, string> _jobCandidates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _idempotentJobs = new(StringComparer.Ordinal);
     private int _jobCounter;
 
     public const string TwinReference = "c_retail_twin";
@@ -400,6 +443,16 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
 
     /// <summary>When set, the failing candidate's status poll breaks the protocol instead of reporting a state.</summary>
     public bool FailingJobBreaksProtocol { get; init; }
+
+    public bool FailingSubmissionIsTerminal { get; init; }
+
+    public bool LoseFirstSubmissionResponse { get; init; }
+
+    public List<Guid> SubmittedRequestIds { get; } = [];
+
+    public List<string> SubmittedIdempotencyKeys { get; } = [];
+
+    public int StatusPollCount { get; private set; }
 
     public string? LastSubmittedCandidate { get; private set; }
 
@@ -456,15 +509,26 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
     {
         LastSubmittedCandidate = request.CandidateReference;
         SubmittedCandidates.Add(request.CandidateReference);
-        var jobId = $"retry-job-{++_jobCounter}";
-        _jobCandidates[jobId] = request.CandidateReference;
+        SubmittedRequestIds.Add(request.RequestId);
+        SubmittedIdempotencyKeys.Add(idempotencyKey);
+        if (!_idempotentJobs.TryGetValue(idempotencyKey, out var jobId))
+        {
+            jobId = $"retry-job-{++_jobCounter}";
+            _idempotentJobs[idempotencyKey] = jobId;
+            _jobCandidates[jobId] = request.CandidateReference;
+            if (LoseFirstSubmissionResponse && request.CandidateReference == FailingReference)
+                throw new HttpRequestException("The provider accepted the job, but its response was lost.");
+        }
+        var state = FailingSubmissionIsTerminal && request.CandidateReference == FailingReference
+            ? FailingJobState : ProviderAcquisitionJobLifecycleState.Running;
         return Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
-            jobId, ProviderAcquisitionJobLifecycleState.Running, phase: null, pollAfterSeconds: 0));
+            jobId, state, phase: null, pollAfterSeconds: 0));
     }
 
     public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
     {
+        StatusPollCount++;
         var isFailing = _jobCandidates.GetValueOrDefault(jobId) == FailingReference;
         if (isFailing && FailingJobBreaksProtocol)
         {

@@ -114,6 +114,16 @@ public sealed class AcquisitionJobPollingService(
                         wasWaitingForInteraction, cancellationToken);
                     return;
                 }
+
+                // A replay after a lost response may already be cancelled.
+                // RecordSubmission preserves a nonterminal local state until
+                // this bookkeeping completes; no extra status request is needed.
+                if (submission.State == ProviderAcquisitionJobLifecycleState.Cancelled)
+                {
+                    await RecordFailureAsync(job, "PROVIDER_CANCELLED", "The provider cancelled the acquisition.",
+                        false, null, null, wasWaitingForInteraction, cancellationToken);
+                    return;
+                }
             }
             catch (ExternalProviderSubmissionConflictException exception)
             {

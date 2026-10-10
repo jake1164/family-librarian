@@ -262,14 +262,14 @@ public sealed class ProviderAcquisitionJob
             throw new InvalidOperationException("The provider returned a different job ID for an existing idempotency key.");
 
         ProviderJobId = providerJobId.Trim();
-        // A remote "completed" response means the provider finished its
-        // work; FL still has to fetch, validate, stage and secure the outputs.
-        // Keep the local job nonterminal until that entire path commits so a
-        // malformed or missing output can be recorded as a local failure.
-        ApplyState(initialState == ProviderAcquisitionJobLifecycleState.Completed
+        // A remote terminal response still needs local processing: completed
+        // outputs must be secured, and failed/cancelled jobs must record the
+        // attempt and wake fulfillment. Keep the job nonterminal until that
+        // processing commits, including when submission is an idempotent replay.
+        ApplyState(IsTerminal(initialState)
             ? ProviderAcquisitionJobLifecycleState.Running
             : initialState, phase: null, atUtc);
-        NextPollAtUtc = nextPollAtUtc ?? atUtc;
+        NextPollAtUtc = IsTerminal(initialState) ? atUtc : nextPollAtUtc ?? atUtc;
         UpdatedAtUtc = atUtc;
     }
 

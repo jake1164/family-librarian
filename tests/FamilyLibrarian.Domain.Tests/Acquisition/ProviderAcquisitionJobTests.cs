@@ -18,6 +18,34 @@ public sealed class ProviderAcquisitionJobTests
     }
 
     [TestMethod]
+    [DataRow(ProviderAcquisitionJobLifecycleState.Failed)]
+    [DataRow(ProviderAcquisitionJobLifecycleState.Cancelled)]
+    public void ATerminalSubmissionCanStillRecordTheLocalFailure(ProviderAcquisitionJobLifecycleState remoteState)
+    {
+        var job = NewJob();
+        job.RecordSubmission("provider-job-1", remoteState, Now.AddMinutes(15), Now);
+
+        job.RecordFailure("PROVIDER_CANCELLED", "The provider ended the job.", false, null, null, Now.AddSeconds(1));
+
+        Assert.AreEqual("provider-job-1", job.ProviderJobId);
+        Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Failed, job.LifecycleState);
+        Assert.IsNull(job.NextPollAtUtc);
+    }
+
+    [TestMethod]
+    public void ALocallyCancelledJobCannotBeReopenedBySubmission()
+    {
+        var job = NewJob();
+        job.Cancel("The administrator abandoned this job.", Now);
+
+        Assert.ThrowsExactly<InvalidProviderAcquisitionJobTransitionException>(() =>
+            job.RecordSubmission("provider-job-1", ProviderAcquisitionJobLifecycleState.Cancelled, Now, Now));
+
+        Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Cancelled, job.LifecycleState);
+        Assert.IsNull(job.NextPollAtUtc);
+    }
+
+    [TestMethod]
     public void RecordingAnInteractionSessionStartRequiresTheJobToBeWaiting()
     {
         var job = NewJob(); // starts Queued
