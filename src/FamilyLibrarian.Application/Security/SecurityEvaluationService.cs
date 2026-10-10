@@ -26,7 +26,8 @@ public sealed class SecurityEvaluationService(
     IEnumerable<IMalwareScanner> scanners,
     IEnumerable<IAssetValidator> validators,
     IAuditWriter audit,
-    IClock clock) : ISecurityEvaluationRunner
+    IClock clock,
+    IArtifactEvidenceRecorder? evidence = null) : ISecurityEvaluationRunner
 {
     private const string PolicyVersion = "v1";
 
@@ -136,6 +137,15 @@ public sealed class SecurityEvaluationService(
             assetId.ToString(),
             new { AssetId = assetId, evaluation.Status },
             cancellationToken);
+
+        // Evidence only: recorded after the decision above is saved and audited, so it cannot influence it.
+        if (evidence is not null)
+        {
+            var toolVersions = new Dictionary<string, string?>(StringComparer.Ordinal);
+            foreach (var validator in validators)
+                toolVersions[validator.Id] = validator.GetType().Assembly.GetName().Version?.ToString();
+            await evidence.RecordSecurityEvaluationAsync(asset, evaluation, toolVersions, cancellationToken);
+        }
 
         if (evaluation.Status == SecurityEvaluationStatus.Failed &&
             evaluation.ScanResults.Any(result => result.Status == ScanResultStatus.Detected))

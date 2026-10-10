@@ -83,25 +83,34 @@ public sealed class EpubAssetIdentityVerifier(
                 .ToArray();
             var titleMatches = titles.Any(title => expectedTitles.Any(expectedTitle => bookMatcher.TitleMatches(expectedTitle, title)));
             var authorMatches = creators.Any(creator => bookMatcher.AuthorMatches(expected.PrimaryAuthor, creator));
+            // Observations only (recorded as evidence); they never feed the verdict below.
+            var facts = new List<IdentityFact>
+            {
+                IdentityFacts.Title(titles.Count > 0, titleMatches),
+                IdentityFacts.Author(creators.Count > 0, authorMatches)
+            };
             if (!titleMatches || !authorMatches)
             {
                 return AssetIdentityVerificationResult.Unmatched(Id, DescribeTitleAuthorMismatch(
-                    expectedTitles, expected.PrimaryAuthor, titles, creators, titleMatches, authorMatches));
+                    expectedTitles, expected.PrimaryAuthor, titles, creators, titleMatches, authorMatches), facts);
             }
 
             // Consent is specific to the selected language, including English.
             // Missing metadata remains eligible; an explicit mismatch does not.
             var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
-            if (languages.Count > 0 &&
-                !languages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage)))
+            var languageAccepted = languages.Count == 0 ||
+                languages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage));
+            facts.Add(IdentityFacts.Language(languages, languageAccepted));
+            if (!languageAccepted)
             {
                 return AssetIdentityVerificationResult.Unmatched(
                     Id,
                     $"The file's embedded language ({string.Join(", ", languages)}) doesn't match the language " +
-                    $"accepted for this request{(string.IsNullOrWhiteSpace(acceptedLanguage) ? string.Empty : $" ({acceptedLanguage})")}.");
+                    $"accepted for this request{(string.IsNullOrWhiteSpace(acceptedLanguage) ? string.Empty : $" ({acceptedLanguage})")}.",
+                    facts);
             }
 
-            return AssetIdentityVerificationResult.Match(Id);
+            return AssetIdentityVerificationResult.Match(Id, facts);
         }
         catch (Exception exception) when (exception is InvalidDataException or ArgumentException or XmlException)
         {

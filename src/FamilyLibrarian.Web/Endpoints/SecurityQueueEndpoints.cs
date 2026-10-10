@@ -81,7 +81,16 @@ internal static class SecurityQueueEndpoints
                 approval.Decision.ToString(), approval.ActorType.ToString(), approval.Reason, approval.DecidedAtUtc))
                 .ToArray()),
         entry.Asset.IdentityMismatchReason,
-        entry.Asset.ScanFailureReason);
+        entry.Asset.ScanFailureReason,
+        ToEvidenceResponse(entry.Evidence));
+
+    private static ArtifactEvidenceResponse ToEvidenceResponse(IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence> evidence) =>
+        evidence.Count == 0
+            ? new("NotRecorded", null, null, [])
+            : new("Recorded", evidence[0].Sha256, evidence.Max(item => item.EvidenceSchemaVersion),
+                evidence.Select(item => new ArtifactEvidenceItemResponse(
+                    item.RecordKind, item.RecordId, item.FindingId, item.Dimension.ToString(), item.Code,
+                    item.Polarity.ToString(), item.Source, item.Value, item.ToolVersion, item.RecordedAtUtc)).ToArray());
 
     /// <summary>
     /// Queues the scan and returns at once. A large file takes minutes to

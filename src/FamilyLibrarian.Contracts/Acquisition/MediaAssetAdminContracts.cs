@@ -17,6 +17,16 @@ public sealed record MediaAssetAdminResponse(
     DateTimeOffset UpdatedAtUtc,
     SecurityEvaluationDetailResponse? LatestEvaluation,
     string? IdentityMismatchReason = null,
-    string? ScanFailureReason = null);
+    string? ScanFailureReason = null,
+    ArtifactEvidenceResponse? Evidence = null);
+
+/// <summary>One persisted artifact-evidence finding. <c>(RecordId, FindingId)</c> cites it.</summary>
+public sealed record ArtifactEvidenceItemResponse(
+    string RecordKind, Guid RecordId, string FindingId, string Dimension, string Code, string Polarity,
+    string Source, string? Value, string? ToolVersion, DateTimeOffset RecordedAtUtc);
+
+/// <param name="Status"><c>Recorded</c>, or <c>NotRecorded</c> for an asset processed before evidence recording existed.</param>
+public sealed record ArtifactEvidenceResponse(
+    string Status, string? Sha256, int? SchemaVersion, IReadOnlyList<ArtifactEvidenceItemResponse> Items);
 
 public sealed record MediaAssetAdminListResponse(IReadOnlyList<MediaAssetAdminResponse> Assets);

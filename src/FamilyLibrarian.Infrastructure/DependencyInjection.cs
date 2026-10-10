@@ -342,6 +342,8 @@ public static class DependencyInjection
 
         services.AddScoped<IAcquisitionBoundaryGuard, AcquisitionBoundaryGuard>();
         services.AddScoped<ISecurityEvaluationRepository, SecurityEvaluationRepository>();
+        services.AddScoped<IArtifactEvidenceStore, ArtifactEvidenceStore>();
+        services.AddScoped<IArtifactEvidenceRecorder, ArtifactEvidenceRecorder>();
         services.AddScoped<SecurityEvaluationService>();
         services.AddScoped<ISecurityEvaluationRunner>(provider => provider.GetRequiredService<SecurityEvaluationService>());
         services.AddScoped<ApprovalService>();

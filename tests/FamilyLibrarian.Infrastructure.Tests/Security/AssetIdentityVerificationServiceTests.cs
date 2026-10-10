@@ -78,6 +78,73 @@ public sealed class AssetIdentityVerificationServiceTests
         Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
     }
 
+    [TestMethod]
+    public async Task RecordingEvidenceNeverChangesAnIdentityVerdict()
+    {
+        foreach (var (format, preConfirmed, verifiers) in new (string, bool, IAssetIdentityVerifier[])[]
+                 {
+                     (".mobi", false, []),
+                     (".mobi", true, []),
+                     (".m4b", true, [new MatchingVerifier()])
+                 })
+        {
+            var plainAsset = CreateProcessingAsset(format, preConfirmed);
+            var plain = await new AssetIdentityVerificationService(
+                new AssetRepository(plainAsset), new RecordingStagingStore(), verifiers, new RecordingAuditWriter(), new FixedClock())
+                .VerifyAsync(plainAsset.Id, CancellationToken.None);
+
+            var observedAsset = CreateProcessingAsset(format, preConfirmed);
+            var recorder = new CapturingIdentityRecorder();
+            var observed = await new AssetIdentityVerificationService(
+                new AssetRepository(observedAsset), new RecordingStagingStore(), verifiers, new RecordingAuditWriter(), new FixedClock(), recorder)
+                .VerifyAsync(observedAsset.Id, CancellationToken.None);
+
+            Assert.AreEqual(plain.IsMatch, observed.IsMatch, $"{format}/{preConfirmed}");
+            Assert.AreEqual(plain.VerifierId, observed.VerifierId);
+            Assert.AreEqual(plainAsset.StorageState, observedAsset.StorageState);
+            Assert.AreEqual(1, recorder.Calls);
+            Assert.AreEqual(observed.IsMatch, recorder.LastResult!.IsMatch);
+            // Held assets already carry their state when the evidence is recorded.
+            Assert.AreEqual(observedAsset.StorageState, recorder.StorageStateWhenCalled);
+        }
+    }
+
+    [TestMethod]
+    public async Task AnAttestedFormatWithNoVerifierStillPassesAsBeforeButIsRecordedAsUncorroborated()
+    {
+        var asset = CreateProcessingAsset(".mp3", identityPreConfirmed: true);
+        var recorder = new CapturingIdentityRecorder();
+        var result = await new AssetIdentityVerificationService(
+            new AssetRepository(asset), new RecordingStagingStore(), [], new RecordingAuditWriter(), new FixedClock(), recorder)
+            .VerifyAsync(asset.Id, CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch, "M1-2 is evidence-only: existing behavior is preserved.");
+        Assert.AreEqual(ArtifactEvidenceRecorder.NoVerifierId, recorder.LastResult!.VerifierId);
+        Assert.IsEmpty(recorder.LastResult.Facts, "Nothing in the file was compared, so there are no content facts.");
+    }
+
+    private sealed class CapturingIdentityRecorder : IArtifactEvidenceRecorder
+    {
+        public int Calls { get; private set; }
+
+        public AssetIdentityVerificationResult? LastResult { get; private set; }
+
+        public MediaAssetStorageState StorageStateWhenCalled { get; private set; }
+
+        public Task RecordSecurityEvaluationAsync(
+            MediaAsset asset, SecurityEvaluation evaluation, IReadOnlyDictionary<string, string?> toolVersions,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task RecordIdentityVerificationAsync(
+            MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken)
+        {
+            Calls++;
+            LastResult = result;
+            StorageStateWhenCalled = asset.StorageState;
+            return Task.CompletedTask;
+        }
+    }
+
     private static MediaAsset CreateProcessingAsset(string format, bool identityPreConfirmed)
     {
         var asset = new MediaAsset(

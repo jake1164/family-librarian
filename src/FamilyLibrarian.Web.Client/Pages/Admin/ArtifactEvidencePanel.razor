@@ -1,0 +1,48 @@
+@using FamilyLibrarian.Contracts.Acquisition
+
+@* Per docs/07-ui-conventions.md: no status chips and no colour semantics here. Polarity is shown as text. *@
+@if (Evidence is null || Evidence.Status == "NotRecorded")
+{
+    <p class="mt-2 mb-0"><small>Artifact evidence: NotRecorded (this file was processed before evidence recording existed, or has not been processed yet).</small></p>
+}
+else
+{
+    <details class="mt-2" style="overflow-wrap: anywhere;">
+        <summary>Artifact evidence (@Evidence.Items.Count findings)</summary>
+        <dl>
+            @foreach (var group in Evidence.Items.GroupBy(item => item.Dimension))
+            {
+                <dt>@Humanize(group.Key)</dt>
+                <dd>
+                    <ul class="mb-0">
+                        @foreach (var item in group)
+                        {
+                            <li>
+                                <code>@item.Code</code> (@item.Polarity) · @item.Source
+                                @if (!string.IsNullOrWhiteSpace(item.Value))
+                                {
+                                    <span> · @item.Value</span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </dd>
+            }
+        </dl>
+    </details>
+}
+
+@code {
+    [Parameter] public ArtifactEvidenceResponse? Evidence { get; set; }
+
+    private static string Humanize(string dimension) => dimension switch
+    {
+        "IdentityAttestation" => "Identity attested by (not content verification)",
+        "IdentityCorroboration" => "Identity corroborated by the file's content",
+        "Language" => "Language",
+        "Structure" => "Structure",
+        "Completeness" => "Completeness",
+        "Security" => "Security",
+        _ => dimension
+    };
+}

@@ -91,4 +91,72 @@ public static class EvidenceReasonCodes
     {
         public const string InsufficientEvidence = "candidate.decision.insufficient_evidence";
     }
+
+    /// <summary>
+    /// Who vouched for an artifact's identity before its content was read. This is NOT
+    /// content verification and must never be read as such (alpha.6 D-14).
+    /// </summary>
+    public static class ArtifactIdentityAttestation
+    {
+        /// <summary>Supplied through the manual-upload route, which is administrator-only.</summary>
+        public const string ManualUpload = "artifact.identity_attestation.manual_upload";
+        public const string BuiltInSource = "artifact.identity_attestation.built_in_source";
+        public const string ExternalProviderConfirmed = "artifact.identity_attestation.external_provider_confirmed";
+        public const string UnknownOrigin = "artifact.identity_attestation.unknown_origin";
+        public const string None = "artifact.identity_attestation.none";
+    }
+
+    /// <summary>What the file's own content says about its identity, independent of any attestation.</summary>
+    public static class ArtifactIdentityCorroboration
+    {
+        public const string Corroborated = "artifact.identity_corroboration.corroborated";
+
+        /// <summary>A verifier read the file and found an explicit difference.</summary>
+        public const string Contradicted = "artifact.identity_corroboration.contradicted";
+
+        /// <summary>A verifier ran but could not read enough to compare. Not a contradiction.</summary>
+        public const string Inconclusive = "artifact.identity_corroboration.inconclusive";
+
+        /// <summary>No content verifier exists for this format, so the content was never compared.</summary>
+        public const string Unavailable = "artifact.identity_corroboration.unavailable";
+
+        public const string TitleAgrees = "artifact.identity_title.agrees";
+        public const string TitleDiffers = "artifact.identity_title.differs";
+        public const string TitleAbsent = "artifact.identity_title.absent";
+        public const string AuthorAgrees = "artifact.identity_author.agrees";
+        public const string AuthorDiffers = "artifact.identity_author.differs";
+        public const string AuthorAbsent = "artifact.identity_author.absent";
+    }
+
+    /// <summary>The language the file itself declares, compared with the language accepted for the request.</summary>
+    public static class ArtifactLanguage
+    {
+        public const string DeclaredMatchesRequest = "artifact.language.declared_matches_request";
+        public const string DeclaredConflicts = "artifact.language.declared_conflicts";
+        public const string NotDeclared = "artifact.language.not_declared";
+        public const string NotAssessed = "artifact.language.not_assessed";
+    }
+
+    /// <summary>Container and format validator results.</summary>
+    public static class ArtifactStructure
+    {
+        /// <summary>The validators that ran reported no defect. Not a claim that the file is complete.</summary>
+        public const string NoDefectReported = "artifact.structure.no_defect_reported";
+        public const string DefectReported = "artifact.structure.defect_reported";
+    }
+
+    /// <summary>Whether the file appears to be the complete work.</summary>
+    public static class ArtifactCompleteness
+    {
+        public const string NotAssessed = "artifact.completeness.not_assessed";
+    }
+
+    /// <summary>Malware and safety scanning results.</summary>
+    public static class ArtifactSecurity
+    {
+        public const string ScanClean = "artifact.security.scan_clean";
+        public const string ThreatDetected = "artifact.security.threat_detected";
+        public const string ScanError = "artifact.security.scan_error";
+        public const string ScannerUnavailable = "artifact.security.scanner_unavailable";
+    }
 }

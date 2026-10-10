@@ -12,6 +12,7 @@ using System.Threading.Channels;
 using FamilyLibrarian.Domain.Security;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -77,6 +78,21 @@ public sealed class MediaAssetQueueEndpointTests
         Assert.AreEqual("Unmatched", entry.StorageState);
         Assert.IsNotNull(entry.LatestEvaluation);
         Assert.AreEqual(nameof(SecurityEvaluationStatus.Passed), entry.LatestEvaluation.Status);
+
+        // M1-2: evidence of what the existing checks observed, kept in separate dimensions.
+        Assert.IsNotNull(entry.Evidence);
+        Assert.AreEqual("Recorded", entry.Evidence.Status);
+        Assert.IsTrue(entry.Evidence.Items.All(item => item.FindingId.Length > 0 && item.RecordId != Guid.Empty));
+        Assert.HasCount(entry.Evidence.Items.Count, entry.Evidence.Items.Select(item => (item.RecordId, item.FindingId)).Distinct().ToArray());
+        Assert.IsTrue(entry.Evidence.Items.Any(item => item.Code == "artifact.security.scan_clean"));
+        Assert.IsTrue(entry.Evidence.Items.Any(item => item.Code == "artifact.completeness.not_assessed" && item.Polarity == "Unknown"));
+        var attestation = entry.Evidence.Items.Single(item => item.Dimension == "IdentityAttestation");
+        Assert.AreEqual("artifact.identity_attestation.manual_upload", attestation.Code);
+        Assert.AreEqual("Weak", attestation.Polarity, "Attestation is a statement about the source, never content verification.");
+        Assert.AreEqual("artifact.identity_corroboration.contradicted",
+            entry.Evidence.Items.Single(item => item.FindingId == "ev-corroboration").Code,
+            "An explicit content contradiction is recorded even though the upload was attested.");
+        Assert.IsTrue(entry.Evidence.Items.Any(item => item.Code == "artifact.identity_title.differs"));
     }
 
     [TestMethod]
@@ -109,6 +125,62 @@ public sealed class MediaAssetQueueEndpointTests
         var retained = recent.Assets.Single(asset => asset.AssetId == imported.MediaAssetId);
         Assert.IsNotNull(retained.LatestEvaluation);
         Assert.IsNotNull(retained.LatestEvaluation.CompletedAtUtc);
+
+        // Recording evidence did not change the approval: still trusted/published, and the evidence
+        // shows the independent content corroboration beside the (weaker) attestation.
+        Assert.IsNotNull(retained.Evidence);
+        Assert.AreEqual("Recorded", retained.Evidence.Status);
+        Assert.AreEqual("artifact.identity_corroboration.corroborated",
+            retained.Evidence.Items.Single(item => item.FindingId == "ev-corroboration").Code);
+        Assert.AreEqual("artifact.identity_attestation.manual_upload",
+            retained.Evidence.Items.Single(item => item.Dimension == "IdentityAttestation").Code);
+        Assert.IsTrue(retained.Evidence.Items.Any(item => item.Dimension == "Language"));
+    }
+
+    [TestMethod]
+    public async Task AnAssetProcessedBeforeEvidenceExistedShowsNotRecordedAndABadWriteCannotBreakLaterSaves()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        var (requestId, formatId) = await CreateEbookRequestAsync(client);
+        var upload = await client.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(EpubTestFixture.BuildMinimalEpubBytes("A Different Book", "Someone Else"), "book.epub"));
+        var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        Assert.IsNotNull(imported);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<FamilyLibrarian.Infrastructure.Persistence.AppDbContext>();
+            var recorded = await database.ArtifactEvidenceItems.Where(item => item.MediaAssetId == imported.MediaAssetId).ToListAsync();
+            Assert.IsNotEmpty(recorded);
+
+            // A duplicate (asset, record, finding) violates the unique index: the store reports failure,
+            // detaches the bad rows, and an unrelated later save on the same context still succeeds.
+            var store = scope.ServiceProvider.GetRequiredService<IArtifactEvidenceStore>();
+            var first = recorded[0];
+            store.Add([new FamilyLibrarian.Domain.Evidence.ArtifactEvidence(
+                first.MediaAssetId, first.Sha256, first.RecordKind, first.RecordId, first.FindingId, first.Dimension,
+                first.Code, first.Polarity, first.Source, first.Value, first.ToolVersion, DateTimeOffset.UtcNow)]);
+            Assert.IsFalse(await store.TrySaveAsync(CancellationToken.None));
+            Assert.IsEmpty(database.ChangeTracker.Entries<FamilyLibrarian.Domain.Evidence.ArtifactEvidence>()
+                .Where(entry => entry.State == EntityState.Added).ToArray());
+            await database.SaveChangesAsync();
+
+            // Model a file processed before evidence recording existed.
+            await database.ArtifactEvidenceItems.Where(item => item.MediaAssetId == imported.MediaAssetId).ExecuteDeleteAsync();
+        }
+
+        var queue = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
+        var legacy = queue!.Assets.Single(asset => asset.AssetId == imported.MediaAssetId);
+        Assert.IsNotNull(legacy.Evidence);
+        Assert.AreEqual("NotRecorded", legacy.Evidence.Status);
+        Assert.IsEmpty(legacy.Evidence.Items);
+        Assert.AreEqual("Unmatched", legacy.StorageState, "Absent evidence must not change the existing hold.");
     }
 
     [TestMethod]

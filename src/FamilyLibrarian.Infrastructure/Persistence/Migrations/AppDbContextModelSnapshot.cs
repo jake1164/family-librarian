@@ -18,7 +18,7 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("identity")
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -1955,6 +1955,90 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("delivery_targets", "delivery");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Evidence.ArtifactEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("Dimension")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("dimension");
+
+                    b.Property<int>("EvidenceSchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("evidence_schema_version");
+
+                    b.Property<string>("FindingId")
+                        .IsRequired()
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)")
+                        .HasColumnName("finding_id");
+
+                    b.Property<Guid>("MediaAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("media_asset_id");
+
+                    b.Property<string>("Polarity")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("polarity");
+
+                    b.Property<Guid>("RecordId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("record_id");
+
+                    b.Property<string>("RecordKind")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("record_kind");
+
+                    b.Property<DateTimeOffset>("RecordedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at_utc");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sha256");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("source");
+
+                    b.Property<string>("ToolVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("tool_version");
+
+                    b.Property<string>("Value")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("value");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaAssetId", "RecordedAtUtc");
+
+                    b.HasIndex("MediaAssetId", "RecordId", "FindingId")
+                        .IsUnique();
+
+                    b.ToTable("artifact_evidence", "security");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Feedback.UserWorkFeedback", b =>
@@ -4167,6 +4251,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Evidence.ArtifactEvidence", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.MediaAsset", null)
+                        .WithMany()
+                        .HasForeignKey("MediaAssetId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

@@ -1,4 +1,6 @@
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.Requests;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -75,6 +77,50 @@ public sealed class MigrationUpgradeTests
         Assert.AreEqual("Example indexer · usenet", updated.AdminSourceSummary);
         Assert.IsFalse(database.Database.HasPendingModelChanges());
     }
+
+    [TestMethod]
+    public async Task ArtifactEvidenceUpgradeKeepsExistingAssetsAndLeavesThemWithoutEvidence()
+    {
+        const string PreArtifactEvidenceMigration = "20261010141754_AddExternalProviderCachedVersion";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var now = DateTimeOffset.UtcNow;
+        var work = new Work("Evidence upgrade", null, null, null, PublicationStatus.Published, now);
+        database.Works.Add(work);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        database.BookRequests.Add(request);
+        var asset = new MediaAsset(
+            work.Id, editionId: null, RequestMediaType.Ebook, ".epub", "legacy.epub", "legacy-stored.epub", 10,
+            new string('c', 64), "application/epub+zip", request.Formats.Single().Id, sourceAcquisitionCandidateId: null, now);
+        database.MediaAssets.Add(asset);
+        await database.SaveChangesAsync();
+
+        // Roll back to the schema before the evidence table, then upgrade again.
+        await database.GetService<IMigrator>().MigrateAsync(PreArtifactEvidenceMigration);
+        Assert.IsFalse(await TableExistsAsync(database, "security", "artifact_evidence"));
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        Assert.IsTrue(await TableExistsAsync(database, "security", "artifact_evidence"));
+        var preserved = await database.MediaAssets.SingleAsync(item => item.Id == asset.Id);
+        Assert.AreEqual(new string('c', 64), preserved.Sha256);
+        Assert.IsTrue(preserved.IdentityPreConfirmed, "Existing assets keep their historical attestation default.");
+        Assert.AreEqual(0, await database.ArtifactEvidenceItems.CountAsync(item => item.MediaAssetId == asset.Id),
+            "Pre-existing assets have no evidence: displayed as NotRecorded, never back-filled.");
+
+        database.ArtifactEvidenceItems.Add(new ArtifactEvidence(
+            asset.Id, asset.Sha256, "security-evaluation", Guid.NewGuid(), "ev-completeness", EvidenceDimension.Completeness,
+            "artifact.completeness.not_assessed", EvidencePolarity.Unknown, "pipeline", null, null, now));
+        await database.SaveChangesAsync();
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    private static async Task<bool> TableExistsAsync(AppDbContext database, string schema, string table) =>
+        await database.Database.SqlQuery<bool>(
+            $"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = {schema} AND table_name = {table}) AS \"Value\"")
+            .SingleAsync();
 
     [TestMethod]
     public async Task SharedRequestUpgradePreservesParticipantsAndHoldsHistoricalOverlaps()

@@ -22,7 +22,8 @@ public sealed class AssetIdentityVerificationService(
     IAssetStagingStore stagingStore,
     IEnumerable<IAssetIdentityVerifier> verifiers,
     IAuditWriter audit,
-    IClock clock) : IAssetIdentityVerificationService
+    IClock clock,
+    IArtifactEvidenceRecorder? evidence = null) : IAssetIdentityVerificationService
 {
     public async Task<AssetIdentityVerificationResult> VerifyAsync(
         Guid assetId,
@@ -58,6 +59,9 @@ public sealed class AssetIdentityVerificationService(
             assetId.ToString(),
             new { AssetId = assetId, result.VerifierId, result.IsMatch, result.Reason },
             cancellationToken);
+
+        // Evidence only: recorded after the verdict above is saved and audited.
+        if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, result, cancellationToken);
 
         return result;
     }
@@ -105,6 +109,8 @@ public sealed class AssetIdentityVerificationService(
             assetId.ToString(),
             new { AssetId = assetId, result.VerifierId, result.IsMatch, result.Reason, Retried = true },
             cancellationToken);
+
+        if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, result, cancellationToken);
 
         return result;
     }
@@ -159,9 +165,9 @@ public sealed class AssetIdentityVerificationService(
     /// </summary>
     private static AssetIdentityVerificationResult NoVerifierResult(MediaAsset asset) =>
         asset.IdentityPreConfirmed
-            ? AssetIdentityVerificationResult.Match("not-applicable")
+            ? AssetIdentityVerificationResult.Match(ArtifactEvidenceRecorder.NoVerifierId)
             : AssetIdentityVerificationResult.Unmatched(
-                "not-applicable",
+                ArtifactEvidenceRecorder.NoVerifierId,
                 "No identity verifier exists for this file format, and the match was not independently " +
                 "confirmed before this file was fetched. A librarian must inspect it directly.");
 }

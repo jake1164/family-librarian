@@ -97,10 +97,16 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
         var authorChecked = authors.Count > 0 && !string.IsNullOrWhiteSpace(expected.PrimaryAuthor);
         var authorMatches = !authorChecked || authors.Any(author => bookMatcher.AuthorMatches(expected.PrimaryAuthor, author));
 
+        // Observations only (recorded as evidence); they never feed the verdict below.
+        IdentityFact[] facts =
+        [
+            IdentityFacts.Title(titles.Count > 0, titleMatches),
+            IdentityFacts.Author(authorChecked, authorMatches)
+        ];
         return titleMatches && authorMatches
-            ? AssetIdentityVerificationResult.Match(Id)
+            ? AssetIdentityVerificationResult.Match(Id, facts)
             : AssetIdentityVerificationResult.Unmatched(Id, DescribeMismatch(
-                expectedTitles, expected.PrimaryAuthor, titles, authors, titleMatches, authorMatches));
+                expectedTitles, expected.PrimaryAuthor, titles, authors, titleMatches, authorMatches), facts);
     }
 
     private static List<string> Collect(IReadOnlyDictionary<string, List<string>> tags, string[] names) =>

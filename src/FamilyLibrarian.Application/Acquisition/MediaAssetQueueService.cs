@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Security;
+using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.Security;
 
 namespace FamilyLibrarian.Application.Acquisition;
@@ -17,7 +18,8 @@ namespace FamilyLibrarian.Application.Acquisition;
 /// </remarks>
 public sealed class MediaAssetQueueService(
     IAcquisitionRepository acquisition,
-    ISecurityEvaluationRepository security)
+    ISecurityEvaluationRepository security,
+    IArtifactEvidenceStore? artifactEvidence = null)
 {
     public async Task<IReadOnlyList<MediaAssetQueueEntry>> ListAsync(CancellationToken cancellationToken)
     {
@@ -39,15 +41,23 @@ public sealed class MediaAssetQueueService(
         IReadOnlyList<MediaAssetAdminView> assets,
         CancellationToken cancellationToken)
     {
+        var evidence = artifactEvidence is null
+            ? new Dictionary<Guid, IReadOnlyList<ArtifactEvidence>>()
+            : await artifactEvidence.ListLatestAsync(assets.Select(asset => asset.AssetId).ToArray(), cancellationToken);
         var entries = new List<MediaAssetQueueEntry>(assets.Count);
         foreach (var asset in assets)
         {
             var evaluation = await security.FindLatestEvaluationAsync(asset.AssetId, cancellationToken);
-            entries.Add(new MediaAssetQueueEntry(asset, evaluation));
+            entries.Add(new MediaAssetQueueEntry(asset, evaluation, evidence.GetValueOrDefault(asset.AssetId)));
         }
 
         return entries;
     }
 }
 
-public sealed record MediaAssetQueueEntry(MediaAssetAdminView Asset, SecurityEvaluation? LatestEvaluation);
+/// <param name="Evidence">Empty when no evidence was ever recorded for the asset (displayed as NotRecorded).</param>
+public sealed record MediaAssetQueueEntry(
+    MediaAssetAdminView Asset, SecurityEvaluation? LatestEvaluation, IReadOnlyList<ArtifactEvidence>? Evidence = null)
+{
+    public IReadOnlyList<ArtifactEvidence> Evidence { get; init; } = Evidence ?? [];
+}

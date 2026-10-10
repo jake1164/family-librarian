@@ -14,6 +14,7 @@ using FamilyLibrarian.Domain.Policy;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Publishing;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.Security;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
@@ -96,6 +97,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
 
     public DbSet<SecurityEvaluation> SecurityEvaluations => Set<SecurityEvaluation>();
+
+    public DbSet<ArtifactEvidence> ArtifactEvidenceItems => Set<ArtifactEvidence>();
 
     public DbSet<CwaSettings> CwaSettings => Set<CwaSettings>();
 
@@ -1099,6 +1102,35 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     private static void ConfigureSecurity(ModelBuilder builder)
     {
+        builder.Entity<ArtifactEvidence>(entity =>
+        {
+            entity.ToTable("artifact_evidence", "security");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(item => item.MediaAssetId).HasColumnName("media_asset_id");
+            entity.Property(item => item.Sha256).HasColumnName("sha256").HasMaxLength(64);
+            entity.Property(item => item.EvidenceSchemaVersion).HasColumnName("evidence_schema_version");
+            entity.Property(item => item.RecordKind).HasColumnName("record_kind").HasMaxLength(ArtifactEvidence.MaxRecordKindLength);
+            entity.Property(item => item.RecordId).HasColumnName("record_id");
+            entity.Property(item => item.FindingId).HasColumnName("finding_id").HasMaxLength(ArtifactEvidence.MaxFindingIdLength);
+            entity.Property(item => item.Dimension).HasColumnName("dimension").HasConversion<string>().HasMaxLength(32);
+            entity.Property(item => item.Code).HasColumnName("code").HasMaxLength(ArtifactEvidence.MaxCodeLength);
+            entity.Property(item => item.Polarity).HasColumnName("polarity").HasConversion<string>().HasMaxLength(32);
+            entity.Property(item => item.Source).HasColumnName("source").HasMaxLength(ArtifactEvidence.MaxSourceLength);
+            entity.Property(item => item.Value).HasColumnName("value").HasMaxLength(ArtifactEvidence.MaxValueLength);
+            entity.Property(item => item.ToolVersion).HasColumnName("tool_version").HasMaxLength(ArtifactEvidence.MaxToolVersionLength);
+            entity.Property(item => item.RecordedAtUtc).HasColumnName("recorded_at_utc").HasColumnType("timestamp with time zone");
+
+            // A finding is cited by (record, finding); that pair is unique per asset.
+            entity.HasIndex(item => new { item.MediaAssetId, item.RecordId, item.FindingId }).IsUnique();
+            entity.HasIndex(item => new { item.MediaAssetId, item.RecordedAtUtc });
+
+            entity.HasOne<MediaAsset>()
+                .WithMany()
+                .HasForeignKey(item => item.MediaAssetId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         builder.Entity<SecurityEvaluation>(entity =>
         {
             entity.ToTable("security_evaluations", "security");

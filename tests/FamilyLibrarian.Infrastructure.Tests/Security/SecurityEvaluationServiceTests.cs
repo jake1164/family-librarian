@@ -211,6 +211,57 @@ public sealed class SecurityEvaluationServiceTests
             context.Audit.Entries.Select(entry => entry.Action).ToArray());
     }
 
+    [TestMethod]
+    public async Task RecordingEvidenceNeverChangesTheSecurityDecisionAndRunsAfterItIsSaved()
+    {
+        foreach (var scanner in new IMalwareScanner[] { new AlwaysCleanScanner(), new DetectedThreatScanner(), new LimitExceededScanner() })
+        {
+            var plain = new TestContext();
+            var plainAsset = plain.SeedAsset();
+            var plainResult = await plain.CreateService(scanner).EvaluateAsync(plainAsset.Id, CancellationToken.None);
+
+            var observed = new TestContext();
+            var observedAsset = observed.SeedAsset();
+            var recorder = new CapturingRecorder(observed.Repository);
+            var observedResult = await observed.CreateService(scanner, recorder).EvaluateAsync(observedAsset.Id, CancellationToken.None);
+
+            Assert.AreEqual(plainResult.Status, observedResult.Status, scanner.GetType().Name);
+            Assert.AreEqual(plainAsset.StorageState, observedAsset.StorageState, scanner.GetType().Name);
+            Assert.AreEqual(plain.Repository.SaveCount, observed.Repository.SaveCount, "Recording must add no save of its own to the decision path.");
+            CollectionAssert.AreEqual(
+                plain.Audit.Entries.Select(entry => entry.Action).ToArray(),
+                observed.Audit.Entries.Select(entry => entry.Action).ToArray());
+            Assert.AreEqual(1, recorder.Calls);
+            Assert.AreEqual(observedResult.Status, recorder.StatusWhenCalled, "Evidence is recorded after the decision exists.");
+            // Pending evaluation, the scan result and the final outcome were all saved before recording
+            // (a destroyed malware file adds one more save afterwards).
+            Assert.IsGreaterThanOrEqualTo(3, recorder.SavesWhenCalled, "Evidence is recorded after the decision is saved.");
+        }
+    }
+
+    private sealed class CapturingRecorder(FakeSecurityEvaluationRepository repository) : IArtifactEvidenceRecorder
+    {
+        public int Calls { get; private set; }
+
+        public SecurityEvaluationStatus? StatusWhenCalled { get; private set; }
+
+        public int SavesWhenCalled { get; private set; }
+
+        public Task RecordSecurityEvaluationAsync(
+            MediaAsset asset, SecurityEvaluation evaluation, IReadOnlyDictionary<string, string?> toolVersions,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            StatusWhenCalled = evaluation.Status;
+            SavesWhenCalled = repository.SaveCount;
+            return Task.CompletedTask;
+        }
+
+        public Task RecordIdentityVerificationAsync(
+            MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+    }
+
     private sealed class TestContext
     {
         public TestContext()
@@ -274,8 +325,8 @@ public sealed class SecurityEvaluationServiceTests
             return asset;
         }
 
-        public SecurityEvaluationService CreateService(IMalwareScanner scanner) =>
-            new(Repository, StagingStore, [scanner], [], Audit, Clock);
+        public SecurityEvaluationService CreateService(IMalwareScanner scanner, IArtifactEvidenceRecorder? evidence = null) =>
+            new(Repository, StagingStore, [scanner], [], Audit, Clock, evidence);
     }
 
     private sealed class FakeSecurityEvaluationRepository : ISecurityEvaluationRepository
