@@ -54,6 +54,7 @@ public sealed class ExternalProviderHealthPollService(
                     health.Status.ToString(), health.Search.ToString(), health.Acquire.ToString(), clock.UtcNow,
                     health.ReportedIssues);
                 changed = true;
+                await RefreshVersionAsync(provider, cancellationToken);
                 await NotifyIfDegradedAsync(provider, wasOperational, cancellationToken);
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
@@ -96,6 +97,21 @@ public sealed class ExternalProviderHealthPollService(
         }
 
         return checkedCount;
+    }
+
+    /// <summary>
+    /// Best effort: the version is informational, so a manifest that cannot be read
+    /// right now must never fail or change the health result just recorded.
+    /// </summary>
+    private async Task RefreshVersionAsync(ExternalProvider provider, CancellationToken cancellationToken)
+    {
+        try
+        {
+            provider.RecordProviderVersion(await candidateChecker.GetManifestVersionAsync(provider, cancellationToken));
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+        }
     }
 
     /// <summary>

@@ -48,6 +48,23 @@ public sealed class ExternalProviderHealthPollServiceTests
     }
 
     [TestMethod]
+    public async Task ThePeriodicProbeRecordsTheManifestVersionWithoutATestConnection()
+    {
+        var context = new TestContext();
+        var provider = NewProvider("versioned-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Add(provider);
+
+        await context.Service.CheckAllEnabledAsync(CancellationToken.None);
+        Assert.AreEqual("0.50.0", provider.CachedProviderVersion);
+
+        context.Client.ManifestUnreachable = true;
+        await context.Service.CheckAllEnabledAsync(CancellationToken.None);
+        Assert.IsTrue(provider.LastTestSucceeded, "An unreadable manifest must not fail the health result.");
+        Assert.AreEqual("0.50.0", provider.CachedProviderVersion, "An unreadable manifest must not erase a known version.");
+    }
+
+    [TestMethod]
     public async Task ADisabledProviderIsNeverChecked()
     {
         var context = new TestContext();
@@ -266,9 +283,17 @@ public sealed class ExternalProviderHealthPollServiceTests
             return ThrowOnHealth is not null ? throw ThrowOnHealth : Task.FromResult(Health);
         }
 
+        public string ManifestVersion { get; set; } = "0.50.0";
+
+        public bool ManifestUnreachable { get; set; }
+
         public Task<ExternalProviderManifest> GetManifestAsync(
             string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            ManifestUnreachable
+                ? throw new HttpRequestException("manifest down")
+                : Task.FromResult(new ExternalProviderManifest(
+                    ["2"], "2", null, "example-source", "Example", ManifestVersion,
+                    ProviderCapabilities.Empty, null, null, null));
 
         public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
             string baseUrl, string? apiKey, ExternalProviderSearchRequest request,

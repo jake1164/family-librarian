@@ -340,6 +340,19 @@ public sealed class ExternalProvider
         CachedHealthIssues = healthIssues ?? [];
     }
 
+    /// <summary>
+    /// Refreshes the provider's self-declared release version from a manifest read
+    /// outside Test Connection (the periodic health probe). A blank value is ignored
+    /// so a manifest that omits <c>version</c> never erases one already known.
+    /// </summary>
+    public void RecordProviderVersion(string? providerVersion)
+    {
+        if (!string.IsNullOrWhiteSpace(providerVersion))
+        {
+            CachedProviderVersion = Truncate(providerVersion, 64);
+        }
+    }
+
     private void ResetTestResult()
     {
         LastTestedAtUtc = null;
