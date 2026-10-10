@@ -39,6 +39,18 @@ public sealed class SystemReadinessEndpointTests
     }
 
     [TestMethod]
+    public async Task ReadinessReportsTheRunningApplicationVersion()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        var readiness = await client.GetFromJsonAsync<SystemReadinessResponse>("/api/v1/system/readiness");
+
+        Assert.IsFalse(string.IsNullOrWhiteSpace(readiness?.Version));
+        Assert.IsFalse(readiness.Version.Contains('+'), "The build-metadata suffix must not reach the footer.");
+    }
+
+    [TestMethod]
     public async Task AnEnabledExternalProviderWithAFailedTestDegradesSystemReadiness()
     {
         var fixture = WebTestFixture.Require(_fixture);

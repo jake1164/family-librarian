@@ -219,6 +219,10 @@
     @* Sticky status footer. Readiness is a plain healthy/degraded signal for
        everyone; transient built-in acquisition work is shown to admins. *@
     <MudAppBar Bottom="true" Dense="true" Elevation="1" Class="family-librarian-status-footer">
+        @if (!string.IsNullOrWhiteSpace(systemReadiness?.Version))
+        {
+            <MudText Typo="Typo.caption" Class="family-librarian-app-version">Family Librarian v@(systemReadiness!.Version)</MudText>
+        }
         <MudSpacer />
         @if (isAdmin && activeAcquisitions.Count > 0)
         {

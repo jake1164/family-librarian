@@ -17,6 +17,11 @@ External acquisition providers grow up: a documented provider protocol (v2) with
 - Duplicate interactive searches against external providers are coalesced instead of repeated for every result on the page
 - Administrators get a debug search to ask a provider directly, outside its recheck schedule
 
+### Versions
+
+- The status footer shows the running Family Librarian version, taken from the release tag
+- **Sources** shows each external provider's own version (from its manifest) beside its protocol version, refreshed on Test Connection
+
 ### Matching and review
 
 - Matching uses the work's identity rather than edition-shaped titles (for example "Moby Dick (Illustrated Classics)"), so legitimate candidates are no longer stranded in review

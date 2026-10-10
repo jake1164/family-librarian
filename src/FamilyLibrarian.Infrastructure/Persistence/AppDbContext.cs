@@ -717,6 +717,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(provider => provider.ApiKeyHint).HasColumnName("api_key_hint").HasMaxLength(8);
             entity.Property(provider => provider.ApiKeySetAtUtc).HasColumnName("api_key_set_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(provider => provider.CachedProtocolVersion).HasColumnName("cached_protocol_version").HasMaxLength(32);
+            entity.Property(provider => provider.CachedProviderVersion).HasColumnName("cached_provider_version").HasMaxLength(64);
             entity.Property(provider => provider.CachedCapabilities).HasColumnName("cached_capabilities").HasMaxLength(512);
             entity.Property(provider => provider.CachedInstanceId).HasColumnName("cached_instance_id").HasMaxLength(256);
             entity.Property(provider => provider.InstanceReplacedSincePreviousTest).HasColumnName("instance_replaced_since_previous_test");

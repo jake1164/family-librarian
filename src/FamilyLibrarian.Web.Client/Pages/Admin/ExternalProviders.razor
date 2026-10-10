@@ -496,6 +496,10 @@
                             {
                                 <MudChip T="string" Size="Size.Small">Protocol v@(provider.CachedProtocolVersion)</MudChip>
                             }
+                            @if (!string.IsNullOrWhiteSpace(provider.CachedProviderVersion))
+                            {
+                                <MudChip T="string" Size="Size.Small">Version @(provider.CachedProviderVersion)</MudChip>
+                            }
                             @if (provider.CachedHealthStatus is not null)
                             {
                                 <MudTooltip Text="@(AllReasons(provider) ?? string.Empty)" Disabled="@(AllReasons(provider) is null)">

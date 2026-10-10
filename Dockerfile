@@ -11,7 +11,10 @@ COPY ["src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj", "src/FamilyLibrarian
 RUN dotnet restore "src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj"
 
 COPY . .
-RUN dotnet publish "src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj" --configuration Release --no-restore --output /app/publish /p:UseAppHost=false
+# Release builds pass the git tag (without the leading "v"); local builds keep
+# the Version in Directory.Build.props.
+ARG APP_VERSION=
+RUN dotnet publish "src/FamilyLibrarian.Web/FamilyLibrarian.Web.csproj" --configuration Release --no-restore --output /app/publish /p:UseAppHost=false ${APP_VERSION:+/p:Version=$APP_VERSION}
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime-base
 WORKDIR /app

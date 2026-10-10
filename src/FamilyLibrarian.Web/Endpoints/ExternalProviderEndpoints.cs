@@ -119,6 +119,7 @@ internal static class ExternalProviderEndpoints
         status.ApiKeyHint,
         status.ApiKeySetAtUtc,
         status.CachedProtocolVersion,
+        status.CachedProviderVersion,
         status.CachedCapabilities,
         status.CachedInstanceId,
         status.InstanceReplacedSincePreviousTest,

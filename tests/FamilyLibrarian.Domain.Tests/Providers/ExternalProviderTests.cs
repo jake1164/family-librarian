@@ -8,6 +8,19 @@ public sealed class ExternalProviderTests
     private static readonly DateTimeOffset Now = new(2026, 8, 11, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
+    public void TheProvidersManifestVersionIsRecordedOnlyWhenTheManifestWasReached()
+    {
+        var provider = new ExternalProvider("example-source", "Example", "https://example.test", Now);
+
+        provider.RecordTestResult(
+            true, "x", "2", "operations:search", null, Now, manifestReached: true, providerVersion: "1.4.2");
+        Assert.AreEqual("1.4.2", provider.CachedProviderVersion);
+
+        provider.RecordTestResult(false, "unreachable", "2", "operations:search", null, Now, providerVersion: "9.9.9");
+        Assert.AreEqual("1.4.2", provider.CachedProviderVersion);
+    }
+
+    [TestMethod]
     public void HealthIssuesAreReplacedByEveryProbeSoAStaleReasonNeverLingers()
     {
         var provider = new ExternalProvider("example-source", "Example", "https://example.test", Now);

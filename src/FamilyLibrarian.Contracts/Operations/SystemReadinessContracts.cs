@@ -7,10 +7,12 @@ namespace FamilyLibrarian.Contracts.Operations;
 /// Publishing pages. A non-admin viewer only ever sees <see cref="Healthy"/>
 /// and a generic message built from it -- the client decides how much of
 /// <see cref="DegradedComponents"/> to show based on the caller's role.
+/// <see cref="Version"/> is the running application release, shown in the footer to everyone.
 /// </summary>
 public sealed record SystemReadinessResponse(
     bool Healthy,
-    IReadOnlyList<DegradedSystemComponentResponse> DegradedComponents);
+    IReadOnlyList<DegradedSystemComponentResponse> DegradedComponents,
+    string? Version = null);
 
 /// <summary>One enabled source or publishing destination currently counted against <see cref="SystemReadinessResponse.Healthy"/>.</summary>
 public sealed record DegradedSystemComponentResponse(string Category, string Name, string? Detail);
