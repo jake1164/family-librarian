@@ -1,5 +1,6 @@
 using FamilyLibrarian.Contracts.Realtime;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Requests;
@@ -80,6 +81,9 @@ internal sealed class LiveChanges
                 case AcquisitionJob job:
                     changes.RequestIds.Add(job.RequestId);
                     break;
+                case ProviderAcquisitionJob job:
+                    changes.RequestIds.Add(job.RequestId);
+                    break;
                 case AcquisitionCandidate candidate:
                     changes.JobIds.Add(candidate.AcquisitionJobId);
                     break;
@@ -127,6 +131,9 @@ internal sealed class LiveChanges
                 case NotificationReceipt receipt:
                     changes.ForUser(receipt.UserId, LiveUpdateTopics.Notifications);
                     break;
+                case UserMatrixDestination destination:
+                    changes.ForUser(destination.UserId, LiveUpdateTopics.Communications);
+                    break;
                 case GutenbergCatalogSyncStateEntity:
                 case ProviderSetting:
                 case ExternalProvider:
@@ -137,6 +144,12 @@ internal sealed class LiveChanges
                 case AudiobookshelfSettings:
                     changes.AdminTopics |= LiveUpdateTopics.Publishing;
                     changes.SharedTopics |= LiveUpdateTopics.System;
+                    break;
+                case ProviderInteractionClaim:
+                case ProviderInteractionAlert:
+                case ProviderInteractionAlertRecipient:
+                    // HUMAN-ACQ-1: the tray and provider-interactions page observe this topic.
+                    changes.AdminTopics |= LiveUpdateTopics.Requests;
                     break;
             }
         }

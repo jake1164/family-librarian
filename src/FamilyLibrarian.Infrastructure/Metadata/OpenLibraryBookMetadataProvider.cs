@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FamilyLibrarian.Application.Catalog;
@@ -65,73 +66,169 @@ public sealed class OpenLibraryBookMetadataProvider(
             return null;
         }
 
-        var result = await SearchCoreAsync(
+        var response = await FetchSearchAsync(
             $"key:/works/{externalId}",
             SearchFields,
             1,
             1,
             cancellationToken);
 
-        var candidate = result.Candidates.SingleOrDefault(candidate =>
-            string.Equals(candidate.ExternalId, externalId, StringComparison.Ordinal));
+        var document = response?.Documents?.SingleOrDefault(document =>
+            string.Equals(GetWorkId(document.Key), externalId, StringComparison.Ordinal));
+        var candidate = document is null ? null : ToCandidate(document, trustUntaggedEditionTitle: false);
+        if (candidate is null)
+        {
+            return null;
+        }
 
-        return candidate is null
-            ? null
-            : await ApplyPreferredLanguageEditionAsync(candidate, externalId, cancellationToken);
+        // search.json never returns more than one nested edition document per
+        // work no matter what is asked of it (verified live: OL45870364W
+        // reports editions.numFound 2 and returns one), and for a key: lookup
+        // the one it returns is arbitrary. The work's own edition list is the
+        // only way the detail view can show every edition, so always read it.
+        var entries = await FetchEditionsAsync(externalId, cancellationToken);
+        if (entries.Count == 0)
+        {
+            return candidate;
+        }
+
+        var editions = ToEditionCandidates(entries, candidate.Title);
+        if (editions.Length > 0)
+        {
+            candidate = candidate with { Editions = editions };
+        }
+
+        // The search document's own edition is the one Open Library judged
+        // relevant; when it is already in the preferred language nothing in
+        // the edition list beats it. editions.json is in modification order,
+        // not relevance, so its first preferred-language entry can be an
+        // abridgement or graded reader (observed live: "Killing Floor" ->
+        // "Penguin Readers Level 4").
+        if (IsPreferredLanguageEdition(PrimaryEdition(document!)))
+        {
+            return candidate;
+        }
+
+        var representative = SelectRepresentativeEdition(entries, candidate.Title);
+        return representative is null
+            ? candidate
+            : ApplyEdition(candidate, representative.Value.Entry, representative.Value.LanguageConfirmed);
     }
 
-    // The search endpoint only ever includes one (arbitrary) edition per work,
-    // so it can't tell us whether a preferred-language edition exists. The
-    // detail view can afford the extra round trip to look at every edition
-    // and swap in one that actually matches, including linking out to that
-    // specific edition instead of the ambiguous work page.
-    private async Task<BookCandidate> ApplyPreferredLanguageEditionAsync(
-        BookCandidate candidate,
+    private async Task<IReadOnlyList<OpenLibraryEditionListEntry>> FetchEditionsAsync(
         string workId,
         CancellationToken cancellationToken)
     {
-        OpenLibraryEditionsListResponse? response;
         try
         {
-            response = await httpClient.GetFromJsonAsync<OpenLibraryEditionsListResponse>(
+            var response = await httpClient.GetFromJsonAsync<OpenLibraryEditionsListResponse>(
                 $"works/{workId}/editions.json?limit=50",
                 cancellationToken);
+            return response?.Entries ?? [];
         }
         catch (HttpRequestException)
         {
-            return candidate;
+            return [];
+        }
+    }
+
+    // Which edition's cover/publisher/page count should stand in for the work.
+    // A confirmed preferred-language edition wins, and among several the one
+    // whose own title is the work title (possibly with an edition subtitle)
+    // beats a retitled abridgement. Open Library editions are very often
+    // untagged - both entries of OL45870364W are - so an untagged edition that
+    // still carries the work's title is the next best self-consistent record,
+    // and far better than the work-level cover, which is aggregated across
+    // every translation ever indexed under the work id.
+    private static (OpenLibraryEditionListEntry Entry, bool LanguageConfirmed)? SelectRepresentativeEdition(
+        IReadOnlyList<OpenLibraryEditionListEntry> entries,
+        string workTitle)
+    {
+        var preferredLanguage = entries.Where(IsPreferredLanguageEntry).ToArray();
+        if (preferredLanguage.Length > 0)
+        {
+            var titled = preferredLanguage.FirstOrDefault(entry =>
+                TitleMatchesWorkTitle(entry.Title, workTitle));
+            return (titled ?? preferredLanguage[0], true);
         }
 
-        var preferredEdition = response?.Entries?.FirstOrDefault(entry =>
-            entry.Languages?.Any(language => string.Equals(
-                LanguageCodeNormalizer.Normalize(GetLanguageCode(language.Key)),
-                PreferredLanguage,
-                StringComparison.OrdinalIgnoreCase)) == true);
+        var untagged = entries.FirstOrDefault(entry =>
+            entry.Languages is not { Count: > 0 } && TitleMatchesWorkTitle(entry.Title, workTitle));
+        return untagged is null ? null : (untagged, false);
+    }
 
-        if (preferredEdition is null)
+    private static BookCandidate ApplyEdition(
+        BookCandidate candidate,
+        OpenLibraryEditionListEntry edition,
+        bool languageConfirmed) =>
+        candidate with
         {
-            return candidate;
-        }
-
-        return candidate with
-        {
-            Title = string.IsNullOrWhiteSpace(preferredEdition.Title)
-                ? candidate.Title
-                : preferredEdition.Title.Trim(),
-            CoverUrl = GetCoverUrl(
-                preferredEdition.Covers is { Count: > 0 } covers ? covers[0] : null) ??
-                    candidate.CoverUrl,
-            Publisher = preferredEdition.Publishers?
+            // An untagged edition only lends the fields that describe the
+            // physical record. Its title and language are not confirmed to be
+            // the preferred ones, so the work title stays.
+            Title = languageConfirmed && !string.IsNullOrWhiteSpace(edition.Title)
+                ? edition.Title.Trim()
+                : candidate.Title,
+            CoverUrl = GetCoverUrl(FirstCoverId(edition.Covers)) ?? candidate.CoverUrl,
+            Publisher = edition.Publishers?
                 .FirstOrDefault(publisher => !string.IsNullOrWhiteSpace(publisher))?.Trim()
                     ?? candidate.Publisher,
-            PageCount = preferredEdition.NumberOfPages is > 0
-                ? preferredEdition.NumberOfPages
+            PageCount = edition.NumberOfPages is > 0
+                ? edition.NumberOfPages
                 : candidate.PageCount,
-            Language = PreferredLanguage,
-            SourceUrl = string.IsNullOrWhiteSpace(preferredEdition.Key)
-                ? candidate.SourceUrl
-                : $"https://openlibrary.org{preferredEdition.Key}"
+            Language = languageConfirmed ? PreferredLanguage : candidate.Language,
+            SourceUrl = languageConfirmed && !string.IsNullOrWhiteSpace(edition.Key)
+                ? $"https://openlibrary.org{edition.Key}"
+                : candidate.SourceUrl
         };
+
+    private static bool IsPreferredLanguageEntry(OpenLibraryEditionListEntry entry) =>
+        entry.Languages?.Any(language => string.Equals(
+            LanguageCodeNormalizer.Normalize(GetLanguageCode(language.Key)),
+            PreferredLanguage,
+            StringComparison.OrdinalIgnoreCase)) == true;
+
+    // An edition title counts as the work's own when it is the work title, or
+    // the work title followed by edition wording ("Threshing Day (Wing and
+    // Claw Collection)"), compared without case or punctuation.
+    private static bool TitleMatchesWorkTitle(string? editionTitle, string workTitle)
+    {
+        var edition = NormalizeTitle(editionTitle);
+        var work = NormalizeTitle(workTitle);
+
+        return work.Length > 0 &&
+            edition.StartsWith(work, StringComparison.Ordinal) &&
+            (edition.Length == work.Length || edition[work.Length] == ' ');
+    }
+
+    private static string NormalizeTitle(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(value.Length);
+        foreach (var character in value.ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                builder.Append(character);
+            }
+            else if (builder.Length > 0 && builder[^1] != ' ')
+            {
+                builder.Append(' ');
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    // Open Library records a removed cover as -1 instead of dropping it.
+    private static int? FirstCoverId(IReadOnlyList<int>? covers)
+    {
+        var cover = covers?.FirstOrDefault(candidate => candidate > 0) ?? 0;
+        return cover > 0 ? cover : null;
     }
 
     private static string? GetLanguageCode(string? languageKey)
@@ -149,15 +246,7 @@ public sealed class OpenLibraryBookMetadataProvider(
         int page,
         CancellationToken cancellationToken)
     {
-        var requestUri =
-            $"search.json?q={Uri.EscapeDataString(query)}" +
-            $"&fields={Uri.EscapeDataString(fields)}" +
-            $"&limit={limit.ToString(CultureInfo.InvariantCulture)}" +
-            $"&page={page.ToString(CultureInfo.InvariantCulture)}";
-
-        var response = await httpClient.GetFromJsonAsync<OpenLibrarySearchResponse>(
-            requestUri,
-            cancellationToken);
+        var response = await FetchSearchAsync(query, fields, limit, page, cancellationToken);
 
         if (response?.Documents is not { Count: > 0 })
         {
@@ -165,7 +254,7 @@ public sealed class OpenLibraryBookMetadataProvider(
         }
 
         var candidates = response.Documents
-            .Select(ToCandidate)
+            .Select(document => ToCandidate(document, trustUntaggedEditionTitle: true))
             .Where(candidate => candidate is not null)
             .Cast<BookCandidate>()
             .ToArray();
@@ -179,7 +268,34 @@ public sealed class OpenLibraryBookMetadataProvider(
         return new BookCandidateSearchPage(candidates, hasMore);
     }
 
-    private BookCandidate? ToCandidate(OpenLibrarySearchDocument document)
+    private Task<OpenLibrarySearchResponse?> FetchSearchAsync(
+        string query,
+        string fields,
+        int limit,
+        int page,
+        CancellationToken cancellationToken) =>
+        httpClient.GetFromJsonAsync<OpenLibrarySearchResponse>(
+            $"search.json?q={Uri.EscapeDataString(query)}" +
+            $"&fields={Uri.EscapeDataString(fields)}&lang={PreferredLanguage}" +
+            $"&limit={limit.ToString(CultureInfo.InvariantCulture)}" +
+            $"&page={page.ToString(CultureInfo.InvariantCulture)}",
+            cancellationToken);
+
+    private static OpenLibraryEditionDocument? PrimaryEdition(OpenLibrarySearchDocument document) =>
+        document.Editions?.Documents is { Count: > 0 } editions ? editions[0] : null;
+
+    private static bool IsPreferredLanguageEdition(OpenLibraryEditionDocument? edition) =>
+        edition is not null && string.Equals(
+            LanguageCodeNormalizer.Normalize(FirstString(edition.Languages)),
+            PreferredLanguage,
+            StringComparison.OrdinalIgnoreCase);
+
+    // trustUntaggedEditionTitle: in a text search the included edition is the one
+    // that matched the query, so its title is relevant even without a language
+    // tag. A key: lookup has nothing to match, so Open Library returns an arbitrary
+    // edition (observed: a Portuguese edition for OL45870364W) and only a
+    // confirmed preferred-language edition may override the work title.
+    private BookCandidate? ToCandidate(OpenLibrarySearchDocument document, bool trustUntaggedEditionTitle)
     {
         var externalId = GetWorkId(document.Key);
         var title = document.Title?.Trim();
@@ -203,15 +319,11 @@ public sealed class OpenLibraryBookMetadataProvider(
         // when that edition itself is in the preferred language, otherwise
         // mixing its fields with the (differently-languaged) work title would
         // just trade one kind of mismatch for another.
-        var editionDocuments = document.Editions?.Documents;
-        var primaryEdition = editionDocuments is { Count: > 0 } ? editionDocuments[0] : null;
+        var primaryEdition = PrimaryEdition(document);
         var primaryEditionLanguage = primaryEdition is null
             ? null
             : LanguageCodeNormalizer.Normalize(FirstString(primaryEdition.Languages));
-        var useEditionFields = string.Equals(
-            primaryEditionLanguage,
-            PreferredLanguage,
-            StringComparison.OrdinalIgnoreCase);
+        var useEditionFields = IsPreferredLanguageEdition(primaryEdition);
 
         // Title gets its own, slightly looser rule than cover/publisher/language
         // below: an edition whose language is merely *unknown* (not confirmed
@@ -224,11 +336,22 @@ public sealed class OpenLibraryBookMetadataProvider(
         // silently substitute a completely different-language title instead
         // of just keeping the one real edition's own.
         var editionConfirmedOtherLanguage = primaryEditionLanguage is not null && !useEditionFields;
-        var displayTitle = primaryEdition is not null && !editionConfirmedOtherLanguage &&
-            !string.IsNullOrWhiteSpace(primaryEdition.Title)
-                ? primaryEdition.Title.Trim()
-                : title;
-        var coverId = useEditionFields ? primaryEdition!.CoverId ?? document.CoverId : document.CoverId;
+        var useEditionRecord = primaryEdition is not null && !editionConfirmedOtherLanguage &&
+            (trustUntaggedEditionTitle || useEditionFields);
+        var displayTitle = useEditionRecord && !string.IsNullOrWhiteSpace(primaryEdition!.Title)
+            ? primaryEdition.Title.Trim()
+            : title;
+
+        // The cover is tied to the title, not to the looser language rule the
+        // other fields use: whichever edition's title is being shown must be
+        // the edition whose cover is shown, or the card illustrates a title it
+        // isn't displaying. Observed live: a search for "threshing day"
+        // returns the matched edition "Threshing Day (Wing and Claw
+        // Collection)" with its own cover 15260611, while the work-level
+        // cover_i is 15260919 - the cover of an unrelated Portuguese edition
+        // of the same work. The edition's cover is already in the response, so
+        // using it costs nothing.
+        var coverId = useEditionRecord ? primaryEdition!.CoverId ?? document.CoverId : document.CoverId;
         var publisher = useEditionFields
             ? FirstString(primaryEdition!.Publishers) ?? FirstString(document.Publishers)
             : FirstString(document.Publishers);
@@ -255,7 +378,8 @@ public sealed class OpenLibraryBookMetadataProvider(
                 .Take(MaximumSubjects)
                 .ToArray(),
             SourceUrl: $"https://openlibrary.org/works/{externalId}",
-            Language: language);
+            Language: language,
+            WorkTitle: title);
     }
 
     private static BookEditionCandidate[] GetEditions(
@@ -298,7 +422,52 @@ public sealed class OpenLibraryBookMetadataProvider(
         return isbn13 is null && string.Equals(title, workTitle, StringComparison.Ordinal)
             && publicationDate is null && string.Equals(format, "Unknown format", StringComparison.Ordinal)
                 ? null
-                : new BookEditionCandidate(title, isbn13, format, publicationDate);
+                : new BookEditionCandidate(title, isbn13, format, publicationDate,
+                    LanguageCodeNormalizer.Normalize(FirstString(edition.Languages)), FirstString(edition.Publishers));
+    }
+
+    private static BookEditionCandidate[] ToEditionCandidates(
+        IReadOnlyList<OpenLibraryEditionListEntry> entries,
+        string workTitle) =>
+        entries
+            .Select(entry => ToEditionCandidate(entry, workTitle))
+            .Where(edition => edition is not null)
+            .Cast<BookEditionCandidate>()
+            .DistinctBy(
+                edition => edition.Isbn13 ??
+                    $"{edition.Title}|{edition.Format}|{edition.PublicationDate}",
+                StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static BookEditionCandidate? ToEditionCandidate(
+        OpenLibraryEditionListEntry entry,
+        string workTitle)
+    {
+        var title = string.IsNullOrWhiteSpace(entry.Title) ? workTitle : entry.Title.Trim();
+        var isbn13 = FirstNormalizedIsbn13(entry.Isbn13s) ?? FirstNormalizedIsbn13(entry.Isbn10s);
+        var format = string.IsNullOrWhiteSpace(entry.PhysicalFormat)
+            ? "Unknown format"
+            : entry.PhysicalFormat.Trim();
+
+        return isbn13 is null && string.Equals(title, workTitle, StringComparison.Ordinal)
+            && string.Equals(format, "Unknown format", StringComparison.Ordinal)
+                ? null
+                : new BookEditionCandidate(title, isbn13, format, TryParseExactDate(entry.PublishDate),
+                    LanguageCodeNormalizer.Normalize(GetLanguageCode(entry.Languages is { Count: > 0 } languages ? languages[0].Key : null)),
+                    entry.Publishers is { Count: > 0 } publishers ? publishers[0] : null);
+    }
+
+    private static string? FirstNormalizedIsbn13(IEnumerable<string>? values)
+    {
+        foreach (var value in values ?? [])
+        {
+            if (IsbnNormalizer.TryNormalizeToIsbn13(value, out var isbn13))
+            {
+                return isbn13;
+            }
+        }
+
+        return null;
     }
 
     private static string? FirstNormalizedIsbn13(JsonElement values)
@@ -499,6 +668,18 @@ public sealed class OpenLibraryBookMetadataProvider(
 
         [JsonPropertyName("covers")]
         public IReadOnlyList<int>? Covers { get; init; }
+
+        [JsonPropertyName("isbn_13")]
+        public IReadOnlyList<string>? Isbn13s { get; init; }
+
+        [JsonPropertyName("isbn_10")]
+        public IReadOnlyList<string>? Isbn10s { get; init; }
+
+        [JsonPropertyName("physical_format")]
+        public string? PhysicalFormat { get; init; }
+
+        [JsonPropertyName("publish_date")]
+        public string? PublishDate { get; init; }
     }
 
     private sealed class OpenLibraryLanguageRef

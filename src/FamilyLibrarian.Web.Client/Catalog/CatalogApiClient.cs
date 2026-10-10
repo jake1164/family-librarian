@@ -18,6 +18,29 @@ public sealed class CatalogApiClient(HttpClient httpClient, AntiforgeryTokenProv
         return response ?? new CatalogSearchResponse([], []);
     }
 
+    public async Task<CatalogSearchRunStartedResponse> StartSearchAsync(string searchText, int page, Guid? previousRunId = null, CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/catalog/search/runs")
+        { Content = JsonContent.Create(new CatalogSearchRequest(searchText, page, previousRunId)) };
+        await antiforgery.AttachAsync(request, cancellationToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<CatalogSearchRunStartedResponse>(cancellationToken)
+            ?? throw new HttpRequestException("The catalog did not start a search.");
+    }
+
+    public async Task<CatalogSearchRunResponse> GetSearchRunAsync(Guid runId, CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<CatalogSearchRunResponse>($"api/v1/catalog/search/runs/{runId}", cancellationToken)
+        ?? throw new HttpRequestException("The catalog search returned no status.");
+
+    public async Task CancelSearchRunAsync(Guid runId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"api/v1/catalog/search/runs/{runId}");
+        await antiforgery.AttachAsync(request, CancellationToken.None);
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
+
     public Task<CatalogBookCandidateResponse?> GetCandidateAsync(
         string providerId,
         string externalId,
@@ -56,6 +79,12 @@ public sealed class CatalogApiClient(HttpClient httpClient, AntiforgeryTokenProv
             $"api/v1/catalog/works/{workId}",
             cancellationToken);
 
+    public async Task<RequestFormatsResponse?> GetRequestFormatsAsync(
+        CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<RequestFormatsResponse>(
+            "api/v1/catalog/request-formats",
+            cancellationToken);
+
     public async Task<WorkFulfillmentOptionsResponse> GetFulfillmentOptionsAsync(
         Guid workId,
         CancellationToken cancellationToken = default)
@@ -65,36 +94,6 @@ public sealed class CatalogApiClient(HttpClient httpClient, AntiforgeryTokenProv
             cancellationToken);
 
         return response ?? new WorkFulfillmentOptionsResponse([], []);
-    }
-
-    /// <summary>
-    /// Checks a raw search candidate against CWA/Gutenberg/Audiobookshelf/
-    /// enabled external providers, without resolving it into a Work first.
-    /// </summary>
-    /// <remarks>
-    /// A pure read, but POST — the request body carries the candidate's
-    /// title/authors/ISBNs, which don't fit cleanly as query parameters.
-    /// </remarks>
-    public async Task<CandidateAvailabilityResponse> GetAvailabilityAsync(
-        CatalogBookCandidateResponse candidate,
-        CancellationToken cancellationToken = default)
-    {
-        var isbn13s = candidate.Editions
-            .Select(edition => edition.Isbn13)
-            .Where(isbn13 => !string.IsNullOrWhiteSpace(isbn13))
-            .Distinct()
-            .ToArray();
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/catalog/availability")
-        {
-            Content = JsonContent.Create(new CandidateAvailabilityRequest(candidate.Title, candidate.Authors, isbn13s!))
-        };
-        await antiforgery.AttachAsync(request, cancellationToken);
-
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<CandidateAvailabilityResponse>(cancellationToken)
-            ?? new CandidateAvailabilityResponse([], []);
     }
 
     public async Task<ExternalLibraryLinksResponse> GetExternalLibraryLinksAsync(

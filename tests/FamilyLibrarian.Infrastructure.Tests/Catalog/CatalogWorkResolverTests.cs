@@ -437,7 +437,157 @@ public sealed class CatalogWorkResolverTests
         Assert.AreEqual(existing.Id, repository.ExternalReferences.Single().EntityId);
     }
 
+    /// <summary>
+    /// The live complaint: searching "threshing day" returned three rows that
+    /// were all the same book, with nothing to tell a requester which to pick
+    /// -- and whichever they picked became the work title that then matched
+    /// no source at all.
+    /// </summary>
+    [TestMethod]
+    public void GroupMatchingCandidatesMergesEditionPackagingOfOneWork()
+    {
+        var plain = Yarros("Threshing Day", "ol-1");
+        var collection = Yarros("Threshing Day (Wing and Claw Collection)", "ol-2");
+        var marketing = Yarros(
+            "Threshing Day: Return to the Empyrean world with thirteen stories starring your favourite Fourth Wing characters.",
+            "gb-1");
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([plain, collection, marketing], "threshing day");
+
+        Assert.HasCount(1, grouped);
+        Assert.HasCount(3, grouped[0].MergedSources);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesMergesAnnotatedAndIllustratedPackaging()
+    {
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates(
+            [
+                Alcott("Little Women", "a"),
+                Alcott("Little Women: ( Illustrated Edition)", "b"),
+                Alcott("Little Women: An Annotated Edition", "c"),
+                Alcott("Little Women: Large Print", "d")
+            ],
+            "little women");
+
+        Assert.HasCount(1, grouped);
+    }
+
+    /// <summary>
+    /// The other half of the rule: an omnibus, a combined edition and an
+    /// adaptation are genuinely different products and must stay separate
+    /// even though they all begin with the requested title.
+    /// </summary>
+    [TestMethod]
+    public void GroupMatchingCandidatesKeepsDifferentProductsApart()
+    {
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates(
+            [
+                Alcott("Little Women", "a"),
+                Alcott("Little Women: the Trilogy Little Women Little Men Jo's Boys", "b"),
+                Alcott("LITTLE WOMEN - Complete Edition: Little Women, Good Wives, Little Men & Jo's Boys", "c"),
+                Alcott("Little Women: Adapted for the Stage", "d")
+            ],
+            "little women");
+
+        Assert.HasCount(4, grouped);
+    }
+
+    [TestMethod]
+    public void GroupMatchingCandidatesKeepsADifferentAuthorsSameTitleBookApart()
+    {
+        var alcott = Alcott("Little Women", "a");
+        var lawlor = Alcott("Little Women", "b") with { Authors = ["Laurie Lawlor"] };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates([alcott, lawlor], "little women");
+
+        Assert.HasCount(2, grouped);
+    }
+
+    private static BookCandidate Yarros(string title, string externalId) =>
+        CreateCandidate(title, externalId) with { Authors = ["Rebecca Yarros"], Editions = [], Series = [] };
+
+    private static BookCandidate Alcott(string title, string externalId) =>
+        CreateCandidate(title, externalId) with { Authors = ["Louisa May Alcott"], Editions = [], Series = [] };
+
+    /// <summary>
+    /// The live complaint: searching "moby dick" ranked five adaptations/comics
+    /// -- each crediting an adapter or illustrator alongside Melville -- ahead
+    /// of the plain, single-author edition, because every one of them tied on
+    /// title match and fell through to alphabetical-by-first-author
+    /// ("Academic Industries" / "Archie Oliver" / "Bill Sienkiewicz" all sort
+    /// before "Herman Melville"). The plain edition must rank first.
+    /// </summary>
+    [TestMethod]
+    public void GroupMatchingCandidatesRanksThePlainEditionAboveCreditedAdaptations()
+    {
+        var plain = Melville("Moby Dick", ["Herman Melville"], "globe-fearon");
+        var comic1 = Melville("Moby Dick", ["Archie Oliver", "Herman Melville"], "playmore");
+        var comic2 = Melville("Moby Dick", ["Bill Sienkiewicz", "Herman Melville"], "berkley");
+        var youngReaders = Melville("Moby Dick", ["Janet Lorimer", "Herman Melville"], "saalfield");
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates(
+            [comic2, youngReaders, comic1, plain], "moby dick");
+
+        Assert.AreEqual("globe-fearon", grouped[0].ExternalId);
+    }
+
+    private static BookCandidate Melville(string title, IReadOnlyList<string> authors, string externalId) =>
+        CreateCandidate(title, externalId) with { Authors = authors, Editions = [], Series = [] };
+
+    /// <summary>
+    /// The exact "moby dick" dataset reported live: nine candidates tie on
+    /// title match (all titled plainly "Moby Dick"), and the previous
+    /// author-count tiebreak had nothing to act on because every one of them
+    /// happened to credit two people, including both real adaptations
+    /// ("Bill Sienkiewicz, Herman Melville" -- a comic) and a legitimate
+    /// scholarly edition ("Herman Melville, Nigel Cliff" -- editor's
+    /// introduction). Four of the nine describe themselves as an adaptation
+    /// in plain text; the scholarly edition does not and must rank first.
+    /// </summary>
+    [TestMethod]
+    public void GroupMatchingCandidatesRanksADescribedNonAdaptationAboveTextuallyConfirmedAdaptations()
+    {
+        var scholarly = Melville("Moby Dick", ["Herman Melville", "Nigel Cliff"], "flame-tree") with
+        {
+            Description = "Moby Dick is the story of Captain Ahab's quest to avenge the whale that 'reaped' his leg."
+        };
+        var comic1 = Melville("Moby Dick", ["Bill Sienkiewicz", "Herman Melville"], "berkley") with
+        {
+            Description = "Presented in comic book format."
+        };
+        var comic2 = Melville("Moby Dick", ["Lance Stahlberg", "Herman Melville"], "campfire") with
+        {
+            Description = "Retells in graphic novel format Melville's story."
+        };
+        var forYoungReaders = Melville("Moby Dick", ["Shirley Bogart", "Herman Melville"], "baronet") with
+        {
+            Description = "A specially adapted version...abridged, simplified and condensed for young readers."
+        };
+        var retelling = Melville("Moby Dick", ["T. W. Robinson", "Herman Melville"], "bendon") with
+        {
+            Description = "Retells the story of the crazed Captain Ahab in his hunt for the great white whale."
+        };
+        // Undescribed stubs: real Open Library records with no description at
+        // all -- indistinguishable from the scholarly edition by text alone,
+        // so they must not outrank it either.
+        var stub1 = Melville("Moby Dick", ["Academic Industries", "Herman Melville"], "academic") with
+        {
+            Description = null
+        };
+        var stub2 = Melville("Moby Dick", ["Albert L. Kanter", "Herman Melville"], "acclaim") with
+        {
+            Description = null
+        };
+
+        var grouped = BookCandidateGrouper.GroupMatchingCandidates(
+            [comic1, stub2, retelling, scholarly, forYoungReaders, stub1, comic2], "moby dick");
+
+        Assert.AreEqual("flame-tree", grouped[0].ExternalId);
+    }
+
     private static BookCandidate CreateCandidate(
+
         string title = "Project Hail Mary",
         string externalId = "work-1") => new(
         "stub",

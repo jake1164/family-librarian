@@ -56,6 +56,7 @@ public sealed class SecurityEvaluationServiceTests
 
         Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
         Assert.AreEqual(MediaAssetStorageState.Quarantine, context.StagingStore.ZoneOf(asset.StoredFilename));
+        StringAssert.Contains(asset.ScanFailureReason, "Simulated connection reset mid-stream.");
 
         // Persisted Processing, then persisted the recovery back to Quarantine.
         Assert.AreEqual(2, context.Repository.SaveCount);
@@ -68,6 +69,98 @@ public sealed class SecurityEvaluationServiceTests
         var auditEntry = context.Audit.Entries.Single();
         Assert.AreEqual(AuditActions.AssetEvaluationFailed, auditEntry.Action);
         Assert.AreEqual(asset.Id.ToString(), auditEntry.SubjectId);
+    }
+
+    [TestMethod]
+    public async Task ACancelledRequestStillRecoversTheAssetToQuarantine()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAsset();
+        using var cancellation = new CancellationTokenSource();
+
+        // The request is aborted mid-scan; recovery must not be cancelled with it.
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(
+            () => context.CreateService(new CancellingScanner(cancellation))
+                .EvaluateAsync(asset.Id, cancellation.Token));
+
+        Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
+        Assert.AreEqual(MediaAssetStorageState.Quarantine, context.StagingStore.ZoneOf(asset.StoredFilename));
+        StringAssert.Contains(asset.ScanFailureReason, "cancelled");
+    }
+
+    [TestMethod]
+    public async Task AnUnexpectedScannerExceptionRecoversTheAssetAndRecordsTheReason()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAsset();
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            () => context.CreateService(new FaultingScanner())
+                .EvaluateAsync(asset.Id, CancellationToken.None));
+
+        Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
+        StringAssert.Contains(asset.ScanFailureReason, "scanner exploded");
+    }
+
+    [TestMethod]
+    public async Task AScanLimitErrorHoldsTheFileForReviewInsteadOfDestroyingIt()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAsset();
+
+        var result = await context.CreateService(new LimitExceededScanner())
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(SecurityEvaluationStatus.ReviewRequired, result.Status);
+        Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
+        Assert.IsTrue(context.StagingStore.Contains(asset.StoredFilename));
+    }
+
+    [TestMethod]
+    public async Task AnAbandonedPendingEvaluationInProcessingCanBeRetried()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAbandonedProcessingAsset();
+        context.Clock.UtcNow = Now.AddMinutes(16);
+
+        var result = await context.CreateService(new AlwaysCleanScanner())
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(SecurityEvaluationOutcome.Success, result.Outcome);
+        Assert.AreEqual(SecurityEvaluationStatus.Passed, result.Status);
+        CollectionAssert.Contains(
+            context.Audit.Entries.Select(entry => entry.Action).ToArray(), AuditActions.AssetEvaluationFailed);
+    }
+
+    [TestMethod]
+    public async Task AReviewRequiredAssetCanBeRescannedAndPassesOnceTheScannerCompletes()
+    {
+        var context = new TestContext();
+        var asset = context.SeedReviewRequiredProcessingAsset();
+
+        var result = await context.CreateService(new AlwaysCleanScanner())
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(SecurityEvaluationOutcome.Success, result.Outcome);
+        Assert.AreEqual(SecurityEvaluationStatus.Passed, result.Status);
+        Assert.AreEqual(2, context.Repository.AddedEvaluations.Count);
+        CollectionAssert.Contains(
+            context.Audit.Entries.Select(entry => entry.Action).ToArray(), AuditActions.AssetRescanRequested);
+    }
+
+    [TestMethod]
+    public async Task ARecentPendingEvaluationInProcessingIsLeftAlone()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAbandonedProcessingAsset();
+        context.Clock.UtcNow = Now.AddMinutes(2);
+
+        var result = await context.CreateService(new AlwaysCleanScanner())
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(SecurityEvaluationOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
+        Assert.AreEqual(1, context.Repository.AddedEvaluations.Count);
     }
 
     [TestMethod]
@@ -125,7 +218,10 @@ public sealed class SecurityEvaluationServiceTests
             Repository = new FakeSecurityEvaluationRepository();
             StagingStore = new FakeAssetStagingStore();
             Audit = new RecordingAuditWriter();
+            Clock = new FixedClock();
         }
+
+        public FixedClock Clock { get; }
 
         public FakeSecurityEvaluationRepository Repository { get; }
 
@@ -154,8 +250,32 @@ public sealed class SecurityEvaluationServiceTests
             return asset;
         }
 
+        /// <summary>An asset a scan started on and then never finished (host restart, aborted request).</summary>
+        public MediaAsset SeedAbandonedProcessingAsset()
+        {
+            var asset = SeedAsset();
+            StagingStore.Seed(asset.StoredFilename, MediaAssetStorageState.Processing);
+            asset.TransitionStorageState(MediaAssetStorageState.Processing, Now);
+            Repository.AddEvaluation(new SecurityEvaluation(asset.Id, "v1", Now));
+            return asset;
+        }
+
+        /// <summary>An asset whose scanner could not finish (e.g. a clamd limit hit), waiting on an administrator.</summary>
+        public MediaAsset SeedReviewRequiredProcessingAsset()
+        {
+            var asset = SeedAsset();
+            StagingStore.Seed(asset.StoredFilename, MediaAssetStorageState.Processing);
+            asset.TransitionStorageState(MediaAssetStorageState.Processing, Now);
+            var evaluation = new SecurityEvaluation(asset.Id, "v1", Now);
+            evaluation.RecordScanResult(
+                "clamav", true, ScanResultStatus.Error, "Not fully scanned: Heuristics.Limits.Exceeded.MaxScanTime", null, Now);
+            evaluation.Evaluate(Now);
+            Repository.AddEvaluation(evaluation);
+            return asset;
+        }
+
         public SecurityEvaluationService CreateService(IMalwareScanner scanner) =>
-            new(Repository, StagingStore, [scanner], [], Audit, new FixedClock());
+            new(Repository, StagingStore, [scanner], [], Audit, Clock);
     }
 
     private sealed class FakeSecurityEvaluationRepository : ISecurityEvaluationRepository
@@ -173,12 +293,14 @@ public sealed class SecurityEvaluationServiceTests
             throw new NotSupportedException();
 
         public Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult(AddedEvaluations.LastOrDefault(evaluation => evaluation.AssetId == assetId));
 
         public void AddEvaluation(SecurityEvaluation evaluation) => AddedEvaluations.Add(evaluation);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken)
         {
+            // Like EF Core, a cancelled token fails the save.
+            cancellationToken.ThrowIfCancellationRequested();
             SaveCount++;
             return Task.CompletedTask;
         }
@@ -262,7 +384,7 @@ public sealed class SecurityEvaluationServiceTests
 
     private sealed class FixedClock : IClock
     {
-        public DateTimeOffset UtcNow => Now;
+        public DateTimeOffset UtcNow { get; set; } = Now;
     }
 
     private sealed class AlwaysCleanScanner : IMalwareScanner
@@ -290,6 +412,50 @@ public sealed class SecurityEvaluationServiceTests
 
         public Task<ScanOutcome> ScanAsync(Stream content, CancellationToken cancellationToken) =>
             throw new IOException("Simulated connection reset mid-stream.");
+    }
+
+    private sealed class CancellingScanner(CancellationTokenSource cancellation) : IMalwareScanner
+    {
+        public string Id => "cancelling";
+
+        public bool IsRequired => true;
+
+        public Task<ScannerHealth> CheckHealthAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ScannerHealth(true, "1.0", null));
+
+        public Task<ScanOutcome> ScanAsync(Stream content, CancellationToken cancellationToken)
+        {
+            cancellation.Cancel();
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new ScanOutcome(ScanResultStatus.Clean, null));
+        }
+    }
+
+    private sealed class FaultingScanner : IMalwareScanner
+    {
+        public string Id => "faulting";
+
+        public bool IsRequired => true;
+
+        public Task<ScannerHealth> CheckHealthAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ScannerHealth(true, "1.0", null));
+
+        public Task<ScanOutcome> ScanAsync(Stream content, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("scanner exploded");
+    }
+
+    private sealed class LimitExceededScanner : IMalwareScanner
+    {
+        public string Id => "limit";
+
+        public bool IsRequired => true;
+
+        public Task<ScannerHealth> CheckHealthAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ScannerHealth(true, "1.0", null));
+
+        public Task<ScanOutcome> ScanAsync(Stream content, CancellationToken cancellationToken) =>
+            Task.FromResult(new ScanOutcome(
+                ScanResultStatus.Error, "Not fully scanned: Heuristics.Limits.Exceeded.MaxScanSize"));
     }
 
     private sealed class DetectedThreatScanner : IMalwareScanner

@@ -42,24 +42,31 @@ services:
     environment:
       # CLAMD_CONF_<Key> writes <Key> into /etc/clamav/clamd.conf — see
       # https://github.com/Cisco-Talos/clamav-docker. The image's own default
-      # StreamMaxLength/MaxFileSize (100M as of ClamAV 1.4, not the 25M the
-      # sample config's comment might suggest) sits under
-      # ManualImportPolicy.DefaultMaxUploadSizeBytes (500 MiB), so most
-      # audiobooks were rejected before a single byte was scanned — see F2 in
-      # the architecture review. 600M covers that cap with headroom.
-      CLAMD_CONF_StreamMaxLength: 600M
-      CLAMD_CONF_MaxFileSize: 600M
-      CLAMD_CONF_PCREMaxFileSize: 600M
+      # StreamMaxLength/MaxFileSize default to 100M as of ClamAV 1.4 (not the
+      # 25M the sample config's comment might suggest), far too low for
+      # audiobooks. ClamAV cannot scan files over ~2 GB (clamd.conf.sample, MaxFileSize), so
+      # 2000M is the practical ceiling. ExternalProviderOutputPolicy caps
+      # audiobook files at 1996 MiB so every accepted file fits under it; keep
+      # the two in step. A file over the ceiling would fail the scan closed and
+      # stay in Quarantine with the reason shown, never skipped as clean.
+      CLAMD_CONF_StreamMaxLength: 2000M
+      CLAMD_CONF_MaxFileSize: 2000M
+      CLAMD_CONF_PCREMaxFileSize: 2000M
       # Deliberately higher than the input caps above: this bounds total work
       # across everything one scan expands into (e.g. an archive's contents),
       # not the input file itself. ClamAV's own documentation warns against
       # setting this equal to — or disabling — the input-size limits.
-      CLAMD_CONF_MaxScanSize: 1000M
-      # A limit-exceeded scan now reports through the same FOUND/threat-name
-      # path as a real detection (Heuristics.Limits.Exceeded.*) instead of a
-      # bare protocol error — ParseScanResponse already treats FOUND as
-      # Detected, so this makes an oversized file a distinguishable result
-      # with no application code change required.
+      CLAMD_CONF_MaxScanSize: 4000M
+      # clamd stops scanning after MaxScanTime ms (default 120000) and, with
+      # AlertExceedsMax, reports it as Heuristics.Limits.Exceeded.MaxScanTime.
+      # A ~1-2 GB audiobook needs longer; keep this under the app's 15-minute
+      # abandoned-evaluation threshold (SecurityEvaluationService).
+      CLAMD_CONF_MaxScanTime: 600000
+      # A limit-exceeded scan is reported through the FOUND line
+      # (Heuristics.Limits.Exceeded.*) instead of a bare protocol error.
+      # ClamAvMalwareScanner maps that prefix to a scanner Error (review
+      # required), never to a malware detection, so an oversized file is held
+      # for an administrator instead of being destroyed.
       CLAMD_CONF_AlertExceedsMax: "yes"
     healthcheck:
       # freshclam's virus-database download can take minutes on a cold image;
@@ -105,6 +112,14 @@ services:
       Storage__RootPath: /data/family-librarian
       ClamAv__Host: clamav
       ClamAv__Port: 3310
+      # Required to enable administrator-brokered remote view (HUMAN-ACQ-1
+      # Phase 3) and, on top of it, the Matrix verification alert -- both
+      # fail closed (no WebSocket upgrade, alert disabled) until set. See
+      # docs/06-deployment-and-recovery.md. Both must name this deployment's
+      # own public HTTPS origin, and Interaction__PublicOrigin must also
+      # appear in RemoteView__AllowedOrigins.
+      # RemoteView__AllowedOrigins__0: https://fl.example.com
+      # Interaction__PublicOrigin: https://fl.example.com
     # Without this, `docker compose up --wait` returns the moment the container
     # is *running* — which is before Kestrel has bound the port. The VS Code
     # task then opens a browser against an app that cannot answer yet, and the

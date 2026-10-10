@@ -23,6 +23,15 @@ public interface IProviderAttemptRepository
     Task<IReadOnlyList<ProviderAttempt>> ListLatestByProviderAsync(
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The newest lookups across providers with nothing collapsed, so source
+    /// health can tell a repeated failure from a one-off. Defaults to the
+    /// latest lookup per provider for stores that cannot do better.
+    /// </summary>
+    Task<IReadOnlyList<ProviderAttempt>> ListRecentForHealthAsync(
+        int maximumCount, CancellationToken cancellationToken) =>
+        ListLatestByProviderAsync(cancellationToken);
+
     void Add(ProviderAttempt attempt);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);

@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
@@ -39,6 +38,11 @@ public sealed class SecurityEvaluationService(
             return SecurityEvaluationResult.NotFound();
         }
 
+        if (asset.StorageState == MediaAssetStorageState.Processing)
+        {
+            await RecoverAbandonedEvaluationAsync(asset, cancellationToken);
+        }
+
         if (asset.StorageState != MediaAssetStorageState.Quarantine)
         {
             return SecurityEvaluationResult.Invalid("Only a quarantined asset can be evaluated.");
@@ -48,6 +52,7 @@ public sealed class SecurityEvaluationService(
         await stagingStore.MoveAsync(
             MediaAssetStorageState.Quarantine, MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
         asset.TransitionStorageState(MediaAssetStorageState.Processing, now);
+        asset.SetScanFailureReason(null);
 
         // Persisted immediately, not batched with everything below: from here
         // on, a scanner or validator can throw (see ClamAvMalwareScannerTests
@@ -92,7 +97,7 @@ public sealed class SecurityEvaluationService(
                 await repository.SaveChangesAsync(cancellationToken);
             }
         }
-        catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException)
+        catch (Exception exception)
         {
             // Re-queues rather than stranding the asset: MediaAssetStorageTransitions
             // already allows Processing -> Quarantine for exactly this
@@ -100,18 +105,14 @@ public sealed class SecurityEvaluationService(
             // makes the failure retryable through the same path a first
             // attempt uses, rather than a dead end only Rejected/Trusted could
             // previously reach.
-            await stagingStore.MoveAsync(
-                MediaAssetStorageState.Processing, MediaAssetStorageState.Quarantine, asset.StoredFilename, cancellationToken);
-            asset.TransitionStorageState(MediaAssetStorageState.Quarantine, clock.UtcNow);
-            await repository.SaveChangesAsync(cancellationToken);
-
-            await audit.WriteAsync(
-                AuditActions.AssetEvaluationFailed,
-                AuditSubjectTypes.MediaAsset,
-                assetId.ToString(),
-                new { AssetId = assetId, Reason = exception.GetType().Name },
-                cancellationToken);
-
+            //
+            // Any exception, not just IO/socket ones: an unexpected failure that
+            // skipped this recovery left the asset in Processing with a Pending
+            // evaluation and no way to retry it. And CancellationToken.None, not
+            // the caller's token: the usual reason we are here is that the
+            // request was cancelled, so a recovery that honoured the same token
+            // would itself be cancelled before it could save anything.
+            await RecoverToQuarantineAsync(asset, DescribeFailure(exception), exception.GetType().Name);
             throw;
         }
 
@@ -144,6 +145,70 @@ public sealed class SecurityEvaluationService(
 
         return SecurityEvaluationResult.Success(
             evaluation.Id, evaluation.Status, evaluation.CreatedAtUtc, evaluation.CompletedAtUtc);
+    }
+
+    private const int MaxFailureReasonLength = 1_024;
+
+    /// <summary>
+    /// How long a Pending evaluation may sit in Processing before it is
+    /// presumed abandoned (the host restarted or the request died mid-scan)
+    /// rather than still running. Comfortably above a scan of the largest
+    /// permitted file, so a retry cannot start a second scan of a live one.
+    /// </summary>
+    private static readonly TimeSpan AbandonedEvaluationAge = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// Returns an asset in Processing to Quarantine so it can be evaluated
+    /// again: either a scan that never recorded a result (abandoned), or one
+    /// the scanner could not finish (review required -- e.g. a clamd limit hit)
+    /// that an administrator asked to run again instead of deciding by hand.
+    /// </summary>
+    private async Task RecoverAbandonedEvaluationAsync(MediaAsset asset, CancellationToken cancellationToken)
+    {
+        var latest = await repository.FindLatestEvaluationAsync(asset.Id, cancellationToken);
+        if (latest is { Status: SecurityEvaluationStatus.ReviewRequired })
+        {
+            await RecoverToQuarantineAsync(
+                asset, "A rescan was requested.", "RescanRequested", AuditActions.AssetRescanRequested);
+            return;
+        }
+
+        if (latest is not { Status: SecurityEvaluationStatus.Pending } ||
+            clock.UtcNow - latest.CreatedAtUtc < AbandonedEvaluationAge)
+        {
+            return;
+        }
+
+        await RecoverToQuarantineAsync(
+            asset,
+            "The previous scan stopped without recording a result (the app may have restarted or the request was cancelled).",
+            "Abandoned");
+    }
+
+    private async Task RecoverToQuarantineAsync(
+        MediaAsset asset, string reason, string auditReason, string auditAction = AuditActions.AssetEvaluationFailed)
+    {
+        await stagingStore.MoveAsync(
+            MediaAssetStorageState.Processing, MediaAssetStorageState.Quarantine, asset.StoredFilename, CancellationToken.None);
+        asset.TransitionStorageState(MediaAssetStorageState.Quarantine, clock.UtcNow);
+        asset.SetScanFailureReason(reason);
+        await repository.SaveChangesAsync(CancellationToken.None);
+
+        await audit.WriteAsync(
+            auditAction,
+            AuditSubjectTypes.MediaAsset,
+            asset.Id.ToString(),
+            new { AssetId = asset.Id, Reason = auditReason },
+            CancellationToken.None);
+    }
+
+    private static string DescribeFailure(Exception exception)
+    {
+        var detail = exception is OperationCanceledException
+            ? "The scan was cancelled or timed out before it finished."
+            : exception.Message;
+        var reason = $"Scan interrupted ({exception.GetType().Name}): {detail}";
+        return reason.Length <= MaxFailureReasonLength ? reason : reason[..MaxFailureReasonLength];
     }
 
     private async Task DestroyDetectedFileAsync(MediaAsset asset, CancellationToken cancellationToken)

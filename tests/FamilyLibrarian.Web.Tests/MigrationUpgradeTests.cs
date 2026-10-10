@@ -47,6 +47,36 @@ public sealed class MigrationUpgradeTests
     private const string PreShareHouseholdRequestsMigration = "20260830231952_AddOutboundCommunications";
 
     [TestMethod]
+    public async Task SourceSummaryUpgradePreservesLegacyCandidatesAsNullAndRoundTripsNewEvidence()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var now = DateTimeOffset.UtcNow;
+        var work = new Work("Origin upgrade", null, null, null, PublicationStatus.Published, now);
+        database.Works.Add(work);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        request.MarkNeedsReview(RequestReviewCategory.PreferenceAmbiguity, "Review", now,
+            [new RequestReviewCandidateInput(request.Formats.Single().Id, "example-source", "legacy",
+                "Origin upgrade", null, null, null, null, null, false)]);
+        database.BookRequests.Add(request);
+        await database.SaveChangesAsync();
+        var candidateId = request.ReviewCandidates.Single().Id;
+        await database.GetService<IMigrator>().MigrateAsync("20261007093810_AddProviderJobPartSet");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var legacy = await database.RequestReviewCandidates.SingleAsync(candidate => candidate.Id == candidateId);
+        Assert.IsNull(legacy.AdminSourceSummary);
+        Assert.AreEqual("legacy", legacy.ProviderResultId);
+        await database.Database.ExecuteSqlInterpolatedAsync($"UPDATE requests.request_review_candidates SET admin_source_summary = {"Example indexer · usenet"} WHERE id = {candidateId}");
+        database.ChangeTracker.Clear();
+        var updated = await database.RequestReviewCandidates.SingleAsync(candidate => candidate.Id == candidateId);
+        Assert.AreEqual("Example indexer · usenet", updated.AdminSourceSummary);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task SharedRequestUpgradePreservesParticipantsAndHoldsHistoricalOverlaps()
     {
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());

@@ -53,7 +53,36 @@ public interface IUserAccountStore
         Guid userId,
         bool isAdmin,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the account's own audiobook narration preference (self-service --
+    /// see <c>AudiobookNarrationPreferenceService</c>). Unlike the other
+    /// setters here, this is not an administrator operation.
+    /// </summary>
+    Task<AccountOperationResult> SetAudiobookNarrationPreferenceAsync(
+        Guid userId,
+        AudiobookNarrationPreference preference,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Every account that can currently sign in and holds the <c>Admin</c> role —
+    /// HUMAN-ACQ-1's Matrix alert fan-out list, before filtering to a verified
+    /// Matrix link.
+    /// </summary>
+    Task<IReadOnlyList<AdminAccountSummary>> ListActiveAdminsAsync(CancellationToken cancellationToken);
+
+    /// <summary>This account's own quiet-hours setting (HUMAN-ACQ-1 D9), or <see langword="null"/> if unset.</summary>
+    Task<QuietHours?> GetQuietHoursAsync(Guid userId, CancellationToken cancellationToken);
+
+    /// <summary>Sets or clears (<paramref name="quietHours"/> <see langword="null"/>) the account's quiet-hours setting.</summary>
+    Task<AccountOperationResult> SetQuietHoursAsync(
+        Guid userId,
+        QuietHours? quietHours,
+        CancellationToken cancellationToken);
 }
+
+/// <summary>An administrator, as HUMAN-ACQ-1's alert fan-out needs it — never a credential or role list.</summary>
+public sealed record AdminAccountSummary(Guid Id, string DisplayName);
 
 /// <summary>An account as the admin surface displays it. Never carries a credential.</summary>
 public sealed record UserAccount(
@@ -63,7 +92,8 @@ public sealed record UserAccount(
     UserStatus Status,
     bool IsAdmin,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset? LastLoginAtUtc);
+    DateTimeOffset? LastLoginAtUtc,
+    AudiobookNarrationPreference AudiobookNarrationPreference = AudiobookNarrationPreference.PreferHuman);
 
 public sealed record AccountOperationResult(bool Succeeded, string? Error, Guid UserId)
 {

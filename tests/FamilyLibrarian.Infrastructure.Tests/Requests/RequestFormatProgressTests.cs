@@ -9,6 +9,23 @@ namespace FamilyLibrarian.Infrastructure.Tests.Requests;
 public sealed class RequestFormatProgressTests
 {
     [TestMethod]
+    [DataRow("paused")]
+    [DataRow("paused-disk-space")]
+    [DataRow("PAUSED-maintenance")]
+    public void ProviderPauseHasRequesterSafeProgress(string phase)
+    {
+        var result = RequestFormatProgress.Describe(null, null, null, null,
+            ProviderAcquisitionJobLifecycleState.Running, phase);
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AcquisitionPaused", result.Code);
+        Assert.DoesNotContain("disk", result.Description, StringComparison.OrdinalIgnoreCase);
+        var resumed = RequestFormatProgress.Describe(null, null, null, null,
+            ProviderAcquisitionJobLifecycleState.Running, "downloading");
+        Assert.IsNotNull(resumed);
+        Assert.AreEqual("AcquisitionInProgress", resumed.Code);
+    }
+
+    [TestMethod]
     public void SecurityStagesHaveRequesterSafeProgress()
     {
         var cases = new (MediaAssetStorageState AssetState, SecurityEvaluationStatus? SecurityStatus, string Code)[]
@@ -56,5 +73,103 @@ public sealed class RequestFormatProgressTests
             Assert.AreEqual(testCase.Code, result.Code);
             Assert.DoesNotContain("error", result.Description, StringComparison.OrdinalIgnoreCase);
         }
+    }
+
+    [TestMethod]
+    public void AWaitingProviderJobIsShownAsAwaitingProviderActionRegardlessOfPhase()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null,
+            securityStatus: null,
+            libraryImportStatus: null,
+            deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Waiting,
+            providerJobPhase: "user-interaction");
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AwaitingProviderAction", result.Code);
+        Assert.AreEqual("A librarian is working with the provider to continue this request.", result.Description);
+    }
+
+    [TestMethod]
+    public void AQueuedOrRunningProviderJobIsShownAsAcquisitionInProgress()
+    {
+        foreach (var state in new[] { ProviderAcquisitionJobLifecycleState.Queued, ProviderAcquisitionJobLifecycleState.Running })
+        {
+            var result = RequestFormatProgress.Describe(
+                assetState: null,
+                securityStatus: null,
+                libraryImportStatus: null,
+                deliveryStatus: null,
+                providerJobState: state,
+                providerJobPhase: "downloading");
+
+            Assert.IsNotNull(result);
+            Assert.AreEqual("AcquisitionInProgress", result.Code);
+        }
+    }
+
+    [TestMethod]
+    public void AnExistingAssetTakesPrecedenceOverAProviderJobState()
+    {
+        // Once a MediaAsset exists, the ordinary asset-state pipeline governs
+        // -- a provider job lingering in a non-terminal state must never
+        // override real, more-advanced progress.
+        var result = RequestFormatProgress.Describe(
+            MediaAssetStorageState.Quarantine,
+            securityStatus: null,
+            libraryImportStatus: null,
+            deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Running,
+            providerJobPhase: "downloading");
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AwaitingSecurityScan", result.Code);
+    }
+
+    [TestMethod]
+    public void AFailedJobThatIsAdvancingToTheNextCopyIsNotPresentedAsAFailure()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null,
+            securityStatus: null,
+            libraryImportStatus: null,
+            deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Failed,
+            providerJobAdvancingToNextCandidate: true);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AcquisitionRetrying", result.Code);
+        Assert.Contains("nothing needs doing", result.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("librarian", result.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [TestMethod]
+    public void AFailedJobNotBeingRetriedStillNeedsTheLibrariansAttention()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null,
+            securityStatus: null,
+            libraryImportStatus: null,
+            deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Failed);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AcquisitionFailed", result.Code);
+    }
+
+    [TestMethod]
+    public void TheAdvancingFlagDoesNotChangeAJobThatHasNotFailed()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null,
+            securityStatus: null,
+            libraryImportStatus: null,
+            deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Running,
+            providerJobAdvancingToNextCandidate: true);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AcquisitionInProgress", result.Code);
     }
 }

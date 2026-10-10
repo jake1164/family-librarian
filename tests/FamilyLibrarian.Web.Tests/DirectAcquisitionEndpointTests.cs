@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace FamilyLibrarian.Web.Tests;
 
@@ -167,7 +168,11 @@ public sealed class DirectAcquisitionEndpointTests
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var fulfillment = scope.ServiceProvider.GetRequiredService<AutomaticRequestFulfillmentService>();
-            Assert.AreEqual(1, await fulfillment.ProcessPendingAsync(CancellationToken.None));
+            // ProcessPendingAsync reports every pending format in this class's
+            // fixture database, including setup from earlier test methods. The
+            // behavior under test is verified below against this request's
+            // format, not that unrelated pending work does not exist.
+            await fulfillment.ProcessPendingAsync(CancellationToken.None);
         }
 
         await using var verificationScope = factory.Services.CreateAsyncScope();
@@ -177,6 +182,143 @@ public sealed class DirectAcquisitionEndpointTests
         Assert.AreEqual(1, await database.SecurityEvaluations.CountAsync(
             evaluation => evaluation.AssetId == asset.Id));
         Assert.IsNotNull(await database.BookRequests.FindAsync(requestId));
+    }
+
+    [TestMethod]
+    public async Task AnAmbiguousAudiobookDoesNotPreventAnEligibleEbookFromBeingAcquired()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(
+            fixture, new FakeProvider(matches: true, audiobookMatchCount: 2));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, ebookFormatId, audiobookFormatId) = await CreateEbookAndAudiobookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await database.BookRequests.SingleAsync(item => item.Id == requestId);
+
+        // Two same-provider audiobook candidates tied on every modeled
+        // dimension (narration/completeness/format unknown or equal for
+        // both) no longer force a review by themselves -- AudiobookCandidateSelector
+        // deterministically picks one (a stable provider-result-ID tiebreak)
+        // and an acquisition is attempted for it. This fake provider always
+        // fetches EPUB bytes regardless of media type, so that attempt fails
+        // identity/format validation -- proving the audiobook was actually
+        // *attempted*, not silently skipped -- while the independently safe
+        // ebook must not be starved just because it was enumerated first.
+        // This mirrors the live Moby Dick regression.
+        Assert.AreEqual(RequestStatus.NeedsReview, request.Status);
+        Assert.AreEqual(RequestReviewCategory.SecurityOrIdentityFailure, request.ReviewCategory);
+        Assert.AreEqual(0, await database.RequestReviewCandidates.CountAsync(
+            candidate => candidate.RequestId == requestId));
+        Assert.AreEqual(1, await database.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == ebookFormatId));
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == audiobookFormatId));
+    }
+
+    [TestMethod]
+    public async Task APreferredSameSourceAudiobookFormatIsFetchedWithoutAFormatReview()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var provider = new FakeProvider(
+            matches: true,
+            throwsOnFetch: true,
+            audiobookFormats: ["m4a", "m4b", "mp3"]);
+        await using var factory = CreateFactory(fixture, provider);
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, _) = await CreateAudiobookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        // The fake deliberately fails after the selection point. That proves
+        // the production acquisition path selected M4B, while avoiding an
+        // invalid pretend-audio fixture in this host-level routing test.
+        Assert.AreEqual("m4b", provider.LastFetchedFormat);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await database.BookRequests.SingleAsync(item => item.Id == requestId);
+        Assert.AreEqual(RequestReviewCategory.SecurityOrIdentityFailure, request.ReviewCategory);
+    }
+
+    [TestMethod]
+    public async Task IgnoredAudiobookFormatsDoNotFetchOrCreateAReview()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var provider = new FakeProvider(matches: true, audiobookFormats: ["wav", "aiff", "wma", "ape"]);
+        await using var factory = CreateFactory(fixture, provider);
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateAudiobookRequestAsync(requester);
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        Assert.IsNull(provider.LastFetchedFormat);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await database.BookRequests.SingleAsync(item => item.Id == requestId);
+        Assert.AreEqual(RequestStatus.PendingAcquisition, request.Status);
+        Assert.IsNull(request.ReviewCategory);
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(asset => asset.AssociatedRequestFormatId == formatId));
+        Assert.AreEqual(1, await database.ProviderAttempts.CountAsync(attempt =>
+            attempt.RequestFormatId == formatId && attempt.Outcome == ProviderAttemptOutcome.NoMatch));
+    }
+
+    [TestMethod]
+    public async Task AStoredLegacyAudiobookReviewIsRefreshedWhileAnUnreviewedEbookIsAcquired()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(
+            fixture, new FakeProvider(matches: true, audiobookMatchCount: 2));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, ebookFormatId, audiobookFormatId) = await CreateEbookAndAudiobookRequestAsync(requester);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var seedRequest = await database.BookRequests
+                .Include(item => item.Formats)
+                .SingleAsync(item => item.Id == requestId);
+            seedRequest.MarkNeedsReview(
+                RequestReviewCategory.PreferenceAmbiguity,
+                "Multiple plausible editions were found.",
+                DateTimeOffset.UtcNow,
+                [new RequestReviewCandidateInput(audiobookFormatId, "gutendex", "stale-audio-record", "The Hobbit", "J. R. R. Tolkien", "en", "MP3 audiobook · 2 parts", null, null, false)]);
+            await database.SaveChangesAsync();
+        }
+
+        await ProcessAutomaticFulfillmentAsync(factory);
+
+        // AudiobookCandidateSelector now deterministically resolves the two
+        // tied candidates instead of asking for a preference, so this format
+        // no longer takes the "refresh the stale PreferenceAmbiguity review
+        // with real candidate evidence" path at all -- it attempts an
+        // acquisition directly (see AnAmbiguousAudiobookDoesNotPreventAn
+        // EligibleEbookFromBeingAcquired for why this fake provider's attempt
+        // fails identity/format validation rather than succeeding). That
+        // failure cannot overwrite the stale review either:
+        // MarkForReviewAsync only ever bypasses its "already NeedsReview"
+        // guard for a legacy PreferenceAmbiguity *refresh* specifically, not
+        // for an unrelated SecurityOrIdentityFailure discovered afterwards --
+        // by design, automatic processing must not silently overwrite a
+        // review a librarian may already be looking at. The stale review
+        // is therefore left exactly as seeded; only the independently safe
+        // ebook, in a separate per-format iteration, is unaffected and
+        // still gets acquired.
+        await using var verificationScope = factory.Services.CreateAsyncScope();
+        var verificationDatabase = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await verificationDatabase.BookRequests.SingleAsync(item => item.Id == requestId);
+        Assert.AreEqual(RequestReviewCategory.PreferenceAmbiguity, request.ReviewCategory);
+        Assert.AreEqual(1, await verificationDatabase.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == ebookFormatId));
+        Assert.AreEqual(0, await verificationDatabase.MediaAssets.CountAsync(
+            asset => asset.AssociatedRequestFormatId == audiobookFormatId));
+        var reviewCandidates = await verificationDatabase.RequestReviewCandidates
+            .Where(candidate => candidate.RequestId == requestId).ToArrayAsync();
+        Assert.HasCount(1, reviewCandidates);
+        Assert.AreEqual("stale-audio-record", reviewCandidates[0].ProviderResultId);
     }
 
     [TestMethod]
@@ -238,6 +380,10 @@ public sealed class DirectAcquisitionEndpointTests
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = new FamilyLibrarianAppFactory(fixture.ConnectionString, services =>
         {
+            // This test invokes the fulfillment pass explicitly below. Leaving
+            // the production worker running creates a second concurrent pass
+            // over the same request and makes the outcome timing-dependent.
+            services.RemoveAll<IHostedService>();
             services.RemoveAll<IDirectAcquisitionProvider>();
             services.RemoveAll<IAutomaticDirectAcquisitionProvider>();
             services.AddSingleton<IDirectAcquisitionProvider>(new FakeProvider(matches: true));
@@ -256,6 +402,30 @@ public sealed class DirectAcquisitionEndpointTests
         Assert.AreEqual(RequestStatus.NeedsReview, request.Status);
         Assert.AreEqual(0, await database.MediaAssets.CountAsync(
             asset => asset.AssociatedRequestFormatId == formatId));
+    }
+
+    [TestMethod]
+    public async Task AdminReviewRecognizesATitleInAReleaseNameEvenForStoredFallbackLabels()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: false));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var request = await database.BookRequests.Include(item => item.Formats).SingleAsync(item => item.Id == requestId);
+            request.MarkNeedsReview(RequestReviewCategory.PreferenceAmbiguity, "Review the release.", DateTimeOffset.UtcNow,
+                [new RequestReviewCandidateInput(formatId, "example-source", "part-two", "The Hobbit", null, "en",
+                    "Part 2 of 2", null, "req.The.Hobbit.The.Hobbit.2.of.2.m4b", true)]);
+            await database.SaveChangesAsync();
+        }
+        using var admin = await CreateTokenClientAsync(factory, isAdmin: true);
+        var view = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{requestId}");
+        Assert.IsNotNull(view);
+        Assert.IsTrue(view.ReviewCandidates!.Single().NamesRequestedWork);
+        Assert.IsTrue(view.ReviewCandidates!.Single().TitleIsRequestFallback,
+            "Recognizing a release title must not fabricate structured source metadata.");
     }
 
     [TestMethod]
@@ -287,6 +457,12 @@ public sealed class DirectAcquisitionEndpointTests
         Assert.AreEqual("gutendex", candidate.ProviderId);
         Assert.AreEqual("1234", candidate.ProviderResultId);
         Assert.AreEqual("spa", candidate.Language);
+
+        using var admin = await CreateTokenClientAsync(factory, isAdmin: true);
+        var adminView = await admin.GetFromJsonAsync<AdminBookRequestResponse>(
+            $"/api/v1/admin/requests/{requestId}");
+        Assert.IsNotNull(adminView);
+        Assert.AreEqual(formatId, adminView.ReviewCandidates?.Single().RequestFormatId);
 
         var requesterUserId = await GetUserIdAsync(database, WebTestFixture.UserEmail);
         var userNotifications = await database.NotificationEvents.Where(e =>
@@ -359,13 +535,19 @@ public sealed class DirectAcquisitionEndpointTests
             var candidates = await database.RequestReviewCandidates
                 .Where(c => c.RequestId == requestId).OrderBy(c => c.DisplayOrder).ToArrayAsync();
             Assert.AreEqual(2, candidates.Length);
-            Assert.AreEqual("1234-0", candidates[0].ProviderResultId);
-            Assert.AreEqual("1234-1", candidates[1].ProviderResultId);
-            // Each edition keeps its own distinguishable title -- not the
-            // canonical Work title repeated for every candidate.
+            Assert.AreEqual("1234-Ebook-0", candidates[0].ProviderResultId);
+            Assert.AreEqual("1234-Ebook-1", candidates[1].ProviderResultId);
+            // Each candidate keeps the title its own source claimed. Storing
+            // FL's canonical work title here instead is what let a review of
+            // unrelated records render as repeated copies of the requested
+            // book; neutral edition facts still carry the rest of the
+            // distinction without exposing source metadata.
             Assert.AreEqual("The Hobbit (Edition 1)", candidates[0].Title);
             Assert.AreEqual("The Hobbit (Edition 2)", candidates[1].Title);
+            Assert.IsFalse(candidates[0].TitleIsRequestFallback);
             Assert.AreEqual("J. R. R. Tolkien", candidates[0].Author);
+            Assert.AreEqual("EPUB · Published 2014 · Example Press · 1.5 MB", candidates[0].Details);
+            Assert.AreEqual("EPUB · Published 2016 · Archive House · 2 MB", candidates[1].Details);
             firstCandidateId = candidates[0].Id;
         }
 
@@ -682,6 +864,9 @@ public sealed class DirectAcquisitionEndpointTests
             fixture.ConnectionString,
             services =>
             {
+                // The tests drive AutomaticRequestFulfillmentService directly
+                // so each assertion observes exactly one deliberate pass.
+                services.RemoveAll<IHostedService>();
                 services.RemoveAll<IDirectAcquisitionProvider>();
                 services.RemoveAll<IAutomaticDirectAcquisitionProvider>();
                 services.AddSingleton<IDirectAcquisitionProvider>(provider);
@@ -723,10 +908,57 @@ public sealed class DirectAcquisitionEndpointTests
         return (request.Id, format.FormatId);
     }
 
+    private static async Task<(Guid RequestId, Guid FormatId)> CreateAudiobookRequestAsync(HttpClient client)
+    {
+        var resolve = await client.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        resolve.EnsureSuccessStatusCode();
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+
+        var created = await client.PostAsJsonAsync(
+            "/api/v1/requests/",
+            new CreateBookRequestRequest(
+                await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id),
+                ["Audiobook"], null, false, false));
+        Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        var format = request.Formats.Single(format => format.MediaType == "Audiobook");
+        return (request.Id, format.FormatId);
+    }
+
+    private static async Task<(Guid RequestId, Guid EbookFormatId, Guid AudiobookFormatId)> CreateEbookAndAudiobookRequestAsync(
+        HttpClient client)
+    {
+        var resolve = await client.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        resolve.EnsureSuccessStatusCode();
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+
+        // Audiobook is intentionally first: this is the order that exposed the
+        // live Moby Dick failure, and proves a review does not short-circuit
+        // the independent ebook path.
+        var created = await client.PostAsJsonAsync(
+            "/api/v1/requests/",
+            new CreateBookRequestRequest(
+                await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id),
+                ["Audiobook", "Ebook"], null, false, false));
+        Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        return (
+            request.Id,
+            request.Formats.Single(format => format.MediaType == "Ebook").FormatId,
+            request.Formats.Single(format => format.MediaType == "Audiobook").FormatId);
+    }
+
     /// <summary>Always reports one DirectAcquisition match (or none), and fetches a fake EPUB.</summary>
     private sealed class FakeProvider(
         bool matches, string providerId = "gutendex", string providerResultId = "1234", bool throwsOnFetch = false,
-        bool isReady = true, bool requiresLanguageConfirmation = false, string? language = null, int matchCount = 1)
+        bool isReady = true, bool requiresLanguageConfirmation = false, string? language = null, int matchCount = 1,
+        int audiobookMatchCount = 0, IReadOnlyList<string>? audiobookFormats = null)
         : IAutomaticDirectAcquisitionProvider
     {
         public string Id => providerId;
@@ -739,26 +971,31 @@ public sealed class DirectAcquisitionEndpointTests
         /// </summary>
         public string ProviderResultId { get; set; } = providerResultId;
 
+        public string? LastFetchedFormat { get; private set; }
+
         public Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(isReady);
 
         public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
             Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken)
         {
-            if (!matches || mediaType != RequestMediaType.Ebook)
+            var candidateCount = mediaType == RequestMediaType.Ebook
+                ? matchCount
+                : audiobookFormats?.Count ?? audiobookMatchCount;
+            if (!matches || candidateCount == 0)
             {
                 return Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
             }
 
-            IReadOnlyList<FulfillmentOption> options = Enumerable.Range(0, matchCount)
+            IReadOnlyList<FulfillmentOption> options = Enumerable.Range(0, candidateCount)
                 .Select(index => new FulfillmentOption(
                     ProviderId: Id,
-                    ProviderResultId: matchCount == 1 ? ProviderResultId : $"{ProviderResultId}-{index}",
+                    ProviderResultId: candidateCount == 1 ? ProviderResultId : $"{ProviderResultId}-{mediaType}-{index}",
                     WorkId: workId,
                     EditionId: null,
-                    MediaType: RequestMediaType.Ebook,
+                    MediaType: mediaType,
                     OptionKind: OptionKind.DirectAcquisition,
                     AcquisitionMethod: AcquisitionMethod.DirectDownload,
-                    Format: "epub",
+                    Format: mediaType == RequestMediaType.Ebook ? "epub" : audiobookFormats?[index] ?? "mp3",
                     Language: language,
                     Quality: null,
                     Availability: null,
@@ -770,8 +1007,11 @@ public sealed class DirectAcquisitionEndpointTests
                     ProviderData: "https://example.test/book.epub",
                     MatchBasis: null,
                     RequiresLanguageConfirmation: requiresLanguageConfirmation,
-                    Title: matchCount == 1 ? null : $"The Hobbit (Edition {index + 1})",
-                    Author: matchCount == 1 ? null : "J. R. R. Tolkien"))
+                    Title: candidateCount == 1 ? null : $"The Hobbit (Edition {index + 1})",
+                    Author: candidateCount == 1 ? null : "J. R. R. Tolkien",
+                    PublicationYear: candidateCount == 1 ? null : 2014 + (index * 2),
+                    Publisher: candidateCount == 1 ? null : index == 0 ? "Example Press" : "Archive House",
+                    SizeBytes: candidateCount == 1 ? null : index == 0 ? 1_572_864 : 2_097_152))
                 .ToArray();
             return Task.FromResult(options);
         }
@@ -783,6 +1023,7 @@ public sealed class DirectAcquisitionEndpointTests
         public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
             FulfillmentOption fulfillmentOption, CancellationToken cancellationToken)
         {
+            LastFetchedFormat = fulfillmentOption.Format;
             if (throwsOnFetch)
             {
                 throw new InvalidOperationException(

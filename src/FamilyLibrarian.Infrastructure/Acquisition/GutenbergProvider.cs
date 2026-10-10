@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
@@ -24,18 +26,35 @@ public sealed class GutenbergProvider(
     ManualImportPolicy importPolicy,
     IBookMatcher bookMatcher) : IAutomaticDirectAcquisitionProvider
 {
-    private const string AudioBundleFormat = "audio-bundle";
+    // Real, deterministically-ranked audiobook formats Project Gutenberg's
+    // audio mirrors actually serve (see BuildAudiobookOptions). Anything else
+    // reported by the RDF catalogue (legacy Speex, WAV, ...) is classified as
+    // GutenbergFormatKind.Other by the synchronizer and never reaches here.
+    private static readonly Dictionary<GutenbergFormatKind, string> AudiobookFormatLabels =
+        new()
+        {
+            [GutenbergFormatKind.AudioM4b] = "m4b",
+            [GutenbergFormatKind.AudioMp3] = "mp3",
+            [GutenbergFormatKind.AudioOgg] = "ogg"
+        };
 
     // See PickDominantByPopularity's remarks for why these exist and what
     // they deliberately do not do.
-    private const int MinimumDominantDownloadCount = 1_000;
-    private const double DominantDownloadRatio = 3.0;
+    internal const int MinimumDominantDownloadCount = 1_000;
+    internal const double DominantDownloadRatio = 3.0;
 
     public string Id => ProviderRegistry.GutenbergProviderId;
 
-    /// <summary>Not ready while the local RDF catalogue is still (re)importing — see <see cref="IDirectAcquisitionProvider.IsReadyAsync"/>.</summary>
+    /// <summary>
+    /// Not ready while the source is disabled, or while the local RDF catalogue is
+    /// still (re)importing — see <see cref="IDirectAcquisitionProvider.IsReadyAsync"/>.
+    /// </summary>
     public async Task<bool> IsReadyAsync(CancellationToken cancellationToken) =>
+        await IsEnabledAsync(cancellationToken) &&
         (await catalog.GetStatusAsync(cancellationToken)).IsReady;
+
+    private Task<bool> IsEnabledAsync(CancellationToken cancellationToken) =>
+        ProviderState.IsUsableAsync(registry, settingsStore, Id, cancellationToken);
 
     public async Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
         Guid workId,
@@ -76,15 +95,19 @@ public sealed class GutenbergProvider(
             return [];
         }
 
-        var descriptor = registry.Find(Id);
-        if (descriptor is null || !ProviderState.IsUsable(
-                descriptor, await settingsStore.FindAsync(Id, cancellationToken)))
+        if (!await IsEnabledAsync(cancellationToken))
         {
             return [];
         }
 
+        // The local catalogue matches on a normalized substring, so a catalog
+        // title carrying edition packaging ("Moby Dick (Illustrated Classics)",
+        // "Moby Dick by Herman Melville") returns nothing at all -- Gutenberg
+        // reported "no high-confidence copy" for books it holds outright. The
+        // work-identifying core is searched instead; acceptance below is
+        // unchanged and still requires a title and author match.
         var candidates = await catalog.SearchAsync(new GutenbergCatalogSearchQuery(
-            identity.Title,
+            WorkTitleCore.Reduce(identity.Title, identity.Author),
             mediaType,
             RequireEpub: mediaType == RequestMediaType.Ebook,
             Take: 30), cancellationToken);
@@ -108,7 +131,7 @@ public sealed class GutenbergProvider(
                 .Where(person => person.Role == GutenbergPersonRole.Author)
                 .FirstOrDefault(person => !string.IsNullOrWhiteSpace(identity.Author) &&
                     bookMatcher.AuthorMatches(identity.Author, person.Name));
-            if (!bookMatcher.TitleMatches(identity.Title, candidate.Title) ||
+            if (!bookMatcher.TitleMatches(identity.Title, candidate.Title, identity.Author) ||
                 (!string.IsNullOrWhiteSpace(identity.Author) && matchedAuthor is null))
             {
                 continue;
@@ -116,7 +139,7 @@ public sealed class GutenbergProvider(
 
             var option = mediaType == RequestMediaType.Ebook
                 ? BuildEbookOption(candidate)
-                : BuildAudiobookOption(candidate);
+                : await BuildBestAudiobookOptionAsync(candidate, cancellationToken);
             if (option is null)
             {
                 continue;
@@ -139,7 +162,15 @@ public sealed class GutenbergProvider(
             }
         }
 
-        if (autoEligible.Count > 1 && PickDominantByPopularity(autoEligible) is { } dominant)
+        // Download-count dominance decides only between ambiguous EBOOK
+        // editions of the same text (see PickDominantByPopularity's remarks).
+        // An audiobook's "which record" ambiguity is a narration/completeness
+        // decision now, made by AudiobookCandidateSelector at the caller --
+        // popularity must not gate whether an audiobook can auto-acquire at
+        // all (a 17-download recording can still be the one clearly correct
+        // copy), only ever break a genuine tie there, very late.
+        if (mediaType == RequestMediaType.Ebook &&
+            autoEligible.Count > 1 && PickDominantByPopularity(autoEligible) is { } dominant)
         {
             return [dominant];
         }
@@ -175,7 +206,24 @@ public sealed class GutenbergProvider(
         }
 
         var runnerUpCount = ranked[1].DownloadCount ?? 0;
-        return topCount >= runnerUpCount * DominantDownloadRatio ? top.Option : null;
+        if (topCount < runnerUpCount * DominantDownloadRatio)
+        {
+            return null;
+        }
+
+        var dominance = runnerUpCount == 0
+            ? "the runner-up has no reported downloads"
+            : $"{topCount / (double)runnerUpCount:0.#}× the runner-up record " +
+              $"#{ranked[1].Option.ProviderResultId} " +
+              $"({runnerUpCount.ToString("N0", CultureInfo.InvariantCulture)} downloads)";
+        return top.Option with
+        {
+            AutomaticSelectionReason =
+                $"Selected automatically: Project Gutenberg record #{top.Option.ProviderResultId} has " +
+                $"{topCount.ToString("N0", CultureInfo.InvariantCulture)} downloads, and {dominance}. " +
+                $"The rule requires at least {MinimumDominantDownloadCount.ToString("N0", CultureInfo.InvariantCulture)} downloads " +
+                $"and a {DominantDownloadRatio:0.#}× lead."
+        };
     }
 
     public async Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
@@ -190,7 +238,7 @@ public sealed class GutenbergProvider(
             throw new InvalidOperationException("This Gutenberg option has no downloadable formats.");
         }
 
-        if (fulfillmentOption.Format != AudioBundleFormat)
+        if (fulfillmentOption.MediaType != RequestMediaType.Audiobook)
         {
             var stream = await OpenFromMirrorsAsync(reference.SourcePaths[0], reference.FormatKind, cancellationToken);
             return [new DirectAcquisitionFile(stream, $"gutenberg-{fulfillmentOption.ProviderResultId}.epub")];
@@ -206,9 +254,10 @@ public sealed class GutenbergProvider(
                 "file manually from this request's Files section.");
         }
 
+        var extension = AudiobookFormatLabels.GetValueOrDefault(reference.FormatKind, "mp3");
         IReadOnlyList<DirectAcquisitionFile> files = reference.SourcePaths.Select((path, index) => new DirectAcquisitionFile(
             new LazyMirrorStream(token => OpenFromMirrorsAsync(path, reference.FormatKind, token)),
-            $"gutenberg-{fulfillmentOption.ProviderResultId}-{index + 1:00}.mp3")).ToArray();
+            $"gutenberg-{fulfillmentOption.ProviderResultId}-{index + 1:00}.{extension}")).ToArray();
         return files;
     }
 
@@ -223,16 +272,93 @@ public sealed class GutenbergProvider(
             })
             .FirstOrDefault(format => format.Kind is GutenbergFormatKind.Epub3Images or
                 GutenbergFormatKind.EpubImages or GutenbergFormatKind.EpubNoImages);
-        return format is null ? null : CreateOption(book, RequestMediaType.Ebook, "epub", [format.SourcePath], format.Kind);
+        return format is null ? null : CreateOption(
+            book, RequestMediaType.Ebook, "epub", [format.SourcePath], format.Kind,
+            sizeBytes: format.FileSizeBytes);
     }
 
-    private FulfillmentOption? BuildAudiobookOption(GutenbergCatalogBook book)
+    /// <summary>
+    /// Builds one bundle option per real codec this record actually publishes
+    /// (Project Gutenberg audio editions commonly ship MP3, M4B, and Ogg
+    /// Vorbis side by side), then keeps only the one <see cref="AudiobookFormatPolicy"/>
+    /// ranks highest -- e.g. M4B's much smaller, chaptered files over a
+    /// needlessly large MP3 bundle -- so the rest of this method still sees
+    /// exactly one option per Gutenberg record, same as every other kind.
+    /// </summary>
+    private async Task<FulfillmentOption?> BuildBestAudiobookOptionAsync(
+        GutenbergCatalogBook book, CancellationToken cancellationToken)
     {
-        var tracks = book.Formats.Where(format => format.Kind == GutenbergFormatKind.AudioMp3)
-            .OrderBy(format => format.SourcePath, StringComparer.Ordinal).ToArray();
-        return tracks.Length == 0 ? null : CreateOption(
-            book, RequestMediaType.Audiobook, AudioBundleFormat,
-            tracks.Select(track => track.SourcePath).ToArray(), GutenbergFormatKind.AudioMp3);
+        var options = await BuildAudiobookOptionsAsync(book, cancellationToken);
+        var best = AudiobookFormatPolicy.KeepHighestUsable(options);
+        return best.Count == 0 ? null : best[0];
+    }
+
+    private async Task<FulfillmentOption[]> BuildAudiobookOptionsAsync(
+        GutenbergCatalogBook book, CancellationToken cancellationToken)
+    {
+        var groups = book.Formats
+            .Where(format => AudiobookFormatLabels.ContainsKey(format.Kind))
+            .GroupBy(format => format.Kind)
+            .ToArray();
+        if (groups.Length == 0)
+        {
+            return [];
+        }
+
+        // One recording can be bundled as several codecs, but they are all
+        // the same reading -- fetch the narration credit once per book, not
+        // once per codec bundle.
+        var narration = await TryFetchNarrationEvidenceAsync(book, cancellationToken);
+
+        return groups.Select(group =>
+        {
+            var tracks = group.OrderBy(format => format.SourcePath, StringComparer.Ordinal).ToArray();
+            return CreateOption(
+                book, RequestMediaType.Audiobook, AudiobookFormatLabels[group.Key],
+                tracks.Select(track => track.SourcePath).ToArray(), group.Key,
+                sizeBytes: SumKnownSizes(tracks), partCount: tracks.Length) with
+            {
+                NarrationKind = narration.Kind,
+                Narrator = narration.Narrator,
+                NarrationEvidence = narration.Evidence
+            };
+        }).ToArray();
+    }
+
+    /// <summary>
+    /// Project Gutenberg's RDF/bibliographic metadata does not distinguish
+    /// human from computer-generated narration (checked against real records
+    /// before writing this -- see <see cref="GutenbergNarrationParser"/>'s
+    /// remarks), but every audio record's own <c>*readme.txt</c> commonly
+    /// states it in prose. A fetch failure here degrades to
+    /// <see cref="NarrationKind.Unknown"/> rather than failing the whole
+    /// candidate -- narration is enrichment, not a required field.
+    /// </summary>
+    private async Task<GutenbergNarrationEvidence> TryFetchNarrationEvidenceAsync(
+        GutenbergCatalogBook book, CancellationToken cancellationToken)
+    {
+        var readme = book.Formats.FirstOrDefault(format =>
+            format.SourcePath.EndsWith("readme.txt", StringComparison.OrdinalIgnoreCase));
+        if (readme is null)
+        {
+            return GutenbergNarrationEvidence.Unknown;
+        }
+
+        try
+        {
+            await using var stream = await OpenFromMirrorsAsync(readme.SourcePath, GutenbergFormatKind.Other, cancellationToken);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            // The narration statement always appears near the top -- reading
+            // a capped prefix avoids holding a whole file in memory for a
+            // value only ever found in its first few kilobytes.
+            var buffer = new char[16 * 1024];
+            var read = await reader.ReadBlockAsync(buffer.AsMemory(), cancellationToken);
+            return GutenbergNarrationParser.Parse(new string(buffer, 0, read));
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return GutenbergNarrationEvidence.Unknown;
+        }
     }
 
     private FulfillmentOption CreateOption(
@@ -240,7 +366,9 @@ public sealed class GutenbergProvider(
         RequestMediaType mediaType,
         string format,
         string[] sourcePaths,
-        GutenbergFormatKind formatKind) => new(
+        GutenbergFormatKind formatKind,
+        long? sizeBytes = null,
+        int? partCount = null) => new(
         Id,
         book.GutenbergId.ToString(System.Globalization.CultureInfo.InvariantCulture),
         WorkId: Guid.Empty,
@@ -257,7 +385,16 @@ public sealed class GutenbergProvider(
         LicenseOrUsageStatus: "Public domain",
         DrmStatus: null,
         ExternalActionUri: null,
-        JsonSerializer.Serialize(new GutenbergDownloadReference(formatKind, sourcePaths)));
+        JsonSerializer.Serialize(new GutenbergDownloadReference(formatKind, sourcePaths)),
+        SizeBytes: sizeBytes,
+        PartCount: partCount,
+        ProviderPopularity: book.DownloadCount,
+        AdminInspectionUri: new Uri($"https://www.gutenberg.org/ebooks/{book.GutenbergId}"));
+
+    private static long? SumKnownSizes(IReadOnlyList<GutenbergCatalogFormat> formats) =>
+        formats.Any(format => format.FileSizeBytes is null)
+            ? null
+            : formats.Sum(format => format.FileSizeBytes!.Value);
 
     private async Task<Stream> OpenFromMirrorsAsync(
         string sourcePath,

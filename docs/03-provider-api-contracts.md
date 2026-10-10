@@ -1,7 +1,7 @@
-# Family Librarian — Provider & API Contract Design
+# Family Librarian — Provider Architecture & Internal Contracts
 
-**Status:** Draft v0.1  
-**Date:** 2026-08-08
+**Status:** Maintained architecture and policy reference  
+**Last reviewed:** 2026-09-21
 
 ---
 
@@ -10,6 +10,11 @@
 Family Librarian should remain useful as external services change.
 
 The application should define stable contracts for capabilities while allowing implementations to be replaced, added, or disabled.
+
+This document defines Family Librarian's internal provider boundaries, safety
+policy, and integration responsibilities. The external-provider HTTP wire
+contract is exclusively [04-external-provider-http-protocol.md](04-external-provider-http-protocol.md).
+This document does not define its fields, endpoints, or version negotiation.
 
 The initial contract families are:
 
@@ -25,11 +30,114 @@ INotificationProvider
 IDeliveryProvider
 ```
 
-Not every contract must support third-party dynamic loading in V1. The important requirement is that core workflow code depends on the contract rather than a specific vendor.
+Not every contract must support third-party dynamic loading in the initial
+release. The important requirement is that core workflow code depends on the
+contract rather than a specific vendor.
 
 ---
 
 ## 2. Provider Design Principles
+
+External acquisition retrieval and local confidence are separate. A provider
+may search broadly by title and persisted title aliases, retaining results with
+missing or imperfect authors. FL evaluates structured author evidence and the
+remaining release-name evidence after its existing title, series, narration,
+language and packaging checks. It does not guess that text before a dash is an
+author.
+
+Local author affinity uses the existing Unicode KC word normalizer, invariant
+case, punctuation/whitespace boundaries, comma-order handling, and harmless
+Jr/Sr/II/III/IV suffix removal. Its ordered supporting weights are exact full
+name (100), compatible full name or first initial plus exact surname (90),
+fuzzy first plus exact surname (80), surname only (70), exact first plus fuzzy
+surname (60), first only (50), both fuzzy (40), unknown (0), conflict (-100).
+Typo evidence permits one insertion, deletion or substitution per component
+only when both tokens have at least five and at most 64 characters. There is no substring
+matching or arbitrary initial matching.
+
+These weights order candidates after categorical identity evidence and before
+release/format/quality tiebreakers. They are not an additive download threshold.
+The external acquisition resolver produces a server-side
+`CandidateIdentityAssessment`: requested and source bibliographic metadata,
+unchanged raw release title, Unicode KC/invariant word tokens, local title
+window (whose indices refer to the retained partless identity tokens), author
+affinity, comparable series positions, language evidence,
+structural/edition conditions, multipart evidence, unclassified descriptors,
+contradictions, reasons and a categorical decision. The separate work-identity property remains `Match` for `MatchWithConditions`;
+acquisition suitability holds the unresolved conditions. Operational acquire tokens
+and administrator origin summaries are excluded from this assessment.
+
+The decisions are `Match`, `MatchWithConditions`, `Mismatch` and
+`Ambiguous`. Unknown is not conflict; extra descriptors are neutral and retained.
+Exact contiguous normalized title phrases are strong evidence anywhere in a
+release name. Ordered significant-token comparison varies only grammatical
+words. Local fuzzy comparison permits one character edit in one title token,
+requires an exact distinctive anchor and strong author support, and never fuzzes
+single-word or very short titles. Very short exact titles also need independent
+author support. Structured work titles take precedence; unexplained structured
+subtitles remain reviewable rather than becoming exact work assertions.
+
+`StrictTitle` establishes external work identity without an author prerequisite;
+strong full/compatible/one-component-typo author support yields
+`StrictTitleAuthor`. Author credits and supporting local name tokens are used;
+arbitrary residual descriptors are never compared as a whole author name.
+Explicit author conflicts prevent strict identity. Owned-library/destination
+matching keeps its separate policy and is unchanged by the release matcher.
+
+Series positions conflict only when catalog and candidate contain comparable
+positions for the same series. Numeric positions compare invariantly (`03`
+and `3` agree; `3.5` and `4` disagree). Inferred release prefixes retain
+unknown requested positions without rejecting them. A single catalog series
+also allows comparison with an explicit `Book N` label. Joined trailing format
+packaging such as `Book.1m4b` remains supported. Malformed book/part numbering
+requires structural review, independently of title identity.
+
+Acquisition suitability is separate: `EligibleForChecks`, `IdentityReview`,
+`NeedsCompanionParts`, `EditionReview`, or `Blocked`. Collections, samples,
+abridgements, graphic/dramatized editions and incomplete parts retain positive
+work evidence but carry typed conditions that prevent unattended individual
+acquisition. Explicit language, format, DRM, narration, quality, destination,
+scan and artifact-identity checks remain deterministic. A language assertion
+is not discarded because it appears in brackets. Unclassified publisher/uploader
+labels do not imply an edition change by themselves.
+
+Optional future semantic resolvers can consume this assessment after
+`DeterministicCandidateIdentityResolver.Assess` and before an ambiguous result
+is mapped to human review. They must preserve deterministic facts and cannot
+approve acquisition. No semantic resolver, AI setting or model dependency ships
+with this phase; deterministic operation is a complete supported mode.
+
+Numbered audiobook fragments (`Part 2`, `1.of.2`, `2 of 2`) are completeness
+evidence distinct from work identity and from tracks inside one complete
+release. A one-file report does not make a numbered fragment the complete
+audiobook. The local evaluator retains the part number and declared total and
+routes fragments to completeness review, with missing/duplicate numbers and
+companion availability described separately. Companion assessment uses the
+requested work, numbering and a compatible normalized release base (prefix through the matched title, with supporting
+author tokens removed), without requiring each member to repeat author, format
+or genre metadata. Explicit candidate series positions must also agree across
+parts even if the requested position is unknown. Known language, format,
+reader and edition-marker conflicts prevent a set from being described as compatible. A set containing
+every number remains review evidence by default: numbering alone cannot
+establish the same audiobook edition. It must not claim a partial or
+ambiguous set is a complete audiobook.
+
+A provider registered with automatic acquisition enabled may have a complete
+set fetched without review, but only when one provider returns exactly one
+compatible record for every number `1..N` (`2 <= N <= 8`), each record's only
+release concern is that it is a fragment (no sample, collection, abridged or
+DRM concern, no language confirmation), each has a plausible title and no
+author conflict. Every member has decisive title evidence; author support cannot
+substitute for an unresolved title. Each part is submitted as its own provider job (`PartSetId`, `PartNumber`, `PartTotal`) and re-derived on the
+server from a fresh search, so a stale or tampered member list is refused. Each
+part must arrive as exactly one file, is scanned on arrival, and is staged as
+track `n` of `N` in one bundle. Nothing is approved until every part is staged
+and passes, then all are approved together and published as one ordered
+audiobook. Each file's own tags are identity-checked after download. If any
+part fails, the remaining jobs are cancelled, staged parts are destroyed and the
+request goes to review naming the part; there is no automatic fallback to a
+different set. Parts that yield several files, mixed providers and sets larger
+than eight remain review-only.
 
 1. Providers declare capabilities.
 2. Providers do not receive database credentials.
@@ -160,6 +268,16 @@ the application must:
 3. load active request/acquisition state and the current user's delivery state;
 4. return one Work result with independently enriched Ebook and Audiobook
    availability.
+
+Interactive metadata searches run enabled providers concurrently and publish
+each provider's results and safe status independently. The requester receives
+an opaque, owner-scoped search-run ID and polls the accumulated result snapshot;
+a slow or unavailable provider must not hold back completed providers. A newer
+search cancels the prior run. The legacy aggregate search endpoint may remain
+for compatibility, but the browser's primary search flow uses the progressive
+run protocol. Provider identifiers are included only in the authenticated
+requester's catalog response; availability-run responses retain their separate
+topology-hiding contract.
 
 The response must be able to represent `Owned`, `Requested`,
 `WaitingForAvailability`, `Acquiring`, `Processing`, and delivery availability
@@ -338,114 +456,28 @@ own import, verification, format, and deep-link behavior.
 
 ## 5. Acquisition Provider
 
-Long-term recommendation: external HTTP provider protocol.
+External acquisition providers are standalone HTTP services. The complete,
+implementer-facing versioned wire contract is
+[04-external-provider-http-protocol.md](04-external-provider-http-protocol.md);
+that document, not this architectural overview, is authoritative for fields,
+endpoints, error codes, and version negotiation.
 
-### Provider Manifest
+The boundary is intentionally asymmetric:
 
-```http
-GET /manifest
-```
-
-Example:
-
-```json
-{
-  "protocolVersion": "1",
-  "id": "example-provider",
-  "name": "Example Provider",
-  "version": "1.2.0",
-  "capabilities": [
-    "ebook",
-    "audiobook",
-    "search",
-    "availability",
-    "acquire"
-  ],
-  "egressPolicy": "PRIVATE_REQUIRED"
-}
-```
-
-`egressPolicy` is optional for backward compatibility; if omitted, the default
-is `NORMAL`. It describes the required egress class, not a commercial VPN
-provider. Valid initial policy values are:
-
-```text
-NORMAL
-PRIVATE_REQUIRED
-CUSTOM_PROXY
-```
-
-### Health
-
-```http
-GET /health
-```
-
-### Search
-
-```http
-POST /search
-```
-
-Request:
-
-```json
-{
-  "requestId": "req_123",
-  "mediaType": "audiobook",
-  "work": {
-    "title": "Example Book",
-    "authors": ["Example Author"],
-    "series": "Example Series",
-    "seriesPosition": "3",
-    "identifiers": {
-      "isbn13": "..."
-    }
-  }
-}
-```
-
-Response:
-
-```json
-{
-  "candidates": [
-    {
-      "providerReference": "abc123",
-      "title": "Example Book",
-      "author": "Example Author",
-      "format": "m4b",
-      "sizeBytes": 123456789,
-      "durationSeconds": 28800,
-      "metadata": {}
-    }
-  ]
-}
-```
-
-### Acquire
-
-```http
-POST /acquire
-```
-
-The provider should return or stage an asset through a controlled mechanism defined by the acquisition engine.
-
-The provider must not place files directly into a destination library; it returns
-them only to Family Librarian-controlled staging.
-
-### Capability Examples
-
-```text
-ebook
-audiobook
-search
-availability
-acquire
-requires-account
-requires-api-key
-manual
-```
+- Providers discover and return all plausible candidates with structured
+  work/edition/release evidence and opaque selection handles. They can rank
+  candidates for usability, but never make FL's trust decision.
+- Family Librarian evaluates that evidence centrally, applies its identity,
+  language, and release policies, and either auto-acquires one explicitly
+  eligible candidate or presents reviewable candidates for a requester or
+  librarian to choose.
+- The chosen provider reference (and, when supplied, its opaque
+  revision/token) travels back to the provider for acquisition. A provider
+  must acquire that selection or report that it changed; it must not silently
+  substitute another release.
+- Every returned file then passes FL's independent safety, structural, and
+  asset-identity pipeline. Provider metadata is evidence, not a substitute
+  validator.
 
 ### Scheduled provider checks
 
@@ -461,8 +493,8 @@ WEEKLY   A lower-priority approved source may be checked no more than once per w
 MANUAL   No background lookup; an administrator explicitly checks it.
 ```
 
-The bundled Project Gutenberg implementation has effective `ONCE` behavior. Registered
-external providers default to `MANUAL`; an administrator may explicitly select
+The bundled Project Gutenberg and LibriVox implementations have effective
+`ONCE` behavior. Registered external providers default to `MANUAL`; an administrator may explicitly select
 `DAILY` or `WEEKLY` for each enabled provider. The application owns that policy,
 not the provider manifest.
 
@@ -470,9 +502,8 @@ Each automatic lookup creates an append-only, administrator-only
 provider-attempt entry containing provider ID, request format, attempt time,
 outcome (`match`, `no-match`, `ambiguous`, `blocked`, or `failed`), a safe
 summary, and next eligible check time. It must not record credentials, complete
-untrusted provider payloads, or downloadable artifact URLs. A provider's
-declared egress policy applies to every scheduled check and must still fail
-closed; a failed private route never permits a normal-egress retry.
+untrusted provider payloads, or downloadable artifact URLs. Family Librarian calls the provider over its registered API URL. The provider
+controls the network route for its own source interactions.
 
 The newest attempt for each provider is also projected into the administrator's
 in-app attention summary when its outcome is `failed` or `blocked`. This is a
@@ -480,57 +511,34 @@ safe operational indicator, not a replacement for the append-only ledger: it
 contains only provider display name/ID, the bounded safe summary, and the time.
 It must never expose credentials, provider payloads, requesters, or artifact URLs.
 
-Provider availability is not page availability. Calls that populate optional
-availability, store-offer, direct-acquisition, owned-library, or external-source
-options isolate transport failures and provider-owned timeouts per provider.
-They return the remaining options (or none) while preserving caller-requested
-cancellation. Background acquisition calls still surface the same failures to
-the provider-attempt ledger and administrator attention projection.
+Provider availability is not page availability. Catalog metadata renders before
+optional availability, store-offer, direct-acquisition, owned-library, or
+external-source enrichment. Each enrichment call is isolated per provider and
+continues until it returns or the browser/API caller cancels or supersedes the
+search; a short server-side wall-clock cutoff must not turn a slow valid source
+into a false “no result.” Unattended background lookups use a separate bounded
+worker lifetime and surface expiry/failure in the provider-attempt ledger and
+administrator attention projection.
 
-### Private-egress policy
+**Progressive availability.** An authenticated requester starts an opaque,
+cancellable availability run. The card polls that run and receives accumulated
+availability facts as each provider completes, without receiving provider
+identifiers or topology. A replacement search cancels its outstanding runs.
 
-Family Librarian **SHALL NOT** depend on a specific commercial VPN provider.
-An acquisition provider may declare `PRIVATE_REQUIRED` or inherit that policy
-from its server-side configuration. For an in-process provider, the policy
-applies to every outbound interaction with its source: authentication, search,
-result and detail lookup, artifact resolution, download-URL resolution, and
-direct download. A private provider must not leak any of those steps via normal
-host egress.
+### External provider network boundary
 
-The generic private-acquisition configuration is server-side and represents a
-gateway endpoint rather than a VPN service:
+Family Librarian calls each external provider through its registered HTTP API
+using ordinary host networking. It has no VPN configuration or egress policy for
+that connection. The provider deployment owns and enforces any VPN or private
+route needed for its own Internet requests, including authentication, search,
+artifact resolution, and download. A failed provider route must not fall back
+to an unintended public route; the provider reports the resulting failure or
+unavailability through its API.
 
-```text
-Private Acquisition Network
-  Enabled
-  Gateway type: HTTP proxy | SOCKS5 proxy | external route (future)
-  Gateway endpoint
-  Require private egress
-  Fail closed
-  Health/status where available
-```
+### External provider boundary
 
-For example, an HTTP proxy endpoint can be `http://gluetun:8888`, but the
-provider never needs to know which VPN service, if any, backs that gateway.
-Gluetun is the documented reference implementation, not a hard dependency;
-custom WireGuard/OpenVPN gateways, router-level routing, and compatible proxy
-gateways remain valid.
-
-When private egress is required, an unavailable or unhealthy gateway blocks the
-operation. The engine records a policy-blocked, waiting, or error state and can
-retry or notify an administrator later; it must not silently fall back to normal
-Internet access. `CUSTOM_PROXY` similarly requires an explicitly configured
-proxy and must not imply an automatic fallback policy.
-
-### Future external sourcing providers
-
-External sourcing is a planned extension of the acquisition-provider boundary,
-not part of the initial catalog/search slice. The application should leave room
-for an administrator to enable and configure additional **vetted** sourcing
-providers in the future, alongside built-in providers such as Manual, library
-availability, public-domain, or commercial integrations.
-
-The future integration model should preserve these boundaries:
+An administrator may enable and configure approved external providers alongside
+built-in providers. The integration model preserves these boundaries:
 
 - a provider has a stable ID, protocol version, declared capabilities, and a
   server-side configuration schema;
@@ -545,14 +553,12 @@ The future integration model should preserve these boundaries:
 - external implementations communicate over the versioned HTTP protocol or run in
   isolated containers. The main application does not load arbitrary provider code.
 
-Provider-source implementations remain independent of VPN-provider
-implementations. For example, a private source provider may require
-`PRIVATE_REQUIRED` and use the generic gateway; it must not embed Proton- or
-Mullvad-specific tunnel logic.
+Provider implementations configure and enforce their own outbound network
+routes at deployment. Family Librarian reaches them through their registered
+API URL over the ordinary network.
 
-This creates a clear future administration/settings surface for source management
-without committing V1 to acquisition automation, a plugin marketplace, or support
-for unreviewed sources.
+This creates a clear administration/settings surface for source management
+without requiring a plugin marketplace or support for unreviewed sources.
 
 ---
 
@@ -580,10 +586,8 @@ A trusted built-in Manual Provider may exist in the acquisition engine.
 
 For an external component that actually contacts private services, prefer
 putting the entire component behind the private-egress gateway rather than
-relying only on its application-level proxy setting. A Docker/Gluetun reference
-deployment can use `network_mode: "service:gluetun"` for an isolated private
-provider. The gateway's firewall/kill switch then governs that component's
-outbound traffic.
+relying only on an application-level proxy setting inside that provider. The gateway's firewall
+and fail-closed network policy should govern that component's outbound traffic.
 
 Family Librarian may call those components over internal APIs, but that does not
 protect the components' own outbound traffic: each provider's complete
@@ -592,14 +596,15 @@ transfer, must be routed by the gateway when required. The main application
 retains normal LAN/Internet networking and must not need
 `NET_ADMIN`, `NET_RAW`, privileged mode, or tunnel-management responsibility.
 
-The same boundary supports a future out-of-process model:
+The external-provider deployment follows this model:
 
 ```text
-Family Librarian --> provider API --> private provider container
-                                  --> VPN/private-egress gateway --> Internet
+Family Librarian --> provider API over the normal network
+Provider container --> its VPN/private-egress gateway --> Internet
 ```
 
-That is a future isolation option, not a V1 requirement solely for VPN support.
+The provider configures and verifies the second path independently of Family
+Librarian.
 
 External providers receive only the minimum scoped configuration, credentials,
 network route, and temporary staging access they require. They never receive the
@@ -1074,21 +1079,12 @@ delivery.report-status
 
 ## 16. Versioning
 
-HTTP plugin protocol:
-
-```text
-protocolVersion
-```
-
-Recommended compatibility policy:
-
-```text
-Major = breaking
-Minor = additive
-Patch = documentation/bug behavior
-```
-
-Provider manifest should advertise protocol support.
+External-provider HTTP protocol versioning, manifest negotiation, and
+compatibility rules are defined exclusively in
+[04-external-provider-http-protocol.md](04-external-provider-http-protocol.md).
+Internal contracts in this document evolve through normal application versioning
+and require implementation and conformance-test updates when their behavior
+changes.
 
 ---
 
@@ -1100,7 +1096,7 @@ links between unrelated concerns:
 
 ```text
 Metadata providers
-Sources and private acquisition network
+Sources
 Security
 Notifications
 Publishing destinations
@@ -1127,12 +1123,10 @@ Last Error
 
 Secrets must never be returned to the browser after storage.
 
-The Private Acquisition Network settings use the generic gateway fields above,
-not VPN-provider credentials or provider-selection controls. VPN tunnel
-configuration, DNS, kill-switch, IPv4/IPv6 leak prevention, reconnection, and
-WireGuard/OpenVPN details belong to the external gateway/deployment. Health
-status must distinguish an unavailable required gateway from a general provider
-failure, without exposing gateway credentials.
+Family Librarian has no Private Acquisition Network setting. Each external
+provider configures its own tunnel, DNS, fail-closed networking, leak prevention,
+and reconnection. Its health response should report when those dependencies
+make search or acquisition unavailable, without exposing credentials.
 
 ### Credential lifecycle
 
@@ -1176,54 +1170,7 @@ especially for Docker deployments.
 
 ---
 
-## 18. V1 Provider Implementation Targets
-
-### Required
-
-```text
-Metadata:
-  Google Books and/or Open Library
-
-Acquisition:
-  Manual
-
-Linked ebook libraries:
-  Calibre-Web (catalog/source via configured OPDS surface)
-  Calibre-Web Automated (CWA, opt-in ingest destination)
-
-Security:
-  ClamAV
-  File type validator
-  EPUB validator
-  Audio validator
-
-Notifications:
-  SMTP outbound email (optional)
-
-Delivery:
-  CWA (initial ebook library destination)
-  Audiobookshelf (initial audiobook library destination)
-  Authenticated download (optional, later)
-```
-
-### Strong Candidate for Early Addition
-
-```text
-Generic OIDC (implemented, optional)
-ntfy
-Hardcover metadata
-```
-
-### Prototype Only
-
-```text
-Browser filesystem Kindle/Kobo transfer
-WebUSB
-```
-
----
-
-## 19. Testing Strategy for Providers
+## 18. Testing Strategy for Providers
 
 Every contract should ship with a provider conformance test suite.
 
@@ -1232,21 +1179,19 @@ Examples:
 ```text
 MetadataProviderContractTests
 AcquisitionProviderProtocolTests
-PrivateEgressPolicyTests
 MalwareScannerContractTests
 NotificationProviderContractTests
 DeliveryProviderContractTests
 LinkedLibraryProviderContractTests
 ```
 
-A third-party provider author should be able to verify:
+A third-party external-provider author should be able to verify:
 
 ```text
-"My provider complies with protocol version 1."
+"My provider conforms to the supported version of the external-provider HTTP protocol."
 ```
 
 without requiring Family Librarian's internal source code or database.
-
-Private-egress conformance tests must confirm that `PRIVATE_REQUIRED` blocks
-the whole provider interaction when its gateway is unavailable and that no
-normal-egress fallback is attempted.
+The protocol conformance surface is defined by
+[04-external-provider-http-protocol.md](04-external-provider-http-protocol.md);
+internal provider contracts require their corresponding application-level tests.

@@ -1,0 +1,63 @@
+using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+
+namespace FamilyLibrarian.Infrastructure.Acquisition;
+
+public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProviderAcquisitionJobStore
+{
+    public Task<ProviderAcquisitionJob?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+        database.ProviderAcquisitionJobs
+            .Include(job => job.Outputs)
+            .FirstOrDefaultAsync(job => job.Id == id, cancellationToken);
+
+    public Task<ProviderAcquisitionJob?> FindByIdempotencyKeyAsync(
+        Guid externalProviderId, string idempotencyKey, CancellationToken cancellationToken) =>
+        database.ProviderAcquisitionJobs
+            .Include(job => job.Outputs)
+            .FirstOrDefaultAsync(
+                job => job.ExternalProviderId == externalProviderId && job.IdempotencyKey == idempotencyKey,
+                cancellationToken);
+
+    public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListDueForPollAsync(
+        DateTimeOffset asOfUtc, int maximumCount, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
+
+        return await database.ProviderAcquisitionJobs
+            .Include(job => job.Outputs)
+            .Where(job => job.NextPollAtUtc != null && job.NextPollAtUtc <= asOfUtc)
+            .OrderBy(job => job.NextPollAtUtc)
+            .Take(maximumCount)
+            .ToArrayAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListWaitingForInteractionAsync(
+        CancellationToken cancellationToken) =>
+        await database.ProviderAcquisitionJobs
+            .Where(job => job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting &&
+                job.InteractionType != null)
+            .OrderBy(job => job.InteractionExpiresAtUtc)
+            .ThenBy(job => job.CreatedAtUtc)
+            .ToArrayAsync(cancellationToken);
+
+    public Task<bool> HasLeftWaitingSinceAsync(
+        Guid externalProviderId, DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
+        database.ProviderAcquisitionJobs.AnyAsync(
+            job => job.ExternalProviderId == externalProviderId && job.LeftWaitingAtUtc != null &&
+                job.LeftWaitingAtUtc >= sinceUtc,
+            cancellationToken);
+
+    public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListByPartSetAsync(
+        Guid partSetId, CancellationToken cancellationToken) =>
+        await database.ProviderAcquisitionJobs
+            .Include(job => job.Outputs)
+            .Where(job => job.PartSetId == partSetId)
+            .OrderBy(job => job.PartNumber)
+            .ToArrayAsync(cancellationToken);
+
+    public void Add(ProviderAcquisitionJob job) => database.ProviderAcquisitionJobs.Add(job);
+
+    public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);
+}

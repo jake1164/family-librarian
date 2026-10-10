@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Matching;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Requests;
 
@@ -35,20 +36,28 @@ public sealed record FulfillmentOption(
     string? DrmStatus,
     Uri? ExternalActionUri,
     string? ProviderData,
-    // Meaningful only when OptionKind is Owned -- how confidently the owning
-    // provider matched this artifact to the requested Work. Null for every
-    // other OptionKind, and for an Owned option from a provider that doesn't
-    // go through the shared matcher. See BookMatchBasis for why this exists:
-    // a title/author fallback match is a reviewable guess, not a verified
-    // identity, and a consumer that acts on Owned automatically (e.g. the
-    // Kindle existing-book send) must not treat the two the same way.
+    // Meaningful for OptionKind.Owned (how confidently the owning provider
+    // matched this artifact to the requested Work) and for a
+    // DirectAcquisition option from an admin-registered external provider
+    // (how confidently ExternalProviderMatchVerifier confirmed the result
+    // against the requested title/author/ISBN -- an external provider is
+    // unvetted third-party code, so its own claimed title/author is never
+    // trusted alone). Null for every other OptionKind, and for an Owned or
+    // DirectAcquisition option from a provider that doesn't go through the
+    // shared matcher (e.g. Gutenberg, which uses its own IBookMatcher calls
+    // directly). See BookMatchBasis for why this exists: a title/author
+    // fallback match is a reviewable guess, not a verified identity, and a
+    // consumer that acts on a match automatically (e.g. the Kindle
+    // existing-book send, or fetching a DirectAcquisition file) must not
+    // treat the two the same way.
     BookMatchBasis? MatchBasis = null,
-    // True when this is the only kind of match an IAutomaticDirectAcquisitionProvider
-    // found -- title/author matched, but every result was excluded by
-    // LanguageAcceptance (ACCURACY-1). Such an option must never be
-    // auto-acquired; AutomaticRequestFulfillmentService instead offers it to
-    // the requester as a SELFSERV-1 preference decision ("get it anyway, or
-    // keep looking?").
+    // True when the only kind of match found was excluded by
+    // LanguageAcceptance (ACCURACY-1) -- either an IAutomaticDirectAcquisitionProvider's
+    // title/author match, or an external provider's result via
+    // ExternalProviderMatchVerifier. Such an option must never be
+    // auto-acquired or fetched without confirmation; a caller instead offers
+    // it as a SELFSERV-1-style preference decision ("get it anyway, or keep
+    // looking?").
     bool RequiresLanguageConfirmation = false,
     // This specific candidate's own title/author, when the provider can
     // supply one distinct from the canonical Work title -- e.g. a specific
@@ -58,7 +67,93 @@ public sealed record FulfillmentOption(
     // a RequestReviewCandidate distinctly (SELFSERV-1); never persisted
     // beyond that review.
     string? Title = null,
-    string? Author = null);
+    string? Author = null,
+    // Carried unchanged from the search candidate that produced this option
+    // (protocol v2 §8/§9) so a later /acquire call can detect staleness or
+    // resolve efficiently -- never inspected or modified, and null for
+    // every provider that doesn't return one.
+    string? CandidateRevision = null,
+    string? AcquireToken = null,
+    // ExternalReleasePolicy's verdict on this option's release evidence
+    // (protocol v2 §7/§10/§16) -- independent of MatchBasis. A release
+    // problem (a collection, a sample, an abridged mismatch) must block
+    // automatic acquisition and require the same explicit confirmation as a
+    // low-confidence match, even when MatchBasis is Identifier: a correct
+    // ISBN on an omnibus edition is still an omnibus.
+    bool RequiresReleaseConfirmation = false,
+    string? ReleaseConcern = null,
+    // Neutral edition/release facts returned by an external provider's
+    // existing search result. They are retained only to make a review choice
+    // meaningful; they never contain a source URL, provider id, or raw
+    // provider extension data.
+    int? PublicationYear = null,
+    string? Publisher = null,
+    long? SizeBytes = null,
+    int? PartCount = null,
+    // A provider-owned usage count. It is not a universal quality score and is
+    // populated only where a built-in provider has a documented, locally
+    // mirrored metric used by its narrowly-scoped automatic-selection rule.
+    int? ProviderPopularity = null,
+    // A controlled explanation of a built-in provider's own deterministic
+    // automatic selection. It is audit evidence, not a provider supplied
+    // recommendation, and is never populated by an external provider.
+    string? AutomaticSelectionReason = null,
+    bool? IsAbridged = null,
+    bool? IsUnabridged = null,
+    // A provider-declared, non-download browser page for an administrator to
+    // inspect a candidate. It is deliberately never part of a requester view.
+    Uri? AdminInspectionUri = null,
+    // Untrusted origin text for administrator review only; never decision evidence.
+    string? AdminSourceSummary = null,
+    // Audiobook narration evidence (AudiobookCandidateSelector). Null/Unknown
+    // for every non-audiobook option and for a provider that does not (yet)
+    // report narration -- that is a valid, expected state, never inferred.
+    NarrationKind? NarrationKind = null,
+    // The credited human reader, when NarrationKind is Human and the provider
+    // names one. Never populated for Synthetic or Unknown narration.
+    string? Narrator = null,
+    // The source text NarrationKind was derived from (e.g. a provider's own
+    // README/description), kept only to explain an automatic decision or a
+    // review reason -- never a source URL or provider-internal reference.
+    string? NarrationEvidence = null,
+    // True when AudiobookNarrationPreference.HumanOnly could not be confirmed
+    // satisfied because this candidate's narration is Unknown -- distinct from
+    // a confirmed Synthetic candidate, which is simply unusable rather than
+    // reviewable. Never true for a non-audiobook option.
+    bool RequiresNarrationConfirmation = false,
+    long? RuntimeSeconds = null,
+    IReadOnlyList<string>? SectionTitles = null,
+    IReadOnlyList<string>? NarratorNames = null,
+    IReadOnlyList<string>? SourceGenres = null,
+    Uri? CoverArtUri = null,
+    // The provider's raw release name, retained only to describe an
+    // automatic attempt in the administrator-only provider-activity ledger and
+    // to recognize the same release posted twice. Untrusted text: it is never
+    // shown to a requester. Derived local identity evidence drives ranking.
+    string? ReleaseName = null,
+    Matching.AuthorAffinityResult? AuthorAffinity = null,
+    bool HasPlausibleTitle = false,
+    ExternalAudiobookPartEvidence? AudiobookPart = null,
+    // True when the only reason this audiobook needs release confirmation is
+    // that it is one numbered fragment: the same release evaluated without its
+    // part marker is acceptable (no sample, collection, abridged or DRM
+    // concern). Only such fragments can join an automatic complete set.
+    bool FragmentOnlyConcern = false,
+    CandidateIdentityAssessment? IdentityAssessment = null,
+    CandidateAcquisitionAssessment? AcquisitionAssessment = null);
+
+/// <summary>
+/// Deterministic classification of an audiobook candidate's narration, as
+/// far as a provider's own evidence supports -- never inferred beyond what
+/// that evidence states. See <c>Application.Acquisition.AudiobookCandidateSelector</c>.
+/// </summary>
+public enum NarrationKind
+{
+    /// <summary>The provider's evidence does not clearly indicate either kind.</summary>
+    Unknown,
+    Human,
+    Synthetic
+}
 
 public enum OptionKind
 {
@@ -80,11 +175,30 @@ public enum AcquisitionMethod
 }
 
 /// <summary>
-/// The minimal identity a provider needs to check for a match, independent
-/// of whether the book has been resolved into a persisted Work yet -- lets a
+/// The identity a provider needs to check for a match, independent of
+/// whether the book has been resolved into a persisted Work yet -- lets a
 /// raw catalog search result be checked the same way a Work is.
 /// </summary>
-public sealed record BookIdentity(string Title, string? Author, IReadOnlyCollection<string> Isbn13Candidates);
+/// <remarks>
+/// <see cref="Title"/>/<see cref="Author"/>/<see cref="Isbn13Candidates"/>
+/// remain the fields every existing matcher (Gutenberg, CWA, Audiobookshelf)
+/// actually reads -- they stay simple on purpose. <see cref="Authors"/>/
+/// <see cref="Series"/>/<see cref="Language"/>/<see cref="PublicationYear"/>/
+/// <see cref="Publisher"/> exist only to build a protocol v2 §6 search
+/// request's richer <c>work</c>/<c>edition</c> evidence for an admin-registered
+/// external provider -- optional, and <c>null</c>/empty for a caller that has
+/// nothing richer to offer.
+/// </remarks>
+public sealed record BookIdentity(
+    string Title,
+    string? Author,
+    IReadOnlyCollection<string> Isbn13Candidates,
+    IReadOnlyList<BookAuthor>? Authors = null,
+    IReadOnlyList<BookSeries>? Series = null,
+    string? Language = null,
+    int? PublicationYear = null,
+    string? Publisher = null,
+    IReadOnlyList<string>? AlternateTitles = null);
 
 /// <summary>Advertises store-offer discovery. No concrete implementation ships in M8.</summary>
 public interface IStoreOfferProvider
@@ -159,6 +273,28 @@ public interface IDirectAcquisitionProvider
     Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(FulfillmentOption fulfillmentOption, CancellationToken cancellationToken);
 }
 
+/// <summary>Optional progress reporting for a direct provider that streams a large transfer.</summary>
+public interface IProgressReportingDirectAcquisitionProvider : IDirectAcquisitionProvider
+{
+    Task<IReadOnlyList<DirectAcquisitionFile>> FetchWithProgressAsync(
+        FulfillmentOption fulfillmentOption,
+        DirectAcquisitionRequestContext requestContext,
+        Action<DirectAcquisitionTransferProgress> reportProgress,
+        CancellationToken cancellationToken);
+
+    /// <summary>Called when an acquisition attempt finishes without preserving resumable data.</summary>
+    Task FinishAcquisitionAsync(
+        DirectAcquisitionRequestContext requestContext);
+}
+
+public sealed record DirectAcquisitionRequestContext(Guid RequestId, Guid RequestFormatId);
+
+public sealed record DirectAcquisitionTransferProgress(
+    long BytesReceived,
+    long? TotalBytes,
+    string Stage,
+    bool IsTransferBaseline = false);
+
 /// <summary>
 /// A direct-acquisition provider whose returned options are conservative enough
 /// for the server to fetch without a librarian choosing among them first.
@@ -172,7 +308,12 @@ public interface IDirectAcquisitionProvider
 /// </remarks>
 public interface IAutomaticDirectAcquisitionProvider : IDirectAcquisitionProvider;
 
-public sealed record DirectAcquisitionFile(Stream Content, string Filename);
+public sealed record DirectAcquisitionFile(
+    Stream Content,
+    string Filename,
+    string? ExternalOutputId = null,
+    long? MaxSizeBytes = null,
+    Func<CancellationToken, Task>? ValidateAsync = null);
 
 /// <summary>Advertises matches in a linked owned library (e.g. Calibre-Web). No concrete implementation ships in M8.</summary>
 public interface IOwnedLibraryProvider
@@ -202,6 +343,17 @@ public interface IWorkFulfillmentOptionsService
         Guid workId,
         RequestMediaType mediaType,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Only the <see cref="OptionKind.Owned"/> matches from linked owned
+    /// libraries. Request creation needs just this; asking every availability,
+    /// store, direct-acquisition and external provider as well would make a
+    /// submit wait on unrelated network searches.
+    /// </summary>
+    Task<IReadOnlyList<FulfillmentOption>> GetOwnedOptionsAsync(
+        Guid workId,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -217,6 +369,16 @@ public sealed class WorkFulfillmentOptionsService(
     ExternalCandidateAvailabilityChecker externalProviderChecker,
     IWorkLookup workLookup) : IWorkFulfillmentOptionsService
 {
+    public async Task<IReadOnlyList<FulfillmentOption>> GetOwnedOptionsAsync(
+        Guid workId,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken)
+    {
+        var options = new List<FulfillmentOption>();
+        await AddOwnedOptionsAsync(options, workId, mediaType, cancellationToken);
+        return options;
+    }
+
     public async Task<IReadOnlyList<FulfillmentOption>> GetOptionsAsync(
         Guid workId,
         RequestMediaType mediaType,
@@ -275,6 +437,31 @@ public sealed class WorkFulfillmentOptionsService(
             }
         }
 
+        await AddOwnedOptionsAsync(options, workId, mediaType, cancellationToken);
+
+        try
+        {
+            options.AddRange(await FindExternalProviderOptionsAsync(workId, mediaType, cancellationToken));
+        }
+        catch (HttpRequestException)
+        {
+            // An external provider's own search failure degrades to no
+            // options from it, same as the four loops above.
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // A provider timeout must not fail the containing page.
+        }
+
+        return options;
+    }
+
+    private async Task AddOwnedOptionsAsync(
+        List<FulfillmentOption> options,
+        Guid workId,
+        RequestMediaType mediaType,
+        CancellationToken cancellationToken)
+    {
         foreach (var provider in ownedLibraryProviders)
         {
             try
@@ -290,10 +477,6 @@ public sealed class WorkFulfillmentOptionsService(
                 // A provider timeout degrades to an unknown owned status.
             }
         }
-
-        options.AddRange(await FindExternalProviderOptionsAsync(workId, mediaType, cancellationToken));
-
-        return options;
     }
 
     /// <summary>

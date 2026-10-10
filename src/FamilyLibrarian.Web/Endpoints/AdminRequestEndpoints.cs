@@ -1,7 +1,9 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Acquisition;
@@ -26,9 +28,20 @@ internal static class AdminRequestEndpoints
 
         adminRequests.MapGet("/", ListAdminRequestsAsync);
         adminRequests.MapGet("/attention", GetAttentionAsync);
+        adminRequests.MapGet("/active-acquisitions", GetActiveAcquisitions);
         adminRequests.MapPost("/recheck", RecheckNeedsReviewAsync);
+        adminRequests.MapGet("/provider-interactions", ListProviderInteractionsAsync);
+        adminRequests.MapPost("/provider-interactions/{jobId:guid}/start", StartProviderInteractionAsync);
+        adminRequests.MapPost("/provider-interactions/{jobId:guid}/fallback", UseProviderInteractionFallbackAsync);
+        adminRequests.MapPost("/provider-interactions/{jobId:guid}/cancel", CancelProviderInteractionAsync);
+        adminRequests.MapPost("/provider-interactions/{jobId:guid}/take-over", TakeOverProviderInteractionAsync);
+        adminRequests.MapGet("/provider-interactions/{jobId:guid}/view", HandleProviderInteractionViewAsync);
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
+        adminRequests.MapGet("/{requestId:guid}/provider-interaction", GetProviderInteractionForRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-attempts", ListProviderAttemptsAsync);
+        adminRequests.MapGet(
+            "/{requestId:guid}/formats/{formatId:guid}/providers/{providerId}/debug-search",
+            DebugSearchProviderAsync);
         adminRequests.MapPost("/{requestId:guid}/transitions", ChangeAdminRequestStatusAsync);
         adminRequests.MapPost("/{requestId:guid}/needs-review/resolve", AdminResolveNeedsReviewAsync);
         adminRequests.MapPut("/{requestId:guid}/note", SetAdminRequestNoteAsync);
@@ -63,6 +76,24 @@ internal static class AdminRequestEndpoints
             queue.Select(ToAdminRequestResponse).ToArray()));
     }
 
+    private static IResult GetActiveAcquisitions(ActiveAcquisitionTracker tracker, IProviderRegistry registry)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return Results.Ok(tracker.Snapshot().Select(activity => new AdminActiveAcquisitionResponse(
+            activity.RequestId,
+            activity.RequestFormatId,
+            activity.ProviderId,
+            registry.Find(activity.ProviderId)?.DisplayName ?? activity.ProviderId,
+            activity.Stage,
+            activity.WorkTitle,
+            activity.BytesReceived,
+            activity.TotalBytes,
+            activity.Stage == "Downloading" && activity.TransferStartedAtUtc is { } startedAt && now > startedAt
+                ? (long)(Math.Max(0, activity.BytesReceived - activity.TransferStartBytesReceived) / (now - startedAt).TotalSeconds)
+                : null,
+            activity.StartedAtUtc)).ToArray());
+    }
+
     private static async Task<IResult> GetAdminRequestAsync(
         Guid requestId,
         BookRequestService requests,
@@ -70,6 +101,175 @@ internal static class AdminRequestEndpoints
     {
         var request = await requests.GetForAdminAsync(requestId, cancellationToken);
         return request is null ? Results.NotFound() : Results.Ok(ToAdminRequestResponse(request));
+    }
+
+    private static async Task<IResult> ListProviderInteractionsAsync(
+        ProviderInteractionService service,
+        ICurrentUser currentUser,
+        CancellationToken cancellationToken) =>
+        Results.Ok((await service.ListAsync(currentUser.UserId, cancellationToken)).Select(ToProviderInteractionResponse).ToArray());
+
+    private static async Task<IResult> GetProviderInteractionForRequestAsync(
+        Guid requestId,
+        ProviderInteractionService service,
+        ICurrentUser currentUser,
+        CancellationToken cancellationToken)
+    {
+        // 200/null, not 404: "no interaction waiting" is this request's
+        // ordinary state, not an exceptional one -- the client deserializes
+        // straight to null without a caught-exception round trip. Since
+        // .NET 7/8, Results.Ok(null) writes zero bytes rather than the JSON
+        // literal "null" (https://github.com/dotnet/aspnetcore/issues/53509),
+        // which GetFromJsonAsync<T> on the Blazor WASM client cannot parse
+        // (JsonException: ExpectedJsonTokens) -- write the literal ourselves.
+        var interaction = await service.FindForRequestAsync(requestId, currentUser.UserId, cancellationToken);
+        return interaction is null
+            ? Results.Text("null", "application/json")
+            : Results.Ok(ToProviderInteractionResponse(interaction));
+    }
+
+    private static ProviderInteractionResponse ToProviderInteractionResponse(ProviderInteractionView interaction) => new(
+        interaction.ProviderAcquisitionJobId,
+        interaction.RequestId,
+        interaction.RequestFormatId,
+        interaction.ProviderId,
+        interaction.Type,
+        interaction.Message,
+        interaction.ExpiresAtUtc,
+        interaction.ResumeSupported,
+        interaction.IsExpired,
+        interaction.CanStart,
+        interaction.CanUseFallback,
+        interaction.CanCancel,
+        interaction.CanViewNow,
+        interaction.WorkTitle,
+        interaction.Authors,
+        interaction.RequesterDisplayName,
+        interaction.ClaimedByDisplayName,
+        interaction.IsClaimedByCurrentUser);
+
+    private static async Task<IResult> StartProviderInteractionAsync(
+        Guid jobId,
+        ProviderInteractionService service,
+        ICurrentUser currentUser,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        return await ToProviderInteractionResult(service.StartAsync(jobId, userId, cancellationToken));
+    }
+
+    private static Task<IResult> UseProviderInteractionFallbackAsync(
+        Guid jobId,
+        ProviderInteractionService service,
+        CancellationToken cancellationToken) =>
+        ToProviderInteractionResult(service.UseFallbackAsync(jobId, cancellationToken));
+
+    private static Task<IResult> CancelProviderInteractionAsync(
+        Guid jobId,
+        ProviderInteractionService service,
+        CancellationToken cancellationToken) =>
+        ToProviderInteractionResult(service.CancelAsync(jobId, cancellationToken));
+
+    /// <summary>Explicit, audited override: replaces whoever currently holds the claim, then starts the session.</summary>
+    private static async Task<IResult> TakeOverProviderInteractionAsync(
+        Guid jobId,
+        ProviderInteractionClaimService claimService,
+        ProviderInteractionService service,
+        ICurrentUser currentUser,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        try
+        {
+            await claimService.TakeOverAsync(jobId, userId, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            return Results.Conflict(new { message = "The current view is still closing. Try taking over again." });
+        }
+        catch (InvalidOperationException)
+        {
+            return Results.Conflict(new { message = "This job is no longer waiting for interaction." });
+        }
+        return await ToProviderInteractionResult(service.StartAsync(jobId, userId, cancellationToken));
+    }
+
+    private static async Task<IResult> ToProviderInteractionResult(Task<ProviderInteractionCommandOutcome> operation)
+    {
+        var outcome = await operation;
+        return outcome.Result switch
+        {
+            ProviderInteractionCommandResult.Success => Results.NoContent(),
+            ProviderInteractionCommandResult.NotFound => Results.NotFound(),
+            ProviderInteractionCommandResult.NotWaiting => Results.Conflict(new
+            {
+                message = "This provider acquisition is no longer waiting for human interaction. Reload the queue."
+            }),
+            ProviderInteractionCommandResult.Expired => Results.Conflict(new
+            {
+                message = "This provider interaction has expired. Reload the queue before choosing a new action."
+            }),
+            ProviderInteractionCommandResult.Unsupported => Results.Conflict(new
+            {
+                message = "This provider does not support administrator interaction control."
+            }),
+            ProviderInteractionCommandResult.ClaimedByAnother => Results.Conflict(new
+            {
+                message = $"Being handled by {outcome.ClaimedByDisplayName}. Use Take over if they're stuck.",
+                claimedBy = outcome.ClaimedByDisplayName
+            }),
+            _ => Results.StatusCode(StatusCodes.Status503ServiceUnavailable)
+        };
+    }
+
+    /// <summary>
+    /// The brokered remote-view WebSocket (HUMAN-ACQ-1 Phase 3, docs/04 §8
+    /// "Optional interaction view"). Eligibility is checked <em>before</em>
+    /// accepting the upgrade so an ineligible request gets a plain HTTP
+    /// status, not an upgrade immediately followed by a close.
+    /// </summary>
+    private static async Task<IResult> HandleProviderInteractionViewAsync(
+        Guid jobId,
+        HttpContext context,
+        ProviderRemoteViewBrokerService broker,
+        ProviderInteractionClaimService claimService,
+        ICurrentUser currentUser,
+        IHostApplicationLifetime lifetime,
+        CancellationToken cancellationToken)
+    {
+        if (!context.WebSockets.IsWebSocketRequest)
+        {
+            return Results.BadRequest(new { message = "This route only accepts a WebSocket upgrade." });
+        }
+
+        // Opening the remote view also counts as a claim (HUMAN-ACQ-1 D7) --
+        // checked, and rejected with a plain HTTP status, before the WebSocket
+        // upgrade so a busy admin never sees an upgrade immediately closed.
+        if (currentUser.UserId is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        var claim = await claimService.TryClaimForUserAsync(
+            jobId, userId, ProviderInteractionClaimChannel.InApp, alertId: null, cancellationToken);
+        if (claim.Kind == ClaimOutcomeKind.HeldByOther)
+        {
+            return Results.Conflict(new
+            {
+                message = $"Being handled by {claim.HeldByDisplayName}. Use Take over if they're stuck.",
+                claimedBy = claim.HeldByDisplayName
+            });
+        }
+
+        return await RemoteViewSocketHandler.HandleAsync(jobId, context, broker, lifetime, cancellationToken);
     }
 
     /// <summary>
@@ -125,19 +325,26 @@ internal static class AdminRequestEndpoints
         };
     }
 
+    // Enough recent lookups to see a run of failures for every provider.
+    private const int RecentAttemptWindow = 300;
+
     private static async Task<IResult> GetAttentionAsync(
         IRequestRepository requests,
         IProviderAttemptRepository attempts,
         IProviderRegistry registry,
         IExternalProviderStore externalProviders,
+        ProviderInteractionService providerInteractions,
+        ICurrentUser currentUser,
+        IClock clock,
         CancellationToken cancellationToken)
     {
-        // All three stores are scoped over the same AppDbContext. EF Core does
+        // All stores here are scoped over the same AppDbContext. EF Core does
         // not allow concurrent operations on that context, so keep these small
         // administrative projections sequential rather than fanning them out.
         var needsReviewCount = await requests.CountForAdminAsync(RequestStatus.NeedsReview, cancellationToken);
-        var latestAttempts = await attempts.ListLatestByProviderAsync(cancellationToken);
+        var recentAttempts = await attempts.ListRecentForHealthAsync(RecentAttemptWindow, cancellationToken);
         var registeredExternalProviders = await externalProviders.ListAsync(cancellationToken);
+        var waitingInteractions = await providerInteractions.ListAsync(currentUser.UserId, cancellationToken);
 
         var displayNames = registry.GetInstalledProviders()
             .ToDictionary(provider => provider.Id, provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase);
@@ -146,8 +353,7 @@ internal static class AdminRequestEndpoints
             displayNames[provider.ProviderId] = provider.DisplayName;
         }
 
-        var providerIssues = latestAttempts
-            .Where(attempt => attempt.IssueKind is not null)
+        var providerIssues = ProviderSourceHealth.CurrentIssues(recentAttempts, clock.UtcNow)
             // Historic provider activity stays available on the request's
             // timeline, but only currently installed/registered providers can
             // be an active source-health issue.
@@ -161,7 +367,22 @@ internal static class AdminRequestEndpoints
                 attempt.IssueKind!.Value.ToString()))
             .ToArray();
 
-        return Results.Ok(new AdminRequestAttentionResponse(needsReviewCount, providerIssues));
+        var providerInteractionsWaiting = waitingInteractions
+            .Select(interaction => new AdminProviderInteractionAttentionResponse(
+                interaction.ProviderAcquisitionJobId,
+                interaction.RequestId,
+                interaction.RequestFormatId,
+                interaction.WorkTitle,
+                interaction.ProviderId,
+                interaction.Type,
+                interaction.Message,
+                interaction.ExpiresAtUtc,
+                interaction.IsExpired,
+                interaction.ClaimedByDisplayName,
+                interaction.IsClaimedByCurrentUser))
+            .ToArray();
+
+        return Results.Ok(new AdminRequestAttentionResponse(needsReviewCount, providerIssues, providerInteractionsWaiting));
     }
 
     private static async Task<IResult> ListProviderAttemptsAsync(
@@ -185,6 +406,106 @@ internal static class AdminRequestEndpoints
                 attempt.AttemptedAtUtc,
                 attempt.NextEligibleCheckAtUtc))
             .ToArray());
+    }
+
+    /// <summary>
+    /// ADMIN-DEBUG-1: asks one admin-registered external provider right now,
+    /// outside its recheck schedule, and returns its raw results plus the
+    /// matcher's verdict on each one. Nothing here is persisted and nothing
+    /// is acquired -- this exists only so a librarian can see what a source
+    /// actually returned (and why the matcher did or didn't accept it)
+    /// without waiting on <see cref="ExternalProviderRecheckService"/>'s own
+    /// Daily/Weekly cadence, which can otherwise leave a request showing no
+    /// provider activity at all for a provider that is enabled but on a
+    /// schedule, or on Manual.
+    /// </summary>
+    private static async Task<IResult> DebugSearchProviderAsync(
+        Guid requestId,
+        Guid formatId,
+        string providerId,
+        IRequestRepository requests,
+        IExternalProviderStore externalProviders,
+        IWorkLookup workLookup,
+        ExternalCandidateAvailabilityChecker candidateChecker,
+        CancellationToken cancellationToken)
+    {
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null)
+        {
+            return Results.NotFound();
+        }
+
+        var format = request.Formats.SingleOrDefault(candidate => candidate.Id == formatId);
+        if (format is null)
+        {
+            return Results.NotFound();
+        }
+
+        var provider = await externalProviders.FindByProviderIdAsync(providerId, cancellationToken);
+        if (provider is null)
+        {
+            return Results.NotFound();
+        }
+
+        var work = await workLookup.FindAsync(request.WorkId, cancellationToken);
+        if (work is null)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["request"] = ["The requested work is no longer available for provider lookup."]
+            });
+        }
+
+        var identity = new BookIdentity(
+            work.Title, work.PrimaryAuthor, work.Isbn13s,
+            work.Authors, work.Series, work.Language, work.PublicationYear, work.Publisher,
+            work.AlternateTitles);
+
+        IReadOnlyList<FulfillmentOption> options;
+        try
+        {
+            options = await candidateChecker.FindForProviderAsync(
+                provider, identity, format.MediaType, cancellationToken);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            return Results.Problem(
+                detail: $"{provider.DisplayName} could not be reached: {exception.Message}",
+                statusCode: StatusCodes.Status502BadGateway);
+        }
+
+        return Results.Ok(options.Select(option => new AdminProviderDebugCandidateResponse(
+            option.ProviderResultId,
+            option.Title ?? string.Empty,
+            option.Author,
+            option.Language,
+            option.Format,
+            option.SizeBytes,
+            option.PublicationYear,
+            option.Publisher,
+            option.ReleaseName,
+            option.MatchBasis?.ToString(),
+            option.RequiresLanguageConfirmation,
+            option.RequiresReleaseConfirmation,
+            option.ReleaseConcern,
+            option.AdminInspectionUri?.ToString(),
+            ToIdentityEvidenceResponse(option))).ToArray());
+    }
+
+    private static AdminCandidateIdentityEvidenceResponse? ToIdentityEvidenceResponse(FulfillmentOption option)
+    {
+        if (option.IdentityAssessment is not { } evidence) return null;
+        return new(evidence.WorkIdentity.ToString(), option.AcquisitionAssessment?.Suitability.ToString() ?? "IdentityReview",
+            evidence.RequestedMetadata.Title, evidence.RequestedMetadata.Author,
+            evidence.TitleEvidence.State.ToString(), evidence.TitleEvidence.Observed,
+            evidence.AuthorEvidence.Kind.ToString(), evidence.AuthorEvidence.DetectedAuthor,
+            evidence.LanguageEvidence.ToString(), evidence.ReleaseEvidence.NormalizedRelease,
+            evidence.ReleaseEvidence.Tokens ?? [],
+            evidence.SeriesEvidence.Select(series => new AdminCandidateSeriesEvidenceResponse(
+                series.State.ToString(), series.Name, series.ExpectedPosition, series.ObservedPosition)).ToArray(),
+            evidence.ReleaseEvidence.UnexplainedTokens, evidence.Contradictions,
+            evidence.Conditions.Select(condition => condition.Reason).ToArray(), evidence.Reasons,
+            evidence.ReleaseEvidence.Part?.Number, evidence.ReleaseEvidence.Part?.Total);
     }
 
     private static async Task<IResult> ChangeAdminRequestStatusAsync(
@@ -322,26 +643,39 @@ internal static class AdminRequestEndpoints
         DirectAcquisitionSecurityService acquisitions,
         IProviderAttemptRepository providerAttempts,
         IClock clock,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool confirmLowConfidenceMatch = false)
     {
         var result = await acquisitions.AcquireAndEvaluateAsync(
-            requestId, formatId, providerId, providerResultId, cancellationToken);
+            requestId, formatId, providerId, providerResultId, cancellationToken, confirmLowConfidenceMatch);
 
         // A librarian's manual "get free copy" click is still a provider
         // lookup; record it in the same ledger the automatic poller uses so
         // "Provider activity" and the Tasks dashboard's "Source and download
         // activity" don't go stale the moment an admin works around an
         // automatic failure by retrying manually — see ProviderAttempt.
+        var attemptOutcome = result.Outcome switch
+        {
+            ManualImportOutcome.Success => ProviderAttemptOutcome.Acquired,
+            ManualImportOutcome.AcquisitionInProgress => ProviderAttemptOutcome.Submitted,
+            _ => ProviderAttemptOutcome.Failed
+        };
+        var attemptSummary = result.Outcome switch
+        {
+            ManualImportOutcome.Success => "A copy was manually fetched by a librarian and sent through the security pipeline.",
+            ManualImportOutcome.AcquisitionInProgress => "A librarian started an acquisition; it is being tracked to completion.",
+            _ => result.Error ?? "The manual fetch could not be completed."
+        };
         providerAttempts.Add(new ProviderAttempt(
             requestId,
             formatId,
             providerId,
-            result.Outcome == ManualImportOutcome.Success ? ProviderAttemptOutcome.Acquired : ProviderAttemptOutcome.Failed,
-            result.Outcome == ManualImportOutcome.Success
-                ? "A copy was manually fetched by a librarian and sent through the security pipeline."
-                : result.Error ?? "The manual fetch could not be completed.",
+            attemptOutcome,
+            attemptSummary,
             clock.UtcNow,
-            nextEligibleCheckAtUtc: null));
+            nextEligibleCheckAtUtc: result.Outcome == ManualImportOutcome.TransferInterrupted
+                ? clock.UtcNow.AddMinutes(2)
+                : null));
         await providerAttempts.SaveChangesAsync(cancellationToken);
 
         return ToManualImportResult(result);
@@ -351,11 +685,21 @@ internal static class AdminRequestEndpoints
     {
         ManualImportOutcome.Success => Results.Ok(
             new ManualImportResultResponse(result.AcquisitionJobId!.Value, result.MediaAssetId!.Value)),
+        ManualImportOutcome.AcquisitionInProgress => Results.Accepted(
+            value: new ManualAcquisitionInProgressResponse(result.ProviderAcquisitionJobId!.Value)),
         ManualImportOutcome.DuplicateDetected => Results.Conflict(new { message = result.Error }),
+        ManualImportOutcome.LowConfidenceMatchConfirmationRequired => Results.Conflict(
+            new { message = result.Error, requiresConfirmation = true }),
+        ManualImportOutcome.ReleaseConfirmationRequired => Results.Conflict(
+            new { message = result.Error, requiresConfirmation = true }),
         ManualImportOutcome.WaitingForSecurityScanner => Results.Problem(
             detail: result.Error,
             statusCode: StatusCodes.Status503ServiceUnavailable,
             type: "WAITING_FOR_SECURITY_SCANNER"),
+        ManualImportOutcome.TransferInterrupted => Results.Problem(
+            detail: result.Error,
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            type: "ACQUISITION_TRANSFER_INTERRUPTED"),
         _ => Results.ValidationProblem(new Dictionary<string, string[]>
         {
             ["file"] = [result.Error ?? "That file could not be imported."]
@@ -401,5 +745,44 @@ internal static class AdminRequestEndpoints
                 history.OccurredAtUtc))
             .ToArray(),
         request.Participants?.Select(participant => new RequestParticipantResponse(
-            participant.DisplayName, participant.Email, participant.Note, participant.Withdrawn)).ToArray());
+            participant.DisplayName, participant.Email, participant.Note, participant.Withdrawn)).ToArray(),
+        request.ReviewCandidates?.Select(candidate => new AdminRequestReviewCandidateResponse(
+            candidate.CandidateId,
+            candidate.RequestFormatId,
+            candidate.ProviderId,
+            candidate.ProviderResultId,
+            candidate.Title,
+            candidate.Author,
+            candidate.Language,
+            candidate.Details,
+            ResolveInspectionUri(candidate),
+            candidate.ReleaseName,
+            candidate.TitleIsRequestFallback,
+            !candidate.TitleIsRequestFallback && WorkTitlePlausibility.NamesRequestedWork(
+                request.Request.WorkTitle,
+                request.Request.Authors is { Count: > 0 } authors ? authors[0] : null,
+                candidate.Title) ||
+            ExternalReleaseNameEvidence.Evaluate(candidate.ReleaseName,
+                [request.Request.WorkTitle],
+                request.Request.Authors is { Count: > 0 } releaseAuthors ? releaseAuthors[0] : null)
+                .AssertsExpectedTitle,
+            candidate.SourceSummary)).ToArray(),
+        request.ProviderJobs?.Select(job => new AdminProviderJobProgressResponse(
+            job.RequestFormatId, job.ProviderId, job.Phase, job.Percent, job.Message)).ToArray());
+
+    private static string? ResolveInspectionUri(AdminRequestReviewCandidateView candidate)
+{
+    if (!string.IsNullOrWhiteSpace(candidate.InspectionUri))
+    {
+        return candidate.InspectionUri;
+    }
+
+    // Older built-in-provider reviews predate AdminInspectionUri. Their
+    // positive catalogue IDs are still sufficient to point an administrator at
+    // the same public record; no opaque external-provider result is inferred.
+    return candidate.ProviderId.Equals("gutendex", StringComparison.OrdinalIgnoreCase) &&
+           int.TryParse(candidate.ProviderResultId, out var gutenbergId) && gutenbergId > 0
+        ? $"https://www.gutenberg.org/ebooks/{gutenbergId}"
+        : null;
+    }
 }

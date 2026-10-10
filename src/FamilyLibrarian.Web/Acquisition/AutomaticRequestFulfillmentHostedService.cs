@@ -9,6 +9,7 @@ namespace FamilyLibrarian.Web.Acquisition;
 /// </summary>
 public sealed partial class AutomaticRequestFulfillmentHostedService(
     IServiceScopeFactory scopeFactory,
+    AutomaticFulfillmentSignal wakeUp,
     ILogger<AutomaticRequestFulfillmentHostedService> logger) : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(2);
@@ -47,7 +48,11 @@ public sealed partial class AutomaticRequestFulfillmentHostedService(
 
             try
             {
-                await Task.Delay(PollInterval, stoppingToken);
+                // Wakes early when a failed copy has just been ruled out, so
+                // the next candidate starts immediately rather than at the
+                // next sweep; otherwise this is the same fixed interval as
+                // before, and a missed signal costs only that wait.
+                await wakeUp.WaitAsync(PollInterval, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

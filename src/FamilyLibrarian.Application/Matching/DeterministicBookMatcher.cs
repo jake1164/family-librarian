@@ -40,24 +40,106 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         string title, string? author, IReadOnlyList<CandidateBook> candidates, string? acceptedLanguage = null)
     {
         var matches = candidates
-            .Where(candidate => TitleMatches(title, candidate.Title) && AuthorMatches(author, candidate.Author))
+            .Where(candidate => TitleMatches(title, candidate.Title, author) && AuthorMatches(author, candidate.Author))
             .ToArray();
 
         return ResolveUnique(matches, acceptedLanguage);
     }
 
-    public bool TitleMatches(string expectedTitle, string candidateTitle)
+    public bool TitleMatches(string expectedTitle, string candidateTitle, string? expectedAuthor = null)
     {
         if (string.IsNullOrWhiteSpace(expectedTitle) || string.IsNullOrWhiteSpace(candidateTitle))
         {
             return false;
         }
 
+        if (TitlePrefixMatches(expectedTitle, candidateTitle))
+        {
+            return true;
+        }
+
+        // The expected title is the catalog's, and a catalog title carries
+        // edition packaging the source's release title does not -- the whole
+        // reason "Moby Dick (Illustrated Classics)" matched nothing while
+        // "Moby Dick; Or, The Whale" sat in the index. Compare the
+        // work-identifying core too. Author agreement is still required
+        // separately by every caller, so this widens what can be compared
+        // without letting a bare title decide identity.
+        var expectedCore = WorkTitleCore.Reduce(expectedTitle, expectedAuthor);
+        return !string.Equals(expectedCore, expectedTitle.Trim(), StringComparison.Ordinal) &&
+            TitlePrefixMatches(expectedCore, candidateTitle);
+    }
+
+    private static bool TitlePrefixMatches(string expectedTitle, string candidateTitle)
+    {
         var normalizedExpected = NormalizeTitle(expectedTitle);
         var normalizedCandidate = NormalizeTitle(candidateTitle);
         return normalizedExpected.Length > 0 &&
             normalizedCandidate.StartsWith(normalizedExpected, StringComparison.OrdinalIgnoreCase) &&
             !IsUnwantedVariant(candidateTitle, normalizedCandidate, normalizedExpected);
+    }
+
+    public bool StrictTitleAuthorMatches(
+        string expectedTitle, string? expectedAuthor, string candidateTitle, string? candidateAuthor)
+    {
+        if (string.IsNullOrWhiteSpace(expectedTitle) || string.IsNullOrWhiteSpace(expectedAuthor) ||
+            string.IsNullOrWhiteSpace(candidateTitle))
+        {
+            return false;
+        }
+
+        var normalizedExpectedTitle = NormalizeTitle(expectedTitle);
+        if (normalizedExpectedTitle.Length == 0)
+        {
+            return false;
+        }
+
+        // Ordinary provider metadata: the candidate's work title and author
+        // are separate fields and both must be exact under the deterministic
+        // normalizers. This is intentionally stricter than TitleMatches.
+        if (string.Equals(normalizedExpectedTitle, NormalizeTitle(candidateTitle), StringComparison.OrdinalIgnoreCase))
+        {
+            return AuthorTokensEqual(expectedAuthor, candidateAuthor);
+        }
+
+        // The same exactness, with edition packaging removed from the
+        // *expected* title only. A catalog title is FL's own record of what
+        // was requested and routinely carries an imprint or an embedded
+        // author ("Moby Dick (Illustrated Classics)", "Moby Dick by Herman
+        // Melville"); without this, requesting any such title made the work
+        // permanently unacquirable even with the plain record in hand.
+        //
+        // The candidate's title is deliberately NOT reduced here. An extra
+        // subtitle on the *source* side is unverified third-party text and
+        // stays in the weaker, confirmation-requiring TitleAuthor tier --
+        // "The Hobbit: A Novel" is probably the right book, "Debt of Honor /
+        // Executive Orders" is not, and nothing here can tell them apart.
+        // The author must still be exactly token-equal, so this remains an
+        // equality rule rather than a prefix one.
+        var expectedCore = NormalizeTitle(WorkTitleCore.Reduce(expectedTitle, expectedAuthor));
+        if (expectedCore.Length > 0 &&
+            expectedCore.Length != normalizedExpectedTitle.Length &&
+            string.Equals(expectedCore, NormalizeTitle(candidateTitle), StringComparison.OrdinalIgnoreCase) &&
+            AuthorTokensEqual(expectedAuthor, candidateAuthor))
+        {
+            return true;
+        }
+
+        // A common source-record spelling embeds the author in the title
+        // ("Net force by Tom Clancy"). Treat it as equivalent only if the
+        // title before that marker is exact and the observed suffix agrees;
+        // a contradictory structured author remains a rejection.
+        var byMarker = candidateTitle.LastIndexOf(" by ", StringComparison.OrdinalIgnoreCase);
+        if (byMarker <= 0)
+        {
+            return false;
+        }
+
+        var titlePart = candidateTitle[..byMarker];
+        var authorPart = candidateTitle[(byMarker + 4)..];
+        return string.Equals(normalizedExpectedTitle, NormalizeTitle(titlePart), StringComparison.OrdinalIgnoreCase) &&
+            AuthorTokensEqual(expectedAuthor, authorPart) &&
+            (string.IsNullOrWhiteSpace(candidateAuthor) || AuthorTokensEqual(expectedAuthor, candidateAuthor));
     }
 
     public bool AuthorMatches(string? expectedAuthor, string? candidateAuthor)
@@ -99,22 +181,36 @@ public sealed class DeterministicBookMatcher : IBookMatcher
             return false;
         }
 
-        var comparableWords = NormalizeWords(candidateTitle);
+        return HasDerivativeOrCombinedWorkMarker(candidateTitle);
+    }
+
+    /// <summary>
+    /// The raw-text negative evidence shared by title matching and external
+    /// release-name verification: a known derivative marker, a <c>/</c>
+    /// combined-work separator, or a spaced ampersand. Separated from
+    /// <see cref="IsUnwantedVariant"/> only so the release-name verifier
+    /// applies the identical rule rather than a second copy of it; callers
+    /// that need the exact-title escape must still go through
+    /// <see cref="IsUnwantedVariant"/>.
+    /// </summary>
+    internal static bool HasDerivativeOrCombinedWorkMarker(string value)
+    {
+        var comparableWords = NormalizeWords(value);
         return DerivativeTitleMarkers.Any(marker =>
                 comparableWords.Contains(marker, StringComparison.OrdinalIgnoreCase)) ||
-            candidateTitle.Contains('/', StringComparison.Ordinal) ||
-            Regex.IsMatch(candidateTitle, @"\s&\s");
+            value.Contains('/', StringComparison.Ordinal) ||
+            Regex.IsMatch(value, @"\s&\s");
     }
 
     private static readonly string[] LeadingArticles = ["The ", "A ", "An "];
     private static readonly string[] TrailingArticles = [", The", ", A", ", An"];
 
-    private static string NormalizeTitle(string value) => new(RemoveArticleVariants(value)
+    internal static string NormalizeTitle(string value) => new(RemoveArticleVariants(value)
         .Normalize(NormalizationForm.FormKC)
         .Where(char.IsLetterOrDigit)
         .ToArray());
 
-    private static string RemoveArticleVariants(string value)
+    internal static string RemoveArticleVariants(string value)
     {
         var trimmed = value.Replace("&", " and ", StringComparison.Ordinal).Trim();
 
@@ -138,7 +234,7 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         return trimmed;
     }
 
-    private static string NormalizeWords(string value)
+    internal static string NormalizeWords(string value)
     {
         var normalized = value.Normalize(NormalizationForm.FormKC);
         var builder = new StringBuilder(normalized.Length);
@@ -160,7 +256,7 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         return builder.ToString().TrimEnd();
     }
 
-    private static HashSet<string> AuthorTokens(string value)
+    internal static HashSet<string> AuthorTokens(string value)
     {
         var tokens = new HashSet<string>(StringComparer.Ordinal);
         var token = new StringBuilder();
@@ -183,5 +279,17 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         }
 
         return tokens;
+    }
+
+    private static bool AuthorTokensEqual(string? expectedAuthor, string? candidateAuthor)
+    {
+        if (string.IsNullOrWhiteSpace(expectedAuthor) || string.IsNullOrWhiteSpace(candidateAuthor))
+        {
+            return false;
+        }
+
+        var expectedTokens = AuthorTokens(expectedAuthor);
+        var candidateTokens = AuthorTokens(candidateAuthor);
+        return expectedTokens.Count > 0 && expectedTokens.SetEquals(candidateTokens);
     }
 }

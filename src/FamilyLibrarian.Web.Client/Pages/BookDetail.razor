@@ -5,6 +5,7 @@
 @using FamilyLibrarian.Web.Client.Delivery
 @using FamilyLibrarian.Web.Client.Following
 @inject CatalogApiClient Catalog
+@inject CatalogAvailabilityApiClient AvailabilityCatalog
 @inject CatalogSearchState SearchState
 @inject RequestsApiClient Requests
 @inject DeliveryTargetApiClient DeliveryTargets
@@ -60,12 +61,16 @@
                         {
                             <ProviderChip ProviderName="@source.ProviderName" SourceUrl="@source.SourceUrl" />
                         }
-                        <AvailabilityBadges Availability="@availability" />
+                        @if (book.VersionKind is "Novel" or "Unspecified")
+                        {
+                            <AvailabilityBadges LegacyAvailability="@availability" />
+                        }
                     </MudStack>
 
                     <div>
                         <MudText Typo="Typo.h3">@book.Title</MudText>
-                        <MudText Typo="Typo.h6">@string.Join(", ", book.Authors)</MudText>
+                        <MudText Typo="Typo.h6">@(book.Authors.Count > 1 ? "Contributors: " : string.Empty)@string.Join(", ", book.Authors)</MudText>
+                        <CandidateVersionSummary Candidate="@book" />
                     </div>
 
                     <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
@@ -149,7 +154,7 @@
         <MudPaper Class="pa-4" Outlined="true">
             <MudText Typo="Typo.h6" Class="mb-1">Known editions</MudText>
             <MudText Typo="Typo.body2" Class="mb-3">
-                These are the edition details reported by @book.ProviderName for this catalog record.
+                Compare the title, language, publisher, and ISBN to identify the edition you want.
             </MudText>
 
             @if (book.Editions.Count == 0)
@@ -164,6 +169,10 @@
                         <MudPaper Outlined="true" Class="pa-3">
                             <MudStack Spacing="1">
                                 <MudText Typo="Typo.subtitle1">@edition.Title</MudText>
+                                @if (!string.IsNullOrWhiteSpace(edition.Language) || !string.IsNullOrWhiteSpace(edition.Publisher))
+                                {
+                                    <MudText Typo="Typo.caption">@edition.Language · @edition.Publisher</MudText>
+                                }
                                 <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
                                     <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
                                         @FormatLabel(edition.Format)
@@ -189,10 +198,9 @@
         </MudPaper>
 
         <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-            Matching titles from different sources are merged into one catalog record automatically
-            when they agree on title, author, and language — the chips above link to every source
-            that was merged into this one. Contributor names, subtitles, formats, dates, or a
-            different language can still indicate a separate catalog record.
+            Choose the book and version you want, then choose Ebook or Audiobook below.
+            Study guides, adaptations, shortened versions, and combined volumes are separate choices.
+            “Version unknown” means the source has not provided enough information to identify the version.
         </MudAlert>
 
         @if (HasOwnedOption(availability?.Ebook) || HasOwnedOption(availability?.Audiobook))
@@ -288,29 +296,51 @@
                         }
                     </MudStack>
                 }
+                else if (!EbookOffered && !AudiobookOffered)
+                {
+                    <MudAlert Severity="Severity.Info">
+                        Requests aren't open right now. An administrator needs to turn on ebook or audiobook delivery.
+                    </MudAlert>
+                }
                 else
                 {
                     <fieldset class="pa-0" style="border: 0;">
                         <legend class="mud-typography mud-typography-body2">Which format would you like?</legend>
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
-                            <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@isSubmitting" />
-                            @if (wantsEbook)
-                            {
-                                @if (kindleTarget is { IsEnabled: true })
+                        @if (EbookOffered)
+                        {
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
+                                <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@(isSubmitting || !IsEbookReady)" />
+                                @if (wantsEbook)
                                 {
-                                    <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
+                                    @if (kindleTarget is { IsEnabled: true })
+                                    {
+                                        <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.caption">
+                                            Kindle delivery is not configured.
+                                            <MudLink Href="settings/ebook-delivery">Configure Kindle</MudLink>
+                                        </MudText>
+                                    }
                                 }
-                                else
-                                {
-                                    <MudText Typo="Typo.caption">
-                                        Kindle delivery is not configured.
-                                        <MudLink Href="settings/ebook-delivery">Configure Kindle</MudLink>
-                                    </MudText>
-                                }
-                            }
-                        </MudStack>
-                        <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@isSubmitting" />
+                            </MudStack>
+                        }
+                        @if (AudiobookOffered)
+                        {
+                            <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@(isSubmitting || !IsAudiobookReady)" />
+                        }
                     </fieldset>
+
+                    @* Enabled but not ready (unhealthy/untested/scanner down) is temporary, so say why. *@
+                    @if (requestFormats?.Ebook is { IsEnabled: true, IsReady: false } ebookReadiness)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">Ebook: @ebookReadiness.Reason</MudText>
+                    }
+                    @if (requestFormats?.Audiobook is { IsEnabled: true, IsReady: false } audiobookReadiness)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">Audiobook: @audiobookReadiness.Reason</MudText>
+                    }
 
                     <MudTextField @bind-Value="note"
                                   Label="Anything we should know? (optional)"
@@ -439,10 +469,43 @@
     private readonly Dictionary<string, Guid> resolvedSeriesIdsByName = new(StringComparer.OrdinalIgnoreCase);
     private bool isTogglingSeriesFollow;
 
+    private RequestFormatsResponse? requestFormats;
+
     private bool HasFormatSelected => wantsEbook || wantsAudiobook;
+
+    // Unknown (the lookup failed) offers both: the server still enforces what
+    // can actually be requested, so a failed lookup never hides a valid choice.
+    private bool EbookOffered => requestFormats?.Ebook.IsEnabled ?? true;
+    private bool AudiobookOffered => requestFormats?.Audiobook.IsEnabled ?? true;
+
+    // Version requests go to librarian review, which the server does not gate
+    // on destination health.
+    private bool IsEbookReady => !string.IsNullOrWhiteSpace(versionKind) || requestFormats?.Ebook is not { IsReady: false };
+    private bool IsAudiobookReady => !string.IsNullOrWhiteSpace(versionKind) || requestFormats?.Audiobook is not { IsReady: false };
+
+    private void ApplyFormatDefaults()
+    {
+        wantsEbook = requestFormats?.Ebook is not { IsReady: false };
+        // Audiobook is only preselected when ebook is not an option.
+        wantsAudiobook = !wantsEbook && requestFormats?.Audiobook is { IsReady: true };
+    }
+
+    private async Task LoadRequestFormatsAsync()
+    {
+        try
+        {
+            requestFormats = await Catalog.GetRequestFormatsAsync();
+        }
+        catch (HttpRequestException)
+        {
+            requestFormats = null;
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
+        var formatsLoad = LoadRequestFormatsAsync();
+
         try
         {
             kindleTarget = await DeliveryTargets.GetMyKindleTargetAsync();
@@ -463,6 +526,8 @@
             // Informational only -- a failed lookup just shows every follow
             // button as "not yet following" rather than failing the page.
         }
+
+        await formatsLoad;
     }
 
     private bool IsFollowingSeriesNamed(string name) =>
@@ -516,8 +581,7 @@
     {
         StopAvailabilityLoad();
         coverFailed = false;
-        wantsEbook = true;
-        wantsAudiobook = false;
+        ApplyFormatDefaults();
         note = null;
         errorMessage = null;
         versionKind = string.Empty;
@@ -531,21 +595,15 @@
         sentAttemptId = null;
         availability = null;
 
-        // Search already fetched this candidate a moment ago: show it immediately
-        // instead of leaving the page blank while we re-fetch full details.
+        // The detail lookup can legitimately return a different title/cover than
+        // the search card (e.g. a preferred-language edition replacing a foreign
+        // work title). Showing the card first made the page visibly flip a second
+        // after opening, so keep the loading state and only use the card as a
+        // fallback if the fetch fails.
         var cached = FindCachedCandidate();
-        if (cached is not null)
-        {
-            book = cached;
-            isLoading = false;
-            isRefreshing = true;
-        }
-        else
-        {
-            book = null;
-            isLoading = true;
-            isRefreshing = false;
-        }
+        book = null;
+        isLoading = true;
+        isRefreshing = false;
 
         try
         {
@@ -555,21 +613,16 @@
             // it never has merged-source info -- carry forward what search
             // already found (from the cached copy) rather than silently
             // dropping the other sources this record was merged from.
-            if (fresh is { Sources.Count: 0 } && cached is { Sources.Count: > 0 })
-            {
-                fresh = fresh with { Sources = cached.Sources };
-            }
+            if (fresh is not null)
+                fresh = CatalogSearchState.PreserveGroupedEditions(fresh, cached);
 
             book = fresh;
         }
         catch (HttpRequestException)
         {
-            // A transient failure keeps showing the cached summary rather than
-            // blanking a page the user already saw content on.
-            if (cached is null)
-            {
-                book = null;
-            }
+            // A transient failure falls back to the search card's summary rather
+            // than blanking the page.
+            book = cached;
         }
         finally
         {
@@ -579,7 +632,15 @@
 
         if (book is not null)
         {
-            StartAvailabilityLoad(book);
+            if (book.VersionKind is "Novel" or "Unspecified")
+                StartAvailabilityLoad(book);
+            else
+            {
+                versionKind = "Edition";
+                versionDetails = $"{book.VersionLabel}: {book.Title}. Source record: {book.ProviderName} / {book.ExternalId}.";
+                wantsEbook = EbookOffered;
+                wantsAudiobook = !wantsEbook && AudiobookOffered;
+            }
         }
     }
 
@@ -593,7 +654,7 @@
     {
         try
         {
-            var loaded = await Catalog.GetAvailabilityAsync(candidate, cancellationToken);
+            var loaded = await AvailabilityCatalog.GetAvailabilityAsync(candidate, cancellationToken);
             await InvokeAsync(() =>
             {
                 if (!cancellationToken.IsCancellationRequested)

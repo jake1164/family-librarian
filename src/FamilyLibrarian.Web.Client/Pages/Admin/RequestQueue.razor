@@ -62,23 +62,56 @@
                             Requested by @item.RequesterDisplayName (@item.RequesterEmail)
                         </MudText>
                         <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
-                            <RequestStatusChip Status="@item.Request.Status" />
+                            <RequestStatusChip Status="@item.Request.Status" Label="@RequestLabel(item.Request)" />
                             @foreach (var format in item.Request.Formats)
                             {
                                 <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
-                                                   ProgressCode="@format.ProgressCode"
-                                                   ProgressDescription="@format.ProgressDescription"
+                                                   ProgressCode="@FormatProgressCode(item, format)"
+                                                   ProgressDescription="@FormatDescription(item, format)"
                                                    ExternalActionUri="@format.ExternalActionUri" />
                             }
                         </MudStack>
+                        @foreach (var activity in ActiveForRequest(item.Request.Id))
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Info">
+                                @activity.Stage from @activity.ProviderDisplayName for @FormatName(item.Request, activity.RequestFormatId)
+                                since @activity.StartedAtUtc.ToLocalTime().ToString("t").
+                            </MudText>
+                        }
                         <MudText Typo="Typo.caption">
                             Asked @item.Request.RequestedAtUtc.ToLocalTime().ToString("g")
                             (@Age(item.Request.RequestedAtUtc))
                         </MudText>
+                        @if (WaitingInteractionFor(item.Request.Id) is { } waitingInteraction)
+                        {
+                            @* HUMAN-ACQ-1 D7: claimed-by-another is informational, not a "needs you" prompt. *@
+                            @if (!string.IsNullOrWhiteSpace(waitingInteraction.ClaimedByDisplayName) && !waitingInteraction.IsClaimedByCurrentUser)
+                            {
+                                <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined">
+                                    Being handled by @waitingInteraction.ClaimedByDisplayName.
+                                </MudAlert>
+                            }
+                            else
+                            {
+                                <MudAlert Severity="@(waitingInteraction.IsExpired ? Severity.Error : Severity.Warning)"
+                                          Dense="true" Variant="Variant.Outlined">
+                                    Needs you: @(waitingInteraction.Message ?? $"{waitingInteraction.ProviderId} needs a librarian action.")
+                                    <MudLink Href="admin/provider-interactions" Class="ml-1">Open provider interactions</MudLink>
+                                </MudAlert>
+                            }
+                        }
                         @if (item.Request.Status == "NeedsReview")
                         {
                             <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined">
-                                <MudText Typo="Typo.body2">@item.Request.StatusDescription</MudText>
+                                <MudText Typo="Typo.body2">@ReviewDescription(item)</MudText>
+                                @if (item.ReviewCandidates is { Count: > 0 } candidates)
+                                {
+                                    <MudText Typo="Typo.caption">
+                                        @candidates.Count source record@(candidates.Count == 1 ? "" : "s")
+                                        from @string.Join(", ", candidates.Select(candidate => candidate.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase)).
+                                        Open the request to inspect and resolve them.
+                                    </MudText>
+                                }
                                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-1" Wrap="Wrap.Wrap">
                                     <MudMenu Label="Recheck" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
                                              StartIcon="@Icons.Material.Filled.Refresh" Disabled="@isRechecking">
@@ -113,6 +146,41 @@
 </MudStack>
 
 @code {
+    [CascadingParameter]
+    private IReadOnlyList<AdminActiveAcquisitionResponse> ActiveAcquisitions { get; set; } = [];
+
+    private IEnumerable<AdminActiveAcquisitionResponse> ActiveForRequest(Guid requestId) =>
+        ActiveAcquisitions.Where(activity => activity.RequestId == requestId);
+
+    private AdminActiveAcquisitionResponse? ActiveForFormat(Guid formatId) =>
+        ActiveAcquisitions.FirstOrDefault(activity => activity.RequestFormatId == formatId);
+
+    private string? RequestLabel(BookRequestResponse request) => request.Status == "PendingAcquisition"
+        ? ActiveForRequest(request.Id).Any() ? "Working" : "Awaiting next check"
+        : null;
+
+    private static bool HasReviewCandidates(AdminBookRequestResponse item, Guid formatId) =>
+        item.Request.Status == "NeedsReview" &&
+        item.ReviewCandidates?.Any(candidate => candidate.RequestFormatId == formatId) == true;
+
+    private string? FormatProgressCode(AdminBookRequestResponse item, BookRequestFormatResponse format) =>
+        HasReviewCandidates(item, format.FormatId) ? "AwaitingApproval" : format.ProgressCode;
+
+    private string? FormatDescription(AdminBookRequestResponse item, BookRequestFormatResponse format) =>
+        ActiveForFormat(format.FormatId) is { } activity
+            ? AdminAcquisitionProgressText.Describe(activity)
+            : HasReviewCandidates(item, format.FormatId) ? "Source review needed"
+            : WaitingInteractionForFormat(item.Request.Id, format.FormatId) is not null ? "Provider action needed"
+            : format.ProgressDescription ?? (format.Status == "Requested" ? "Awaiting next check" : null);
+
+    private static string FormatName(BookRequestResponse request, Guid formatId) =>
+        request.Formats.FirstOrDefault(format => format.FormatId == formatId)?.MediaType ?? "format";
+
+    private static string ReviewDescription(AdminBookRequestResponse item) =>
+        item.Request.NeedsReview?.Reason is { Length: > 0 } reason && !string.IsNullOrWhiteSpace(reason)
+            ? reason
+            : item.Request.StatusDescription;
+
     private static readonly (string? Status, string Label)[] Filters =
     [
         (null, "All requests"),
@@ -130,7 +198,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.Sources, LoadAsync);
+        Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.Sources, () => LoadAsync(showSpinner: false));
         await RefreshLiveAsync();
         await LoadDirectAcquisitionProvidersAsync();
     }
@@ -182,9 +250,10 @@
         await LoadAsync();
     }
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool showSpinner = true)
     {
-        isLoading = true;
+        // Live (SignalR) refreshes swap data in place; the spinner would blank the list and flash.
+        isLoading = showSpinner;
         errorMessage = null;
         try
         {
@@ -215,19 +284,41 @@
     }
 
     /// <summary>
+    /// The waiting provider interaction for one request in the queue, if any
+    /// -- looked up from the same attention payload the "Needs review" filter
+    /// count already uses, so no extra round trip per card.
+    /// </summary>
+    private AdminProviderInteractionAttentionResponse? WaitingInteractionFor(Guid requestId) =>
+        attention?.WaitingProviderInteractions.FirstOrDefault(interaction => interaction.RequestId == requestId);
+
+    private AdminProviderInteractionAttentionResponse? WaitingInteractionForFormat(Guid requestId, Guid formatId) =>
+        attention?.WaitingProviderInteractions.FirstOrDefault(interaction =>
+            interaction.RequestId == requestId && interaction.RequestFormatId == formatId);
+
+    /// <summary>
     /// Lowest rank surfaces first: requests or formats colored red (failed /
     /// not available) outrank amber (needs review / awaiting approval),
     /// which outrank in-progress blue, which outrank resolved green/grey.
     /// Mirrors the chip color convention in <see cref="MediaTypeVisuals"/> so
     /// "needs action" in the queue always means the same thing it means on
-    /// the chip.
+    /// the chip. A waiting provider interaction is folded in at the same
+    /// amber/red tier as the shared status vocabulary, even though the
+    /// underlying format chip itself stays the deliberately generic blue
+    /// "AwaitingProviderAction" (docs/07-ui-conventions.md) -- this ranking
+    /// is admin-only and does not touch that shared chip.
     /// </summary>
-    private static int AttentionRank(AdminBookRequestResponse item)
+    private int AttentionRank(AdminBookRequestResponse item)
     {
         var colors = item.Request.Formats
             .Select(format => MediaTypeVisuals.StatusColor(format.Status, format.ProgressCode))
             .Append(MediaTypeVisuals.StatusColor(item.Request.Status));
-        return colors.Min(ColorRank);
+        var rank = colors.Min(ColorRank);
+        if (WaitingInteractionFor(item.Request.Id) is { } interaction)
+        {
+            rank = Math.Min(rank, ColorRank(interaction.IsExpired ? Color.Error : Color.Warning));
+        }
+
+        return rank;
     }
 
     private static int ColorRank(Color color) => color switch

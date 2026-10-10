@@ -1,2 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <!-- The conformance tests check the sample's output against FL's own validators. -->
+    <InternalsVisibleTo Include="FamilyLibrarian.Infrastructure.Tests" />
+  </ItemGroup>
 </Project>

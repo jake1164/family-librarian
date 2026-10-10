@@ -1,0 +1,33 @@
+@using FamilyLibrarian.Contracts.Requests
+
+@if (Evidence is { } evidence)
+{
+    <details class="mt-2" style="overflow-wrap: anywhere;">
+        <summary>Identity and acquisition evidence</summary>
+        <dl>
+            <dt>Requested work</dt><dd>@evidence.RequestedTitle — @(evidence.RequestedAuthor ?? "author unknown")</dd>
+            <dt>Work identity</dt><dd>@evidence.WorkIdentity</dd>
+            <dt>Acquisition suitability</dt><dd>@evidence.AcquisitionSuitability</dd>
+            <dt>Title</dt><dd>@evidence.TitleEvidence: @(evidence.MatchedTitlePhrase ?? "no complete title phrase established")</dd>
+            <dt>Author</dt><dd>@evidence.AuthorEvidence: @(evidence.DetectedAuthor ?? "unknown")</dd>
+            <dt>Language</dt><dd>@evidence.LanguageEvidence</dd>
+            @foreach (var series in evidence.Series)
+            {
+                <dt>Series</dt><dd>@series.Name: requested @(series.RequestedPosition ?? "unknown"), release @(series.ReleasePosition ?? "unknown") — @series.State</dd>
+            }
+            @if (evidence.PartNumber is { } number)
+            {
+                <dt>Multipart</dt><dd>Part @number of @(evidence.PartTotal?.ToString() ?? "unknown"); completeness is assessed across companion records.</dd>
+            }
+            <dt>Unclassified descriptors</dt><dd>@(evidence.UnclassifiedTokens.Count == 0 ? "None" : string.Join(" ", evidence.UnclassifiedTokens))</dd>
+            <dt>Contradictions</dt><dd>@(evidence.Contradictions.Count == 0 ? "None" : string.Join(" ", evidence.Contradictions))</dd>
+            <dt>Conditions</dt><dd>@(evidence.Conditions.Count == 0 ? "None" : string.Join(" ", evidence.Conditions))</dd>
+            <dt>Reasons</dt><dd>@string.Join(" ", evidence.Reasons)</dd>
+            <dt>Normalized release</dt><dd>@(evidence.NormalizedRelease ?? "unknown")</dd>
+        </dl>
+    </details>
+}
+
+@code {
+    [Parameter] public AdminCandidateIdentityEvidenceResponse? Evidence { get; set; }
+}

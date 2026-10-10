@@ -7,7 +7,6 @@ public sealed record SettingsBackupCountsResponse(
     int CwaSettings,
     int AudiobookshelfSettings,
     int SmtpSettings,
-    int PrivateEgressGatewaySettings,
     int ProviderSettings,
     int OidcSettings,
     int AcquisitionPolicySettings);

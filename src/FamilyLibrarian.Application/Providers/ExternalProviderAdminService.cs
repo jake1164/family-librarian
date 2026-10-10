@@ -1,6 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
-using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Providers;
 
@@ -11,7 +10,6 @@ public sealed class ExternalProviderAdminService(
     IExternalProviderStore store,
     ICredentialProtector protector,
     IExternalProviderClient client,
-    PrivateEgressRouteResolver routeResolver,
     IAuditWriter audit,
     ICurrentUser currentUser,
     IClock clock)
@@ -83,6 +81,62 @@ public sealed class ExternalProviderAdminService(
         await audit.WriteAsync(
             AuditActions.ExternalProviderRecheckScheduleChanged, AuditSubjectTypes.ExternalProvider, id.ToString(),
             new { provider.ProviderId, Schedule = schedule.ToString() }, cancellationToken);
+
+        return ExternalProviderCommandResult.Success(ToStatus(provider));
+    }
+
+    public async Task<ExternalProviderCommandResult> SetAutoAcquireEnabledAsync(
+        Guid id, bool isEnabled, CancellationToken cancellationToken)
+    {
+        var provider = await store.FindAsync(id, cancellationToken);
+        if (provider is null)
+        {
+            return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
+        }
+
+        provider.SetAutoAcquireEnabled(isEnabled, currentUser.UserId, clock.UtcNow);
+        await store.SaveChangesAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            isEnabled ? AuditActions.ExternalProviderAutoAcquireEnabled : AuditActions.ExternalProviderAutoAcquireDisabled,
+            AuditSubjectTypes.ExternalProvider, id.ToString(), new { provider.ProviderId }, cancellationToken);
+
+        return ExternalProviderCommandResult.Success(ToStatus(provider));
+    }
+
+    /// <summary>
+    /// Sets how many candidates unattended acquisition may download and fail
+    /// to verify for one format before the request waits for a librarian.
+    /// </summary>
+    /// <remarks>
+    /// An administrator who knows a source is metered sets this to 1, which
+    /// spends one download and then reviews. Family Librarian cannot read a
+    /// provider's own remaining allowance (protocol v2 §8 keeps quota the
+    /// provider's business), so this setting is the only honest bound.
+    /// </remarks>
+    public async Task<ExternalProviderCommandResult> SetAutomaticAttemptLimitAsync(
+        Guid id, int limit, CancellationToken cancellationToken)
+    {
+        if (limit is < ExternalProvider.MinimumAutomaticAttemptLimit or > ExternalProvider.MaximumAutomaticAttemptLimit)
+        {
+            return ExternalProviderCommandResult.Invalid(
+                $"The automatic attempt limit must be between {ExternalProvider.MinimumAutomaticAttemptLimit} " +
+                $"and {ExternalProvider.MaximumAutomaticAttemptLimit}.");
+        }
+
+        var provider = await store.FindAsync(id, cancellationToken);
+        if (provider is null)
+        {
+            return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
+        }
+
+        provider.SetAutomaticAttemptLimit(limit, currentUser.UserId, clock.UtcNow);
+        await store.SaveChangesAsync(cancellationToken);
+
+        await audit.WriteAsync(
+            AuditActions.ExternalProviderAutomaticAttemptLimitChanged,
+            AuditSubjectTypes.ExternalProvider, id.ToString(),
+            new { provider.ProviderId, Limit = limit }, cancellationToken);
 
         return ExternalProviderCommandResult.Success(ToStatus(provider));
     }
@@ -168,42 +222,70 @@ public sealed class ExternalProviderAdminService(
             return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
         }
 
-        var resolution = routeResolver.Resolve(provider.CachedEgressPolicy);
-        if (!resolution.IsAllowed)
-        {
-            provider.RecordTestResult(
-                false, resolution.BlockedReason, provider.CachedProtocolVersion, provider.CachedCapabilities,
-                provider.CachedEgressPolicy, currentUser.UserId, clock.UtcNow);
-            await store.SaveChangesAsync(cancellationToken);
-            return ExternalProviderCommandResult.Success(ToStatus(provider));
-        }
-
         var apiKey = provider.HasApiKey
             ? protector.Unprotect(ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
             : null;
 
         try
         {
-            var manifest = await client.GetManifestAsync(provider.BaseUrl, apiKey, resolution.Route!, cancellationToken);
-            var healthy = await client.GetHealthAsync(provider.BaseUrl, apiKey, resolution.Route!, cancellationToken);
+            var manifest = await client.GetManifestAsync(provider.BaseUrl, apiKey, cancellationToken);
+            var negotiatedVersion = ProtocolVersionNegotiation.Negotiate(manifest.ProtocolVersions);
 
-            var egressPolicy = ParseEgressPolicy(manifest.EgressPolicy);
+            if (negotiatedVersion is null)
+            {
+                // No mutually supported protocol version — refuse to guess
+                // (protocol v2 §0). The manifest was still reachable, so
+                // record that much, but never proceed as if a version had
+                // been agreed on.
+                provider.RecordTestResult(
+                    false,
+                    $"{manifest.Name} declares protocol version(s) [{string.Join(", ", manifest.ProtocolVersions)}], " +
+                        "none of which Family Librarian supports.",
+                    protocolVersion: null,
+                    capabilities: SerializeCapabilities(manifest.Capabilities),
+                    currentUser.UserId,
+                    clock.UtcNow,
+                    manifest.InstanceId,
+                    healthStatus: null,
+                    searchOperationStatus: null,
+                    acquireOperationStatus: null,
+                    manifest.ManagementUrl,
+                    manifest.DocumentationUrl);
+                await store.SaveChangesAsync(cancellationToken);
+                await audit.WriteAsync(
+                    AuditActions.ExternalProviderTested, AuditSubjectTypes.ExternalProvider, id.ToString(),
+                    new { provider.ProviderId, provider.LastTestSucceeded }, cancellationToken);
+                return ExternalProviderCommandResult.Success(ToStatus(provider));
+            }
+
+            var health = await client.GetHealthAsync(provider.BaseUrl, apiKey, cancellationToken);
             provider.RecordTestResult(
-                healthy,
-                healthy
-                    ? $"Reached {manifest.Name} (protocol v{manifest.ProtocolVersion})."
-                    : "The manifest was reachable, but the health check did not report healthy.",
-                manifest.ProtocolVersion,
-                string.Join(',', manifest.Capabilities),
-                egressPolicy,
+                health.IsFullyOperational,
+                health.IsFullyOperational
+                    ? $"Reached {manifest.Name} (protocol v{negotiatedVersion})."
+                    : (health.IsHealthy
+                        ? $"The manifest was reachable, but {manifest.Name} reported its search or acquire " +
+                            "capability as unavailable — see the health/search/acquire chips below."
+                        : "The manifest was reachable, but the health check did not report healthy.")
+                        + ProviderHealthIssueText.AsSuffix(health.ReportedIssues),
+                negotiatedVersion,
+                SerializeCapabilities(manifest.Capabilities),
                 currentUser.UserId,
-                clock.UtcNow);
+                clock.UtcNow,
+                manifest.InstanceId,
+                health.Status.ToString(),
+                health.Search.ToString(),
+                health.Acquire.ToString(),
+                manifest.ManagementUrl,
+                manifest.DocumentationUrl,
+                manifestReached: true,
+                healthIssues: health.ReportedIssues);
         }
-        catch (HttpRequestException exception)
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
             provider.RecordTestResult(
                 false, $"The provider is unreachable: {exception.Message}", provider.CachedProtocolVersion,
-                provider.CachedCapabilities, provider.CachedEgressPolicy, currentUser.UserId, clock.UtcNow);
+                provider.CachedCapabilities, currentUser.UserId, clock.UtcNow);
         }
 
         await store.SaveChangesAsync(cancellationToken);
@@ -234,37 +316,32 @@ public sealed class ExternalProviderAdminService(
     }
 
     /// <summary>
-    /// Lets an administrator override a provider's own declared egress policy —
-    /// accepted as a deliberate trade-off: a provider that declares
-    /// <c>PRIVATE_REQUIRED</c> for a real reason can have that requirement
-    /// weakened here, which is exactly why the UI surfaces a warning when the
-    /// effective policy ends up less strict than what the provider declared.
+    /// A stable, human-legible flattening of the structured v2 capabilities
+    /// object for the existing <c>Cached*</c>-string storage slot — e.g.
+    /// <c>"mediaTypes:ebook;operations:search,acquire;features:pagination"</c>.
+    /// Not machine-parsed anywhere else today; just what "Test Connection"
+    /// displays.
     /// </summary>
-    public async Task<ExternalProviderCommandResult> SetEgressPolicyOverrideAsync(
-        Guid id, EgressPolicy? policy, CancellationToken cancellationToken)
+    private static string SerializeCapabilities(ProviderCapabilities capabilities)
     {
-        var provider = await store.FindAsync(id, cancellationToken);
-        if (provider is null)
+        var parts = new List<string>();
+        if (capabilities.MediaTypes.Count > 0)
         {
-            return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
+            parts.Add($"mediaTypes:{string.Join(',', capabilities.MediaTypes)}");
         }
 
-        provider.SetEgressPolicyOverride(policy, currentUser.UserId, clock.UtcNow);
-        await store.SaveChangesAsync(cancellationToken);
+        if (capabilities.Operations.Count > 0)
+        {
+            parts.Add($"operations:{string.Join(',', capabilities.Operations)}");
+        }
 
-        await audit.WriteAsync(
-            AuditActions.ExternalProviderEgressPolicyOverrideChanged, AuditSubjectTypes.ExternalProvider, id.ToString(),
-            new { provider.ProviderId, Override = policy?.ToString() }, cancellationToken);
+        if (capabilities.Features.Count > 0)
+        {
+            parts.Add($"features:{string.Join(',', capabilities.Features)}");
+        }
 
-        return ExternalProviderCommandResult.Success(ToStatus(provider));
+        return string.Join(';', parts);
     }
-
-    private static EgressPolicy ParseEgressPolicy(string value) => value.ToUpperInvariant() switch
-    {
-        "PRIVATE_REQUIRED" => EgressPolicy.PrivateRequired,
-        "CUSTOM_PROXY" => EgressPolicy.CustomProxy,
-        _ => EgressPolicy.Normal
-    };
 
     private static ExternalProviderStatus ToStatus(ExternalProvider provider) => new(
         provider.Id,
@@ -273,17 +350,24 @@ public sealed class ExternalProviderAdminService(
         provider.BaseUrl,
         provider.IsEnabled,
         provider.RecheckSchedule.ToString(),
+        provider.AutoAcquireEnabled,
+        provider.AutomaticAttemptLimit,
         provider.HasApiKey,
         provider.ApiKeyHint,
         provider.ApiKeySetAtUtc,
         provider.CachedProtocolVersion,
         provider.CachedCapabilities,
-        provider.CachedEgressPolicy.ToString(),
-        provider.EgressPolicyOverride?.ToString(),
-        provider.EffectiveEgressPolicy.ToString(),
+        provider.CachedInstanceId,
+        provider.InstanceReplacedSincePreviousTest,
+        provider.CachedHealthStatus,
+        provider.CachedSearchOperationStatus,
+        provider.CachedAcquireOperationStatus,
+        provider.CachedManagementUrl,
+        provider.CachedDocumentationUrl,
         provider.LastTestedAtUtc,
         provider.LastTestSucceeded,
-        provider.LastTestMessage);
+        provider.LastTestMessage,
+        provider.CachedHealthIssues);
 }
 
 public sealed record ExternalProviderStatus(
@@ -293,17 +377,24 @@ public sealed record ExternalProviderStatus(
     string BaseUrl,
     bool IsEnabled,
     string RecheckSchedule,
+    bool AutoAcquireEnabled,
+    int AutomaticAttemptLimit,
     bool HasApiKey,
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,
     string? CachedProtocolVersion,
     string? CachedCapabilities,
-    string CachedEgressPolicy,
-    string? EgressPolicyOverride,
-    string EffectiveEgressPolicy,
+    string? CachedInstanceId,
+    bool InstanceReplacedSincePreviousTest,
+    string? CachedHealthStatus,
+    string? CachedSearchOperationStatus,
+    string? CachedAcquireOperationStatus,
+    string? CachedManagementUrl,
+    string? CachedDocumentationUrl,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
-    string? LastTestMessage);
+    string? LastTestMessage,
+    IReadOnlyList<ProviderHealthIssue> CachedHealthIssues);
 
 public sealed record ExternalProviderCommandResult(
     ExternalProviderCommandOutcome Outcome, ExternalProviderStatus? Status, string? Error)

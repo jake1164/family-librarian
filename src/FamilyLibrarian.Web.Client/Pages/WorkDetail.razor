@@ -181,35 +181,48 @@
                         See my requests
                     </MudButton>
                 }
+                else if (!EbookOffered && !AudiobookOffered)
+                {
+                    <MudAlert Severity="Severity.Info">
+                        Requests aren't open right now. An administrator needs to turn on ebook or audiobook delivery.
+                    </MudAlert>
+                }
                 else
                 {
                     <fieldset class="pa-0" style="border: 0;">
                         <legend class="mud-typography mud-typography-body2">Which format would you like?</legend>
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
-                            <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@(isSubmitting || !IsEbookReady)" />
-                            @if (wantsEbook)
-                            {
-                                @if (kindleTarget is { IsEnabled: true })
+                        @if (EbookOffered)
+                        {
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
+                                <MudCheckBox @bind-Value="wantsEbook" Label="Ebook" Disabled="@(isSubmitting || !IsEbookReady)" />
+                                @if (wantsEbook)
                                 {
-                                    <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
+                                    @if (kindleTarget is { IsEnabled: true })
+                                    {
+                                        <MudCheckBox @bind-Value="sendToKindle" Label="Send to my Kindle when ready" Disabled="@isSubmitting" />
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.caption">
+                                            Kindle delivery is not configured.
+                                            <MudLink Href="settings/ebook-delivery">Configure Kindle</MudLink>
+                                        </MudText>
+                                    }
                                 }
-                                else
-                                {
-                                    <MudText Typo="Typo.caption">
-                                        Kindle delivery is not configured.
-                                        <MudLink Href="settings/ebook-delivery">Configure Kindle</MudLink>
-                                    </MudText>
-                                }
-                            }
-                        </MudStack>
-                        <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@(isSubmitting || !IsAudiobookReady)" />
+                            </MudStack>
+                        }
+                        @if (AudiobookOffered)
+                        {
+                            <MudCheckBox @bind-Value="wantsAudiobook" Label="Audiobook" Disabled="@(isSubmitting || !IsAudiobookReady)" />
+                        }
                     </fieldset>
 
-                    @if (fulfillment?.EbookReadiness is { IsReady: false } ebookReadiness)
+                    @* Enabled but not ready (unhealthy/untested/scanner down) is temporary, so say why. *@
+                    @if (requestFormats?.Ebook is { IsEnabled: true, IsReady: false } ebookReadiness)
                     {
                         <MudText Typo="Typo.caption" Color="Color.Error">Ebook: @ebookReadiness.Reason</MudText>
                     }
-                    @if (fulfillment?.AudiobookReadiness is { IsReady: false } audiobookReadiness)
+                    @if (requestFormats?.Audiobook is { IsEnabled: true, IsReady: false } audiobookReadiness)
                     {
                         <MudText Typo="Typo.caption" Color="Color.Error">Audiobook: @audiobookReadiness.Reason</MudText>
                     }
@@ -312,15 +325,50 @@
     private HashSet<Guid> followedAuthorIds = [];
     private Guid busySubjectId;
 
+    private RequestFormatsResponse? requestFormats;
+
     private bool HasFormatSelected => wantsEbook || wantsAudiobook;
 
-    // A missing readiness signal (null) means "unknown" — treated as ready so
-    // an older/failed fetch never blocks a request the server would accept.
-    private bool IsEbookReady => !string.IsNullOrWhiteSpace(versionKind) || fulfillment?.EbookReadiness is not { IsReady: false };
-    private bool IsAudiobookReady => !string.IsNullOrWhiteSpace(versionKind) || fulfillment?.AudiobookReadiness is not { IsReady: false };
+    // A missing readiness signal (null) means "unknown" — treated as offered and
+    // ready so a failed fetch never blocks a request the server would accept.
+    private bool EbookOffered => requestFormats?.Ebook.IsEnabled ?? true;
+    private bool AudiobookOffered => requestFormats?.Audiobook.IsEnabled ?? true;
+    private bool IsEbookReady => !string.IsNullOrWhiteSpace(versionKind) || requestFormats?.Ebook is not { IsReady: false };
+    private bool IsAudiobookReady => !string.IsNullOrWhiteSpace(versionKind) || requestFormats?.Audiobook is not { IsReady: false };
+
+    private async Task LoadRequestFormatsAsync()
+    {
+        var firstLoad = requestFormats is null;
+        try
+        {
+            requestFormats = await Catalog.GetRequestFormatsAsync();
+        }
+        catch (HttpRequestException)
+        {
+            requestFormats = null;
+        }
+
+        // Never leave a format ticked that the form no longer offers or allows.
+        if (requestFormats?.Ebook is { IsReady: false })
+        {
+            wantsEbook = false;
+        }
+        if (requestFormats?.Audiobook is { IsReady: false })
+        {
+            wantsAudiobook = false;
+        }
+        // Ebook is the default; on first load fall back to audiobook when it isn't
+        // an option. Not on refresh, which would undo the user's own unticking.
+        if (firstLoad && !wantsEbook && !wantsAudiobook && requestFormats?.Audiobook is { IsReady: true })
+        {
+            wantsAudiobook = true;
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
+        var formatsLoad = LoadRequestFormatsAsync();
+
         try
         {
             kindleTarget = await DeliveryTargets.GetMyKindleTargetAsync();
@@ -333,6 +381,7 @@
         }
 
         await LoadFollowingStateAsync();
+        await formatsLoad;
     }
 
     private async Task LoadFollowingStateAsync()
@@ -458,14 +507,6 @@
                 if (!cancellationToken.IsCancellationRequested)
                 {
                     fulfillment = loaded;
-                    if (loaded.EbookReadiness is { IsReady: false })
-                    {
-                        wantsEbook = false;
-                    }
-                    if (loaded.AudiobookReadiness is { IsReady: false })
-                    {
-                        wantsAudiobook = false;
-                    }
                     StateHasChanged();
                 }
             });
@@ -599,6 +640,7 @@
             if (currentWorkId == WorkId && createdRequest?.Id == requestId)
                 createdRequest = requests.Active.Concat(requests.History).FirstOrDefault(request => request.Id == requestId);
         }
+        if (!isSubmitting) await LoadRequestFormatsAsync();
         if (work is not null && !isSubmitting) StartFulfillmentOptionsLoad();
     }
 

@@ -20,13 +20,32 @@ public sealed record RequestFormatProgressView(string Code, string Description);
 /// </summary>
 public static class RequestFormatProgress
 {
+    /// <param name="providerJobState">
+    /// The active <see cref="ProviderAcquisitionJob"/>'s lifecycle
+    /// state, when one exists for this format and <paramref name="assetState"/>
+    /// is still <c>null</c> -- no file exists yet, so none of the
+    /// asset/security/publishing states below apply. Checked before
+    /// <paramref name="assetState"/>'s own switch so a job that is
+    /// <c>waiting</c>/<c>user-interaction</c> or simply still running shows
+    /// real progress instead of the bare "Requested" state.
+    /// </param>
     public static RequestFormatProgressView? Describe(
         MediaAssetStorageState? assetState,
         SecurityEvaluationStatus? securityStatus,
         LibraryImportStatus? libraryImportStatus,
-        AudiobookshelfDeliveryStatus? deliveryStatus) => assetState switch
+        AudiobookshelfDeliveryStatus? deliveryStatus,
+        ProviderAcquisitionJobLifecycleState? providerJobState = null,
+        string? providerJobPhase = null,
+        bool providerJobAdvancingToNextCandidate = false)
     {
-        null => null,
+        if (assetState is null && providerJobState is not null)
+        {
+            return DescribeProviderJob(providerJobState.Value, providerJobPhase, providerJobAdvancingToNextCandidate);
+        }
+
+        return assetState switch
+        {
+            null => null,
         MediaAssetStorageState.Quarantine => Stage(
             "AwaitingSecurityScan",
             "File received — awaiting security scan."),
@@ -44,7 +63,50 @@ public static class RequestFormatProgress
         MediaAssetStorageState.Destroyed => Stage(
             "FileRemoved",
             "The submitted file was removed before delivery."),
-        _ => null
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// A durable job is <c>waiting</c> whenever it needs something external
+    /// to proceed (protocol v2 §8) -- most concretely user interaction, but
+    /// the state alone is enough to warrant an in-progress treatment
+    /// regardless of the exact open-string phase. Provider interaction text
+    /// is deliberately not shown here: this projection is also used by
+    /// requesters and must not disclose provider-specific details. <c>failed</c> is shown
+    /// distinctly (not lumped into ordinary in-progress work) but, like
+    /// <see cref="MediaAssetStorageState.Rejected"/>/<c>PublishingNeedsAttention</c>
+    /// below, deliberately generic here -- this view is also read by the
+    /// plain requester (<c>ListForUserAsync</c>), so the provider's raw error
+    /// text belongs only in the admin-only Provider Activity ledger
+    /// (<see cref="ProviderAttempt"/>), not on this shared chip.
+    /// Any other non-terminal state (<c>queued</c>/<c>running</c>) is
+    /// ordinary in-progress work.
+    /// </summary>
+    private static RequestFormatProgressView DescribeProviderJob(
+        ProviderAcquisitionJobLifecycleState state, string? phase, bool advancingToNextCandidate) => state switch
+    {
+        ProviderAcquisitionJobLifecycleState.Running or ProviderAcquisitionJobLifecycleState.Queued
+            when ProviderJobPause.IsPaused(phase) => Stage(
+                "AcquisitionPaused", "Acquisition is paused and needs the librarian's attention."),
+        // An automatic copy failed its checks but the request is still in the
+        // automatic queue: Family Librarian is already moving to the next best
+        // copy and nothing needs a person. Without this the chip said "needs
+        // the librarian's attention" for the minutes between the failure and
+        // the next attempt -- an alarm about a step that was working as
+        // designed. Generic on purpose: this view is also read by requesters.
+        ProviderAcquisitionJobLifecycleState.Failed when advancingToNextCandidate => Stage(
+            "AcquisitionRetrying",
+            "That copy didn't pass its checks. Trying the next best copy; nothing needs doing."),
+        ProviderAcquisitionJobLifecycleState.Waiting => Stage(
+            "AwaitingProviderAction",
+            "A librarian is working with the provider to continue this request."),
+        ProviderAcquisitionJobLifecycleState.Failed => Stage(
+            "AcquisitionFailed",
+            "The acquisition failed and needs the librarian's attention."),
+        _ => Stage(
+            "AcquisitionInProgress",
+            "Fetching from the external provider.")
     };
 
     private static RequestFormatProgressView DescribeProcessing(SecurityEvaluationStatus? securityStatus) =>

@@ -1,0 +1,22 @@
+@using System.Globalization
+
+<MudText Typo="Typo.body2"><strong>@Candidate.VersionLabel</strong> · @LanguageLabel</MudText>
+<MudText Typo="Typo.caption">@Candidate.VersionDescription</MudText>
+@if (Candidate.Authors.Count == 0)
+{
+    <MudText Typo="Typo.caption">Author not reported — check the edition before requesting.</MudText>
+}
+
+@code {
+    [Parameter, EditorRequired] public CatalogBookCandidateResponse Candidate { get; set; } = null!;
+
+    private string LanguageLabel
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Candidate.Language)) return "Language unknown";
+            try { return CultureInfo.GetCultureInfo(Candidate.Language).EnglishName; }
+            catch (CultureNotFoundException) { return Candidate.Language; }
+        }
+    }
+}

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain.Acquisition;
@@ -137,14 +138,38 @@ public sealed class AdminRequestQueueEndpointTests
         {
             var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var formatId = created.Formats.Single().FormatId;
+            // One failure is a glitch or one bad book, not a source problem.
             database.ProviderAttempts.Add(new ProviderAttempt(
                 created.Id,
                 formatId,
                 "gutendex",
                 ProviderAttemptOutcome.Failed,
                 "The automatic provider could not be reached; automatic retry is disabled for this source.",
-                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow.AddMinutes(-3),
                 nextEligibleCheckAtUtc: null));
+            await database.SaveChangesAsync();
+        }
+
+        var afterOneFailure = await (await admin.GetAsync("/api/v1/admin/requests/attention"))
+            .Content.ReadFromJsonAsync<AdminRequestAttentionResponse>();
+        Assert.IsFalse(afterOneFailure!.ProviderIssues.Any(issue => issue.ProviderId == "gutendex"));
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var formatId = created.Formats.Single().FormatId;
+            foreach (var minutesAgo in new[] { 2, 0 })
+            {
+                database.ProviderAttempts.Add(new ProviderAttempt(
+                    created.Id,
+                    formatId,
+                    "gutendex",
+                    ProviderAttemptOutcome.Failed,
+                    "The automatic provider could not be reached; automatic retry is disabled for this source.",
+                    DateTimeOffset.UtcNow.AddMinutes(-minutesAgo),
+                    nextEligibleCheckAtUtc: null));
+            }
+
             await database.SaveChangesAsync();
         }
 
@@ -161,6 +186,38 @@ public sealed class AdminRequestQueueEndpointTests
         using var nonAdmin = await CreateTokenClientAsync(fixture, isAdmin: false);
         var forbidden = await nonAdmin.GetAsync("/api/v1/admin/requests/attention");
         Assert.AreEqual(HttpStatusCode.Forbidden, forbidden.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task ActiveAcquisitionEndpointShowsCurrentStageOnlyToAnAdmin()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var tracker = fixture.Services.GetRequiredService<ActiveAcquisitionTracker>();
+        var requestId = Guid.NewGuid();
+        var formatId = Guid.NewGuid();
+        using var admin = await CreateTokenClientAsync(fixture, isAdmin: true);
+        using var nonAdmin = await CreateTokenClientAsync(fixture, isAdmin: false);
+
+        using (var activity = tracker.Begin(requestId, formatId, "librivox", "Downloading", "Dodsworth"))
+        {
+            var response = await admin.GetFromJsonAsync<AdminActiveAcquisitionResponse[]>(
+                "/api/v1/admin/requests/active-acquisitions");
+            var current = response?.Single(item => item.RequestFormatId == formatId);
+            Assert.IsNotNull(current);
+            Assert.AreEqual("Downloading", current.Stage);
+            Assert.AreEqual("LibriVox", current.ProviderDisplayName);
+            Assert.AreEqual("Dodsworth", current.WorkTitle);
+            var forbidden = await nonAdmin.GetAsync("/api/v1/admin/requests/active-acquisitions");
+            Assert.AreEqual(HttpStatusCode.Forbidden, forbidden.StatusCode);
+            activity.SetStage("Processing files");
+            response = await admin.GetFromJsonAsync<AdminActiveAcquisitionResponse[]>(
+                "/api/v1/admin/requests/active-acquisitions");
+            Assert.AreEqual("Processing files", response?.Single(item => item.RequestFormatId == formatId).Stage);
+        }
+
+        var completed = await admin.GetFromJsonAsync<AdminActiveAcquisitionResponse[]>(
+            "/api/v1/admin/requests/active-acquisitions");
+        Assert.IsFalse(completed?.Any(item => item.RequestFormatId == formatId) ?? true);
     }
 
     [TestMethod]

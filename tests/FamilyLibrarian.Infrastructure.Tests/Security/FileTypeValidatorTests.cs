@@ -22,6 +22,18 @@ public sealed class FileTypeValidatorTests
     }
 
     [TestMethod]
+    public async Task ContentMatchingItsClaimedOggFormatPasses()
+    {
+        var validator = new FileTypeValidator();
+        var asset = CreateAsset(".ogg", RequestMediaType.Audiobook);
+
+        var outcome = await validator.ValidateAsync(
+            asset, new MemoryStream([0x4F, 0x67, 0x67, 0x53, 0x00, 0x02, 0x00, 0x00]), CancellationToken.None);
+
+        Assert.IsTrue(outcome.IsValid, outcome.Message);
+    }
+
+    [TestMethod]
     public async Task ContentThatDoesNotMatchItsClaimedFormatIsRejected()
     {
         var validator = new FileTypeValidator();
@@ -47,10 +59,10 @@ public sealed class FileTypeValidatorTests
         Assert.IsFalse(outcome.IsValid);
     }
 
-    private static MediaAsset CreateAsset(string format) => new(
+    private static MediaAsset CreateAsset(string format, RequestMediaType mediaType = RequestMediaType.Ebook) => new(
         Guid.NewGuid(),
         editionId: null,
-        RequestMediaType.Ebook,
+        mediaType,
         format,
         "book" + format,
         $"{Guid.NewGuid():N}{format}",

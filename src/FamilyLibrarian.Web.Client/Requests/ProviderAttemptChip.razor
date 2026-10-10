@@ -1,0 +1,20 @@
+@* One row of the provider-activity ledger (an automatic lookup's outcome).
+   Colour, label, icon and the "does this need me?" tooltip all come from
+   MediaTypeVisuals so the request page and the Tasks dashboard cannot disagree
+   about what, for example, an in-progress submission looks like. See
+   docs/07-ui-conventions.md. *@
+
+<MudTooltip Text="@MediaTypeVisuals.AttemptOutcomeHint(Outcome)">
+    <MudChip T="string" Size="@Size" Color="@MediaTypeVisuals.AttemptOutcomeColor(Outcome)"
+             Icon="@MediaTypeVisuals.AttemptOutcomeIcon(Outcome)">
+        @MediaTypeVisuals.AttemptOutcomeLabel(Outcome)
+    </MudChip>
+</MudTooltip>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Outcome { get; set; } = null!;
+
+    [Parameter]
+    public Size Size { get; set; } = Size.Small;
+}

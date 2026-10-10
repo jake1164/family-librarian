@@ -11,7 +11,8 @@ public enum LiveUpdateTopics
     Sources = 16,
     System = 32,
     Deliveries = 64,
-    All = Requests | Security | Publishing | Notifications | Sources | System | Deliveries
+    Communications = 128,
+    All = Requests | Security | Publishing | Notifications | Sources | System | Deliveries | Communications
 }
 
 public static class LiveUpdates

@@ -13,6 +13,37 @@ same application image with the `--migrate` command, so the schema reviewed in
 source control is the schema deployed by Compose. Do not replace it with
 `EnsureCreated`, and do not run migrations from every application replica.
 
+## Resumable audiobook archive downloads
+
+An in-progress LibriVox audiobook archive is kept under
+`Storage__RootPath/acquisition-work/librivox/<request-format-id>` as one
+partial ZIP plus a small sidecar containing the provider result, final download
+URL, entity validator, and expected byte count. In the default Compose setup,
+`Storage__RootPath` is `/data/family-librarian`, backed by the
+`family-librarian-data` volume. Keep that volume mounted across container
+recreation; the partial archive is not stored in PostgreSQL or the container's
+temporary directory.
+
+After restart, Family Librarian sends an HTTP byte-range request from the saved
+file length and uses `If-Range` with a strong ETag or Last-Modified value. It
+appends only when the response confirms the requested range and matching
+representation. If the source redirects to a different mirror, ignores the
+range, changes the archive, or provides no stable validator, Family Librarian
+discards the partial file and downloads the archive from the beginning. A
+completed archive remains available through extraction and quarantine staging.
+It is removed after staging finishes, including a handled rejection. A
+connection interruption, retryable server response, or host shutdown releases
+the lock and retains the ZIP for the next attempt. Other failed attempts and
+invalid or corrupt archives are deleted immediately. Any leftovers from an
+unclean process termination are pruned at startup after 30 days.
+
+Range support varies by final download host, so a particular transfer may safely
+restart from zero even though the resume path is implemented. A download that
+receives no bytes for two minutes is treated as interrupted; automatic
+fulfillment schedules a retry while the request remains pending. A completed
+ZIP is re-used after restart and is fully read during extraction before it is
+accepted.
+
 ## Optional linked ebook libraries
 
 Calibre-Web and Calibre-Web Automated (CWA) are optional integrations, not
@@ -73,6 +104,24 @@ in `WaitingForSecurityScanner` for automatic, auditable backfill after scanner
 health recovers. If the scanner fails during ingress, retain the affected file in
 quarantine and do not publish it to CWA, Audiobookshelf, a download endpoint, or
 a notification.
+
+### ClamAV size and time limits
+
+The shipped `compose.yaml` raises clamd's defaults so large audiobooks scan
+successfully. Keep these values if you supply your own ClamAV configuration:
+
+| clamd setting | Value | Why |
+| --- | --- | --- |
+| `StreamMaxLength`, `MaxFileSize`, `PCREMaxFileSize` | `2000M` | ClamAV cannot scan files over about 2 GB. Family Librarian caps accepted audiobook files at 1996 MiB (`ExternalProviderOutputPolicy`) so every accepted file is scannable. |
+| `MaxScanSize` | `4000M` | Bounds total work across archive expansion; keep it above the input limits. |
+| `MaxScanTime` | `600000` (ms) | The 120 s default cuts off a 1-2 GB file. Keep it under the 15-minute abandoned-scan threshold. |
+| `AlertExceedsMax` | `yes` | A limit hit is reported as `Heuristics.Limits.Exceeded.*`, which Family Librarian treats as a scanner error (held for review), never as malware. |
+
+A file that exceeds a limit, or a scan that cannot finish, stays in Quarantine
+with the reason shown on **Security scans**. Administrators can use **Retry
+security scan** (queued server-side, so closing the browser does not cancel it)
+or **Rescan** for a scan that could not complete. A scan left pending for more
+than 15 minutes is treated as abandoned and returned to Quarantine.
 
 ## Deploy or upgrade
 
@@ -341,6 +390,34 @@ this at a network wider than the actual proxy: any address inside it can then
 spoof its own client IP into request logs and the invitation rate limiter's
 per-caller partitioning.
 
+Set `RemoteView__AllowedOrigins__0` (and `__1`, `__2`, ... for more than one)
+to this deployment's own public HTTPS origin(s) before enabling any
+provider's administrator-brokered remote view (HUMAN-ACQ-1 Phase 3).
+WebSocket upgrades are accepted only from an origin in this list —
+unconfigured, every upgrade is rejected, never "any origin," to close the
+cross-site WebSocket hijacking gap the framework's own default otherwise
+leaves open. This mirrors `ReverseProxy__TrustedNetworks` immediately above:
+both fail closed until explicitly set for the real deployment topology.
+
+Set `Interaction__PublicOrigin` to this deployment's own public HTTPS origin
+(e.g. `https://fl.example.com`, no path/query/fragment) to enable HUMAN-ACQ-1's
+Matrix verification alert — the magic link an administrator taps from chat to
+open a provider's remote-verification view without signing in first. It must
+also already be listed in `RemoteView__AllowedOrigins` above: the magic-link
+page opens the same brokered WebSocket, so an origin the WebSocket upgrade
+would reject can never actually work, and the application refuses to start if
+the two settings disagree. Left unset, the application still starts normally
+— it only disables this one alert (a warning is logged at startup) — every
+other notification path and the existing in-app "needs you" queue keep
+working. `http` is accepted only in the Development environment.
+
+Each administrator links their own Matrix ID at **Settings → Matrix chat**
+(`/settings/matrix`) to receive this alert; an administrator with no verified
+link simply receives none. The same page's quiet hours (a time zone and daily
+window) hold this alert until the window ends instead of dropping it — a
+general per-account setting, not admin-only, though only administrators
+receive an alert this slice enforces it against today.
+
 Keep PostgreSQL credentials, bootstrap credentials, OIDC secrets, and provider
 credentials outside the repository. Provider credentials entered through the
 administrator UI are encrypted using the persisted Data Protection key ring in
@@ -360,7 +437,7 @@ todo, not routine output, once real provider credentials are in use.
 
 An administrator can create an encrypted settings-only archive from **Settings
 backup** in the application. It contains current integration, provider, OIDC,
-private-egress, and acquisition-policy configuration, including Data Protection
+and acquisition-policy configuration, including Data Protection
 ciphertext for the supported credentials. **Excluded:** CWA e-reader service-account
 username/password, personal Kindle targets and all delivery/receipt history.
 After import, re-enter the service credentials in Publishing settings and have
@@ -368,7 +445,10 @@ users set up their Kindle addresses again. The service sign-in test only checks
 login; verify an intended book send separately. It does not contain accounts,
 catalogue data, requests, audit history, notifications, jobs, files, or the
 Data Protection key ring. It is not a replacement for the PostgreSQL backup
-and restore procedure above.
+and restore procedure above. Older settings archives may include the removed
+Family Librarian private-egress gateway section. Import ignores that section;
+external providers manage their own Internet routes. The schema migration drops
+the old FL gateway settings and per-provider policy columns.
 
 Import is intentionally create-only: use it only to seed a fresh instance with
 none of those settings configured. Before import, the target validates that all

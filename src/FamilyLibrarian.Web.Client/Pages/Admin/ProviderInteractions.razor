@@ -1,0 +1,274 @@
+@page "/admin/provider-interactions"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Acquisition
+@using FamilyLibrarian.Web.Client.Acquisition
+@inject ProviderInteractionsApiClient Interactions
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>Provider interactions · Family Librarian</PageTitle>
+
+<MudStack Spacing="4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+        <div>
+            <MudText Typo="Typo.h3">Provider interactions</MudText>
+            <MudText Typo="Typo.body1">
+                Provider work waiting for an administrator. Requesters cannot see these controls or provider details.
+            </MudText>
+        </div>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" Disabled="@isLoading" OnClick="LoadAsync">
+            Refresh
+        </MudButton>
+    </MudStack>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+    }
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (interactions.Count == 0)
+    {
+        <MudAlert Severity="Severity.Success">No provider interactions need attention.</MudAlert>
+    }
+    else
+    {
+        @foreach (var interaction in interactions)
+        {
+            <MudCard Outlined="true">
+                <MudCardContent>
+                    <MudStack Spacing="1">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                            <MudAlert Severity="@(interaction.IsExpired ? Severity.Error : Severity.Warning)"
+                                      Dense="true"
+                                      Variant="Variant.Outlined">
+                                @(interaction.IsExpired ? "Expired" : "Action needed")
+                            </MudAlert>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@interaction.ProviderId</MudChip>
+                            <MudText Typo="Typo.subtitle1">@InteractionLabel(interaction.Type)</MudText>
+                        </MudStack>
+                        <MudText Typo="Typo.h6">@(interaction.WorkTitle ?? "(request no longer available)")</MudText>
+                        @if (interaction.Authors is { Count: > 0 } authors)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">@string.Join(", ", authors)</MudText>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(interaction.RequesterDisplayName))
+                        {
+                            <MudText Typo="Typo.body2">Requested by @interaction.RequesterDisplayName</MudText>
+                        }
+                        <MudLink Href="@($"admin/requests/{interaction.RequestId}")" Typo="Typo.body2">
+                            Open this request
+                        </MudLink>
+                        @if (!string.IsNullOrWhiteSpace(interaction.Message))
+                        {
+                            <MudText Typo="Typo.body2">@interaction.Message</MudText>
+                        }
+                        <MudText Typo="Typo.caption">
+                            @ExpiryDescription(interaction)
+                        </MudText>
+                    </MudStack>
+                </MudCardContent>
+                <MudCardActions>
+                    @if (!string.IsNullOrWhiteSpace(interaction.ClaimedByDisplayName) && !interaction.IsClaimedByCurrentUser)
+                    {
+                        @* HUMAN-ACQ-1 D7: another admin (in-app or via Matrix link) already
+                           holds this job. Start/Open stay hidden until an explicit take-over. *@
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            Being handled by @interaction.ClaimedByDisplayName
+                        </MudText>
+                        @if (confirmTakeOverJobId == interaction.ProviderAcquisitionJobId)
+                        {
+                            <MudText Typo="Typo.caption">Take over from @interaction.ClaimedByDisplayName?</MudText>
+                            <MudButton Color="Color.Warning" Variant="Variant.Filled" Disabled="@isActing"
+                                       OnClick="() => TakeOverAsync(interaction.ProviderAcquisitionJobId)">
+                                Confirm take over
+                            </MudButton>
+                            <MudButton Variant="Variant.Text" Disabled="@isActing" OnClick="CancelTakeOverConfirmation">
+                                Never mind
+                            </MudButton>
+                        }
+                        else
+                        {
+                            <MudButton Color="Color.Warning" Variant="Variant.Outlined" Disabled="@isActing"
+                                       OnClick="() => ConfirmTakeOver(interaction.ProviderAcquisitionJobId)">
+                                Take over
+                            </MudButton>
+                        }
+                    }
+                    else if (interaction.CanViewNow)
+                    {
+                        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                                   StartIcon="@Icons.Material.Filled.OpenInNew" Disabled="@(isActing || interaction.IsExpired)"
+                                   OnClick="() => OpenRemoteView(interaction.ProviderAcquisitionJobId)">
+                            Open remote view
+                        </MudButton>
+                    }
+                    else if (interaction.CanStart)
+                    {
+                        <MudButton Color="Color.Primary" Variant="Variant.Outlined" Disabled="@(isActing || interaction.IsExpired)"
+                                   OnClick="() => StartAsync(interaction.ProviderAcquisitionJobId)">
+                            Start verification
+                        </MudButton>
+                    }
+                    @if (confirmFallbackJobId == interaction.ProviderAcquisitionJobId)
+                    {
+                        <MudText Typo="Typo.caption">
+                            This invokes the provider-configured alternative. It may use provider account quota or subscription access.
+                        </MudText>
+                        <MudButton Color="Color.Warning" Variant="Variant.Filled" Disabled="@isActing"
+                                   OnClick="() => UseFallbackAsync(interaction.ProviderAcquisitionJobId)">
+                            Confirm fallback
+                        </MudButton>
+                        <MudButton Variant="Variant.Text" Disabled="@isActing" OnClick="CancelFallbackConfirmation">
+                            Keep waiting
+                        </MudButton>
+                    }
+                    else
+                    {
+                        <MudButton Color="Color.Warning" Variant="Variant.Outlined"
+                                   Disabled="@(isActing || interaction.IsExpired || !interaction.CanUseFallback)"
+                                   OnClick="() => ConfirmFallback(interaction.ProviderAcquisitionJobId)">
+                            Use provider fallback
+                        </MudButton>
+                    }
+                    <MudButton Color="Color.Error" Variant="Variant.Text" Disabled="@isActing"
+                               OnClick="() => CancelAsync(interaction.ProviderAcquisitionJobId)">
+                        Cancel acquisition
+                    </MudButton>
+                </MudCardActions>
+            </MudCard>
+        }
+    }
+</MudStack>
+
+@code {
+    private IReadOnlyList<ProviderInteractionResponse> interactions = [];
+    private Guid? confirmFallbackJobId;
+    private Guid? confirmTakeOverJobId;
+    private bool isActing;
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+        try
+        {
+            interactions = (await Interactions.GetAsync())
+                .OrderBy(item => item.IsExpired)
+                .ThenBy(item => item.ExpiresAtUtc)
+                .ToArray();
+        }
+        catch (HttpRequestException)
+        {
+            interactions = [];
+            errorMessage = "The provider interaction queue could not be loaded. Please try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task StartAsync(Guid jobId)
+    {
+        isActing = true;
+        try
+        {
+            var outcome = await Interactions.StartAsync(jobId);
+            await HandleOutcomeAsync(outcome, "Verification session requested. Open the remote view once it's ready.");
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
+
+    private void OpenRemoteView(Guid jobId) => Navigation.NavigateTo($"/admin/provider-interactions/{jobId}/view");
+
+    private void ConfirmFallback(Guid jobId) => confirmFallbackJobId = jobId;
+
+    private void CancelFallbackConfirmation() => confirmFallbackJobId = null;
+
+    private void ConfirmTakeOver(Guid jobId) => confirmTakeOverJobId = jobId;
+
+    private void CancelTakeOverConfirmation() => confirmTakeOverJobId = null;
+
+    private async Task TakeOverAsync(Guid jobId)
+    {
+        isActing = true;
+        try
+        {
+            var outcome = await Interactions.TakeOverAsync(jobId);
+            confirmTakeOverJobId = null;
+            await HandleOutcomeAsync(outcome, "Took over this verification.");
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
+
+    private async Task UseFallbackAsync(Guid jobId)
+    {
+        isActing = true;
+        try
+        {
+            var outcome = await Interactions.UseFallbackAsync(jobId);
+            await HandleOutcomeAsync(outcome, "Provider fallback selected.");
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
+
+    private async Task CancelAsync(Guid jobId)
+    {
+        isActing = true;
+        try
+        {
+            var outcome = await Interactions.CancelAsync(jobId);
+            await HandleOutcomeAsync(outcome, "Provider acquisition cancelled.");
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
+
+    private async Task HandleOutcomeAsync(ProviderInteractionCommandOutcome outcome, string successMessage)
+    {
+        if (outcome.Succeeded)
+        {
+            confirmFallbackJobId = null;
+            Snackbar.Add(successMessage, Severity.Success);
+            await LoadAsync();
+        }
+        else
+        {
+            errorMessage = outcome.Error;
+        }
+    }
+
+    private static string InteractionLabel(string type) => type switch
+    {
+        "browser" => "Browser verification",
+        "login" => "Provider sign-in",
+        "mfa" => "Multi-factor verification",
+        "captcha" => "Human verification",
+        _ => "Provider action"
+    };
+
+    private static string ExpiryDescription(ProviderInteractionResponse interaction) => interaction.ExpiresAtUtc is { } expiresAt
+        ? interaction.IsExpired
+            ? $"Expired {expiresAt.ToLocalTime():g}."
+            : $"Expires {expiresAt.ToLocalTime():g}."
+        : "No expiry was reported by the provider.";
+}

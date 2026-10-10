@@ -157,12 +157,13 @@ public sealed class KindleDeliveryPersistenceTests
     {
         var connection = await NewDatabaseAsync("20260909213025_AddDeliveryAttemptConfirmation");
         await using var database = Open(connection);
-        var target = await SeedTargetAsync(database);
-        // Raw SQL, not the ORM: book_requests has gained columns since this
-        // migration pin (e.g. review_category), so BookRequest's current model
-        // no longer matches the schema at this exact point in history --
-        // exactly like InsertLegacyAttemptAsync below, which exists for the
-        // same reason on delivery_attempts.
+        // Raw SQL, not the ORM: identity.users has also gained columns since
+        // this migration pin (e.g. audiobook_narration_preference), so
+        // AppUser's current model no longer matches the schema at this exact
+        // point in history -- exactly like SeedLegacyRequestAsync/
+        // InsertLegacyAttemptAsync below, which exist for the same reason on
+        // book_requests/delivery_attempts.
+        var target = await SeedLegacyTargetAsync(database);
         var requestId = await SeedLegacyRequestAsync(database, target);
         var first = Guid.NewGuid();
         var duplicate = Guid.NewGuid();
@@ -185,6 +186,13 @@ public sealed class KindleDeliveryPersistenceTests
         Assert.IsEmpty(await new DeliveryAttemptRepository(database).ListRetryableFailedAsync(Now.AddDays(1), 3, CancellationToken.None));
         Assert.IsTrue(attempts.All(row => row.DeliveryId != Guid.Empty));
         Assert.IsFalse(database.Database.HasPendingModelChanges());
+
+        // The account predates AudiobookNarrationPreference entirely (it was
+        // inserted before this migration pin, with no opinion on the column
+        // at all) -- the upgrade must still leave it at the same PreferHuman
+        // default a brand new account gets, with no manual repair needed.
+        var user = await database.Users.SingleAsync(row => row.Id == target.UserId);
+        Assert.AreEqual(AudiobookNarrationPreference.PreferHuman, user.AudiobookNarrationPreference);
     }
 
     /// <summary>
@@ -245,6 +253,36 @@ public sealed class KindleDeliveryPersistenceTests
         var user = new AppUser { Id = Guid.NewGuid(), UserName = Guid.NewGuid().ToString(), Email = "reader@example.test", DisplayName = "Reader" };
         var target = new DeliveryTarget(user.Id, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", Now);
         database.Users.Add(user);
+        database.DeliveryTargets.Add(target);
+        await database.SaveChangesAsync();
+        return target;
+    }
+
+    /// <summary>
+    /// Same shape as <see cref="SeedTargetAsync"/>, but for a database still
+    /// pinned at a historical migration: identity.users as of
+    /// "20260909213025_AddDeliveryAttemptConfirmation" predates several
+    /// columns AppUser has today (e.g. audiobook_narration_preference), so
+    /// the ORM's current model cannot insert a row that matches the actual
+    /// schema at that point -- raw SQL listing only the columns that existed
+    /// then, exactly like SeedLegacyRequestAsync does for book_requests.
+    /// </summary>
+    private static async Task<DeliveryTarget> SeedLegacyTargetAsync(AppDbContext database)
+    {
+        var userId = Guid.NewGuid();
+        await database.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO identity.users
+                ("Id", "DisplayName", "CreatedAtUtc", "LastLoginAtUtc", "UserName", "NormalizedUserName",
+                 "Email", "NormalizedEmail", "EmailConfirmed", "PasswordHash", "SecurityStamp", "ConcurrencyStamp",
+                 "PhoneNumber", "PhoneNumberConfirmed", "TwoFactorEnabled", "LockoutEnd", "LockoutEnabled",
+                 "AccessFailedCount", status, "IsBreakGlass")
+            VALUES ({userId}, 'Reader', {Now}, NULL, {userId.ToString()}, NULL,
+                    'reader@example.test', NULL, false, NULL, NULL, NULL,
+                    NULL, false, false, NULL, false,
+                    0, 'Active', false)
+            """);
+
+        var target = new DeliveryTarget(userId, DeliveryTargetProvider.CwaKindleEmail, "Kindle", "reader@kindle.com", Now);
         database.DeliveryTargets.Add(target);
         await database.SaveChangesAsync();
         return target;

@@ -78,9 +78,15 @@ public sealed record KindleDeliveryResponse(
 /// </summary>
 public sealed record NeedsReviewResponse(
     string Category,
-    IReadOnlyList<RequestReviewCandidateResponse> Candidates);
+    IReadOnlyList<RequestReviewCandidateResponse> Candidates,
+    string? Reason = null);
 
-public sealed record RequestReviewCandidateResponse(Guid CandidateId, string Title, string? Author, string? Language);
+/// <summary>
+/// A requester-safe candidate label. Details contains neutral edition/release
+/// facts only; it never exposes a provider identity, source URL, or opaque id.
+/// </summary>
+public sealed record RequestReviewCandidateResponse(
+    Guid CandidateId, string Title, string? Author, string? Language, string? Details);
 
 /// <param name="CandidateId">
 /// Which offered candidate to acquire ("get it anyway"). Omit to decline
@@ -109,6 +115,19 @@ public sealed record BookRequestListResponse(
 public sealed record AdminBookRequestListResponse(
     IReadOnlyList<AdminBookRequestResponse> Requests);
 
+/// <summary>Current host-local acquisition work, visible only to administrators.</summary>
+public sealed record AdminActiveAcquisitionResponse(
+    Guid RequestId,
+    Guid RequestFormatId,
+    string ProviderId,
+    string ProviderDisplayName,
+    string Stage,
+    string? WorkTitle,
+    long BytesReceived,
+    long? TotalBytes,
+    long? AverageBytesPerSecond,
+    DateTimeOffset StartedAtUtc);
+
 /// <summary>
 /// Small, administrator-only attention summary for the persistent application
 /// chrome and request-review surfaces. It deliberately contains no requester
@@ -116,7 +135,8 @@ public sealed record AdminBookRequestListResponse(
 /// </summary>
 public sealed record AdminRequestAttentionResponse(
     int NeedsReviewCount,
-    IReadOnlyList<AdminProviderIssueResponse> ProviderIssues);
+    IReadOnlyList<AdminProviderIssueResponse> ProviderIssues,
+    IReadOnlyList<AdminProviderInteractionAttentionResponse> WaitingProviderInteractions);
 
 public sealed record AdminProviderIssueResponse(
     string ProviderId,
@@ -125,12 +145,92 @@ public sealed record AdminProviderIssueResponse(
     DateTimeOffset OccurredAtUtc,
     string IssueKind);
 
+/// <summary>
+/// A durable provider acquisition job parked on an administrator (protocol
+/// v2 §8). Deliberately smaller than <c>ProviderInteractionResponse</c> --
+/// just enough to badge a request and link to the full interaction, not to
+/// act on it from here.
+/// </summary>
+public sealed record AdminProviderInteractionAttentionResponse(
+    Guid ProviderAcquisitionJobId,
+    Guid RequestId,
+    Guid RequestFormatId,
+    string? WorkTitle,
+    string ProviderId,
+    string Type,
+    string? Message,
+    DateTimeOffset? ExpiresAtUtc,
+    bool IsExpired,
+    string? ClaimedByDisplayName,
+    bool IsClaimedByCurrentUser);
+
 public sealed record AdminBookRequestResponse(
     BookRequestResponse Request,
     string RequesterDisplayName,
     string RequesterEmail,
     IReadOnlyList<BookRequestStatusHistoryResponse> StatusHistory,
-    IReadOnlyList<RequestParticipantResponse>? Participants = null);
+    IReadOnlyList<RequestParticipantResponse>? Participants = null,
+    IReadOnlyList<AdminRequestReviewCandidateResponse>? ReviewCandidates = null,
+    IReadOnlyList<AdminProviderJobProgressResponse>? ProviderJobs = null);
+
+public sealed record AdminProviderJobProgressResponse(
+    Guid RequestFormatId, string ProviderId, string? Phase, double? Percent, string? Message);
+
+/// <summary>
+/// Administrator-only evidence for a review candidate. <see cref="InspectionUri"/>
+/// is an optional provider-declared browser page, never a download URL and never
+/// returned from family request endpoints.
+/// </summary>
+public sealed record AdminRequestReviewCandidateResponse(
+    Guid CandidateId,
+    Guid RequestFormatId,
+    string ProviderId,
+    string ProviderResultId,
+    string Title,
+    string? Author,
+    string? Language,
+    string? Details,
+    string? InspectionUri,
+    string? ReleaseName = null,
+    bool TitleIsRequestFallback = false,
+    bool NamesRequestedWork = false,
+    string? SourceSummary = null);
+
+/// <summary>
+/// One raw result from an on-demand live search against a single
+/// admin-registered external provider (debug tooling, ADMIN-DEBUG-1). This is
+/// never persisted and never gates acquisition -- it exists so a librarian can
+/// see what a provider actually returned, and whether the matcher accepted it,
+/// without waiting on that provider's recheck schedule.
+/// </summary>
+public sealed record AdminProviderDebugCandidateResponse(
+    string ProviderResultId,
+    string Title,
+    string? Author,
+    string? Language,
+    string? Format,
+    long? SizeBytes,
+    int? PublicationYear,
+    string? Publisher,
+    string? ReleaseName,
+    string? MatchBasis,
+    bool RequiresLanguageConfirmation,
+    bool RequiresReleaseConfirmation,
+    string? ReleaseConcern,
+    string? InspectionUri,
+    AdminCandidateIdentityEvidenceResponse? IdentityEvidence = null);
+
+public sealed record AdminCandidateSeriesEvidenceResponse(
+    string State, string Name, string? RequestedPosition, string? ReleasePosition);
+
+/// <summary>Safe bibliographic projection, available only in administrator diagnostics.</summary>
+public sealed record AdminCandidateIdentityEvidenceResponse(
+    string WorkIdentity, string AcquisitionSuitability, string RequestedTitle, string? RequestedAuthor,
+    string TitleEvidence, string? MatchedTitlePhrase, string AuthorEvidence, string? DetectedAuthor,
+    string LanguageEvidence, string? NormalizedRelease, IReadOnlyList<string> Tokens,
+    IReadOnlyList<AdminCandidateSeriesEvidenceResponse> Series, IReadOnlyList<string> UnclassifiedTokens,
+    IReadOnlyList<string> Contradictions, IReadOnlyList<string> Conditions, IReadOnlyList<string> Reasons,
+    int? PartNumber, int? PartTotal);
 
 public sealed record RequestParticipantResponse(string DisplayName, string Email, string? Note, bool Withdrawn);
 

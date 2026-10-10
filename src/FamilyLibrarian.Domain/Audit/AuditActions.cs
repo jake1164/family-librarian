@@ -17,6 +17,8 @@ public static class AuditActions
     public const string AccountAdminGranted = "account.admin_granted";
     public const string AccountAdminRevoked = "account.admin_revoked";
     public const string AccountPasswordReset = "account.password_reset";
+    public const string AccountAudiobookNarrationPreferenceChanged = "account.audiobook_narration_preference_changed";
+    public const string AccountQuietHoursChanged = "account.quiet_hours_changed";
 
     public const string BookRequestStatusChanged = "book_request.status_changed";
     public const string BookRequestNoteChanged = "book_request.note_changed";
@@ -27,8 +29,11 @@ public static class AuditActions
 
     public const string AssetEvaluated = "asset.evaluated";
     public const string AssetEvaluationFailed = "asset.evaluation_failed";
+    public const string AssetRescanRequested = "asset.rescan_requested";
+    public const string AssetPartSetDiscarded = "asset.part_set_discarded";
     public const string AssetIdentityVerified = "asset.identity_verified";
     public const string AssetIdentityUnmatched = "asset.identity_unmatched";
+    public const string AssetIdentityOverridden = "asset.identity_overridden";
     public const string AssetApproved = "asset.approved";
     public const string AssetRejected = "asset.rejected";
     public const string AssetDestroyed = "asset.destroyed";
@@ -79,12 +84,22 @@ public static class AuditActions
     public const string ExternalProviderApiKeyCleared = "external_provider.api_key_cleared";
     public const string ExternalProviderTested = "external_provider.tested";
     public const string ExternalProviderRemoved = "external_provider.removed";
-    public const string ExternalProviderEgressPolicyOverrideChanged = "external_provider.egress_policy_override_changed";
     public const string ExternalProviderRecheckScheduleChanged = "external_provider.recheck_schedule_changed";
+    public const string ExternalProviderAutoAcquireEnabled = "external_provider.auto_acquire_enabled";
+    public const string ExternalProviderAutoAcquireDisabled = "external_provider.auto_acquire_disabled";
+    public const string ExternalProviderAutomaticAttemptLimitChanged = "external_provider.automatic_attempt_limit_changed";
     public const string ExternalProviderAcquisitionStaged = "external_provider_acquisition.staged";
+    public const string ProviderInteractionStarted = "provider_interaction.started";
+    public const string ProviderInteractionFallbackSelected = "provider_interaction.fallback_selected";
+    public const string ProviderInteractionCancelled = "provider_interaction.cancelled";
+    public const string ProviderInteractionExpired = "provider_interaction.expired";
+    public const string ProviderInteractionCompleted = "provider_interaction.completed";
+    public const string ProviderInteractionFailed = "provider_interaction.failed";
+    public const string ProviderInteractionViewConnected = "provider_interaction.view_connected";
+    public const string ProviderInteractionViewEnded = "provider_interaction.view_ended";
+    public const string ProviderInteractionClaimed = "provider_interaction.claimed";
+    public const string ProviderInteractionTakenOver = "provider_interaction.taken_over";
 
-    public const string PrivateEgressGatewayChanged = "private_egress_gateway.changed";
-    public const string PrivateEgressGatewayTested = "private_egress_gateway.tested";
 
     public const string ProviderCatalogAdded = "provider_catalog.added";
     public const string ProviderCatalogRemoved = "provider_catalog.removed";
@@ -114,9 +129,9 @@ public static class AuditSubjectTypes
     public const string AcquisitionPolicy = "acquisition_policy";
     public const string Oidc = "oidc";
     public const string ExternalProvider = "external_provider";
-    public const string PrivateEgressGateway = "private_egress_gateway";
     public const string ProviderCatalog = "provider_catalog";
     public const string SettingsBackup = "settings_backup";
     public const string DeliveryAttempt = "delivery_attempt";
     public const string DeliveryTarget = "delivery_target";
+    public const string ProviderInteraction = "provider_interaction";
 }

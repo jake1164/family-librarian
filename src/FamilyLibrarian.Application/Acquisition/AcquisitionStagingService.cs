@@ -43,14 +43,12 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
-        CancellationToken cancellationToken,
-        EgressPolicy egressPolicy = EgressPolicy.Normal)
+        CancellationToken cancellationToken)
     {
         var extension = Path.GetExtension(originalFilename);
         if (string.IsNullOrEmpty(extension) || !policy.IsExtensionAllowed(format.MediaType, extension))
         {
-            return ManualImportResult.Invalid(
-                $"'{extension}' is not an allowed file type for {format.MediaType}.");
+            return ManualImportResult.Invalid(DisallowedFileTypeMessage(extension, format.MediaType));
         }
 
         if (!await boundaryGuard.CanAcceptNewArtifactAsync(cancellationToken))
@@ -72,7 +70,7 @@ public sealed class AcquisitionStagingService(
         }
 
         var now = clock.UtcNow;
-        var job = new AcquisitionJob(request.Id, format.MediaType, providerId, EgressPolicy.Normal, now);
+        var job = new AcquisitionJob(request.Id, format.MediaType, providerId, now);
         var candidate = AddAcquiredCandidate(job, providerId, staged!, candidateTitle, candidateAuthor, extension, now);
         job.TransitionTo(AcquisitionJobStatus.CandidateAcquired, now);
 
@@ -134,6 +132,36 @@ public sealed class AcquisitionStagingService(
         string? candidateAuthor,
         CancellationToken cancellationToken)
     {
+        return await StageBundleCoreAsync(
+            request, format, ToAsyncEnumerable(files), providerId, auditAction,
+            candidateTitle, candidateAuthor, providerJob: null, cancellationToken);
+    }
+
+    public Task<ManualImportResult> StageExternalBundleAsync(
+        BookRequest request,
+        RequestFormat format,
+        IAsyncEnumerable<DirectAcquisitionFile> files,
+        string providerId,
+        string auditAction,
+        ProviderAcquisitionJob providerJob,
+        CancellationToken cancellationToken,
+        AudiobookPartSetSlot? partSetSlot = null) =>
+        StageBundleCoreAsync(
+            request, format, files, providerId, auditAction,
+            candidateTitle: null, candidateAuthor: null, providerJob, cancellationToken, partSetSlot);
+
+    private async Task<ManualImportResult> StageBundleCoreAsync(
+        BookRequest request,
+        RequestFormat format,
+        IAsyncEnumerable<DirectAcquisitionFile> files,
+        string providerId,
+        string auditAction,
+        string? candidateTitle,
+        string? candidateAuthor,
+        ProviderAcquisitionJob? providerJob,
+        CancellationToken cancellationToken,
+        AudiobookPartSetSlot? partSetSlot = null)
+    {
         if (!await boundaryGuard.CanAcceptNewArtifactAsync(cancellationToken))
         {
             await audit.WriteAsync(
@@ -147,36 +175,67 @@ public sealed class AcquisitionStagingService(
 
         var quarantined = new List<StagedFile>();
         var staged = new List<StagedFile>();
-        foreach (var file in files)
+        var acceptedFiles = new List<DirectAcquisitionFile>();
+        try
         {
-            var extension = Path.GetExtension(file.Filename);
-            if (string.IsNullOrEmpty(extension) || !policy.IsExtensionAllowed(format.MediaType, extension))
+            await foreach (var file in files.WithCancellation(cancellationToken))
             {
-                await CleanUpAsync(quarantined, cancellationToken);
-                return ManualImportResult.Invalid(
-                    $"'{extension}' is not an allowed file type for {format.MediaType}.");
-            }
+                await using (file.Content.ConfigureAwait(false))
+                {
+                    var extension = Path.GetExtension(file.Filename);
+                    if (string.IsNullOrEmpty(extension) || !policy.IsExtensionAllowed(format.MediaType, extension))
+                    {
+                        await CleanUpAsync(quarantined, CancellationToken.None);
+                        return ManualImportResult.Invalid(DisallowedFileTypeMessage(extension, format.MediaType));
+                    }
 
-            var (stagedFile, error) = await WriteAndValidateContentAsync(
-                format, file.Content, file.Filename, extension, cancellationToken);
-            if (error is not null)
-            {
-                await CleanUpAsync(quarantined, cancellationToken);
-                return error;
-            }
+                    var (stagedFile, error) = await WriteAndValidateContentAsync(
+                        format, file.Content, file.Filename, extension, cancellationToken, file.MaxSizeBytes);
+                    if (error is not null)
+                    {
+                        await CleanUpAsync(quarantined, CancellationToken.None);
+                        return error;
+                    }
 
-            quarantined.Add(stagedFile!);
-            staged.Add(stagedFile!);
+                    quarantined.Add(stagedFile!);
+                    if (file.ValidateAsync is not null)
+                        await file.ValidateAsync(cancellationToken);
+                    staged.Add(stagedFile!);
+                    acceptedFiles.Add(file);
+                }
+            }
+        }
+        catch
+        {
+            await CleanUpAsync(quarantined, CancellationToken.None);
+            throw;
+        }
+
+        if (staged.Count == 0)
+        {
+            await CleanUpAsync(quarantined, CancellationToken.None);
+            return ManualImportResult.Invalid("The provider returned no audiobook tracks.");
+        }
+
+        // One part must be exactly one file: the set's total track count is
+        // fixed up front (one file per part), and a part that arrived as
+        // several would silently shift every later part's position.
+        if (partSetSlot is not null && staged.Count != 1)
+        {
+            await CleanUpAsync(quarantined, CancellationToken.None);
+            return ManualImportResult.Invalid(
+                $"Part {partSetSlot.Number} of {partSetSlot.Total} contained {staged.Count} files; " +
+                "a part of an automatic set must be a single file.");
         }
 
         var now = clock.UtcNow;
-        var bundleId = Guid.NewGuid();
-        var job = new AcquisitionJob(request.Id, format.MediaType, providerId, EgressPolicy.Normal, now);
+        var bundleId = partSetSlot?.SetId ?? (staged.Count > 1 ? Guid.NewGuid() : (Guid?)null);
+        var job = new AcquisitionJob(request.Id, format.MediaType, providerId, now);
         var assetIds = new List<Guid>(staged.Count);
 
         for (var index = 0; index < staged.Count; index++)
         {
-            var extension = Path.GetExtension(files[index].Filename);
+            var extension = Path.GetExtension(acceptedFiles[index].Filename);
             var candidate = AddAcquiredCandidate(
                 job, providerId, staged[index], candidateTitle, candidateAuthor, extension, now);
 
@@ -185,7 +244,7 @@ public sealed class AcquisitionStagingService(
                 editionId: null,
                 format.MediaType,
                 extension,
-                files[index].Filename,
+                acceptedFiles[index].Filename,
                 staged[index].StoredFilename,
                 staged[index].SizeBytes,
                 staged[index].Sha256,
@@ -194,21 +253,30 @@ public sealed class AcquisitionStagingService(
                 candidate.Id,
                 now,
                 bundleId: bundleId,
-                bundleSequence: index + 1,
-                bundleTrackCount: staged.Count);
+                bundleSequence: partSetSlot?.Number ?? (bundleId is null ? null : index + 1),
+                bundleTrackCount: partSetSlot?.Total ?? (bundleId is null ? null : staged.Count),
+                // Default true (manual import, and StageBundleAsync's other
+                // caller -- a built-in provider, which verifies title/author
+                // itself before ever offering a candidate) is correct as-is;
+                // only an external provider's job carries a real answer.
+                identityPreConfirmed: providerJob?.IdentityPreConfirmed ?? true);
 
             acquisitions.AddAsset(asset);
+            if (providerJob is not null && acceptedFiles[index].ExternalOutputId is { } outputId)
+                providerJob.Outputs.Single(output => output.OutputId == outputId).LinkAsset(asset.Id);
             assetIds.Add(asset.Id);
         }
 
         job.TransitionTo(AcquisitionJobStatus.CandidateAcquired, now);
         acquisitions.AddJob(job);
+        if (providerJob is not null)
+            providerJob.SetLocalAcquisition(job.Id, now);
         await acquisitions.SaveChangesAsync(cancellationToken);
 
         await audit.WriteAsync(
             auditAction,
             AuditSubjectTypes.MediaAsset,
-            bundleId.ToString(),
+            (bundleId ?? job.Id).ToString(),
             new
             {
                 RequestId = request.Id,
@@ -221,7 +289,17 @@ public sealed class AcquisitionStagingService(
             },
             cancellationToken);
 
-        return ManualImportResult.SuccessBundle(job.Id, assetIds);
+        return assetIds.Count == 1
+            ? ManualImportResult.Success(job.Id, assetIds[0])
+            : ManualImportResult.SuccessBundle(job.Id, assetIds);
+    }
+
+    private static async IAsyncEnumerable<DirectAcquisitionFile> ToAsyncEnumerable(
+        IReadOnlyList<DirectAcquisitionFile> files)
+    {
+        foreach (var file in files)
+            yield return file;
+        await Task.CompletedTask;
     }
 
     /// <summary>
@@ -238,7 +316,8 @@ public sealed class AcquisitionStagingService(
         Stream content,
         string originalFilename,
         string extension,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? maximumSizeBytes = null)
     {
         StagedFile staged;
         try
@@ -246,13 +325,13 @@ public sealed class AcquisitionStagingService(
             staged = await stagingStore.WriteToQuarantineAsync(
                 content,
                 originalFilename,
-                policy.MaxUploadSizeBytes,
+                maximumSizeBytes ?? policy.MaxUploadSizeBytes,
                 cancellationToken);
         }
         catch (AssetTooLargeException)
         {
             return (null, ManualImportResult.Invalid(
-                $"The file exceeds the {policy.MaxUploadSizeBytes}-byte upload limit."));
+                $"The file exceeds the {(maximumSizeBytes ?? policy.MaxUploadSizeBytes)}-byte upload limit."));
         }
 
         // The file is already in quarantine at this point, which is safe: it is
@@ -303,6 +382,13 @@ public sealed class AcquisitionStagingService(
         job.MarkCandidateStatus(candidate.Id, AcquisitionCandidateStatus.Acquired, now);
         return candidate;
     }
+
+    // An empty extension rendered as "'' is not an allowed file type", which
+    // reads like a stray quote rather than "the name has no extension".
+    private static string DisallowedFileTypeMessage(string extension, RequestMediaType mediaType) =>
+        string.IsNullOrEmpty(extension)
+            ? $"The file name has no extension, so it can't be accepted as {mediaType}."
+            : $"'{extension}' is not an allowed file type for {mediaType}.";
 
     private async Task CleanUpAsync(IReadOnlyList<StagedFile> quarantined, CancellationToken cancellationToken)
     {

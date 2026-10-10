@@ -13,3 +13,12 @@ public sealed record CandidateAvailabilityRequest(
 public sealed record CandidateAvailabilityResponse(
     IReadOnlyList<FulfillmentOptionResponse> Ebook,
     IReadOnlyList<FulfillmentOptionResponse> Audiobook);
+
+/// <summary>Requester-safe availability fact; it intentionally has no provider identity.</summary>
+public sealed record AvailabilityFactResponse(string OptionKind, string MediaType);
+
+public sealed record CandidateAvailabilityRunStartedResponse(Guid RunId);
+
+public sealed record CandidateAvailabilityRunResponse(
+    bool IsComplete,
+    IReadOnlyList<AvailabilityFactResponse> Availability);

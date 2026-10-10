@@ -25,6 +25,12 @@ internal sealed class LiveUpdatesSaveInterceptor(LiveUpdateBuffer buffer, LiveUp
     {
         if (buffer.TransactionId != eventData.Context?.Database.CurrentTransaction?.TransactionId)
             buffer.Pending = null;
+        // SavingChangesAsync fires before automatic change detection runs, so a
+        // property-only mutation on an already-tracked entity (no explicit Add/
+        // Update/Remove) would otherwise still show as Unchanged here and be
+        // missed entirely -- DetectChanges must be called explicitly first, per
+        // EF Core's own SaveChanges-interceptor documentation/sample.
+        eventData.Context?.ChangeTracker.DetectChanges();
         buffer.Saving = eventData.Context is { } context ? LiveChanges.Capture(context) : null;
         return ValueTask.FromResult(result);
     }

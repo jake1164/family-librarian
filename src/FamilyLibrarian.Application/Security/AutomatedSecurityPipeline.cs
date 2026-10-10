@@ -1,4 +1,5 @@
 using FamilyLibrarian.Domain.Security;
+using FamilyLibrarian.Domain.Acquisition;
 
 namespace FamilyLibrarian.Application.Security;
 
@@ -12,7 +13,8 @@ namespace FamilyLibrarian.Application.Security;
 public sealed class AutomatedSecurityPipeline(
     ISecurityEvaluationRunner evaluations,
     IPolicyAssetApprovalService approvals,
-    IAssetIdentityVerificationService identity)
+    IAssetIdentityVerificationService identity,
+    ISecurityEvaluationRepository? repository = null)
 {
     private const string CleanScanPolicyName = "clean-security-evaluation-v1";
 
@@ -24,18 +26,98 @@ public sealed class AutomatedSecurityPipeline(
         if (result is { Outcome: SecurityEvaluationOutcome.Success, Status: SecurityEvaluationStatus.Passed })
         {
             var approval = await approvals.ApproveByPolicyAsync(assetId, CleanScanPolicyName, cancellationToken);
-            if (approval.Outcome == ApprovalOutcome.IdentityUnmatched)
+            if (approval.Outcome != ApprovalOutcome.Success && approval.Outcome != ApprovalOutcome.IdentityUnmatched)
+                throw new InvalidOperationException(approval.Error ?? "The clean security result could not be approved.");
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Scans and validates one asset but approves nothing. For a part of an
+    /// automatic audiobook set: it is checked as it arrives, yet nothing is
+    /// trusted until every part is present and passes
+    /// (<see cref="EvaluateBundleAsync"/>).
+    /// </summary>
+    public Task<SecurityEvaluationResult> EvaluateWithoutApprovalAsync(
+        Guid assetId, CancellationToken cancellationToken) =>
+        evaluations.EvaluateAsync(assetId, cancellationToken);
+
+    /// <summary>
+    /// Evaluates every sibling before policy approval begins. This prevents a
+    /// clean early track from becoming Trusted before a later track fails or
+    /// cannot be scanned/identity-checked.
+    /// </summary>
+    public async Task<IReadOnlyList<SecurityEvaluationResult>> EvaluateBundleAsync(
+        IReadOnlyList<Guid> assetIds,
+        CancellationToken cancellationToken)
+    {
+        var securityRepository = repository ?? throw new InvalidOperationException(
+            "Bundle security evaluation requires an asset and evaluation repository.");
+        if (assetIds.Count == 0 || assetIds.Distinct().Count() != assetIds.Count)
+            throw new ArgumentException("A non-empty set of distinct asset IDs is required.", nameof(assetIds));
+
+        var results = new Dictionary<Guid, SecurityEvaluationResult>();
+        foreach (var assetId in assetIds)
+        {
+            var asset = await securityRepository.FindAssetAsync(assetId, cancellationToken);
+            if (asset is null)
+                return assetIds.Select(_ => SecurityEvaluationResult.NotFound()).ToArray();
+
+            var previous = await securityRepository.FindLatestEvaluationAsync(assetId, cancellationToken);
+            if (asset.StorageState == MediaAssetStorageState.Quarantine ||
+                (asset.StorageState == MediaAssetStorageState.Processing &&
+                 previous?.Status == SecurityEvaluationStatus.Pending))
+                results[assetId] = await evaluations.EvaluateAsync(assetId, cancellationToken);
+            else if (previous is not null)
+                results[assetId] = SecurityEvaluationResult.Success(
+                    previous.Id, previous.Status, previous.CreatedAtUtc, previous.CompletedAtUtc);
+            else
+                results[assetId] = SecurityEvaluationResult.Invalid("The staged asset has no security evaluation.");
+        }
+
+        var assets = new List<MediaAsset>(assetIds.Count);
+        foreach (var assetId in assetIds)
+        {
+            var asset = await securityRepository.FindAssetAsync(assetId, cancellationToken);
+            if (asset is null)
+                return assetIds.Select(_ => SecurityEvaluationResult.NotFound()).ToArray();
+            assets.Add(asset);
+        }
+
+        foreach (var asset in assets)
+        {
+            var evaluation = await securityRepository.FindLatestEvaluationAsync(asset.Id, cancellationToken);
+            if (evaluation?.Status != SecurityEvaluationStatus.Passed ||
+                asset.StorageState is not (MediaAssetStorageState.Processing or MediaAssetStorageState.Trusted))
+                return assetIds.Select(id => results.GetValueOrDefault(id) ?? SecurityEvaluationResult.Invalid(
+                    "A sibling track did not pass every security check.")).ToArray();
+        }
+
+        foreach (var asset in assets.Where(asset =>
+                     asset.StorageState == MediaAssetStorageState.Processing))
+        {
+            var identityResult = await identity.VerifyAsync(asset.Id, cancellationToken);
+            if (!identityResult.IsMatch)
+                return assetIds.Select(id => results[id]).ToArray();
+        }
+
+        // Verify identity for the whole set before approving any sibling.
+        // ApprovalService repeats its own identity check as a defense-in-depth
+        // guard at the trust boundary.
+        foreach (var assetId in assetIds)
+        {
+            var asset = await securityRepository.FindAssetAsync(assetId, cancellationToken);
+            if (asset?.StorageState == MediaAssetStorageState.Processing)
             {
-                return result;
-            }
-            if (approval.Outcome != ApprovalOutcome.Success)
-            {
-                throw new InvalidOperationException(
-                    approval.Error ?? "The clean security result could not be approved.");
+                var approval = await approvals.ApproveByPolicyAsync(assetId, CleanScanPolicyName, cancellationToken);
+                if (approval.Outcome == ApprovalOutcome.IdentityUnmatched)
+                    break;
+                if (approval.Outcome != ApprovalOutcome.Success)
+                    throw new InvalidOperationException(approval.Error ?? "The clean security result could not be approved.");
             }
         }
 
-        return result;
+        return assetIds.Select(id => results[id]).ToArray();
     }
 
     /// <summary>

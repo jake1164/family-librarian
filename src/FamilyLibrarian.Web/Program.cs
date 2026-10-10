@@ -1,16 +1,18 @@
 using System.Threading.RateLimiting;
 using FamilyLibrarian.Application.Accounts;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Infrastructure;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Persistence;
-using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Security;
 using FamilyLibrarian.Web.Acquisition;
+using FamilyLibrarian.Web.Catalog;
 using FamilyLibrarian.Web.Communications;
 using FamilyLibrarian.Web;
 using FamilyLibrarian.Web.Endpoints;
 using FamilyLibrarian.Web.Gutenberg;
+using FamilyLibrarian.Web.Providers;
 using FamilyLibrarian.Web.Publishing;
 using FamilyLibrarian.Web.Readiness;
 using FamilyLibrarian.Web.Realtime;
@@ -21,9 +23,12 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddProviderInteractionAlertOptions(builder.Configuration, builder.Environment.IsDevelopment());
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<LiveConnections>();
 builder.Services.AddSingleton<LiveUpdatesPublisher>();
+builder.Services.AddSingleton<ActiveAcquisitionTracker>();
+builder.Services.AddSingleton<RemoteViewSessionRegistry>();
 builder.Services.ConfigureDbContext<AppDbContext>((services, options) =>
 {
     var buffer = new LiveUpdateBuffer();
@@ -32,16 +37,31 @@ builder.Services.ConfigureDbContext<AppDbContext>((services, options) =>
         new LiveUpdatesTransactionInterceptor(buffer, publisher));
 });
 builder.Services.AddScoped<SystemReadinessService>();
+builder.Services.AddSingleton<AvailabilityRunCoordinator>();
+builder.Services.AddHostedService<AvailabilityRunHostedService>();
+builder.Services.AddSingleton<CatalogSearchRunCoordinator>();
+builder.Services.AddHostedService<CatalogSearchRunHostedService>();
+builder.Services.AddSingleton<SecurityEvaluationScheduler>();
+builder.Services.AddHostedService<SecurityEvaluationHostedService>();
+builder.Services.AddSingleton<AutomaticFulfillmentSignal>();
+builder.Services.AddSingleton<IAutomaticFulfillmentSignal>(
+    services => services.GetRequiredService<AutomaticFulfillmentSignal>());
+
 if (!builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService<CwaVerificationHostedService>();
     builder.Services.AddHostedService<DeliveryRetryHostedService>();
     builder.Services.AddHostedService<AudiobookshelfVerificationHostedService>();
     builder.Services.AddHostedService<PublishingDestinationHealthHostedService>();
+    builder.Services.AddHostedService<ExternalProviderHealthHostedService>();
+    builder.Services.AddHostedService<LibriVoxDownloadWorkspaceCleanupHostedService>();
+    builder.Services.AddHostedService<OrphanedWorkRetirementHostedService>();
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
+    builder.Services.AddHostedService<AcquisitionJobPollingHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
     builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();
     builder.Services.AddHostedService<MatrixInboundSyncHostedService>();
+    builder.Services.AddHostedService<ProviderInteractionAlertHostedService>();
 }
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("postgresql")
@@ -112,6 +132,25 @@ builder.Services.AddRateLimiter(options =>
         limiterOptions.Window = TimeSpan.FromMinutes(1);
         limiterOptions.QueueLimit = 0;
     });
+
+    // HUMAN-ACQ-1's magic-link claim: the same reasoning as invitation
+    // redemption above -- the token is 256 bits, so this bounds resource use
+    // and log/DB churn from a guessing attempt, not the guess's own odds.
+    options.AddPolicy(InteractionLinkEndpoints.RateLimitPolicy, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = redemptionAttemptsPerMinute,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+    options.AddFixedWindowLimiter(InteractionLinkEndpoints.GlobalRateLimitPolicy, limiterOptions =>
+    {
+        limiterOptions.PermitLimit = Math.Max(redemptionAttemptsPerMinute * 20, 100);
+        limiterOptions.Window = TimeSpan.FromMinutes(1);
+        limiterOptions.QueueLimit = 0;
+    });
 });
 
 // The WebAssembly client cannot read an HttpOnly cookie, so the request token
@@ -134,6 +173,12 @@ builder.Services.AddProblemDetails();
 
 builder.Services.AddHsts(options => options.MaxAge = TimeSpan.FromHours(1));
 
+// Brokered remote-view sessions (HUMAN-ACQ-1 Phase 3) are the only WebSocket
+// upgrades this host accepts. They are long-lived by nature (one per active
+// human-verification session), so bound how many can pile up rather than
+// leaving Kestrel's own default (unlimited) in place.
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxConcurrentUpgradedConnections = 50);
+
 var app = builder.Build();
 
 if (args.Contains("--migrate", StringComparer.Ordinal))
@@ -152,6 +197,11 @@ app.Services.EnsureAssetValidatorsAreConfigured();
 // own remarks for why an unconfigured certificate does not fail closed here.
 app.Services.WarnIfKeyRingIsUnprotected();
 
+// HUMAN-ACQ-1: a fresh install has no Interaction:PublicOrigin yet, so this is a
+// warning, not a startup guard — see AddProviderInteractionAlertOptions above for
+// the checks that DO fail closed when the setting is present but wrong.
+app.Services.WarnIfInteractionAlertsAreDisabled();
+
 if (app.Configuration.GetValue<bool>("Authentication:EnableLocal"))
 {
     await app.Services.InitializeIdentityAsync(app.Configuration);
@@ -162,10 +212,6 @@ if (app.Configuration.GetValue<bool>("Authentication:EnableLocal"))
 // see OidcOptionsConfigurator's remarks for why this can't be read from
 // configuration at Build() time the way the connection string is.
 await app.Services.InitializeOidcRuntimeCacheAsync();
-
-// Same reasoning as the OIDC cache above, for the private-egress gateway
-// PrivateEgressRouteResolver reads from.
-await app.Services.InitializeGatewayRuntimeCacheAsync();
 
 // First: everything below — HTTPS redirection, the auth cookie's Secure flag,
 // the rate limiter's per-caller partition key — depends on seeing the
@@ -205,6 +251,22 @@ app.UseAuthorization();
 app.UseAntiforgery();
 app.UseRateLimiter();
 
+// Brokered remote-view sessions (HUMAN-ACQ-1 Phase 3) upgrade to a raw
+// WebSocket. Fail closed on Origin the same way ReverseProxy:TrustedNetworks
+// above fails closed on address: an empty/unset list means every upgrade is
+// rejected, never "any origin" (Kestrel's own default) -- a self-hosted
+// deployment must set this to its own real, browser-facing origin(s).
+var webSocketOptions = new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30)
+};
+foreach (var origin in app.Configuration.GetSection("RemoteView:AllowedOrigins").Get<string[]>() ?? [])
+{
+    webSocketOptions.AllowedOrigins.Add(origin);
+}
+
+app.UseWebSockets(webSocketOptions);
+
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }))
     .AllowAnonymous();
 app.MapHealthChecks("/health/ready");
@@ -227,6 +289,8 @@ app.MapMatrixIdentityLinkEndpoints();
 app.MapFeedbackEndpoints();
 app.MapFollowingEndpoints();
 app.MapDeliveryTargetEndpoints();
+app.MapAudiobookNarrationPreferenceEndpoints();
+app.MapQuietHoursEndpoints();
 app.MapSecurityQueueEndpoints();
 app.MapLiveUpdatesEndpoints();
 app.MapInvitationEndpoints();
@@ -239,9 +303,9 @@ app.MapPolicyEndpoints();
 app.MapSystemReadinessEndpoints();
 app.MapOidcSettingsEndpoints();
 app.MapExternalProviderEndpoints();
-app.MapPrivateEgressGatewayEndpoints();
 app.MapProviderCatalogEndpoints();
 app.MapSettingsBackupEndpoints();
+app.MapInteractionLinkEndpoints();
 
 app.MapFallbackToFile("index.html");
 

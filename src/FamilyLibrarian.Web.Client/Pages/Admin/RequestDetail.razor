@@ -4,9 +4,12 @@
 @using FamilyLibrarian.Web.Client.Acquisition
 @using FamilyLibrarian.Web.Client.Catalog
 @using FamilyLibrarian.Contracts.Acquisition
+@using FamilyLibrarian.Web.Client.Providers
+@using FamilyLibrarian.Contracts.Providers
 @inject AdminRequestsApiClient Requests
 @inject MediaAssetsApiClient MediaAssets
 @inject CatalogApiClient Catalog
+@inject ExternalProviderApiClient ExternalProviders
 @inject ISnackbar Snackbar
 
 <PageTitle>Review request · Family Librarian</PageTitle>
@@ -53,18 +56,61 @@
             <MudStack Spacing="2">
                 <MudText Typo="Typo.h6">Request</MudText>
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
-                    <RequestStatusChip Status="@request.Request.Status" />
+                    <RequestStatusChip Status="@request.Request.Status" Label="@RequestLabel" />
                     @foreach (var format in request.Request.Formats)
                     {
                         <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
-                                           ProgressCode="@format.ProgressCode"
-                                           ProgressDescription="@format.ProgressDescription"
+                                           ProgressCode="@FormatProgressCode(format)"
+                                           ProgressDescription="@FormatDescription(format)"
                                            ExternalActionUri="@format.ExternalActionUri" />
                     }
                 </MudStack>
-                <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
+                @foreach (var activity in ActiveForRequest)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Info">
+                        @activity.Stage from @activity.ProviderDisplayName for @FormatName(activity.RequestFormatId)
+                        since @activity.StartedAtUtc.ToLocalTime().ToString("t").
+                    </MudText>
+                }
+                @if (!ActiveForRequest.Any())
+                {
+                    <MudText Typo="Typo.body2">@request.Request.StatusDescription</MudText>
+                }
                 <MudText Typo="Typo.caption">Asked @request.Request.RequestedAtUtc.ToLocalTime().ToString("f")</MudText>
                 <MudText Typo="Typo.body2">@request.Request.RequesterCount active requester(s) share this fulfillment.</MudText>
+                @foreach (var job in request.ProviderJobs ?? [])
+                {
+                    @if (!string.IsNullOrWhiteSpace(job.Message))
+                    {
+                        <MudAlert Severity="@(string.Equals(job.Phase, "paused", StringComparison.OrdinalIgnoreCase) || job.Phase?.StartsWith("paused-", StringComparison.OrdinalIgnoreCase) == true ? Severity.Warning : Severity.Info)">
+                            @FormatName(job.RequestFormatId) via @job.ProviderId: @job.Message
+                        </MudAlert>
+                    }
+                }
+                @if (waitingInteraction is not null)
+                {
+                    @* HUMAN-ACQ-1 D7: already claimed by another admin (in-app or
+                       via a Matrix magic link) -- informational, not an action
+                       prompt; Take over lives on the provider-interactions queue. *@
+                    @if (!string.IsNullOrWhiteSpace(waitingInteraction.ClaimedByDisplayName) && !waitingInteraction.IsClaimedByCurrentUser)
+                    {
+                        <MudAlert Severity="Severity.Info">
+                            Being handled by @waitingInteraction.ClaimedByDisplayName. Nothing to do right now.
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudAlert Severity="@(waitingInteraction.IsExpired ? Severity.Error : Severity.Warning)">
+                            This request needs a librarian action:
+                            @(waitingInteraction.Message ?? $"{waitingInteraction.ProviderId} is waiting on a verification step.")
+                            <div class="mt-2">
+                                <MudButton Variant="Variant.Filled" Color="Color.Warning" Href="admin/provider-interactions">
+                                    Open provider interactions
+                                </MudButton>
+                            </div>
+                        </MudAlert>
+                    }
+                }
                 @if (request.Request.RequiresManualFulfillment)
                 {
                     <MudAlert Severity="Severity.Warning">
@@ -101,7 +147,7 @@
                         <MudListItem T="string">
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
                                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.ProviderId</MudChip>
-                                <MudChip T="string" Size="Size.Small" Color="@ProviderAttemptColor(attempt.Outcome)">@attempt.Outcome</MudChip>
+                                <ProviderAttemptChip Outcome="@attempt.Outcome" />
                             </MudStack>
                             <MudText Typo="Typo.body2">@attempt.Summary</MudText>
                             <MudText Typo="Typo.caption">
@@ -114,6 +160,87 @@
                         </MudListItem>
                     }
                 </MudList>
+            }
+
+            @if (externalProviders.Count > 0)
+            {
+                <MudDivider Class="my-3" />
+                <MudText Typo="Typo.subtitle2">Debug: search a provider right now</MudText>
+                <MudText Typo="Typo.caption" Class="mb-2">
+                    Asks one provider immediately, outside its recheck schedule. Shows its raw results and whether
+                    the matcher accepted them -- nothing here is saved or acquired.
+                </MudText>
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                    <MudSelect T="Guid" @bind-Value="debugFormatId" Label="Format" Dense="true" Style="min-width: 160px;">
+                        @foreach (var format in request!.Request.Formats)
+                        {
+                            <MudSelectItem T="Guid" Value="@format.FormatId">@format.MediaType</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="string" @bind-Value="debugProviderId" Label="Provider" Dense="true" Style="min-width: 160px;">
+                        @foreach (var provider in externalProviders)
+                        {
+                            <MudSelectItem T="string" Value="@provider.ProviderId">@provider.DisplayName</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                               Disabled="@(isDebugSearching || debugFormatId == Guid.Empty || string.IsNullOrEmpty(debugProviderId))"
+                               OnClick="RunDebugSearchAsync">
+                        @(isDebugSearching ? "Searching…" : "Run live search")
+                    </MudButton>
+                </MudStack>
+                @if (!string.IsNullOrWhiteSpace(debugSearchError))
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">@debugSearchError</MudAlert>
+                }
+                else if (debugSearchResults is not null)
+                {
+                    <MudText Typo="Typo.caption" Class="mt-2">
+                        @(debugSearchResults.Count == 0
+                            ? "This provider returned nothing for this work right now."
+                            : $"{debugSearchResults.Count} raw result(s) from this provider:")
+                    </MudText>
+                    @foreach (var candidate in debugSearchResults)
+                    {
+                        <MudPaper Outlined="true" Class="pa-2 mt-1">
+                            <MudStack Spacing="0">
+                                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                                    <MudText Typo="Typo.body2"><strong>@candidate.Title</strong>@(string.IsNullOrWhiteSpace(candidate.Author) ? "" : $" — {candidate.Author}")</MudText>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                             Color="@(candidate.MatchBasis is null ? Color.Default : Color.Success)">
+                                        @(candidate.MatchBasis ?? "No confirmed match")
+                                    </MudChip>
+                                    @if (candidate.RequiresLanguageConfirmation)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Wrong language</MudChip>
+                                    }
+                                    @if (candidate.RequiresReleaseConfirmation)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Release needs confirmation</MudChip>
+                                    }
+                                </MudStack>
+                                <MudText Typo="Typo.caption">
+                                    @DescribeDebugCandidate(candidate)
+                                </MudText>
+                                <AdminCandidateIdentityEvidence Evidence="candidate.IdentityEvidence" />
+                                @if (!string.IsNullOrWhiteSpace(candidate.ReleaseName))
+                                {
+                                    <MudText Typo="Typo.caption" Style="font-family: var(--mud-typography-monospace-family, monospace); word-break: break-all;">
+                                        Release: @candidate.ReleaseName
+                                    </MudText>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.ReleaseConcern))
+                                {
+                                    <MudText Typo="Typo.caption">@candidate.ReleaseConcern</MudText>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.InspectionUri))
+                                {
+                                    <a href="@candidate.InspectionUri" target="_blank" rel="noopener noreferrer">Open source record</a>
+                                }
+                            </MudStack>
+                        </MudPaper>
+                    }
+                }
             }
         </MudPaper>
 
@@ -133,25 +260,65 @@
             </MudStack>
         </MudPaper>
 
-        @if (request.Request.NeedsReview is { Category: "PreferenceAmbiguity" } review)
+        @if (request.Request.NeedsReview is { Category: "PreferenceAmbiguity" } &&
+             request.ReviewCandidates is { Count: > 0 } reviewCandidates)
         {
             <MudPaper Outlined="true" Class="pa-4">
                 <MudStack Spacing="2">
-                    <MudText Typo="Typo.h6">Preference review</MudText>
+                    <MudText Typo="Typo.h6">Librarian candidate review</MudText>
                     <MudText Typo="Typo.body2">
-                        The requester was offered these candidates directly. An admin can resolve the same review
-                        (additive, not exclusive) if the requester hasn't -- e.g. for a request with no active participant.
+                        @ReviewSummary(reviewCandidates.Count)
                     </MudText>
-                    @foreach (var candidate in review.Candidates)
+                    <MudText Typo="Typo.caption">@ReviewReason(request.Request.NeedsReview, reviewCandidates.Count)</MudText>
+                    @if (reviewCandidates.All(candidate => !CandidateMatchesRequest(candidate)))
                     {
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-                            <MudText Typo="Typo.body2">@CandidateLabel(candidate)</MudText>
-                            <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Success"
-                                       Disabled="@isBusy"
-                                       OnClick="() => ResolveNeedsReviewAsync(candidate.CandidateId)">
-                                Get it anyway
-                            </MudButton>
-                        </MudStack>
+                        <MudAlert Severity="Severity.Warning" Dense="true">
+                            No source below names the requested work. Acquiring one of these overrides
+                            identity verification, so confirm the source record first.
+                        </MudAlert>
+                    }
+                    @foreach (var candidate in reviewCandidates)
+                    {
+                        <MudPaper Outlined="true" Class="pa-3">
+                            <MudStack Spacing="1">
+                                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                                    <MudText Typo="Typo.subtitle1">@AdminCandidateLabel(candidate)</MudText>
+                                    @if (candidate.TitleIsRequestFallback)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                                            @(string.IsNullOrWhiteSpace(candidate.ReleaseName)
+                                                ? "Source named no title — showing the requested one"
+                                                : "Source supplied a release name; no separate work title")
+                                        </MudChip>
+                                    }
+                                    else if (!CandidateMatchesRequest(candidate))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                                            Does not match "@request.Request.WorkTitle"
+                                        </MudChip>
+                                    }
+                                </MudStack>
+                                @if (!string.IsNullOrWhiteSpace(candidate.Details))
+                                {
+                                    <MudText Typo="Typo.body2">@candidate.Details</MudText>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.ReleaseName))
+                                {
+                                    <MudText Typo="Typo.caption" Style="font-family: var(--mud-typography-monospace-family, monospace); word-break: break-all;">
+                                        Release: @candidate.ReleaseName
+                                    </MudText>
+                                }
+                                <AdminCandidateOrigin ProviderName="@AdminProviderName(candidate)"
+                                                      ProviderResultId="@candidate.ProviderResultId"
+                                                      SourceSummary="@candidate.SourceSummary"
+                                                      InspectionUri="@candidate.InspectionUri" />
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Success"
+                                           Disabled="@isBusy"
+                                           OnClick="() => ResolveNeedsReviewAsync(candidate.CandidateId)">
+                                    Acquire this reviewed copy
+                                </MudButton>
+                            </MudStack>
+                        </MudPaper>
                     }
                     <MudButton Variant="Variant.Text" Size="Size.Small" Disabled="@isBusy"
                                OnClick="() => ResolveNeedsReviewAsync(null)">
@@ -224,6 +391,20 @@
                                     <MudChip T="string" Size="Size.Small" Color="Color.Primary">Recommended</MudChip>
                                     <MudText Typo="Typo.caption">@recommendation.Reason</MudText>
                                 }
+                                @if (pendingConfirmFormatId == format.FormatId &&
+                                     pendingConfirmOption is { } pendingOption)
+                                {
+                                    <MudAlert Severity="Severity.Warning" Class="mt-2" Dense="true">
+                                        @pendingConfirmMessage
+                                        <div class="mt-2">
+                                            <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Warning"
+                                                       Disabled="@isBusy"
+                                                       OnClick="@(() => AcquireDirectAsync(format.FormatId, pendingOption, confirmLowConfidenceMatch: true))">
+                                                Fetch anyway
+                                            </MudButton>
+                                        </div>
+                                    </MudAlert>
+                                }
                             }
                         </MudStack>
                     }
@@ -255,25 +436,72 @@
 </MudStack>
 
 @code {
+    [CascadingParameter]
+    private IReadOnlyList<AdminActiveAcquisitionResponse> ActiveAcquisitions { get; set; } = [];
+
+    private IEnumerable<AdminActiveAcquisitionResponse> ActiveForRequest =>
+        ActiveAcquisitions.Where(activity => activity.RequestId == RequestId);
+
+    private string? RequestLabel => request?.Request.Status == "PendingAcquisition"
+        ? ActiveForRequest.Any() ? "Working" : "Awaiting next check"
+        : null;
+
+    private bool HasReviewCandidates(Guid formatId) =>
+        request?.Request.Status == "NeedsReview" &&
+        request.ReviewCandidates?.Any(candidate => candidate.RequestFormatId == formatId) == true;
+
+    private string? FormatProgressCode(BookRequestFormatResponse format) =>
+        HasReviewCandidates(format.FormatId) ? "AwaitingApproval" : format.ProgressCode;
+
+    private string? FormatDescription(BookRequestFormatResponse format) =>
+        ActiveAcquisitions.FirstOrDefault(activity => activity.RequestFormatId == format.FormatId) is { } activity
+            ? AdminAcquisitionProgressText.Describe(activity)
+            : HasReviewCandidates(format.FormatId) ? "Source review needed"
+            : waitingInteraction?.RequestFormatId == format.FormatId ? "Provider action needed"
+            : format.ProgressDescription ?? (format.Status == "Requested" ? "Awaiting next check" : null);
+
+    private string FormatName(Guid formatId) =>
+        request?.Request.Formats.FirstOrDefault(format => format.FormatId == formatId)?.MediaType ?? "format";
+
     [Parameter]
     public Guid RequestId { get; set; }
 
     private AdminBookRequestResponse? request;
     private WorkFulfillmentOptionsResponse? fulfillment;
     private IReadOnlyList<ProviderAttemptResponse> providerAttempts = [];
+    private ProviderInteractionResponse? waitingInteraction;
     private string? adminNote;
     private string? transitionReason;
     private bool isLoading = true;
     private bool isBusy;
     private string? errorMessage;
     private string? providerActivityError;
+    private IReadOnlyList<ExternalProviderResponse> externalProviders = [];
+    private Guid debugFormatId;
+    private string? debugProviderId;
+    private bool isDebugSearching;
+    private string? debugSearchError;
+    private IReadOnlyList<AdminProviderDebugCandidateResponse>? debugSearchResults;
     private CancellationTokenSource? fulfillmentLoadCancellation;
+    private Guid? pendingConfirmFormatId;
+    private FulfillmentOptionResponse? pendingConfirmOption;
+    private string? pendingConfirmMessage;
 
     protected override void OnInitialized() =>
         Observe(LiveUpdateTopics.Requests | LiveUpdateTopics.Security | LiveUpdateTopics.Publishing,
             () => LoadAsync(preserveDraft: true));
 
-    protected override Task OnParametersSetAsync() => LoadAsync();
+    private Guid loadedRequestId;
+
+    // Cascading parameters (e.g. the layout's active-acquisitions list) also
+    // trigger OnParametersSet; only a route change should do a full reload.
+    // Live updates already refresh in place via Observe.
+    protected override Task OnParametersSetAsync()
+    {
+        if (loadedRequestId == RequestId) return Task.CompletedTask;
+        loadedRequestId = RequestId;
+        return LoadAsync();
+    }
 
     private async Task LoadAsync(bool preserveDraft = false)
     {
@@ -285,6 +513,7 @@
         {
             fulfillment = null;
             providerAttempts = [];
+            waitingInteraction = null;
             request = null;
         }
         var loadingRequestId = RequestId;
@@ -320,7 +549,100 @@
             providerActivityError = "Provider activity could not be loaded. The request is still available.";
         }
 
+        try
+        {
+            var interaction = await Requests.GetProviderInteractionAsync(loadingRequestId);
+            if (loadingRequestId != RequestId) return;
+            waitingInteraction = interaction;
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: worst case the banner just doesn't show this load.
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Same best-effort intent as above: a malformed/empty response
+            // must not take down the whole page render.
+        }
+
+        if (!preserveDraft)
+        {
+            try
+            {
+                externalProviders = (await ExternalProviders.GetProvidersAsync())
+                    .Where(provider => provider.IsEnabled)
+                    .ToArray();
+                if (debugFormatId == Guid.Empty && request.Request.Formats.Count > 0)
+                {
+                    debugFormatId = request.Request.Formats[0].FormatId;
+                }
+                if (debugProviderId is null && externalProviders.Count > 0)
+                {
+                    debugProviderId = externalProviders[0].ProviderId;
+                }
+            }
+            catch (HttpRequestException)
+            {
+                // Best-effort: the debug panel just won't offer a provider
+                // list this load. Everything else on the page still works.
+            }
+        }
+
         StartFulfillmentOptionsLoad(request.Request.WorkId);
+    }
+
+    private async Task RunDebugSearchAsync()
+    {
+        if (debugFormatId == Guid.Empty || string.IsNullOrWhiteSpace(debugProviderId))
+        {
+            return;
+        }
+
+        isDebugSearching = true;
+        debugSearchError = null;
+        debugSearchResults = null;
+        try
+        {
+            var outcome = await Requests.DebugSearchProviderAsync(RequestId, debugFormatId, debugProviderId);
+            if (outcome.Succeeded)
+            {
+                debugSearchResults = outcome.Candidates;
+            }
+            else
+            {
+                debugSearchError = outcome.Error;
+            }
+        }
+        finally
+        {
+            isDebugSearching = false;
+        }
+    }
+
+    private static string DescribeDebugCandidate(AdminProviderDebugCandidateResponse candidate)
+    {
+        var facts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(candidate.Format)) facts.Add(candidate.Format.ToUpperInvariant());
+        if (!string.IsNullOrWhiteSpace(candidate.Language)) facts.Add(candidate.Language);
+        if (candidate.PublicationYear is > 0) facts.Add($"Published {candidate.PublicationYear}");
+        if (!string.IsNullOrWhiteSpace(candidate.Publisher)) facts.Add(candidate.Publisher);
+        if (candidate.SizeBytes is > 0) facts.Add(FormatDebugSize(candidate.SizeBytes.Value));
+        facts.Add($"ref: {candidate.ProviderResultId}");
+        return string.Join(" · ", facts);
+    }
+
+    private static string FormatDebugSize(long sizeBytes)
+    {
+        const long kibibyte = 1024;
+        const long mebibyte = kibibyte * 1024;
+        const long gibibyte = mebibyte * 1024;
+        return sizeBytes switch
+        {
+            >= gibibyte => $"{sizeBytes / (double)gibibyte:0.#} GB",
+            >= mebibyte => $"{sizeBytes / (double)mebibyte:0.#} MB",
+            >= kibibyte => $"{sizeBytes / (double)kibibyte:0.#} KB",
+            _ => $"{sizeBytes} bytes"
+        };
     }
 
     private void StartFulfillmentOptionsLoad(Guid workId)
@@ -385,19 +707,35 @@
         _ => null
     };
 
-    private async Task AcquireDirectAsync(Guid formatId, FulfillmentOptionResponse option)
+    private async Task AcquireDirectAsync(Guid formatId, FulfillmentOptionResponse option, bool confirmLowConfidenceMatch = false)
     {
         isBusy = true;
         errorMessage = null;
+        pendingConfirmFormatId = null;
+        pendingConfirmOption = null;
         try
         {
             var outcome = await MediaAssets.AcquireDirectAsync(
-                RequestId, formatId, option.ProviderId, option.ProviderResultId);
-            if (outcome.Succeeded)
+                RequestId, formatId, option.ProviderId, option.ProviderResultId, confirmLowConfidenceMatch);
+            if (outcome.AcquisitionInProgress)
+            {
+                Snackbar.Add(
+                    $"Submitted to {option.ProviderId} — no file yet. Watch this request's format status; " +
+                    "the provider may need further action (such as a link on its site) before it can deliver a copy.",
+                    Severity.Info);
+                await LoadAsync();
+            }
+            else if (outcome.Succeeded)
             {
                 Snackbar.Add(
                     $"Fetched from {option.ProviderId}. It is being scanned, verified, and published automatically when it passes.",
                     Severity.Success);
+            }
+            else if (outcome.RequiresConfirmation)
+            {
+                pendingConfirmFormatId = formatId;
+                pendingConfirmOption = option;
+                pendingConfirmMessage = outcome.Error;
             }
             else
             {
@@ -517,14 +855,47 @@
         }
     }
 
-    private static string CandidateLabel(RequestReviewCandidateResponse candidate) =>
-        candidate.Author is { } author
+    private static string AdminCandidateLabel(AdminRequestReviewCandidateResponse candidate) =>
+        (candidate.Author is { } author
             ? string.IsNullOrWhiteSpace(candidate.Language)
                 ? $"{candidate.Title} by {author}"
                 : $"{candidate.Title} by {author} ({candidate.Language})"
             : string.IsNullOrWhiteSpace(candidate.Language)
                 ? candidate.Title
-                : $"{candidate.Title} ({candidate.Language})";
+                : $"{candidate.Title} ({candidate.Language})") +
+        (string.IsNullOrWhiteSpace(candidate.Details) ? string.Empty : $" — {candidate.Details}");
+
+    private static string AdminProviderName(AdminRequestReviewCandidateResponse candidate) =>
+        candidate.ProviderId.Equals("gutendex", StringComparison.OrdinalIgnoreCase)
+            ? "Project Gutenberg"
+            : candidate.ProviderId;
+
+    /// <summary>
+    /// The server's verdict on whether this candidate's own claimed title
+    /// names the requested work. Computed host-side (WorkTitlePlausibility) so
+    /// the WebAssembly client never carries a second copy of the matching
+    /// rules that could drift from the ones acquisition actually enforces.
+    /// </summary>
+    private static bool CandidateMatchesRequest(AdminRequestReviewCandidateResponse candidate) =>
+        candidate.NamesRequestedWork;
+
+    private static string ReviewSummary(int candidateCount) => candidateCount == 1
+        ? "One source record needs your review. Inspect its source page and media details before acquiring it."
+        : $"{candidateCount} distinct source records need your review. Compare their source pages and media details before acquiring one.";
+
+    private static string ReviewReason(NeedsReviewResponse? review, int candidateCount)
+    {
+        if (string.Equals(review?.Reason, "Multiple plausible editions were found.", StringComparison.Ordinal))
+        {
+            return candidateCount == 1
+                ? "One source record was retained from an earlier review. Project Gutenberg compares ebook and audiobook records separately and only selects a record automatically when it has at least 1,000 downloads and a 3× lead over the runner-up. Inspect this audiobook record before acquiring it."
+                : "Several eligible records were found, but no single record met the automatic-selection rule.";
+        }
+
+        return string.IsNullOrWhiteSpace(review?.Reason)
+            ? "Compare the source evidence here, then select one copy for acquisition."
+            : review.Reason;
+    }
 
     private async Task ApplyOutcomeAsync(AdminRequestActionOutcome outcome)
     {
@@ -555,15 +926,6 @@
         "NotAvailable" or "Cancelled" => Color.Error,
         "NeedsReview" => Color.Warning,
         _ => Color.Primary
-    };
-
-    private static Color ProviderAttemptColor(string outcome) => outcome switch
-    {
-        "Acquired" => Color.Success,
-        "CandidatesFound" => Color.Info,
-        "NoMatch" => Color.Default,
-        "Blocked" => Color.Warning,
-        _ => Color.Error
     };
 
     private void StopFulfillmentOptionsLoad()

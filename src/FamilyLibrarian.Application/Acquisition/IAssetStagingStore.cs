@@ -31,6 +31,13 @@ public interface IAssetStagingStore
         long maxSizeBytes,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Bytes still writable to the volume that holds quarantine storage, or
+    /// <c>null</c> when that cannot be determined (the caller then skips its
+    /// pre-download space check rather than blocking on an unknown).
+    /// </summary>
+    long? GetAvailableFreeBytes() => null;
+
     /// <summary>Opens a staged file for host-only reading, from its current zone.</summary>
     Task<Stream> OpenAsync(
         MediaAssetStorageState zone,

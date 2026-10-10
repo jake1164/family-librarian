@@ -37,6 +37,33 @@ public sealed class ApprovalService(
             cancellationToken);
 
     /// <summary>
+    /// Approves an asset the deterministic identity check has already held
+    /// as <see cref="MediaAssetStorageState.Unmatched"/>, on a librarian's
+    /// explicit say-so after reviewing <see cref="MediaAsset.IdentityMismatchReason"/>
+    /// -- e.g. a byline formatting difference the check is too conservative
+    /// to accept on its own. This is the one path that does not call
+    /// <see cref="IAssetIdentityVerificationService.VerifyAsync"/>: the
+    /// deterministic check already failed and would fail identically again,
+    /// so re-running it here would just flip the asset straight back to
+    /// Unmatched and make the override a no-op. <paramref name="reason"/> is
+    /// required so the override -- not just the ordinary approval -- has a
+    /// stated justification in the audit trail.
+    /// </summary>
+    public Task<ApprovalResult> OverrideIdentityAndApproveAsync(
+        Guid assetId, string reason, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        return ApproveCoreAsync(
+            assetId,
+            ApprovalActorType.Admin,
+            currentUser.UserId,
+            policyName: null,
+            reason,
+            cancellationToken,
+            identityOverrideConfirmed: true);
+    }
+
+    /// <summary>
     /// Records the trusted clean-scan policy's decision. This path is intentionally unavailable for
     /// review-required evaluations: an administrator must make that exception decision.
     /// </summary>
@@ -62,14 +89,23 @@ public sealed class ApprovalService(
         Guid? actorUserId,
         string? policyName,
         string? reason,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool identityOverrideConfirmed = false)
     {
         var asset = await repository.FindAssetAsync(assetId, cancellationToken);
         if (asset is null)
         {
             return ApprovalResult.NotFound();
         }
-        if (asset.StorageState != MediaAssetStorageState.Processing)
+
+        if (identityOverrideConfirmed)
+        {
+            if (asset.StorageState != MediaAssetStorageState.Unmatched)
+            {
+                return ApprovalResult.Invalid("Only an asset held for identity review can have its match overridden.");
+            }
+        }
+        else if (asset.StorageState != MediaAssetStorageState.Processing)
         {
             return ApprovalResult.Invalid("Only a security-review asset can be approved.");
         }
@@ -80,17 +116,31 @@ public sealed class ApprovalService(
             return ApprovalResult.Invalid("This asset has not been evaluated yet.");
         }
 
-        // Identity verification is deliberately part of every approval path,
-        // including a librarian's approval of a review-required scan. A clean
-        // security evaluation proves the file is safe, not that it is the
-        // requested book.
-        var identityResult = await identity.VerifyAsync(assetId, cancellationToken);
-        if (!identityResult.IsMatch)
+        var now = clock.UtcNow;
+        if (identityOverrideConfirmed)
         {
-            return ApprovalResult.IdentityUnmatched();
+            // The only allowed exit from Unmatched is back through Processing
+            // (MediaAssetStorageTransitions) -- an override still passes
+            // through it on the way to Trusted below, it just skips
+            // re-running the deterministic check that already failed once.
+            await stagingStore.MoveAsync(
+                MediaAssetStorageState.Unmatched, MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
+            asset.TransitionStorageState(MediaAssetStorageState.Processing, now);
+            asset.SetIdentityMismatchReason(null);
+        }
+        else
+        {
+            // Identity verification is deliberately part of every ordinary
+            // approval path, including a librarian's approval of a
+            // review-required scan. A clean security evaluation proves the
+            // file is safe, not that it is the requested book.
+            var identityResult = await identity.VerifyAsync(assetId, cancellationToken);
+            if (!identityResult.IsMatch)
+            {
+                return ApprovalResult.IdentityUnmatched();
+            }
         }
 
-        var now = clock.UtcNow;
         try
         {
             evaluation.Approve(actorType, actorUserId, policyName, reason, now);
@@ -105,6 +155,16 @@ public sealed class ApprovalService(
         asset.TransitionStorageState(MediaAssetStorageState.Trusted, now);
 
         await repository.SaveChangesAsync(cancellationToken);
+
+        if (identityOverrideConfirmed)
+        {
+            await audit.WriteAsync(
+                AuditActions.AssetIdentityOverridden,
+                AuditSubjectTypes.MediaAsset,
+                assetId.ToString(),
+                new { AssetId = assetId, ActorUserId = actorUserId, Reason = reason },
+                cancellationToken);
+        }
 
         await audit.WriteAsync(
             AuditActions.AssetApproved,

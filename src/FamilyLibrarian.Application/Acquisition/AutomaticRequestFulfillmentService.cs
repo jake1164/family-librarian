@@ -1,7 +1,9 @@
+using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
 
@@ -37,6 +39,9 @@ public enum PreferenceAmbiguityResolutionOutcome
     Conflict
 }
 
+/// <summary>What happened to the retry budget when an automatic provider job failed.</summary>
+public sealed record ExternalFailureOutcome(bool AdvancesToNextCandidate, int FailuresSoFar, int AttemptLimit);
+
 public sealed class AutomaticRequestFulfillmentService(
     IRequestRepository requests,
     IProviderAttemptRepository attempts,
@@ -44,9 +49,68 @@ public sealed class AutomaticRequestFulfillmentService(
     DirectAcquisitionSecurityService acquisition,
     IClock clock,
     NotificationService notifications,
-    ICurrentUser currentUser)
+    ICurrentUser currentUser,
+    IUserAccountStore accounts) : IPartSetReviewRouter
 {
     private const int BatchSize = 20;
+
+    /// <summary>
+    /// Sends a request to a librarian outright, for a failure that must not be
+    /// retried automatically (an audiobook set that could not be completed).
+    /// </summary>
+    public async Task SendToReviewAsync(Guid requestId, string reason, CancellationToken cancellationToken)
+    {
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null)
+        {
+            return;
+        }
+
+        await MarkForReviewAsync(request, RequestReviewCategory.SecurityOrIdentityFailure, reason, cancellationToken);
+        await requests.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Completes the existing review flow when an automatic provider job fails
+    /// after submit -- but first rules the failed candidate out so the next
+    /// scheduled pass can advance to the next ranked one (PROVIDER-7).
+    /// </summary>
+    /// <returns>
+    /// Whether the provider's attempt budget still had room, meaning the
+    /// request was left in the automatic queue to try the next candidate
+    /// rather than moved to review, plus the counts the ledger needs to say
+    /// "attempt 2 of 3". The caller uses the first to schedule a prompt
+    /// recheck: the next attempt is a different record, not a repeat of the
+    /// lookup that just failed.
+    /// </returns>
+    public async Task<ExternalFailureOutcome> RecordExternalAcquisitionFailureAsync(
+        Guid requestId, Guid requestFormatId, string providerId, string candidateReference,
+        string? candidateFingerprint, int automaticAttemptLimit, string reason, CancellationToken cancellationToken)
+    {
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null)
+            return new ExternalFailureOutcome(false, 0, automaticAttemptLimit);
+
+        var failures = 0;
+        if (!string.IsNullOrWhiteSpace(providerId) && !string.IsNullOrWhiteSpace(candidateReference))
+        {
+            request.RecordAutomaticCandidateFailure(
+                requestFormatId, providerId, candidateReference, reason, clock.UtcNow, candidateFingerprint);
+            failures = request.CountAutomaticCandidateFailures(requestFormatId, providerId);
+
+            if (failures < automaticAttemptLimit)
+            {
+                // One bad copy is not a reason to stop. Leave the request in
+                // the automatic queue with this candidate ruled out.
+                await requests.SaveChangesAsync(cancellationToken);
+                return new ExternalFailureOutcome(true, failures, automaticAttemptLimit);
+            }
+        }
+
+        await MarkForReviewAsync(request, RequestReviewCategory.SecurityOrIdentityFailure, reason, cancellationToken);
+        await requests.SaveChangesAsync(cancellationToken);
+        return new ExternalFailureOutcome(false, failures, automaticAttemptLimit);
+    }
 
     /// <summary>
     /// How long to wait before asking the same provider about the same format
@@ -64,13 +128,19 @@ public sealed class AutomaticRequestFulfillmentService(
             return 0;
         }
 
-        var pending = await requests.ListPendingForAutomaticFulfillmentAsync(BatchSize, cancellationToken);
+        var pending = await requests.ListPendingForAutomaticFulfillmentAsync(
+            BatchSize, cancellationToken, includeNeedsReview: true);
         var processed = 0;
 
         foreach (var request in pending)
         {
             if (request.RequiresManualFulfillment) continue;
-            foreach (var format in request.Formats.Where(format => format.Status == RequestFormatStatus.Requested))
+            var refreshLegacyReview = IsLegacyCollapsedPreferenceReview(request);
+            var reviewedFormatIds = request.Status == RequestStatus.NeedsReview && !refreshLegacyReview
+                ? request.ReviewCandidates.Select(candidate => candidate.RequestFormatId).ToHashSet()
+                : [];
+            foreach (var format in request.Formats.Where(format =>
+                format.Status == RequestFormatStatus.Requested && !reviewedFormatIds.Contains(format.Id)))
             {
                 if (await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken))
                 {
@@ -82,7 +152,9 @@ public sealed class AutomaticRequestFulfillmentService(
                 {
                     var latestAttempt = await attempts.FindLatestForFormatAsync(
                         format.Id, provider.Id, cancellationToken);
-                    if (HasRecentAttempt(latestAttempt, request))
+                    // A pre-evidence review needs one immediate refresh even
+                    // when its earlier lookup is inside the normal cooldown.
+                    if (!refreshLegacyReview && HasRecentAttempt(latestAttempt, request))
                     {
                         continue;
                     }
@@ -103,12 +175,20 @@ public sealed class AutomaticRequestFulfillmentService(
                             format.MediaType,
                             cancellationToken);
                         options.AddRange(providerOptions);
+                        var onlyExcludedAudiobookFormats = format.MediaType == RequestMediaType.Audiobook &&
+                                                           providerOptions.Count > 0 &&
+                                                           providerOptions.All(option =>
+                                                               !AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format));
                         attempts.Add(new ProviderAttempt(
                             request.Id, format.Id, provider.Id,
-                            providerOptions.Count == 0 ? ProviderAttemptOutcome.NoMatch : ProviderAttemptOutcome.CandidatesFound,
+                            providerOptions.Count == 0 || onlyExcludedAudiobookFormats
+                                ? ProviderAttemptOutcome.NoMatch
+                                : ProviderAttemptOutcome.CandidatesFound,
                             providerOptions.Count == 0
                                 ? "No high-confidence automatic copy was found."
-                                : $"Found {providerOptions.Count} high-confidence automatic candidate(s).",
+                                : onlyExcludedAudiobookFormats
+                                    ? "The provider reported only audiobook formats excluded from automatic acquisition."
+                                : DescribeProviderCandidates(providerOptions),
                             clock.UtcNow,
                             nextEligibleCheckAtUtc: null));
                     }
@@ -142,8 +222,49 @@ public sealed class AutomaticRequestFulfillmentService(
                 // must never be auto-selected here -- it is kept separate so it
                 // can be offered to the requester as a preference decision below
                 // instead of silently acquired or silently discarded.
-                var autoEligible = distinctOptions.Where(option => !option.RequiresLanguageConfirmation).ToArray();
-                var languageExcluded = distinctOptions.Where(option => option.RequiresLanguageConfirmation).ToArray();
+                var automaticFormatOptions = format.MediaType == RequestMediaType.Audiobook
+                    ? distinctOptions.Where(option => AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format)).ToArray()
+                    : distinctOptions;
+                var autoEligible = automaticFormatOptions.Where(option => !option.RequiresLanguageConfirmation).ToArray();
+                var languageExcluded = automaticFormatOptions.Where(option => option.RequiresLanguageConfirmation).ToArray();
+
+                // Cross-record audiobook selection -- narration preference,
+                // completeness, then packaging/popularity/ID as late
+                // tiebreakers -- resolves only same-source candidates.
+                // Different sources remain a real trust disagreement (below).
+                // Multiple acceptable candidates never force a review by
+                // themselves: AudiobookCandidateSelector's comparator chain
+                // always ends in a stable-ID tiebreak, so it always produces
+                // exactly one winner from an acceptable candidate set. The
+                // one exception is genuine unresolved uncertainty -- a
+                // HumanOnly requirement no candidate can confirm satisfying.
+                if (format.MediaType == RequestMediaType.Audiobook &&
+                    autoEligible.Length > 0 &&
+                    autoEligible.Select(option => option.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
+                {
+                    var preference = await GetNarrationPreferenceAsync(request.UserId, cancellationToken);
+                    var selection = AudiobookCandidateSelector.Select(autoEligible, preference);
+                    if (selection.Winner is { } winner)
+                    {
+                        autoEligible = [winner with { AutomaticSelectionReason = selection.DecisionReason }];
+                    }
+                    else if (selection.CandidatesRequiringNarrationConfirmation.Count > 0)
+                    {
+                        await MarkForReviewAsync(
+                            request, RequestReviewCategory.PreferenceAmbiguity,
+                            selection.DecisionReason, cancellationToken,
+                            selection.CandidatesRequiringNarrationConfirmation.Select(option =>
+                                RequestReviewCandidateRecord.From(format.Id, option))
+                                .ToArray());
+                        await attempts.SaveChangesAsync(cancellationToken);
+                        await requests.SaveChangesAsync(cancellationToken);
+                        continue;
+                    }
+                    else
+                    {
+                        autoEligible = [];
+                    }
+                }
 
                 if (autoEligible.Length > 1)
                 {
@@ -156,12 +277,17 @@ public sealed class AutomaticRequestFulfillmentService(
                         // result rather than the cross-provider case below.
                         await MarkForReviewAsync(
                             request, RequestReviewCategory.PreferenceAmbiguity,
-                            "Multiple plausible editions were found.", cancellationToken,
-                            autoEligible.Select(option => (format.Id, option.ProviderId, option.ProviderResultId, option.Title, option.Author, option.Language))
+                            DescribeSameProviderAmbiguity(autoEligible), cancellationToken,
+                            autoEligible.Select(option =>
+                                RequestReviewCandidateRecord.From(format.Id, option))
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
-                        break;
+                        // A request can ask for both ebook and audiobook. An
+                        // ambiguity in one format must not prevent a separate
+                        // requested format with one safe candidate from being
+                        // acquired in this same pass.
+                        continue;
                     }
 
                     // Different providers confidently disagree on the file. Picking
@@ -172,7 +298,7 @@ public sealed class AutomaticRequestFulfillmentService(
                         "More than one high-confidence automatic copy was found.", cancellationToken);
                     await attempts.SaveChangesAsync(cancellationToken);
                     await requests.SaveChangesAsync(cancellationToken);
-                    break;
+                    continue;
                 }
 
                 if (autoEligible.Length == 0)
@@ -185,11 +311,12 @@ public sealed class AutomaticRequestFulfillmentService(
                         await MarkForReviewAsync(
                             request, RequestReviewCategory.PreferenceAmbiguity,
                             "A copy was found, but not in English.", cancellationToken,
-                            languageExcluded.Select(option => (format.Id, option.ProviderId, option.ProviderResultId, option.Title, option.Author, option.Language))
+                            languageExcluded.Select(option =>
+                                RequestReviewCandidateRecord.From(format.Id, option))
                                 .ToArray());
                         await attempts.SaveChangesAsync(cancellationToken);
                         await requests.SaveChangesAsync(cancellationToken);
-                        break;
+                        continue;
                     }
 
                     // Nothing found yet, not a failure — leave the request in the
@@ -205,7 +332,9 @@ public sealed class AutomaticRequestFulfillmentService(
                 }
                 else
                 {
-                    break;
+                    // The failed format is now in review, but another requested
+                    // format can still be fulfilled automatically.
+                    continue;
                 }
             }
         }
@@ -221,7 +350,11 @@ public sealed class AutomaticRequestFulfillmentService(
     /// automatically-selected one.
     /// </summary>
     private async Task<bool> AcquireOptionAsync(
-        BookRequest request, RequestFormat format, FulfillmentOption option, CancellationToken cancellationToken)
+        BookRequest request,
+        RequestFormat format,
+        FulfillmentOption option,
+        CancellationToken cancellationToken,
+        bool confirmLowConfidenceMatch = false)
     {
         ManualImportResult result;
         try
@@ -231,7 +364,9 @@ public sealed class AutomaticRequestFulfillmentService(
                 format.Id,
                 option.ProviderId,
                 option.ProviderResultId,
-                cancellationToken);
+                cancellationToken,
+                confirmLowConfidenceMatch,
+                isAutomaticAcquisition: true);
         }
         catch (Exception exception) when (exception is IOException or HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
@@ -252,6 +387,32 @@ public sealed class AutomaticRequestFulfillmentService(
                 $"The file could not be processed: {exception.Message}");
         }
 
+        if (result.Outcome == ManualImportOutcome.TransferInterrupted)
+        {
+            var retryAt = clock.UtcNow.AddMinutes(2);
+            attempts.Add(new ProviderAttempt(
+                request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Failed,
+                result.Error!, clock.UtcNow, nextEligibleCheckAtUtc: retryAt));
+            await attempts.SaveChangesAsync(cancellationToken);
+            return false;
+        }
+
+        if (result.Outcome == ManualImportOutcome.AcquisitionInProgress)
+        {
+            // Protocol v2: the provider accepted a durable job rather than
+            // returning bytes immediately. AcquisitionJobPollingService
+            // drives it to completion (or a real failure) in the
+            // background -- this is progress, not a failure, and must not
+            // route to review (mirrors ExternalProviderRecheckService's
+            // same check).
+            attempts.Add(new ProviderAttempt(
+                request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Submitted,
+                "A high-confidence copy acquisition was submitted and is being tracked to completion.",
+                clock.UtcNow, nextEligibleCheckAtUtc: null));
+            await attempts.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+
         if (result.Outcome != ManualImportOutcome.Success)
         {
             attempts.Add(new ProviderAttempt(
@@ -268,7 +429,7 @@ public sealed class AutomaticRequestFulfillmentService(
 
         attempts.Add(new ProviderAttempt(
             request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Acquired,
-            "A high-confidence copy was acquired and sent through the security pipeline.", clock.UtcNow,
+            AudiobookFormatPolicy.DescribeAcquiredOption(option), clock.UtcNow,
             nextEligibleCheckAtUtc: null));
         await attempts.SaveChangesAsync(cancellationToken);
         return true;
@@ -420,7 +581,7 @@ public sealed class AutomaticRequestFulfillmentService(
         // has been resolved -- a failure already re-flags the request as
         // SecurityOrIdentityFailure via AcquireOptionAsync, which the caller
         // will see on its next load.
-        await AcquireOptionAsync(request, format, option, cancellationToken);
+        await AcquireOptionAsync(request, format, option, cancellationToken, confirmLowConfidenceMatch: true);
         return PreferenceAmbiguityResolutionOutcome.Resolved;
     }
 
@@ -464,47 +625,97 @@ public sealed class AutomaticRequestFulfillmentService(
     /// <see cref="BookRequest.StatusChangedAtUtc"/>, which is what lets this
     /// bypass the cooldown immediately instead of waiting out the full period.
     /// </summary>
-    private bool HasRecentAttempt(ProviderAttempt? attempt, BookRequest request) =>
-        attempt is not null &&
-        attempt.AttemptedAtUtc >= request.StatusChangedAtUtc &&
-        attempt.AttemptedAtUtc >= clock.UtcNow - RetryCooldown;
+    private bool HasRecentAttempt(ProviderAttempt? attempt, BookRequest request)
+    {
+        if (attempt is null || attempt.AttemptedAtUtc < request.StatusChangedAtUtc) return false;
+        if (attempt.NextEligibleCheckAtUtc is { } nextEligibleCheckAtUtc)
+            return nextEligibleCheckAtUtc > clock.UtcNow;
+        return attempt.AttemptedAtUtc >= clock.UtcNow - RetryCooldown;
+    }
 
-    private async Task MarkForReviewAsync(
+    /// <returns>
+    /// Whether anything was actually recorded. False only when the request is
+    /// already under review for an unrelated reason and this format's own
+    /// candidates genuinely cannot be added to it.
+    /// </returns>
+    private async Task<bool> MarkForReviewAsync(
         BookRequest request,
         RequestReviewCategory category,
         string reason,
         CancellationToken cancellationToken,
-        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string? Title, string? Author, string? Language)>? candidateOptions = null)
+        IReadOnlyList<RequestReviewCandidateInput>? candidateOptions = null)
     {
-        if (request.Status != RequestStatus.PendingAcquisition)
+        var refreshLegacyReview = category == RequestReviewCategory.PreferenceAmbiguity &&
+                                  candidateOptions is { Count: > 0 } &&
+                                  IsLegacyCollapsedPreferenceReview(request);
+
+        // A different format of this same request can complete its own
+        // lookup earlier in the same ProcessPendingAsync pass and already
+        // have flipped the status to NeedsReview/PreferenceAmbiguity. That
+        // format's candidates must be added, not silently dropped (the old
+        // behavior here) or have RefreshPreferenceReview wipe them out
+        // (that method replaces the whole candidate list, not just this
+        // format's slice).
+        var candidateFormatId = candidateOptions is { Count: > 0 }
+            ? candidateOptions.Select(option => option.RequestFormatId).First()
+            : (Guid?)null;
+        var addToExistingReview = !refreshLegacyReview &&
+            category == RequestReviewCategory.PreferenceAmbiguity &&
+            candidateFormatId is not null &&
+            request.Status == RequestStatus.NeedsReview &&
+            request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity &&
+            request.ReviewCandidates.All(candidate => candidate.RequestFormatId != candidateFormatId);
+
+        if (request.Status != RequestStatus.PendingAcquisition && !refreshLegacyReview && !addToExistingReview)
         {
-            return;
+            return false;
         }
 
         var view = await requests.FindAdminViewAsync(request.Id, cancellationToken);
         var workTitle = view?.Request.WorkTitle ?? request.WorkId.ToString();
 
-        // Prefer each option's own title/author, when the provider supplied
-        // one, so distinct editions stay distinguishable to the requester --
-        // fall back to the canonical Work title/no author only when a
-        // provider didn't supply its own.
+        // A candidate keeps the title and author the *source* claimed. This
+        // used to overwrite both with FL's own catalog facts so a requester
+        // never saw raw provider debris -- but it also meant a list of
+        // unrelated records rendered as repeated copies of the requested
+        // book, which is a worse failure than untidy text: both the requester
+        // and the librarian need to see that a source is offering something
+        // else. The catalog title is still the fallback when a source named
+        // nothing at all, and RequestReviewCandidateRecord flags that case.
+        var workAuthor = view?.Request.Authors is { Count: > 0 } authors ? authors[0] : null;
         var candidates = candidateOptions?
-            .Select(option => (option.RequestFormatId, option.ProviderId, option.ProviderResultId,
-                Title: option.Title ?? workTitle, option.Author, option.Language))
+            .Select(option => RequestReviewCandidateRecord.WithCatalogFallback(option, workTitle, workAuthor))
             .ToArray();
-        request.MarkNeedsReview(category, reason, clock.UtcNow, candidates);
+        if (refreshLegacyReview)
+        {
+            request.RefreshPreferenceReview(reason, clock.UtcNow, candidates!);
+        }
+        else if (addToExistingReview)
+        {
+            request.AddReviewCandidatesForFormat(
+                candidateFormatId!.Value, reason, clock.UtcNow, candidates!);
+        }
+        else
+        {
+            request.MarkNeedsReview(category, reason, clock.UtcNow, candidates);
+        }
 
         // Admin can still resolve a PreferenceAmbiguity item too (additive,
         // not exclusive), so this fires unconditionally for every category.
-        await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
+        if (!refreshLegacyReview)
+        {
+            await notifications.RecordRequestNeedsReviewAsync(request.Id, workTitle, reason, cancellationToken);
+        }
 
-        if (category == RequestReviewCategory.PreferenceAmbiguity)
+        if (!refreshLegacyReview && category == RequestReviewCategory.PreferenceAmbiguity)
         {
             foreach (var requesterId in request.ActiveRequesterIds)
             {
                 await notifications.RecordPreferenceAmbiguityAsync(requesterId, request.Id, workTitle, reason, cancellationToken);
             }
         }
+
+        return true;
     }
 
     private static string DescribeProviderFailure(Exception exception) => exception switch
@@ -515,6 +726,51 @@ public sealed class AutomaticRequestFulfillmentService(
             "The automatic provider timed out; it will be tried again automatically.",
         _ => "The automatic provider could not be reached; it will be tried again automatically."
     };
+
+    private static string DescribeProviderCandidates(IReadOnlyList<FulfillmentOption> options) =>
+        options.Count == 1 && !string.IsNullOrWhiteSpace(options[0].AutomaticSelectionReason)
+            ? options[0].AutomaticSelectionReason!
+            : $"Found {options.Count} high-confidence automatic candidate(s).";
+
+    private static bool IsLegacyCollapsedPreferenceReview(BookRequest request) =>
+        request.Status == RequestStatus.NeedsReview &&
+        request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity &&
+        request.ReviewCandidates.Count == 1 &&
+        string.Equals(
+            request.StatusHistory.LastOrDefault()?.Reason,
+            "Multiple plausible editions were found.",
+            StringComparison.Ordinal);
+
+    private async Task<AudiobookNarrationPreference> GetNarrationPreferenceAsync(
+        Guid requesterUserId, CancellationToken cancellationToken)
+    {
+        var account = await accounts.FindAsync(requesterUserId, cancellationToken);
+        return account?.AudiobookNarrationPreference ?? AudiobookNarrationPreference.PreferHuman;
+    }
+
+    private static string DescribeSameProviderAmbiguity(IReadOnlyList<FulfillmentOption> options)
+    {
+        const string gutenbergProviderId = "gutendex";
+        const int minimumDownloads = 1_000;
+        const double dominanceRatio = 3.0;
+
+        var ranked = options.OrderByDescending(option => option.ProviderPopularity ?? 0).ToArray();
+        if (ranked.Length >= 2 &&
+            ranked.All(option => option.ProviderId.Equals(gutenbergProviderId, StringComparison.OrdinalIgnoreCase) &&
+                                 option.ProviderPopularity is > 0) &&
+            ranked[1].ProviderPopularity is { } runnerUpDownloads)
+        {
+            var leading = ranked[0];
+            var leadingDownloads = leading.ProviderPopularity!.Value;
+            var ratio = leadingDownloads / (double)runnerUpDownloads;
+            return $"Project Gutenberg found {ranked.Length} eligible records. Its leading record " +
+                   $"(#{leading.ProviderResultId}, {leadingDownloads:N0} downloads) is only " +
+                   $"{ratio:0.#}× the runner-up (#{ranked[1].ProviderResultId}, {runnerUpDownloads:N0}). " +
+                   $"Automatic selection requires at least {minimumDownloads:N0} downloads and a {dominanceRatio:0.#}× lead.";
+        }
+
+        return "Several eligible records were found, but no single record met the automatic-selection rule.";
+    }
 
     private sealed class StringTupleComparer : IEqualityComparer<(string ProviderId, string ProviderResultId)>
     {

@@ -157,7 +157,7 @@ public sealed class BookRequest
         RequestReviewCategory category,
         string reason,
         DateTimeOffset atUtc,
-        IReadOnlyList<(Guid RequestFormatId, string ProviderId, string ProviderResultId, string Title, string? Author, string? Language)>? candidates = null)
+        IReadOnlyList<RequestReviewCandidateInput>? candidates = null)
     {
         if (category == RequestReviewCategory.PreferenceAmbiguity)
         {
@@ -176,17 +176,127 @@ public sealed class BookRequest
         _reviewCandidates.Clear();
         if (candidates is not null)
         {
+            // Retain every distinct provider record for the administrator.
+            // Requester-facing UI deliberately withholds a multi-record choice,
+            // but collapsing here would leave the librarian with a blind approval
+            // while the review reason still truthfully says there were several.
             for (var index = 0; index < candidates.Count; index++)
             {
                 var candidate = candidates[index];
                 _reviewCandidates.Add(new RequestReviewCandidate(
                     Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
-                    candidate.Author, candidate.Language, index, atUtc));
+                    candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
+                    candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc, candidate.AdminSourceSummary));
             }
         }
 
         ReviewCategory = category;
         TransitionTo(RequestStatus.NeedsReview, actorUserId: null, reason, atUtc);
+    }
+
+    /// <summary>
+    /// Replaces stale evidence for an existing preference review without
+    /// reopening the request. Used only when a background worker can recover
+    /// evidence that an older review did not retain.
+    /// </summary>
+    public void RefreshPreferenceReview(
+        string reason,
+        DateTimeOffset atUtc,
+        IReadOnlyList<RequestReviewCandidateInput> candidates)
+    {
+        if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
+        {
+            throw new InvalidOperationException("Only an existing preference review can be refreshed.");
+        }
+
+        if (candidates.Count == 0)
+        {
+            throw new ArgumentException("A preference review requires at least one candidate.", nameof(candidates));
+        }
+
+        _reviewCandidates.Clear();
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            var candidate = candidates[index];
+            _reviewCandidates.Add(new RequestReviewCandidate(
+                Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
+                candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
+                candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc, candidate.AdminSourceSummary));
+        }
+
+        StatusChangedAtUtc = atUtc;
+        UpdatedAtUtc = atUtc;
+        _statusHistory.Add(new RequestStatusHistory(
+            Id, RequestStatus.NeedsReview, RequestStatus.NeedsReview, actorUserId: null,
+            CleanNote(reason, MaxReasonLength, nameof(reason)), atUtc));
+    }
+
+    /// <summary>
+    /// Adds review candidates for a format not yet represented in an existing
+    /// preference-ambiguity review, leaving candidates already stored for any
+    /// other format untouched.
+    /// </summary>
+    /// <remarks>
+    /// Two different formats of the same request can each complete their own
+    /// automatic lookup in the same background pass. The first to find
+    /// candidates calls <see cref="MarkNeedsReview"/> and flips the status;
+    /// without this, the second format's own candidates would then either be
+    /// silently dropped (a caller that only checks for
+    /// <see cref="RequestStatus.PendingAcquisition"/> before recording
+    /// anything) or wipe the first format's candidates entirely (a caller
+    /// that instead used <see cref="RefreshPreferenceReview"/>, which
+    /// replaces the whole list rather than appending to it). Observed live:
+    /// an external provider's attempt log said "Found 1 candidate(s); choose
+    /// a reviewed candidate" for a candidate that was never actually stored
+    /// anywhere, because a different format's provider had claimed the
+    /// transition a second earlier in the same pass.
+    /// </remarks>
+    public void AddReviewCandidatesForFormat(
+        Guid requestFormatId,
+        string reason,
+        DateTimeOffset atUtc,
+        IReadOnlyList<RequestReviewCandidateInput> candidates)
+    {
+        if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
+        {
+            throw new InvalidOperationException(
+                "Only an existing preference-ambiguity review can have a format's candidates added to it.");
+        }
+
+        if (candidates.Count == 0)
+        {
+            throw new ArgumentException("At least one candidate is required.", nameof(candidates));
+        }
+
+        if (candidates.Any(candidate => candidate.RequestFormatId != requestFormatId))
+        {
+            throw new ArgumentException(
+                "Every candidate must belong to the format being added.", nameof(candidates));
+        }
+
+        if (_reviewCandidates.Any(candidate => candidate.RequestFormatId == requestFormatId))
+        {
+            // Nothing to do: a previous pass already recorded this format's
+            // candidates (e.g. a retry landed here after success).
+            return;
+        }
+
+        var nextDisplayOrder = _reviewCandidates.Count == 0
+            ? 0
+            : _reviewCandidates.Max(candidate => candidate.DisplayOrder) + 1;
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            var candidate = candidates[index];
+            _reviewCandidates.Add(new RequestReviewCandidate(
+                Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
+                candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
+                candidate.ReleaseName, candidate.TitleIsRequestFallback, nextDisplayOrder + index, atUtc, candidate.AdminSourceSummary));
+        }
+
+        UpdatedAtUtc = atUtc;
+        _statusHistory.Add(new RequestStatusHistory(
+            Id, RequestStatus.NeedsReview, RequestStatus.NeedsReview, actorUserId: null,
+            CleanNote(reason, MaxReasonLength, nameof(reason)), atUtc));
     }
 
     /// <summary>
@@ -243,6 +353,47 @@ public sealed class BookRequest
         _reviewCandidates.Clear();
         TransitionTo(RequestStatus.PendingAcquisition, actorUserId, "The requester chose to keep looking for a better match.", atUtc);
     }
+
+    /// <summary>
+    /// Records that unattended acquisition fetched one candidate and it failed
+    /// a post-download check, so the next automatic pass advances to the next
+    /// ranked candidate instead of re-downloading the same bad file
+    /// (PROVIDER-7).
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does not change <see cref="Status"/>. A single failed
+    /// candidate is not a reason to stop: the caller decides whether the
+    /// provider's attempt budget is now spent and only then moves the request
+    /// to review. Recorded with
+    /// <see cref="DeclinedCandidateReason.AutomaticVerificationFailed"/> so it
+    /// is countable against that budget and distinguishable from a requester's
+    /// free "keep looking".
+    /// </remarks>
+    public void RecordAutomaticCandidateFailure(
+        Guid requestFormatId, string providerId, string providerResultId, string? failureReason, DateTimeOffset atUtc,
+        string? releaseFingerprint = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerResultId);
+
+        _declinedCandidates.RemoveAll(declined =>
+            declined.RequestFormatId == requestFormatId &&
+            declined.ProviderId == providerId &&
+            declined.ProviderResultId == providerResultId);
+        _declinedCandidates.Add(new DeclinedRequestCandidate(
+            Id, requestFormatId, providerId, providerResultId, atUtc,
+            DeclinedCandidateReason.AutomaticVerificationFailed, failureReason, releaseFingerprint));
+    }
+
+    /// <summary>
+    /// How many distinct candidates unattended acquisition has already
+    /// downloaded and failed to verify for one format from one provider.
+    /// </summary>
+    public int CountAutomaticCandidateFailures(Guid requestFormatId, string providerId) =>
+        _declinedCandidates.Count(declined =>
+            declined.RequestFormatId == requestFormatId &&
+            declined.Reason == DeclinedCandidateReason.AutomaticVerificationFailed &&
+            string.Equals(declined.ProviderId, providerId, StringComparison.OrdinalIgnoreCase));
 
     public void Join(
         Guid userId,

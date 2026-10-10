@@ -1,4 +1,6 @@
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Infrastructure.Providers;
 
 namespace FamilyLibrarian.Web.Endpoints;
 
@@ -26,8 +28,20 @@ internal static class GutenbergCatalogEndpoints
     private static async Task<IResult> SynchronizeAsync(
         IGutenbergCatalog catalog,
         IGutenbergCatalogSynchronizer synchronizer,
+        IProviderRegistry registry,
+        IProviderSettingsStore settings,
         CancellationToken cancellationToken)
     {
+        // The UI disables the button, but a disabled source must not be
+        // downloaded or imported by any caller.
+        if (!await ProviderState.IsUsableAsync(registry, settings, ProviderRegistry.GutenbergProviderId, cancellationToken))
+        {
+            return Results.Conflict(new
+            {
+                detail = "Project Gutenberg is disabled. Enable it before refreshing the catalogue."
+            });
+        }
+
         var currentStatus = await catalog.GetStatusAsync(cancellationToken);
         if (currentStatus.Status is "CheckingUpdates" or "Downloading" or "Parsing" or "Importing" or "Retrying" or "Purging")
         {

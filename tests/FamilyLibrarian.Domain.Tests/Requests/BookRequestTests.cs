@@ -13,7 +13,12 @@ public sealed class BookRequestTests
 
     private static readonly Guid UserId = Guid.NewGuid();
     private static readonly Guid WorkId = Guid.NewGuid();
-
+    private static readonly string[] RetainedReviewCandidateDetails =
+    [
+        "EPUB · Published 2014 · Example Press",
+        "epub · published 2014 · example press",
+        "EPUB · Published 2015 · Archive House"
+    ];
     [TestMethod]
     public void ANewRequestStartsPendingWithOneRowPerRequestedFormat()
     {
@@ -224,6 +229,125 @@ public sealed class BookRequestTests
         Assert.AreEqual(targetId, participant.DeliveryTargetId);
         Assert.IsTrue(participant.WantsEbook);
         Assert.IsTrue(participant.WantsAudiobook);
+    }
+
+    [TestMethod]
+    public void PreferenceReviewRetainsEveryDistinctProviderRecordForLibrarianReview()
+    {
+        var request = Create(RequestMediaType.Ebook);
+        var formatId = request.Formats.Single().Id;
+
+        request.MarkNeedsReview(
+            RequestReviewCategory.PreferenceAmbiguity,
+            "Choose an edition.",
+            CreatedAt.AddHours(1),
+            [
+                new RequestReviewCandidateInput(formatId, "provider-a", "opaque-a", "The Martian", "Andy Weir", "en", "EPUB · Published 2014 · Example Press", null, null, false),
+                new RequestReviewCandidateInput(formatId, "provider-a", "opaque-b", "the   martian", "Weir, Andy", "EN", "epub · published 2014 · example press", null, null, false),
+                new RequestReviewCandidateInput(formatId, "provider-a", "opaque-c", "The Martian", "Andy Weir", "en", "EPUB · Published 2015 · Archive House", null, null, false)
+            ]);
+
+        Assert.HasCount(3, request.ReviewCandidates);
+        Assert.AreEqual("opaque-a", request.ReviewCandidates.First().ProviderResultId);
+        CollectionAssert.AreEquivalent(
+            RetainedReviewCandidateDetails,
+            request.ReviewCandidates.Select(candidate => candidate.Details).ToArray());
+    }
+
+    /// <summary>
+    /// The live bug: two formats of the same request can each complete their
+    /// own lookup in the same background pass. Whichever gets there first
+    /// correctly calls <see cref="BookRequest.MarkNeedsReview"/> and flips the
+    /// status; the second format's own candidates must then be added, not
+    /// silently dropped (the old behavior for any caller that only checked
+    /// for <see cref="RequestStatus.PendingAcquisition"/>) or wipe the first
+    /// format's candidates (what <see cref="BookRequest.RefreshPreferenceReview"/>
+    /// would do, since it replaces the whole list).
+    /// </summary>
+    [TestMethod]
+    public void AddReviewCandidatesForFormatAddsASecondFormatWithoutDisturbingTheFirst()
+    {
+        var request = Create(RequestMediaType.Ebook, RequestMediaType.Audiobook);
+        var ebookFormatId = request.Formats.Single(format => format.MediaType == RequestMediaType.Ebook).Id;
+        var audiobookFormatId = request.Formats.Single(format => format.MediaType == RequestMediaType.Audiobook).Id;
+
+        request.MarkNeedsReview(
+            RequestReviewCategory.PreferenceAmbiguity,
+            "Found 23 candidate(s); choose a reviewed candidate before acquisition.",
+            CreatedAt.AddHours(1),
+            [new RequestReviewCandidateInput(
+                ebookFormatId, "annas", "ebook-ref", "Day of the Dead", "Rebecca Pettiford", "en", null, null, null, false)]);
+
+        request.AddReviewCandidatesForFormat(
+            audiobookFormatId,
+            "Found 1 candidate(s); choose a reviewed candidate before acquisition.",
+            CreatedAt.AddHours(1).AddSeconds(2),
+            [new RequestReviewCandidateInput(
+                audiobookFormatId, "prowlarr", "audio-ref", "Threshing Day", "Rebecca Yarros", "en", null, null, null, false)]);
+
+        Assert.HasCount(2, request.ReviewCandidates);
+        Assert.IsTrue(request.ReviewCandidates.Any(candidate =>
+            candidate.RequestFormatId == ebookFormatId && candidate.ProviderResultId == "ebook-ref"));
+        Assert.IsTrue(request.ReviewCandidates.Any(candidate =>
+            candidate.RequestFormatId == audiobookFormatId && candidate.ProviderResultId == "audio-ref"));
+    }
+
+    [TestMethod]
+    public void AddReviewCandidatesForFormatIsANoOpWhenThatFormatAlreadyHasCandidates()
+    {
+        var request = Create(RequestMediaType.Ebook);
+        var formatId = request.Formats.Single().Id;
+        request.MarkNeedsReview(
+            RequestReviewCategory.PreferenceAmbiguity,
+            "Found 1 candidate(s).",
+            CreatedAt.AddHours(1),
+            [new RequestReviewCandidateInput(formatId, "annas", "ref-1", "Title", "Author", "en", null, null, null, false)]);
+
+        request.AddReviewCandidatesForFormat(
+            formatId,
+            "A retry landed here after success.",
+            CreatedAt.AddHours(2),
+            [new RequestReviewCandidateInput(formatId, "annas", "ref-2", "Title", "Author", "en", null, null, null, false)]);
+
+        Assert.HasCount(1, request.ReviewCandidates);
+        Assert.AreEqual("ref-1", request.ReviewCandidates.Single().ProviderResultId);
+    }
+
+    [TestMethod]
+    public void AddReviewCandidatesForFormatThrowsWhenNotAlreadyAPreferenceReview()
+    {
+        var request = Create(RequestMediaType.Ebook);
+        var formatId = request.Formats.Single().Id;
+
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            request.AddReviewCandidatesForFormat(
+                formatId, "reason", CreatedAt.AddHours(1),
+                [new RequestReviewCandidateInput(formatId, "annas", "ref", "Title", "Author", "en", null, null, null, false)]));
+    }
+
+    [TestMethod]
+    public void RefreshPreferenceReviewReplacesLegacyEvidenceWithoutReopeningTheRequest()
+    {
+        var request = Create(RequestMediaType.Audiobook);
+        var formatId = request.Formats.Single().Id;
+        request.MarkNeedsReview(
+            RequestReviewCategory.PreferenceAmbiguity,
+            "Multiple plausible editions were found.",
+            CreatedAt.AddHours(1),
+            [new RequestReviewCandidateInput(formatId, "gutendex", "9147", "Moby Dick", "Herman Melville", "en", null, null, null, false)]);
+
+        request.RefreshPreferenceReview(
+            "Project Gutenberg found 2 eligible records. Its leading record (#28794, 5,505 downloads) is only 1.8× the runner-up (#9147, 3,064). Automatic selection requires at least 1,000 downloads and a 3× lead.",
+            CreatedAt.AddHours(2),
+            [
+                new RequestReviewCandidateInput(formatId, "gutendex", "9147", "Moby Dick", "Herman Melville", "en", "MP3 audiobook · 155 parts · 3,064 source downloads", null, null, false),
+                new RequestReviewCandidateInput(formatId, "gutendex", "28794", "Moby Dick", "Herman Melville", "en", "MP3 audiobook · 44 parts · 5,505 source downloads", null, null, false)
+            ]);
+
+        Assert.AreEqual(RequestStatus.NeedsReview, request.Status);
+        Assert.HasCount(2, request.ReviewCandidates);
+        Assert.AreEqual("28794", request.ReviewCandidates.Last().ProviderResultId);
+        Assert.IsTrue(request.StatusHistory.Last().Reason!.Contains("1.8×", StringComparison.Ordinal));
     }
 
     private static BookRequest Create(params RequestMediaType[] mediaTypes) =>

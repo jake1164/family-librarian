@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Policy;
 using FamilyLibrarian.Application.Publishing;
@@ -8,6 +9,7 @@ using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Policy;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Web.Logging;
+using FamilyLibrarian.Web.Catalog;
 
 namespace FamilyLibrarian.Web.Endpoints;
 
@@ -23,11 +25,18 @@ internal static class CatalogEndpoints
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
         catalog.MapGet("/search", SearchCatalogAsync);
+        catalog.MapPost("/search/runs", StartCatalogSearchRunAsync);
+        catalog.MapGet("/search/runs/{runId:guid}", GetCatalogSearchRunAsync);
+        catalog.MapDelete("/search/runs/{runId:guid}", CancelCatalogSearchRunAsync);
         catalog.MapGet("/candidates/{providerId}/{externalId}", GetCatalogCandidateAsync);
         catalog.MapPost("/candidates/{providerId}/{externalId}/resolve", ResolveCatalogCandidateAsync);
+        catalog.MapGet("/request-formats", GetRequestFormatsAsync);
         catalog.MapGet("/works/{workId:guid}", GetCatalogWorkAsync);
         catalog.MapGet("/works/{workId:guid}/fulfillment-options", GetWorkFulfillmentOptionsAsync);
         catalog.MapPost("/availability", GetCandidateAvailabilityAsync);
+        catalog.MapPost("/availability/runs", StartCandidateAvailabilityRunAsync);
+        catalog.MapGet("/availability/runs/{runId:guid}", GetCandidateAvailabilityRunAsync);
+        catalog.MapDelete("/availability/runs/{runId:guid}", CancelCandidateAvailabilityRunAsync);
         catalog.MapGet("/external-library-links", GetExternalLibraryLinksAsync);
     }
 
@@ -256,6 +265,96 @@ internal static class CatalogEndpoints
             result.Audiobook.Select(ToFulfillmentOptionResponse).ToArray()));
     }
 
+    private static IResult StartCatalogSearchRunAsync(
+        CatalogSearchRequest request,
+        ICurrentUser currentUser,
+        CatalogSearchRunCoordinator coordinator)
+    {
+        var searchText = request.Query?.Trim();
+        if (string.IsNullOrWhiteSpace(searchText) || searchText.Length is < 2 or > 200 || request.Page is < 1 or > BookSearchQuery.MaximumPage)
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["query"] = ["Enter a query of 2–200 characters and a valid page number."] });
+        if (currentUser.UserId is not { } userId) return Results.Unauthorized();
+        if (request.PreviousRunId is { } previousId &&
+            (!coordinator.TryGet(userId, previousId, out var previous) || previous is null || !previous.IsComplete ||
+             previous.Query.Text != searchText || previous.Query.Page + 1 != request.Page))
+            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Search expired", detail: "Search again to load more results.");
+        var run = coordinator.Start(userId, new BookSearchQuery(searchText, request.Page), request.PreviousRunId);
+        return run is null ? Results.StatusCode(StatusCodes.Status503ServiceUnavailable) :
+            Results.Accepted($"/api/v1/catalog/search/runs/{run.Id}", new CatalogSearchRunStartedResponse(run.Id));
+    }
+
+    private static IResult GetCatalogSearchRunAsync(
+        Guid runId,
+        string? q,
+        ICurrentUser currentUser,
+        CatalogSearchRunCoordinator coordinator)
+    {
+        if (currentUser.UserId is not { } userId || !coordinator.TryGet(userId, runId, out var run) || run is null)
+            return Results.NotFound();
+        var providerResults = run.Snapshot();
+        var candidates = BookCandidateGrouper.GroupMatchingCandidates(
+            providerResults.SelectMany(result => result.Candidates).ToArray(), run.Query.Text)
+            .Select(candidate => ToResponse(candidate, run.Query.Text)).ToArray();
+        var response = new CatalogSearchResponse(candidates,
+            providerResults.Select(result => new CatalogProviderSearchStatusResponse(result.ProviderId, result.ProviderName, result.Succeeded)).ToArray(),
+            run.Query.Page, providerResults.Any(result => result.Succeeded && result.HasMore));
+        return Results.Ok(new CatalogSearchRunResponse(response, run.IsComplete));
+    }
+
+    private static IResult CancelCatalogSearchRunAsync(Guid runId, ICurrentUser currentUser, CatalogSearchRunCoordinator coordinator) =>
+        currentUser.UserId is { } userId && coordinator.Cancel(userId, runId) ? Results.NoContent() : Results.NotFound();
+
+    private static IResult StartCandidateAvailabilityRunAsync(
+        CandidateAvailabilityRequest request,
+        ICurrentUser currentUser,
+        AvailabilityRunCoordinator coordinator)
+    {
+        var title = request.Title?.Trim();
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["title"] = ["A title is required to check availability."]
+            });
+        }
+
+        if (currentUser.UserId is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        var run = coordinator.Start(userId, new BookIdentity(
+            title, request.Authors.Count > 0 ? request.Authors[0] : null, request.Isbn13s));
+        return run is null
+            ? Results.StatusCode(StatusCodes.Status503ServiceUnavailable)
+            : Results.Accepted($"/api/v1/catalog/availability/runs/{run.Id}", new CandidateAvailabilityRunStartedResponse(run.Id));
+    }
+
+    private static IResult GetCandidateAvailabilityRunAsync(
+        Guid runId,
+        ICurrentUser currentUser,
+        AvailabilityRunCoordinator coordinator)
+    {
+        if (currentUser.UserId is not { } userId || !coordinator.TryGet(userId, runId, out var run) || run is null)
+        {
+            return Results.NotFound();
+        }
+
+        var facts = run.Snapshot()
+            .GroupBy(option => (option.OptionKind.ToString(), MediaType: option.MediaType.ToString()))
+            .Select(group => new AvailabilityFactResponse(group.Key.Item1, group.Key.MediaType))
+            .ToArray();
+        return Results.Ok(new CandidateAvailabilityRunResponse(run.IsComplete, facts));
+    }
+
+    private static IResult CancelCandidateAvailabilityRunAsync(
+        Guid runId,
+        ICurrentUser currentUser,
+        AvailabilityRunCoordinator coordinator) =>
+        currentUser.UserId is { } userId && coordinator.Cancel(userId, runId)
+            ? Results.NoContent()
+            : Results.NotFound();
+
     private static async Task<IResult> GetExternalLibraryLinksAsync(
         ICwaSettingsStore cwaSettingsStore,
         IAudiobookshelfSettingsStore audiobookshelfSettingsStore,
@@ -281,14 +380,23 @@ internal static class CatalogEndpoints
     }
 
     private static FormatReadinessResponse ToFormatReadinessResponse(FormatReadiness readiness) =>
-        new(readiness.IsReady, readiness.Reason);
+        new(readiness.IsReady, readiness.Reason, readiness.IsEnabled);
+
+    private static async Task<IResult> GetRequestFormatsAsync(
+        IFormatReadinessService readiness,
+        CancellationToken cancellationToken) =>
+        Results.Ok(new RequestFormatsResponse(
+            ToFormatReadinessResponse(await readiness.CheckAsync(RequestMediaType.Ebook, cancellationToken)),
+            ToFormatReadinessResponse(await readiness.CheckAsync(RequestMediaType.Audiobook, cancellationToken))));
 
     private static FulfillmentOptionResponse ToFulfillmentOptionResponse(FulfillmentOption option) => new(
         option.ProviderId,
         option.ProviderResultId,
         option.OptionKind.ToString(),
         option.AcquisitionMethod.ToString(),
-        option.ExternalActionUri?.ToString());
+        option.ExternalActionUri?.ToString(),
+        option.MatchBasis?.ToString(),
+        option.RequiresLanguageConfirmation);
 
     private static RecommendationResponse? ToRecommendationResponse(FulfillmentRecommendation? recommendation) =>
         recommendation is null
@@ -349,7 +457,7 @@ internal static class CatalogEndpoints
         candidate.ProviderId,
         candidate.ProviderName,
         candidate.ExternalId,
-        candidate.Title,
+        BookCandidateVersion.Assess(candidate).Kind == "Collection" ? candidate.WorkTitle ?? candidate.Title : candidate.Title,
         candidate.Authors,
         candidate.Description,
         candidate.CoverUrl,
@@ -358,7 +466,7 @@ internal static class CatalogEndpoints
             edition.Title,
             edition.Isbn13,
             edition.Format,
-            edition.PublicationDate)).ToArray(),
+            edition.PublicationDate, edition.Language, edition.Publisher)).ToArray(),
         candidate.Series.Select(series => new CatalogSeriesResponse(
             series.Name,
             series.PositionLabel,
@@ -372,7 +480,11 @@ internal static class CatalogEndpoints
             source.ProviderId,
             source.ProviderName,
             source.ExternalId,
-            source.SourceUrl)).ToArray());
+            source.SourceUrl)).ToArray(),
+        candidate.Language,
+        BookCandidateVersion.Assess(candidate).Kind,
+        BookCandidateVersion.Assess(candidate).Label,
+        BookCandidateVersion.Assess(candidate).Explanation);
 
     private static async Task<CatalogWorkResponse> ToWorkResponseAsync(
         Domain.Catalog.Work work,

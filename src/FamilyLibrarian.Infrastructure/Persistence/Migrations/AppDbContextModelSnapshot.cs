@@ -303,12 +303,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
 
-                    b.Property<string>("EgressPolicy")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("egress_policy");
-
                     b.Property<string>("FailureReason")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)")
@@ -399,6 +393,17 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("format");
 
+                    b.Property<string>("IdentityMismatchReason")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("identity_mismatch_reason");
+
+                    b.Property<bool>("IdentityPreConfirmed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("identity_pre_confirmed");
+
                     b.Property<string>("MediaType")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -410,6 +415,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasMaxLength(1024)
                         .HasColumnType("character varying(1024)")
                         .HasColumnName("original_filename");
+
+                    b.Property<string>("ScanFailureReason")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("scan_failure_reason");
 
                     b.Property<string>("Sha256")
                         .IsRequired()
@@ -466,6 +476,307 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("media_assets", "acquisition");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AcquireRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("acquire_request_id");
+
+                    b.Property<string>("AcquireToken")
+                        .HasColumnType("text")
+                        .HasColumnName("acquire_token");
+
+                    b.Property<string>("CandidateFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("candidate_fingerprint");
+
+                    b.Property<string>("CandidateReference")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("candidate_reference");
+
+                    b.Property<string>("CandidateRevision")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("candidate_revision");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("error_code");
+
+                    b.Property<string>("ErrorDetailsJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("error_details_json");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("error_message");
+
+                    b.Property<int?>("ErrorRetryAfterSeconds")
+                        .HasColumnType("integer")
+                        .HasColumnName("error_retry_after_seconds");
+
+                    b.Property<bool?>("ErrorRetryable")
+                        .HasColumnType("boolean")
+                        .HasColumnName("error_retryable");
+
+                    b.Property<string>("ExtensionsJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("extensions_json");
+
+                    b.Property<Guid>("ExternalProviderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("external_provider_id");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<bool>("IdentityPreConfirmed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("identity_pre_confirmed");
+
+                    b.Property<string>("InteractionActionUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("interaction_action_url");
+
+                    b.Property<DateTimeOffset?>("InteractionExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("interaction_expires_at_utc");
+
+                    b.Property<string>("InteractionMessage")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("interaction_message");
+
+                    b.Property<bool?>("InteractionResumeSupported")
+                        .HasColumnType("boolean")
+                        .HasColumnName("interaction_resume_supported");
+
+                    b.Property<string>("InteractionType")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("interaction_type");
+
+                    b.Property<DateTimeOffset?>("InteractionViewSessionStartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("interaction_view_session_started_at_utc");
+
+                    b.Property<bool>("IsAutomaticAcquisition")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_automatic_acquisition");
+
+                    b.Property<DateTimeOffset?>("LeftWaitingAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("left_waiting_at_utc");
+
+                    b.Property<string>("LifecycleState")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("lifecycle_state");
+
+                    b.Property<Guid?>("LocalAcquisitionJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("local_acquisition_job_id");
+
+                    b.Property<DateTimeOffset?>("NextPollAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_poll_at_utc");
+
+                    b.Property<int?>("PartNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("part_number");
+
+                    b.Property<Guid?>("PartSetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("part_set_id");
+
+                    b.Property<int?>("PartTotal")
+                        .HasColumnType("integer")
+                        .HasColumnName("part_total");
+
+                    b.Property<string>("Phase")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("phase");
+
+                    b.Property<long?>("ProgressBytesCompleted")
+                        .HasColumnType("bigint")
+                        .HasColumnName("progress_bytes_completed");
+
+                    b.Property<long?>("ProgressBytesTotal")
+                        .HasColumnType("bigint")
+                        .HasColumnName("progress_bytes_total");
+
+                    b.Property<string>("ProgressMessage")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("progress_message");
+
+                    b.Property<double?>("ProgressPercent")
+                        .HasColumnType("double precision")
+                        .HasColumnName("progress_percent");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<string>("ProviderInstanceId")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("provider_instance_id");
+
+                    b.Property<string>("ProviderJobId")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("provider_job_id");
+
+                    b.Property<Guid>("RequestFormatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_format_id");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<DateTimeOffset?>("RetentionExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("retention_expires_at_utc");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<DateTimeOffset?>("WaitingSinceUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("waiting_since_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LocalAcquisitionJobId");
+
+                    b.HasIndex("NextPollAtUtc");
+
+                    b.HasIndex("PartSetId");
+
+                    b.HasIndex("RequestId");
+
+                    b.HasIndex("ExternalProviderId", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("RequestFormatId", "LifecycleState");
+
+                    b.ToTable("provider_acquisition_jobs", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJobOutput", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ChecksumsJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("checksums_json");
+
+                    b.Property<string>("ContentType")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("content_type");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Filename")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("filename");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid?>("MediaAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("media_asset_id");
+
+                    b.Property<string>("OutputId")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("output_id");
+
+                    b.Property<Guid>("ProviderAcquisitionJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("provider_acquisition_job_id");
+
+                    b.Property<DateTimeOffset?>("RetentionExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("retention_expires_at_utc");
+
+                    b.Property<string>("Role")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("role");
+
+                    b.Property<int?>("Sequence")
+                        .HasColumnType("integer")
+                        .HasColumnName("sequence");
+
+                    b.Property<long?>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<string>("Uri")
+                        .HasColumnType("text")
+                        .HasColumnName("uri");
+
+                    b.Property<string>("UriScheme")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("uri_scheme");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaAssetId")
+                        .IsUnique()
+                        .HasFilter("media_asset_id IS NOT NULL");
+
+                    b.HasIndex("ProviderAcquisitionJobId", "OutputId")
+                        .IsUnique();
+
+                    b.ToTable("provider_acquisition_job_outputs", "acquisition");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAttempt", b =>
                 {
                     b.Property<Guid>("Id")
@@ -513,6 +824,204 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasIndex("RequestFormatId", "ProviderId", "AttemptedAtUtc");
 
                     b.ToTable("provider_attempts", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlert", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("ClaimedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_at_utc");
+
+                    b.Property<string>("ClaimedByDisplayName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("claimed_by_display_name");
+
+                    b.Property<Guid?>("ClaimedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("claimed_by_user_id");
+
+                    b.Property<Guid?>("ClaimedJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("claimed_job_id");
+
+                    b.Property<string>("CloseReason")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("close_reason");
+
+                    b.Property<DateTimeOffset?>("ClosedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("closed_at_utc");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid>("ExternalProviderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("external_provider_id");
+
+                    b.Property<string>("ProviderDisplayName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("provider_display_name");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("state");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExternalProviderId")
+                        .IsUnique()
+                        .HasFilter("state IN ('Open','Claimed')");
+
+                    b.ToTable("provider_interaction_alerts", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlertRecipient", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AlertId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("alert_id");
+
+                    b.Property<string>("DeliveryState")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("delivery_state");
+
+                    b.Property<string>("EventId")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("event_id");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("last_error");
+
+                    b.Property<string>("RenderedState")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("rendered_state");
+
+                    b.Property<string>("RoomId")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("room_id");
+
+                    b.Property<int>("SendAttempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("send_attempts");
+
+                    b.Property<DateTimeOffset?>("SentAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at_utc");
+
+                    b.Property<DateTimeOffset?>("TokenConsumedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("token_consumed_at_utc");
+
+                    b.Property<string>("TokenHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("token_hash");
+
+                    b.Property<DateTimeOffset?>("TokenRevokedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("token_revoked_at_utc");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AlertId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasFilter("token_hash IS NOT NULL");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("provider_interaction_alert_recipients", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionClaim", b =>
+                {
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("job_id");
+
+                    b.Property<Guid?>("AlertId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("alert_id");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("channel");
+
+                    b.Property<DateTimeOffset>("ClaimedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_at_utc");
+
+                    b.Property<Guid>("ClaimedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("claimed_by_user_id");
+
+                    b.Property<Guid>("ExternalProviderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("external_provider_id");
+
+                    b.Property<DateTimeOffset?>("LastViewerActivityAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_viewer_activity_at_utc");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("JobId");
+
+                    b.HasIndex("ClaimedByUserId");
+
+                    b.ToTable("provider_interaction_claims", "acquisition");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Audit.AuditEvent", b =>
@@ -1690,27 +2199,66 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("api_key_set_at_utc");
 
+                    b.Property<bool>("AutoAcquireEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("auto_acquire_enabled");
+
+                    b.Property<int>("AutomaticAttemptLimit")
+                        .HasColumnType("integer")
+                        .HasColumnName("automatic_attempt_limit");
+
                     b.Property<string>("BaseUrl")
                         .IsRequired()
                         .HasMaxLength(1024)
                         .HasColumnType("character varying(1024)")
                         .HasColumnName("base_url");
 
+                    b.Property<string>("CachedAcquireOperationStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("cached_acquire_operation_status");
+
                     b.Property<string>("CachedCapabilities")
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)")
                         .HasColumnName("cached_capabilities");
 
-                    b.Property<string>("CachedEgressPolicy")
+                    b.Property<string>("CachedDocumentationUrl")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("cached_documentation_url");
+
+                    b.Property<string>("CachedHealthIssues")
                         .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasColumnName("cached_health_issues")
+                        .HasDefaultValueSql("'[]'");
+
+                    b.Property<string>("CachedHealthStatus")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
-                        .HasColumnName("cached_egress_policy");
+                        .HasColumnName("cached_health_status");
+
+                    b.Property<string>("CachedInstanceId")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("cached_instance_id");
+
+                    b.Property<string>("CachedManagementUrl")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("cached_management_url");
 
                     b.Property<string>("CachedProtocolVersion")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("cached_protocol_version");
+
+                    b.Property<string>("CachedSearchOperationStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("cached_search_operation_status");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
@@ -1722,10 +2270,9 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(128)")
                         .HasColumnName("display_name");
 
-                    b.Property<string>("EgressPolicyOverride")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("overridden_egress_policy");
+                    b.Property<bool>("InstanceReplacedSincePreviousTest")
+                        .HasColumnType("boolean")
+                        .HasColumnName("instance_replaced_since_previous_test");
 
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("boolean")
@@ -1781,57 +2328,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("external_providers", "providers");
-                });
-
-            modelBuilder.Entity("FamilyLibrarian.Domain.Providers.PrivateEgressGatewaySettings", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<string>("GatewayEndpoint")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("gateway_endpoint");
-
-                    b.Property<bool>("IsEnabled")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_enabled");
-
-                    b.Property<string>("LastTestMessage")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("last_test_message");
-
-                    b.Property<bool?>("LastTestSucceeded")
-                        .HasColumnType("boolean")
-                        .HasColumnName("last_test_succeeded");
-
-                    b.Property<DateTimeOffset?>("LastTestedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_tested_at_utc");
-
-                    b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at_utc");
-
-                    b.Property<Guid?>("UpdatedByUserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("updated_by_user_id");
-
-                    b.Property<uint>("Version")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("private_egress_gateway_settings", "providers");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Providers.ProviderCatalog", b =>
@@ -2447,6 +2943,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("declined_at_utc");
 
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("failure_reason");
+
                     b.Property<string>("ProviderId")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -2458,6 +2959,17 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
                         .HasColumnName("provider_result_id");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("ReleaseFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("release_fingerprint");
 
                     b.Property<Guid>("RequestFormatId")
                         .HasColumnType("uuid")
@@ -2575,6 +3087,16 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("AdminInspectionUri")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("admin_inspection_uri");
+
+                    b.Property<string>("AdminSourceSummary")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("admin_source_summary");
+
                     b.Property<string>("Author")
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)")
@@ -2583,6 +3105,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Details")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("details");
 
                     b.Property<int>("DisplayOrder")
                         .HasColumnType("integer")
@@ -2605,6 +3132,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(256)")
                         .HasColumnName("provider_result_id");
 
+                    b.Property<string>("ReleaseName")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("release_name");
+
                     b.Property<Guid>("RequestFormatId")
                         .HasColumnType("uuid")
                         .HasColumnName("request_format_id");
@@ -2618,6 +3150,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)")
                         .HasColumnName("title");
+
+                    b.Property<bool>("TitleIsRequestFallback")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("title_is_request_fallback");
 
                     b.HasKey("Id");
 
@@ -3120,6 +3658,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<int>("AccessFailedCount")
                         .HasColumnType("integer");
 
+                    b.Property<string>("AudiobookNarrationPreference")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("audiobook_narration_preference");
+
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
                         .HasColumnType("text");
@@ -3167,6 +3711,19 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("PhoneNumberConfirmed")
                         .HasColumnType("boolean");
+
+                    b.Property<int?>("QuietHoursEndMinute")
+                        .HasColumnType("integer")
+                        .HasColumnName("quiet_hours_end_minute");
+
+                    b.Property<int?>("QuietHoursStartMinute")
+                        .HasColumnType("integer")
+                        .HasColumnName("quiet_hours_start_minute");
+
+                    b.Property<string>("QuietHoursTimeZoneId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("quiet_hours_time_zone_id");
 
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("text");
@@ -3396,6 +3953,48 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Providers.ExternalProvider", null)
+                        .WithMany()
+                        .HasForeignKey("ExternalProviderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.AcquisitionJob", null)
+                        .WithMany()
+                        .HasForeignKey("LocalAcquisitionJobId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
+                        .WithMany()
+                        .HasForeignKey("RequestFormatId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJobOutput", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.MediaAsset", null)
+                        .WithMany()
+                        .HasForeignKey("MediaAssetId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", "ProviderAcquisitionJob")
+                        .WithMany("Outputs")
+                        .HasForeignKey("ProviderAcquisitionJobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ProviderAcquisitionJob");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAttempt", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
@@ -3408,6 +4007,47 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("RequestId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlert", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Providers.ExternalProvider", null)
+                        .WithMany()
+                        .HasForeignKey("ExternalProviderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlertRecipient", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlert", "Alert")
+                        .WithMany("Recipients")
+                        .HasForeignKey("AlertId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Alert");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionClaim", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("ClaimedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", null)
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
@@ -3777,6 +4417,16 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.AcquisitionJob", b =>
                 {
                     b.Navigation("Candidates");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", b =>
+                {
+                    b.Navigation("Outputs");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderInteractionAlert", b =>
+                {
+                    b.Navigation("Recipients");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.Author", b =>

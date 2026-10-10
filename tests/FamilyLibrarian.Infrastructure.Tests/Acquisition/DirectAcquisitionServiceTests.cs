@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
@@ -73,6 +74,167 @@ public sealed class DirectAcquisitionServiceTests
     }
 
     [TestMethod]
+    public async Task AnExternalProviderBroadTitleAuthorMatchRequiresConfirmationBeforeFetching()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit: A Novel", "J. R. R. Tolkien", "epub", 500_000)
+        ];
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.LowConfidenceMatchConfirmationRequired, result.Outcome);
+        Assert.AreEqual(0, context.StagingStore.WriteCount);
+
+        var confirmed = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None, confirmLowConfidenceMatch: true);
+
+        // Protocol v2: the external-provider path now submits a durable job
+        // rather than blocking on the fetch — see DirectAcquisitionService.
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, confirmed.Outcome);
+        Assert.AreEqual(1, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task AnExternalProviderStrictTitleAuthorMatchProceedsWithoutConfirmation()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            new ExternalProviderCandidate(
+                "ref-1",
+                new ExternalProviderWorkEvidence(
+                    "The Hobbit", null, [new BookAuthor("J. R. R. Tolkien", "author")], [], []),
+                Release: new ExternalProviderReleaseEvidence(
+                    "The-Hobbit.epub", "epub", 500_000, false, 1, false, null, null, [], null,
+                    ExternalProviderDrmStatus.None))
+        ];
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, result.Outcome);
+        Assert.AreEqual(1, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task UnknownDrmRequiresTheInternalDownloadTimeValidationPath()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            ExternalProviderCandidate.FromSimple("ref-1", "The Hobbit", "J. R. R. Tolkien", "epub", 500_000)
+        ];
+
+        var ordinary = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+        Assert.AreEqual(ManualImportOutcome.ReleaseConfirmationRequired, ordinary.Outcome);
+
+        var scheduled = await context.Service.AcquireAsync(
+            request.Id,
+            format.Id,
+            "custom-source",
+            "ref-1",
+            CancellationToken.None,
+            allowDownloadTimeDrmValidation: true);
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, scheduled.Outcome);
+        Assert.AreEqual(1, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task AnExternalProviderIsbnCorroboratedMatchProceedsWithoutConfirmation()
+    {
+        var context = new TestContext();
+        context.WorkLookup.Isbn13s = ["9780618260300"];
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            CandidateWithIsbn("ref-1", "The Hobbit", "J. R. R. Tolkien", "9780618260300")
+        ];
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, result.Outcome);
+        Assert.AreEqual(1, context.ProviderAcquisitionJobs.Jobs.Count);
+        Assert.AreEqual("ref-1", context.ProviderAcquisitionJobs.Jobs[0].CandidateReference);
+    }
+
+    [TestMethod]
+    public async Task AnIsbnCorroboratedMatchThatIsACollectionStillRequiresConfirmation()
+    {
+        var context = new TestContext();
+        context.WorkLookup.Isbn13s = ["9780618260300"];
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            new ExternalProviderCandidate(
+                "ref-1",
+                new ExternalProviderWorkEvidence(
+                    "The Hobbit", null, [new BookAuthor("J. R. R. Tolkien", "author")], [], []),
+                new ExternalProviderEditionEvidence(
+                    "en", null, null, [new BookIdentifier("isbn13", "9780618260300")]),
+                Release: new ExternalProviderReleaseEvidence(
+                    "The-Middle-Earth-Omnibus", "epub", 500_000, IsCollection: true, PartCount: 4,
+                    IsSample: false, IsAbridged: null, IsUnabridged: null, QualityTags: [], AgeDays: null))
+        ];
+
+        // A verified identifier match alone is not enough -- the release
+        // itself is a collection, so this must still require confirmation,
+        // never proceed straight to AcquisitionInProgress.
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.ReleaseConfirmationRequired, result.Outcome);
+        Assert.AreEqual(0, context.ProviderAcquisitionJobs.Jobs.Count);
+
+        var confirmed = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None, confirmLowConfidenceMatch: true);
+
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, confirmed.Outcome);
+    }
+
+    [TestMethod]
+    public async Task AnExternalProviderPlausibleButWrongTitleIsNeverFetchedWithoutConfirmation()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates =
+        [
+            ExternalProviderCandidate.FromSimple("ref-1", "Dim Sum of Fears", "Some Other Author", "epub", 500_000)
+        ];
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "ref-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.LowConfidenceMatchConfirmationRequired, result.Outcome);
+        Assert.AreEqual(0, context.StagingStore.WriteCount);
+    }
+
+    [TestMethod]
     public async Task ADuplicateChecksumIsDetectedThroughTheSharedStagingPath()
     {
         var context = new TestContext();
@@ -87,6 +249,119 @@ public sealed class DirectAcquisitionServiceTests
         Assert.AreEqual(1, context.StagingStore.DeleteCount);
     }
 
+    private static readonly string[] SetMembers = ["part-1", "part-2"];
+
+    private static ExternalProviderCandidate PartCandidate(string reference, int number, int total) =>
+        new(
+            reference,
+            new ExternalProviderWorkEvidence(
+                "The Hobbit", null, [new BookAuthor("J. R. R. Tolkien", "author")], [], []),
+            Release: new ExternalProviderReleaseEvidence(
+                $"The.Hobbit.{number}.of.{total}", "m4b", 500_000, false, 1, false, null, null, [], null,
+                ExternalProviderDrmStatus.None));
+
+    private static (TestContext Context, BookRequest Request, RequestFormat Format) AudiobookSetContext(
+        params ExternalProviderCandidate[] candidates)
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Audiobook);
+        var provider = new ExternalProvider("custom-source", "Custom Source", "https://example.test", Now);
+        provider.SetEnabled(true, null, Now);
+        context.ExternalProviderStore.Add(provider);
+        context.ExternalProviderClient.Candidates = candidates;
+        return (context, request, format);
+    }
+
+    [TestMethod]
+    public async Task AFragmentOnItsOwnStillNeedsReleaseConfirmation()
+    {
+        var (context, request, format) = AudiobookSetContext(
+            PartCandidate("part-1", 1, 2), PartCandidate("part-2", 2, 2));
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "part-1", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.ReleaseConfirmationRequired, result.Outcome);
+        Assert.AreEqual(0, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task AMemberOfACompleteSetIsSubmittedAsAJobOfThatSet()
+    {
+        var (context, request, format) = AudiobookSetContext(
+            PartCandidate("part-1", 1, 2), PartCandidate("part-2", 2, 2));
+        var setId = Guid.NewGuid();
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "part-2", CancellationToken.None,
+            isAutomaticAcquisition: true, partSet: new AudiobookPartSetMember(setId, 2, 2, SetMembers));
+
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, result.Outcome);
+        var job = context.ProviderAcquisitionJobs.Jobs.Single();
+        Assert.AreEqual(setId, job.PartSetId);
+        Assert.AreEqual(2, job.PartNumber);
+        Assert.AreEqual(2, job.PartTotal);
+        Assert.IsTrue(job.IsAutomaticAcquisition);
+        // A part is matched on its release name alone, so the downloaded
+        // file's own tags must still prove which book it is.
+        Assert.IsFalse(job.IdentityPreConfirmed);
+    }
+
+    [TestMethod]
+    public async Task ASetThatNoLongerHasEveryPartIsRefusedBeforeAnyJobExists()
+    {
+        var (context, request, format) = AudiobookSetContext(PartCandidate("part-1", 1, 2));
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "part-1", CancellationToken.None,
+            isAutomaticAcquisition: true, partSet: new AudiobookPartSetMember(Guid.NewGuid(), 1, 2, SetMembers));
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+        StringAssert.Contains(result.Error, "complete set");
+        Assert.AreEqual(0, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task AClaimedMemberListThatDiffersFromTheProvidersAnswerIsRefused()
+    {
+        var (context, request, format) = AudiobookSetContext(
+            PartCandidate("part-1", 1, 2), PartCandidate("part-2", 2, 2));
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "part-1", CancellationToken.None,
+            isAutomaticAcquisition: true,
+            partSet: new AudiobookPartSetMember(Guid.NewGuid(), 1, 2, ["part-1", "someone-elses-part"]));
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+
+    [TestMethod]
+    public async Task APartClaimingTheWrongPositionIsRefused()
+    {
+        var (context, request, format) = AudiobookSetContext(
+            PartCandidate("part-1", 1, 2), PartCandidate("part-2", 2, 2));
+
+        // part-2 presented as part 1 would let a file be published in the wrong order.
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "custom-source", "part-2", CancellationToken.None,
+            isAutomaticAcquisition: true, partSet: new AudiobookPartSetMember(Guid.NewGuid(), 1, 2, SetMembers));
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, context.ProviderAcquisitionJobs.Jobs.Count);
+    }
+    private static ExternalProviderCandidate CandidateWithIsbn(
+        string providerReference, string title, string author, string isbn13) =>
+        new(
+            providerReference,
+            new ExternalProviderWorkEvidence(
+                title, null, [new BookAuthor(author, "author")], [], []),
+            new ExternalProviderEditionEvidence(
+                "en", null, null, [new BookIdentifier("isbn13", isbn13)]),
+            new ExternalProviderReleaseEvidence(
+                null, "epub", 500_000, false, 1, false, null, null, [], null,
+                ExternalProviderDrmStatus.None));
+
     private sealed class TestContext
     {
         public TestContext()
@@ -97,6 +372,9 @@ public sealed class DirectAcquisitionServiceTests
             Audit = new RecordingAuditWriter();
             Provider = new FakeDirectAcquisitionProvider();
             WorkLookup = new FakeWorkLookup();
+            ExternalProviderStore = new FakeExternalProviderStore();
+            ExternalProviderClient = new FakeExternalProviderClient();
+            ProviderAcquisitionJobs = new FakeProviderAcquisitionJobStore();
 
             var staging = new AcquisitionStagingService(
                 Repository,
@@ -106,20 +384,35 @@ public sealed class DirectAcquisitionServiceTests
                 Audit,
                 new FixedClock());
 
-            // No external providers are registered in these tests — only the
-            // DI-registered (Gutendex-style) provider path is under test here;
-            // see ExternalProviderClientTests/ExternalProviderEndpointTests for
-            // the external-provider path.
+            var checker = new ExternalCandidateAvailabilityChecker(
+                ExternalProviderStore,
+                ExternalProviderClient,
+                                new ExternalProviderMatchVerifier(
+                    new BookMatchService(new DeterministicBookMatcher(), new NoOpAmbiguityResolver()),
+                    new DeterministicBookMatcher()),
+                new NoOpCredentialProtector());
+
+            // No external providers are registered by default — only the
+            // DI-registered (Gutendex-style) provider path is under test in
+            // the cases above; ExternalProviderStore/ExternalProviderClient
+            // are populated per-test below for the external-provider gate
+            // cases, and ExternalProviderClientTests/ExternalProviderEndpointTests
+            // cover the wire client itself.
             Service = new DirectAcquisitionService(
                 RequestRepository,
                 [Provider],
-                new NoExternalProviders(),
-                new UnusedExternalProviderClient(),
-                new PrivateEgressRouteResolver(new AlwaysDisabledGatewayCache()),
-                new NoOpCredentialProtector(),
+                ExternalProviderStore,
+                ExternalProviderClient,
+                ProviderAcquisitionJobs,
+                checker,
+                                new NoOpCredentialProtector(),
                 WorkLookup,
-                staging);
+                staging,
+                new FixedClock(),
+                new ActiveAcquisitionTracker());
         }
+
+        public FakeProviderAcquisitionJobStore ProviderAcquisitionJobs { get; }
 
         public FakeAcquisitionRepository Repository { get; }
 
@@ -132,6 +425,10 @@ public sealed class DirectAcquisitionServiceTests
         public FakeDirectAcquisitionProvider Provider { get; }
 
         public FakeWorkLookup WorkLookup { get; }
+
+        public FakeExternalProviderStore ExternalProviderStore { get; }
+
+        public FakeExternalProviderClient ExternalProviderClient { get; }
 
         public DirectAcquisitionService Service { get; }
 
@@ -265,6 +562,44 @@ public sealed class DirectAcquisitionServiceTests
         public Task<bool> CanAcceptNewArtifactAsync(CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
+    private sealed class FakeProviderAcquisitionJobStore : IProviderAcquisitionJobStore
+    {
+        public List<ProviderAcquisitionJob> Jobs { get; } = [];
+
+        public Task<ProviderAcquisitionJob?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(Jobs.FirstOrDefault(job => job.Id == id));
+
+        public Task<ProviderAcquisitionJob?> FindByIdempotencyKeyAsync(
+            Guid externalProviderId, string idempotencyKey, CancellationToken cancellationToken) =>
+            Task.FromResult(Jobs.FirstOrDefault(
+                job => job.ExternalProviderId == externalProviderId && job.IdempotencyKey == idempotencyKey));
+
+        public Task<IReadOnlyList<ProviderAcquisitionJob>> ListDueForPollAsync(
+            DateTimeOffset asOfUtc, int maximumCount, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>(
+                Jobs.Where(job => job.NextPollAtUtc is not null && job.NextPollAtUtc <= asOfUtc).ToArray());
+
+        public Task<IReadOnlyList<ProviderAcquisitionJob>> ListWaitingForInteractionAsync(
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>(
+                Jobs.Where(job => job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting &&
+                    job.InteractionType is not null).ToArray());
+
+        public Task<bool> HasLeftWaitingSinceAsync(
+            Guid externalProviderId, DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
+            Task.FromResult(Jobs.Any(job => job.ExternalProviderId == externalProviderId &&
+                job.LeftWaitingAtUtc is not null && job.LeftWaitingAtUtc >= sinceUtc));
+
+        public Task<IReadOnlyList<ProviderAcquisitionJob>> ListByPartSetAsync(
+            Guid partSetId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>(
+                Jobs.Where(job => job.PartSetId == partSetId).OrderBy(job => job.PartNumber).ToArray());
+
+        public void Add(ProviderAcquisitionJob job) => Jobs.Add(job);
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
     private sealed class RecordingAuditWriter : IAuditWriter
     {
         public List<(string Action, string SubjectType, string? SubjectId, object? Detail)> Entries { get; } = [];
@@ -334,57 +669,83 @@ public sealed class DirectAcquisitionServiceTests
 
     private sealed class FakeWorkLookup : IWorkLookup
     {
+        public IReadOnlyList<string> Isbn13s { get; set; } = [];
+
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien", []));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, "The Hobbit", "J. R. R. Tolkien", Isbn13s));
     }
 
-    private sealed class NoExternalProviders : IExternalProviderStore
+    private sealed class FakeExternalProviderStore : IExternalProviderStore
     {
+        public List<ExternalProvider> Providers { get; } = [];
+
         public Task<IReadOnlyList<ExternalProvider>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<ExternalProvider>>([]);
+            Task.FromResult<IReadOnlyList<ExternalProvider>>(Providers);
 
         public Task<IReadOnlyList<ExternalProvider>> ListEnabledAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<ExternalProvider>>([]);
+            Task.FromResult<IReadOnlyList<ExternalProvider>>(Providers.Where(provider => provider.IsEnabled).ToArray());
 
         public Task<ExternalProvider?> FindAsync(Guid id, CancellationToken cancellationToken) =>
-            Task.FromResult<ExternalProvider?>(null);
+            Task.FromResult(Providers.FirstOrDefault(provider => provider.Id == id));
 
         public Task<ExternalProvider?> FindByProviderIdAsync(string providerId, CancellationToken cancellationToken) =>
-            Task.FromResult<ExternalProvider?>(null);
+            Task.FromResult(Providers.FirstOrDefault(provider => provider.ProviderId == providerId));
 
-        public void Add(ExternalProvider provider) => throw new NotSupportedException();
+        public void Add(ExternalProvider provider) => Providers.Add(provider);
 
-        public void Remove(ExternalProvider provider) => throw new NotSupportedException();
+        public void Remove(ExternalProvider provider) => Providers.Remove(provider);
 
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    private sealed class UnusedExternalProviderClient : IExternalProviderClient
+    private sealed class FakeExternalProviderClient : IExternalProviderClient
     {
+        public IReadOnlyList<ExternalProviderCandidate> Candidates { get; set; } = [];
+
         public Task<ExternalProviderManifest> GetManifestAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<bool> GetHealthAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
+        public Task<ExternalProviderHealth> GetHealthAsync(
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-            string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
             CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult(Candidates);
 
         public Task<ExternalProviderArtifact> AcquireAsync(
-            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderArtifact(new MemoryStream(Encoding.UTF8.GetBytes("epub bytes")), "book.epub"));
+
+        public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
+                "fake-job-1", ProviderAcquisitionJobLifecycleState.Queued, phase: null, pollAfterSeconds: null));
+
+        public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExternalProviderArtifact> GetOutputAsync(
+            string baseUrl, string? apiKey, string jobId, string outputId,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-    }
 
-    private sealed class AlwaysDisabledGatewayCache : IPrivateEgressGatewayRuntimeCache
-    {
-        public PrivateEgressGatewayRuntimeState Current => PrivateEgressGatewayRuntimeState.Disabled;
+        public Task CancelAcquireAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
-        public void Refresh(PrivateEgressGatewayRuntimeState state) => throw new NotSupportedException();
+        public Task DeleteAcquireAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class NoOpCredentialProtector : ICredentialProtector

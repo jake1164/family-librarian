@@ -341,6 +341,17 @@ public sealed class DeliveryAttemptService(
             auditAction, AuditSubjectTypes.DeliveryAttempt, attempt.Id.ToString(),
             new { attempt.Id, attempt.RequestId, attempt.UserId }, cancellationToken);
 
+        try
+        {
+            await notifications.DismissKindleDeliveryConfirmationAsync(
+                userId, attempt.Id, cancellationToken);
+        }
+        catch (Exception)
+        {
+            // Clearing the prompt must not turn an already-saved answer into a
+            // failed confirmation. The user can still dismiss it manually.
+        }
+
         return ConfirmDeliveryResult.Success(attempt);
     }
 

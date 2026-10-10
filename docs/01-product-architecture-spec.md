@@ -174,6 +174,16 @@ Can additionally:
   - clear Ebook and Audiobook indicators;
   - the appropriate simple action for each format: for example, **Get Ebook**,
     **Get Audiobook**, **Read**, **Listen**, or **Send to device**.
+- Preserve work identity separately from the edition title matched by a provider.
+- Explain source-supported version differences (novel, study guide or criticism,
+  graphic adaptation, retelling, shortened version, collection); unknown version
+  and language remain explicit. Contributor lists do not imply author roles.
+- Never hide a novel behind a collection or adaptation with the same short title.
+  Compatible grouped editions remain available for comparison.
+- Loading more results carries prior raw candidates into server-side grouping and
+  ranking. Search continuations are bound to the requesting user and query.
+- Identified related versions default to an explicit edition request for librarian
+  review; they do not borrow general-title availability badges.
 - Allow admin correction when provider data is wrong or ambiguous.
 
 The family catalogue is a catalogue of Works, not separate search-result rows
@@ -343,7 +353,7 @@ Browser/PWA device delivery should be prototyped separately before becoming a ha
 ### Optional Supporting Services
 
 - ClamAV
-- VPN/private-egress gateway (Gluetun is the documented reference implementation)
+- Provider-managed VPN/private-egress gateway, where a source requires it
 - Audiobookshelf
 - Calibre-Web or Calibre-Web Automated (CWA)
 - Authentik
@@ -392,8 +402,7 @@ clamav
 audiobookshelf
 cwa
 ntfy
-acquisition-provider-*
-vpn-gateway
+acquisition-provider-* (separate provider deployments own any VPN gateway)
 ```
 
 ---
@@ -673,27 +682,23 @@ OPDS/HTTP download so remote CWA works identically without SFTP. See
 ### 12.2 Private acquisition egress
 
 Family Librarian **SHALL NOT** depend on a specific commercial VPN provider.
-Private acquisition networking is optional and configured at the deployment
-layer through a generic VPN/private-egress gateway. The application must not
-contain provider-specific logic for Proton VPN, Mullvad, PIA, NordVPN,
+Private acquisition networking is optional and configured by each provider's
+deployment through a generic VPN/private-egress gateway. The application must
+not contain provider-specific logic for Proton VPN, Mullvad, PIA, NordVPN,
 Surfshark, IVPN, or any other commercial VPN service.
 
-The application has two distinct traffic paths:
+The host and each external provider have separate network paths:
 
 ```text
-Family Librarian
-  +--> normal traffic --> LAN / normal Internet
-  |      metadata, OIDC/authentication, notifications, Audiobookshelf,
-  |      BookLore, and other LAN services
-  |
-  +--> private acquisition traffic --> VPN/private-egress gateway
-                                         --> selected VPN provider / Internet
+Family Librarian --> provider's API over LAN / normal network
+Provider        --> its own VPN/private-egress gateway --> Internet
+Family Librarian --> metadata, OIDC, notifications, and other services
 ```
 
-The main Family Librarian container does not need to run entirely inside the
-VPN. A provider that is configured to require private egress must route its
-complete interaction through the configured gateway: authentication, search,
-result and detail retrieval, artifact and download-URL resolution, and the
+The main Family Librarian container uses its ordinary network and does not
+need VPN access. A provider that is configured to require private egress
+must route its complete interaction through its own configured gateway:
+authentication, search, result and detail retrieval, artifact and download-URL resolution, and the
 artifact download itself. It must never protect only the final file transfer.
 
 Supported integration mechanisms are gateway-neutral:
@@ -712,11 +717,9 @@ a Family Librarian application release. A gateway that supports custom
 WireGuard or OpenVPN configuration also provides an escape hatch for VPN
 providers outside its built-in provider list.
 
-Private-required work must fail closed. If the selected gateway is unavailable
-or cannot be verified, acquisition must be blocked and represented as a waiting
-or failed operation (for example, `WAITING_FOR_PRIVATE_EGRESS` or
-`PRIVATE_EGRESS_UNAVAILABLE`); it must not silently retry through normal
-Internet egress.
+A provider requiring private egress must fail closed if its route is
+unavailable. It reports a waiting, unavailable, or failed operation through its
+API; it must not silently retry through normal Internet egress.
 
 The component that makes an external request owns its privacy boundary. When
 Family Librarian calls an isolated provider over an internal API, that provider's
@@ -732,16 +735,12 @@ No VPN
   Suitable for metadata, public-domain sources, manual imports, and
   legitimate store integrations.
 
-Private acquisition gateway
-  Family Librarian --> normal Internet / LAN
-  private in-process provider --> HTTP or SOCKS5 gateway --> VPN --> Internet
-
-Private acquisition stack
-  Family Librarian --> isolated provider internal API
-  isolated provider --> VPN gateway --> Internet
+Provider-managed private acquisition
+  Family Librarian --> external provider API over the normal network
+  external provider --> its VPN gateway --> Internet
 ```
 
-For Docker deployments, the last model commonly places the external acquisition
+For Docker deployments, a provider commonly places the external acquisition
 container in the gateway's shared namespace (for example,
 `network_mode: "service:gluetun"`). The gateway then governs that container's
 egress using its own firewall/kill switch, while Family Librarian can still use
@@ -801,13 +800,14 @@ action apply across the application. Navigating away disposes that page's
 subscription without closing the tab's connection; sign-out stops the connection.
 
 SignalR messages carry only topic flags for requests, scans, publishing,
-notifications, sources and system readiness. Existing HTTP APIs provide snapshots
-and perform actions, retaining their authorization, input validation and
-anti-forgery rules. The server resolves request owners and current active users,
-roles and security stamps before sending. Private notifications target their
-recipient; admin topics target current admins. Disabled or revoked sessions are
-closed. Clients cannot select another user's audience or subscribe themselves to
-privileged server groups.
+notifications, sources, communications settings and system readiness. Personal
+communications changes are scoped to the affected user. Existing HTTP APIs
+provide snapshots and perform actions, retaining their authorization, input
+validation and anti-forgery rules. The server resolves request owners and current
+active users, roles and security stamps before sending. Private notifications
+target their recipient; admin topics target current admins. Disabled or revoked
+sessions are closed. Clients cannot select another user's audience or subscribe
+themselves to privileged server groups.
 
 EF save and transaction interceptors capture affected records. Implicit saves
 notify after SaveChanges succeeds; explicit transactions buffer notifications

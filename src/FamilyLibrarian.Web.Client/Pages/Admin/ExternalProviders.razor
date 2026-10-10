@@ -50,6 +50,10 @@
                     {
                         <span>Searches the locally imported Project Gutenberg catalogue; downloads use configured mirrors when a family request is fulfilled.</span>
                     }
+                    else if (source.ProviderId == "librivox")
+                    {
+                        <span>Searches the live LibriVox audiobook catalog; selected recordings are downloaded as a whole-book ZIP and validated as MP3 tracks.</span>
+                    }
                     else
                     {
                         <span>Provides direct acquisition options during fulfillment.</span>
@@ -229,54 +233,6 @@
 </MudPaper>
 
 <MudPaper Class="pa-4 mb-6" Elevation="1">
-    <MudText Typo="Typo.h6">Private acquisition network</MudText>
-    <MudText Typo="Typo.body2" Class="mb-3">
-        An optional HTTP proxy (e.g. Gluetun) that a provider declaring
-        <code>PRIVATE_REQUIRED</code> or <code>CUSTOM_PROXY</code> must be routed
-        through. No gateway means those providers simply fail closed rather than
-        falling back to normal egress.
-    </MudText>
-
-    @if (gateway is null)
-    {
-        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
-    }
-    else
-    {
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
-            <MudSwitch T="bool"
-                       @key="@("gateway:" + gatewayGeneration)"
-                       Value="gateway.IsEnabled"
-                       ValueChanged="@(enabled => SetGatewayEnabledAsync(enabled))"
-                       Color="Color.Primary"
-                       Disabled="@gatewayBusy"
-                       Label="@(gateway.IsEnabled ? "Enabled" : "Disabled")" />
-        </MudStack>
-
-        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-            <MudTextField T="string" Label="Gateway endpoint (e.g. http://gluetun:8888)"
-                          @bind-Value="gatewayEndpoint" Disabled="@gatewayBusy" Class="flex-grow-1" />
-            <MudButton Variant="Variant.Filled" Disabled="@gatewayBusy" OnClick="SaveGatewayEndpointAsync">
-                Save
-            </MudButton>
-            <MudButton Variant="Variant.Outlined" Disabled="@gatewayBusy" OnClick="TestGatewayAsync">
-                Test connection
-            </MudButton>
-        </MudStack>
-
-        @if (gateway.LastTestedAtUtc is not null)
-        {
-            <MudText Typo="Typo.body2" Class="mt-2">
-                <MudIcon Icon="@(gateway.LastTestSucceeded == true ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Error)"
-                         Color="@(gateway.LastTestSucceeded == true ? Color.Success : Color.Error)"
-                         Size="Size.Small" />
-                @gateway.LastTestMessage
-            </MudText>
-        }
-    }
-</MudPaper>
-
-<MudPaper Class="pa-4 mb-6" Elevation="1">
     <MudText Typo="Typo.h6" Class="mb-2">Provider catalogs</MudText>
     <MudText Typo="Typo.body2" Class="mb-3">
         A discovery listing, not an installer — signed catalog verification is not
@@ -428,7 +384,13 @@
                 <MudText Typo="Typo.subtitle2">Automatic rechecks</MudText>
                 <MudText Typo="Typo.body2" Class="mb-2">
                     Choose whether this source should look again for requests that did not have a high-confidence
-                    automatic copy. A found candidate is recorded for review; no external file is downloaded automatically.
+                    automatic copy. This only controls how often FL looks — whether a found candidate is downloaded
+                    without review is a separate setting below.
+                </MudText>
+                <MudText Typo="Typo.caption" Class="mb-2">
+                    This does not affect the health/search/acquire chips below — Family Librarian checks this
+                    provider's reachability on its own fixed interval regardless of this setting, including when
+                    set to Manual.
                 </MudText>
                 <MudSelect T="string" Label="Recheck schedule" Value="provider.RecheckSchedule"
                            ValueChanged="@(value => SetProviderRecheckScheduleAsync(provider.Id, value))"
@@ -442,6 +404,33 @@
                     <MudText Typo="Typo.caption">Enable this source to allow its selected recheck schedule to run.</MudText>
                 }
 
+                <MudSwitch T="bool" Value="provider.AutoAcquireEnabled" Disabled="@providersBusy"
+                           ValueChanged="@(enabled => SetProviderAutoAcquireEnabledAsync(provider.Id, enabled))"
+                           Label="Automatically download a high-confidence match found on a scheduled recheck" />
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    Off by default for every provider. When off, a candidate this source finds — even one FL can
+                    confirm by ISBN — is only ever recorded for librarian review, never downloaded automatically.
+                    When on, an ISBN-confirmed candidate is fetched and security-scanned without review; a
+                    title/author-only match still always requires review regardless of this setting.
+                </MudText>
+
+                <MudNumericField T="int" Value="provider.AutomaticAttemptLimit" Disabled="@providersBusy"
+                                 Min="1" Max="10" Step="1" Immediate="false"
+                                 Label="Candidates to try before asking a librarian"
+                                 ValueChanged="@(limit => SetProviderAutomaticAttemptLimitAsync(provider.Id, limit))" />
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    When an automatically downloaded copy fails its post-download checks — malware, a malformed
+                    file, or content that turns out not to be the requested book — FL rules that copy out and tries
+                    the next best candidate, up to this many times. Set this to 1 for a source with a limited
+                    download allowance: FL cannot see a provider's remaining quota, so this is the only limit it can
+                    enforce. A candidate a requester set aside with "keep looking" is free and never counts here.
+                </MudText>
+
+                <MudText Typo="Typo.caption" Class="mb-2">
+                    Provider-specific options (for example how a source uses its own quota or download methods) are
+                    managed in the provider's own admin page, linked below when the provider offers one.
+                </MudText>
+
                 <MudStack Row="true" Spacing="2" Class="mt-2">
                     <MudTextField T="string" Label="Base URL" Value="@provider.BaseUrl" Disabled="@providersBusy" Class="flex-grow-1"
                                   ValueChanged="@(value => baseUrlDrafts[provider.Id] = value)" />
@@ -450,29 +439,6 @@
                         Save URL
                     </MudButton>
                 </MudStack>
-
-                <MudDivider Class="my-2" />
-                <MudText Typo="Typo.subtitle2">Egress policy</MudText>
-                <MudText Typo="Typo.body2" Class="mb-2">
-                    Declared by the provider's manifest as <b>@provider.CachedEgressPolicy</b>. Override the
-                    routing decision here if needed.
-                </MudText>
-                <MudSelect T="string" Label="Override" Value="@(provider.EgressPolicyOverride ?? string.Empty)"
-                           ValueChanged="@(value => SetEgressPolicyOverrideAsync(provider.Id, value))"
-                           Disabled="@providersBusy" Class="mb-2">
-                    <MudSelectItem T="string" Value="@string.Empty">Use provider default (currently: @provider.CachedEgressPolicy)</MudSelectItem>
-                    <MudSelectItem T="string" Value="@("Normal")">Normal</MudSelectItem>
-                    <MudSelectItem T="string" Value="@("PrivateRequired")">PrivateRequired</MudSelectItem>
-                    <MudSelectItem T="string" Value="@("CustomProxy")">CustomProxy</MudSelectItem>
-                </MudSelect>
-                @if (IsOverrideWeaker(provider))
-                {
-                    <MudAlert Severity="Severity.Warning" Class="mb-2" Dense="true">
-                        This override weakens the provider's declared @provider.CachedEgressPolicy requirement
-                        down to @provider.EffectiveEgressPolicy — acquisitions from this provider may no longer
-                        be routed through the private egress gateway.
-                    </MudAlert>
-                }
 
                 <MudDivider Class="my-2" />
                 <MudText Typo="Typo.subtitle2">API key</MudText>
@@ -517,16 +483,82 @@
                                  Size="Size.Small" />
                         @provider.LastTestMessage
                     </MudText>
-                    @if (provider.LastTestSucceeded == true)
+                    @if (provider.CachedProtocolVersion is not null || provider.CachedHealthStatus is not null)
                     {
+                        @* Health/Search/Acquire can now refresh independently of a full
+                           Test Connection (ExternalProviderRecheckService's own scheduled
+                           probe), so this no longer gates on LastTestSucceeded -- a
+                           provider whose last check found it degraded must still show
+                           these chips, not just the summary line above. Each chip already
+                           guards on its own underlying cached value being present. *@
                         <MudStack Row="true" Spacing="1" Class="mt-1" Wrap="Wrap.Wrap">
-                            <MudChip T="string" Size="Size.Small">Protocol v@(provider.CachedProtocolVersion)</MudChip>
-                            <MudChip T="string" Size="Size.Small">Egress: @provider.CachedEgressPolicy</MudChip>
-                            @foreach (var capability in (provider.CachedCapabilities ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries))
+                            @if (provider.CachedProtocolVersion is not null)
                             {
-                                <MudChip T="string" Size="Size.Small" Color="Color.Info">@capability</MudChip>
+                                <MudChip T="string" Size="Size.Small">Protocol v@(provider.CachedProtocolVersion)</MudChip>
+                            }
+                            @if (provider.CachedHealthStatus is not null)
+                            {
+                                <MudTooltip Text="@(AllReasons(provider) ?? string.Empty)" Disabled="@(AllReasons(provider) is null)">
+                                    <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedHealthStatus)">
+                                        Health: @provider.CachedHealthStatus
+                                    </MudChip>
+                                </MudTooltip>
+                            }
+                            @if (provider.CachedSearchOperationStatus is not null)
+                            {
+                                <MudTooltip Text="@(ReasonFor(provider, "search") ?? string.Empty)" Disabled="@(ReasonFor(provider, "search") is null)">
+                                    <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedSearchOperationStatus)">
+                                        Search: @provider.CachedSearchOperationStatus
+                                    </MudChip>
+                                </MudTooltip>
+                            }
+                            @if (provider.CachedAcquireOperationStatus is not null)
+                            {
+                                <MudTooltip Text="@(ReasonFor(provider, "acquire") ?? string.Empty)" Disabled="@(ReasonFor(provider, "acquire") is null)">
+                                    <MudChip T="string" Size="Size.Small" Color="@HealthColor(provider.CachedAcquireOperationStatus)">
+                                        Acquire: @provider.CachedAcquireOperationStatus
+                                    </MudChip>
+                                </MudTooltip>
+                            }
+                            @foreach (var (group, capability) in ParseCapabilities(provider.CachedCapabilities))
+                            {
+                                <MudTooltip Text="@group" Disabled="@(group.Length == 0)">
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Info">@capability</MudChip>
+                                </MudTooltip>
                             }
                         </MudStack>
+                        <ProviderHealthIssueList Issues="@provider.CachedHealthIssues" />
+                        @if (!string.IsNullOrWhiteSpace(provider.CachedInstanceId))
+                        {
+                            <MudText Typo="Typo.caption" Class="mt-1">
+                                Instance: @provider.CachedInstanceId
+                            </MudText>
+                        }
+                        @if (provider.InstanceReplacedSincePreviousTest)
+                        {
+                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-2" Dense="true">
+                                This provider reported a different instance id than its previous test — the
+                                underlying deployment was likely replaced. Any acquisition job already tracked
+                                against the old instance may no longer resolve.
+                            </MudAlert>
+                        }
+                        @if (IsSafeExternalUrl(provider.CachedManagementUrl) || IsSafeExternalUrl(provider.CachedDocumentationUrl))
+                        {
+                            <MudStack Row="true" Spacing="3" Class="mt-1" Wrap="Wrap.Wrap">
+                                @if (IsSafeExternalUrl(provider.CachedManagementUrl))
+                                {
+                                    <MudLink Href="@provider.CachedManagementUrl" Target="_blank" rel="noopener noreferrer">
+                                        Configure provider
+                                    </MudLink>
+                                }
+                                @if (IsSafeExternalUrl(provider.CachedDocumentationUrl))
+                                {
+                                    <MudLink Href="@provider.CachedDocumentationUrl" Target="_blank" rel="noopener noreferrer">
+                                        Documentation
+                                    </MudLink>
+                                }
+                            </MudStack>
+                        }
                     }
                 }
             </MudPaper>
@@ -535,10 +567,6 @@
 </MudPaper>
 
 @code {
-    private PrivateEgressGatewayResponse? gateway;
-    private bool gatewayBusy;
-    private int gatewayGeneration;
-    private string? gatewayEndpoint;
 
     private IReadOnlyList<ProviderCatalogResponse>? catalogs;
     private bool catalogsBusy;
@@ -571,9 +599,8 @@
     protected override async Task OnInitializedAsync()
     {
         Observe(LiveUpdateTopics.Sources | LiveUpdateTopics.Requests,
-            () => Task.WhenAll(LoadAttentionAsync(), LoadGutenbergCatalogStatusAsync()));
+            () => Task.WhenAll(LoadProvidersAsync(), LoadAttentionAsync(), LoadGutenbergCatalogStatusAsync()));
         await Task.WhenAll(
-            LoadGatewayAsync(),
             LoadCatalogsAsync(),
             LoadProvidersAsync(),
             LoadBuiltInSourcesAsync(),
@@ -592,9 +619,70 @@
             string.Equals(issue.ProviderId, providerId, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(issue.IssueKind, issueKind, StringComparison.Ordinal));
 
+    // Providers self-report managementUrl/documentationUrl (protocol v2 S4) and are often
+    // reached over plain http on an internal/lab network (docs/04-external-provider-http-protocol.md
+    // S4's own example is http). Restricting to https here would silently hide a correctly
+    // configured, provider-supplied link, so both schemes are allowed; anything else (e.g.
+    // javascript:) is rejected.
     private static bool IsSafeExternalUrl(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
-        string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+        (string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Shared coloring for the health/operations chips (protocol v2 §5):
+    /// healthy/available -> success, degraded -> warning, unhealthy/unavailable -> error.
+    /// </summary>
+    // CachedCapabilities is stored as "mediaTypes:ebook,audiobook;operations:search,acquire;
+    // features:x" (ExternalProviderAdminService.SerializeCapabilities): groups are
+    // ';'-separated, values ','-separated. A value with no "group:" prefix gets an empty group.
+    private static IEnumerable<(string Group, string Value)> ParseCapabilities(string? stored)
+    {
+        foreach (var segment in (stored ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var colon = segment.IndexOf(':');
+            var group = colon < 0 ? string.Empty : segment[..colon].Trim();
+            var values = colon < 0 ? segment : segment[(colon + 1)..];
+            foreach (var value in values.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                yield return (group, value);
+            }
+        }
+    }
+
+    // Health is the summary chip, so its tooltip carries every reported reason,
+    // each prefixed with the operation it concerns ("general" issues unprefixed).
+    private static string? AllReasons(ExternalProviderResponse provider)
+    {
+        var messages = provider.CachedHealthIssues
+            .Select(issue => issue.Operation switch
+            {
+                "search" => $"Search: {issue.Message}",
+                "acquire" => $"Acquire: {issue.Message}",
+                _ => issue.Message
+            })
+            .ToList();
+        return messages.Count == 0 ? null : string.Join(" ", messages);
+    }
+
+    // The provider's own reason (protocol v2 §5 "issues") for one operation, as
+    // plain text for a chip tooltip; null when it reported none.
+    private static string? ReasonFor(ExternalProviderResponse provider, string operation)
+    {
+        var messages = provider.CachedHealthIssues
+            .Where(issue => issue.Operation == operation)
+            .Select(issue => issue.Message)
+            .ToList();
+        return messages.Count == 0 ? null : string.Join(" ", messages);
+    }
+
+    private static Color HealthColor(string? status) => status switch
+    {
+        "Healthy" or "Available" => Color.Success,
+        "Degraded" => Color.Warning,
+        "Unhealthy" or "Unavailable" => Color.Error,
+        _ => Color.Default
+    };
 
     private async Task LoadBuiltInSourcesAsync()
     {
@@ -838,72 +926,6 @@
         }
     }
 
-    // --- Gateway -------------------------------------------------------------
-
-    private async Task LoadGatewayAsync()
-    {
-        gateway = await Api.GetGatewayAsync();
-        gatewayEndpoint = gateway?.GatewayEndpoint;
-    }
-
-    private async Task SetGatewayEnabledAsync(bool enabled)
-    {
-        gatewayBusy = true;
-        try
-        {
-            var result = await Api.SetGatewayEnabledAsync(enabled);
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-            }
-
-            gateway = result.Settings;
-        }
-        finally
-        {
-            gatewayBusy = false;
-            gatewayGeneration++;
-        }
-    }
-
-    private async Task SaveGatewayEndpointAsync()
-    {
-        gatewayBusy = true;
-        try
-        {
-            var result = await Api.SetGatewayEndpointAsync(gatewayEndpoint);
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-                return;
-            }
-
-            gateway = result.Settings;
-            Snackbar.Add("Saved the gateway endpoint.", Severity.Success);
-        }
-        finally
-        {
-            gatewayBusy = false;
-        }
-    }
-
-    private async Task TestGatewayAsync()
-    {
-        gatewayBusy = true;
-        try
-        {
-            var result = await Api.TestGatewayAsync();
-            gateway = result.Settings ?? gateway;
-            Snackbar.Add(
-                gateway?.LastTestMessage ?? "The connection test could not be run.",
-                gateway?.LastTestSucceeded == true ? Severity.Success : Severity.Warning);
-        }
-        finally
-        {
-            gatewayBusy = false;
-        }
-    }
-
     // --- Catalogs --------------------------------------------------------------
 
     private async Task LoadCatalogsAsync() => catalogs = await Api.GetCatalogsAsync();
@@ -1054,6 +1076,46 @@
         }
     }
 
+    private async Task SetProviderAutoAcquireEnabledAsync(Guid id, bool enabled)
+    {
+        providersBusy = true;
+        try
+        {
+            var result = await Api.SetProviderAutoAcquireEnabledAsync(id, enabled);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
+    private async Task SetProviderAutomaticAttemptLimitAsync(Guid id, int limit)
+    {
+        providersBusy = true;
+        try
+        {
+            var result = await Api.SetProviderAutomaticAttemptLimitAsync(id, limit);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
+                return;
+            }
+
+            await LoadProvidersAsync();
+        }
+        finally
+        {
+            providersBusy = false;
+        }
+    }
+
     private async Task SaveDetailsAsync(ExternalProviderResponse provider)
     {
         var baseUrl = baseUrlDrafts.GetValueOrDefault(provider.Id, provider.BaseUrl);
@@ -1162,43 +1224,5 @@
         }
     }
 
-    private async Task SetEgressPolicyOverrideAsync(Guid id, string? value)
-    {
-        providersBusy = true;
-        try
-        {
-            var policy = string.IsNullOrEmpty(value) ? null : value;
-            var result = await Api.SetProviderEgressPolicyOverrideAsync(id, policy);
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-                return;
-            }
 
-            await LoadProvidersAsync();
-        }
-        finally
-        {
-            providersBusy = false;
-        }
-    }
-
-    private static readonly Dictionary<string, int> EgressPolicyStrictness = new()
-    {
-        ["Normal"] = 1,
-        ["PrivateRequired"] = 2,
-        ["CustomProxy"] = 3
-    };
-
-    private static bool IsOverrideWeaker(ExternalProviderResponse provider)
-    {
-        if (provider.EgressPolicyOverride is null)
-        {
-            return false;
-        }
-
-        var declared = EgressPolicyStrictness.GetValueOrDefault(provider.CachedEgressPolicy, 0);
-        var overridden = EgressPolicyStrictness.GetValueOrDefault(provider.EgressPolicyOverride, 0);
-        return overridden < declared;
-    }
 }

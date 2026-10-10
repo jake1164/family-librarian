@@ -47,10 +47,14 @@ jobs:
       - name: Build (zero warnings, zero errors)
         run: dotnet build FamilyLibrarian.slnx --no-restore
 
+      # Checkin CI is the regression tier. Tests tagged TestCategory("Release")
+      # need Chromium and, for the queue E2E, a deployed Compose stack; they
+      # run from release-tests.yml instead, so a checkin neither builds the
+      # application image nor installs a browser.
       # Testcontainers.PostgreSql needs a Docker daemon, which is
       # preinstalled and running on GitHub-hosted ubuntu-latest runners.
       - name: Test
-        run: dotnet test --solution FamilyLibrarian.slnx --no-restore
+        run: dotnet test --solution FamilyLibrarian.slnx --no-build -- --filter "TestCategory!=Release"
 
   # docs/01 §13.1 requires "dependency and container image scanning in the
   # build pipeline". This job covers NuGet packages; container-scan below
@@ -87,9 +91,9 @@ jobs:
           fi
 
   # scripts/backups/*.sh have no .NET equivalent, so `dotnet test` above
-  # never runs them. backup-restore-postgres.test.sh drives a real, disposable
-  # `docker compose` project (see that file), which needs the same
-  # preinstalled Docker daemon the Testcontainers-based .NET tests rely on.
+  # never runs them. These are the fast, docker-stubbed regressions; the real
+  # PostgreSQL round trip through the unmodified scripts is family-librarian-lab's
+  # BASE-04 case, run between releases.
   backup-restore-scripts:
     name: Backup/restore scripts
     runs-on: ubuntu-latest

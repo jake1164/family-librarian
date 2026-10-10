@@ -3,7 +3,7 @@ namespace FamilyLibrarian.Domain.Acquisition;
 /// <summary>
 /// An immutable record of one provider lookup made for a requested format.
 /// This is deliberately separate from an acquisition job: a lookup may find
-/// nothing, be blocked by egress policy, or surface candidates for review
+/// nothing, be blocked by source availability, or surface candidates for review
 /// without ever downloading a file.
 /// </summary>
 public sealed class ProviderAttempt
@@ -79,6 +79,7 @@ public sealed class ProviderAttempt
             ConfiguredTrackLimitMarker, StringComparison.OrdinalIgnoreCase) =>
             ProviderAttemptIssueKind.Configuration,
         ProviderAttemptOutcome.Failed => ProviderAttemptIssueKind.Operational,
+        ProviderAttemptOutcome.Paused => ProviderAttemptIssueKind.Operational,
         _ => null
     };
 }
@@ -88,8 +89,31 @@ public enum ProviderAttemptOutcome
     NoMatch,
     CandidatesFound,
     Acquired,
+
+    /// <summary>
+    /// A protocol-v2 external-provider job was durably submitted and is
+    /// being tracked by the background poller — not yet acquired, not
+    /// failed. Distinct from <see cref="Acquired"/> because no file exists
+    /// yet.
+    /// </summary>
+    Submitted,
     Failed,
-    Blocked
+    Blocked,
+
+    /// <summary>
+    /// One automatically fetched copy failed its checks and Family Librarian
+    /// is moving on to the next ranked candidate (PROVIDER-7).
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <see cref="Failed"/>: nothing is wrong that a person
+    /// must fix. It is a recoverable step in a bounded loop, so it has no
+    /// <see cref="ProviderAttempt.IssueKind"/> and is not drawn as an error.
+    /// The terminal case -- the attempt limit is spent -- is still recorded as
+    /// <see cref="Failed"/>.
+    /// </remarks>
+    Retrying,
+    Paused,
+    Resumed
 }
 
 /// <summary>The kind of administrator action an unsuccessful provider attempt needs.</summary>

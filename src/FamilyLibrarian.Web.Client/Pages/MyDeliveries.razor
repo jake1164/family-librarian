@@ -53,12 +53,18 @@
                 {
                     <MudText>Automatic retries exhausted. Check the cause before retrying.</MudText>
                 }
-                @if (attempt.Id == attempt.LatestAttemptId && attempt.Status == "Submitted" && attempt.ConfirmationStatus == "Unconfirmed")
+                @if (attempt.Id == attempt.LatestAttemptId && attempt.Status == "Submitted")
                 {
                     <MudText>Did it arrive on your Kindle?</MudText>
                     <MudStack Row="true">
-                        <MudButton Variant="Variant.Outlined" Disabled="@(busyId is not null)" OnClick="@(() => ConfirmAsync(attempt.Id, true))">Received</MudButton>
-                        <MudButton Variant="Variant.Outlined" Disabled="@(busyId is not null)" OnClick="@(() => ConfirmAsync(attempt.Id, false))">Not received</MudButton>
+                        @if (attempt.ConfirmationStatus != "Confirmed")
+                        {
+                            <MudButton Variant="Variant.Outlined" Disabled="@(busyId is not null)" OnClick="@(() => ConfirmAsync(attempt.Id, true))">Received</MudButton>
+                        }
+                        @if (attempt.ConfirmationStatus != "ReportedMissing")
+                        {
+                            <MudButton Variant="Variant.Outlined" Disabled="@(busyId is not null)" OnClick="@(() => ConfirmAsync(attempt.Id, false))">Not received</MudButton>
+                        }
                     </MudStack>
                 }
                 @if (attempt.CanRetry)

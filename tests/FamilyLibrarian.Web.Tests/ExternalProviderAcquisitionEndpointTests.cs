@@ -91,23 +91,45 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var option = fulfillment.Ebook.SingleOrDefault(candidate => candidate.ProviderId == "fake-external");
         Assert.IsNotNull(option, "The fake external provider's search result should appear in fulfillment options.");
 
+        // "the-hobbit" is the shared canonical Work every test in this class
+        // resolves to, so whether IWorkLookup already has an ISBN for it
+        // (from an earlier test's own acquisition) depends on execution
+        // order -- MatchBasis can legitimately be Identifier or TitleAuthor
+        // here. Always confirming is safe either way (a no-op for an
+        // Identifier-tier match); APlausibleButWrongTitleRequiresConfirmationBeforeFetching
+        // below is what actually proves the confidence gate itself.
         var acquire = await admin.PostAsync(
-            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/fake-external/{option.ProviderResultId}",
+            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/fake-external/{option.ProviderResultId}" +
+            "?confirmLowConfidenceMatch=true",
             content: null);
-        Assert.AreEqual(HttpStatusCode.OK, acquire.StatusCode);
-        var result = await acquire.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        // Protocol v2: the provider accepts a durable job rather than
+        // returning bytes synchronously -- see DirectAcquisitionService.
+        Assert.AreEqual(HttpStatusCode.Accepted, acquire.StatusCode);
+        var result = await acquire.Content.ReadFromJsonAsync<ManualAcquisitionInProgressResponse>();
         Assert.IsNotNull(result);
+
+        await using (var pollScope = factory.Services.CreateAsyncScope())
+        {
+            var polling = pollScope.ServiceProvider.GetRequiredService<AcquisitionJobPollingService>();
+            Assert.AreEqual(1, await polling.ProcessDueAsync(CancellationToken.None));
+        }
 
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var asset = await database.MediaAssets.SingleAsync(mediaAsset => mediaAsset.Id == result.MediaAssetId);
+        var job = await database.ProviderAcquisitionJobs.SingleAsync(
+            acquisitionJob => acquisitionJob.Id == result.ProviderAcquisitionJobId);
+        Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Completed, job.LifecycleState);
+        Assert.AreEqual("fake-external", job.ProviderId);
+
+        var asset = await database.MediaAssets.SingleAsync(
+            mediaAsset => mediaAsset.AssociatedRequestFormatId == format.FormatId);
         Assert.AreEqual(MediaAssetStorageState.Trusted, asset.StorageState);
         Assert.AreEqual(1, await database.SecurityEvaluations.CountAsync(
             evaluation => evaluation.AssetId == asset.Id));
 
-        var job = await database.AcquisitionJobs.SingleAsync(acquisitionJob => acquisitionJob.Id == result.AcquisitionJobId);
-        Assert.AreEqual("fake-external", job.ProviderId);
-        Assert.AreEqual(EgressPolicy.Normal, job.EgressPolicy);
+        var acquisitionJob = await database.AcquisitionJobs.SingleAsync(
+            acquisitionJob => acquisitionJob.RequestId == request.Id);
+        Assert.AreEqual("fake-external", acquisitionJob.ProviderId);
     }
 
     [TestMethod]
@@ -215,7 +237,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     }
 
     [TestMethod]
-    public async Task OverridingEgressPolicyDownToNormalLetsAcquisitionSucceedWithNoGatewayConfigured()
+    public async Task APlausibleButWrongTitleRequiresConfirmationBeforeFetching()
     {
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = new FamilyLibrarianAppFactory(
@@ -223,7 +245,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             services =>
             {
                 services.RemoveAll<IExternalProviderClient>();
-                services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient("PRIVATE_REQUIRED"));
+                services.AddSingleton<IExternalProviderClient>(new WrongTitleExternalProviderClient());
             });
 
         using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -233,7 +255,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
 
         var create = await admin.PostAsJsonAsync(
             "/api/v1/admin/external-providers/",
-            new CreateExternalProviderRequest("override-down-external", "Override Down External", "http://fake-external.test"));
+            new CreateExternalProviderRequest("wrong-title-external", "Wrong Title External", "http://fake-external.test"));
         create.EnsureSuccessStatusCode();
         var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
         Assert.IsNotNull(provider);
@@ -242,16 +264,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true));
         enable.EnsureSuccessStatusCode();
 
-        // Populates CachedEgressPolicy from the manifest — PRIVATE_REQUIRED, with no gateway configured.
-        var test = await admin.PostAsync($"/api/v1/admin/external-providers/{provider.Id}/test", content: null);
-        test.EnsureSuccessStatusCode();
-
-        var setOverride = await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/egress-policy-override",
-            new SetExternalProviderEgressPolicyOverrideRequest("Normal"));
-        setOverride.EnsureSuccessStatusCode();
-
-        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/a-wrinkle-in-time/resolve", content: null);
         resolve.EnsureSuccessStatusCode();
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
         Assert.IsNotNull(work);
@@ -266,73 +279,111 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var fulfillment = await admin.GetFromJsonAsync<WorkFulfillmentOptionsResponse>(
             $"/api/v1/catalog/works/{work.Id}/fulfillment-options");
         Assert.IsNotNull(fulfillment);
-        var option = fulfillment.Ebook.SingleOrDefault(candidate => candidate.ProviderId == "override-down-external");
-        Assert.IsNotNull(option, "An overridden-to-Normal provider should still surface options with no gateway configured.");
+        var option = fulfillment.Ebook.SingleOrDefault(candidate => candidate.ProviderId == "wrong-title-external");
+        Assert.IsNotNull(option, "The wrong-title external provider's search result should still appear as an option.");
 
         var acquire = await admin.PostAsync(
-            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/override-down-external/{option.ProviderResultId}",
+            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/wrong-title-external/{option.ProviderResultId}",
             content: null);
-        Assert.AreEqual(HttpStatusCode.OK, acquire.StatusCode);
-        var result = await acquire.Content.ReadFromJsonAsync<ManualImportResultResponse>();
-        Assert.IsNotNull(result);
+        Assert.AreEqual(HttpStatusCode.Conflict, acquire.StatusCode, "An unverified title/author match must never be fetched silently.");
 
-        await using var scope = factory.Services.CreateAsyncScope();
-        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var job = await database.AcquisitionJobs.SingleAsync(acquisitionJob => acquisitionJob.Id == result.AcquisitionJobId);
-        Assert.AreEqual(EgressPolicy.Normal, job.EgressPolicy);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.AreEqual(0, await database.MediaAssets.CountAsync(
+                asset => asset.AssociatedRequestFormatId == format.FormatId));
+        }
+
+        var confirmed = await admin.PostAsync(
+            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/wrong-title-external/{option.ProviderResultId}" +
+            "?confirmLowConfidenceMatch=true",
+            content: null);
+        Assert.AreEqual(
+            HttpStatusCode.Accepted, confirmed.StatusCode, "Confirming the low-confidence match should let it proceed.");
+        var confirmedResult = await confirmed.Content.ReadFromJsonAsync<ManualAcquisitionInProgressResponse>();
+        Assert.IsNotNull(confirmedResult);
     }
 
     [TestMethod]
-    public async Task OverridingEgressPolicyUpToPrivateRequiredBlocksAcquisitionEvenThoughTheManifestDeclaresNormal()
+    public async Task ProviderPauseAppearsOnlyForAdminsAndHistoryRecordsTransitionsOnce()
     {
         var fixture = WebTestFixture.Require(_fixture);
-        await using var factory = new FamilyLibrarianAppFactory(
-            fixture.ConnectionString,
-            services =>
-            {
-                services.RemoveAll<IExternalProviderClient>();
-                services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient());
-            });
-
+        var fake = new FakeExternalProviderClient("pause-external")
+        {
+            Status = new ExternalProviderJobStatus("fake-job-1", ProviderAcquisitionJobLifecycleState.Running,
+                "paused-disk-space", null, new ProviderProgress(97, null, null,
+                    "Downloader paused: insufficient disk space. 0.39 GiB available; minimum 500 MiB."), null, 0)
+        };
+        await using var factory = new FamilyLibrarianAppFactory(fixture.ConnectionString, services =>
+        {
+            services.RemoveAll<IExternalProviderClient>();
+            services.AddSingleton<IExternalProviderClient>(fake);
+        });
         using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         await SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
-        var token = await WebTestFixture.GetAntiforgeryTokenAsync(admin);
-        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
-
-        var create = await admin.PostAsJsonAsync(
-            "/api/v1/admin/external-providers/",
-            new CreateExternalProviderRequest("override-up-external", "Override Up External", "http://fake-external.test"));
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        var create = await admin.PostAsJsonAsync("/api/v1/admin/external-providers/",
+            new CreateExternalProviderRequest("pause-external", "Pause External", "http://pause-external.test"));
         create.EnsureSuccessStatusCode();
         var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
         Assert.IsNotNull(provider);
-
-        var enable = await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true));
+        var enable = await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{provider.Id}/enabled",
+            new SetExternalProviderEnabledRequest(true));
         enable.EnsureSuccessStatusCode();
-
-        var setOverride = await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/egress-policy-override",
-            new SetExternalProviderEgressPolicyOverrideRequest("PrivateRequired"));
-        setOverride.EnsureSuccessStatusCode();
-        var overridden = await setOverride.Content.ReadFromJsonAsync<ExternalProviderResponse>();
-        Assert.IsNotNull(overridden);
-        Assert.AreEqual("Normal", overridden.CachedEgressPolicy);
-        Assert.AreEqual("PrivateRequired", overridden.EffectiveEgressPolicy);
-
-        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", null);
+        resolve.EnsureSuccessStatusCode();
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
         Assert.IsNotNull(work);
-        var created = await admin.PostAsJsonAsync(
-            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
+        var created = await admin.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(await fixture.CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
+        created.EnsureSuccessStatusCode();
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
-        var format = request.Formats.Single(candidate => candidate.MediaType == "Ebook");
-
+        var format = request.Formats.Single();
         var acquire = await admin.PostAsync(
-            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/override-up-external/anything",
-            content: null);
+            $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/pause-external/fake-hobbit-1?confirmLowConfidenceMatch=true", null);
+        Assert.AreEqual(HttpStatusCode.Accepted, acquire.StatusCode);
+        var acquisition = await acquire.Content.ReadFromJsonAsync<ManualAcquisitionInProgressResponse>();
+        Assert.IsNotNull(acquisition);
 
-        Assert.AreEqual(HttpStatusCode.BadRequest, acquire.StatusCode);
+        async Task PollAsync()
+        {
+            await using var pollScope = factory.Services.CreateAsyncScope();
+            var db = pollScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var tracked = await db.ProviderAcquisitionJobs.SingleAsync(j => j.Id == acquisition.ProviderAcquisitionJobId);
+            tracked.Reschedule(DateTimeOffset.UtcNow.AddSeconds(-1), DateTimeOffset.UtcNow);
+            await db.SaveChangesAsync();
+            await pollScope.ServiceProvider.GetRequiredService<AcquisitionJobPollingService>().ProcessDueAsync(CancellationToken.None);
+        }
+        await PollAsync();
+        await PollAsync();
+        var detail = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{request.Id}");
+        Assert.IsNotNull(detail);
+        Assert.AreEqual("AcquisitionPaused", detail.Request.Formats.Single().ProgressCode);
+        Assert.IsNotNull(detail.ProviderJobs);
+        Assert.Contains("minimum 500 MiB", detail.ProviderJobs.Single().Message!);
+        // The requester's own projection. There is no GET /api/v1/requests/{id};
+        // asking for it used to return the SPA shell, which can never contain
+        // these strings, so the privacy check passed without testing anything.
+        var familyJson = await admin.GetStringAsync("/api/v1/me/requests");
+        StringAssert.Contains(familyJson, request.Id.ToString());
+        Assert.DoesNotContain("minimum 500 MiB", familyJson);
+        Assert.DoesNotContain("providerJobs", familyJson, StringComparison.OrdinalIgnoreCase);
+
+        fake.Status = fake.Status with { Phase = "downloading", Progress = new ProviderProgress(98, null, null, null) };
+        await PollAsync();
+        await PollAsync();
+        detail = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{request.Id}");
+        Assert.IsNotNull(detail);
+        Assert.AreEqual("AcquisitionInProgress", detail.Request.Formats.Single().ProgressCode);
+        Assert.IsNotNull(detail.ProviderJobs);
+        Assert.IsNull(detail.ProviderJobs.Single().Message);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var events = await database.ProviderAttempts.Where(a => a.RequestId == request.Id).ToArrayAsync();
+        Assert.AreEqual(1, events.Count(a => a.Outcome == ProviderAttemptOutcome.Paused));
+        Assert.AreEqual(1, events.Count(a => a.Outcome == ProviderAttemptOutcome.Resumed));
+        Assert.Contains("insufficient disk space", events.Single(a => a.Outcome == ProviderAttemptOutcome.Paused).Summary);
     }
 
     private static async Task SignInAsync(HttpClient client, string email, string password)
@@ -343,31 +394,143 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     }
 
     /// <summary>Always finds "the-hobbit"-matching searches and fetches a real, minimal, valid EPUB.</summary>
-    private sealed class FakeExternalProviderClient(string egressPolicy = "NORMAL") : IExternalProviderClient
+    private sealed class FakeExternalProviderClient(string providerId = "fake-external") : IExternalProviderClient
     {
+        public ExternalProviderJobStatus? Status { get; set; }
         public Task<ExternalProviderManifest> GetManifestAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
-            Task.FromResult(new ExternalProviderManifest("1", "fake-external", "Fake External", "1.0.0", ["ebook"], egressPolicy));
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderManifest(
+                ["2"], "2", null, providerId, "Fake External", "1.0.0",
+                new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null));
 
-        public Task<bool> GetHealthAsync(
-            string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken) =>
-            Task.FromResult(true);
+        public Task<ExternalProviderHealth> GetHealthAsync(
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderHealth(
+                ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available));
 
         public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-            string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
             CancellationToken cancellationToken)
         {
             IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-                ? [new ExternalProviderCandidate("fake-hobbit-1", "The Hobbit", "J. R. R. Tolkien", "epub", null, null)]
+                ? [ExternalProviderCandidate.FromSimple("fake-hobbit-1", "The Hobbit", "J. R. R. Tolkien", "epub", null)]
                 : [];
             return Task.FromResult(candidates);
         }
 
         public Task<ExternalProviderArtifact> AcquireAsync(
-            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
             CancellationToken cancellationToken) =>
             Task.FromResult(new ExternalProviderArtifact(
                 new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
                 "the-hobbit.epub"));
+
+        public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
+                "fake-job-1", Status?.State ?? ProviderAcquisitionJobLifecycleState.Completed, phase: null, pollAfterSeconds: 0));
+
+        public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            Task.FromResult(Status ?? new ExternalProviderJobStatus(
+                jobId, ProviderAcquisitionJobLifecycleState.Completed, Phase: null, Interaction: null, Progress: null,
+                Error: null, PollAfterSeconds: null));
+
+        public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ExternalProviderOutput>>(
+            [
+                new ExternalProviderOutput(
+                    "primary", ProviderOutputKind.File, "primary", "the-hobbit.epub", "application/epub+zip",
+                    null, null, null, null, null)
+            ]);
+
+        public Task<ExternalProviderArtifact> GetOutputAsync(
+            string baseUrl, string? apiKey, string jobId, string outputId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderArtifact(
+                new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()), "the-hobbit.epub"));
+
+        public Task CancelAcquireAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task DeleteAcquireAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Always returns a plausible-looking but unrelated title/author, no
+    /// matter what it was actually searched for -- the exact shape PROVIDER-1
+    /// §F2 exists to catch (e.g. a loosely-indexed source matched by
+    /// keyword). Reproduces exit criterion 5a: FL must never fetch this
+    /// without explicit confirmation, regardless of the request's own ISBN.
+    /// </summary>
+    private sealed class WrongTitleExternalProviderClient : IExternalProviderClient
+    {
+        public Task<ExternalProviderManifest> GetManifestAsync(
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderManifest(
+                ["2"], "2", null, "wrong-title-external", "Wrong Title External", "1.0.0",
+                new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null));
+
+        public Task<ExternalProviderHealth> GetHealthAsync(
+            string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderHealth(
+                ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available));
+
+        public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
+            string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
+            CancellationToken cancellationToken)
+        {
+            IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
+                ? [ExternalProviderCandidate.FromSimple("wrong-title-1", "Dim Sum of Fears", "Someone Unrelated", "epub", null)]
+                : [];
+            return Task.FromResult(candidates);
+        }
+
+        public Task<ExternalProviderArtifact> AcquireAsync(
+            string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderArtifact(
+                new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
+                "wrong-title.epub"));
+
+        public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+            string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
+                "fake-job-1", ProviderAcquisitionJobLifecycleState.Completed, phase: null, pollAfterSeconds: 0));
+
+        public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderJobStatus(
+                jobId, ProviderAcquisitionJobLifecycleState.Completed, Phase: null, Interaction: null, Progress: null,
+                Error: null, PollAfterSeconds: null));
+
+        public Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ExternalProviderOutput>>(
+            [
+                new ExternalProviderOutput(
+                    "primary", ProviderOutputKind.File, "primary", "wrong-title.epub", "application/epub+zip",
+                    null, null, null, null, null)
+            ]);
+
+        public Task<ExternalProviderArtifact> GetOutputAsync(
+            string baseUrl, string? apiKey, string jobId, string outputId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ExternalProviderArtifact(
+                new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()), "wrong-title.epub"));
+
+        public Task CancelAcquireAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task DeleteAcquireAsync(
+            string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 }

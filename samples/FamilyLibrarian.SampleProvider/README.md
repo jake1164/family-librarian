@@ -9,23 +9,23 @@ implementable, and to give a third party a working starting point in any languag
 Two canned public-domain candidates ("Pride and Prejudice", "Frankenstein"), an
 optional shared-secret bearer check, and a genuinely asynchronous `/acquire` (a
 3-second simulated delay before the job reports `Completed`) so a client has to do
-real polling, not just call a synchronous stub.
+real polling, not just call a synchronous stub. The delay is three "stages" of
+`SampleProvider:JobStageMilliseconds` (default `1000`); the repository's conformance
+tests shorten it so they observe the same state sequence without waiting for it.
 
 ## The protocol
 
 | Method & path                    | Purpose                                                  |
 |-----------------------------------|-----------------------------------------------------------|
-| `GET /manifest`                   | Identity, protocol version, declared capabilities, declared egress policy |
-| `GET /health`                     | 200 when usable                                            |
-| `POST /search`                    | `{ requestId, mediaType, work: { title, authors[], identifiers } }` → `{ candidates: [...] }` |
-| `POST /acquire`                   | `{ requestId, candidateReference, mediaType }` → `202 { jobId, status }` |
-| `GET /acquire/{jobId}`            | `{ jobId, status: InProgress\|Completed\|Failed, failureReason? }` |
-| `GET /acquire/{jobId}/artifact`   | Binary stream, once `status` is `Completed`                |
-| `DELETE /acquire/{jobId}`         | Best-effort cancellation                                    |
-
-`egressPolicy` in the manifest is `NORMAL` (default), `PRIVATE_REQUIRED`, or
-`CUSTOM_PROXY` — the provider's own declared requirement for how Family Librarian
-must route every call to it (search *and* acquire), not a per-request choice.
+| `GET /manifest`                   | Identity, protocol version, and declared capabilities |
+| `GET /health`                     | v2 health plus per-operation availability                   |
+| `POST /search`                    | v2 work/edition evidence → structured candidate evidence    |
+| `POST /acquire`                   | Exact candidate reference/revision/token → durable v2 job   |
+| `GET /acquire/{jobId}`            | v2 state, phase, progress, interaction, or structured error |
+| `GET /acquire/{jobId}/outputs`    | Describes retained outputs after completion                  |
+| `GET /acquire/{jobId}/outputs/{outputId}` | Streams one file output                              |
+| `POST /acquire/{jobId}/cancel`    | Best-effort cancellation                                    |
+| `DELETE /acquire/{jobId}`         | Best-effort cleanup                                         |
 
 An optional `Authorization: Bearer <token>` header carries the scoped API key
 Family Librarian was given for this registration — checked here only if

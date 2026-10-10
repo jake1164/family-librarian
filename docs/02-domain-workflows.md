@@ -441,7 +441,6 @@ AcquisitionJobId
 RequestId
 MediaType
 ProviderId
-EgressPolicy
 ScannerHealthAtStart?
 Status
 CreatedAt
@@ -451,20 +450,6 @@ FailureReason?
 ```
 
 A request may have multiple acquisition jobs.
-
-`EgressPolicy` is a policy selected by the provider or deployment, not a VPN
-provider identity. It should support at least:
-
-```text
-NORMAL
-PRIVATE_REQUIRED
-CUSTOM_PROXY
-```
-
-`PRIVATE_REQUIRED` means all provider-originated external traffic must use the
-configured private-egress gateway. It must fail closed when that gateway is
-unavailable; the job may wait for private egress or fail, but must never fall
-back silently to normal host Internet access.
 
 **Provider-attempt ledger:** `AcquisitionJob` is created only after an artifact
 is successfully staged, so it cannot explain providers that found no result.
@@ -865,8 +850,10 @@ missing does not itself retry it: an explicit retry creates a new row, and
 a `Submitted`+`ReportedMissing` row alongside an ordinary `Failed` one.
 Reaching `Submitted` also raises a
 `NotificationCategories.KindleDeliveryConfirmationRequested` notification
-asking the user to confirm receipt. Automatic retries never resend a
-Submitted attempt solely because the user reported it missing.
+asking the user to confirm receipt. Confirming receipt or reporting it missing
+dismisses that attempt's in-app prompt; reporting it missing still raises the
+admin-facing delivery-needs-attention notification. Automatic retries never
+resend a Submitted attempt solely because the user reported it missing.
 
 ```text
 DeliveryAttemptId
@@ -1096,31 +1083,119 @@ available, the request moves to completed history with an explicit status
 event. A background verifier performs the OPDS rechecks, so administrators do
 not have to drive that normal asynchronous CWA step by hand.
 
-**Automatic public-domain ebook path:** a second background worker processes
-pending ebook formats. The locally indexed Project Gutenberg source is enabled by default and is only eligible for
-unattended acquisition when it returns exactly one result whose normalized title
-starts with the canonical title and whose creator-name tokens exactly match the
-canonical primary author. The worker then re-derives the candidate on the
-server, downloads it into quarantine, runs malware and EPUB structure checks,
-verifies package title/creator identity, and lets the existing approval and CWA
-publishing path continue. A result that is missing, ambiguous, unavailable, or
-cannot be acquired moves the request to `NeedsReview`; it is never guessed or
-retried continuously.
+**Automatic public-domain format path:** a second background worker processes
+pending formats. Project Gutenberg and LibriVox are compiled-in direct-acquisition
+providers, independently enabled by default, and can each be disabled in
+Settings → Sources. Gutenberg searches its locally imported RDF catalogue;
+LibriVox searches its live audiobook API by title. LibriVox uses one project ID
+per recording and acquires the selected recording's whole-book ZIP, safely
+extracts its MP3 tracks into the existing quarantine bundle pipeline, and lets
+the existing audio, security, and identity validation run before approval.
+Both public-domain providers use the existing acquisition and review flow; no
+provider writes directly to a library destination. The Project Gutenberg source
+is only eligible for unattended acquisition when it returns exactly
+one result whose normalized title starts with the canonical title and whose
+creator-name tokens exactly match the canonical primary author. For an ebook,
+the worker then re-derives the candidate on the server, downloads it into
+quarantine, runs malware and EPUB structure checks, verifies package
+title/creator identity, and lets the existing approval and CWA publishing path
+continue. A result that is missing, ambiguous, unavailable, or cannot be
+acquired is not guessed or retried continuously.
+
+An ambiguous or failed format can place the aggregate request in
+`NeedsReview`, but it does not stop the same automatic pass from acquiring a
+different requested format that has one safe candidate. For example, an
+ambiguous audiobook must not prevent a clearly selected EPUB from entering the
+security and publishing pipeline. The review remains scoped to its
+`RequestFormat`; the request becomes fully available only when all requested
+formats complete.
+This also applies to an already-stored preference review: the worker skips the
+format under review and continues unattended processing of another requested
+format, so a historical audiobook review does not require someone to requeue
+the request before its ebook can proceed.
+
+When several records require review, Family Librarian retains every source
+record for the librarian rather than collapsing them into a single blind
+approval. The requester is not asked to guess among several copies. The
+administrator sees the source name and record number, neutral media facts such
+as format, size, and track count, and—where the provider supplies one or a
+built-in catalogue has a stable public record—a link to the corresponding
+browser page before choosing an acquisition.
+
+For the built-in Gutenberg source's **ebook** path, the administrator also sees
+the actual automatic-selection evidence. Download counts are a narrow,
+source-owned tie breaker for choosing among several plausible text editions of
+the same title — not a general quality score. An edition is selected only when
+it has at least 1,000 downloads and a 3× lead over the next edition. Older
+collapsed Gutenberg ebook reviews are refreshed once by the background worker:
+the worker replaces the stale one-record evidence with the current complete
+comparison while still leaving the request in review. **This download-count
+dominance rule applies only to ebooks.** It has no role in choosing among
+audiobook recordings (below) — a lightly-downloaded audiobook is not treated
+as less acceptable than a popular one.
+
+**Automatic audiobook selection:** choosing among multiple acceptable
+audiobook recordings of the same requested work is a deterministic
+suitability/quality decision, not a popularity contest, and multiple
+same-provider candidates never force a review merely because more than one
+exists. `AudiobookCandidateSelector` ranks acceptable candidates by an ordered
+comparator chain — each dimension dominates every later one, never combined
+into one additive score — so an earlier requirement can never be outvoted by
+several weaker signals in a later one:
+
+1. **Completeness.** A recording known to be abridged ranks behind one that
+   is not known to be.
+2. **Narration**, governed by the requester's own narration preference
+   (`/settings/audiobook-narration`, defaulting to *Prefer human narration*
+   for every account): under *Prefer human narration*, a confirmed human
+   recording outranks every other candidate, but
+   a synthetic (computer-generated) one remains fully eligible when no human
+   recording is acceptable; under *Human narration only*, a confirmed
+   synthetic recording is excluded outright, and one whose narration cannot be
+   confirmed is neither accepted nor silently discarded — it is routed for
+   review as genuine unresolved uncertainty; under *No narration preference*,
+   narration has no effect on the outcome. For Project Gutenberg, narration is
+   classified from that record's own `*readme.txt` (structured catalogue
+   metadata does not distinguish a human reading from a computer-generated
+   one), never guessed — an unrecognized statement is `Unknown`, a valid,
+   expected result.
+3. **Packaging/format preference** — the existing container/codec ranking
+   below (M4B, MP3, M4A/AAC, OPUS, OGG/OGA, then FLAC), applied only as a late
+   tiebreaker among otherwise-equivalent recordings, never as a stand-in for
+   audio quality (a smaller M4B file is not "better" than a larger MP3 one on
+   that basis alone).
+4. **Popularity**, then **a stable record ID**, as the last, weak
+   tiebreakers — never an acceptance requirement, and never enough by
+   themselves to prefer one otherwise-equivalent recording over another for a
+   requester-visible reason.
+
+A record's own bundled codecs are resolved separately, before this
+comparison: Project Gutenberg audio records commonly publish several codecs
+side by side (e.g. MP3, M4B, and Ogg Vorbis for the same reading), so the
+Gutenberg provider first picks that one record's own best usable format —
+M4B, MP3, M4A/AAC, OPUS, OGG/OGA, then FLAC, in that order — before it is
+ever compared against a *different* record. Legacy Speex (`.spx`), WAV,
+AIFF/AIF, WMA, APE, and any other unrecognized audio format are ignored:
+they neither auto-acquire nor create an automatic-review choice. A
+cross-provider disagreement, and identity/language/release/DRM checks, are
+unchanged.
 
 This is intentionally limited to the bundled provider that explicitly opts in
 to automatic acquisition. Project Gutenberg has effective `Once` behavior: each outcome
 is recorded and it is not repeatedly queried. Admin-registered external
 providers default to `Manual`, but an administrator may select `Daily` or
-`Weekly` per enabled provider. A scheduled external lookup follows the declared
-egress policy and records the outcome; a result moves the request to
+`Weekly` per enabled provider. A scheduled external lookup calls the provider over its registered API URL
+and records the outcome; a result moves the request to
 `NeedsReview` and never downloads the external artifact automatically.
 
 Project Gutenberg discovery reads the locally imported daily RDF catalogue, so it
-continues to work when external catalogue APIs are blocked. The source's mirror
-download failure is recorded by the automatic request worker as an
-administrator-visible provider failure. The same source's optional
-fulfillment-options lookup degrades to no options, so it must
-not fail or delay the core Work and request detail views.
+continues to work when external catalogue APIs are blocked. LibriVox discovery
+uses the upstream title-only search (not combined title-and-author filtering),
+spaces catalog requests, and performs one bounded retry for rate limits or
+transient server failures. An upstream search failure is recorded separately
+from an archive download or post-download validation failure. Neither source's
+optional fulfillment-options lookup may fail or delay core Work and request
+detail views.
 
 **Cancel and ask again:** reopening a cancelled request begins a fresh
 acquisition cycle. Previous provider attempts remain visible in the audit
@@ -1142,6 +1217,70 @@ instead of leaving it behind a filter, and Sources shows the latest bounded,
 secret-free provider-attempt summary. The detailed request activity ledger
 remains the provenance view. Requesters never receive provider IDs, transport
 failures, URLs, credentials, or diagnostic details.
+
+**Preference-review presentation:** when a provider's existing search result
+includes edition or release evidence, a requester sees only neutral facts that
+can make a choice meaningful: language, format, publication year, publisher,
+size, part count, and abridged/unabridged status when applicable. Candidate
+records that are identical on every requester-visible fact collapse to one
+choice while retaining one opaque server-side handle for a later acquisition.
+This presentation never triggers a per-candidate provider request, range
+probe, download, or file inspection; source identity, URLs, opaque handles,
+raw release names, provider-supplied title/author labels, and extension data
+remain administrator/server-only. The requester-facing title and author always
+come from Family Librarian's canonical catalog Work.
+
+### External ebook source formats and DRM
+
+External ebook candidates are classified before any source acquisition: Safe
+sources are EPUB, AZW3, MOBI, and AZW; Possible sources are FB2, FBZ, KEPUB,
+PRC, and DOCX; every other source format, including PDF and plain text, is
+rejected. Possible sources are offered only when the provider returned no Safe
+source and always require explicit review. A provider reports `none`,
+`encrypted`, or `unknown` DRM evidence: encrypted files are rejected; unknown
+DRM can never be auto-acquired. FL also inspects acquired MOBI-family files for
+their encryption flag and never decrypts or circumvents DRM. Provider format
+constraints are a quota-saving hint, not enforcement; FL independently applies
+this policy before it can submit `/acquire`.
+
+For deterministic title identity, FL compares a candidate against the Work's
+canonical title and any distinct titles recorded on that same Work's catalog
+editions. These edition titles are catalog-owned evidence (for example, an
+original-language title), not provider labels or guessed translations. A
+candidate must still pass decisive deterministic work identity, language, release,
+DRM and Safe-format checks before unattended acquisition. Exact release title
+phrases tolerate neutral extra descriptors; unknown author/series metadata is
+not a contradiction. Work identity and typed edition/completeness conditions
+are assessed separately. Author-only or unresolved title evidence remains
+reviewable. See docs/03-provider-api-contracts.md for the evidence model and
+complete numbered-audiobook grouping policy. EPUB package identity verification uses the
+same title set after download. M4B audiobooks are verified the same way from
+their embedded iTunes-style tags: the title (`nam`/`alb`) must match, and the
+author/artist tags (`ART`/`aART`/`wrt`), when present, must include a match;
+a file with no author tag is judged on title alone. Formats with no verifier
+(for example MP3 or MOBI) that were not independently confirmed before
+download are held for a librarian's review.
+
+When automatic acquisition is disabled or the remaining candidates need a
+human review, Family Librarian does not ask a requester to guess between rows
+whose available evidence provides no meaningful distinction. The requester
+receives a concise explanation; the administrator receives the structured
+candidate evidence and, only when the provider explicitly supplied a safe
+browser inspection URL, a link to inspect that source page. Provider
+provenance and inspection URLs never leave administrator-authorized APIs.
+
+The explanation is an explicit review fact, not a client-side inference from
+the category name. When no candidate has identifier or strict title-and-author
+corroboration, it says that possible copies were found but their titles could
+not be confirmed as the requested work, and that a librarian must verify the
+source before acquisition. That is an identity review, not an edition
+preference. When work identity is confirmed but automatic acquisition is off,
+the explanation instead says that matching copies need librarian selection.
+
+CWA receives the original approved source file and performs any library/device
+conversion later. FL does not yet receive CWA's converted EPUB as an artifact,
+so it cannot structurally validate that converted file; Possible formats remain
+review-required until that integration exists.
 
 There is still no general `CheckingLibrary`, `Searching`, `Acquiring`, or
 `Processing` request state machine; audiobook confirmation remains future work.
@@ -1220,10 +1359,6 @@ Acquisition engine selects providers
       +--> Required scanner unavailable
       |        --> WaitingForSecurityScanner (do not search/acquire/stage files)
       |
-      +--> Enforce provider egress policy
-      |      PRIVATE_REQUIRED + gateway unavailable
-      |        --> WaitingForPrivateEgress / AcquisitionFailed
-      |
       +--> Search provider A
       +--> Search provider B
       +--> Search provider C
@@ -1266,6 +1401,11 @@ provides Refresh for manual recovery. The shared hub has no client-invokable ope
 and sends no filenames, identifiers, or scan details. Every snapshot and action
 continues to enforce current server-side authorization; mutations retain their
 anti-forgery checks. No periodic data polling is used by this page.
+
+Personal communications settings use the same connection: a Matrix identity-link
+change invalidates the owning user's communications snapshot so the page reflects
+verification or unlinking without a manual reload. The hub message carries only a
+topic flag; the page reloads the status through its authenticated HTTP API.
 
 ```text
 Asset enters quarantine
@@ -1486,8 +1626,6 @@ RequestCreated
 MetadataResolved
 MetadataCorrected
 AcquisitionStarted
-PrivateEgressUnavailable
-PrivateEgressPolicyBlocked
 CandidateSelected
 AssetUploaded
 SecurityScanStarted
@@ -1539,5 +1677,3 @@ Recommended default:
 - Different regional publication dates.
 - Multiple audiobook editions/narrators.
 - Whether a Request should directly target a Work or optionally a specific Edition.
-- How a deployment proves a private-egress gateway is healthy before dispatching
-  a `PRIVATE_REQUIRED` acquisition job.

@@ -95,6 +95,37 @@ public sealed class NotificationService(
             cancellationToken);
 
     /// <summary>
+    /// Clears the recipient's in-app prompt once they answer whether this
+    /// submitted Kindle delivery arrived. The prompt is keyed to the attempt,
+    /// so answering one retry must not clear another attempt's prompt.
+    /// </summary>
+    public async Task DismissKindleDeliveryConfirmationAsync(
+        Guid userId, Guid attemptId, CancellationToken cancellationToken)
+    {
+        var notification = await repository.FindLatestAsync(
+            NotificationAudience.SingleUser,
+            userId,
+            NotificationCategories.KindleDeliveryConfirmationRequested,
+            NotificationSubjectTypes.DeliveryAttempt,
+            attemptId.ToString(),
+            cancellationToken);
+        if (notification is null)
+        {
+            return;
+        }
+
+        var receipt = await repository.FindReceiptAsync(notification.Id, userId, cancellationToken);
+        if (receipt is null)
+        {
+            receipt = new NotificationReceipt(notification.Id, userId);
+            await repository.AddReceiptAsync(receipt, cancellationToken);
+        }
+
+        receipt.Dismiss(clock.UtcNow);
+        await repository.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
     /// Admin-facing counterpart to <see cref="RecordKindleDeliverySubmittedAsync"/>:
     /// raised when a delivery attempt has no automatic path forward left -- a
     /// terminal failure, an ambiguous submission, or a user's report-missing --
@@ -160,6 +191,29 @@ public sealed class NotificationService(
             detail: "You're following this author.",
             subjectType: NotificationSubjectTypes.Work,
             subjectId: newWorkId.ToString(),
+            cancellationToken);
+
+    /// <summary>
+    /// Admin-facing alert raised by <c>ExternalProviderHealthPollService</c>'s
+    /// independent background probe on a transition into non-operational --
+    /// the passive Sources-page chip alone only helps an admin already
+    /// looking at it. Keyed on the provider's own stable id so a later
+    /// still-down poll tick recurs (never duplicates) this same event; the
+    /// caller only invokes this on an actual transition, not every tick, so
+    /// a persistently broken provider doesn't un-dismiss its own
+    /// notification every cycle.
+    /// </summary>
+    public Task RecordProviderHealthDegradedAsync(
+        Guid providerId, string providerName, string reason, CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.AdminBroadcast,
+            recipientUserId: null,
+            NotificationCategories.ProviderHealthDegraded,
+            NotificationSeverity.Warning,
+            title: $"{providerName} needs attention",
+            detail: reason,
+            subjectType: NotificationSubjectTypes.ExternalProvider,
+            subjectId: providerId.ToString(),
             cancellationToken);
 
     public async Task<IReadOnlyList<NotificationView>> ListForViewerAsync(

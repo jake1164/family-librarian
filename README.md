@@ -8,10 +8,11 @@ This repository contains the current design documents for **Family Librarian**, 
 
 1. [Product & Architecture Specification](docs/01-product-architecture-spec.md)
 2. [Domain Model & Workflow Specification](docs/02-domain-workflows.md)
-3. [Provider & API Contract Design](docs/03-provider-api-contracts.md)
-4. [Project Name Decision (archived shortlist)](docs/05-project-name-options.md)
+3. [Provider Architecture & Internal Contracts](docs/03-provider-api-contracts.md)
+4. [External Provider HTTP Protocol (v2)](docs/04-external-provider-http-protocol.md)
 5. [Deployment, Backup, and Recovery](docs/06-deployment-and-recovery.md)
 6. [UI Conventions](docs/07-ui-conventions.md)
+7. [Book Matching Design Findings](docs/family-librarian-book-matching-design-findings.md)
 
 These documents are intended to be living specifications and should be updated as technical spikes and implementation decisions resolve open questions.
 
@@ -166,6 +167,12 @@ and sends a clean verified copy to CWA. **My requests** and the book page refres
 while open so the requester can follow safe, plain-language progress without
 seeing provider diagnostics.
 
+For audiobooks, the built-in LibriVox source is also enabled by default. It
+searches LibriVox's public catalog by title, keeps each recording as a separate
+candidate, and acquires the selected whole-book ZIP into Family Librarian's
+normal quarantine, audio-validation, and approval flow before Audiobookshelf
+delivery. Both built-in sources can be disabled independently under **Sources**.
+
 For Kindle delivery, configure **Ebook delivery**, then opt in on an ebook
 request or choose **Send to Kindle** for a book already in the library.
 **My Kindle deliveries** includes both paths, receipt confirmation, failures,
@@ -182,12 +189,13 @@ Administrators also get:
   Queue navigation label show any requests that need review;
 - **Metadata providers**, for enabling book-information providers and storing a
   Google Books key;
-- **Sources**, for reviewing the built-in Project Gutenberg source and configuring
+- **Sources**, for reviewing the built-in Project Gutenberg and LibriVox sources and configuring
   external acquisition sources, their private network, and a per-source manual,
   daily, or weekly recheck schedule. The page also shows the latest safe
   automatic-source failure directly, so an operator does not have to trace a
   request timeline to discover it. Project Gutenberg searches use the daily RDF
-  catalogue imported into PostgreSQL; actual ebook downloads use configured mirrors.
+  catalogue imported into PostgreSQL; LibriVox searches its live audiobook API.
+  Project Gutenberg ebook downloads use configured mirrors.
   Source failures remain visible to administrators but
   do not prevent Work or request pages from loading;
 - **Security scans**, for the latest 25, 50 (default), or 100 imported/acquired
@@ -331,6 +339,14 @@ requests a book through the UI, and verifies that the administrator can review
 it in the Queue. It is intentionally inconclusive unless all three variables
 are set, so everyday unit and host-integration runs do not require a browser or
 credentials.
+
+Browser tests are tagged `TestCategory("Release")`. Checkin CI excludes them
+(`-- --filter "TestCategory!=Release"`) so every push stays a fast regression run.
+The release-tests workflow runs on release tags or on demand: it installs Chromium,
+starts an isolated Compose deployment with CI-only bootstrap credentials, and runs
+this test together with the local browser regressions. The local command remains
+opt-in because a developer machine may not have Chromium installed or a free
+Compose port.
 
 ```bash
 FAMILY_LIBRARIAN_E2E_BASE_URL=http://localhost:8080 \

@@ -9,7 +9,11 @@ namespace FamilyLibrarian.Web.Tests;
 /// hosted client, cookie session, anti-forgery handling, and admin queue work
 /// together rather than only exercising the host endpoints.
 /// </summary>
+// Release tier: needs Chromium (and, for the queue E2E, a deployed Compose
+// stack), so checkin CI excludes it and .github/workflows/release-tests.yml
+// runs it before a release.
 [TestClass]
+[TestCategory("Release")]
 public sealed class BrowserRequestQueueE2ETests
 {
     private const string BaseUrlVariable = "FAMILY_LIBRARIAN_E2E_BASE_URL";

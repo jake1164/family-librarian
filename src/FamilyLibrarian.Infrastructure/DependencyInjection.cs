@@ -20,6 +20,7 @@ using FamilyLibrarian.Infrastructure.Catalog;
 using FamilyLibrarian.Infrastructure.Communications;
 using FamilyLibrarian.Infrastructure.Delivery;
 using FamilyLibrarian.Infrastructure.Gutenberg;
+using FamilyLibrarian.Infrastructure.LibriVox;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
@@ -84,6 +85,34 @@ public static class DependencyInjection
         // harmless placeholder) at resolution time instead of here — see its own
         // remarks for why that has to happen lazily.
         authenticationBuilder.AddOpenIdConnect(OidcOptionsConfigurator.SchemeName, _ => { });
+
+        // HUMAN-ACQ-1 D12: a second, non-default cookie scheme for a magic-link
+        // claim's short-lived, single-job grant. Adding a named scheme here does
+        // not change AddAuthentication's default above, so ordinary admin cookie
+        // auth is untouched; this scheme is only ever selected explicitly, via
+        // the "InteractionGrant" policy's AuthenticationSchemes below.
+        authenticationBuilder.AddCookie(InteractionGrantDefaults.AuthenticationScheme, options =>
+        {
+            options.Cookie.Name = InteractionGrantDefaults.CookieName;
+            options.Cookie.Path = "/api/v1/interaction-links";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SameSite = SameSiteMode.Strict;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            options.ExpireTimeSpan = TimeSpan.FromMinutes(30);
+            options.SlidingExpiration = false;
+            // This is an API, not a page: a failed check must return a status
+            // code, never redirect to a login page that does not exist for it.
+            options.Events.OnRedirectToLogin = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            };
+            options.Events.OnRedirectToAccessDenied = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return Task.CompletedTask;
+            };
+        });
 
         services.ConfigureOptions<OidcOptionsConfigurator>();
         services.AddSingleton<IOidcRuntimeSettingsCache, OidcRuntimeSettingsCache>();
@@ -158,10 +187,22 @@ public static class DependencyInjection
         services.AddAuthorizationBuilder()
             .AddPolicy(
                 "Admin",
-                policy => policy.RequireRole(RoleNames.Admin));
+                policy => policy.RequireRole(RoleNames.Admin))
+            .AddPolicy(
+                InteractionGrantDefaults.PolicyName,
+                policy =>
+                {
+                    // Scoped to this one scheme: an ordinary Identity admin cookie
+                    // must not satisfy this policy, and this grant must never
+                    // satisfy "Admin" -- see InteractionGrantDefaults' remarks.
+                    policy.AuthenticationSchemes.Add(InteractionGrantDefaults.AuthenticationScheme);
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireClaim(InteractionGrantDefaults.JobIdClaimType);
+                });
 
         services.AddScoped<IClock, SystemClock>();
         services.AddScoped<ICatalogRepository, CatalogRepository>();
+        services.AddScoped<OrphanedWorkRetirement>();
         services.AddScoped<CatalogWorkResolver>();
         services.AddScoped<IWorkFulfillmentOptionsService, WorkFulfillmentOptionsService>();
 
@@ -223,9 +264,13 @@ public static class DependencyInjection
                 options => !string.IsNullOrWhiteSpace(options.RootPath),
                 $"{StorageOptions.SectionName}:RootPath is required.")
             .ValidateOnStart();
+        services.AddSingleton<LibriVoxDownloadWorkspace>();
         services.AddScoped<IAssetStagingStore, FileSystemAssetStagingStore>();
         services.AddScoped<IAcquisitionRepository, AcquisitionRepository>();
+        services.AddScoped<IProviderAcquisitionJobStore, ProviderAcquisitionJobStore>();
         services.AddScoped<IProviderAttemptRepository, ProviderAttemptRepository>();
+        services.AddScoped<IProviderInteractionClaimStore, ProviderInteractionClaimStore>();
+        services.AddScoped<IProviderInteractionAlertStore, ProviderInteractionAlertStore>();
 
         // Mirrors InvitationPolicy above: a plain settings object, since the
         // Application layer that consumes it takes no dependency on the options
@@ -241,12 +286,35 @@ public static class DependencyInjection
         }
 
         services.AddSingleton(manualImportPolicy);
+        var externalProviderOutputPolicy = new ExternalProviderOutputPolicy();
+        configuration.GetSection(ExternalProviderOutputPolicy.SectionName).Bind(externalProviderOutputPolicy);
+        if (!externalProviderOutputPolicy.IsValid)
+        {
+            throw new InvalidOperationException(
+                $"{ExternalProviderOutputPolicy.SectionName} configuration is invalid: output count, " +
+                "file size, job size, filename length and read inactivity timeout must be positive, " +
+                "MaxJobBytes must be at least MaxFileBytes, and MinFreeDiskBytes must not be negative.");
+        }
+
+        services.AddSingleton(externalProviderOutputPolicy);
         services.AddScoped<AcquisitionStagingService>();
         services.AddScoped<ManualImportService>();
         services.AddScoped<DirectAcquisitionService>();
+        services.AddScoped<IAudiobookPartSetMemberAcquirer>(
+            provider => provider.GetRequiredService<DirectAcquisitionService>());
+        services.AddScoped<AudiobookPartSetAcquisitionService>();
+        services.AddScoped<IPartSetReviewRouter>(
+            provider => provider.GetRequiredService<AutomaticRequestFulfillmentService>());
+        services.AddScoped<AudiobookPartSetFailureService>();
         services.AddScoped<DirectAcquisitionSecurityService>();
         services.AddScoped<AutomaticRequestFulfillmentService>();
         services.AddScoped<ExternalProviderRecheckService>();
+        services.AddScoped<ExternalProviderHealthPollService>();
+        services.AddScoped<AcquisitionJobPollingService>();
+        services.AddScoped<ProviderInteractionClaimService>();
+        services.AddScoped<ProviderInteractionService>();
+        services.AddScoped<ProviderInteractionLinkService>();
+        services.AddScoped<ProviderInteractionAlertService>();
 
         services.AddOptions<ClamAvScannerOptions>()
             .Bind(configuration.GetSection(ClamAvScannerOptions.SectionName))
@@ -267,8 +335,10 @@ public static class DependencyInjection
         // Program.cs) refuses to serve if this collection is ever empty.
         services.AddSingleton<IAssetValidator, FileTypeValidator>();
         services.AddSingleton<IAssetValidator, EpubValidator>();
+        services.AddSingleton<IAssetValidator, MobiEncryptionValidator>();
         services.AddSingleton<IAssetValidator, AudioValidator>();
         services.AddScoped<IAssetIdentityVerifier, EpubAssetIdentityVerifier>();
+        services.AddScoped<IAssetIdentityVerifier, M4bAssetIdentityVerifier>();
 
         services.AddScoped<IAcquisitionBoundaryGuard, AcquisitionBoundaryGuard>();
         services.AddScoped<ISecurityEvaluationRepository, SecurityEvaluationRepository>();
@@ -301,9 +371,13 @@ public static class DependencyInjection
 
         services.AddScoped<IInvitationRepository, InvitationRepository>();
         services.AddScoped<IUserAccountStore, IdentityUserAccountStore>();
-        services.AddSingleton<IInvitationTokenGenerator, InvitationTokenGenerator>();
+        services.AddSingleton<InvitationTokenGenerator>();
+        services.AddSingleton<IInvitationTokenGenerator>(provider => provider.GetRequiredService<InvitationTokenGenerator>());
+        services.AddSingleton<ISecureTokenGenerator>(provider => provider.GetRequiredService<InvitationTokenGenerator>());
         services.AddScoped<InvitationService>();
         services.AddScoped<AccountAdminService>();
+        services.AddScoped<AudiobookNarrationPreferenceService>();
+        services.AddScoped<QuietHoursPreferenceService>();
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
@@ -512,6 +586,28 @@ public static class DependencyInjection
         services.AddTransient<IAutomaticDirectAcquisitionProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<GutenbergProvider>());
 
+        services.AddSingleton<LibriVoxRequestThrottle>();
+        services.AddHttpClient<LibriVoxApiClient>(client =>
+        {
+            client.BaseAddress = new Uri("https://librivox.org/");
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        });
+        services.AddHttpClient<LibriVoxProvider>(client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(30);
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
+        }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false
+        });
+        services.AddTransient<IDirectAcquisitionProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<LibriVoxProvider>());
+        services.AddTransient<IAutomaticDirectAcquisitionProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<LibriVoxProvider>());
+
         // Publishing destinations (M12): CWA (ebook library, ingest folder) and
         // Audiobookshelf (audiobook delivery, upload API). Neither is a metadata
         // provider, so neither goes through ProviderRegistry/ProviderSetting —
@@ -561,6 +657,13 @@ public static class DependencyInjection
         // -acquisition providers above, plus external providers, checked
         // directly from a raw catalog candidate's title/author/ISBNs instead
         // of a persisted Work.
+        // Re-verifies an external provider's own claimed title/author against
+        // the request's identity via the same IBookMatchService/IBookMatcher
+        // singletons above -- stateless itself, so a singleton too.
+        services.AddSingleton<ExternalProviderMatchVerifier>();
+        // Singleton so concurrent availability runs (one per search result)
+        // share one provider call per identical book/media-type search.
+        services.AddSingleton<ExternalSearchCoalescer>();
         services.AddScoped<ExternalCandidateAvailabilityChecker>();
         services.AddScoped<ICandidateAvailabilityService, CandidateAvailabilityService>();
 
@@ -575,18 +678,13 @@ public static class DependencyInjection
         // External-provider protocol (M13): a registered provider is a
         // multi-row, admin-added registration (unlike ProviderRegistry's
         // hardcoded allowlist), so it has its own store/service rather than
-        // widening ProviderSetting. The gateway cache is a singleton for the
-        // same "never block route resolution on a DB read" reason as the OIDC
-        // runtime cache.
+        // widening ProviderSetting.
         services.AddScoped<IExternalProviderStore, ExternalProviderStore>();
         services.AddScoped<IExternalProviderClient, ExternalProviderClient>();
+        services.AddScoped<IProviderRemoteViewClient, ProviderRemoteViewClient>();
+        services.AddScoped<ProviderRemoteViewBrokerService>();
         services.AddScoped<ExternalProviderAdminService>();
 
-        services.AddSingleton<IPrivateEgressGatewayRuntimeCache, PrivateEgressGatewayRuntimeCache>();
-        services.AddScoped<IPrivateEgressGatewayStore, PrivateEgressGatewayStore>();
-        services.AddScoped<IPrivateEgressGatewayTester, PrivateEgressGatewayTester>();
-        services.AddScoped<PrivateEgressGatewayService>();
-        services.AddScoped<PrivateEgressRouteResolver>();
 
         services.AddScoped<SettingsBackupService>();
 

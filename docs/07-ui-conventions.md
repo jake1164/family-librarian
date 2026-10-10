@@ -29,8 +29,8 @@ The rule:
   type so the distinction isn't icon-only for screen readers.
 
 Security scan/storage statuses use the same `MediaTypeVisuals` mapping and
-`RequestStatusChip`: scanning/waiting is blue, interrupted/review-required is
-amber, passed/trusted is green, and failed/deleted is red.
+`RequestStatusChip`: scanning/waiting is blue, interrupted/stalled/review-required is
+amber (a stalled scan replaces the "Processing" storage chip rather than sitting beside it), passed/trusted is green, and failed/deleted is red.
 
 This mapping lives in one place —
 [`Theme/MediaTypeVisuals.cs`](../src/FamilyLibrarian.Web.Client/Theme/MediaTypeVisuals.cs)
@@ -62,17 +62,56 @@ request lifecycle yet. This mapping has its own functions on
 separate from `StatusColor`/`StatusLabel` rather than folded into that
 switch. Media-type icon still comes from the shared `MediaTypeVisuals.Icon`.
 
+## Provider activity outcomes
+
+The provider-activity ledger (a request's admin detail page and the Tasks
+dashboard) records one row per automatic lookup. Its outcomes are their own
+vocabulary — they are not a request or format status — so they have their own
+mapping on `MediaTypeVisuals` (`AttemptOutcomeColor`, `AttemptOutcomeLabel`,
+`AttemptOutcomeHint`, `AttemptOutcomeIcon`) and are drawn only through
+`ProviderAttemptChip`. They follow the same colour rule as everything else:
+
+| Outcome | Chip | Meaning |
+| --- | --- | --- |
+| `Submitted` | blue, "In progress" | A copy is being fetched. Nothing needs doing. |
+| `Retrying` | blue, "Trying next copy" | A copy failed its checks and the next best one is already being tried. Nothing needs doing. |
+| `Acquired` | green | A copy was fetched and sent to the security checks. |
+| `CandidatesFound` | blue | Possible copies were found; a librarian chooses. |
+| `NoMatch` | grey, "Nothing found" | The source had nothing; it is asked again later. |
+| `Blocked` | amber | A setting stopped the lookup; check the source's configuration. |
+| `Failed` | red | A real failure that needs a librarian. |
+
+The rule worth protecting is that **red means a person must act**. The retry
+loop deliberately moves on from a bad copy by itself, so that step is
+`Retrying`, never `Failed`; only an exhausted attempt budget, or a failure
+outside the automatic loop, is `Failed`. Drawing the intermediate step in red
+taught administrators to ignore red. Each chip also carries an icon and a
+tooltip that says in words whether anything needs doing, so the state is not
+carried by colour alone.
+
+The requester-safe format chip follows the same idea: while an automatic job
+has failed but the request is still in the automatic queue, the progress code
+is `AcquisitionRetrying` (blue, generic text) rather than `AcquisitionFailed`
+(red). `AcquisitionFailed` remains for a failed job that is not being retried.
+
+Ledger wording for the retry loop lives in `AutomaticAttemptNarrative`, not in
+the pages: each line says which attempt it is ("Attempt 2 of 3"), whether
+anything needs doing, and what happens next. A fetch row names the release
+(provider-supplied, so it is cleaned, length-bounded and only ever rendered as
+text, and it appears in the administrator-only ledger, never to a requester).
+
 ## Use the shared components, not a hand-rolled `MudChip`
 
-Three components in
+Four components in
 [`FamilyLibrarian.Web.Client/Requests/`](../src/FamilyLibrarian.Web.Client/Requests/)
 cover every case:
 
 | Component | Use for | Shows |
 | --- | --- | --- |
-| `FormatStatusChip` | One request format (Ebook/Audiobook + its status) | icon (media type) + chip colored by status + tooltip; clickable once `ExternalActionUri` is set |
+| `FormatStatusChip` | One request format (Ebook/Audiobook + its status) | icon (media type) + chip colored by status + tooltip; clickable once a safe `ExternalActionUri` is set |
 | `RequestStatusChip` | A whole request's status (no single media type) | chip colored by status, short label by default |
 | `MediaTypeChip` | A media type with no status attached (e.g. a provider lookup) | neutral/outlined chip + icon + tooltip |
+| `ProviderAttemptChip` | One provider-activity ledger row's outcome | chip colored by outcome + icon + tooltip saying whether anything needs doing |
 
 ```razor
 @* One request's format list *@
@@ -88,6 +127,12 @@ cover every case:
 <RequestStatusChip Status="@request.Status" />
 ```
 
+`ExternalActionUri` is reserved for a safe, ordinary external-library action
+such as opening an already-owned copy. It must never carry an external
+provider's interaction/control URL, signed URL, bearer capability, or remote
+browser destination. Those remain server-side and, when needed, are exposed
+only through a separately authorized administrator broker.
+
 `RequestStatusChip` defaults to a short, scannable label
 (`MediaTypeVisuals.StatusLabel`, e.g. "Needs review"). Pass `Label="@request.StatusDescription"`
 only where a full sentence is the right register — the family-facing pages
@@ -97,6 +142,65 @@ there. On admin surfaces (`Tasks`, `RequestQueue`, `RequestDetail`) the viewer
 *is* the librarian, so the same sentence reads as narration — use the short
 label instead (the default).
 
+For administrator request surfaces, a pending format may override the shared
+chip label with a server-reported active acquisition stage (such as
+"Downloading and preparing files via LibriVox" or "Processing files") and otherwise say
+"Awaiting next check." The underlying `Requested` status and its blue color
+remain unchanged. The active stage is transient host activity, not a durable
+request transition or evidence that a queued provider has already been asked.
+Only the administrator endpoint exposes provider identity and current work.
+When an external provider is waiting for a human action, the admin-only chip
+may say "Provider action needed" using the amber `AwaitingProviderAction`
+progress code. Show the provider-supplied reason in adjacent admin-only text
+or an attention panel; keep the shared requester progress sentence generic.
+When saved review candidates identify a particular request format, its admin
+chip says "Source review needed" and uses the existing amber
+`AwaitingApproval` progress color. Other formats on the same request retain
+their own status and color.
+
+## Review-decision language
+
+A review category is routing metadata, not an explanation a person can act
+on. Requester and administrator review panels must render the host-provided
+plain-language review reason. In particular, an external search whose title
+could not be corroborated as the requested Work must say so; it must never be
+headed or described merely as a “preference review.” Do not manufacture a
+quality recommendation from byte count, publication year, provider ordering,
+or free-form quality tags. When there is no meaningful requester-visible
+difference between multiple records, tell the requester that a librarian will
+compare them and expose the provider/source inspection evidence only in the
+administrator panel. Do not collapse source records before persistence: the
+administrator must see every record, its human-facing source and record
+identifier, and the neutral media facts needed to compare it.
+
+Administrator request-review provenance may include the optional provider-authored
+`sourceSummary` beside the source name and record identifier. It is bounded plain
+text, rendered with normal Razor HTML encoding; it is never a decision signal or
+requester/family content. Inspection anchors use primary color and an underline
+so they remain visibly recognizable as links.
+
+For a legacy review saved before those records were retained, suppress any
+one-row requester action rather than presenting a false choice; the admin view
+may show a stable built-in-catalogue record page when the stored record ID is
+validated.
+Where a built-in source has a narrow deterministic tie-breaker, show its
+stored decision evidence (the metric, threshold, and runner-up) rather than
+calling the result “better.” Do not turn that source-specific evidence into a
+general-purpose quality badge or color.
+
+Audiobook format priority is a deterministic acquisition rule, not a status or
+quality signal. Do not display M4B/MP3/etc. in status colors or describe the
+selected container as “better”; surface the format as ordinary media evidence
+when explaining an automatic decision or a genuine same-format tie.
+
+Audiobook narration (Human/Synthetic/Unknown) is the requester's own stated
+preference applied to meaningful evidence, not a quality score either. Show it
+by kind (e.g. “Human narration — Stewart Wills”, “Computer-generated
+narration”) as ordinary media evidence alongside format/size/parts, never in
+status colors, and never phrased as one recording being generally “better”
+than another. An `Unknown` classification is a valid, expected result — do not
+imply it as a defect or guess a kind the provider's own evidence did not state.
+
 ## Adding a new status or media type
 
 1. Add the color/label mapping to `MediaTypeVisuals` — not to the page.
@@ -105,3 +209,25 @@ label instead (the default).
    picks it up automatically.
 3. Update this file's status-color list above if the new status doesn't fit
    an existing bucket.
+
+## Candidate identity diagnostics
+
+Administrator live-search diagnostics display identity and acquisition evidence
+separately in a keyboard-accessible disclosure with semantic definition lists.
+Unknown series positions are written as “unknown”; unclassified descriptors,
+contradictions and conditions are shown as encoded text. This diagnostic
+projection excludes operational acquire tokens and arbitrary provider extensions.
+
+## Search version explanations
+
+Search and book details share `CandidateVersionSummary`: neutral text describing
+source-supported version differences, language (including unknown), and missing
+author metadata. These descriptions are not status chips or identity approvals.
+A novel label does not promise an unabridged edition. Multiple supplied names
+are labelled Contributors when roles are not reported. Editions show their
+reported language/publisher alongside title, format and ISBN. Collections retain
+the work title even when a matched edition has a shorter title.
+
+Guides, adaptations, shortened versions and combined volumes default to the
+existing edition-review request flow. Generic availability is not shown for
+these identified related versions. Unknown records stay visible for inspection.

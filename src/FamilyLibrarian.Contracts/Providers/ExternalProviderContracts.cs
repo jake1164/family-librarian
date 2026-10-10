@@ -7,17 +7,32 @@ public sealed record ExternalProviderResponse(
     string BaseUrl,
     bool IsEnabled,
     string RecheckSchedule,
+    bool AutoAcquireEnabled,
+    int AutomaticAttemptLimit,
     bool HasApiKey,
     string? ApiKeyHint,
     DateTimeOffset? ApiKeySetAtUtc,
     string? CachedProtocolVersion,
     string? CachedCapabilities,
-    string CachedEgressPolicy,
-    string? EgressPolicyOverride,
-    string EffectiveEgressPolicy,
+    string? CachedInstanceId,
+    bool InstanceReplacedSincePreviousTest,
+    string? CachedHealthStatus,
+    string? CachedSearchOperationStatus,
+    string? CachedAcquireOperationStatus,
+    string? CachedManagementUrl,
+    string? CachedDocumentationUrl,
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
-    string? LastTestMessage);
+    string? LastTestMessage,
+    IReadOnlyList<ExternalProviderHealthIssueResponse> CachedHealthIssues);
+
+/// <summary>
+/// A provider-reported reason behind a degraded/unavailable result. Untrusted,
+/// plain text: render as text only. Admin-only (this response is only served
+/// to administrators).
+/// </summary>
+/// <param name="Operation"><c>search</c>, <c>acquire</c>, or <c>general</c>.</param>
+public sealed record ExternalProviderHealthIssueResponse(string Operation, string? Code, string Message);
 
 public sealed record CreateExternalProviderRequest(string ProviderId, string DisplayName, string BaseUrl);
 
@@ -28,21 +43,23 @@ public sealed record SetExternalProviderEnabledRequest(bool Enabled);
 /// <summary>One of <c>Manual</c>, <c>Daily</c>, or <c>Weekly</c>.</summary>
 public sealed record SetExternalProviderRecheckScheduleRequest(string RecheckSchedule);
 
+/// <summary>
+/// A separate, explicit opt-in for unattended acquisition of a
+/// high-confidence candidate found on a scheduled recheck — independent of
+/// <see cref="SetExternalProviderRecheckScheduleRequest"/>, which only
+/// controls how often this provider is checked, never whether a match found
+/// that way may be fetched without review.
+/// </summary>
+public sealed record SetExternalProviderAutoAcquireEnabledRequest(bool Enabled);
+
+/// <summary>
+/// How many candidates unattended acquisition may download and fail to verify
+/// for one requested format before it stops and waits for a librarian. Set to
+/// 1 for a source with a limited download allowance.
+/// </summary>
+public sealed record SetExternalProviderAutomaticAttemptLimitRequest(int Limit);
+
 public sealed record SetExternalProviderApiKeyRequest(string ApiKey);
-
-/// <summary>One of "Normal", "PrivateRequired", "CustomProxy", or <c>null</c> to clear the override.</summary>
-public sealed record SetExternalProviderEgressPolicyOverrideRequest(string? EgressPolicy);
-
-public sealed record PrivateEgressGatewayResponse(
-    bool IsEnabled,
-    string? GatewayEndpoint,
-    DateTimeOffset? LastTestedAtUtc,
-    bool? LastTestSucceeded,
-    string? LastTestMessage);
-
-public sealed record SetPrivateEgressGatewayEnabledRequest(bool Enabled);
-
-public sealed record SetPrivateEgressGatewayEndpointRequest(string? GatewayEndpoint);
 
 public sealed record ProviderCatalogEntryResponse(
     string Id,

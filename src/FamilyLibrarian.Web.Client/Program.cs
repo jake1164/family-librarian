@@ -33,6 +33,13 @@ builder.Services.AddScoped(sp => new HttpClient
 {
     BaseAddress = new Uri(builder.HostEnvironment.BaseAddress)
 });
+builder.Services.AddScoped<CatalogAvailabilityApiClient>(sp => new CatalogAvailabilityApiClient(
+    new HttpClient
+    {
+        BaseAddress = new Uri(builder.HostEnvironment.BaseAddress),
+        Timeout = Timeout.InfiniteTimeSpan
+    },
+    sp.GetRequiredService<AntiforgeryTokenProvider>()));
 builder.Services.AddScoped<AntiforgeryTokenProvider>();
 builder.Services.AddScoped<AccountsApiClient>();
 builder.Services.AddScoped<CatalogApiClient>();
@@ -41,6 +48,8 @@ builder.Services.AddScoped<MetadataIntegrationsApiClient>();
 builder.Services.AddScoped<GutenbergCatalogApiClient>();
 builder.Services.AddScoped<RequestsApiClient>();
 builder.Services.AddScoped<AdminRequestsApiClient>();
+builder.Services.AddScoped<ProviderInteractionsApiClient>();
+builder.Services.AddScoped<InteractionLinkApiClient>();
 builder.Services.AddScoped<AdminTasksApiClient>();
 builder.Services.AddScoped<SystemReadinessApiClient>();
 builder.Services.AddScoped<NotificationsApiClient>();
@@ -50,6 +59,8 @@ builder.Services.AddScoped<MatrixLinkApiClient>();
 builder.Services.AddScoped<FeedbackApiClient>();
 builder.Services.AddScoped<FollowApiClient>();
 builder.Services.AddScoped<DeliveryTargetApiClient>();
+builder.Services.AddScoped<AudiobookNarrationPreferenceApiClient>();
+builder.Services.AddScoped<QuietHoursApiClient>();
 builder.Services.AddScoped<MediaAssetsApiClient>();
 builder.Services.AddScoped<CwaSettingsApiClient>();
 builder.Services.AddScoped<AudiobookshelfSettingsApiClient>();

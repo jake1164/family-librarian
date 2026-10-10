@@ -25,9 +25,18 @@ public interface IAssetIdentityVerifier
 
 public sealed record AssetIdentityVerificationResult(
     bool IsMatch,
-    string VerifierId)
+    string VerifierId,
+    string? Reason = null)
 {
     public static AssetIdentityVerificationResult Match(string verifierId) => new(true, verifierId);
 
-    public static AssetIdentityVerificationResult Unmatched(string verifierId) => new(false, verifierId);
+    /// <param name="reason">
+    /// What was compared and why it didn't match, in terms a librarian can
+    /// act on without reading source code (e.g. the catalog's expected title
+    /// next to what the file actually has embedded). Left <c>null</c> only
+    /// when the verifier couldn't safely read enough of the file to compare
+    /// anything at all.
+    /// </param>
+    public static AssetIdentityVerificationResult Unmatched(string verifierId, string? reason = null) =>
+        new(false, verifierId, reason);
 }

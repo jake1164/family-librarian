@@ -23,7 +23,6 @@ public sealed class AcquisitionJob
         Guid requestId,
         RequestMediaType mediaType,
         string providerId,
-        EgressPolicy egressPolicy,
         DateTimeOffset createdAtUtc)
     {
         if (requestId == Guid.Empty)
@@ -40,7 +39,6 @@ public sealed class AcquisitionJob
         RequestId = requestId;
         MediaType = mediaType;
         ProviderId = providerId.Trim();
-        EgressPolicy = egressPolicy;
         Status = AcquisitionJobStatusTransitions.InitialStatus;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
@@ -53,8 +51,6 @@ public sealed class AcquisitionJob
     public RequestMediaType MediaType { get; private set; }
 
     public string ProviderId { get; private set; } = null!;
-
-    public EgressPolicy EgressPolicy { get; private set; }
 
     public AcquisitionJobStatus Status { get; private set; }
 

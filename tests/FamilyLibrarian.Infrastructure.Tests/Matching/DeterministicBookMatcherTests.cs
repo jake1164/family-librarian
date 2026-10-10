@@ -210,4 +210,48 @@ public sealed class DeterministicBookMatcherTests
         Assert.AreEqual(expected, matcher.ResolveUnique(candidates, accepted).Decision);
         Assert.AreEqual(expected, matcher.MatchByTitleAuthor("Moby Dick", "Herman Melville", candidates, accepted).Decision);
     }
+
+    /// <summary>
+    /// The live integration-lab failure: every one of these requests sat in
+    /// review while the right record was in the source's index the whole
+    /// time, because the catalog title carried edition packaging that the
+    /// record's own title did not.
+    /// </summary>
+    [TestMethod]
+    [DataRow("Moby Dick (Illustrated Classics)", "Moby Dick; Or, The Whale")]
+    [DataRow("Moby Dick (Illustrated Classics)", "Moby Dick")]
+    [DataRow("Moby Dick by Herman Melville", "Moby Dick; Or, The Whale")]
+    [DataRow("Moby Dick (Diversion Classics)", "Moby-Dick or the Whale")]
+    public void AnEditionQualifiedCatalogTitleStillMatchesThePlainRecord(
+        string expectedTitle, string candidateTitle) =>
+        Assert.IsTrue(matcher.TitleMatches(expectedTitle, candidateTitle, "Herman Melville"));
+
+    [TestMethod]
+    public void AnEditionQualifiedCatalogTitleIsStrictWhenTheAuthorIsExact() =>
+        Assert.IsTrue(matcher.StrictTitleAuthorMatches(
+            "Moby Dick (Illustrated Classics)", "Herman Melville", "Moby Dick", "Herman Melville"));
+
+    [TestMethod]
+    public void ReducingTheCatalogTitleDoesNotExcuseAConflictingAuthor() =>
+        Assert.IsFalse(matcher.StrictTitleAuthorMatches(
+            "Moby Dick (Illustrated Classics)", "Herman Melville", "Moby Dick", "Jan Fields"));
+
+    [TestMethod]
+    public void ReducingTheCatalogTitleDoesNotAdmitADerivative() =>
+        Assert.IsFalse(matcher.TitleMatches(
+            "Moby Dick (Illustrated Classics)", "Herman Melville's Moby Dick: A Study Guide", "Herman Melville"));
+
+    [TestMethod]
+    public void AMarketingSubtitleOnTheRequestStillMatchesThePlainRecord() =>
+        Assert.IsTrue(matcher.TitleMatches(
+            "Threshing Day: Return to the Empyrean world with thirteen stories starring your favourite Fourth Wing characters.",
+            "Threshing Day",
+            "Rebecca Yarros"));
+
+    [TestMethod]
+    public void AnUnrelatedBookSharingAWordIsStillRejected()
+    {
+        Assert.IsFalse(matcher.TitleMatches("Threshing Day", "The Threshing Floor", "Rebecca Yarros"));
+        Assert.IsFalse(matcher.TitleMatches("Threshing Day", "The Threshing Circle", "Rebecca Yarros"));
+    }
 }

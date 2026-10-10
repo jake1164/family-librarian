@@ -1,6 +1,7 @@
 using System.Buffers.Text;
 using System.Security.Cryptography;
 using System.Text;
+using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
 
 namespace FamilyLibrarian.Infrastructure.Identity;
@@ -15,7 +16,7 @@ namespace FamilyLibrarian.Infrastructure.Identity;
 /// table yields nothing usable. A per-row salt would also make lookup-by-hash
 /// impossible without scanning every row.
 /// </remarks>
-public sealed class InvitationTokenGenerator : IInvitationTokenGenerator
+public sealed class InvitationTokenGenerator : IInvitationTokenGenerator, ISecureTokenGenerator
 {
     private const int TokenBytes = 32;
 

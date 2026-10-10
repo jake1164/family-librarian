@@ -1,0 +1,547 @@
+namespace FamilyLibrarian.Domain.Acquisition;
+
+/// <summary>
+/// Durable tracking for one in-flight external-provider acquisition —
+/// protocol v2's <c>state</c>/<c>phase</c>/outputs job model
+/// (<c>docs/04-external-provider-http-protocol.md</c> §8). Created the
+/// moment Family Librarian submits <c>POST /acquire</c>, long before any
+/// file exists; <see cref="AcquisitionJob"/> remains the separate, post-hoc
+/// audit record created only once bytes are actually staged — this type is
+/// upstream plumbing for durably tracking the remote job itself, including
+/// across a Family Librarian restart, not a replacement for that audit trail.
+/// </summary>
+public sealed class ProviderAcquisitionJob
+{
+    private readonly List<ProviderAcquisitionJobOutput> _outputs = [];
+
+    private ProviderAcquisitionJob()
+    {
+    }
+
+    public ProviderAcquisitionJob(
+        Guid requestId,
+        Guid requestFormatId,
+        Guid externalProviderId,
+        string providerId,
+        string? providerInstanceId,
+        string idempotencyKey,
+        string candidateReference,
+        string? candidateRevision,
+        string? acquireToken,
+        DateTimeOffset createdAtUtc,
+        Guid? acquireRequestId = null,
+        bool isAutomaticAcquisition = false,
+        string? candidateFingerprint = null,
+        bool identityPreConfirmed = false)
+    {
+        if (requestId == Guid.Empty)
+        {
+            throw new ArgumentException("A request ID is required.", nameof(requestId));
+        }
+
+        if (requestFormatId == Guid.Empty)
+        {
+            throw new ArgumentException("A request format ID is required.", nameof(requestFormatId));
+        }
+
+        if (externalProviderId == Guid.Empty)
+        {
+            throw new ArgumentException("An external provider ID is required.", nameof(externalProviderId));
+        }
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            throw new ArgumentException("An idempotency key is required.", nameof(idempotencyKey));
+        }
+
+        if (string.IsNullOrWhiteSpace(candidateReference))
+        {
+            throw new ArgumentException("A candidate reference is required.", nameof(candidateReference));
+        }
+
+        Id = Guid.NewGuid();
+        RequestId = requestId;
+        RequestFormatId = requestFormatId;
+        ExternalProviderId = externalProviderId;
+        ProviderId = providerId.Trim();
+        ProviderInstanceId = string.IsNullOrWhiteSpace(providerInstanceId) ? null : providerInstanceId.Trim();
+        IdempotencyKey = idempotencyKey.Trim();
+        CandidateReference = candidateReference.Trim();
+        CandidateRevision = string.IsNullOrWhiteSpace(candidateRevision) ? null : candidateRevision.Trim();
+        AcquireToken = acquireToken;
+        AcquireRequestId = acquireRequestId is { } id && id != Guid.Empty ? id : Guid.NewGuid();
+        IsAutomaticAcquisition = isAutomaticAcquisition;
+        CandidateFingerprint = string.IsNullOrWhiteSpace(candidateFingerprint) ? null : candidateFingerprint;
+        IdentityPreConfirmed = identityPreConfirmed;
+        LifecycleState = ProviderAcquisitionJobLifecycleTransitions.InitialState;
+        // Poll immediately — the caller submits and the poller picks it up
+        // on its very next pass rather than waiting a full interval.
+        NextPollAtUtc = createdAtUtc;
+        CreatedAtUtc = createdAtUtc;
+        UpdatedAtUtc = createdAtUtc;
+    }
+
+    public Guid Id { get; private set; } = Guid.NewGuid();
+
+    public Guid RequestId { get; private set; }
+
+    public Guid RequestFormatId { get; private set; }
+
+    public Guid ExternalProviderId { get; private set; }
+
+    /// <summary>Snapshotted at submit time so a later provider-container swap (a changed <c>instanceId</c>) is detectable.</summary>
+    public string ProviderId { get; private set; } = null!;
+
+    public string? ProviderInstanceId { get; private set; }
+
+    public string IdempotencyKey { get; private set; } = null!;
+
+    /// <summary>The provider's own job id, set once <c>POST /acquire</c> is accepted.</summary>
+    public string? ProviderJobId { get; private set; }
+
+    /// <summary>Local acquisition created from this provider job's complete output set.</summary>
+    public Guid? LocalAcquisitionJobId { get; private set; }
+
+    public string CandidateReference { get; private set; } = null!;
+
+    public string? CandidateRevision { get; private set; }
+
+    public string? AcquireToken { get; private set; }
+
+    public Guid AcquireRequestId { get; private set; }
+
+    public bool IsAutomaticAcquisition { get; private set; }
+
+    /// <summary>
+    /// Hash of the submitted release's normalized name and size, carried so a
+    /// later failure of this job can rule out an identical re-posting without
+    /// needing the original search result again.
+    /// </summary>
+    public string? CandidateFingerprint { get; private set; }
+
+    /// <summary>
+    /// Carries the submitting candidate's confirmed-identity state across
+    /// this job's async gap, so the <see cref="MediaAsset"/> created once it
+    /// completes can be marked the same way -- see
+    /// <see cref="MediaAsset.IdentityPreConfirmed"/> for why this matters.
+    /// </summary>
+    public bool IdentityPreConfirmed { get; private set; }
+
+    /// <summary>
+    /// When this job fetches one numbered part of a complete audiobook set,
+    /// the set's id; every member job shares it. Null for an ordinary job.
+    /// The set has no row of its own -- membership is just these three
+    /// columns, so it is as restart-safe as the jobs themselves.
+    /// </summary>
+    public Guid? PartSetId { get; private set; }
+
+    /// <summary>This job's 1-based part number within <see cref="PartSetId"/>.</summary>
+    public int? PartNumber { get; private set; }
+
+    /// <summary>How many parts make up the complete set.</summary>
+    public int? PartTotal { get; private set; }
+
+    public bool IsPartSetMember => PartSetId is not null;
+
+    /// <summary>
+    /// Marks this (not yet submitted) job as one numbered part of a set.
+    /// </summary>
+    public void AssignToPartSet(Guid setId, int number, int total)
+    {
+        if (setId == Guid.Empty)
+        {
+            throw new ArgumentException("A part set id is required.", nameof(setId));
+        }
+
+        if (total < 2 || number < 1 || number > total)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(number), $"Part {number} of {total} is not a valid position in a numbered set.");
+        }
+
+        PartSetId = setId;
+        PartNumber = number;
+        PartTotal = total;
+    }
+
+    public ProviderAcquisitionJobLifecycleState LifecycleState { get; private set; }
+
+    /// <summary>Open string — never validated against a closed vocabulary (protocol v2 §8).</summary>
+    public string? Phase { get; private set; }
+
+    public string? InteractionType { get; private set; }
+
+    public string? InteractionMessage { get; private set; }
+
+    public DateTimeOffset? InteractionExpiresAtUtc { get; private set; }
+
+    public bool? InteractionResumeSupported { get; private set; }
+
+    /// <summary>
+    /// Legacy protocol-v2 interaction URL storage. Family Librarian no longer
+    /// persists this value: a provider's control URL must never flow into a
+    /// requester projection, and the forthcoming broker will use a dedicated
+    /// server-only interaction record instead.
+    /// </summary>
+    public string? InteractionActionUrl { get; private set; }
+
+    /// <summary>
+    /// When an administrator most recently asked the provider to prepare a
+    /// verification session (protocol v2 §8 <c>interaction/start</c>). Lets
+    /// the admin queue offer "open remote view" after a page reload, instead
+    /// of only within the single browser tab that clicked Start. Cleared
+    /// whenever the job leaves <see cref="ProviderAcquisitionJobLifecycleState.Waiting"/>.
+    /// </summary>
+    public DateTimeOffset? InteractionViewSessionStartedAtUtc { get; private set; }
+
+    public double? ProgressPercent { get; private set; }
+
+    public long? ProgressBytesCompleted { get; private set; }
+
+    public long? ProgressBytesTotal { get; private set; }
+
+    public string? ProgressMessage { get; private set; }
+
+    public string? ErrorCode { get; private set; }
+
+    public string? ErrorMessage { get; private set; }
+
+    public bool? ErrorRetryable { get; private set; }
+
+    public int? ErrorRetryAfterSeconds { get; private set; }
+
+    /// <summary>Opaque provider-reported error detail, never parsed as trusted fact.</summary>
+    public string? ErrorDetailsJson { get; private set; }
+
+    public DateTimeOffset? RetentionExpiresAtUtc { get; private set; }
+
+    /// <summary>
+    /// When the background poller should next check this job — driven by the
+    /// provider's own <c>Retry-After</c>/<c>pollAfterSeconds</c> hint. Terminal
+    /// jobs (<see cref="ProviderAcquisitionJobLifecycleState.Completed"/>/
+    /// <see cref="ProviderAcquisitionJobLifecycleState.Failed"/>/
+    /// <see cref="ProviderAcquisitionJobLifecycleState.Cancelled"/>) clear this
+    /// to <c>null</c> so they drop out of the poller's due-work query.
+    /// </summary>
+    public DateTimeOffset? NextPollAtUtc { get; private set; }
+
+    /// <summary>Namespaced, provider-specific data (protocol v2 §11) — inert, never used for matching/trust decisions.</summary>
+    public string? ExtensionsJson { get; private set; }
+
+    public DateTimeOffset CreatedAtUtc { get; private set; }
+
+    public DateTimeOffset UpdatedAtUtc { get; private set; }
+
+    /// <summary>
+    /// When the job most recently entered <see cref="ProviderAcquisitionJobLifecycleState.Waiting"/>.
+    /// Cleared when it leaves. Drives HUMAN-ACQ-1's send-delay/quiescence checks
+    /// (<c>.ai_docs/human-acq-1-matrix-authorize-plan.md</c> §1a) — written only
+    /// by <see cref="ApplyState"/>, the same writer as the poller's other saves,
+    /// so it never conflicts with the poller's <c>xmin</c> concurrency check.
+    /// </summary>
+    public DateTimeOffset? WaitingSinceUtc { get; private set; }
+
+    /// <summary>When the job most recently left <see cref="ProviderAcquisitionJobLifecycleState.Waiting"/>.</summary>
+    public DateTimeOffset? LeftWaitingAtUtc { get; private set; }
+
+    public uint Version { get; private set; }
+
+    public IReadOnlyCollection<ProviderAcquisitionJobOutput> Outputs => _outputs;
+
+    /// <summary>Records the provider's initial acceptance of <c>POST /acquire</c>.</summary>
+    public void RecordSubmission(
+        string providerJobId, ProviderAcquisitionJobLifecycleState initialState, DateTimeOffset? nextPollAtUtc,
+        DateTimeOffset atUtc)
+    {
+        if (string.IsNullOrWhiteSpace(providerJobId))
+        {
+            throw new ArgumentException("A provider job id is required.", nameof(providerJobId));
+        }
+
+        if (ProviderJobId is { } existingJobId && !string.Equals(existingJobId, providerJobId.Trim(), StringComparison.Ordinal))
+            throw new InvalidOperationException("The provider returned a different job ID for an existing idempotency key.");
+
+        ProviderJobId = providerJobId.Trim();
+        // A remote terminal response still needs local processing: completed
+        // outputs must be secured, and failed/cancelled jobs must record the
+        // attempt and wake fulfillment. Keep the job nonterminal until that
+        // processing commits, including when submission is an idempotent replay.
+        ApplyState(IsTerminal(initialState)
+            ? ProviderAcquisitionJobLifecycleState.Running
+            : initialState, phase: null, atUtc);
+        NextPollAtUtc = IsTerminal(initialState) ? atUtc : nextPollAtUtc ?? atUtc;
+        UpdatedAtUtc = atUtc;
+    }
+
+    public void Reschedule(DateTimeOffset nextPollAtUtc, DateTimeOffset atUtc)
+    {
+        if (IsTerminal(LifecycleState))
+            throw new InvalidOperationException("A terminal provider job cannot be rescheduled.");
+        NextPollAtUtc = nextPollAtUtc;
+        UpdatedAtUtc = atUtc;
+    }
+
+    /// <exception cref="InvalidProviderAcquisitionJobTransitionException">
+    /// The move is not in <see cref="ProviderAcquisitionJobLifecycleTransitions"/>.
+    /// </exception>
+    public void ApplyStatus(
+        ProviderAcquisitionJobLifecycleState state,
+        string? phase,
+        string? interactionType,
+        string? interactionMessage,
+        DateTimeOffset? interactionExpiresAtUtc,
+        bool? interactionResumeSupported,
+        string? interactionActionUrl,
+        double? progressPercent,
+        long? progressBytesCompleted,
+        long? progressBytesTotal,
+        string? progressMessage,
+        DateTimeOffset? nextPollAtUtc,
+        DateTimeOffset atUtc)
+    {
+        ApplyState(state, phase, atUtc);
+
+        InteractionType = interactionType;
+        InteractionMessage = interactionMessage;
+        InteractionExpiresAtUtc = interactionExpiresAtUtc;
+        InteractionResumeSupported = interactionResumeSupported;
+        // The v2 descriptor is accepted for compatibility, but is not kept.
+        // It is neither a safe requester-facing link nor sufficient to grant a
+        // browser access to a provider-side human-verification session.
+        InteractionActionUrl = null;
+        if (state != ProviderAcquisitionJobLifecycleState.Waiting)
+        {
+            InteractionViewSessionStartedAtUtc = null;
+        }
+
+        ProgressPercent = progressPercent;
+        ProgressBytesCompleted = progressBytesCompleted;
+        ProgressBytesTotal = progressBytesTotal;
+        ProgressMessage = progressMessage;
+
+        NextPollAtUtc = IsTerminal(state) ? null : nextPollAtUtc;
+        UpdatedAtUtc = atUtc;
+    }
+
+    /// <summary>
+    /// Records a structured job failure (protocol v2 §8's <c>error</c>
+    /// object) including the <c>CANDIDATE_CHANGED</c> case — the caller
+    /// decides whether that specific code should trigger a re-search rather
+    /// than treating the whole request as dead; this only records the
+    /// terminal state.
+    /// </summary>
+    public void RecordFailure(
+        string? errorCode, string? errorMessage, bool? retryable, int? retryAfterSeconds, string? detailsJson,
+        DateTimeOffset atUtc)
+    {
+        ApplyState(ProviderAcquisitionJobLifecycleState.Failed, phase: null, atUtc);
+        ErrorCode = errorCode;
+        ErrorMessage = errorMessage;
+        ErrorRetryable = retryable;
+        ErrorRetryAfterSeconds = retryAfterSeconds;
+        ErrorDetailsJson = detailsJson;
+        NextPollAtUtc = null;
+        UpdatedAtUtc = atUtc;
+    }
+
+    /// <summary>
+    /// Stops tracking this job because the audiobook set it belongs to has been
+    /// abandoned (another part failed, or the set could not be fully started).
+    /// A job that already finished is left exactly as it is.
+    /// </summary>
+    public void Cancel(string reason, DateTimeOffset atUtc)
+    {
+        if (IsTerminal(LifecycleState))
+        {
+            return;
+        }
+
+        ApplyState(ProviderAcquisitionJobLifecycleState.Cancelled, phase: null, atUtc);
+        ErrorCode = "PART_SET_ABANDONED";
+        ErrorMessage = reason.Length <= 1_024 ? reason : reason[..1_024];
+        NextPollAtUtc = null;
+        UpdatedAtUtc = atUtc;
+    }
+
+    /// <summary>
+    /// Records that an administrator has asked the provider to prepare its
+    /// verification session (a successful <c>interaction/start</c> call).
+    /// Does not itself change <see cref="LifecycleState"/> — the job stays
+    /// <see cref="ProviderAcquisitionJobLifecycleState.Waiting"/> until the
+    /// next poll or provider push moves it.
+    /// </summary>
+    public void RecordInteractionSessionStarted(DateTimeOffset atUtc)
+    {
+        if (LifecycleState != ProviderAcquisitionJobLifecycleState.Waiting)
+        {
+            throw new InvalidOperationException(
+                $"Cannot record an interaction session start while the job is {LifecycleState}.");
+        }
+
+        InteractionViewSessionStartedAtUtc = atUtc;
+    }
+
+    public void SetRetention(DateTimeOffset? expiresAtUtc, DateTimeOffset atUtc)
+    {
+        RetentionExpiresAtUtc = expiresAtUtc;
+        UpdatedAtUtc = atUtc;
+    }
+
+    public void SetLocalAcquisition(Guid acquisitionJobId, DateTimeOffset atUtc)
+    {
+        if (acquisitionJobId == Guid.Empty)
+            throw new ArgumentException("A local acquisition job ID is required.", nameof(acquisitionJobId));
+        if (LocalAcquisitionJobId is { } existing && existing != acquisitionJobId)
+            throw new InvalidOperationException("The provider job is already linked to a different local acquisition.");
+        LocalAcquisitionJobId = acquisitionJobId;
+        UpdatedAtUtc = atUtc;
+    }
+
+    public void SetExtensions(string? extensionsJson, DateTimeOffset atUtc)
+    {
+        ExtensionsJson = extensionsJson;
+        UpdatedAtUtc = atUtc;
+    }
+
+    public ProviderAcquisitionJobOutput AddOutput(
+        string outputId,
+        ProviderOutputKind kind,
+        string? role,
+        string? filename,
+        string? contentType,
+        long? sizeBytes,
+        string? uri,
+        string? uriScheme,
+        string? checksumsJson,
+        DateTimeOffset? retentionExpiresAtUtc,
+        DateTimeOffset atUtc,
+        int? sequence = null)
+    {
+        var existing = _outputs.SingleOrDefault(output => string.Equals(output.OutputId, outputId, StringComparison.Ordinal));
+        if (existing is not null)
+        {
+            existing.Update(kind, role, filename, contentType, sizeBytes, uri, uriScheme, checksumsJson,
+                retentionExpiresAtUtc, sequence);
+            UpdatedAtUtc = atUtc;
+            return existing;
+        }
+
+        var output = new ProviderAcquisitionJobOutput(
+            Id, outputId, kind, role, filename, contentType, sizeBytes, uri, uriScheme, checksumsJson,
+            retentionExpiresAtUtc, atUtc, sequence);
+        _outputs.Add(output);
+        UpdatedAtUtc = atUtc;
+        return output;
+    }
+
+    private void ApplyState(ProviderAcquisitionJobLifecycleState to, string? phase, DateTimeOffset atUtc)
+    {
+        if (!ProviderAcquisitionJobLifecycleTransitions.IsAllowed(LifecycleState, to))
+        {
+            throw new InvalidProviderAcquisitionJobTransitionException(LifecycleState, to);
+        }
+
+        var wasWaiting = LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting;
+        var isWaiting = to == ProviderAcquisitionJobLifecycleState.Waiting;
+        if (isWaiting && !wasWaiting)
+        {
+            WaitingSinceUtc = atUtc;
+        }
+        else if (!isWaiting && wasWaiting)
+        {
+            LeftWaitingAtUtc = atUtc;
+            WaitingSinceUtc = null;
+        }
+
+        LifecycleState = to;
+        Phase = phase;
+        UpdatedAtUtc = atUtc;
+    }
+
+    private static bool IsTerminal(ProviderAcquisitionJobLifecycleState state) => state is
+        ProviderAcquisitionJobLifecycleState.Completed or
+        ProviderAcquisitionJobLifecycleState.Failed or
+        ProviderAcquisitionJobLifecycleState.Cancelled;
+}
+
+/// <summary>
+/// The small, stable six-value lifecycle state from protocol v2 §8 — kept
+/// deliberately separate from <see cref="AcquisitionJobStatus"/>, which
+/// encodes Family Librarian's own post-fetch staging pipeline, a different
+/// concern.
+/// </summary>
+public enum ProviderAcquisitionJobLifecycleState
+{
+    Queued,
+    Running,
+    Waiting,
+    Completed,
+    Failed,
+    Cancelled
+}
+
+/// <summary>Protocol v2 §8a's three output kinds.</summary>
+public enum ProviderOutputKind
+{
+    Unknown,
+    File,
+    Uri,
+    Descriptor
+}
+
+public static class ProviderAcquisitionJobLifecycleTransitions
+{
+    public const ProviderAcquisitionJobLifecycleState InitialState = ProviderAcquisitionJobLifecycleState.Queued;
+
+    private static readonly Dictionary<ProviderAcquisitionJobLifecycleState, ProviderAcquisitionJobLifecycleState[]> Allowed = new()
+    {
+        [ProviderAcquisitionJobLifecycleState.Queued] =
+        [
+            ProviderAcquisitionJobLifecycleState.Queued,
+            ProviderAcquisitionJobLifecycleState.Running,
+            ProviderAcquisitionJobLifecycleState.Waiting,
+            ProviderAcquisitionJobLifecycleState.Completed,
+            ProviderAcquisitionJobLifecycleState.Failed,
+            ProviderAcquisitionJobLifecycleState.Cancelled
+        ],
+        [ProviderAcquisitionJobLifecycleState.Running] =
+        [
+            ProviderAcquisitionJobLifecycleState.Running,
+            ProviderAcquisitionJobLifecycleState.Waiting,
+            ProviderAcquisitionJobLifecycleState.Completed,
+            ProviderAcquisitionJobLifecycleState.Failed,
+            ProviderAcquisitionJobLifecycleState.Cancelled
+        ],
+        [ProviderAcquisitionJobLifecycleState.Waiting] =
+        [
+            ProviderAcquisitionJobLifecycleState.Running,
+            ProviderAcquisitionJobLifecycleState.Waiting,
+            ProviderAcquisitionJobLifecycleState.Completed,
+            ProviderAcquisitionJobLifecycleState.Failed,
+            ProviderAcquisitionJobLifecycleState.Cancelled
+        ],
+        // Completed, Failed, and Cancelled are terminal -- except that each
+        // allows a self-transition. A provider may legitimately report the
+        // same terminal state again (a fast provider whose very first status
+        // check already reads "completed", or a poll that lands after
+        // another has already recorded the same outcome); re-recording the
+        // same terminal state must be a safe idempotent no-op, not a thrown
+        // transition error, matching protocol v2's idempotency posture
+        // throughout the rest of the acquire flow.
+        [ProviderAcquisitionJobLifecycleState.Completed] = [ProviderAcquisitionJobLifecycleState.Completed],
+        [ProviderAcquisitionJobLifecycleState.Failed] = [ProviderAcquisitionJobLifecycleState.Failed],
+        [ProviderAcquisitionJobLifecycleState.Cancelled] = [ProviderAcquisitionJobLifecycleState.Cancelled]
+    };
+
+    public static bool IsAllowed(ProviderAcquisitionJobLifecycleState from, ProviderAcquisitionJobLifecycleState to) =>
+        Allowed.TryGetValue(from, out var targets) && Array.IndexOf(targets, to) >= 0;
+}
+
+public sealed class InvalidProviderAcquisitionJobTransitionException(
+    ProviderAcquisitionJobLifecycleState from, ProviderAcquisitionJobLifecycleState to)
+    : InvalidOperationException($"A provider acquisition job cannot move from {from} to {to}.")
+{
+    public ProviderAcquisitionJobLifecycleState From { get; } = from;
+
+    public ProviderAcquisitionJobLifecycleState To { get; } = to;
+}

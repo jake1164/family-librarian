@@ -1,0 +1,82 @@
+name: Release tests
+
+# The release tier: tests tagged TestCategory("Release") that need a real
+# browser and, for BrowserRequestQueueE2ETests, a deployed Compose stack.
+# Checkin CI (ci.yml) excludes them so every push stays a fast regression run.
+# Deployment boundaries (CWA, Audiobookshelf, ClamAV, SMTP, external providers,
+# backup/restore) are family-librarian-lab's job, not this workflow's.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*.*.*-alpha.*"
+      - "v*.*.*-beta.*"
+      - "v*.*.*-rc.*"
+      - "v*.*.*-alpha-test.*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  browser:
+    name: Browser regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj
+
+      - name: Build
+        run: dotnet build tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj --no-restore
+
+      # Playwright's browser binary is installed explicitly for this Linux
+      # runner; the package itself does not ship one.
+      - name: Install Playwright Chromium
+        run: pwsh tests/FamilyLibrarian.Web.Tests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium
+
+      # BrowserRequestQueueE2ETests deliberately exercises a deployed Compose
+      # application rather than an in-process host. These credentials exist
+      # only for this fresh, isolated CI database and are not deployment
+      # secrets.
+      - name: Start browser E2E deployment
+        env:
+          FL_DB_PASSWORD: ci-browser-e2e-database-only
+          ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
+          ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
+        run: docker compose --project-name family-librarian-browser-e2e up --build --wait
+
+      - name: Test
+        env:
+          FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS: "1"
+          FAMILY_LIBRARIAN_E2E_BASE_URL: http://localhost:8080
+          FAMILY_LIBRARIAN_E2E_ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
+          FAMILY_LIBRARIAN_E2E_ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
+        run: dotnet test --project tests/FamilyLibrarian.Web.Tests/FamilyLibrarian.Web.Tests.csproj --no-build -- --filter "TestCategory=Release"
+
+      - name: Stop browser E2E deployment
+        if: always()
+        env:
+          FL_DB_PASSWORD: ci-browser-e2e-database-only
+          ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
+          ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
+        run: docker compose --project-name family-librarian-browser-e2e down --volumes --remove-orphans

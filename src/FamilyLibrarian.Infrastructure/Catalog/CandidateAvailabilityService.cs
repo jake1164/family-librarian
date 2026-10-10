@@ -1,6 +1,8 @@
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Domain.Requests;
 using Microsoft.Extensions.DependencyInjection;
+using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 
 namespace FamilyLibrarian.Infrastructure.Catalog;
 
@@ -12,9 +14,11 @@ namespace FamilyLibrarian.Infrastructure.Catalog;
 /// unlike <see cref="WorkFulfillmentOptionsService"/>'s sequential fan-out,
 /// this runs every provider call concurrently since it's driven by an
 /// interactive search results page rather than a single work-detail load.
-/// A per-call bounded timeout keeps one unresponsive source (e.g. a CWA
-/// server that has stopped answering) from holding up the rest of a badge
-/// check indefinitely.
+/// The browser performs this enrichment after it has rendered catalog results
+/// and cancels it when that search is superseded. A source is therefore
+/// allowed to complete on the caller's lifetime rather than an arbitrary
+/// server-side deadline that could turn a slow valid result into a false
+/// absence.
 /// </summary>
 /// <remarks>
 /// Each parallel branch resolves its provider fresh from its own
@@ -31,11 +35,25 @@ public sealed class CandidateAvailabilityService(
     IEnumerable<IDirectAcquisitionProvider> directAcquisitionProviders,
     IServiceScopeFactory scopeFactory) : ICandidateAvailabilityService
 {
-    private static readonly TimeSpan PerCallTimeout = TimeSpan.FromSeconds(10);
     private static readonly RequestMediaType[] MediaTypes = [RequestMediaType.Ebook, RequestMediaType.Audiobook];
 
     public async Task<CandidateAvailabilityResult> GetAvailabilityAsync(
         BookIdentity identity, CancellationToken cancellationToken)
+    {
+        var options = new List<FulfillmentOption>();
+        await foreach (var update in GetAvailabilityUpdatesAsync(identity, cancellationToken))
+        {
+            options.AddRange(update.Options);
+        }
+
+        return new CandidateAvailabilityResult(
+            options.Where(option => option.MediaType == RequestMediaType.Ebook).ToArray(),
+            options.Where(option => option.MediaType == RequestMediaType.Audiobook).ToArray());
+    }
+
+    public async IAsyncEnumerable<CandidateAvailabilityUpdate> GetAvailabilityUpdatesAsync(
+        BookIdentity identity,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         // Only the provider ids are captured from this request's own scope --
         // each task below re-resolves its provider inside a brand-new scope
@@ -43,45 +61,82 @@ public sealed class CandidateAvailabilityService(
         var ownedIds = ownedLibraryProviders.Select(provider => provider.Id).ToArray();
         var directIds = directAcquisitionProviders.Select(provider => provider.Id).ToArray();
 
-        var tasks = new List<Task<IReadOnlyList<FulfillmentOption>>>();
+        var updates = Channel.CreateUnbounded<CandidateAvailabilityUpdate>(
+            new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+        var tasks = new List<Task>();
 
         foreach (var mediaType in MediaTypes)
         {
             foreach (var id in ownedIds)
             {
-                tasks.Add(SafeCallInScopeAsync(
+                tasks.Add(PublishAsync(SafeCallInScopeAsync(
                     scope => scope.ServiceProvider.GetServices<IOwnedLibraryProvider>().First(provider => provider.Id == id),
                     (provider, ct) => provider.FindOwnedMatchesAsync(identity, mediaType, ct),
-                    cancellationToken));
+                    cancellationToken), updates.Writer, cancellationToken));
             }
 
             foreach (var id in directIds)
             {
-                tasks.Add(SafeCallInScopeAsync(
+                tasks.Add(PublishAsync(SafeCallInScopeAsync(
                     scope => scope.ServiceProvider.GetServices<IDirectAcquisitionProvider>().First(provider => provider.Id == id),
                     (provider, ct) => provider.FindDirectAcquisitionsAsync(identity, mediaType, ct),
-                    cancellationToken));
+                    cancellationToken), updates.Writer, cancellationToken));
             }
 
-            tasks.Add(SafeCallInScopeAsync(
-                scope => scope.ServiceProvider.GetRequiredService<ExternalCandidateAvailabilityChecker>(),
-                (checker, ct) => checker.FindAsync(identity, mediaType, ct),
-                cancellationToken));
+            tasks.Add(PublishExternalAsync(identity, mediaType, updates.Writer, cancellationToken));
         }
 
-        var results = await Task.WhenAll(tasks);
-        var options = results.SelectMany(result => result).ToArray();
+        _ = CompleteAsync(tasks, updates.Writer);
+        await foreach (var update in updates.Reader.ReadAllAsync(cancellationToken))
+        {
+            yield return update;
+        }
+    }
 
-        return new CandidateAvailabilityResult(
-            options.Where(option => option.MediaType == RequestMediaType.Ebook).ToArray(),
-            options.Where(option => option.MediaType == RequestMediaType.Audiobook).ToArray());
+    private static async Task PublishAsync(
+        Task<IReadOnlyList<FulfillmentOption>> source,
+        ChannelWriter<CandidateAvailabilityUpdate> writer,
+        CancellationToken cancellationToken)
+    {
+        var options = await source;
+        if (options.Count > 0)
+        {
+            await writer.WriteAsync(new CandidateAvailabilityUpdate(options), cancellationToken);
+        }
+    }
+
+    private async Task PublishExternalAsync(
+        BookIdentity identity,
+        RequestMediaType mediaType,
+        ChannelWriter<CandidateAvailabilityUpdate> writer,
+        CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var checker = scope.ServiceProvider.GetRequiredService<ExternalCandidateAvailabilityChecker>();
+        await foreach (var options in checker.FindUpdatesAsync(identity, mediaType, cancellationToken))
+        {
+            await writer.WriteAsync(new CandidateAvailabilityUpdate(options), cancellationToken);
+        }
+    }
+
+    private static async Task CompleteAsync(IReadOnlyList<Task> tasks, ChannelWriter<CandidateAvailabilityUpdate> writer)
+    {
+        try
+        {
+            await Task.WhenAll(tasks);
+            writer.TryComplete();
+        }
+        catch (Exception exception)
+        {
+            writer.TryComplete(exception);
+        }
     }
 
     /// <summary>
     /// Same "degrade one source to empty, never fail the whole check" posture
-    /// <see cref="WorkFulfillmentOptionsService"/> uses, plus a per-call
-    /// timeout so a source that never fails but never answers either (e.g. a
-    /// black-holed CWA server) can't tie up one badge check indefinitely.
+    /// <see cref="WorkFulfillmentOptionsService"/> uses. Interactive calls
+    /// run until the browser/API caller cancels them, rather than inventing a
+    /// false absence after a server-side deadline.
     /// </summary>
     private async Task<IReadOnlyList<FulfillmentOption>> SafeCallInScopeAsync<TService>(
         Func<IServiceScope, TService> resolve,
@@ -89,14 +144,11 @@ public sealed class CandidateAvailabilityService(
         CancellationToken cancellationToken)
         where TService : notnull
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(PerCallTimeout);
-
         try
         {
             await using var scope = scopeFactory.CreateAsyncScope();
             var service = resolve(scope);
-            return await call(service, timeout.Token);
+            return await call(service, cancellationToken);
         }
         catch (HttpRequestException)
         {
@@ -104,9 +156,9 @@ public sealed class CandidateAvailabilityService(
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // Either the caller's own cancellation was already handled by the
-            // guard above, or this source simply took longer than
-            // PerCallTimeout -- both degrade to "no options from this source".
+            // A source-owned cancellation remains optional enrichment; a
+            // caller-owned cancellation propagates so the browser can stop
+            // work when its search has been superseded.
             return [];
         }
     }

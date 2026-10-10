@@ -1,4 +1,3 @@
-using FamilyLibrarian.Domain.Acquisition;
 
 namespace FamilyLibrarian.Domain.Providers;
 
@@ -10,10 +9,22 @@ namespace FamilyLibrarian.Domain.Providers;
 /// Unlike <c>ProviderRegistry</c>'s hardcoded allowlist — deliberately closed,
 /// so no configuration or request body can introduce a new provider — this is
 /// a multi-row table by design: an external provider only exists because an
-/// administrator explicitly registered one. <see cref="CachedEgressPolicy"/>
-/// and the other <c>Cached*</c> fields come only from the provider's own
-/// <c>/manifest</c> response at registration/Test Connection time; they are
-/// never admin-typed, since the provider is the one declaring what it needs.
+/// administrator explicitly registered one. The manifest-derived <c>Cached*</c> fields (protocol version,
+/// capabilities, instance id) come only from the provider's
+/// own <c>/manifest</c> response at registration/Test Connection time; they
+/// are never admin-typed, since the provider is the one declaring what it
+/// needs. <see cref="CachedHealthStatus"/>/<see cref="CachedSearchOperationStatus"/>/
+/// <see cref="CachedAcquireOperationStatus"/> are the exception: per
+/// docs/04-external-provider-http-protocol.md §5, <c>/health</c> is called
+/// both at Test Connection and periodically by Family Librarian's own
+/// independent background poll (<c>ExternalProviderHealthPollService</c>),
+/// deliberately decoupled from <see cref="RecheckSchedule"/> — that field
+/// governs candidate-lookup cadence only, never whether the provider itself
+/// gets probed for reachability (see <see cref="RecordHealthCheck"/>), so
+/// those three fields — and
+/// <see cref="LastTestedAtUtc"/>/<see cref="LastTestSucceeded"/>/
+/// <see cref="LastTestMessage"/> alongside them — reflect whichever probe ran
+/// most recently, not only an admin's explicit click.
 /// </remarks>
 public sealed class ExternalProvider
 {
@@ -27,8 +38,9 @@ public sealed class ExternalProvider
         DisplayName = RequireText(displayName, nameof(displayName));
         BaseUrl = RequireText(baseUrl, nameof(baseUrl));
         IsEnabled = false;
-        CachedEgressPolicy = EgressPolicy.Normal;
         RecheckSchedule = ProviderRecheckSchedule.Manual;
+        AutoAcquireEnabled = false;
+        AutomaticAttemptLimit = DefaultAutomaticAttemptLimit;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
     }
@@ -45,10 +57,56 @@ public sealed class ExternalProvider
     public bool IsEnabled { get; private set; }
 
     /// <summary>
-    /// Administrator-controlled retry cadence for discovery only. It never
-    /// authorizes unattended acquisition from this external provider.
+    /// Administrator-controlled retry cadence for discovery only. On its own
+    /// it never authorizes unattended acquisition from this external
+    /// provider — a due recheck that finds a high-confidence candidate is
+    /// still just recorded for review unless <see cref="AutoAcquireEnabled"/>
+    /// is separately turned on for this provider.
     /// </summary>
     public ProviderRecheckSchedule RecheckSchedule { get; private set; }
+
+    /// <summary>
+    /// A separate, explicit admin toggle authorizing unattended acquisition
+    /// of a high-confidence (<c>Identifier</c>-basis) candidate found on a
+    /// scheduled recheck. Defaults to <c>false</c> for every newly registered
+    /// provider, regardless of what its manifest claims to support or
+    /// whether <see cref="RecheckSchedule"/> is set — never inferred from
+    /// either, and freely settable at any time
+    /// (family-librarian-provider-alpha5-plan.md §B). A
+    /// <c>TitleAuthor</c>-basis candidate is never eligible for automatic
+    /// acquisition regardless of this setting (§F2) — that gate lives in
+    /// <c>ExternalProviderRecheckService</c>, not here.
+    /// </summary>
+    public bool AutoAcquireEnabled { get; private set; }
+
+    /// <summary>The attempt budget a newly registered provider starts with.</summary>
+    public const int DefaultAutomaticAttemptLimit = 3;
+
+    public const int MinimumAutomaticAttemptLimit = 1;
+
+    public const int MaximumAutomaticAttemptLimit = 10;
+
+    /// <summary>
+    /// How many distinct candidates unattended acquisition may download and
+    /// fail to verify for one requested format before the request stops and
+    /// waits for a librarian (PROVIDER-7).
+    /// </summary>
+    /// <remarks>
+    /// The honest bound on a retry loop that spends real downloads. Family
+    /// Librarian deliberately does not model a provider's own quota: protocol
+    /// v2 §8 makes a provider's subscription/quota path its own business and
+    /// instructs it to keep a job queued rather than report a quota failure,
+    /// so FL cannot see a remaining allowance and must not pretend to. An
+    /// administrator who knows a source is metered sets this to
+    /// <see cref="MinimumAutomaticAttemptLimit"/>, which spends one download
+    /// and then reviews.
+    /// <para>
+    /// A candidate a *requester* set aside via "keep looking" is not an
+    /// attempt and never consumes this budget — see
+    /// <c>DeclinedCandidateReason</c>.
+    /// </para>
+    /// </remarks>
+    public int AutomaticAttemptLimit { get; private set; } = DefaultAutomaticAttemptLimit;
 
     public string? ProtectedApiKey { get; private set; }
 
@@ -63,7 +121,51 @@ public sealed class ExternalProvider
     /// <summary>Comma-separated, as declared by the provider's own manifest.</summary>
     public string? CachedCapabilities { get; private set; }
 
-    public EgressPolicy CachedEgressPolicy { get; private set; }
+    /// <summary>
+    /// This deployed instance's own identity, as declared by its manifest
+    /// (protocol v2 §4/§20) — distinct from <see cref="ProviderId"/>, which
+    /// identifies the provider software, not this specific running copy of
+    /// it. <c>null</c> when the provider never declares one (tolerated) or
+    /// hasn't been successfully tested yet.
+    /// </summary>
+    public string? CachedInstanceId { get; private set; }
+
+    /// <summary>
+    /// True once a successful test observes an <see cref="CachedInstanceId"/>
+    /// different from the previous successful test's — a container/instance
+    /// swap mid-job is exactly the signal protocol v2 §20's provider-replacement
+    /// detection needs. Reset to false whenever the instance id matches (or
+    /// is newly recorded for the first time).
+    /// </summary>
+    public bool InstanceReplacedSincePreviousTest { get; private set; }
+
+
+    /// <summary>
+    /// Coarse overall health from the provider's last successful test, per
+    /// protocol v2 §5 — one of <c>Healthy</c>/<c>Degraded</c>/<c>Unhealthy</c>.
+    /// A raw string, like <see cref="CachedCapabilities"/>: the wire
+    /// vocabulary is Application/Infrastructure's concern to parse, not
+    /// Domain's to model as its own enum.
+    /// </summary>
+    public string? CachedHealthStatus { get; private set; }
+
+    /// <summary>One of <c>Available</c>/<c>Degraded</c>/<c>Unavailable</c>.</summary>
+    public string? CachedSearchOperationStatus { get; private set; }
+
+    /// <summary>One of <c>Available</c>/<c>Degraded</c>/<c>Unavailable</c>.</summary>
+    public string? CachedAcquireOperationStatus { get; private set; }
+
+    /// <summary>
+    /// The provider's own explanation of a non-available result, from the
+    /// optional protocol v2 §5 <c>issues</c> array. Replaced wholesale by every
+    /// probe, so it is empty whenever the latest probe reported none and a
+    /// stale reason never outlives the condition it described.
+    /// </summary>
+    public IReadOnlyList<ProviderHealthIssue> CachedHealthIssues { get; private set; } = [];
+
+    public string? CachedManagementUrl { get; private set; }
+
+    public string? CachedDocumentationUrl { get; private set; }
 
     public DateTimeOffset? LastTestedAtUtc { get; private set; }
 
@@ -78,17 +180,6 @@ public sealed class ExternalProvider
     public DateTimeOffset UpdatedAtUtc { get; private set; }
 
     public uint Version { get; private set; }
-
-    /// <summary>
-    /// An administrator-chosen replacement for <see cref="CachedEgressPolicy"/>.
-    /// <c>null</c> means "use the provider's own declared policy" (the default).
-    /// Survives re-tests: <see cref="RecordTestResult"/> only ever updates
-    /// <see cref="CachedEgressPolicy"/>, never this.
-    /// </summary>
-    public EgressPolicy? EgressPolicyOverride { get; private set; }
-
-    /// <summary>What actually governs routing for this provider right now.</summary>
-    public EgressPolicy EffectiveEgressPolicy => EgressPolicyOverride ?? CachedEgressPolicy;
 
     public bool HasApiKey => !string.IsNullOrEmpty(ProtectedApiKey);
 
@@ -107,9 +198,22 @@ public sealed class ExternalProvider
         Touch(actorUserId, updatedAtUtc);
     }
 
-    public void SetEgressPolicyOverride(EgressPolicy? policy, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    public void SetAutoAcquireEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
     {
-        EgressPolicyOverride = policy;
+        AutoAcquireEnabled = isEnabled;
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void SetAutomaticAttemptLimit(int limit, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        if (limit is < MinimumAutomaticAttemptLimit or > MaximumAutomaticAttemptLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(limit), limit,
+                $"The automatic attempt limit must be between {MinimumAutomaticAttemptLimit} and {MaximumAutomaticAttemptLimit}.");
+        }
+
+        AutomaticAttemptLimit = limit;
         Touch(actorUserId, updatedAtUtc);
     }
 
@@ -152,22 +256,83 @@ public sealed class ExternalProvider
         string? message,
         string? protocolVersion,
         string? capabilities,
-        EgressPolicy egressPolicy,
         Guid? actorUserId,
-        DateTimeOffset testedAtUtc)
+        DateTimeOffset testedAtUtc,
+        string? instanceId = null,
+        string? healthStatus = null,
+        string? searchOperationStatus = null,
+        string? acquireOperationStatus = null,
+        string? managementUrl = null,
+        string? documentationUrl = null,
+        bool manifestReached = false,
+        IReadOnlyList<ProviderHealthIssue>? healthIssues = null)
     {
         LastTestedAtUtc = testedAtUtc;
         LastTestSucceeded = succeeded;
         LastTestMessage = Truncate(message, 512);
 
-        if (succeeded)
+        // Deliberately gated on manifestReached, not succeeded: succeeded
+        // reflects whether /health came back fully operational, but a
+        // degraded/unhealthy result is still a real, freshly observed
+        // response that the Test Connection UI's health/search/acquire
+        // chips must reflect -- otherwise they keep showing whatever the
+        // previous (possibly healthy) test cached while the banner text
+        // above them, built from the same probe, already reports the
+        // degradation.
+        if (manifestReached)
         {
             CachedProtocolVersion = protocolVersion;
             CachedCapabilities = capabilities;
-            CachedEgressPolicy = egressPolicy;
+            CachedHealthStatus = healthStatus;
+            CachedSearchOperationStatus = searchOperationStatus;
+            CachedAcquireOperationStatus = acquireOperationStatus;
+            CachedHealthIssues = healthIssues ?? [];
+            CachedManagementUrl = managementUrl;
+            CachedDocumentationUrl = documentationUrl;
+
+            // A previously-observed instance id that changes to a different
+            // (non-empty) one is exactly the container-replacement signal
+            // protocol v2 §20 asks for. A provider that has never declared
+            // one, or declares the same one again, is not a replacement.
+            InstanceReplacedSincePreviousTest =
+                !string.IsNullOrWhiteSpace(CachedInstanceId) &&
+                !string.IsNullOrWhiteSpace(instanceId) &&
+                !string.Equals(CachedInstanceId, instanceId, StringComparison.Ordinal);
+            CachedInstanceId = instanceId ?? CachedInstanceId;
         }
 
         Touch(actorUserId, testedAtUtc);
+    }
+
+    /// <summary>
+    /// Records a live <c>/health</c> probe made outside an admin's "Test
+    /// Connection" click — <c>ExternalProviderHealthPollService</c>'s own
+    /// independent background probe, on a fixed interval for every enabled
+    /// provider regardless of <see cref="RecheckSchedule"/> (docs/04 §5).
+    /// Deliberately narrower than <see cref="RecordTestResult"/>:
+    /// a probe never calls <c>/manifest</c>, so this must not touch protocol
+    /// version, capabilities, or instance id — those stay
+    /// exactly what the last real Test Connection observed. Also does not
+    /// call <see cref="Touch"/>: <see cref="UpdatedByUserId"/>/
+    /// <see cref="UpdatedAtUtc"/> record an administrator's own edits, and an
+    /// unattended background probe is not one.
+    /// </summary>
+    public void RecordHealthCheck(
+        bool succeeded,
+        string? message,
+        string? healthStatus,
+        string? searchOperationStatus,
+        string? acquireOperationStatus,
+        DateTimeOffset checkedAtUtc,
+        IReadOnlyList<ProviderHealthIssue>? healthIssues = null)
+    {
+        LastTestedAtUtc = checkedAtUtc;
+        LastTestSucceeded = succeeded;
+        LastTestMessage = Truncate(message, 512);
+        CachedHealthStatus = healthStatus;
+        CachedSearchOperationStatus = searchOperationStatus;
+        CachedAcquireOperationStatus = acquireOperationStatus;
+        CachedHealthIssues = healthIssues ?? [];
     }
 
     private void ResetTestResult()

@@ -109,7 +109,8 @@ public sealed class RequestRepository(
 
     public async Task<IReadOnlyList<BookRequest>> ListPendingForAutomaticFulfillmentAsync(
         int maximumCount,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeNeedsReview = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
 
@@ -119,7 +120,10 @@ public sealed class RequestRepository(
             .Include(request => request.StatusHistory)
             .Include(request => request.ReviewCandidates)
             .Include(request => request.DeclinedCandidates)
-            .Where(request => request.Status == RequestStatus.PendingAcquisition && !request.RequiresManualFulfillment)
+            .Where(request => !request.RequiresManualFulfillment &&
+                (request.Status == RequestStatus.PendingAcquisition ||
+                 (includeNeedsReview && request.Status == RequestStatus.NeedsReview &&
+                  request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity)))
             .OrderBy(request => request.RequestedAtUtc)
             .Take(maximumCount)
             .ToArrayAsync(cancellationToken);
@@ -249,6 +253,31 @@ public sealed class RequestRepository(
             return ApplyKindleDeliveries(requests, kindleDeliveries);
         }
 
+        // No MediaAsset exists yet for a format still tracked by a durable
+        // provider job (protocol v2 §8) -- it hasn't completed, so none of
+        // the asset/security/publishing lookups below apply to it. Loaded
+        // independently of assetIds precisely because it must still surface
+        // for a format that has never had one.
+        // Failed is deliberately included here (unlike Completed/Cancelled): a
+        // failed job is exactly the case where no MediaAsset exists to take
+        // over the format's progress display, so excluding it left the
+        // format silently reverting to a bare "Requested" state -- looking
+        // identical to a format nothing had ever attempted.
+        var providerJobs = await database.ProviderAcquisitionJobs
+            .AsNoTracking()
+            .Where(job =>
+                formatIds.Contains(job.RequestFormatId) &&
+                job.LifecycleState != ProviderAcquisitionJobLifecycleState.Completed &&
+                job.LifecycleState != ProviderAcquisitionJobLifecycleState.Cancelled)
+            .Select(job => new ProviderJobProgressRow(
+                job.RequestFormatId, job.LifecycleState, job.Phase, job.CreatedAtUtc, job.IsAutomaticAcquisition))
+            .ToArrayAsync(cancellationToken);
+        var latestProviderJobs = providerJobs
+            .GroupBy(job => job.RequestFormatId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(job => job.CreatedAtUtc).First());
+
         // These are separate, bounded projections rather than a large join of
         // collections. That avoids duplicating request rows and keeps each query
         // to the facts used in the requester-facing progress message.
@@ -271,7 +300,7 @@ public sealed class RequestRepository(
         var assetIds = latestAssets.Values.Select(asset => asset.AssetId).ToArray();
         if (assetIds.Length == 0)
         {
-            return ApplyKindleDeliveries(requests, kindleDeliveries);
+            return ApplyKindleDeliveries(ApplyProviderJobProgress(requests, latestProviderJobs), kindleDeliveries);
         }
 
         var evaluations = await database.SecurityEvaluations
@@ -344,7 +373,9 @@ public sealed class RequestRepository(
                     {
                         if (!latestAssets.TryGetValue(format.Id, out var asset))
                         {
-                            return format;
+                            return latestProviderJobs.TryGetValue(format.Id, out var providerJob)
+                                ? WithProviderJobProgress(format, providerJob, request.Status)
+                                : format;
                         }
 
                         SecurityEvaluationStatus? securityStatus =
@@ -432,6 +463,52 @@ public sealed class RequestRepository(
                     group.First().AttemptNumber, group.First().ConfirmationStatus));
     }
 
+    /// <summary>
+    /// Every format that has no <see cref="MediaAssetProgressRow"/> at all
+    /// still needs a chance to show a durable provider job's progress --
+    /// this is the path taken when nothing in the whole batch has ever
+    /// produced an asset.
+    /// </summary>
+    private static IReadOnlyList<BookRequestView> ApplyProviderJobProgress(
+        IReadOnlyList<BookRequestView> requests,
+        IReadOnlyDictionary<Guid, ProviderJobProgressRow> latestProviderJobs) =>
+        latestProviderJobs.Count == 0
+            ? requests
+            : requests
+                .Select(request => request with
+                {
+                    Formats = request.Formats
+                        .Select(format => latestProviderJobs.TryGetValue(format.Id, out var providerJob)
+                            ? WithProviderJobProgress(format, providerJob, request.Status)
+                            : format)
+                        .ToArray()
+                })
+                .ToArray();
+
+    private static RequestFormatView WithProviderJobProgress(
+        RequestFormatView format, ProviderJobProgressRow providerJob, RequestStatus requestStatus) =>
+        format with
+        {
+            Progress = RequestFormatProgress.Describe(
+                assetState: null,
+                securityStatus: null,
+                libraryImportStatus: null,
+                deliveryStatus: null,
+                providerJobState: providerJob.LifecycleState,
+                providerJobPhase: providerJob.Phase,
+                // The retry loop only leaves a request pending after an
+                // automatic job fails when it is about to try another copy;
+                // an exhausted budget moves it to review. A failed job on a
+                // request that is not pending, or one a librarian started by
+                // hand, genuinely needs attention and keeps the red chip.
+                providerJobAdvancingToNextCandidate:
+                    providerJob.IsAutomaticAcquisition && requestStatus == RequestStatus.PendingAcquisition),
+            // Provider interaction control is an administrator-only,
+            // server-brokered workflow. Never turn a provider URL into a
+            // requester-visible link while its job is active.
+            ExternalActionUri = null
+        };
+
     private static IReadOnlyList<BookRequestView> ApplyKindleDeliveries(
         IReadOnlyList<BookRequestView> requests, IReadOnlyDictionary<Guid, RequestKindleDeliveryView> deliveries) =>
         deliveries.Count == 0
@@ -460,12 +537,18 @@ public sealed class RequestRepository(
             return new Dictionary<Guid, RequestNeedsReviewView>();
         }
 
-        var preferenceAmbiguityIds = await database.BookRequests
+        var preferenceReviews = await database.BookRequests
             .AsNoTracking()
             .Where(request => needsReviewIds.Contains(request.Id) &&
                 request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity)
-            .Select(request => request.Id)
+            .Select(request => new PreferenceReviewRow(
+                request.Id,
+                request.StatusHistory
+                    .OrderByDescending(history => history.OccurredAtUtc)
+                    .Select(history => history.Reason)
+                    .FirstOrDefault()))
             .ToArrayAsync(cancellationToken);
+        var preferenceAmbiguityIds = preferenceReviews.Select(review => review.RequestId).ToArray();
         if (preferenceAmbiguityIds.Length == 0)
         {
             return new Dictionary<Guid, RequestNeedsReviewView>();
@@ -476,7 +559,7 @@ public sealed class RequestRepository(
             .Where(candidate => preferenceAmbiguityIds.Contains(candidate.RequestId))
             .OrderBy(candidate => candidate.DisplayOrder)
             .Select(candidate => new RequestReviewCandidateRow(
-                candidate.RequestId, candidate.Id, candidate.Title, candidate.Author, candidate.Language))
+                candidate.RequestId, candidate.Id, candidate.Title, candidate.Author, candidate.Language, candidate.Details))
             .ToArrayAsync(cancellationToken);
         var candidatesByRequest = candidates
             .GroupBy(candidate => candidate.RequestId)
@@ -484,14 +567,15 @@ public sealed class RequestRepository(
                 group => group.Key,
                 group => (IReadOnlyList<RequestReviewCandidateView>)group
                     .Select(candidate => new RequestReviewCandidateView(
-                        candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language))
+                        candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language, candidate.Details))
                     .ToArray());
 
         return preferenceAmbiguityIds.ToDictionary(
             requestId => requestId,
             requestId => new RequestNeedsReviewView(
                 RequestReviewCategory.PreferenceAmbiguity,
-                candidatesByRequest.TryGetValue(requestId, out var list) ? list : []));
+                candidatesByRequest.TryGetValue(requestId, out var list) ? list : [],
+                preferenceReviews.Single(review => review.RequestId == requestId).Reason));
     }
 
     private static IReadOnlyList<BookRequestView> ApplyNeedsReview(
@@ -512,9 +596,25 @@ public sealed class RequestRepository(
             requests.Select(request => request.Request).ToArray(),
             cancellationToken);
         var progressByRequestId = progress.ToDictionary(request => request.Id);
+        var requestIds = requests.Select(request => request.Request.Id).ToArray();
+        var providerJobs = await database.ProviderAcquisitionJobs.AsNoTracking()
+            .Where(job => requestIds.Contains(job.RequestId) &&
+                (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Running ||
+                 job.LifecycleState == ProviderAcquisitionJobLifecycleState.Queued))
+            .Select(job => new
+            {
+                job.RequestId, job.RequestFormatId, job.ProviderId, job.Phase,
+                job.ProgressPercent, job.ProgressMessage
+            }).ToArrayAsync(cancellationToken);
 
         return requests
-            .Select(request => request with { Request = progressByRequestId[request.Request.Id] })
+            .Select(request => request with
+            {
+                Request = progressByRequestId[request.Request.Id],
+                ProviderJobs = providerJobs.Where(job => job.RequestId == request.Request.Id)
+                    .Select(job => new AdminProviderJobProgressView(job.RequestFormatId, job.ProviderId,
+                        job.Phase, job.ProgressPercent, job.ProgressMessage)).ToArray()
+            })
             .ToArray();
     }
 
@@ -618,7 +718,30 @@ public sealed class RequestRepository(
                 database.Users.Where(member => member.Id == participant.UserId).Select(member => member.DisplayName).First(),
                 database.Users.Where(member => member.Id == participant.UserId).Select(member => member.Email!).First(),
                 participant.Note,
-                participant.WithdrawnAtUtc != null)).ToList());
+                participant.WithdrawnAtUtc != null)).ToList(),
+            request.ReviewCandidates
+                .OrderBy(candidate => candidate.DisplayOrder)
+                .Select(candidate => new AdminRequestReviewCandidateView(
+                    candidate.Id,
+                    candidate.RequestFormatId,
+                    candidate.ProviderId,
+                    candidate.ProviderResultId,
+                    candidate.Title,
+                    candidate.Author,
+                    candidate.Language,
+                    candidate.Details,
+                    candidate.AdminInspectionUri,
+                    candidate.ReleaseName,
+                    candidate.TitleIsRequestFallback,
+                    candidate.AdminSourceSummary))
+                .ToList());
+
+    private sealed record ProviderJobProgressRow(
+        Guid RequestFormatId,
+        ProviderAcquisitionJobLifecycleState LifecycleState,
+        string? Phase,
+        DateTimeOffset CreatedAtUtc,
+        bool IsAutomaticAcquisition);
 
     private sealed record MediaAssetProgressRow(
         Guid AssetId,
@@ -641,5 +764,7 @@ public sealed class RequestRepository(
         string? FailureReason, int AttemptNumber, DeliveryConfirmationStatus ConfirmationStatus);
 
     private sealed record RequestReviewCandidateRow(
-        Guid RequestId, Guid CandidateId, string Title, string? Author, string? Language);
+        Guid RequestId, Guid CandidateId, string Title, string? Author, string? Language, string? Details);
+
+    private sealed record PreferenceReviewRow(Guid RequestId, string? Reason);
 }

@@ -34,14 +34,15 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
         long totalBytesRead = 0;
         var exceeded = false;
 
-        await using (var destination = new FileStream(
-            destinationPath,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            bufferSize: 81_920,
-            useAsync: true))
+        try
         {
+            await using var destination = new FileStream(
+                destinationPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 81_920,
+                useAsync: true);
             int bytesRead;
             while (!exceeded && (bytesRead = await content.ReadAsync(buffer, cancellationToken)) > 0)
             {
@@ -66,6 +67,11 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
                 await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
             }
         }
+        catch
+        {
+            TryDelete(destinationPath);
+            throw;
+        }
 
         if (exceeded)
         {
@@ -77,6 +83,28 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
         var detectedMimeType = SignatureFileTypeDetector.Detect(header, headerBytesRead);
 
         return new StagedFile(storedFilename, totalBytesRead, checksum, detectedMimeType);
+    }
+
+    // DriveInfo.AvailableFreeSpace (not TotalFreeSpace) because it honours the
+    // disk quota of the account the host runs as.
+    public long? GetAvailableFreeBytes()
+    {
+        try
+        {
+            Directory.CreateDirectory(_options.RootPath);
+            return new DriveInfo(Path.GetFullPath(_options.RootPath)).AvailableFreeSpace;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     public Task<Stream> OpenAsync(

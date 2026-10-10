@@ -6,6 +6,17 @@ Design guidance derived from the deterministic book-validation work. This docume
 
 The immediate implementation target is deterministic. AI/LLM matching is a future extension and must not be required by the initial implementation.
 
+The external candidate phase implemented on 2026-10-07 is described in
+[the maintained provider policy](03-provider-api-contracts.md#2-provider-design-principles).
+Its `CandidateIdentityAssessment` separates work identity from acquisition
+conditions. Unknown metadata and unclassified descriptors are neutral. Local
+one-edit title windows with an exact anchor and strong author support may be
+decisive; generic fuzzy scores remain insufficient. Very short exact titles need
+author support. For longer exact title phrases, absent author data is unknown
+and does not alone prevent automatic identity. These implemented rules qualify
+the earlier recommendations in sections 8 and 10 below, which remain design
+background rather than a second active policy.
+
 ---
 
 ## 1. Core Finding: Matching and Validation Should Share One Evidence Model

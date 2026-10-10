@@ -5,8 +5,10 @@
 @using FamilyLibrarian.Contracts.Operations
 @using FamilyLibrarian.Contracts.Acquisition
 @using FamilyLibrarian.Contracts.Publishing
+@using FamilyLibrarian.Contracts.Requests
 @using FamilyLibrarian.Web.Client.Operations
 @inject AdminTasksApiClient TasksApi
+@inject AdminRequestsApiClient RequestsApi
 
 <PageTitle>Tasks · Family Librarian</PageTitle>
 
@@ -71,16 +73,22 @@
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
                                 <MudLink Href="@($"admin/requests/{request.Request.Id}")">@request.Request.WorkTitle</MudLink>
                                 <MudLink Href="@($"admin/requests/{request.Request.Id}")" Underline="Underline.None">
-                                    <RequestStatusChip Status="@request.Request.Status" />
+                                    <RequestStatusChip Status="@request.Request.Status" Label="@RequestLabel(request.Request)" />
                                 </MudLink>
                                 @foreach (var format in request.Request.Formats)
                                 {
                                     <FormatStatusChip MediaType="@format.MediaType" Status="@format.Status"
-                                                       ProgressCode="@format.ProgressCode"
-                                                       ProgressDescription="@format.ProgressDescription"
+                                                       ProgressCode="@FormatProgressCode(request, format)"
+                                                       ProgressDescription="@FormatDescription(request, format)"
                                                        ExternalActionUri="@format.ExternalActionUri" />
                                 }
                             </MudStack>
+                            @foreach (var interaction in WaitingInteractionsForRequest(request.Request.Id))
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Warning">
+                                    @(interaction.ProviderId): @(interaction.Message ?? "Waiting for administrator action.")
+                                </MudText>
+                            }
                             <MudText Typo="Typo.caption">
                                 @request.RequesterDisplayName · requested @request.Request.RequestedAtUtc.ToLocalTime().ToString("g")
                             </MudText>
@@ -108,7 +116,7 @@
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
                                 <MudLink Href="@($"admin/requests/{attempt.RequestId}")">@attempt.WorkTitle</MudLink>
                                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.ProviderId</MudChip>
-                                <MudChip T="string" Size="Size.Small" Color="@AttemptColor(attempt.Outcome)">@attempt.Outcome</MudChip>
+                                <ProviderAttemptChip Outcome="@attempt.Outcome" />
                                 <MediaTypeChip MediaType="@attempt.MediaType" />
                             </MudStack>
                             <MudText Typo="Typo.body2">@attempt.Summary</MudText>
@@ -215,7 +223,37 @@
 </MudStack>
 
 @code {
+    [CascadingParameter]
+    private IReadOnlyList<AdminActiveAcquisitionResponse> ActiveAcquisitions { get; set; } = [];
+
+    private string? RequestLabel(BookRequestResponse request) => request.Status == "PendingAcquisition"
+        ? ActiveAcquisitions.Any(activity => activity.RequestId == request.Id) ? "Working" : "Awaiting next check"
+        : null;
+
+    private static bool HasReviewCandidates(AdminBookRequestResponse request, Guid formatId) =>
+        request.Request.Status == "NeedsReview" &&
+        request.ReviewCandidates?.Any(candidate => candidate.RequestFormatId == formatId) == true;
+
+    private string? FormatProgressCode(AdminBookRequestResponse request, BookRequestFormatResponse format) =>
+        HasReviewCandidates(request, format.FormatId) ? "AwaitingApproval" : format.ProgressCode;
+
+    private string? FormatDescription(AdminBookRequestResponse request, BookRequestFormatResponse format) =>
+        ActiveAcquisitions.FirstOrDefault(activity => activity.RequestFormatId == format.FormatId) is { } activity
+            ? AdminAcquisitionProgressText.Describe(activity)
+            : HasReviewCandidates(request, format.FormatId) ? "Source review needed"
+            : WaitingInteractionForFormat(request.Request.Id, format.FormatId) is not null ? "Provider action needed"
+            : format.ProgressDescription ?? (format.Status == "Requested" ? "Awaiting next check" : null);
+
+    private AdminProviderInteractionAttentionResponse? WaitingInteractionForFormat(Guid requestId, Guid formatId) =>
+        attention?.WaitingProviderInteractions.FirstOrDefault(interaction =>
+            interaction.RequestId == requestId && interaction.RequestFormatId == formatId);
+
+    private IEnumerable<AdminProviderInteractionAttentionResponse> WaitingInteractionsForRequest(Guid requestId) =>
+        attention?.WaitingProviderInteractions.Where(interaction => interaction.RequestId == requestId)
+            ?? Enumerable.Empty<AdminProviderInteractionAttentionResponse>();
+
     private AdminTasksResponse? snapshot;
+    private AdminRequestAttentionResponse? attention;
     private string? errorMessage;
 
     protected override async Task OnInitializedAsync()
@@ -234,6 +272,14 @@
             {
                 errorMessage = "The task dashboard did not return a response. Please try again.";
             }
+            try
+            {
+                attention = await RequestsApi.GetAttentionAsync();
+            }
+            catch (HttpRequestException)
+            {
+                attention = null;
+            }
         }
         catch (HttpRequestException)
         {
@@ -242,14 +288,6 @@
     }
 
 
-
-    private static Color AttemptColor(string outcome) => outcome switch
-    {
-        "Acquired" => Color.Success,
-        "Failed" or "Blocked" => Color.Error,
-        "CandidatesFound" => Color.Info,
-        _ => Color.Default
-    };
 
     private static Color PublishingColor(string status) => status switch
     {

@@ -1,0 +1,104 @@
+@page "/settings/audiobook-narration"
+@attribute [Authorize]
+@using FamilyLibrarian.Web.Client.Accounts
+@inject AudiobookNarrationPreferenceApiClient PreferenceApi
+@inject ISnackbar Snackbar
+
+<PageTitle>Audiobook narration preference · Family Librarian</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Audiobook narration preference</MudText>
+<MudText Typo="Typo.body1" Class="mb-6">
+    Controls which audiobook recording Family Librarian picks automatically when a
+    requested title has more than one acceptable recording. This never overrides
+    identity, language, or rights checks -- it only breaks a tie between otherwise
+    acceptable copies.
+</MudText>
+
+@if (isLoading)
+{
+    <MudProgressCircular Indeterminate="true" aria-label="Loading audiobook narration preference" />
+}
+else if (loadFailed)
+{
+    <MudAlert Severity="Severity.Error">We could not load your audiobook narration preference.</MudAlert>
+}
+else
+{
+    <MudPaper Class="pa-4" Outlined="true">
+        <MudRadioGroup T="string" Value="@selected" ValueChanged="@SetPreferenceAsync" Disabled="@busy">
+            <MudRadio T="string" Value="@("PreferHuman")" Color="Color.Primary">
+                <MudText Typo="Typo.subtitle1">Prefer human narration</MudText>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    Prefer human-narrated copies when available, but allow synthetic narration
+                    when it is the only suitable option.
+                </MudText>
+            </MudRadio>
+            <MudRadio T="string" Value="@("HumanOnly")" Color="Color.Primary" Class="mt-4">
+                <MudText Typo="Typo.subtitle1">Human narration only</MudText>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    Do not automatically acquire recordings known to use synthetic narration.
+                </MudText>
+            </MudRadio>
+            <MudRadio T="string" Value="@("NoPreference")" Color="Color.Primary" Class="mt-4">
+                <MudText Typo="Typo.subtitle1">No narration preference</MudText>
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    Do not use narration type when choosing among otherwise suitable copies.
+                </MudText>
+            </MudRadio>
+        </MudRadioGroup>
+    </MudPaper>
+}
+
+@code {
+    private bool isLoading = true;
+    private bool loadFailed;
+    private bool busy;
+    private string selected = "PreferHuman";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var status = await PreferenceApi.GetAsync();
+            selected = status?.Preference ?? selected;
+        }
+        catch (HttpRequestException)
+        {
+            loadFailed = true;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SetPreferenceAsync(string value)
+    {
+        var previous = selected;
+        selected = value;
+        busy = true;
+
+        try
+        {
+            var result = await PreferenceApi.SetAsync(value);
+            if (result.Succeeded)
+            {
+                Snackbar.Add("Audiobook narration preference saved.", Severity.Success);
+            }
+            else
+            {
+                selected = previous;
+                Snackbar.Add(result.Error ?? "That could not be saved.", Severity.Error);
+            }
+        }
+        catch (HttpRequestException)
+        {
+            selected = previous;
+            Snackbar.Add("That could not be saved. Please try again.", Severity.Error);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

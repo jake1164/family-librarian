@@ -9,11 +9,23 @@ namespace FamilyLibrarian.Web.Client.Requests;
 /// <summary>Typed client for the administrator's request-review queue.</summary>
 public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTokenProvider antiforgery)
 {
+    public async Task<IReadOnlyList<AdminActiveAcquisitionResponse>> GetActiveAcquisitionsAsync(
+        CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<AdminActiveAcquisitionResponse[]>(
+            "api/v1/admin/requests/active-acquisitions", cancellationToken) ?? [];
+
     public async Task<AdminRequestAttentionResponse> GetAttentionAsync(
         CancellationToken cancellationToken = default) =>
         await httpClient.GetFromJsonAsync<AdminRequestAttentionResponse>(
             "api/v1/admin/requests/attention", cancellationToken)
-        ?? new AdminRequestAttentionResponse(0, []);
+        ?? new AdminRequestAttentionResponse(0, [], []);
+
+    /// <summary>This request's own waiting provider interaction, or null if none is waiting.</summary>
+    public Task<ProviderInteractionResponse?> GetProviderInteractionAsync(
+        Guid requestId,
+        CancellationToken cancellationToken = default) =>
+        httpClient.GetFromJsonAsync<ProviderInteractionResponse>(
+            $"api/v1/admin/requests/{requestId}/provider-interaction", cancellationToken);
 
     public async Task<IReadOnlyList<AdminBookRequestResponse>> GetQueueAsync(
         string? status,
@@ -37,6 +49,61 @@ public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTok
         CancellationToken cancellationToken = default) =>
         await httpClient.GetFromJsonAsync<ProviderAttemptResponse[]>(
             $"api/v1/admin/requests/{requestId}/provider-attempts", cancellationToken) ?? [];
+
+    /// <summary>
+    /// ADMIN-DEBUG-1: asks one external provider right now and returns its
+    /// raw results, outside that provider's own recheck schedule. Never
+    /// acquires anything and writes nothing -- a librarian-facing debug tool.
+    /// </summary>
+    public async Task<ProviderDebugSearchOutcome> DebugSearchProviderAsync(
+        Guid requestId,
+        Guid formatId,
+        string providerId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/admin/requests/{requestId}/formats/{formatId}/providers/{Uri.EscapeDataString(providerId)}/debug-search",
+            cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            var candidates = await response.Content.ReadFromJsonAsync<AdminProviderDebugCandidateResponse[]>(
+                cancellationToken);
+            return new ProviderDebugSearchOutcome(true, candidates ?? [], null);
+        }
+
+        return new ProviderDebugSearchOutcome(
+            false, [], await ReadDebugSearchErrorAsync(response, cancellationToken));
+    }
+
+    private static async Task<string> ReadDebugSearchErrorAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return "That request, format, or provider no longer exists.";
+        }
+
+        try
+        {
+            var problem = await response.Content.ReadFromJsonAsync<ProblemDetailsPayload>(cancellationToken);
+            var message = problem?.Detail ??
+                problem?.Errors?.Values.SelectMany(messages => messages).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                return message;
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or NotSupportedException
+            or System.Text.Json.JsonException)
+        {
+            // The generic message below is safe when an intermediary returned a
+            // response outside the application's problem-details shape.
+        }
+
+        return "That provider could not be searched right now. Please try again.";
+    }
+
+    private sealed record ProblemDetailsPayload(string? Detail, Dictionary<string, string[]>? Errors);
 
     public Task<AdminRequestActionOutcome> ChangeStatusAsync(
         Guid requestId,
@@ -170,4 +237,9 @@ public sealed record AdminRequestActionOutcome(
 public sealed record RecheckOutcome(
     bool Succeeded,
     int RequeuedCount,
+    string? Error);
+
+public sealed record ProviderDebugSearchOutcome(
+    bool Succeeded,
+    IReadOnlyList<AdminProviderDebugCandidateResponse> Candidates,
     string? Error);

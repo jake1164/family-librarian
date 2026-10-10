@@ -34,6 +34,60 @@ public sealed class AssetIdentityVerificationServiceTests
         Assert.AreEqual(1, repository.SaveCount);
     }
 
+    /// <summary>
+    /// The live gap this guards against: a MOBI/AZW3 candidate from an
+    /// unconfirmed (title/author-only, <c>confirmLowConfidenceMatch</c>)
+    /// external-provider match has no format-specific verifier and used to
+    /// pass through as "not-applicable = match" regardless. It must now be
+    /// held, same as a confirmed mismatch, since nothing actually checked it.
+    /// </summary>
+    [TestMethod]
+    public async Task AnUnconfirmedMatchWithNoFormatVerifierIsHeldNotWaved()
+    {
+        var asset = CreateProcessingAsset(format: ".mobi", identityPreConfirmed: false);
+        var repository = new AssetRepository(asset);
+        var staging = new RecordingStagingStore();
+        var service = new AssetIdentityVerificationService(
+            repository, staging, [], new RecordingAuditWriter(), new FixedClock());
+
+        var result = await service.VerifyAsync(asset.Id, CancellationToken.None);
+
+        Assert.IsFalse(result.IsMatch);
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState);
+        Assert.IsNotNull(asset.IdentityMismatchReason);
+    }
+
+    /// <summary>
+    /// The existing, still-correct behavior for everything else: a
+    /// pre-confirmed match (every built-in-provider acquisition, a manual
+    /// upload, or an external candidate strong enough to need no override)
+    /// has nothing left to prove, so a format with no verifier still passes.
+    /// </summary>
+    [TestMethod]
+    public async Task APreConfirmedMatchWithNoFormatVerifierStillPasses()
+    {
+        var asset = CreateProcessingAsset(format: ".m4b", identityPreConfirmed: true);
+        var repository = new AssetRepository(asset);
+        var staging = new RecordingStagingStore();
+        var service = new AssetIdentityVerificationService(
+            repository, staging, [], new RecordingAuditWriter(), new FixedClock());
+
+        var result = await service.VerifyAsync(asset.Id, CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch);
+        Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
+    }
+
+    private static MediaAsset CreateProcessingAsset(string format, bool identityPreConfirmed)
+    {
+        var asset = new MediaAsset(
+            Guid.NewGuid(), null, RequestMediaType.Ebook, format, $"Book{format}", $"asset{format}", 12,
+            new string('a', 64), "application/octet-stream", Guid.NewGuid(), null, DateTimeOffset.UtcNow,
+            identityPreConfirmed: identityPreConfirmed);
+        asset.TransitionStorageState(MediaAssetStorageState.Processing, DateTimeOffset.UtcNow);
+        return asset;
+    }
+
     private static MediaAsset CreateUnmatchedAsset()
     {
         var asset = new MediaAsset(

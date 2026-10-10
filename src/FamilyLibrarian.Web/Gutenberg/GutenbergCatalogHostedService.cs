@@ -44,10 +44,7 @@ public sealed partial class GutenbergCatalogHostedService(
         await using var scope = scopeFactory.CreateAsyncScope();
         var registry = scope.ServiceProvider.GetRequiredService<IProviderRegistry>();
         var settings = scope.ServiceProvider.GetRequiredService<IProviderSettingsStore>();
-        var descriptor = registry.Find(ProviderRegistry.GutenbergProviderId);
-        if (descriptor is null || !ProviderState.IsEnabled(
-                descriptor,
-                await settings.FindAsync(descriptor.Id, cancellationToken)))
+        if (!await ProviderState.IsUsableAsync(registry, settings, ProviderRegistry.GutenbergProviderId, cancellationToken))
         {
             return;
         }

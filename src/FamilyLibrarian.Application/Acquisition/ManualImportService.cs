@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Audit;
 
@@ -89,6 +90,53 @@ public sealed record ManualImportResult(
             null,
             null,
             "A required security scanner is unavailable. Try again once it has recovered.");
+
+    public static ManualImportResult TransferInterrupted() =>
+        new(
+            ManualImportOutcome.TransferInterrupted,
+            null,
+            null,
+            "The audiobook archive transfer was interrupted. An automatic retry is scheduled; the saved byte offset will be resumed when the source provides a stable validator and range support.");
+
+    public static ManualImportResult LowConfidenceMatchConfirmationRequired() =>
+        new(
+            ManualImportOutcome.LowConfidenceMatchConfirmationRequired,
+            null,
+            null,
+            "We found a likely match by title and author, not a verified identifier. " +
+            "Confirm you want to fetch this copy, or try a different source instead.");
+
+    /// <summary>
+    /// <see cref="ExternalReleasePolicy"/> flagged this candidate's release
+    /// evidence (a collection, a sample, an abridged mismatch) — independent
+    /// of match confidence, since even a verified identifier match can point
+    /// at the wrong release. <paramref name="reason"/> is
+    /// <see cref="ExternalReleaseVerdict.Reason"/>.
+    /// </summary>
+    public static ManualImportResult ReleaseConfirmationRequired(string? reason) =>
+        new(
+            ManualImportOutcome.ReleaseConfirmationRequired,
+            null,
+            null,
+            (reason ?? "This release may not be what you expect.") +
+            " Confirm you want to fetch it anyway, or try a different source instead.");
+
+    /// <summary>
+    /// A protocol-v2 external-provider acquisition was durably submitted and
+    /// is now tracked by <see cref="ProviderAcquisitionJobId"/> — no file
+    /// exists yet, and none of the usual staging/security-pipeline steps
+    /// have run. The background poller (<c>AcquisitionJobPollingService</c>)
+    /// drives the job to completion and stages it once the provider reports
+    /// <c>completed</c>.
+    /// </summary>
+    public static ManualImportResult AcquisitionInProgress(Guid providerAcquisitionJobId) =>
+        new(ManualImportOutcome.AcquisitionInProgress, null, null, null)
+        {
+            ProviderAcquisitionJobId = providerAcquisitionJobId
+        };
+
+    /// <summary>Set only for <see cref="ManualImportOutcome.AcquisitionInProgress"/> — see <see cref="AcquisitionInProgress"/>.</summary>
+    public Guid? ProviderAcquisitionJobId { get; init; }
 }
 
 public enum ManualImportOutcome
@@ -96,5 +144,9 @@ public enum ManualImportOutcome
     Success,
     Invalid,
     DuplicateDetected,
-    WaitingForSecurityScanner
+    WaitingForSecurityScanner,
+    TransferInterrupted,
+    LowConfidenceMatchConfirmationRequired,
+    AcquisitionInProgress,
+    ReleaseConfirmationRequired
 }

@@ -53,7 +53,8 @@ public sealed class EpubValidator : IAssetValidator
     public async Task<ValidationOutcome> ValidateAsync(
         MediaAsset asset, Stream content, CancellationToken cancellationToken)
     {
-        if (!string.Equals(asset.Format, ".epub", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(asset.Format, ".epub", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(asset.Format, ".kepub", StringComparison.OrdinalIgnoreCase))
         {
             return new ValidationOutcome(true, null);
         }

@@ -10,6 +10,22 @@ namespace FamilyLibrarian.Infrastructure.Tests.Metadata;
 public sealed class OpenLibraryBookMetadataProviderTests
 {
     [TestMethod]
+    public async Task SearchPreservesCollectionWorkTitleWhenMatchedEditionHasOnlyTheNovelTitle()
+    {
+        using var handler = new StubHttpMessageHandler((_, _) => JsonResponse(
+            """
+            {"num_found":1,"docs":[{"key":"/works/OL28185143W","title":"Fahrenheit 451 (Fahrenheit 451 / Playground / Rock Cried Out)","author_name":["Ray Bradbury"],"editions":{"docs":[{"title":"Fahrenheit 451","language":["eng"],"publisher":["Example publisher"],"isbn":["9780006546061"]}]}}]}
+            """));
+        using var client = CreateHttpClient(handler);
+        var candidate = (await CreateProvider(client).SearchAsync(new BookSearchQuery("Fahrenheit 451"), CancellationToken.None)).Candidates.Single();
+        Assert.AreEqual("Fahrenheit 451", candidate.Title);
+        StringAssert.Contains(candidate.WorkTitle!, "Playground / Rock Cried Out");
+        Assert.AreEqual("Collection", BookCandidateVersion.Assess(candidate).Kind);
+        Assert.AreEqual("en", candidate.Editions.Single().Language);
+        Assert.AreEqual("Example publisher", candidate.Editions.Single().Publisher);
+    }
+
+    [TestMethod]
     public async Task SearchAsyncNormalizesWorkAndEditionEvidence()
     {
         Uri? requestedUri = null;
@@ -343,6 +359,52 @@ public sealed class OpenLibraryBookMetadataProviderTests
     }
 
     [TestMethod]
+    public async Task SearchAsyncTakesTheCoverFromTheMatchedEditionRatherThanTheWork()
+    {
+        // Live "threshing day": the matched edition is the English "Threshing
+        // Day (Wing and Claw Collection)" and carries its own cover, but the
+        // work-level cover_i is a Portuguese edition's. The card showed the
+        // matched edition's title over the other edition's cover.
+        using var handler = new StubHttpMessageHandler((_, _) => JsonResponse(
+            """
+            {
+              "num_found": 1,
+              "docs": [
+                {
+                  "key": "/works/OL45870364W",
+                  "title": "Threshing Day",
+                  "author_name": ["Rebecca Yarros"],
+                  "cover_i": 15260919,
+                  "editions": {
+                    "docs": [
+                      {
+                        "key": "/books/OL62417601M",
+                        "title": "Threshing Day (Wing and Claw Collection)",
+                        "cover_i": 15260611,
+                        "isbn": ["9781682818084"]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+            """));
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var results = await provider.SearchAsync(
+            new BookSearchQuery("threshing day"),
+            CancellationToken.None);
+
+        Assert.HasCount(1, results.Candidates);
+        var candidate = results.Candidates[0];
+        Assert.AreEqual("Threshing Day (Wing and Claw Collection)", candidate.Title);
+        Assert.AreEqual(
+            "https://covers.openlibrary.org/b/id/15260611-L.jpg?default=false",
+            candidate.CoverUrl);
+    }
+
+    [TestMethod]
     public async Task GetDetailsAsyncMapsObjectDescriptionAndRejectsInvalidWorkId()
     {
         var requestCount = 0;
@@ -492,6 +554,187 @@ public sealed class OpenLibraryBookMetadataProviderTests
         Assert.AreEqual("The Cardinal of the Kremlin", candidate.Title);
         Assert.AreEqual("HarperCollins Publishers", candidate.Publisher);
         Assert.AreEqual("https://openlibrary.org/books/OL14417712M", candidate.SourceUrl);
+    }
+
+    [TestMethod]
+    public async Task GetDetailsAsyncKeepsAnAlreadyPreferredLanguageEditionInsteadOfTheFirstEditionsListEntry()
+    {
+        // Live OL24477958W: the search's own edition is the English Jove
+        // "Killing Floor", but editions.json (modification order) leads its
+        // English entries with a graded reader, "Penguin Readers Level 4".
+        using var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("editions.json", StringComparison.Ordinal))
+            {
+                return JsonResponse(
+                    """
+                    {
+                      "entries": [
+                        {
+                          "key": "/books/OL38814068M",
+                          "title": "Penguin Readers Level 4",
+                          "languages": [{ "key": "/languages/eng" }],
+                          "publishers": ["Penguin"]
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL24477958W",
+                      "title": "Killing Floor",
+                      "author_name": ["Lee Child"],
+                      "editions": {
+                        "docs": [
+                          {
+                            "key": "/books/OL7657915M",
+                            "title": "Killing Floor",
+                            "language": ["eng"],
+                            "publisher": ["Jove Books"]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """);
+        });
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var candidate = await provider.GetDetailsAsync("OL24477958W", CancellationToken.None);
+
+        Assert.IsNotNull(candidate);
+        Assert.AreEqual("Killing Floor", candidate.Title);
+        Assert.AreEqual("Jove Books", candidate.Publisher);
+    }
+
+    [TestMethod]
+    public async Task GetDetailsAsyncListsEveryEditionAndTakesTheCoverFromTheMatchingOne()
+    {
+        // Live OL45870364W: search.json reports editions.numFound 2 but only
+        // ever returns one nested edition document, here the Portuguese "Dia
+        // da Ceifa" whose cover then became the work's cover. Neither edition
+        // carries a language tag, so only the title can tell them apart.
+        using var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("editions.json", StringComparison.Ordinal))
+            {
+                return JsonResponse(
+                    """
+                    {
+                      "entries": [
+                        {
+                          "key": "/books/OL62616037M",
+                          "title": "Dia da Ceifa",
+                          "publishers": ["Entangled: Red Tower Books"],
+                          "publish_date": "2026",
+                          "number_of_pages": 304,
+                          "covers": [15260919],
+                          "isbn_13": ["9788542243659"]
+                        },
+                        {
+                          "key": "/books/OL62417601M",
+                          "title": "Threshing Day (Wing and Claw Collection)",
+                          "publishers": ["Entangled Publishing LLC"],
+                          "publish_date": "2026",
+                          "physical_format": "Hardcover",
+                          "number_of_pages": 204,
+                          "covers": [15260611, -1],
+                          "isbn_13": ["9781682818084"]
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL45870364W",
+                      "title": "Threshing Day",
+                      "author_name": ["Rebecca Yarros"],
+                      "cover_i": 15260919,
+                      "number_of_pages_median": 254,
+                      "editions": {
+                        "docs": [
+                          {
+                            "key": "/books/OL62616037M",
+                            "title": "Dia da Ceifa",
+                            "publisher": ["Entangled: Red Tower Books"],
+                            "isbn": ["9788542243659"]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """);
+        });
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var candidate = await provider.GetDetailsAsync("OL45870364W", CancellationToken.None);
+
+        Assert.IsNotNull(candidate);
+        Assert.AreEqual(2, candidate.Editions.Count);
+        Assert.AreEqual("Dia da Ceifa", candidate.Editions[0].Title);
+        Assert.AreEqual("Threshing Day (Wing and Claw Collection)", candidate.Editions[1].Title);
+        Assert.AreEqual("Hardcover", candidate.Editions.Single(
+            edition => edition.Isbn13 == "9781682818084").Format);
+        Assert.AreEqual(
+            "https://covers.openlibrary.org/b/id/15260611-L.jpg?default=false",
+            candidate.CoverUrl);
+        Assert.AreEqual("Entangled Publishing LLC", candidate.Publisher);
+        Assert.AreEqual(204, candidate.PageCount);
+
+        // The matching edition is untagged, so it lends its record but not a
+        // language claim, its own edition title, or the canonical link.
+        Assert.AreEqual("Threshing Day", candidate.Title);
+        Assert.IsNull(candidate.Language);
+        Assert.AreEqual("https://openlibrary.org/works/OL45870364W", candidate.SourceUrl);
+    }
+
+    [TestMethod]
+    public async Task GetDetailsAsyncIgnoresAnArbitraryUntaggedEditionTitle()
+    {
+        // Live OL45870364W: a key: lookup returns an arbitrary edition
+        // ("Dia da Ceifa", no language tag) because nothing matched a query.
+        using var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("editions.json", StringComparison.Ordinal))
+            {
+                return JsonResponse("""{ "entries": [] }""");
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "docs": [
+                    {
+                      "key": "/works/OL45870364W",
+                      "title": "Threshing Day",
+                      "author_name": ["Rebecca Yarros"],
+                      "editions": { "docs": [ { "key": "/books/OL62616037M", "title": "Dia da Ceifa" } ] }
+                    }
+                  ]
+                }
+                """);
+        });
+        using var httpClient = CreateHttpClient(handler);
+        var provider = CreateProvider(httpClient);
+
+        var candidate = await provider.GetDetailsAsync("OL45870364W", CancellationToken.None);
+
+        Assert.IsNotNull(candidate);
+        Assert.AreEqual("Threshing Day", candidate.Title);
     }
 
     [TestMethod]

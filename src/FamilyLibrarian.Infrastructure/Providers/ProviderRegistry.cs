@@ -24,6 +24,7 @@ public sealed class ProviderRegistry : IProviderRegistry
     // enablement choices and attempt history continue to resolve after the
     // implementation moves from the Gutendex API to the local RDF catalogue.
     public const string GutenbergProviderId = "gutendex";
+    public const string LibriVoxProviderId = "librivox";
 
     private static readonly IReadOnlySet<ProviderCapability> MetadataOnly =
         new HashSet<ProviderCapability> { ProviderCapability.Metadata };
@@ -130,7 +131,10 @@ public sealed class ProviderRegistry : IProviderRegistry
                 // This credential-free public-domain source becomes searchable
                 // after its daily RDF catalogue import completes. Files still
                 // pass the full quarantine, malware, format, and identity pipeline.
-                DefaultEnabled: true,
+                // On by default; a deployment can turn it off at boot with
+                // MetadataProviders:Gutenberg:Enabled=false (the catalogue import
+                // starts with the host, so the admin API alone is too late).
+                DefaultEnabled: configuration.GetValue("MetadataProviders:Gutenberg:Enabled", true),
                 SetupInstructions:
                     "Family Librarian imports Project Gutenberg's RDF catalogue " +
                     "daily and searches its local PostgreSQL cache. Downloads are " +
@@ -139,6 +143,25 @@ public sealed class ProviderRegistry : IProviderRegistry
                 [
                     new ProviderSetupLink("Offline catalogue documentation", "https://www.gutenberg.org/ebooks/offline_catalogs.html"),
                     new ProviderSetupLink("About Project Gutenberg", "https://www.gutenberg.org/about/")
+                ]),
+            new ProviderDescriptor(
+                LibriVoxProviderId,
+                "LibriVox",
+                DirectAcquisitionOnly,
+                RequiresCredential: false,
+                HasExternallyManagedCredential: false,
+                // Like Project Gutenberg above, this is an anonymous, credential-free
+                // public-domain built-in source; a fresh install should be able to
+                // fulfil an audiobook request from it without any admin setup.
+                // MetadataProviders:LibriVox:Enabled=false turns it off at boot.
+                DefaultEnabled: configuration.GetValue("MetadataProviders:LibriVox:Enabled", true),
+                SetupInstructions:
+                    "Searches the public LibriVox audiobook catalog. Selected recordings are downloaded " +
+                    "as a whole-book archive and each MP3 track passes Family Librarian's normal validation.",
+                SetupLinks:
+                [
+                    new ProviderSetupLink("LibriVox", "https://librivox.org/"),
+                    new ProviderSetupLink("API documentation", "https://librivox.org/api/info")
                 ])
         ];
     }

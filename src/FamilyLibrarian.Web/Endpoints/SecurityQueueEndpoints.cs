@@ -1,6 +1,8 @@
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Security;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Contracts.Acquisition;
+using FamilyLibrarian.Web.Acquisition;
 using FamilyLibrarian.Contracts.Security;
 
 namespace FamilyLibrarian.Web.Endpoints;
@@ -20,6 +22,7 @@ internal static class SecurityQueueEndpoints
         adminMediaAssets.MapGet("/recent", ListRecentMediaAssetsAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/evaluate", EvaluateMediaAssetAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/retry-identity", RetryIdentityAsync);
+        adminMediaAssets.MapPost("/{assetId:guid}/override-identity", OverrideIdentityAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/approve", ApproveMediaAssetAsync);
         adminMediaAssets.MapPost("/{assetId:guid}/reject", RejectMediaAssetAsync);
         adminMediaAssets.MapDelete("/{assetId:guid}", DiscardMediaAssetAsync);
@@ -76,29 +79,40 @@ internal static class SecurityQueueEndpoints
                 .ToArray(),
             entry.LatestEvaluation.Approvals.Select(approval => new SecurityApprovalResponse(
                 approval.Decision.ToString(), approval.ActorType.ToString(), approval.Reason, approval.DecidedAtUtc))
-                .ToArray()));
+                .ToArray()),
+        entry.Asset.IdentityMismatchReason,
+        entry.Asset.ScanFailureReason);
 
+    /// <summary>
+    /// Queues the scan and returns at once. A large file takes minutes to
+    /// scan, and a scan run inside this request died with it; the page follows
+    /// progress through SignalR live updates instead.
+    /// </summary>
     private static async Task<IResult> EvaluateMediaAssetAsync(
         Guid assetId,
-        AutomatedSecurityPipeline securityPipeline,
+        ISecurityEvaluationRepository repository,
+        SecurityEvaluationScheduler queue,
         CancellationToken cancellationToken)
     {
-        var result = await securityPipeline.EvaluateAsync(assetId, cancellationToken);
-
-        return result.Outcome switch
+        var asset = await repository.FindAssetAsync(assetId, cancellationToken);
+        if (asset is null)
         {
-            SecurityEvaluationOutcome.Success => Results.Ok(new SecurityEvaluationResponse(
-                result.EvaluationId!.Value,
-                assetId,
-                result.Status!.Value.ToString(),
-                result.CreatedAtUtc!.Value,
-                result.CompletedAtUtc)),
-            SecurityEvaluationOutcome.NotFound => Results.NotFound(),
-            _ => Results.ValidationProblem(new Dictionary<string, string[]>
+            return Results.NotFound();
+        }
+
+        // Processing is allowed through: a scan that stalled there is recovered
+        // by the evaluation service, which re-checks how long it has been idle.
+        if (asset.StorageState is not (MediaAssetStorageState.Quarantine or MediaAssetStorageState.Processing))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["asset"] = [result.Error ?? "That asset could not be evaluated."]
-            })
-        };
+                ["asset"] = ["Only a quarantined asset can be evaluated."]
+            });
+        }
+
+        // Already queued or scanning: the request is satisfied as it stands.
+        queue.TryEnqueue(assetId);
+        return Results.Accepted();
     }
 
     private static async Task<IResult> ApproveMediaAssetAsync(
@@ -113,6 +127,24 @@ internal static class SecurityQueueEndpoints
         AutomatedSecurityPipeline securityPipeline,
         CancellationToken cancellationToken) =>
         ToApprovalResult(await securityPipeline.RetryIdentityAsync(assetId, cancellationToken));
+
+    private static async Task<IResult> OverrideIdentityAsync(
+        Guid assetId,
+        ApprovalDecisionRequest request,
+        ApprovalService approvals,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["reason"] = ["Explain why this file is correct despite the identity mismatch."]
+            });
+        }
+
+        return ToApprovalResult(
+            await approvals.OverrideIdentityAndApproveAsync(assetId, request.Reason, cancellationToken));
+    }
 
     private static async Task<IResult> RejectMediaAssetAsync(
         Guid assetId,

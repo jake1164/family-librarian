@@ -5,6 +5,7 @@ using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.AspNetCore.Hosting;
@@ -38,73 +39,55 @@ internal sealed class FamilyLibrarianAppFactory(
         Path.GetTempPath(), "family-librarian-tests", Guid.NewGuid().ToString("N"));
 
     /// <summary>
-    /// Settings the host must see, as environment variables.
+    /// Settings the host must see.
     /// </summary>
     /// <remarks>
     /// Not <c>ConfigureAppConfiguration</c>: those callbacks are applied when the
     /// host is built, but <c>Program.cs</c> reads the connection string while
     /// composing services — before <c>Build()</c> — so they arrive too late and
     /// startup fails with "Connection string 'FamilyLibrarian' is required".
-    /// <c>WebApplication.CreateBuilder</c> reads environment variables during
-    /// <c>CreateBuilder</c>, which is early enough. A double underscore is the
-    /// configuration section separator — except <c>Admin_Email</c>/<c>Admin_Password</c>,
-    /// which <c>IdentityInitializer</c> reads as flat keys, not through a nested
-    /// options class, so a single underscore is enough.
+    /// Host configuration is enumerated before the entry point runs and handed to
+    /// it as <c>args</c>, which <c>WebApplication.CreateBuilder(args)</c> reads
+    /// immediately (Microsoft Learn, "Integration tests in ASP.NET Core"). Each
+    /// host therefore gets its own settings, with nothing process-wide, so hosts
+    /// for parallel test classes can start concurrently. <c>Admin_Email</c>/
+    /// <c>Admin_Password</c> are flat keys because <c>IdentityInitializer</c>
+    /// reads them that way, not through a nested options class.
     /// </remarks>
-    private Dictionary<string, string?> HostVariables() => new(StringComparer.Ordinal)
+    private Dictionary<string, string?> HostSettings() => new(StringComparer.Ordinal)
     {
-        // Not "Development": that branch calls UseWebAssemblyDebugging, which wants
-        // a debugging proxy no test needs.
-        ["ASPNETCORE_ENVIRONMENT"] = "Testing",
-        ["ConnectionStrings__FamilyLibrarian"] = connectionString,
-        ["Authentication__EnableLocal"] = "true",
+        ["ConnectionStrings:FamilyLibrarian"] = connectionString,
+        ["Authentication:EnableLocal"] = "true",
         ["Admin_Email"] = AdminEmail,
         ["Admin_Password"] = AdminPassword,
         // Every test reaches the host from the same address, so they share one
         // rate-limit bucket. Raised here so the suite exercises the invitation
         // rules rather than the limiter; the limiter's own ceiling is a
         // deployment setting, not behaviour these tests are asserting.
-        ["Invitations__RedemptionAttemptsPerMinute"] = "10000",
+        ["Invitations:RedemptionAttemptsPerMinute"] = "10000",
         // Keep every outbound provider off. A test must never depend on Open
         // Library or Google Books being reachable.
-        ["MetadataProviders__Demo__Enabled"] = "true",
-        ["MetadataProviders__OpenLibrary__Enabled"] = "false",
-        ["MetadataProviders__GoogleBooks__Enabled"] = "false",
+        ["MetadataProviders:Demo:Enabled"] = "true",
+        ["MetadataProviders:OpenLibrary:Enabled"] = "false",
+        ["MetadataProviders:GoogleBooks:Enabled"] = "false",
         // Leave the deployment-supplied Google Books key unset, so the provider is
         // credential-managed through the admin surface rather than externally
-        // managed. Clearing it defends against a developer's own shell exporting one.
-        ["MetadataProviders__GoogleBooks__ApiKey"] = null,
-        ["Storage__RootPath"] = _storageRootPath
+        // managed. Command-line arguments outrank environment variables, so this
+        // empty value (read as unset) also defends against a developer's own
+        // shell exporting one.
+        ["MetadataProviders:GoogleBooks:ApiKey"] = string.Empty,
+        ["Storage:RootPath"] = _storageRootPath
     };
 
-    /// <summary>
-    /// Applies the host settings only for the moment the entry point runs, then
-    /// restores them, so one fixture's connection string cannot leak into another's.
-    /// </summary>
     protected override IHost CreateHost(IHostBuilder builder)
     {
-        var variables = HostVariables();
-        var previous = variables.Keys.ToDictionary(
-            key => key,
-            Environment.GetEnvironmentVariable,
-            StringComparer.Ordinal);
+        ArgumentNullException.ThrowIfNull(builder);
 
-        foreach (var (key, value) in variables)
-        {
-            Environment.SetEnvironmentVariable(key, value);
-        }
-
-        try
-        {
-            return base.CreateHost(builder);
-        }
-        finally
-        {
-            foreach (var (key, value) in previous)
-            {
-                Environment.SetEnvironmentVariable(key, value);
-            }
-        }
+        // Not "Development": that branch calls UseWebAssemblyDebugging, which wants
+        // a debugging proxy no test needs.
+        builder.UseEnvironment("Testing");
+        builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(HostSettings()));
+        return base.CreateHost(builder);
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -116,6 +99,14 @@ internal sealed class FamilyLibrarianAppFactory(
         // which runs after this and so wins.
         builder.ConfigureServices(services =>
         {
+            // Host-integration tests drive scheduled application services
+            // explicitly. Starting production polling loops here races those
+            // deliberate calls and lets a test host contact real services
+            // (for example, the Gutenberg catalog and its bzip2 dependency).
+            // The hosted loops contain no business behavior beyond scheduling;
+            // their underlying services remain registered and testable.
+            services.RemoveAll<IHostedService>();
+
             services.RemoveAll<IMalwareScanner>();
             services.AddSingleton<IMalwareScanner, AlwaysCleanTestMalwareScanner>();
 

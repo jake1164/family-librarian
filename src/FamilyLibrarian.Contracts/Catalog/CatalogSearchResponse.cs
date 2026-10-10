@@ -6,6 +6,12 @@ public sealed record CatalogSearchResponse(
     int Page = 1,
     bool HasMore = false);
 
+public sealed record CatalogSearchRequest(string Query, int Page = 1, Guid? PreviousRunId = null);
+
+public sealed record CatalogSearchRunStartedResponse(Guid RunId);
+
+public sealed record CatalogSearchRunResponse(CatalogSearchResponse Search, bool IsComplete);
+
 public sealed record CatalogProviderSearchStatusResponse(
     string ProviderId,
     string ProviderName,
@@ -27,7 +33,11 @@ public sealed record CatalogBookCandidateResponse(
     IReadOnlyList<string> Subjects,
     string? SourceUrl,
     string MatchKind = "Other",
-    IReadOnlyList<CatalogCandidateSourceResponse>? Sources = null)
+    IReadOnlyList<CatalogCandidateSourceResponse>? Sources = null,
+    string? Language = null,
+    string VersionKind = "Unspecified",
+    string VersionLabel = "Version unknown",
+    string VersionDescription = "The source does not clearly identify the version.")
 {
     // Populated when search grouped this candidate together with matching
     // records from other providers; empty for a single-provider detail fetch
@@ -46,7 +56,9 @@ public sealed record CatalogEditionResponse(
     string Title,
     string? Isbn13,
     string Format,
-    DateOnly? PublicationDate);
+    DateOnly? PublicationDate,
+    string? Language = null,
+    string? Publisher = null);
 
 /// <param name="Id">
 /// The catalog <c>Series</c>' id, so it can be followed — only ever populated

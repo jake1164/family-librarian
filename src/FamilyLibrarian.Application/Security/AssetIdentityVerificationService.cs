@@ -36,11 +36,8 @@ public sealed class AssetIdentityVerificationService(
         }
 
         var verifier = verifiers.FirstOrDefault(verifier => verifier.Supports(asset));
-        // This slice verifies EPUB package metadata. Other supported formats
-        // retain their established security and review workflow until they
-        // gain a format-specific identity verifier.
         var result = verifier is null
-            ? AssetIdentityVerificationResult.Match("not-applicable")
+            ? NoVerifierResult(asset)
             : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Processing, cancellationToken);
 
         if (!result.IsMatch)
@@ -51,6 +48,7 @@ public sealed class AssetIdentityVerificationService(
                 asset.StoredFilename,
                 cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Unmatched, clock.UtcNow);
+            asset.SetIdentityMismatchReason(result.Reason);
             await repository.SaveChangesAsync(cancellationToken);
         }
 
@@ -58,7 +56,7 @@ public sealed class AssetIdentityVerificationService(
             result.IsMatch ? AuditActions.AssetIdentityVerified : AuditActions.AssetIdentityUnmatched,
             AuditSubjectTypes.MediaAsset,
             assetId.ToString(),
-            new { AssetId = assetId, result.VerifierId, result.IsMatch },
+            new { AssetId = assetId, result.VerifierId, result.IsMatch, result.Reason },
             cancellationToken);
 
         return result;
@@ -77,7 +75,7 @@ public sealed class AssetIdentityVerificationService(
 
         var verifier = verifiers.FirstOrDefault(verifier => verifier.Supports(asset));
         var result = verifier is null
-            ? AssetIdentityVerificationResult.Match("not-applicable")
+            ? NoVerifierResult(asset)
             : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Unmatched, cancellationToken);
 
         if (result.IsMatch)
@@ -88,6 +86,16 @@ public sealed class AssetIdentityVerificationService(
                 asset.StoredFilename,
                 cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Processing, clock.UtcNow);
+            asset.SetIdentityMismatchReason(null);
+            await repository.SaveChangesAsync(cancellationToken);
+        }
+        else if (result.Reason != asset.IdentityMismatchReason)
+        {
+            // The comparison itself may have changed (e.g. the catalog Work's
+            // title was corrected) even though the outcome is still a
+            // mismatch -- keep the displayed reason current rather than
+            // stale from the original hold.
+            asset.SetIdentityMismatchReason(result.Reason);
             await repository.SaveChangesAsync(cancellationToken);
         }
 
@@ -95,7 +103,7 @@ public sealed class AssetIdentityVerificationService(
             result.IsMatch ? AuditActions.AssetIdentityVerified : AuditActions.AssetIdentityUnmatched,
             AuditSubjectTypes.MediaAsset,
             assetId.ToString(),
-            new { AssetId = assetId, result.VerifierId, result.IsMatch, Retried = true },
+            new { AssetId = assetId, result.VerifierId, result.IsMatch, result.Reason, Retried = true },
             cancellationToken);
 
         return result;
@@ -136,4 +144,24 @@ public sealed class AssetIdentityVerificationService(
             return AssetIdentityVerificationResult.Unmatched(verifier.Id);
         }
     }
+
+    /// <summary>
+    /// No format-specific verifier exists for this asset's file type. A
+    /// pre-confirmed match (every built-in-provider acquisition, a manual
+    /// upload, or an external-provider candidate strong enough to need no
+    /// override) has nothing left to prove, so this still passes. An
+    /// unconfirmed external-provider match has nothing confirming it at all
+    /// -- only EPUB/KEPUB and M4B have their own verifiers today, so a
+    /// MOBI/AZW3/MP3/etc. candidate that only cleared the pre-download gate via
+    /// <c>confirmLowConfidenceMatch</c> would otherwise reach a library
+    /// shelf, correctly labeled with someone else's book, with nothing
+    /// having actually checked it.
+    /// </summary>
+    private static AssetIdentityVerificationResult NoVerifierResult(MediaAsset asset) =>
+        asset.IdentityPreConfirmed
+            ? AssetIdentityVerificationResult.Match("not-applicable")
+            : AssetIdentityVerificationResult.Unmatched(
+                "not-applicable",
+                "No identity verifier exists for this file format, and the match was not independently " +
+                "confirmed before this file was fetched. A librarian must inspect it directly.");
 }

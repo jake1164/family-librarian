@@ -54,6 +54,17 @@ public sealed class Work
 
     public ICollection<SeriesEntry> SeriesEntries { get; } = new List<SeriesEntry>();
 
+    /// <summary>
+    /// Takes the Work out of provider-reference and ISBN lookups, so the next
+    /// request for the same book builds a fresh Work from current provider data.
+    /// Existing requests, assets and history keep pointing at it.
+    /// </summary>
+    public void Retire(DateTimeOffset retiredAtUtc)
+    {
+        IsRetired = true;
+        UpdatedAtUtc = retiredAtUtc;
+    }
+
     public void AddAuthor(Author author, int ordinal, string? role = null)
     {
         ArgumentNullException.ThrowIfNull(author);

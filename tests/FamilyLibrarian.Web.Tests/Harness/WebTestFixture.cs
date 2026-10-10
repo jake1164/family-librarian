@@ -42,9 +42,10 @@ internal sealed class WebTestFixture : IAsyncDisposable
             return null;
         }
 
-        var fixture = new WebTestFixture(await PostgresFixture.CreateMigratedDatabaseAsync());
-        await fixture.SeedNonAdminUserAsync();
-        return fixture;
+        // The host is not started here: a clone of the seeded template already
+        // holds every user the fixture's clients sign in as, so a class that only
+        // needs the connection string never pays for a host it does not use.
+        return new WebTestFixture(await PostgresFixture.CreateSeededDatabaseAsync());
     }
 
     /// <summary>
@@ -172,12 +173,14 @@ internal sealed class WebTestFixture : IAsyncDisposable
     }
 
     /// <summary>
-    /// Adds an ordinary family member. Program.cs bootstraps the administrator, but
+    /// Seeds the template every fixture database is cloned from. Booting the real
+    /// host once runs Program.cs's own role and bootstrap-administrator seeding;
     /// nothing seeds a plain user, and the denial tests need one.
     /// </summary>
-    private async Task SeedNonAdminUserAsync()
+    internal static async Task SeedTemplateAsync(string connectionString)
     {
-        await using var scope = _factory.Services.CreateAsyncScope();
+        await using var factory = new FamilyLibrarianAppFactory(connectionString);
+        await using var scope = factory.Services.CreateAsyncScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
 
         var user = new AppUser
@@ -190,12 +193,17 @@ internal sealed class WebTestFixture : IAsyncDisposable
         };
 
         var created = await userManager.CreateAsync(user, UserPassword);
-        Assert.IsTrue(
-            created.Succeeded,
-            $"Test setup could not create the non-admin user: {string.Join(", ", created.Errors.Select(error => error.Description))}");
+        if (!created.Succeeded)
+        {
+            throw new InvalidOperationException(
+                $"Test setup could not create the non-admin user: {string.Join(", ", created.Errors.Select(error => error.Description))}");
+        }
 
         var roleAdded = await userManager.AddToRoleAsync(user, RoleNames.User);
-        Assert.IsTrue(roleAdded.Succeeded, "Test setup could not assign the User role.");
+        if (!roleAdded.Succeeded)
+        {
+            throw new InvalidOperationException("Test setup could not assign the User role.");
+        }
     }
 
     public async ValueTask DisposeAsync() => await _factory.DisposeAsync();

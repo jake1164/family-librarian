@@ -9,6 +9,7 @@ using FamilyLibrarian.Contracts.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Security;
 using FamilyLibrarian.Infrastructure.Persistence;
+using FamilyLibrarian.Web.Acquisition;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -164,13 +165,21 @@ public sealed class SecurityGateEndpointTests
         Assert.AreEqual(MediaAssetStorageState.Destroyed, asset.StorageState);
     }
 
-    private static FamilyLibrarianAppFactory CreateFactory(WebTestFixture fixture, IMalwareScanner scanner) =>
+    private static FamilyLibrarianAppFactory CreateFactory(
+        WebTestFixture fixture, IMalwareScanner scanner, bool runSecurityEvaluationWorker = false) =>
         new(
             fixture.ConnectionString,
             services =>
             {
                 services.RemoveAll<IMalwareScanner>();
                 services.AddSingleton(scanner);
+
+                // The harness strips every hosted service so tests never race
+                // production loops; the one under test is started explicitly.
+                if (runSecurityEvaluationWorker)
+                {
+                    services.AddHostedService<SecurityEvaluationHostedService>();
+                }
             });
 
     private static async Task SignInAsAdminAsync(HttpClient client)
@@ -243,6 +252,76 @@ public sealed class SecurityGateEndpointTests
         Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
     }
 
+    [TestMethod]
+    public async Task ARetryIsQueuedAndRunsInTheBackgroundInsteadOfHoldingTheRequest()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+
+        // One host throughout: each factory has its own staging directory, so a
+        // second host could not see the first one's quarantined file.
+        await using var factory = CreateFactory(fixture, new FailsOnceThenCleanMalwareScanner(), runSecurityEvaluationWorker: true);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        client.DefaultRequestHeaders.Add(
+            AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(client));
+        var (requestId, formatId) = await CreateEbookRequestAsync(client);
+
+        // The first scan drops mid-stream, stranding the asset in Quarantine.
+        var upload = await client.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(BuildMinimalEpubBytes(), "book.epub"));
+        Assert.AreEqual(HttpStatusCode.InternalServerError, upload.StatusCode);
+
+        Guid assetId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stranded = await database.MediaAssets.SingleAsync(asset => asset.AssociatedRequestFormatId == formatId);
+            Assert.AreEqual(MediaAssetStorageState.Quarantine, stranded.StorageState);
+            StringAssert.Contains(stranded.ScanFailureReason, "Simulated");
+            assetId = stranded.Id;
+        }
+
+        var response = await client.PostAsync($"/api/v1/admin/media-assets/{assetId}/evaluate", content: null);
+
+        // Accepted, not the finished result: the scan is not tied to this request.
+        Assert.AreEqual(HttpStatusCode.Accepted, response.StatusCode);
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        MediaAssetStorageState state;
+        do
+        {
+            await using var scope = factory.Services.CreateAsyncScope();
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            state = await database.MediaAssets.Where(asset => asset.Id == assetId)
+                .Select(asset => asset.StorageState).SingleAsync();
+            if (state == MediaAssetStorageState.Trusted)
+            {
+                break;
+            }
+
+            await Task.Delay(100);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+
+        Assert.AreEqual(MediaAssetStorageState.Trusted, state);
+    }
+
+    [TestMethod]
+    public async Task QueueingARetryForAnUnknownAssetIsNotFound()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        client.DefaultRequestHeaders.Add(
+            AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(client));
+
+        var response = await client.PostAsync($"/api/v1/admin/media-assets/{Guid.NewGuid()}/evaluate", content: null);
+
+        Assert.AreEqual(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private static byte[] BuildMinimalEpubBytes() => EpubTestFixture.BuildMinimalEpubBytes();
 
     /// <summary>
@@ -276,6 +355,24 @@ public sealed class SecurityGateEndpointTests
 
         public Task<ScanOutcome> ScanAsync(Stream content, CancellationToken cancellationToken) =>
             Task.FromResult(new ScanOutcome(status, threatName));
+    }
+
+    /// <summary>Drops the first scan mid-stream like a dead clamd connection, then scans clean.</summary>
+    private sealed class FailsOnceThenCleanMalwareScanner : IMalwareScanner
+    {
+        private int _scans;
+
+        public string Id => "clamav";
+
+        public bool IsRequired => true;
+
+        public Task<ScannerHealth> CheckHealthAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new ScannerHealth(true, "fake-1.0", null));
+
+        public Task<ScanOutcome> ScanAsync(Stream content, CancellationToken cancellationToken) =>
+            Interlocked.Increment(ref _scans) == 1
+                ? throw new IOException("Simulated connection reset mid-stream.")
+                : Task.FromResult(new ScanOutcome(ScanResultStatus.Clean, null));
     }
 
     /// <summary>Reports healthy, then fails mid-scan — the shape a dropped clamd connection actually takes.</summary>

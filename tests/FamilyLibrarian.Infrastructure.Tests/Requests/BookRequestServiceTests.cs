@@ -700,6 +700,11 @@ public sealed class BookRequestServiceTests
 
         public Task<IReadOnlyList<FulfillmentOption>> GetOptionsAsync(
             Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            throw new NotSupportedException(
+                "Request creation must use GetOwnedOptionsAsync; the full lookup queries every provider and makes a submit slow.");
+
+        public Task<IReadOnlyList<FulfillmentOption>> GetOwnedOptionsAsync(
+            Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<FulfillmentOption>>(
                 owned.TryGetValue(mediaType, out var option) ? [option] : []);
     }

@@ -1,8 +1,12 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json.Nodes;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Providers;
@@ -10,8 +14,9 @@ namespace FamilyLibrarian.Infrastructure.Providers;
 /// <summary>Speaks the versioned external-provider HTTP protocol described in the M13 plan.</summary>
 public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory) : IExternalProviderClient
 {
-    private static readonly TimeSpan AcquirePollInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan DefaultAcquirePollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan AcquireTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan ControlPlaneTimeout = TimeSpan.FromSeconds(20);
 
     // Governs the manifest/search/job-status calls below, all of which are
     // small JSON and read fully into memory via ReadAsStringAsync — the
@@ -22,56 +27,273 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     // third-party code, and only the download path already had a size bound.
     private const long MaxJsonResponseBytes = 10 * 1024 * 1024;
 
+    // Bounds for the optional /health "issues" array (protocol v2 §5). The text
+    // is provider-authored and untrusted; it is capped so a misbehaving
+    // provider cannot bloat the stored row or the admin UI.
+    internal const int MaxHealthIssues = 5;
+    internal const int MaxHealthIssueMessageLength = 300;
+    internal const int MaxHealthIssueCodeLength = 64;
+
+    private readonly TimeSpan _acquirePollInterval = DefaultAcquirePollInterval;
+
+    /// <summary>
+    /// Lets the conformance tests poll a fast sample-provider timeline without
+    /// sleeping the production interval. Internal, so DI (which only considers
+    /// public constructors) always uses the default.
+    /// </summary>
+    internal ExternalProviderClient(IHttpClientFactory httpClientFactory, TimeSpan acquirePollInterval)
+        : this(httpClientFactory) =>
+        _acquirePollInterval = acquirePollInterval;
+
     public async Task<ExternalProviderManifest> GetManifestAsync(
-        string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken)
+        string baseUrl, string? apiKey, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        using var client = CreateClient(baseUrl, apiKey);
         using var response = await client.GetAsync("manifest", cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))
             ?? throw new HttpRequestException("The manifest response was not valid JSON.");
 
+        var protocolVersions = json["protocolVersions"]?.AsArray()
+            .Select(node => node?.GetValue<string>() ?? string.Empty)
+            .Where(version => version.Length > 0)
+            .ToArray();
+        var protocolVersion = json["protocolVersion"]?.GetValue<string>()
+            ?? protocolVersions?.FirstOrDefault()
+            ?? "1";
+        // A v1 manifest declares neither field — treat it as speaking only v1.
+        protocolVersions ??= [protocolVersion];
+
         return new ExternalProviderManifest(
-            json["protocolVersion"]?.GetValue<string>() ?? "1",
+            protocolVersions,
+            protocolVersion,
+            json["instanceId"]?.GetValue<string>(),
             json["id"]?.GetValue<string>() ?? string.Empty,
             json["name"]?.GetValue<string>() ?? string.Empty,
             json["version"]?.GetValue<string>() ?? string.Empty,
-            json["capabilities"]?.AsArray().Select(node => node?.GetValue<string>() ?? string.Empty).ToArray() ?? [],
-            json["egressPolicy"]?.GetValue<string>() ?? "NORMAL");
+            ParseCapabilities(json["capabilities"]),
+            json["outputRetentionSeconds"]?.GetValue<int?>(),
+            json["managementUrl"]?.GetValue<string>(),
+            json["documentationUrl"]?.GetValue<string>());
     }
 
-    public async Task<bool> GetHealthAsync(
-        string baseUrl, string? apiKey, EgressRoute route, CancellationToken cancellationToken)
+    /// <summary>
+    /// Accepts both the v2 structured object and the v1 flat capability-string
+    /// array, per §4's tolerance note — a legacy array is parsed as
+    /// best-effort <c>mediaTypes</c>/<c>operations</c> (ebook/audiobook go to
+    /// media types, search/acquire go to operations, anything else is
+    /// dropped rather than guessed at).
+    /// </summary>
+    private static ProviderCapabilities ParseCapabilities(JsonNode? node)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        if (node is null)
+        {
+            return ProviderCapabilities.Empty;
+        }
+
+        if (node is JsonArray legacyArray)
+        {
+            var values = legacyArray.Select(item => item?.GetValue<string>() ?? string.Empty).ToArray();
+            var mediaTypes = values.Where(value => value is "ebook" or "audiobook").ToArray();
+            var operations = values.Where(value => value is "search" or "acquire").ToArray();
+            return new ProviderCapabilities(mediaTypes, operations, []);
+        }
+
+        return new ProviderCapabilities(
+            node["mediaTypes"]?.AsArray().Select(item => item?.GetValue<string>() ?? string.Empty).ToArray() ?? [],
+            node["operations"]?.AsArray().Select(item => item?.GetValue<string>() ?? string.Empty).ToArray() ?? [],
+            node["features"]?.AsArray().Select(item => item?.GetValue<string>() ?? string.Empty).ToArray() ?? []);
+    }
+
+    public async Task<ExternalProviderHealth> GetHealthAsync(
+        string baseUrl, string? apiKey, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey);
         try
         {
             using var response = await client.GetAsync("health", cancellationToken);
-            return response.IsSuccessStatusCode;
+            if (!response.IsSuccessStatusCode)
+            {
+                // Per §5: a non-2xx (or a connection failure, below) means
+                // Family Librarian could not obtain usable health
+                // information at all — distinct from a deliberately
+                // reported degraded/unhealthy body.
+                return ExternalProviderHealth.Unreachable;
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                // Bare 2xx with no body is the v1 shape — treat as healthy.
+                return new ExternalProviderHealth(
+                    ProviderHealthStatus.Healthy, ProviderOperationalStatus.Available, ProviderOperationalStatus.Available);
+            }
+
+            var json = JsonNode.Parse(body);
+            var status = ParseHealthStatus(json?["status"]?.GetValue<string>());
+            var inherited = status switch
+            {
+                ProviderHealthStatus.Healthy => ProviderOperationalStatus.Available,
+                ProviderHealthStatus.Degraded => ProviderOperationalStatus.Degraded,
+                _ => ProviderOperationalStatus.Unavailable
+            };
+
+            return new ExternalProviderHealth(
+                status,
+                ParseOperationalStatus(json?["operations"]?["search"]?.GetValue<string>(), inherited),
+                ParseOperationalStatus(json?["operations"]?["acquire"]?.GetValue<string>(), inherited),
+                ParseHealthIssues(json?["issues"]));
         }
-        catch (HttpRequestException)
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
-            return false;
+            // A timeout throws TaskCanceledException, not HttpRequestException —
+            // this method's whole point is to never let a connectivity problem
+            // escape as an exception, so both must degrade to Unreachable the
+            // same way a non-2xx response already does above.
+            return ExternalProviderHealth.Unreachable;
         }
     }
 
+    /// <summary>
+    /// Tolerant by design: the field is optional and advisory, so anything
+    /// malformed (a non-array, a non-object entry, a non-string message, an
+    /// unknown <c>operation</c>) is dropped rather than failing the health
+    /// probe. Never throws.
+    /// </summary>
+    internal static IReadOnlyList<ProviderHealthIssue> ParseHealthIssues(JsonNode? node)
+    {
+        if (node is not JsonArray array)
+        {
+            return [];
+        }
+
+        var issues = new List<ProviderHealthIssue>();
+        foreach (var item in array)
+        {
+            if (issues.Count >= MaxHealthIssues)
+            {
+                break;
+            }
+
+            if (item is not JsonObject entry)
+            {
+                continue;
+            }
+
+            var operation = (ReadString(entry["operation"]) ?? string.Empty).Trim().ToLowerInvariant();
+            var message = SanitizeText(ReadString(entry["message"]), MaxHealthIssueMessageLength);
+            if (!ProviderHealthIssue.IsKnownOperation(operation) || message is null)
+            {
+                continue;
+            }
+
+            issues.Add(new ProviderHealthIssue(
+                operation, SanitizeText(ReadString(entry["code"]), MaxHealthIssueCodeLength), message));
+        }
+
+        return issues;
+
+        static string? ReadString(JsonNode? value)
+        {
+            try
+            {
+                return value is JsonValue json && json.TryGetValue<string>(out var text) ? text : null;
+            }
+            catch (InvalidOperationException)
+            {
+                // An unpaired-surrogate escape cannot be decoded to a string.
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whitespace controls become a single space; all other control and Unicode
+    /// format characters (e.g. bidi overrides) are removed; the result is
+    /// trimmed and capped. Null when nothing printable is left.
+    /// </summary>
+    private static string? SanitizeText(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        // Enumerated as runes so a cap can never split a surrogate pair and a
+        // lone surrogate becomes U+FFFD; either would otherwise make the text
+        // unserializable when persisted.
+        var builder = new StringBuilder(Math.Min(value.Length, maxLength));
+        foreach (var rune in value.EnumerateRunes())
+        {
+            if (builder.Length + rune.Utf16SequenceLength > maxLength)
+            {
+                break;
+            }
+
+            if (Rune.IsWhiteSpace(rune))
+            {
+                if (builder.Length > 0 && builder[^1] != ' ')
+                {
+                    builder.Append(' ');
+                }
+            }
+            else if (!Rune.IsControl(rune) && Rune.GetUnicodeCategory(rune) != UnicodeCategory.Format)
+            {
+                builder.Append(rune.ToString());
+            }
+        }
+
+        var text = builder.ToString().Trim();
+        return text.Length == 0 ? null : text;
+    }
+
+    private static ProviderHealthStatus ParseHealthStatus(string? value) => value?.ToLowerInvariant() switch
+    {
+        "degraded" => ProviderHealthStatus.Degraded,
+        "unhealthy" => ProviderHealthStatus.Unhealthy,
+        _ => ProviderHealthStatus.Healthy
+    };
+
+    private static ProviderOperationalStatus ParseOperationalStatus(string? value, ProviderOperationalStatus fallback) =>
+        value?.ToLowerInvariant() switch
+        {
+            "available" => ProviderOperationalStatus.Available,
+            "degraded" => ProviderOperationalStatus.Degraded,
+            "unavailable" => ProviderOperationalStatus.Unavailable,
+            _ => fallback
+        };
+
     public async Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
-        string baseUrl, string? apiKey, ExternalProviderSearchRequest request, EgressRoute route,
+        string baseUrl, string? apiKey, ExternalProviderSearchRequest request,
         CancellationToken cancellationToken)
     {
-        using var client = CreateClient(baseUrl, apiKey, route);
+        // Search backs interactive source enrichment. The caller's cancellation
+        // token represents the browser/request lifetime; imposing the normal
+        // short control-plane timeout here would misrepresent a slow provider
+        // as returning no candidate.
+        using var client = CreateClient(baseUrl, apiKey, Timeout.InfiniteTimeSpan);
         var payload = new JsonObject
         {
             ["requestId"] = request.RequestId.ToString(),
             ["mediaType"] = request.MediaType.ToString().ToLowerInvariant(),
-            ["work"] = new JsonObject
-            {
-                ["title"] = request.Title,
-                ["authors"] = new JsonArray(request.Authors.Select(author => (JsonNode)JsonValue.Create(author)).ToArray()),
-                ["identifiers"] = new JsonObject { ["isbn13"] = request.Isbn13 }
-            }
+            ["work"] = SerializeWork(request.Work),
+            ["edition"] = request.Edition is null ? null : SerializeEdition(request.Edition)
         };
+
+        if (request.Constraints is not null)
+        {
+            payload["constraints"] = SerializeConstraints(request.Constraints);
+        }
+
+        if (request.Pagination is not null)
+        {
+            payload["pagination"] = new JsonObject
+            {
+                ["limit"] = request.Pagination.Limit,
+                ["cursor"] = request.Pagination.Cursor
+            };
+        }
 
         using var response = await client.PostAsync("search", JsonContent.Create(payload), cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -87,28 +309,281 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         foreach (var node in candidatesNode)
         {
             var reference = node?["providerReference"]?.GetValue<string>();
-            if (string.IsNullOrWhiteSpace(reference))
+            if (string.IsNullOrWhiteSpace(reference) || node is null)
             {
                 continue;
             }
 
             results.Add(new ExternalProviderCandidate(
                 reference,
-                node!["title"]?.GetValue<string>() ?? string.Empty,
-                node["author"]?.GetValue<string>(),
-                node["format"]?.GetValue<string>(),
-                node["sizeBytes"]?.GetValue<long?>(),
-                node["metadata"]?.ToJsonString()));
+                ParseWork(node),
+                ParseEdition(node["edition"]),
+                ParseRelease(node["release"]),
+                node["candidateRevision"]?.GetValue<string>(),
+                node["acquireToken"]?.GetValue<string>(),
+                node["extensions"]?.ToJsonString(),
+                ParseInspectionUri(node["inspectionUrl"]?.GetValue<string>()),
+                ParseSourceSummary(node["sourceSummary"]?.GetValue<string>())));
         }
 
         return results;
     }
 
+    private static JsonObject SerializeWork(ExternalProviderWorkEvidence work) => new()
+    {
+        ["title"] = work.Title,
+        ["subtitle"] = work.Subtitle,
+        ["authors"] = new JsonArray(work.Authors
+            .Select(author => (JsonNode)new JsonObject { ["name"] = author.Name, ["role"] = author.Role })
+            .ToArray()),
+        ["series"] = new JsonArray(work.Series
+            .Select(series => (JsonNode)new JsonObject { ["name"] = series.Name, ["position"] = series.Position })
+            .ToArray()),
+        ["identifiers"] = SerializeIdentifiers(work.Identifiers)
+    };
+
+    private static JsonObject SerializeEdition(ExternalProviderEditionEvidence edition) => new()
+    {
+        ["language"] = edition.Language,
+        ["publicationYear"] = edition.PublicationYear,
+        ["publisher"] = edition.Publisher,
+        ["identifiers"] = SerializeIdentifiers(edition.Identifiers)
+    };
+
+    private static JsonArray SerializeIdentifiers(IReadOnlyList<BookIdentifier> identifiers) => new(identifiers
+        .Select(identifier => (JsonNode)new JsonObject { ["scheme"] = identifier.Scheme, ["value"] = identifier.Value })
+        .ToArray());
+
+    private static JsonObject SerializeConstraints(ExternalProviderSearchConstraints constraints)
+    {
+        var payload = new JsonObject();
+        if (constraints.Languages is not null)
+        {
+            payload["languages"] = ToJsonArray(constraints.Languages);
+        }
+
+        if (constraints.Formats is not null)
+        {
+            payload["formats"] = ToJsonArray(constraints.Formats);
+        }
+
+        if (constraints.ExcludeCollections is not null)
+        {
+            payload["excludeCollections"] = constraints.ExcludeCollections;
+        }
+
+        return payload;
+    }
+
+    private static JsonArray ToJsonArray(IReadOnlyList<string> values) =>
+        new(values.Select(value => (JsonNode)JsonValue.Create(value)).ToArray());
+
+    /// <summary>
+    /// Tolerant of both the v2 nested <c>work</c> object and a legacy flat
+    /// <c>title</c>/<c>author</c> candidate (protocol v1, Appendix A) — a
+    /// provider that has not upgraded still parses cleanly.
+    /// </summary>
+    private static ExternalProviderWorkEvidence ParseWork(JsonNode node)
+    {
+        var workNode = node["work"];
+        if (workNode is null)
+        {
+            return new ExternalProviderWorkEvidence(
+                node["title"]?.GetValue<string>() ?? string.Empty,
+                null,
+                node["author"]?.GetValue<string>() is { } legacyAuthor ? [new BookAuthor(legacyAuthor, "author")] : [],
+                [],
+                []);
+        }
+
+        return new ExternalProviderWorkEvidence(
+            workNode["title"]?.GetValue<string>() ?? string.Empty,
+            workNode["subtitle"]?.GetValue<string>(),
+            ParseAuthors(workNode["authors"]),
+            ParseSeries(workNode["series"]),
+            ParseIdentifiers(workNode["identifiers"]));
+    }
+
+    private static ExternalProviderEditionEvidence? ParseEdition(JsonNode? editionNode) => editionNode is null
+        ? null
+        : new ExternalProviderEditionEvidence(
+            editionNode["language"]?.GetValue<string>(),
+            editionNode["publicationYear"]?.GetValue<int?>(),
+            editionNode["publisher"]?.GetValue<string>(),
+            ParseIdentifiers(editionNode["identifiers"]));
+
+    private static ExternalProviderReleaseEvidence? ParseRelease(JsonNode? releaseNode) => releaseNode is null
+        ? null
+        : new ExternalProviderReleaseEvidence(
+            releaseNode["name"]?.GetValue<string>(),
+            releaseNode["format"]?.GetValue<string>(),
+            releaseNode["sizeBytes"]?.GetValue<long?>(),
+            releaseNode["isCollection"]?.GetValue<bool?>(),
+            releaseNode["partCount"]?.GetValue<int?>(),
+            releaseNode["isSample"]?.GetValue<bool?>(),
+            releaseNode["isAbridged"]?.GetValue<bool?>(),
+            releaseNode["isUnabridged"]?.GetValue<bool?>(),
+            releaseNode["qualityTags"]?.AsArray().Select(tag => tag?.GetValue<string>() ?? string.Empty).ToArray() ?? [],
+            releaseNode["ageDays"]?.GetValue<int?>(),
+            ParseDrmStatus(releaseNode["drm"]?.GetValue<string>()));
+
+    private static ExternalProviderDrmStatus ParseDrmStatus(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "none" => ExternalProviderDrmStatus.None,
+        "encrypted" => ExternalProviderDrmStatus.Encrypted,
+        _ => ExternalProviderDrmStatus.Unknown
+    };
+
+    // An inspection URI is rendered only on an administrator surface. It is
+    // still untrusted provider input: accept only browser-safe absolute HTTP(S)
+    // links with no embedded credentials, and never treat it as an acquire URL.
+    private static Uri? ParseInspectionUri(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        (string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) &&
+        !string.IsNullOrWhiteSpace(uri.Host) &&
+        string.IsNullOrEmpty(uri.UserInfo)
+            ? uri
+            : null;
+
+    // Provider-authored origin text is presentation only. Whitespace becomes a
+    // single space; other controls are discarded. Razor encodes markup on display.
+    private static string? ParseSourceSummary(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        var text = new System.Text.StringBuilder(120);
+        var pendingSpace = false;
+        foreach (var character in value)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                pendingSpace = text.Length > 0;
+                continue;
+            }
+
+            if (char.IsControl(character))
+            {
+                continue;
+            }
+
+            if (pendingSpace)
+            {
+                text.Append(' ');
+                pendingSpace = false;
+            }
+
+            text.Append(character);
+            if (text.Length >= 120)
+            {
+                break;
+            }
+        }
+
+        var result = text.ToString(0, Math.Min(text.Length, 120)).TrimEnd();
+        // A UTF-16 truncation must not leave half of a supplementary character.
+        if (result.Length > 0 && char.IsHighSurrogate(result[^1]))
+        {
+            result = result[..^1];
+        }
+
+        return result.Length == 0 ? null : result;
+    }
+
+    private static List<BookAuthor> ParseAuthors(JsonNode? authorsNode)
+    {
+        if (authorsNode is not JsonArray array)
+        {
+            return [];
+        }
+
+        var results = new List<BookAuthor>();
+        foreach (var node in array)
+        {
+            // Tolerates a legacy flat array of plain author-name strings
+            // alongside the v2 {name, role} object shape.
+            if (node is JsonValue value && value.TryGetValue(out string? name))
+            {
+                results.Add(new BookAuthor(name, "author"));
+            }
+            else if (node is not null)
+            {
+                var authorName = node["name"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(authorName))
+                {
+                    results.Add(new BookAuthor(authorName, node["role"]?.GetValue<string>()));
+                }
+            }
+        }
+
+        return results;
+    }
+
+    private static List<BookSeries> ParseSeries(JsonNode? seriesNode)
+    {
+        if (seriesNode is not JsonArray array)
+        {
+            return [];
+        }
+
+        var results = new List<BookSeries>();
+        foreach (var node in array)
+        {
+            var name = node?["name"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                results.Add(new BookSeries(name, node!["position"]?.GetValue<string>()));
+            }
+        }
+
+        return results;
+    }
+
+    private static List<BookIdentifier> ParseIdentifiers(JsonNode? identifiersNode)
+    {
+        if (identifiersNode is JsonObject legacyObject)
+        {
+            // Tolerates v1's fixed {isbn13: "..."} shape.
+            var results = new List<BookIdentifier>();
+            foreach (var (scheme, valueNode) in legacyObject)
+            {
+                var value = valueNode?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    results.Add(new BookIdentifier(scheme, value));
+                }
+            }
+
+            return results;
+        }
+
+        if (identifiersNode is not JsonArray array)
+        {
+            return [];
+        }
+
+        var identifiers = new List<BookIdentifier>();
+        foreach (var node in array)
+        {
+            var scheme = node?["scheme"]?.GetValue<string>();
+            var value = node?["value"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(scheme) && !string.IsNullOrWhiteSpace(value))
+            {
+                identifiers.Add(new BookIdentifier(scheme, value));
+            }
+        }
+
+        return identifiers;
+    }
+
     public async Task<ExternalProviderArtifact> AcquireAsync(
-        string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType, EgressRoute route,
+        string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
         CancellationToken cancellationToken)
     {
-        var client = CreateClient(baseUrl, apiKey, route);
+        var client = CreateClient(baseUrl, apiKey);
         try
         {
             var payload = new JsonObject
@@ -149,7 +624,282 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         }
     }
 
-    private static async Task PollUntilCompletedAsync(HttpClient client, string jobPath, CancellationToken cancellationToken)
+    public async Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
+        string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey);
+        var payload = new JsonObject
+        {
+            ["requestId"] = request.RequestId.ToString(),
+            ["candidateReference"] = request.CandidateReference,
+            ["candidateRevision"] = request.CandidateRevision,
+            ["acquireToken"] = request.AcquireToken,
+            ["mediaType"] = request.MediaType.ToString().ToLowerInvariant()
+        };
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "acquire")
+        {
+            Content = JsonContent.Create(payload)
+        };
+        httpRequest.Headers.Add("Idempotency-Key", idempotencyKey);
+
+        using var response = await client.SendAsync(httpRequest, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            var conflictJson = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var code = conflictJson?["code"]?.GetValue<string>();
+            if (string.Equals(code, "CANDIDATE_CHANGED", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExternalProviderAcquireSubmission.CandidateChanged;
+            }
+            throw new ExternalProviderSubmissionConflictException(
+                "The provider rejected the idempotency-key replay because it does not match the original request.");
+        }
+
+        response.EnsureSuccessStatusCode();
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))
+            ?? throw new HttpRequestException("The acquire response was not valid JSON.");
+        var jobId = json["jobId"]?.GetValue<string>()
+            ?? throw new HttpRequestException("The acquire response did not include a jobId.");
+
+        return ExternalProviderAcquireSubmission.Accepted(
+            jobId,
+            ParseLifecycleState(json["state"]?.GetValue<string>()),
+            json["phase"]?.GetValue<string>(),
+            ParsePollAfterSeconds(response, json));
+    }
+
+    public async Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey);
+        using var response = await client.GetAsync($"acquire/{Uri.EscapeDataString(jobId)}", cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))
+            ?? throw new HttpRequestException("The job status response was not valid JSON.");
+
+        return ParseJobStatus(jobId, json, response);
+    }
+
+    public Task<ExternalProviderJobStatus> StartInteractionAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+        PostInteractionControlAsync(baseUrl, apiKey, jobId, "start", cancellationToken);
+
+    public Task<ExternalProviderJobStatus> UseAcquireFallbackAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
+        PostInteractionControlAsync(baseUrl, apiKey, jobId, "fallback", cancellationToken);
+
+    private async Task<ExternalProviderJobStatus> PostInteractionControlAsync(
+        string baseUrl, string? apiKey, string jobId, string operation, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey);
+        using var response = await client.PostAsync(
+            $"acquire/{Uri.EscapeDataString(jobId)}/interaction/{operation}", content: null, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))
+            ?? throw new HttpRequestException("The interaction control response was not valid JSON.");
+
+        return ParseJobStatus(jobId, json, response);
+    }
+
+    private static ExternalProviderJobStatus ParseJobStatus(string jobId, JsonNode json, HttpResponseMessage response)
+    {
+
+        var state = ParseLifecycleState(json["state"]?.GetValue<string>());
+        var interactionNode = json["interaction"];
+        var interaction = interactionNode is null
+            ? null
+            : new ProviderInteraction(
+                interactionNode["type"]?.GetValue<string>(),
+                interactionNode["message"]?.GetValue<string>(),
+                interactionNode["expiresAt"]?.GetValue<DateTimeOffset?>(),
+                interactionNode["resumeSupported"]?.GetValue<bool?>(),
+                interactionNode["actionUrl"]?.GetValue<string>());
+
+        var progressNode = json["progress"];
+        var progress = progressNode is null
+            ? null
+            : new ProviderProgress(
+                progressNode["percent"]?.GetValue<double?>(),
+                progressNode["bytesCompleted"]?.GetValue<long?>(),
+                progressNode["bytesTotal"]?.GetValue<long?>(),
+                progressNode["message"]?.GetValue<string>());
+
+        var errorNode = json["error"];
+        var error = errorNode is null
+            ? null
+            : new ProviderJobError(
+                errorNode["code"]?.GetValue<string>(),
+                errorNode["message"]?.GetValue<string>(),
+                errorNode["retryable"]?.GetValue<bool?>(),
+                errorNode["retryAfterSeconds"]?.GetValue<int?>(),
+                errorNode["details"]?.ToJsonString());
+
+        return new ExternalProviderJobStatus(
+            jobId, state, json["phase"]?.GetValue<string>(), interaction, progress, error,
+            ParsePollAfterSeconds(response, json));
+    }
+
+    public async Task<IReadOnlyList<ExternalProviderOutput>> ListOutputsAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey);
+        using var response = await client.GetAsync($"acquire/{Uri.EscapeDataString(jobId)}/outputs", cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        var outputsNode = json?["outputs"]?.AsArray();
+        if (outputsNode is null)
+        {
+            return [];
+        }
+
+        var results = new List<ExternalProviderOutput>();
+        foreach (var node in outputsNode)
+        {
+            var outputId = node?["id"]?.GetValue<string>();
+            results.Add(new ExternalProviderOutput(
+                outputId ?? string.Empty,
+                ParseOutputKind(node!["kind"]?.GetValue<string>()),
+                node["role"]?.GetValue<string>(),
+                node["filename"]?.GetValue<string>(),
+                node["contentType"]?.GetValue<string>(),
+                node["sizeBytes"]?.GetValue<long?>(),
+                node["uri"]?.GetValue<string>(),
+                node["uriScheme"]?.GetValue<string>(),
+                node["checksums"]?.ToJsonString(),
+                node["retention"]?["expiresAt"]?.GetValue<DateTimeOffset?>(),
+                node["sequence"]?.GetValue<int?>()));
+        }
+
+        return results;
+    }
+
+    public async Task<ExternalProviderArtifact> GetOutputAsync(
+        string baseUrl, string? apiKey, string jobId, string outputId,
+        CancellationToken cancellationToken)
+    {
+        var client = CreateClient(baseUrl, apiKey);
+        try
+        {
+            var response = await client.GetAsync(
+                $"acquire/{Uri.EscapeDataString(jobId)}/outputs/{Uri.EscapeDataString(outputId)}",
+                HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var filename = response.Content.Headers.ContentDisposition?.FileNameStar?.Trim('"')
+                ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"')
+                ?? $"{outputId}.bin";
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+
+            return new ExternalProviderArtifact(new HttpResponseOwnedStream(stream, response, client), filename);
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
+    }
+
+    public async Task CancelAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey);
+        try
+        {
+            using var response = await client.PostAsync(
+                $"acquire/{Uri.EscapeDataString(jobId)}/cancel", content: null, cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort per §8b — the job may still complete or fail on its own.
+        }
+    }
+
+    public async Task DeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey);
+        try
+        {
+            using var response = await client.DeleteAsync($"acquire/{Uri.EscapeDataString(jobId)}", cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort per §8b.
+        }
+    }
+
+    public async Task<bool> TryDeleteAcquireAsync(
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
+    {
+        using var client = CreateClient(baseUrl, apiKey);
+        try
+        {
+            using var response = await client.DeleteAsync($"acquire/{Uri.EscapeDataString(jobId)}", cancellationToken);
+            return response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    private static ProviderAcquisitionJobLifecycleState ParseLifecycleState(string? value) =>
+        value?.ToLowerInvariant() switch
+        {
+            "queued" => ProviderAcquisitionJobLifecycleState.Queued,
+            "running" => ProviderAcquisitionJobLifecycleState.Running,
+            "waiting" => ProviderAcquisitionJobLifecycleState.Waiting,
+            "completed" => ProviderAcquisitionJobLifecycleState.Completed,
+            "failed" => ProviderAcquisitionJobLifecycleState.Failed,
+            "cancelled" => ProviderAcquisitionJobLifecycleState.Cancelled,
+            // A v1 provider's InProgress/Completed/Failed vocabulary — tolerated
+            // rather than rejected while both protocol versions are in play.
+            "inprogress" => ProviderAcquisitionJobLifecycleState.Running,
+            // The v2 state set is closed (protocol doc §8). Guessing "Running" for
+            // anything else turned a malformed terminal state into a job polled forever.
+            _ => throw new ExternalProviderProtocolException(
+                $"The provider reported an unrecognized job state '{value ?? "(missing)"}'.")
+        };
+
+    private static ProviderOutputKind ParseOutputKind(string? value) => value?.ToLowerInvariant() switch
+    {
+        "file" => ProviderOutputKind.File,
+        "uri" => ProviderOutputKind.Uri,
+        "descriptor" => ProviderOutputKind.Descriptor,
+        _ => ProviderOutputKind.Unknown
+    };
+
+    /// <summary>Prefers the standard <c>Retry-After</c> header; falls back to the body-level <c>pollAfterSeconds</c> hint (protocol v2 §8).</summary>
+    private static int? ParsePollAfterSeconds(HttpResponseMessage response, JsonNode json)
+    {
+        double? seconds = response.Headers.RetryAfter?.Delta?.TotalSeconds;
+        if (seconds is null && json["pollAfterSeconds"] is JsonValue value && value.TryGetValue<double>(out var bodySeconds))
+        {
+            seconds = bodySeconds;
+        }
+
+        // Provider-controlled, so bounded here once for every caller: a negative
+        // or zero hint would leave the job permanently due and starve the poll
+        // batch; an enormous one would park it for years.
+        return seconds is { } hint && double.IsFinite(hint)
+            ? (int)Math.Clamp(hint, MinPollAfterSeconds, MaxPollAfterSeconds)
+            : null;
+    }
+
+    /// <summary>Bounds on a provider's polling hint; mirrored in the protocol document §8.</summary>
+    internal const int MinPollAfterSeconds = 1;
+    internal const int MaxPollAfterSeconds = 900;
+
+    private async Task PollUntilCompletedAsync(HttpClient client, string jobPath, CancellationToken cancellationToken)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(AcquireTimeout);
@@ -174,7 +924,7 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
                         statusJson?["failureReason"]?.GetValue<string>() ?? "The provider reported the job failed.");
                 }
 
-                await Task.Delay(AcquirePollInterval, timeoutCts.Token);
+                await Task.Delay(_acquirePollInterval, timeoutCts.Token);
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -201,16 +951,15 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         }
     }
 
-    private HttpClient CreateClient(string baseUrl, string? apiKey, EgressRoute route)
+    private HttpClient CreateClient(
+        string baseUrl,
+        string? apiKey,
+        TimeSpan? timeout = null)
     {
-        var client = route is EgressRoute.GatewayRoute gatewayRoute
-            ? new HttpClient(
-                new SocketsHttpHandler { Proxy = new WebProxy(gatewayRoute.ProxyEndpoint), UseProxy = true },
-                disposeHandler: true)
-            : httpClientFactory.CreateClient();
+        var client = httpClientFactory.CreateClient();
 
         client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
-        client.Timeout = TimeSpan.FromSeconds(20);
+        client.Timeout = timeout ?? ControlPlaneTimeout;
         client.MaxResponseContentBufferSize = MaxJsonResponseBytes;
         if (!string.IsNullOrWhiteSpace(apiKey))
         {

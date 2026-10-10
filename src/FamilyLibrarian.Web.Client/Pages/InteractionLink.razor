@@ -1,0 +1,289 @@
+@page "/interaction"
+@implements IAsyncDisposable
+@using FamilyLibrarian.Contracts.Acquisition
+@using FamilyLibrarian.Web.Client.Acquisition
+@inject InteractionLinkApiClient InteractionLinks
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@* Deliberately anonymous (HUMAN-ACQ-1 D11): the token in the URL fragment is
+   the caller's only credential. Uses the default (Main) layout, same as
+   Invite.razor -- every AuthorizeView block in MainLayout already degrades
+   gracefully for an anonymous caller, so no separate bare layout is needed. *@
+
+<PageTitle>Verify · Family Librarian</PageTitle>
+
+<MudStack Spacing="3" Class="mx-auto" Style="max-width:34rem;">
+    <MudText Typo="Typo.h4">Verify a download</MudText>
+
+    <div role="status" aria-live="polite">
+        @if (stage == Stage.Claiming)
+        {
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (stage == Stage.ClaimedByOther)
+        {
+            <MudAlert Severity="Severity.Info">
+                @(string.IsNullOrWhiteSpace(claimedByDisplayName)
+                    ? "Someone else is already handling this."
+                    : $"{claimedByDisplayName} is already handling this.")
+            </MudAlert>
+        }
+        else if (stage == Stage.Done)
+        {
+            <MudAlert Severity="Severity.Success">This has already been verified. You can close this page.</MudAlert>
+        }
+        else if (stage == Stage.NothingWaiting)
+        {
+            <MudAlert Severity="Severity.Info">Nothing is currently waiting for this. You can close this page.</MudAlert>
+        }
+        else if (stage == Stage.Expired)
+        {
+            <MudAlert Severity="Severity.Warning">This link has expired.</MudAlert>
+        }
+        else if (stage == Stage.Invalid)
+        {
+            <MudAlert Severity="Severity.Error">
+                This link has already been used or is not valid. Open Family Librarian to see what's waiting.
+            </MudAlert>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/" Class="mt-3">
+                Open Family Librarian
+            </MudButton>
+        }
+        else if (stage == Stage.Starting)
+        {
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+            <MudText Typo="Typo.body1">Starting the verification session…</MudText>
+        }
+        else if (stage == Stage.Connecting)
+        {
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+            <MudText Typo="Typo.body1">Opening the remote view…</MudText>
+        }
+        else if (stage == Stage.Connected)
+        {
+            <MudText Typo="Typo.body1" Class="mb-2">
+                Solve any check shown below. It clears itself automatically once solved.
+            </MudText>
+        }
+        else if (stage == Stage.Finished)
+        {
+            <MudAlert Severity="Severity.Success">Verified — you can close this page.</MudAlert>
+        }
+        else if (stage == Stage.Released)
+        {
+            <MudAlert Severity="Severity.Warning">This session has ended. If it's still needed, a new link will be sent.</MudAlert>
+        }
+        @if (stage is Stage.Connecting or Stage.Connected)
+        {
+            <div @ref="containerRef" style="width:100%; height:70vh; background:#111; border-radius:4px;"></div>
+        }
+    </div>
+</MudStack>
+
+@code {
+    private enum Stage
+    {
+        Claiming, ClaimedByOther, Done, NothingWaiting, Expired, Invalid,
+        Starting, Connecting, Connected, Finished, Released
+    }
+
+    private Stage stage = Stage.Claiming;
+    private string? claimedByDisplayName;
+    private Guid jobId;
+    private ElementReference containerRef;
+    private IJSObjectReference? remoteViewInterop;
+    private IJSObjectReference? rfbInstance;
+    private DotNetObjectReference<InteractionLink>? selfReference;
+    private CancellationTokenSource? statusPollCts;
+    private bool openViewAfterRender;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var token = ReadAndClearFragment();
+        if (string.IsNullOrEmpty(token))
+        {
+            stage = Stage.Invalid;
+            return;
+        }
+
+        // Kept only in this local variable, and only for the one call it takes
+        // to claim -- never logged, never stored, never put back in the URL.
+        var outcome = await InteractionLinks.ClaimAsync(token);
+        token = string.Empty;
+
+        switch (outcome.Kind)
+        {
+            case InteractionLinkClaimKind.Claimed:
+                jobId = outcome.Response!.JobId;
+                stage = Stage.Starting;
+                statusPollCts = new CancellationTokenSource();
+                _ = PollStatusAsync(statusPollCts.Token);
+                break;
+            case InteractionLinkClaimKind.ClaimedByOther:
+                claimedByDisplayName = outcome.ClaimedByDisplayName;
+                stage = Stage.ClaimedByOther;
+                break;
+            case InteractionLinkClaimKind.Done:
+                stage = Stage.Done;
+                break;
+            case InteractionLinkClaimKind.NothingWaiting:
+                stage = Stage.NothingWaiting;
+                break;
+            case InteractionLinkClaimKind.Expired:
+                stage = Stage.Expired;
+                break;
+            default:
+                stage = Stage.Invalid;
+                break;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (openViewAfterRender && stage == Stage.Connecting)
+        {
+            openViewAfterRender = false;
+            await OpenRemoteViewAsync();
+        }
+    }
+
+    /// <summary>Reads the token from the URL fragment, then immediately scrubs it from the address bar and history.</summary>
+    private string? ReadAndClearFragment()
+    {
+        var fragment = new Uri(Navigation.Uri).Fragment;
+        var token = string.IsNullOrEmpty(fragment) ? null : fragment.TrimStart('#');
+        _ = ClearFragmentAsync();
+        return token;
+    }
+
+    private async Task ClearFragmentAsync()
+    {
+        try
+        {
+            await using var interop = await JS.InvokeAsync<IJSObjectReference>("import", "./js/interaction-link-interop.js");
+            await interop.InvokeVoidAsync("clearFragment");
+        }
+        catch (JSException)
+        {
+            // Best-effort: worst case the token stays visible in the address
+            // bar for this one page load, still consumed only once.
+        }
+    }
+
+    private async Task PollStatusAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            InteractionLinkStatusResponse? status;
+            try
+            {
+                status = await InteractionLinks.GetStatusAsync(jobId, cancellationToken);
+            }
+            catch (HttpRequestException)
+            {
+                status = null;
+            }
+
+            if (status is not null)
+            {
+                switch (status.State)
+                {
+                    case "ready":
+                        await InvokeAsync(async () =>
+                        {
+                            stage = Stage.Connecting;
+                            openViewAfterRender = true;
+                            StateHasChanged();
+                        });
+                        return; // The remote-view socket's own lifecycle drives the page from here.
+                    case "done":
+                        await InvokeAsync(() => SetStage(Stage.Finished));
+                        return;
+                    case "released":
+                    case "expired":
+                    case "cancelled":
+                        await InvokeAsync(() => SetStage(Stage.Released));
+                        return;
+                    case "starting":
+                    default:
+                        break; // Keep polling.
+                }
+            }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    private async Task OpenRemoteViewAsync()
+    {
+        try
+        {
+            remoteViewInterop = await JS.InvokeAsync<IJSObjectReference>("import", "./js/remote-view-interop.js");
+            selfReference = DotNetObjectReference.Create(this);
+            var wsUrl = InteractionLinks.GetViewWebSocketUri(jobId);
+            rfbInstance = await remoteViewInterop.InvokeAsync<IJSObjectReference>(
+                "open", containerRef, wsUrl.ToString(), selfReference);
+            SetStage(Stage.Connected);
+        }
+        catch (JSException)
+        {
+            SetStage(Stage.Released);
+        }
+    }
+
+    [JSInvokable]
+    public void OnRemoteViewConnected()
+    {
+        // Already Connected from OpenRemoteViewAsync; nothing further to show.
+    }
+
+    [JSInvokable]
+    public void OnRemoteViewDisconnected(bool clean)
+    {
+        // A clean provider-side close means the job moved on -- resume
+        // polling /status once to show the right terminal message (Finished
+        // vs Released) instead of guessing from the socket alone.
+        statusPollCts = new CancellationTokenSource();
+        _ = PollStatusAsync(statusPollCts.Token);
+    }
+
+    private void SetStage(Stage next)
+    {
+        stage = next;
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        statusPollCts?.Cancel();
+        statusPollCts?.Dispose();
+
+        try
+        {
+            if (rfbInstance is not null && remoteViewInterop is not null)
+            {
+                await remoteViewInterop.InvokeVoidAsync("close", rfbInstance);
+                await rfbInstance.DisposeAsync();
+            }
+
+            if (remoteViewInterop is not null)
+            {
+                await remoteViewInterop.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // The circuit is already gone -- nothing left to clean up on the JS side.
+        }
+
+        selfReference?.Dispose();
+    }
+}

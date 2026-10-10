@@ -127,6 +127,42 @@
                     Timestamp: issue.OccurredAtUtc,
                     IsRead: false,
                     Href: "settings/sources")));
+
+                // Reflects the live jobs.ApplyStatus(...) lifecycle rather
+                // than a persisted event, so there is nothing to mark
+                // read/dismiss here the way notifications.Id-backed entries
+                // are -- it simply stops appearing once the job leaves
+                // Waiting (resolved, expired, or cancelled).
+                merged.AddRange(attention.WaitingProviderInteractions.Select(interaction =>
+                {
+                    // HUMAN-ACQ-1 D7: a claimed interaction (in-app or via a
+                    // Matrix magic link) is already being worked -- informational,
+                    // not an action-needed warning, and never claims IsExpired's
+                    // Error severity for a job someone is actively handling.
+                    var claimedByOther = !string.IsNullOrWhiteSpace(interaction.ClaimedByDisplayName) &&
+                        !interaction.IsClaimedByCurrentUser;
+
+                    return new TrayEntry(
+                        Id: null,
+                        Category: ProviderInteractionWaitingCategory,
+                        Severity: claimedByOther ? "Info" : interaction.IsExpired ? "Error" : "Warning",
+                        Title: claimedByOther
+                            ? (interaction.WorkTitle is { } claimedTitle
+                                ? $"'{claimedTitle}' is being verified by {interaction.ClaimedByDisplayName}"
+                                : $"A request is being verified by {interaction.ClaimedByDisplayName}")
+                            : interaction.WorkTitle is { } title
+                                ? $"'{title}' needs a librarian action"
+                                : "A request needs a librarian action",
+                        Detail: claimedByOther
+                            ? "Nothing to do right now."
+                            : interaction.IsExpired
+                                ? $"The provider's verification window for {interaction.ProviderId} expired."
+                                : $"{interaction.ProviderId} is waiting on a verification step.",
+                        RepeatCount: 1,
+                        Timestamp: interaction.ExpiresAtUtc ?? DateTimeOffset.UtcNow,
+                        IsRead: false,
+                        Href: $"admin/requests/{interaction.RequestId}");
+                }));
             }
             catch (HttpRequestException)
             {
@@ -212,6 +248,8 @@
     // The client only references Contracts, not Domain, so the value is duplicated here.
     private const string RequestNeedsReviewCategory = "request.needs_review";
     private const string ProviderIssueCategory = "provider.issue";
+    // No Domain.Notifications match -- this is derived live from ProviderAcquisitionJob.LifecycleState, not a persisted Notification.
+    private const string ProviderInteractionWaitingCategory = "provider.interaction_waiting";
     private const string SourceIssueCategory = "source.issue";
     private const string PublishingIssueCategory = "publishing.issue";
     private const string KindleDeliveryConfirmationRequestedCategory = "delivery.kindle_confirmation_requested";
@@ -223,6 +261,8 @@
     private const string SeriesNewEntryDetectedCategory = "following.series_entry_added";
     // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.AuthorNewWorkDetected.
     private const string AuthorNewWorkDetectedCategory = "following.author_work_added";
+    // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.ProviderHealthDegraded.
+    private const string ProviderHealthDegradedCategory = "provider.health_degraded";
 
     private static string? LinkFor(string category, string? subjectType, string? subjectId) => (category, subjectType, subjectId) switch
     {
@@ -242,6 +282,10 @@
         // it rather than the Following list it was found through.
         (SeriesNewEntryDetectedCategory, "work", { } id) => $"works/{id}",
         (AuthorNewWorkDetectedCategory, "work", { } id) => $"works/{id}",
+        // Keyed on the provider's own stable id, which has no per-provider
+        // route on the Sources page -- just get the admin to the page where
+        // the health/search/acquire chips and Test Connection live.
+        (ProviderHealthDegradedCategory, "external_provider", not null) => "settings/sources",
         _ => null
     };
 
@@ -252,6 +296,7 @@
         SourceIssueCategory => Icons.Material.Filled.Source,
         PublishingIssueCategory => Icons.Material.Filled.CloudUpload,
         SeriesNewEntryDetectedCategory or AuthorNewWorkDetectedCategory => Icons.Material.Filled.NewReleases,
+        ProviderHealthDegradedCategory => Icons.Material.Filled.Source,
         _ => SeverityIcon(entry.Severity)
     };
 

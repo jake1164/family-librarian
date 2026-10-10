@@ -80,6 +80,8 @@ public enum GutenbergFormatKind
     EpubImages,
     EpubNoImages,
     AudioMp3,
+    AudioM4b,
+    AudioOgg,
     Other
 }
 

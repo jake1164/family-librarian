@@ -2,6 +2,7 @@ using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Contracts.Operations;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Infrastructure.Providers;
 
 namespace FamilyLibrarian.Web.Readiness;
@@ -26,6 +27,7 @@ public sealed class SystemReadinessService(
     IProviderRegistry providerRegistry,
     IProviderSettingsStore providerSettings,
     IGutenbergCatalog gutenbergCatalog,
+    IExternalProviderStore externalProviders,
     ICwaSettingsStore cwaSettings,
     IAudiobookshelfSettingsStore audiobookshelfSettings)
 {
@@ -48,6 +50,23 @@ public sealed class SystemReadinessService(
             }
         }
 
+        var enabledExternalProviders = await externalProviders.ListEnabledAsync(cancellationToken);
+        foreach (var provider in enabledExternalProviders)
+        {
+            // A failed last test is the hard signal. A provider that answers
+            // but reports search or acquire as Degraded is also not working
+            // (protocol v2 §5: operations are the more specific signal), so it
+            // must not read as healthy just because the poll reached it.
+            var operationsDetail = DescribeNonAvailableOperations(provider);
+            if (provider.LastTestSucceeded == false || operationsDetail is not null)
+            {
+                degraded.Add(new DegradedSystemComponentResponse(
+                    SystemReadinessCategories.Source,
+                    provider.DisplayName,
+                    DescribeDetail(provider, operationsDetail)));
+            }
+        }
+
         var cwa = await cwaSettings.FindAsync(cancellationToken);
         if (cwa is { IsEnabled: true, LastTestSucceeded: false })
         {
@@ -63,5 +82,46 @@ public sealed class SystemReadinessService(
         }
 
         return new SystemReadinessResponse(degraded.Count == 0, degraded);
+    }
+
+    /// <summary>
+    /// Prefers the provider's own reported reasons (protocol v2 §5 <c>issues</c>)
+    /// over a generic sentence: they are what actually tells an admin what to
+    /// fix. Falls back to the operation-status text, then to the last test
+    /// message, when the provider reported none.
+    /// </summary>
+    private static string? DescribeDetail(ExternalProvider provider, string? operationsDetail)
+    {
+        if (ProviderHealthIssueText.Describe(provider.CachedHealthIssues) is { } reported
+            && (operationsDetail is not null || provider.LastTestSucceeded == false))
+        {
+            return reported;
+        }
+
+        return operationsDetail is null
+            ? provider.LastTestMessage
+            : $"{operationsDetail} Open the provider's management page for the cause.";
+    }
+
+    /// <summary>
+    /// Names each operation the provider last reported as anything other than
+    /// Available, e.g. "Search is degraded." Null when both are Available or
+    /// the provider has never reported them.
+    /// </summary>
+    private static string? DescribeNonAvailableOperations(ExternalProvider provider)
+    {
+        var parts = new List<string>();
+        AddIfNotAvailable(parts, "Search", provider.CachedSearchOperationStatus);
+        AddIfNotAvailable(parts, "Acquire", provider.CachedAcquireOperationStatus);
+        return parts.Count == 0 ? null : string.Join(" ", parts);
+
+        static void AddIfNotAvailable(List<string> parts, string name, string? status)
+        {
+            if (!string.IsNullOrWhiteSpace(status)
+                && !string.Equals(status, nameof(ProviderOperationalStatus.Available), StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add($"{name} is {status.ToLowerInvariant()}.");
+            }
+        }
     }
 }

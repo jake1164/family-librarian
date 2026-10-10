@@ -55,7 +55,12 @@ else
                     <MudText Typo="Typo.h6">@asset.WorkTitle</MudText>
                     <MediaTypeChip MediaType="@asset.MediaType" />
                     <MudSpacer />
-                    <RequestStatusChip Status="@asset.StorageState" />
+                    @* A stalled scan is one fact, not two: "Processing" + "Scanning" would
+                       contradict the "Scan stalled" chip, so the storage chip is dropped. *@
+                    @if (!IsScanStalled(asset))
+                    {
+                        <RequestStatusChip Status="@asset.StorageState" />
+                    }
                     <RequestStatusChip Status="@ScanStatus(asset)" />
                 </MudStack>
 
@@ -68,6 +73,22 @@ else
                 <ChildContent>
                 <MudStack Spacing="2" Class="pb-2">
                     <MudLink Href="@($"admin/requests/{asset.RequestId}")">View request</MudLink>
+                @if (asset.StorageState == "Unmatched")
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined">
+                        <MudText Typo="Typo.body2">
+                            @(asset.IdentityMismatchReason ?? "The file's embedded metadata could not be matched to the catalog entry, but no further detail was recorded.")
+                        </MudText>
+                    </MudAlert>
+                }
+                @if (asset.StorageState == "Quarantine")
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined">
+                        <MudText Typo="Typo.body2">
+                            @QuarantineExplanation(asset)
+                        </MudText>
+                    </MudAlert>
+                }
                 @if (asset.LatestEvaluation is not null)
                 {
                     <MudText Typo="Typo.body2" Class="mt-2">
@@ -79,6 +100,10 @@ else
                         else if (asset.StorageState != "Processing")
                         {
                             <span> · Scan did not complete</span>
+                        }
+                        else if (IsScanStalled(asset))
+                        {
+                            <span> · Scan stalled — no result was recorded. Retry the scan.</span>
                         }
                         else
                         {
@@ -116,7 +141,7 @@ else
                                    Color="Color.Primary"
                                    Disabled="@(busyAssetId is not null)"
                                    OnClick="@(() => EvaluateAsync(asset))">
-                            Retry security scan
+                            @(CanRescan(asset) ? "Rescan" : "Retry security scan")
                         </MudButton>
                     }
                     @if (CanDecide(asset))
@@ -143,6 +168,15 @@ else
                             Retry identity check
                         </MudButton>
                     }
+                    @if (asset.StorageState == "Unmatched" && overridingAssetId != asset.AssetId)
+                    {
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Warning"
+                                   Disabled="@(busyAssetId is not null)"
+                                   OnClick="@(() => StartOverride(asset))">
+                            Confirm this is correct
+                        </MudButton>
+                    }
                     @if (CanDiscard(asset))
                     {
                         <MudButton Variant="Variant.Outlined"
@@ -153,6 +187,31 @@ else
                         </MudButton>
                     }
                 </MudStack>
+                @if (overridingAssetId == asset.AssetId)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
+                        <MudText Typo="Typo.body2">
+                            Only confirm if you've checked the file itself (title/author page) against the reason above
+                            and are sure this is the right book. This skips the automatic identity check and approves
+                            the file for publishing.
+                        </MudText>
+                        <MudTextField T="string" @bind-Value="overrideReason" Class="mt-2"
+                                      Label="Why is this file correct? (required, shown in the audit log)"
+                                      Lines="2" Disabled="@(busyAssetId is not null)" />
+                        <MudStack Row="true" Spacing="2" Class="mt-2">
+                            <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small"
+                                       Disabled="@(busyAssetId is not null || string.IsNullOrWhiteSpace(overrideReason))"
+                                       OnClick="@(() => OverrideIdentityAsync(asset))">
+                                Approve anyway
+                            </MudButton>
+                            <MudButton Variant="Variant.Text" Size="Size.Small"
+                                       Disabled="@(busyAssetId is not null)"
+                                       OnClick="CancelOverride">
+                                Cancel
+                            </MudButton>
+                        </MudStack>
+                    </MudAlert>
+                }
                 </MudStack>
                 </ChildContent>
             </MudExpansionPanel>
@@ -164,6 +223,8 @@ else
     private IReadOnlyList<MediaAssetAdminResponse>? assets;
     private bool loadFailed;
     private Guid? busyAssetId;
+    private Guid? overridingAssetId;
+    private string? overrideReason;
 
     private int maximumCount = 50;
     private bool loading;
@@ -204,13 +265,36 @@ else
 
     private static string ScanStatus(MediaAssetAdminResponse asset) => asset.StorageState switch
     {
+        "Processing" when IsScanStalled(asset) => "ScanStalled",
         "Quarantine" => asset.LatestEvaluation is null ? "AwaitingScan" : "ScanInterrupted",
         "Processing" when asset.LatestEvaluation is null or { Status: "Pending" } => "Scanning",
         _ when asset.LatestEvaluation is { Status: "Pending" } => "ScanIncomplete",
         _ => asset.LatestEvaluation?.Status ?? "NotScanned"
     };
 
-    private static bool CanEvaluate(MediaAssetAdminResponse asset) => asset.StorageState == "Quarantine";
+    private static string QuarantineExplanation(MediaAssetAdminResponse asset) =>
+        !string.IsNullOrWhiteSpace(asset.ScanFailureReason) ? asset.ScanFailureReason
+        : asset.LatestEvaluation is null ? "Waiting for its first security scan."
+        : "The last scan did not complete and no reason was recorded. Retry the scan; if it fails again, check the host logs.";
+
+    // Mirrors the server's abandoned-evaluation threshold; the server re-checks
+    // it, so a stale client clock can only show or hide the button, never
+    // start a second scan of a live one.
+    private static readonly TimeSpan StalledScanAge = TimeSpan.FromMinutes(15);
+
+    private static bool IsScanStalled(MediaAssetAdminResponse asset) =>
+        asset.StorageState == "Processing" &&
+        asset.LatestEvaluation is { Status: "Pending" } pending &&
+        DateTimeOffset.UtcNow - pending.CreatedAtUtc >= StalledScanAge;
+
+    // A review-required scan is one the scanner could not finish (for example
+    // clamd hit a time or size limit). Besides approving or rejecting it by
+    // hand, an administrator can run the scan again once the cause is fixed.
+    private static bool CanRescan(MediaAssetAdminResponse asset) =>
+        asset.StorageState == "Processing" && asset.LatestEvaluation is { Status: "ReviewRequired" };
+
+    private static bool CanEvaluate(MediaAssetAdminResponse asset) =>
+        asset.StorageState == "Quarantine" || IsScanStalled(asset) || CanRescan(asset);
 
     private static bool CanDecide(MediaAssetAdminResponse asset) =>
         asset.StorageState == "Processing" &&
@@ -224,6 +308,31 @@ else
 
     private async Task RetryIdentityAsync(MediaAssetAdminResponse asset) =>
         await RunAsync(asset, () => MediaAssets.RetryIdentityAsync(asset.AssetId));
+
+    private void StartOverride(MediaAssetAdminResponse asset)
+    {
+        overridingAssetId = asset.AssetId;
+        overrideReason = null;
+    }
+
+    private void CancelOverride()
+    {
+        overridingAssetId = null;
+        overrideReason = null;
+    }
+
+    private async Task OverrideIdentityAsync(MediaAssetAdminResponse asset)
+    {
+        if (string.IsNullOrWhiteSpace(overrideReason))
+        {
+            return;
+        }
+
+        var reason = overrideReason;
+        overridingAssetId = null;
+        overrideReason = null;
+        await RunAsync(asset, () => MediaAssets.OverrideIdentityAsync(asset.AssetId, reason));
+    }
 
     private async Task RejectAsync(MediaAssetAdminResponse asset) =>
         await RunAsync(asset, () => MediaAssets.RejectAsync(asset.AssetId));

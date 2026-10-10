@@ -1,6 +1,5 @@
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Contracts.Providers;
-using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Providers;
 
 namespace FamilyLibrarian.Web.Endpoints;
@@ -23,10 +22,11 @@ internal static class ExternalProviderEndpoints
         adminExternalProviders.MapPut("/{id:guid}/details", SetExternalProviderDetailsAsync);
         adminExternalProviders.MapPut("/{id:guid}/enabled", SetExternalProviderEnabledAsync);
         adminExternalProviders.MapPut("/{id:guid}/recheck-schedule", SetExternalProviderRecheckScheduleAsync);
+        adminExternalProviders.MapPut("/{id:guid}/auto-acquire", SetExternalProviderAutoAcquireEnabledAsync);
+        adminExternalProviders.MapPut("/{id:guid}/automatic-attempt-limit", SetExternalProviderAutomaticAttemptLimitAsync);
         adminExternalProviders.MapPut("/{id:guid}/api-key", SetExternalProviderApiKeyAsync);
         adminExternalProviders.MapDelete("/{id:guid}/api-key", ClearExternalProviderApiKeyAsync);
         adminExternalProviders.MapPost("/{id:guid}/test", TestExternalProviderAsync);
-        adminExternalProviders.MapPut("/{id:guid}/egress-policy-override", SetExternalProviderEgressPolicyOverrideAsync);
         adminExternalProviders.MapDelete("/{id:guid}", RemoveExternalProviderAsync);
     }
 
@@ -65,6 +65,16 @@ internal static class ExternalProviderEndpoints
         return ToExternalProviderResult(await service.SetRecheckScheduleAsync(id, schedule, cancellationToken));
     }
 
+    private static async Task<IResult> SetExternalProviderAutoAcquireEnabledAsync(
+        Guid id, SetExternalProviderAutoAcquireEnabledRequest request, ExternalProviderAdminService service,
+        CancellationToken cancellationToken) =>
+        ToExternalProviderResult(await service.SetAutoAcquireEnabledAsync(id, request.Enabled, cancellationToken));
+
+    private static async Task<IResult> SetExternalProviderAutomaticAttemptLimitAsync(
+        Guid id, SetExternalProviderAutomaticAttemptLimitRequest request, ExternalProviderAdminService service,
+        CancellationToken cancellationToken) =>
+        ToExternalProviderResult(await service.SetAutomaticAttemptLimitAsync(id, request.Limit, cancellationToken));
+
     private static async Task<IResult> SetExternalProviderApiKeyAsync(
         Guid id, SetExternalProviderApiKeyRequest request, ExternalProviderAdminService service,
         CancellationToken cancellationToken) =>
@@ -77,27 +87,6 @@ internal static class ExternalProviderEndpoints
     private static async Task<IResult> TestExternalProviderAsync(
         Guid id, ExternalProviderAdminService service, CancellationToken cancellationToken) =>
         ToExternalProviderResult(await service.TestConnectionAsync(id, cancellationToken));
-
-    private static async Task<IResult> SetExternalProviderEgressPolicyOverrideAsync(
-        Guid id, SetExternalProviderEgressPolicyOverrideRequest request, ExternalProviderAdminService service,
-        CancellationToken cancellationToken)
-    {
-        EgressPolicy? policy = null;
-        if (!string.IsNullOrWhiteSpace(request.EgressPolicy))
-        {
-            if (!Enum.TryParse<EgressPolicy>(request.EgressPolicy, ignoreCase: true, out var parsed))
-            {
-                return Results.ValidationProblem(new Dictionary<string, string[]>
-                {
-                    ["externalProvider"] = ["That is not a known egress policy."]
-                });
-            }
-
-            policy = parsed;
-        }
-
-        return ToExternalProviderResult(await service.SetEgressPolicyOverrideAsync(id, policy, cancellationToken));
-    }
 
     private static async Task<IResult> RemoveExternalProviderAsync(
         Guid id, ExternalProviderAdminService service, CancellationToken cancellationToken)
@@ -124,15 +113,24 @@ internal static class ExternalProviderEndpoints
         status.BaseUrl,
         status.IsEnabled,
         status.RecheckSchedule,
+        status.AutoAcquireEnabled,
+        status.AutomaticAttemptLimit,
         status.HasApiKey,
         status.ApiKeyHint,
         status.ApiKeySetAtUtc,
         status.CachedProtocolVersion,
         status.CachedCapabilities,
-        status.CachedEgressPolicy,
-        status.EgressPolicyOverride,
-        status.EffectiveEgressPolicy,
+        status.CachedInstanceId,
+        status.InstanceReplacedSincePreviousTest,
+        status.CachedHealthStatus,
+        status.CachedSearchOperationStatus,
+        status.CachedAcquireOperationStatus,
+        status.CachedManagementUrl,
+        status.CachedDocumentationUrl,
         status.LastTestedAtUtc,
         status.LastTestSucceeded,
-        status.LastTestMessage);
+        status.LastTestMessage,
+        status.CachedHealthIssues
+            .Select(issue => new ExternalProviderHealthIssueResponse(issue.Operation, issue.Code, issue.Message))
+            .ToList());
 }
