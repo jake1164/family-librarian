@@ -222,6 +222,106 @@ public sealed class ExternalProviderMeteredRetryLimitEndpointTests
     }
 }
 
+/// <summary>
+/// A job the provider itself reports as <c>cancelled</c> is a failed attempt, in
+/// its own database: it must wake the fulfillment worker and rule the candidate
+/// out, not leave the format reverting to "Requested" with a "Submitted" attempt.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderCancelledJobEndpointTests
+{
+    private static WebTestFixture? _fixture;
+
+    [ClassInitialize]
+    public static async Task InitializeAsync(TestContext testContext)
+    {
+        ArgumentNullException.ThrowIfNull(testContext);
+        _fixture = await WebTestFixture.CreateAsync();
+    }
+
+    [ClassCleanup]
+    public static async Task CleanupAsync()
+    {
+        if (_fixture is not null)
+        {
+            await _fixture.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task AProviderCancelledJobIsRecordedAsAFailureAndTheNextCandidateIsTried() =>
+        await AssertFailureAdvancesToNextCandidateAsync(
+            _fixture, new RetryLoopExternalProviderClient
+            {
+                FailingJobState = ProviderAcquisitionJobLifecycleState.Cancelled
+            },
+            "cancelled-job-external");
+
+    [TestMethod]
+    public async Task AProtocolBreakingStatusFailsTheJobInsteadOfBeingPolledForever()
+    {
+        await using var ownFixture = await WebTestFixture.CreateAsync();
+        await AssertFailureAdvancesToNextCandidateAsync(
+            ownFixture, new RetryLoopExternalProviderClient { FailingJobBreaksProtocol = true },
+            "protocol-error-external");
+    }
+
+    private static async Task AssertFailureAdvancesToNextCandidateAsync(
+        WebTestFixture? testFixture, object fakeClient, string providerId)
+    {
+        var client = (RetryLoopExternalProviderClient)fakeClient;
+        var fixture = WebTestFixture.Require(testFixture);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(client);
+            });
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await RetryLoopSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(
+            AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+
+        await RetryLoopSupport.RegisterProviderAsync(admin, providerId: providerId);
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        Assert.AreEqual(RetryLoopExternalProviderClient.FailingReference, client.LastSubmittedCandidate);
+
+        var wakeUp = factory.Services.GetRequiredService<FamilyLibrarian.Web.Acquisition.AutomaticFulfillmentSignal>();
+        Assert.IsFalse(await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None));
+        await RetryLoopSupport.RunPollingAsync(factory);
+
+        Assert.IsTrue(
+            await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None),
+            "The failure must ask the fulfillment worker to run now.");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var declined = await database.DeclinedRequestCandidates
+                .Where(candidate => candidate.RequestId == request.Id)
+                .ToListAsync();
+            Assert.HasCount(1, declined, "The failed copy must be ruled out so it is not retried.");
+            Assert.AreEqual(RetryLoopExternalProviderClient.FailingReference, declined[0].ProviderResultId);
+        }
+
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        Assert.AreEqual(
+            RetryLoopExternalProviderClient.SucceedingReference, client.LastSubmittedCandidate,
+            "The next pass must advance to the next ranked candidate, not resubmit the failed one.");
+    }
+}
+
 file static class RetryLoopSupport
 {
     public static async Task SignInAsync(HttpClient client, string email, string password)
@@ -295,6 +395,12 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
 
     public const string TwinReference = "c_retail_twin";
 
+    /// <summary>The terminal state the failing candidate's job reports: Failed (default) or Cancelled.</summary>
+    public ProviderAcquisitionJobLifecycleState FailingJobState { get; init; } = ProviderAcquisitionJobLifecycleState.Failed;
+
+    /// <summary>When set, the failing candidate's status poll breaks the protocol instead of reporting a state.</summary>
+    public bool FailingJobBreaksProtocol { get; init; }
+
     public string? LastSubmittedCandidate { get; private set; }
 
     public List<string> SubmittedCandidates { get; } = [];
@@ -360,6 +466,18 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
     {
         var isFailing = _jobCandidates.GetValueOrDefault(jobId) == FailingReference;
+        if (isFailing && FailingJobBreaksProtocol)
+        {
+            throw new ExternalProviderProtocolException("The provider reported an unrecognized job state 'complete'.");
+        }
+
+        if (isFailing && FailingJobState == ProviderAcquisitionJobLifecycleState.Cancelled)
+        {
+            return Task.FromResult(new ExternalProviderJobStatus(
+                jobId, ProviderAcquisitionJobLifecycleState.Cancelled, Phase: null, Interaction: null, Progress: null,
+                Error: null, PollAfterSeconds: null));
+        }
+
         return Task.FromResult(isFailing
             ? new ExternalProviderJobStatus(
                 jobId, ProviderAcquisitionJobLifecycleState.Failed, Phase: null, Interaction: null, Progress: null,

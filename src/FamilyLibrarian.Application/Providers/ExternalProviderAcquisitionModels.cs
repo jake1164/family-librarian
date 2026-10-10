@@ -27,6 +27,9 @@ public enum ProviderAcquireOutcome
 /// <summary>A replay conflicted with a different request under the same idempotency key.</summary>
 public sealed class ExternalProviderSubmissionConflictException(string message) : Exception(message);
 
+/// <summary>A provider response broke the protocol (for example an unrecognized lifecycle state), so retrying the same call would not help.</summary>
+public sealed class ExternalProviderProtocolException(string message) : Exception(message);
+
 public sealed record ExternalProviderAcquireSubmission(
     ProviderAcquireOutcome Outcome,
     string? JobId,

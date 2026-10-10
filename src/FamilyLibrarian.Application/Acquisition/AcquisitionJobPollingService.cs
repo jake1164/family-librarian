@@ -121,6 +121,12 @@ public sealed class AcquisitionJobPollingService(
                     wasWaitingForInteraction, cancellationToken);
                 return;
             }
+            catch (ExternalProviderProtocolException exception)
+            {
+                await RecordFailureAsync(job, "PROVIDER_PROTOCOL_ERROR", exception.Message, false, null, null,
+                    wasWaitingForInteraction, cancellationToken);
+                return;
+            }
             catch (Exception exception) when (exception is HttpRequestException or TimeoutException or TaskCanceledException)
             {
                 Reschedule(job, TimeSpan.FromSeconds(30));
@@ -143,12 +149,32 @@ public sealed class AcquisitionJobPollingService(
             await jobs.SaveChangesAsync(cancellationToken);
             return;
         }
+        catch (ExternalProviderProtocolException exception)
+        {
+            await RecordFailureAsync(job, "PROVIDER_PROTOCOL_ERROR", exception.Message, false, null, null,
+                wasWaitingForInteraction, cancellationToken);
+            return;
+        }
 
         if (status.State == ProviderAcquisitionJobLifecycleState.Failed)
         {
             await RecordFailureAsync(
                 job, status.Error?.Code, status.Error?.Message, status.Error?.Retryable,
                 status.Error?.RetryAfterSeconds, status.Error?.DetailsJson, wasWaitingForInteraction, cancellationToken);
+            return;
+        }
+
+        // The provider itself ended the job. That is not the local admin-cancel
+        // flow (which never reaches this poller): nothing was delivered, so it
+        // must count as a failed attempt, or the format silently reverts to
+        // "Requested" while its last attempt still reads "Submitted".
+        if (status.State == ProviderAcquisitionJobLifecycleState.Cancelled)
+        {
+            await RecordFailureAsync(
+                job, status.Error?.Code ?? "PROVIDER_CANCELLED",
+                status.Error?.Message ?? "The provider cancelled the acquisition.",
+                status.Error?.Retryable ?? false, status.Error?.RetryAfterSeconds, status.Error?.DetailsJson,
+                wasWaitingForInteraction, cancellationToken);
             return;
         }
 

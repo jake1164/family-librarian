@@ -349,6 +349,12 @@ public sealed class DirectAcquisitionService(
             await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
             return ManualImportResult.Invalid("The provider could not confirm the original acquisition request. Review provider activity before retrying.");
         }
+        catch (ExternalProviderProtocolException exception)
+        {
+            job.RecordFailure("PROVIDER_PROTOCOL_ERROR", exception.Message, false, null, null, clock.UtcNow);
+            await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
+            return ManualImportResult.Invalid("The provider sent an invalid response. Review provider activity before retrying.");
+        }
         catch (Exception exception) when (exception is HttpRequestException or TimeoutException or TaskCanceledException)
         {
             job.Reschedule(now.AddSeconds(30), clock.UtcNow);

@@ -864,7 +864,10 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
             // A v1 provider's InProgress/Completed/Failed vocabulary — tolerated
             // rather than rejected while both protocol versions are in play.
             "inprogress" => ProviderAcquisitionJobLifecycleState.Running,
-            _ => ProviderAcquisitionJobLifecycleState.Running
+            // The v2 state set is closed (protocol doc §8). Guessing "Running" for
+            // anything else turned a malformed terminal state into a job polled forever.
+            _ => throw new ExternalProviderProtocolException(
+                $"The provider reported an unrecognized job state '{value ?? "(missing)"}'.")
         };
 
     private static ProviderOutputKind ParseOutputKind(string? value) => value?.ToLowerInvariant() switch
@@ -876,8 +879,25 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
     };
 
     /// <summary>Prefers the standard <c>Retry-After</c> header; falls back to the body-level <c>pollAfterSeconds</c> hint (protocol v2 §8).</summary>
-    private static int? ParsePollAfterSeconds(HttpResponseMessage response, JsonNode json) =>
-        (int?)response.Headers.RetryAfter?.Delta?.TotalSeconds ?? json["pollAfterSeconds"]?.GetValue<int?>();
+    private static int? ParsePollAfterSeconds(HttpResponseMessage response, JsonNode json)
+    {
+        double? seconds = response.Headers.RetryAfter?.Delta?.TotalSeconds;
+        if (seconds is null && json["pollAfterSeconds"] is JsonValue value && value.TryGetValue<double>(out var bodySeconds))
+        {
+            seconds = bodySeconds;
+        }
+
+        // Provider-controlled, so bounded here once for every caller: a negative
+        // or zero hint would leave the job permanently due and starve the poll
+        // batch; an enormous one would park it for years.
+        return seconds is { } hint && double.IsFinite(hint)
+            ? (int)Math.Clamp(hint, MinPollAfterSeconds, MaxPollAfterSeconds)
+            : null;
+    }
+
+    /// <summary>Bounds on a provider's polling hint; mirrored in the protocol document §8.</summary>
+    internal const int MinPollAfterSeconds = 1;
+    internal const int MaxPollAfterSeconds = 900;
 
     private async Task PollUntilCompletedAsync(HttpClient client, string jobPath, CancellationToken cancellationToken)
     {

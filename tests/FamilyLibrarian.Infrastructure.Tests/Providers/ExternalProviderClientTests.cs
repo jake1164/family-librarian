@@ -555,6 +555,85 @@ public sealed class ExternalProviderClientTests
     }
 
     [TestMethod]
+    [DataRow("""{"jobId":"j","state":"running","pollAfterSeconds":-5}""", 1)]
+    [DataRow("""{"jobId":"j","state":"running","pollAfterSeconds":0}""", 1)]
+    [DataRow("""{"jobId":"j","state":"running","pollAfterSeconds":2147483647}""", 900)]
+    [DataRow("""{"jobId":"j","state":"running","pollAfterSeconds":99999999999}""", 900)]
+    [DataRow("""{"jobId":"j","state":"running","pollAfterSeconds":7}""", 7)]
+    [DataRow("""{"jobId":"j","state":"running","pollAfterSeconds":"soon"}""", null)]
+    [DataRow("""{"jobId":"j","state":"running"}""", null)]
+    public async Task ThePollAfterHintIsClampedToTheSupportedRange(string body, int? expected)
+    {
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(new StaticSearchHandler(body)));
+
+        var status = await client.GetAcquireStatusAsync("http://provider.test", null, "j", CancellationToken.None);
+
+        Assert.AreEqual(expected, status.PollAfterSeconds);
+    }
+
+    [TestMethod]
+    public async Task AnOutOfRangeRetryAfterHeaderIsClampedToo()
+    {
+        var handler = new StaticSearchHandler("""{"jobId":"j","state":"running"}""", retryAfterSeconds: 86_400 * 365);
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(handler));
+
+        var status = await client.GetAcquireStatusAsync("http://provider.test", null, "j", CancellationToken.None);
+
+        Assert.AreEqual(900, status.PollAfterSeconds);
+    }
+
+    [TestMethod]
+    public async Task ASubmissionPollAfterHintIsClamped()
+    {
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(new StaticSearchHandler(
+            """{"jobId":"j","state":"queued","pollAfterSeconds":-30}""")));
+        var request = new ExternalAcquireRequest(Guid.NewGuid(), "ref", null, null, RequestMediaType.Ebook);
+
+        var submission = await client.SubmitAcquireAsync("http://provider.test", null, request, "key", CancellationToken.None);
+
+        Assert.AreEqual(1, submission.PollAfterSeconds);
+    }
+
+    [TestMethod]
+    [DataRow("""{"jobId":"j","state":"complete"}""")]
+    [DataRow("""{"jobId":"j","state":""}""")]
+    [DataRow("""{"jobId":"j"}""")]
+    public async Task AnUnknownOrMissingStatusStateIsAProtocolError(string body)
+    {
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(new StaticSearchHandler(body)));
+
+        await Assert.ThrowsExactlyAsync<ExternalProviderProtocolException>(() =>
+            client.GetAcquireStatusAsync("http://provider.test", null, "j", CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task AnUnknownSubmissionStateIsAProtocolError()
+    {
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(new StaticSearchHandler(
+            """{"jobId":"j","state":"started"}""")));
+        var request = new ExternalAcquireRequest(Guid.NewGuid(), "ref", null, null, RequestMediaType.Ebook);
+
+        await Assert.ThrowsExactlyAsync<ExternalProviderProtocolException>(() =>
+            client.SubmitAcquireAsync("http://provider.test", null, request, "key", CancellationToken.None));
+    }
+
+    [TestMethod]
+    [DataRow("queued", ProviderAcquisitionJobLifecycleState.Queued)]
+    [DataRow("RUNNING", ProviderAcquisitionJobLifecycleState.Running)]
+    [DataRow("cancelled", ProviderAcquisitionJobLifecycleState.Cancelled)]
+    [DataRow("InProgress", ProviderAcquisitionJobLifecycleState.Running)]
+    public async Task TheSixV2StatesAndTheLegacyInProgressAreAccepted(
+        string state, ProviderAcquisitionJobLifecycleState expected)
+    {
+        var client = new ExternalProviderClient(new RecordingHttpClientFactory(new StaticSearchHandler(
+            $$"""{"jobId":"j","state":"{{state}}"}""")));
+
+        var status = await client.GetAcquireStatusAsync("http://provider.test", null, "j", CancellationToken.None);
+
+        Assert.AreEqual(expected, status.State);
+    }
+
+    [TestMethod]
     public async Task AWrongOrMissingApiKeyIsRejectedWhenOneIsConfigured()
     {
         Environment.SetEnvironmentVariable("SAMPLE_PROVIDER_API_KEY", "expected-secret");
@@ -648,14 +727,23 @@ public sealed class ExternalProviderClientTests
         }
     }
 
-    private sealed class StaticSearchHandler(string payload) : HttpMessageHandler
+    private sealed class StaticSearchHandler(string payload, int? retryAfterSeconds = null) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(payload)
-            });
+            };
+            if (retryAfterSeconds is { } seconds)
+            {
+                response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+                    TimeSpan.FromSeconds(seconds));
+            }
+
+            return Task.FromResult(response);
+        }
     }
 }

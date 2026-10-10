@@ -603,7 +603,13 @@ checked again immediately — e.g. `2` for an active direct download, `30`
 for a browser waiting-queue, much longer for a step waiting on a human.
 Family Librarian enforces its own reasonable minimum/maximum bounds around
 whatever you suggest; it will not poll faster than a sane floor even if you
-ask for less, and will not wait indefinitely even if you ask for more.
+ask for less, and will not wait indefinitely even if you ask for more. Today
+the hint is clamped to 1–900 seconds; zero, negative, or non-numeric values
+never make a job "always due".
+
+A response whose `state` is missing or not one of the six values above is a
+protocol error: Family Librarian fails that job (`PROVIDER_PROTOCOL_ERROR`)
+rather than guessing a state and polling it indefinitely.
 
 ### Optional interaction control
 

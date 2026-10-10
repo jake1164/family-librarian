@@ -100,6 +100,37 @@ public sealed class M4bAssetIdentityVerifierTests
     }
 
     [TestMethod]
+    public async Task ATitleThatOnlyStartsWithTheExpectedTitleIsHeld()
+    {
+        var result = await VerifyAsync(
+            CreateVerifier("Dune", "Frank Herbert"),
+            BuildM4b(Tag("nam", "Dune Messiah"), Tag("ART", "Frank Herbert")));
+
+        Assert.IsFalse(result.IsMatch);
+        StringAssert.Contains(result.Reason, "Dune Messiah");
+    }
+
+    [TestMethod]
+    public async Task ASubtitledTitleWithoutAuthorTagIsHeld()
+    {
+        var result = await VerifyAsync(
+            CreateVerifier("Dune", "Frank Herbert"),
+            BuildM4b(Tag("nam", "Dune: Messiah")));
+
+        Assert.IsFalse(result.IsMatch);
+    }
+
+    [TestMethod]
+    public async Task ATitleDiffingOnlyInCaseAndPunctuationIsAccepted()
+    {
+        var result = await VerifyAsync(
+            CreateVerifier("Fourth Wing", "Rebecca Yarros"),
+            BuildM4b(Tag("nam", "fourth wing!"), Tag("ART", "Rebecca Yarros")));
+
+        Assert.IsTrue(result.IsMatch);
+    }
+
+    [TestMethod]
     public async Task AnAuthorTagThatMatchesNobodyIsHeld()
     {
         var result = await VerifyAsync(

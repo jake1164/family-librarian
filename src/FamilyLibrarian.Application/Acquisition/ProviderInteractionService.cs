@@ -174,7 +174,8 @@ public sealed class ProviderInteractionService(
                 new { job.Id, job.RequestId, job.RequestFormatId, job.ProviderId }, cancellationToken);
             return ProviderInteractionCommandOutcome.Of(ProviderInteractionCommandResult.Success);
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or NotSupportedException)
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException
+            or NotSupportedException or ExternalProviderProtocolException)
         {
             return ProviderInteractionCommandOutcome.Of(ProviderInteractionCommandResult.ProviderUnavailable);
         }

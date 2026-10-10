@@ -85,7 +85,15 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
             .Where(title => !string.IsNullOrWhiteSpace(title))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var titleMatches = titles.Any(title => expectedTitles.Any(expectedTitle => bookMatcher.TitleMatches(expectedTitle, title)));
+        // This is a trust boundary: the title must be the same work, not merely
+        // start with it ("Dune" must not accept "Dune Messiah"). The strict
+        // comparison is exact on the normalized title. It requires an author on
+        // both sides, so the expected author stands in for the observed one here
+        // -- the author tags are judged separately below, and a file with none
+        // is judged on its exact title alone.
+        var titleAuthor = string.IsNullOrWhiteSpace(expected.PrimaryAuthor) ? "Unknown" : expected.PrimaryAuthor;
+        var titleMatches = titles.Any(title => expectedTitles.Any(expectedTitle =>
+            bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, title, titleAuthor)));
         var authorChecked = authors.Count > 0 && !string.IsNullOrWhiteSpace(expected.PrimaryAuthor);
         var authorMatches = !authorChecked || authors.Any(author => bookMatcher.AuthorMatches(expected.PrimaryAuthor, author));
 
