@@ -20,7 +20,7 @@ External acquisition providers grow up: a documented provider protocol (v2) with
 ### Versions
 
 - The status footer shows the running Family Librarian version, taken from the release tag
-- **Sources** shows each external provider's own version (from its manifest) beside its protocol version, refreshed on Test Connection
+- **Sources** shows each external provider's own version (from its manifest) beside its protocol version, kept current by the periodic health check as well as Test Connection
 
 ### Matching and review
 

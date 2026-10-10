@@ -161,6 +161,19 @@ all EF Core migrations, do not downgrade a production database casually: a
 rollback executes migration `Down` operations and may lose data. See
 [Microsoft's migration deployment guidance](https://learn.microsoft.com/ef/core/managing-schemas/migrations/applying).
 
+## Versions
+
+The running Family Librarian version is shown in the status footer for every
+signed-in user. Release images take it from the git tag (`v1.0.0-alpha.5` shows as
+`1.0.0-alpha.5`, passed to the Dockerfile as the `APP_VERSION` build argument);
+a local build shows the `Version` in `Directory.Build.props`, so bump that value
+when you start a new release line.
+
+Each external provider's own version, as declared by its manifest, appears as a
+"Version" chip on **Sources**. It refreshes on **Test Connection** and on the
+periodic background health check (about every 15 minutes), so a provider
+upgrade shows up without any manual step.
+
 ## Matrix chat notifications
 
 Matrix is an optional second notification channel beside SMTP. Every notification
