@@ -275,8 +275,11 @@ public sealed class ExternalProviderClientTests
     [DataRow(" Example indexer · usenet · 679 grabs ", "Example indexer · usenet · 679 grabs")]
     [DataRow(null, null)]
     [DataRow("", null)]
-    [DataRow(" \r\n\t\u0000 ", null)]
-    [DataRow("Example\r\n indexer\t ·  usenet\u0000\u0007", "Example indexer · usenet")]
+    // Rows that carry control characters need an explicit DisplayName: the
+    // default name embeds the raw arguments, and test explorers (C# Dev Kit)
+    // reject a test ID containing them, which aborts discovery of the project.
+    [DataRow(" \r\n\t\u0000 ", null, DisplayName = "Only whitespace and control characters")]
+    [DataRow("Example\r\n indexer\t ·  usenet\u0000\u0007", "Example indexer · usenet", DisplayName = "Control characters inside the text")]
     [DataRow("<script>alert(1)</script> & <b>origin</b>", "<script>alert(1)</script> & <b>origin</b>")]
     public async Task SearchNormalizesAdministratorSourceSummary(string? supplied, string? expected)
     {

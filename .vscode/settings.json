@@ -1,6 +1,7 @@
 {
   "dotnet.defaultSolution": "FamilyLibrarian.slnx",
   "dotnet.server.useOmnisharp": false,
+  "dotnet.testWindow.disableAutoDiscovery": true,
   "files.exclude": {
     "**/bin": true,
     "**/obj": true
