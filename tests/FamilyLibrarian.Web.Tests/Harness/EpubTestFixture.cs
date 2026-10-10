@@ -23,7 +23,8 @@ public static class EpubTestFixture
     public static byte[] BuildMinimalEpubBytes(
         string title = "The Hobbit",
         string author = "J. R. R. Tolkien",
-        bool withReadingOrder = true)
+        bool withReadingOrder = true,
+        string? subject = null)
     {
         using var stream = new MemoryStream();
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
@@ -53,6 +54,7 @@ public static class EpubTestFixture
                   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
                     <dc:title>{title}</dc:title>
                     <dc:creator>{author}</dc:creator>
+                    {(subject is null ? string.Empty : $"<dc:subject>{subject}</dc:subject>")}
                   </metadata>
                   {(withReadingOrder
                     ? "<manifest><item id=\"c1\" href=\"chapter1.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c1\"/></spine>"

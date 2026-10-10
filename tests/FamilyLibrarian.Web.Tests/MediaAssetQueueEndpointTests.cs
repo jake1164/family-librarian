@@ -216,6 +216,41 @@ public sealed class MediaAssetQueueEndpointTests
     }
 
     [TestMethod]
+    public async Task ASampleMarkedEpubIsStillApprovedAsBeforeButTheCompletenessCueIsRecorded()
+    {
+        // M1-3b is evidence only: identity matches, the scan is clean, so the decision is unchanged
+        // (approved and published). The pre-approval hold on this cue arrives in M1-5.
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        var (requestId, formatId) = await CreateEbookRequestAsync(client);
+
+        var upload = await client.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(EpubTestFixture.BuildMinimalEpubBytes(subject: "Free Sample"), "book.epub"));
+        var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        Assert.IsNotNull(imported);
+
+        var queue = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
+        Assert.IsFalse(queue!.Assets.Any(asset => asset.AssetId == imported.MediaAssetId), "Decision unchanged: still approved.");
+
+        var recent = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/recent?limit=100");
+        var asset = recent!.Assets.Single(entry => entry.AssetId == imported.MediaAssetId);
+        Assert.IsNotNull(asset.Evidence);
+        var cue = asset.Evidence.Items.Single(item => item.Code == "artifact.completeness.sample_marker_in_metadata");
+        Assert.AreEqual("Completeness", cue.Dimension);
+        Assert.AreEqual("Condition", cue.Polarity);
+        Assert.AreEqual("subject:sample", cue.Value);
+        Assert.AreEqual("artifact.identity_corroboration.corroborated",
+            asset.Evidence.Items.Single(item => item.FindingId == "ev-corroboration").Code,
+            "A completeness cue is not an identity contradiction.");
+        Assert.IsTrue(asset.Evidence.Items.Any(item => item.Code == "artifact.completeness.reading_order_counted"));
+    }
+
+    [TestMethod]
     public async Task AnEpubWithAnEmptySpineIsRejectedBeforeApprovalAndTheDefectIsRecorded()
     {
         // E03: the title and author match the catalog and the scan is clean, so before M1-3a this

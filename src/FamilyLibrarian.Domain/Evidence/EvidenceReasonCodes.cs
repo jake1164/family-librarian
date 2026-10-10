@@ -149,6 +149,24 @@ public static class EvidenceReasonCodes
     public static class ArtifactCompleteness
     {
         public const string NotAssessed = "artifact.completeness.not_assessed";
+
+        /// <summary>Measured reading-order and navigation counts. Informational; no judgment.</summary>
+        public const string ReadingOrderCounted = "artifact.completeness.reading_order_counted";
+
+        /// <summary>Cues were checked and none found. NOT proof of completeness.</summary>
+        public const string NoCueDetected = "artifact.completeness.no_cue_detected";
+
+        /// <summary>The package metadata itself labels the file a sample, excerpt, preview or teaser.</summary>
+        public const string SampleMarkerInMetadata = "artifact.completeness.sample_marker_in_metadata";
+
+        /// <summary>Table-of-contents links point at files that are not in the archive.</summary>
+        public const string TocTargetsMissing = "artifact.completeness.toc_targets_missing";
+
+        /// <summary>Reading-order items point at files that are not in the archive.</summary>
+        public const string SpineContentMissing = "artifact.completeness.spine_content_missing";
+
+        /// <summary>The same file is listed more than once in the reading order.</summary>
+        public const string DuplicateReadingOrderItems = "artifact.completeness.duplicate_reading_order_items";
     }
 
     /// <summary>Malware and safety scanning results.</summary>

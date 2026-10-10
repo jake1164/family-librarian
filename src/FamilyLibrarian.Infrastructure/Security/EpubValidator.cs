@@ -221,7 +221,7 @@ public sealed class EpubValidator : IAssetValidator
     }
 
     /// <summary>Resolves a manifest href against the package directory, or <see langword="null"/> when it does not name a local archive file.</summary>
-    private static string? ResolveArchivePath(string packageDirectory, string href)
+    internal static string? ResolveArchivePath(string packageDirectory, string href)
     {
         var reference = href.Split('#', '?')[0];
         if (reference.Length == 0 || reference.Contains("://", StringComparison.Ordinal) || reference.StartsWith('/'))

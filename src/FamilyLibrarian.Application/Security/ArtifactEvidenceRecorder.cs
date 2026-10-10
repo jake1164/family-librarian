@@ -139,7 +139,10 @@ public sealed class ArtifactEvidenceRecorder(
                 PipelineSource, $"preConfirmed={asset.IdentityPreConfirmed};provider={provider ?? "unknown"}");
 
             var noVerifier = result.VerifierId == NoVerifierId;
-            var contradicted = result.Facts.Any(fact => fact.Polarity == EvidencePolarity.Negative);
+            // Only a negative observation about identity itself is a contradiction; a completeness or
+            // language cue must never be read as one.
+            var contradicted = result.Facts.Any(fact =>
+                fact.Dimension == EvidenceDimension.IdentityCorroboration && fact.Polarity == EvidencePolarity.Negative);
             var (corroborationCode, corroborationPolarity) = result switch
             {
                 { IsMatch: true } when noVerifier => (EvidenceReasonCodes.ArtifactIdentityCorroboration.Unavailable, EvidencePolarity.Unknown),

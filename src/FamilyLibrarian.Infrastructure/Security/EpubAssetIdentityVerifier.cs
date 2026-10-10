@@ -83,8 +83,9 @@ public sealed class EpubAssetIdentityVerifier(
                 .ToArray();
             var titleMatches = titles.Any(title => expectedTitles.Any(expectedTitle => bookMatcher.TitleMatches(expectedTitle, title)));
             var authorMatches = creators.Any(creator => bookMatcher.AuthorMatches(expected.PrimaryAuthor, creator));
-            // Observations only (recorded as evidence); they never feed the verdict below.
-            var facts = new List<IdentityFact>
+            // Observations only (recorded as evidence); they never feed the verdict below. Completeness
+            // cues are inspected best-effort and can never change the outcome (M1-3b).
+            var facts = new List<IdentityFact>(EpubCompletenessInspector.Inspect(archive, rootfilePath, expectedTitles))
             {
                 IdentityFacts.Title(titles.Count > 0, titleMatches),
                 IdentityFacts.Author(creators.Count > 0, authorMatches)
