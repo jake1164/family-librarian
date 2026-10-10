@@ -3,14 +3,13 @@ using FamilyLibrarian.Application.Matching;
 namespace FamilyLibrarian.Infrastructure.Tests.Characterization;
 
 /// <summary>
-/// M1-0 regression guard for <see cref="IAmbiguityResolver"/> (alpha.6 owner
-/// requirement 1). Today <see cref="BookMatchService"/> promotes ANY non-null
-/// resolver pick straight to <see cref="BookMatchDecision.Match"/>, which would let
-/// advisory (e.g. model) output independently produce a match. The Web.Tests
-/// guard <c>OnlyTheNoOpAmbiguityResolverExists</c> keeps that unreachable by
-/// forbidding any other implementation; this test pins the contract defect itself
-/// as KnownGap R01 so it cannot be forgotten. Fixing it is production work
-/// (D-7) and is deliberately not part of M1-0.
+/// Regression guard for <see cref="IAmbiguityResolver"/> (alpha.6 owner requirement 1).
+/// M1-0 pinned KnownGap R01: <see cref="BookMatchService"/> promoted ANY non-null
+/// resolver pick straight to <see cref="BookMatchDecision.Match"/>. The R01 safety fix
+/// made the resolver advisory (<see cref="BookMatchResult.AdvisoryPick"/>), so R01 is
+/// now a resolved case that pins the corrected behavior. Broader scenarios live in
+/// <c>BookMatchServiceTests</c>; the Web.Tests guard
+/// <c>OnlyTheNoOpAmbiguityResolverExists</c> remains as defense in depth until M4-2.
 /// </summary>
 [TestClass]
 public sealed class AmbiguityResolverCharacterizationTests
@@ -18,13 +17,12 @@ public sealed class AmbiguityResolverCharacterizationTests
     private static readonly CharacterizationCase R01 = new(
         "R01",
         "A resolver returning a non-null pick on an Ambiguous result",
-        "Match (advisory pick promoted to a match)",
-        "Ambiguous (advisory output never produces a Match by itself)");
+        "Ambiguous (advisory pick attached, not promoted)");
 
     internal static IReadOnlyList<CharacterizationCase> Cases { get; } = [R01];
 
     [TestMethod]
-    public async Task ANonNullAdvisoryPickIsCurrentlyPromotedToAMatch()
+    public async Task ANonNullAdvisoryPickIsAttachedButNeverPromotedToAMatch()
     {
         var first = new CandidateBook("a", "Dune", "Frank Herbert");
         var second = new CandidateBook("b", "Dune", "Frank Herbert");
@@ -33,7 +31,9 @@ public sealed class AmbiguityResolverCharacterizationTests
 
         var result = await service.MatchByTitleAuthorAsync("Dune", "Frank Herbert", [first, second], CancellationToken.None);
 
-        var actual = result.Decision == BookMatchDecision.Match ? "Match (advisory pick promoted to a match)" : result.Decision.ToString();
+        var actual = result is { Decision: BookMatchDecision.Ambiguous, MatchedId: null, AdvisoryPick.ExternalId: "a" }
+            ? "Ambiguous (advisory pick attached, not promoted)"
+            : $"{result.Decision} matched={result.MatchedId ?? "none"} pick={result.AdvisoryPick?.ExternalId ?? "none"}";
         Assert.AreEqual(R01.Observed, actual);
     }
 

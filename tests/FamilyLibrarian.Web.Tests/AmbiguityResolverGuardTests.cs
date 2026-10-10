@@ -6,12 +6,12 @@ using FamilyLibrarian.Web.Communications;
 namespace FamilyLibrarian.Web.Tests;
 
 /// <summary>
-/// Alpha.6 M1-0 guard. <see cref="BookMatchService"/> promotes any non-null
-/// <see cref="IAmbiguityResolver"/> pick straight to a Match, so until the contract
-/// is redefined (D-7, M4-2) no resolver other than <see cref="NoOpAmbiguityResolver"/>
-/// may exist anywhere in the product assemblies. Adding one must fail this test and
-/// force the contract decision first. The contract defect itself is pinned as
-/// KnownGap R01 in Infrastructure.Tests.
+/// Alpha.6 defense in depth. Since the R01 safety fix <see cref="BookMatchService"/>
+/// treats an <see cref="IAmbiguityResolver"/> pick as advisory and never promotes it
+/// to a Match, so this is no longer the only protection. It still forbids any
+/// resolver other than <see cref="NoOpAmbiguityResolver"/> in the product assemblies
+/// until the M4-2 model-gateway design deliberately introduces one; adding one must
+/// fail this test and force that review.
 /// </summary>
 [TestClass]
 public sealed class AmbiguityResolverGuardTests
