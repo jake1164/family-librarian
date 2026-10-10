@@ -11,7 +11,7 @@ namespace FamilyLibrarian.Infrastructure.Tests.Characterization;
 [TestClass]
 public sealed class CandidateAssessmentCharacterizationTests
 {
-    private static readonly BookIdentity Requested = new(
+    internal static readonly BookIdentity Requested = new(
         CharacterizationFixtures.Title, CharacterizationFixtures.Author, [],
         Series: [new BookSeries("The Ember Cycle", "3")], Language: "en");
 

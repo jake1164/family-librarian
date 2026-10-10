@@ -819,9 +819,13 @@ public sealed class ExternalProviderReviewCandidatePresentationEndpointTests
         Assert.AreEqual("EligibleForChecks", identityEvidence.AcquisitionSuitability);
         Assert.AreEqual("Exact", identityEvidence.TitleEvidence);
         Assert.HasCount(0, identityEvidence.Contradictions);
+        Assert.IsNotNull(identityEvidence.Findings);
+        Assert.IsTrue(identityEvidence.Findings.Any(finding => finding.Id == "ev-title" && finding.Code == "candidate.title.exact" && finding.Polarity == "Positive"),
+            "Admin diagnostics must expose the stable evidence code for the title finding.");
         using var anonymous = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         Assert.AreEqual(System.Net.HttpStatusCode.Unauthorized, (await anonymous.GetAsync(debugUri)).StatusCode);
         Assert.IsFalse(rawResponse.Contains("identityEvidence", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(rawResponse.Contains("candidate.title", StringComparison.OrdinalIgnoreCase), "Evidence codes are administrator-only.");
         Assert.IsFalse(rawResponse.Contains("normalizedRelease", StringComparison.OrdinalIgnoreCase));
         Assert.IsFalse(rawResponse.Contains("unclassifiedTokens", StringComparison.OrdinalIgnoreCase));
     }

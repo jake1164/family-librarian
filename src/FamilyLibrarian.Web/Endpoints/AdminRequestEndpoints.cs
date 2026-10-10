@@ -505,7 +505,9 @@ internal static class AdminRequestEndpoints
                 series.State.ToString(), series.Name, series.ExpectedPosition, series.ObservedPosition)).ToArray(),
             evidence.ReleaseEvidence.UnexplainedTokens, evidence.Contradictions,
             evidence.Conditions.Select(condition => condition.Reason).ToArray(), evidence.Reasons,
-            evidence.ReleaseEvidence.Part?.Number, evidence.ReleaseEvidence.Part?.Total);
+            evidence.ReleaseEvidence.Part?.Number, evidence.ReleaseEvidence.Part?.Total,
+            evidence.Findings.Select(finding => new AdminCandidateEvidenceFindingResponse(
+                finding.Id, finding.Code, finding.Polarity.ToString(), finding.Text)).ToArray());
     }
 
     private static async Task<IResult> ChangeAdminRequestStatusAsync(

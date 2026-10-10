@@ -1,3 +1,4 @@
+using FamilyLibrarian.Domain.Evidence;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using FamilyLibrarian.Application.Matching;
@@ -157,12 +158,12 @@ public static partial class ExternalReleaseNameEvidence
         var qualifiers = StructuralQualifiers().Matches(name).Select(match =>
             DeterministicBookMatcher.NormalizeWords(match.Value).ToUpperInvariant()).Distinct(StringComparer.Ordinal)
             .Where(value => title?.Observed is null || !(" " + title.Observed + " ").Contains(" " + value + " ", StringComparison.Ordinal)).ToArray();
-        var conditions = qualifiers.Where(value => value != "UNABRIDGED").Select(value => new ReleaseCondition(ReleaseConditionKind.EditionReview, $"Release qualifier requires completeness or edition review: {value}.")).ToList();
+        var conditions = qualifiers.Where(value => value != "UNABRIDGED").Select(value => new ReleaseCondition(ReleaseConditionKind.EditionReview, $"Release qualifier requires completeness or edition review: {value}.", EvidenceReasonCodes.CandidateCondition.QualifierReview)).ToList();
         if (part.Name.Contains('/', StringComparison.Ordinal) || Regex.IsMatch(name, @"\s&\s", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-            conditions.Add(new(ReleaseConditionKind.EditionReview, "Combined-work or slash-separated release needs review."));
-        if (part.Evidence is { Total: not 1 } fragment) conditions.Add(new(ReleaseConditionKind.CompanionParts, $"{fragment.Description}: companion completeness must be resolved."));
-        if (part.Evidence is null && PartLikeMarker().IsMatch(name)) conditions.Add(new(ReleaseConditionKind.MalformedStructure, "Part numbering is malformed or ambiguous."));
-        if (BookLikeMarker().IsMatch(name) && !bookNumber.Success) conditions.Add(new(ReleaseConditionKind.MalformedStructure, "Book-number packaging is not interpretable."));
+            conditions.Add(new(ReleaseConditionKind.EditionReview, "Combined-work or slash-separated release needs review.", EvidenceReasonCodes.CandidateCondition.CombinedWork));
+        if (part.Evidence is { Total: not 1 } fragment) conditions.Add(new(ReleaseConditionKind.CompanionParts, $"{fragment.Description}: companion completeness must be resolved.", EvidenceReasonCodes.CandidateCondition.CompanionParts));
+        if (part.Evidence is null && PartLikeMarker().IsMatch(name)) conditions.Add(new(ReleaseConditionKind.MalformedStructure, "Part numbering is malformed or ambiguous.", EvidenceReasonCodes.CandidateCondition.MalformedPartNumbering));
+        if (BookLikeMarker().IsMatch(name) && !bookNumber.Success) conditions.Add(new(ReleaseConditionKind.MalformedStructure, "Book-number packaging is not interpretable.", EvidenceReasonCodes.CandidateCondition.MalformedBookNumber));
         foreach (var qualifier in qualifiers) ConsumePhrase(qualifier);
 
         string? language = null;

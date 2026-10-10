@@ -223,6 +223,12 @@ public sealed record AdminProviderDebugCandidateResponse(
 public sealed record AdminCandidateSeriesEvidenceResponse(
     string State, string Name, string? RequestedPosition, string? ReleasePosition);
 
+/// <summary>
+/// One stable, citable observation. <paramref name="Code"/> is the contract (a Domain-owned reason code);
+/// <paramref name="Text"/> is advisory prose.
+/// </summary>
+public sealed record AdminCandidateEvidenceFindingResponse(string Id, string Code, string Polarity, string Text);
+
 /// <summary>Safe bibliographic projection, available only in administrator diagnostics.</summary>
 public sealed record AdminCandidateIdentityEvidenceResponse(
     string WorkIdentity, string AcquisitionSuitability, string RequestedTitle, string? RequestedAuthor,
@@ -230,7 +236,8 @@ public sealed record AdminCandidateIdentityEvidenceResponse(
     string LanguageEvidence, string? NormalizedRelease, IReadOnlyList<string> Tokens,
     IReadOnlyList<AdminCandidateSeriesEvidenceResponse> Series, IReadOnlyList<string> UnclassifiedTokens,
     IReadOnlyList<string> Contradictions, IReadOnlyList<string> Conditions, IReadOnlyList<string> Reasons,
-    int? PartNumber, int? PartTotal);
+    int? PartNumber, int? PartTotal,
+    IReadOnlyList<AdminCandidateEvidenceFindingResponse>? Findings = null);
 
 public sealed record RequestParticipantResponse(string DisplayName, string Email, string? Note, bool Withdrawn);
 

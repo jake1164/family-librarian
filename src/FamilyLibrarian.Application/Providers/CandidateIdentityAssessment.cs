@@ -1,3 +1,4 @@
+using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Matching;
 
@@ -16,8 +17,12 @@ public sealed record CandidateIdentityAssessment(
     ReleaseNameVerdict ReleaseEvidence, ReleaseTitleEvidence TitleEvidence,
     AuthorAffinityResult AuthorEvidence, IReadOnlyList<SeriesIdentityEvidence> SeriesEvidence,
     IdentityEvidenceState LanguageEvidence, IReadOnlyList<string> Contradictions,
-    IReadOnlyList<ReleaseCondition> Conditions, WorkIdentityDecision Decision, IReadOnlyList<string> Reasons)
+    IReadOnlyList<ReleaseCondition> Conditions, WorkIdentityDecision Decision, IReadOnlyList<string> Reasons,
+    IReadOnlyList<EvidenceFinding>? Findings = null)
 {
+    /// <summary>Stable, citable observations derived from the fields above. Never an input to <see cref="Decision"/>.</summary>
+    public IReadOnlyList<EvidenceFinding> Findings { get; init; } = Findings ?? [];
+
     public WorkIdentityDecision WorkIdentity => Decision == WorkIdentityDecision.MatchWithConditions
         ? WorkIdentityDecision.Match : Decision;
 
@@ -88,15 +93,16 @@ public static class DeterministicCandidateIdentityResolver
             .Select(value => $"Series {value.Name} position conflicts: requested {value.ExpectedPosition}, observed {value.ObservedPosition}."));
         if (languageState == IdentityEvidenceState.Conflicting) contradictions.Add($"Language conflicts: requested {requested.Language ?? "default accepted language"}, observed {language}.");
         var conditions = (release.Conditions ?? []).Concat(structuredName.Conditions ?? []).Distinct().ToList();
-        if (source.Release?.IsCollection == true) conditions.Add(new(ReleaseConditionKind.EditionReview, "Structured release is a collection."));
-        if (source.Release?.IsSample == true) conditions.Add(new(ReleaseConditionKind.EditionReview, "Structured release is a sample."));
-        if (source.Release?.IsAbridged == true && source.Release.IsUnabridged != true) conditions.Add(new(ReleaseConditionKind.EditionReview, "Structured release is abridged."));
+        if (source.Release?.IsCollection == true) conditions.Add(new(ReleaseConditionKind.EditionReview, "Structured release is a collection.", EvidenceReasonCodes.CandidateCondition.Collection));
+        if (source.Release?.IsSample == true) conditions.Add(new(ReleaseConditionKind.EditionReview, "Structured release is a sample.", EvidenceReasonCodes.CandidateCondition.Sample));
+        if (source.Release?.IsAbridged == true && source.Release.IsUnabridged != true) conditions.Add(new(ReleaseConditionKind.EditionReview, "Structured release is abridged.", EvidenceReasonCodes.CandidateCondition.Abridged));
         var assessment = new CandidateIdentityAssessment(requested, new CandidateSourceMetadata(
             source.ProviderReference, source.Work, source.Edition, source.Release, source.ExtensionsJson), release, title, affinity, seriesEvidence,
             languageState, contradictions, conditions, WorkIdentityDecision.Ambiguous,
             [title.Reason, $"Author evidence: {affinity.Kind}.", "Unclassified descriptors are preserved without a penalty."]);
         var decision = contradictions.Count > 0 ? WorkIdentityDecision.Mismatch : !assessment.HasStrongTitle
             ? WorkIdentityDecision.Ambiguous : conditions.Count > 0 ? WorkIdentityDecision.MatchWithConditions : WorkIdentityDecision.Match;
-        return assessment with { Decision = decision };
+        var decided = assessment with { Decision = decision };
+        return decided with { Findings = CandidateEvidenceFindings.Build(decided) };
     }
 }
