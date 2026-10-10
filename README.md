@@ -14,6 +14,8 @@ This repository contains the current design documents for **Family Librarian**, 
 6. [UI Conventions](docs/07-ui-conventions.md)
 7. [Book Matching Design Findings](docs/family-librarian-book-matching-design-findings.md)
 
+Release history is in the [Changelog](CHANGELOG.md).
+
 These documents are intended to be living specifications and should be updated as technical spikes and implementation decisions resolve open questions.
 
 ## Development startup

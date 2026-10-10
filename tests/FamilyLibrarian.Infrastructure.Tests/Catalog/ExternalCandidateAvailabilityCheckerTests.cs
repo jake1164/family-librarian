@@ -105,7 +105,7 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
     [TestMethod]
     public async Task TheLiveOnyxStormPartsFormOneCompleteSetThatMayBeFetchedAutomatically()
     {
-        // The exact release names a live Prowlarr search returned: part 1 carries
+        // The exact release names a live an indexer search returned: part 1 carries
         // a misspelt author and trailing genre words, part 2 is bare.
         var context = new TestContext();
         var provider = NewProvider("example-source");

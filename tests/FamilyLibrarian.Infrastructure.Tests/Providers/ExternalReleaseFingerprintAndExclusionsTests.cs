@@ -16,7 +16,7 @@ public sealed class ExternalReleaseFingerprintAndExclusionsTests
 
     private static FulfillmentOption Option(string resultId, string? releaseName, long? sizeBytes) =>
         new(
-            ProviderId: "prowlarr",
+            ProviderId: "example-indexer",
             ProviderResultId: resultId,
             WorkId: Guid.Empty,
             EditionId: null,
@@ -75,10 +75,10 @@ public sealed class ExternalReleaseFingerprintAndExclusionsTests
         var request = NewRequest(out var formatId);
         var failed = Option("c_first", "Ray.Bradbury-Fahrenheit.451", 269_285_000);
         request.RecordAutomaticCandidateFailure(
-            formatId, "prowlarr", failed.ProviderResultId, "Could not repair.", Now,
+            formatId, "example-indexer", failed.ProviderResultId, "Could not repair.", Now,
             ExternalReleaseFingerprint.Compute(failed.ReleaseName, failed.SizeBytes));
 
-        var exclusions = ExternalCandidateExclusions.From(request.DeclinedCandidates, "prowlarr", formatId);
+        var exclusions = ExternalCandidateExclusions.From(request.DeclinedCandidates, "example-indexer", formatId);
 
         Assert.IsTrue(exclusions.Excludes(failed));
         Assert.IsTrue(
@@ -99,10 +99,10 @@ public sealed class ExternalReleaseFingerprintAndExclusionsTests
         var request = NewRequest(out var formatId);
         request.MarkNeedsReview(
             RequestReviewCategory.PreferenceAmbiguity, "Two editions.", Now,
-            [new RequestReviewCandidateInput(formatId, "prowlarr", "c_declined", "Fahrenheit 451", "Ray Bradbury", "en", null, null, null, false)]);
+            [new RequestReviewCandidateInput(formatId, "example-indexer", "c_declined", "Fahrenheit 451", "Ray Bradbury", "en", null, null, null, false)]);
         request.DismissReviewPreference(null, Now);
 
-        var exclusions = ExternalCandidateExclusions.From(request.DeclinedCandidates, "prowlarr", formatId);
+        var exclusions = ExternalCandidateExclusions.From(request.DeclinedCandidates, "example-indexer", formatId);
 
         Assert.IsTrue(exclusions.Excludes(Option("c_declined", "Ray.Bradbury-Fahrenheit.451", 269_285_000)));
         Assert.IsFalse(exclusions.Excludes(Option("c_lookalike", "Ray.Bradbury-Fahrenheit.451", 269_285_000)));
@@ -113,10 +113,10 @@ public sealed class ExternalReleaseFingerprintAndExclusionsTests
     public void TheCandidateBeingFetchedIsNeverExcludedByItsOwnEarlierEntry()
     {
         var request = NewRequest(out var formatId);
-        request.RecordAutomaticCandidateFailure(formatId, "prowlarr", "c_retry", "Timed out.", Now);
+        request.RecordAutomaticCandidateFailure(formatId, "example-indexer", "c_retry", "Timed out.", Now);
 
         var exclusions = ExternalCandidateExclusions.From(
-            request.DeclinedCandidates, "prowlarr", formatId, exceptResultId: "c_retry");
+            request.DeclinedCandidates, "example-indexer", formatId, exceptResultId: "c_retry");
 
         Assert.IsFalse(exclusions.Excludes(Option("c_retry", null, null)));
     }
@@ -128,10 +128,10 @@ public sealed class ExternalReleaseFingerprintAndExclusionsTests
             Guid.NewGuid(), Guid.NewGuid(), [RequestMediaType.Ebook, RequestMediaType.Audiobook], null, Now);
         var ebookFormat = request.Formats.Single(format => format.MediaType == RequestMediaType.Ebook).Id;
         var audioFormat = request.Formats.Single(format => format.MediaType == RequestMediaType.Audiobook).Id;
-        request.RecordAutomaticCandidateFailure(ebookFormat, "prowlarr", "c_ebook", "Failed.", Now);
+        request.RecordAutomaticCandidateFailure(ebookFormat, "example-indexer", "c_ebook", "Failed.", Now);
         request.RecordAutomaticCandidateFailure(audioFormat, "other-source", "c_other", "Failed.", Now);
 
-        var exclusions = ExternalCandidateExclusions.From(request.DeclinedCandidates, "prowlarr", audioFormat);
+        var exclusions = ExternalCandidateExclusions.From(request.DeclinedCandidates, "example-indexer", audioFormat);
 
         Assert.IsFalse(exclusions.Excludes(Option("c_ebook", null, null)));
         Assert.IsFalse(exclusions.Excludes(Option("c_other", null, null)));

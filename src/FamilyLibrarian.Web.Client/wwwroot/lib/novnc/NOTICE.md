@@ -9,10 +9,9 @@
 Only `core/` and `vendor/` are vendored here (the parts `core/rfb.js` needs
 as an ES module) -- not the full repository, not `app/` or `vnc_lite.html`.
 
-This is the same pinned release FLP-Annas vendors for its own admin-side
-noVNC client (`FLP-Annas` repo, `Dockerfile`'s `NOVNC_VERSION`/`NOVNC_SHA256`
-build args) -- kept in sync intentionally so both ends of a future brokered
-session (HUMAN-ACQ-1) run the same RFB client version.
+Keep this release aligned with the noVNC client any external provider vendors for
+its own admin-side view, so both ends of a brokered session (HUMAN-ACQ-1) run the
+same RFB client version.
 
 Do not hand-edit anything under `core/`/`vendor/`; replace the whole
 directory when bumping the pinned version, and update the version/checksum
