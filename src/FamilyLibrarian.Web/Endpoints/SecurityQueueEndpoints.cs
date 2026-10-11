@@ -82,7 +82,9 @@ internal static class SecurityQueueEndpoints
                 .ToArray()),
         entry.Asset.IdentityMismatchReason,
         entry.Asset.ScanFailureReason,
-        ToEvidenceResponse(entry.Evidence));
+        ToEvidenceResponse(entry.Evidence),
+        entry.Asset.IdentityHoldCode,
+        entry.Asset.Origin.ToString());
 
     private static ArtifactEvidenceResponse ToEvidenceResponse(IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence> evidence) =>
         evidence.Count == 0

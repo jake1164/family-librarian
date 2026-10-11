@@ -25,7 +25,8 @@ public sealed class ApprovalService(
     IAssetIdentityVerificationService identity,
     IAuditWriter audit,
     ICurrentUser currentUser,
-    IClock clock) : IPolicyAssetApprovalService
+    IClock clock,
+    IArtifactEvidenceRecorder? evidence = null) : IPolicyAssetApprovalService
 {
     public async Task<ApprovalResult> ApproveAsync(Guid assetId, string? reason, CancellationToken cancellationToken)
         => await ApproveCoreAsync(
@@ -146,8 +147,10 @@ public sealed class ApprovalService(
         }
 
         var now = clock.UtcNow;
+        string? overriddenHoldCode = null;
         if (identityOverrideConfirmed)
         {
+            overriddenHoldCode = asset.IdentityHoldCode;
             // The only allowed exit from Unmatched is back through Processing
             // (MediaAssetStorageTransitions) -- an override still passes
             // through it on the way to Trusted below, it just skips
@@ -194,6 +197,13 @@ public sealed class ApprovalService(
                 assetId.ToString(),
                 new { AssetId = assetId, ActorUserId = actorUserId, Reason = reason },
                 cancellationToken);
+
+            // Evidence only, after the override is saved and audited (M1-5c): the evidence view must not keep
+            // implying the hold still stands.
+            if (evidence is not null)
+            {
+                await evidence.RecordIdentityOverrideAsync(asset, actorUserId, overriddenHoldCode, reason ?? string.Empty, cancellationToken);
+            }
         }
 
         await audit.WriteAsync(

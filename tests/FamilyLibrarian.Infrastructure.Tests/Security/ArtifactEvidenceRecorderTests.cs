@@ -272,6 +272,48 @@ public sealed class ArtifactEvidenceRecorderTests
     }
 
     [TestMethod]
+    public async Task AnAdministratorOverrideIsRecordedWithTheAdministratorsIdOnlyTheHeldCodeAndTheBoundedReason()
+    {
+        var asset = Asset(preConfirmed: true, AssetOrigin.ExternalProvider);
+        var (recorder, store) = Create();
+        var administrator = Guid.NewGuid();
+
+        await recorder.RecordIdentityOverrideAsync(
+            asset, administrator, "identity.hold.attested_only_external",
+            "Checked it\u0007 by hand.\n" + new string('x', 1_000), CancellationToken.None);
+
+        Assert.HasCount(2, store.Saved);
+        Assert.IsTrue(store.Saved.All(item =>
+            item.RecordKind == ArtifactEvidenceRecordKinds.IdentityOverride &&
+            item.Dimension == EvidenceDimension.IdentityAttestation &&
+            item.Polarity == EvidencePolarity.Weak &&
+            item.Source == $"admin:{administrator}" &&
+            item.MediaAssetId == asset.Id && item.Sha256 == Hash));
+        Assert.HasCount(1, store.Saved.Select(item => item.RecordId).Distinct().ToArray());
+        var marker = store.Saved.Single(item => item.FindingId == "ev-override");
+        Assert.AreEqual("artifact.identity_attestation.admin_override", marker.Code);
+        Assert.AreEqual("identity.hold.attested_only_external", marker.Value);
+        var reason = store.Saved.Single(item => item.FindingId == "ev-override-reason");
+        Assert.AreEqual("artifact.identity_attestation.admin_override_reason", reason.Code);
+        Assert.IsLessThanOrEqualTo(ArtifactEvidence.MaxValueLength, reason.Value!.Length);
+        Assert.IsFalse(reason.Value.Any(char.IsControl));
+        Assert.IsFalse(store.Saved.Any(item => (item.Source + item.Value).Contains('@')), "No email or name is recorded, only the user id.");
+    }
+
+    [TestMethod]
+    public async Task AnOverrideOfAHoldRecordedBeforeCodesExistedSaysNoneAndAFailingStoreNeverEscapes()
+    {
+        var (recorder, store) = Create();
+        await recorder.RecordIdentityOverrideAsync(Asset(), administratorUserId: null, overriddenHoldCode: null, "ok", CancellationToken.None);
+        Assert.AreEqual("none", store.Saved.Single(item => item.FindingId == "ev-override").Value);
+        StringAssert.EndsWith(store.Saved[0].Source, "unknown");
+
+        var (failing, failingStore) = Create(failingStore: true);
+        await failing.RecordIdentityOverrideAsync(Asset(), Guid.NewGuid(), "identity.hold.x", "ok", CancellationToken.None);
+        Assert.IsEmpty(failingStore.Saved);
+    }
+
+    [TestMethod]
     public async Task AnUnreadableFileIsInconclusiveNotContradicted()
     {
         var asset = Asset();

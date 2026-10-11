@@ -18,7 +18,9 @@ public sealed record MediaAssetAdminResponse(
     SecurityEvaluationDetailResponse? LatestEvaluation,
     string? IdentityMismatchReason = null,
     string? ScanFailureReason = null,
-    ArtifactEvidenceResponse? Evidence = null);
+    ArtifactEvidenceResponse? Evidence = null,
+    string? IdentityHoldCode = null,
+    string? Origin = null);
 
 /// <summary>One persisted artifact-evidence finding. <c>(RecordId, FindingId)</c> cites it.</summary>
 public sealed record ArtifactEvidenceItemResponse(

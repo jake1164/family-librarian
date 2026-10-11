@@ -131,6 +131,12 @@ public static class EvidenceReasonCodes
         /// <summary>A row that predates origin tracking; nothing is inferred about its source.</summary>
         public const string LegacyUnclassified = "artifact.identity_attestation.legacy_unclassified";
         public const string None = "artifact.identity_attestation.none";
+
+        /// <summary>An administrator reviewed a held asset and approved it on their own judgment (M1-5c). A human attestation, never content verification.</summary>
+        public const string AdminOverride = "artifact.identity_attestation.admin_override";
+
+        /// <summary>The (bounded) reason the administrator gave for an override.</summary>
+        public const string AdminOverrideReason = "artifact.identity_attestation.admin_override_reason";
     }
 
     /// <summary>What the file's own content says about its identity, independent of any attestation.</summary>

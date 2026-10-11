@@ -115,6 +115,15 @@ public sealed class AttestedOnlyBundleEndpointTests
         var released = await LoadAsync(factory, set.AssetIds);
         Assert.IsTrue(released.All(asset => asset.StorageState == MediaAssetStorageState.Trusted && asset.IdentityHoldCode is null),
             "One decision covers the tracks held for the same shared reason: " + string.Join(", ", released.Select(asset => asset.StorageState)));
+
+        // Each released track carries its own override evidence naming the hold it overrode.
+        await using var scope = factory.Services.CreateAsyncScope();
+        var overrides = await scope.ServiceProvider.GetRequiredService<AppDbContext>().ArtifactEvidenceItems.AsNoTracking()
+            .Where(item => set.AssetIds.Contains(item.MediaAssetId) && item.RecordKind == "identity-override" && item.FindingId == "ev-override")
+            .ToListAsync();
+        Assert.AreEqual(Tracks, overrides.Count);
+        Assert.AreEqual(Tracks, overrides.Select(item => item.MediaAssetId).Distinct().Count());
+        Assert.IsTrue(overrides.All(item => item.Value == "identity.hold.attested_only_external"));
     }
 
     [TestMethod]

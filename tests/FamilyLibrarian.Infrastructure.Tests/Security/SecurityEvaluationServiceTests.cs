@@ -260,6 +260,10 @@ public sealed class SecurityEvaluationServiceTests
         public Task RecordIdentityVerificationAsync(
             MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+
+        public Task RecordIdentityOverrideAsync(
+            MediaAsset asset, Guid? administratorUserId, string? overriddenHoldCode, string reason, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 
     private sealed class TestContext

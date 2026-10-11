@@ -7,7 +7,25 @@
 }
 else
 {
-    <details class="mt-2" style="overflow-wrap: anywhere;">
+    <div class="mt-2">
+        @if (OverrideReason() is { } overrideNote)
+        {
+            <p class="mb-1"><strong>Administrator override.</strong> @overrideNote</p>
+        }
+        @if (SourceLabel() is { } source)
+        {
+            <p class="mb-1"><small>Source: @source</small></p>
+        }
+        @if (ContentNotVerified())
+        {
+            <p class="mb-1"><small><strong>Trusted on source attestation; content not verified.</strong> No check could read this file's content, so its identity rests on how it was obtained.</small></p>
+        }
+        @foreach (var caution in Cautions())
+        {
+            <p class="mb-1"><small><strong>Caution:</strong> @caution</small></p>
+        }
+    </div>
+    <details class="mt-1" style="overflow-wrap: anywhere;">
         <summary>Artifact evidence (@Evidence.Items.Count findings)</summary>
         <dl>
             @foreach (var group in Evidence.Items.GroupBy(item => item.Dimension))
@@ -34,6 +52,50 @@ else
 
 @code {
     [Parameter] public ArtifactEvidenceResponse? Evidence { get; set; }
+
+    /// <summary>The asset's recorded origin (fixed at creation), shown as a plain-language source.</summary>
+    [Parameter] public string? Origin { get; set; }
+
+    private bool Has(string code) => Evidence?.Items.Any(item => item.Code == code) == true;
+
+    private string? ValueOf(string code) => Evidence?.Items.FirstOrDefault(item => item.Code == code)?.Value;
+
+    /// <summary>
+    /// Attested but never compared with anything: a source vouched for it and no content check exists for the format.
+    /// Shown only when nothing else says the file was verified or overridden.
+    /// </summary>
+    private bool ContentNotVerified() =>
+        Has("artifact.identity_corroboration.unavailable") && !Has("artifact.identity_attestation.admin_override") &&
+        Evidence!.Items.Any(item => item.Dimension == "IdentityAttestation" && item.Polarity == "Weak" &&
+            item.Code is "artifact.identity_attestation.manual_upload" or "artifact.identity_attestation.built_in_source"
+                or "artifact.identity_attestation.external_provider_confirmed" or "artifact.identity_attestation.legacy_unclassified");
+
+    private string? OverrideReason()
+    {
+        if (!Has("artifact.identity_attestation.admin_override")) return null;
+        var held = ValueOf("artifact.identity_attestation.admin_override");
+        var reason = ValueOf("artifact.identity_attestation.admin_override_reason");
+        return $"An administrator approved this file despite its hold ({held ?? "none"}). Reason: {reason ?? "not recorded"}. " +
+               "Findings below from the earlier identity check describe what was overridden.";
+    }
+
+    private string? SourceLabel() => Origin switch
+    {
+        "ManualUpload" => "uploaded by an administrator",
+        "BuiltInProvider" => "built-in provider",
+        "ExternalProvider" => "external provider",
+        "Legacy" => "recorded before source tracking existed",
+        "Unknown" => "source not established",
+        _ => null
+    };
+
+    private IEnumerable<string> Cautions()
+    {
+        if (ValueOf("artifact.completeness.toc_targets_missing") is { } toc)
+            yield return $"some table-of-contents links point at files that are not in the book ({toc}).";
+        if (ValueOf("artifact.completeness.duplicate_reading_order_items") is { } duplicates)
+            yield return $"the same file is listed more than once in the reading order ({duplicates}).";
+    }
 
     private static string Humanize(string dimension) => dimension switch
     {

@@ -79,6 +79,10 @@ else
                         <MudText Typo="Typo.body2">
                             @(asset.IdentityMismatchReason ?? "The file's embedded metadata could not be matched to the catalog entry, but no further detail was recorded.")
                         </MudText>
+                        @if (!string.IsNullOrWhiteSpace(asset.IdentityHoldCode))
+                        {
+                            <MudText Typo="Typo.caption">Hold: <code>@asset.IdentityHoldCode</code></MudText>
+                        }
                     </MudAlert>
                 }
                 @if (asset.StorageState == "Quarantine")
@@ -134,7 +138,7 @@ else
                     </MudStack>
                 }
 
-                <ArtifactEvidencePanel Evidence="asset.Evidence" />
+                <ArtifactEvidencePanel Evidence="asset.Evidence" Origin="asset.Origin" />
 
                 <MudStack Row="true" Spacing="2" Class="mt-3">
                     @if (CanEvaluate(asset))

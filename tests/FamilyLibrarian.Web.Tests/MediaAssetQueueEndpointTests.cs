@@ -239,6 +239,8 @@ public sealed class MediaAssetQueueEndpointTests
         Assert.AreEqual(nameof(SecurityEvaluationStatus.Passed), held.LatestEvaluation!.Status, "Safety checks are unchanged.");
         Assert.IsEmpty(held.LatestEvaluation.Approvals);
         StringAssert.Contains(held.IdentityMismatchReason, "subject:sample");
+        Assert.AreEqual("identity.hold.completeness_sample_marker", held.IdentityHoldCode, "The hold code reaches the review UI contract.");
+        Assert.AreEqual("ManualUpload", held.Origin);
 
         var cue = held.Evidence!.Items.Single(item => item.Code == "artifact.completeness.sample_marker_in_metadata");
         Assert.AreEqual("Completeness", cue.Dimension);
@@ -253,6 +255,23 @@ public sealed class MediaAssetQueueEndpointTests
         Assert.IsTrue(overridden.IsSuccessStatusCode, overridden.StatusCode.ToString());
         var after = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
         Assert.IsFalse(after!.Assets.Any(entry => entry.AssetId == imported.MediaAssetId), "The administrator's override releases it.");
+
+        // M1-5c: the override is evidence too, so the view no longer implies the hold stands.
+        var recent = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/recent?limit=100");
+        var released = recent!.Assets.Single(entry => entry.AssetId == imported.MediaAssetId);
+        Assert.IsNull(released.IdentityHoldCode);
+        var marker = released.Evidence!.Items.Single(item => item.Code == "artifact.identity_attestation.admin_override");
+        Assert.AreEqual("identity-override", marker.RecordKind);
+        Assert.AreEqual("identity.hold.completeness_sample_marker", marker.Value, "It names the hold that was overridden.");
+        StringAssert.StartsWith(marker.Source, "admin:");
+        Assert.IsTrue(Guid.TryParse(marker.Source["admin:".Length..], out var administratorId) && administratorId != Guid.Empty,
+            "Identified by user id only.");
+        Assert.IsFalse((marker.Source + marker.Value).Contains('@'), "No email or name is recorded.");
+        var reason = released.Evidence.Items.Single(item => item.Code == "artifact.identity_attestation.admin_override_reason");
+        Assert.AreEqual("Confirmed complete by hand.", reason.Value);
+        Assert.AreEqual("Weak", marker.Polarity, "A human attestation, never content verification.");
+        Assert.IsTrue(released.Evidence.Items.Any(item => item.RecordKind == "identity-verification"),
+            "The superseded verification findings remain as history.");
     }
 
     [TestMethod]

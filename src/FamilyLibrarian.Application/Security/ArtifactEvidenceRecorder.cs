@@ -35,6 +35,13 @@ public interface IArtifactEvidenceRecorder
 
     Task RecordIdentityVerificationAsync(
         MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records that an administrator approved a held asset on their own judgment, so the evidence no longer reads as
+    /// though the hold simply stands. Identifies the administrator by id only (no name or email).
+    /// </summary>
+    Task RecordIdentityOverrideAsync(
+        MediaAsset asset, Guid? administratorUserId, string? overriddenHoldCode, string reason, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -163,6 +170,33 @@ public sealed class ArtifactEvidenceRecorder(
             }
 
             store.Add(items);
+            await store.TrySaveAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Evidence is best effort and must never alter the decision it describes.
+        }
+    }
+
+    public async Task RecordIdentityOverrideAsync(
+        MediaAsset asset, Guid? administratorUserId, string? overriddenHoldCode, string reason, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var recordId = Guid.NewGuid();
+            var now = clock.UtcNow;
+            var source = $"admin:{administratorUserId?.ToString() ?? "unknown"}";
+            store.Add(
+            [
+                new ArtifactEvidence(
+                    asset.Id, asset.Sha256, ArtifactEvidenceRecordKinds.IdentityOverride, recordId, "ev-override",
+                    EvidenceDimension.IdentityAttestation, EvidenceReasonCodes.ArtifactIdentityAttestation.AdminOverride,
+                    EvidencePolarity.Weak, source, overriddenHoldCode ?? "none", toolVersion: null, now),
+                new ArtifactEvidence(
+                    asset.Id, asset.Sha256, ArtifactEvidenceRecordKinds.IdentityOverride, recordId, "ev-override-reason",
+                    EvidenceDimension.IdentityAttestation, EvidenceReasonCodes.ArtifactIdentityAttestation.AdminOverrideReason,
+                    EvidencePolarity.Weak, source, reason, toolVersion: null, now)
+            ]);
             await store.TrySaveAsync(cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

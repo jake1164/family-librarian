@@ -155,4 +155,5 @@ public static class ArtifactEvidenceRecordKinds
 {
     public const string SecurityEvaluation = "security-evaluation";
     public const string IdentityVerification = "identity-verification";
+    public const string IdentityOverride = "identity-override";
 }

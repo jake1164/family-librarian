@@ -188,6 +188,10 @@ public sealed class AssetIdentityVerificationServiceTests
             MediaAsset asset, SecurityEvaluation evaluation, IReadOnlyDictionary<string, string?> toolVersions,
             CancellationToken cancellationToken) => Task.CompletedTask;
 
+        public Task RecordIdentityOverrideAsync(
+            MediaAsset asset, Guid? administratorUserId, string? overriddenHoldCode, string reason, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
         public Task RecordIdentityVerificationAsync(
             MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken)
         {
