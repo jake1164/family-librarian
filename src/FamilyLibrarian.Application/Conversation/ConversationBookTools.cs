@@ -57,6 +57,8 @@ public sealed partial class ConversationBookTools(
 {
     private const int MaxDescriptionLength = 400;
 
+    private static readonly KeyedAsyncLock ResolveLocks = new();
+
     public async Task<ConversationSearchResult> SearchBooksAsync(string text, int maxChoices, CancellationToken cancellationToken)
     {
         RequireUser();
@@ -145,6 +147,8 @@ public sealed partial class ConversationBookTools(
         RequireUser();
         try
         {
+            // Two people asking for the same new book at the same moment take turns: the second finds the first's record.
+            using var turn = await ResolveLocks.AcquireAsync($"{choice.ProviderId}|{choice.ExternalId}", cancellationToken);
             return (await works.ResolveAsync(choice.ProviderId, choice.ExternalId, cancellationToken)).Work.Id;
         }
         catch (Exception exception) when (exception is UnknownMetadataProviderException or CatalogCandidateNotFoundException or ArgumentException

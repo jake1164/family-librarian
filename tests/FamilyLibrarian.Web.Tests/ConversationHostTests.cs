@@ -34,7 +34,7 @@ public sealed class ConversationHostTests
         if (fixture is not null) await fixture.DisposeAsync();
     }
 
-    internal sealed record LinkedUser(Guid UserId, string Room, string MatrixId);
+    internal sealed record LinkedUser(Guid UserId, string Room, string MatrixId, string Email = "");
 
     private static FamilyLibrarianAppFactory Factory(bool enabled = true) => new(WebTestFixture.Require(fixture).ConnectionString, services =>
     {
@@ -58,7 +58,7 @@ public sealed class ConversationHostTests
         destination.Verify(DateTimeOffset.UtcNow);
         database.UserMatrixDestinations.Add(destination);
         await database.SaveChangesAsync();
-        return new LinkedUser(user.Id, room, matrixId);
+        return new LinkedUser(user.Id, room, matrixId, email);
     }
 
     /// <summary>One message in its own scope, authenticated from the Matrix link exactly as an inbound event would be.</summary>
