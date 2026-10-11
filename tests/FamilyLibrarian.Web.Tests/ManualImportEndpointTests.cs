@@ -228,6 +228,26 @@ public sealed class ManualImportEndpointTests
     }
 
     [TestMethod]
+    public async Task AnAdministratorsUploadInAFormatWithNoContentCheckStaysTrustedAsBefore()
+    {
+        // D-15 compatibility exception: an authenticated administrator chose this exact file.
+        var fixture = WebTestFixture.Require(_fixture);
+        using var admin = await CreateTokenClientAsync(fixture);
+        var (requestId, formatId) = await CreateEbookRequestAsync(fixture, admin);
+
+        var response = await admin.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(MobiTestFixture.Build(), "book.mobi"));
+        var result = await response.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var asset = await scope.ServiceProvider.GetRequiredService<AppDbContext>().MediaAssets.AsNoTracking().SingleAsync(a => a.Id == result!.MediaAssetId);
+        Assert.AreEqual(AssetOrigin.ManualUpload, asset.Origin);
+        Assert.AreEqual(MediaAssetStorageState.Trusted, asset.StorageState);
+        Assert.IsNull(asset.IdentityHoldCode);
+    }
+
+    [TestMethod]
     public async Task AnUploadWithoutAnAntiforgeryTokenIsRejected()
     {
         var fixture = WebTestFixture.Require(_fixture);

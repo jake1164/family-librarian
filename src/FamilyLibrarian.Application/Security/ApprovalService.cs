@@ -49,11 +49,15 @@ public sealed class ApprovalService(
     /// required so the override -- not just the ordinary approval -- has a
     /// stated justification in the audit trail.
     /// </summary>
-    public Task<ApprovalResult> OverrideIdentityAndApproveAsync(
+    public async Task<ApprovalResult> OverrideIdentityAndApproveAsync(
         Guid assetId, string reason, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
-        return ApproveCoreAsync(
+        var target = await repository.FindAssetAsync(assetId, cancellationToken);
+        var sharedHoldCode = target is { BundleId: not null } && IsSetWideHold(target.IdentityHoldCode) ? target.IdentityHoldCode : null;
+        var bundleId = target?.BundleId;
+
+        var result = await ApproveCoreAsync(
             assetId,
             ApprovalActorType.Admin,
             currentUser.UserId,
@@ -61,7 +65,32 @@ public sealed class ApprovalService(
             reason,
             cancellationToken,
             identityOverrideConfirmed: true);
+        if (result.Outcome != ApprovalOutcome.Success || sharedHoldCode is null || bundleId is null)
+        {
+            return result;
+        }
+
+        // A multi-file set held because its format has no content check is held for one reason shared by every
+        // track, so one librarian decision covers the tracks held for exactly that reason. A track held for any
+        // other reason (its own content contradicts, its language conflicts, ...) is never released this way, and
+        // each track's override is audited on its own.
+        foreach (var sibling in await repository.FindAssetsByBundleIdAsync(bundleId.Value, cancellationToken))
+        {
+            if (sibling.Id != assetId && sibling.StorageState == MediaAssetStorageState.Unmatched &&
+                sibling.IdentityHoldCode == sharedHoldCode)
+            {
+                await ApproveCoreAsync(
+                    sibling.Id, ApprovalActorType.Admin, currentUser.UserId, policyName: null, reason, cancellationToken,
+                    identityOverrideConfirmed: true);
+            }
+        }
+
+        return result;
     }
+
+    private static bool IsSetWideHold(string? code) =>
+        code is Domain.Evidence.EvidenceReasonCodes.IdentityHold.AttestedOnlyExternal or
+            Domain.Evidence.EvidenceReasonCodes.IdentityHold.AttestedOnlyUnknownOrigin;
 
     /// <summary>
     /// Records the trusted clean-scan policy's decision. This path is intentionally unavailable for

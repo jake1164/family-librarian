@@ -93,13 +93,18 @@ public sealed class AutomatedSecurityPipeline(
                     "A sibling track did not pass every security check.")).ToArray();
         }
 
+        // Every track is verified before the set is judged (M1-5b), so each held track carries its own hold and
+        // an administrator sees the whole set rather than one held track and untouched others.
+        var anyHeld = false;
         foreach (var asset in assets.Where(asset =>
                      asset.StorageState == MediaAssetStorageState.Processing))
         {
             var identityResult = await identity.VerifyAsync(asset.Id, cancellationToken);
-            if (!identityResult.IsMatch)
-                return assetIds.Select(id => results[id]).ToArray();
+            anyHeld |= !identityResult.IsMatch;
         }
+
+        if (anyHeld)
+            return assetIds.Select(id => results[id]).ToArray();
 
         // Verify identity for the whole set before approving any sibling.
         // ApprovalService repeats its own identity check as a defense-in-depth

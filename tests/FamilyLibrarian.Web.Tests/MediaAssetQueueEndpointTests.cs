@@ -216,10 +216,9 @@ public sealed class MediaAssetQueueEndpointTests
     }
 
     [TestMethod]
-    public async Task ASampleMarkedEpubIsStillApprovedAsBeforeButTheCompletenessCueIsRecorded()
+    public async Task ASampleMarkedEpubIsHeldBeforeApprovalWithItsCueAndHoldCodeRecorded()
     {
-        // M1-3b is evidence only: identity matches, the scan is clean, so the decision is unchanged
-        // (approved and published). The pre-approval hold on this cue arrives in M1-5.
+        // M1-5b (D-16): an explicit sample marker holds an otherwise matching, clean file for a librarian.
         var fixture = WebTestFixture.Require(_fixture);
         await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -235,19 +234,54 @@ public sealed class MediaAssetQueueEndpointTests
         Assert.IsNotNull(imported);
 
         var queue = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
-        Assert.IsFalse(queue!.Assets.Any(asset => asset.AssetId == imported.MediaAssetId), "Decision unchanged: still approved.");
+        var held = queue!.Assets.Single(entry => entry.AssetId == imported.MediaAssetId);
+        Assert.AreEqual("Unmatched", held.StorageState, "Held before Trusted; never published.");
+        Assert.AreEqual(nameof(SecurityEvaluationStatus.Passed), held.LatestEvaluation!.Status, "Safety checks are unchanged.");
+        Assert.IsEmpty(held.LatestEvaluation.Approvals);
+        StringAssert.Contains(held.IdentityMismatchReason, "subject:sample");
 
-        var recent = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/recent?limit=100");
-        var asset = recent!.Assets.Single(entry => entry.AssetId == imported.MediaAssetId);
-        Assert.IsNotNull(asset.Evidence);
-        var cue = asset.Evidence.Items.Single(item => item.Code == "artifact.completeness.sample_marker_in_metadata");
+        var cue = held.Evidence!.Items.Single(item => item.Code == "artifact.completeness.sample_marker_in_metadata");
         Assert.AreEqual("Completeness", cue.Dimension);
         Assert.AreEqual("Condition", cue.Polarity);
         Assert.AreEqual("subject:sample", cue.Value);
         Assert.AreEqual("artifact.identity_corroboration.corroborated",
-            asset.Evidence.Items.Single(item => item.FindingId == "ev-corroboration").Code,
-            "A completeness cue is not an identity contradiction.");
-        Assert.IsTrue(asset.Evidence.Items.Any(item => item.Code == "artifact.completeness.reading_order_counted"));
+            held.Evidence.Items.Single(item => item.FindingId == "ev-corroboration").Code,
+            "A completeness cue is not an identity contradiction; title and author were corroborated.");
+
+        var overridden = await client.PostAsJsonAsync(
+            $"/api/v1/admin/media-assets/{imported.MediaAssetId}/override-identity", new { reason = "Confirmed complete by hand." });
+        Assert.IsTrue(overridden.IsSuccessStatusCode, overridden.StatusCode.ToString());
+        var after = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
+        Assert.IsFalse(after!.Assets.Any(entry => entry.AssetId == imported.MediaAssetId), "The administrator's override releases it.");
+    }
+
+    [TestMethod]
+    public async Task AnEpubWhoseReadingOrderPointsAtMissingFilesIsHeldButMissingNavigationTargetsAreOnlyAWarning()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+
+        async Task<(MediaAssetAdminResponse? Held, bool Approved, Guid Id)> UploadAsync(byte[] epub)
+        {
+            var (requestId, formatId) = await CreateEbookRequestAsync(client);
+            var upload = await client.PostAsync(
+                $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import", BuildUpload(epub, "book.epub"));
+            var imported = (await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>())!;
+            var queue = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
+            var entry = queue!.Assets.SingleOrDefault(asset => asset.AssetId == imported.MediaAssetId);
+            return (entry, entry is null, imported.MediaAssetId);
+        }
+
+        var missingFiles = await UploadAsync(EpubTestFixture.BuildMinimalEpubBytes(readingOrderFilesMissing: 1));
+        Assert.AreEqual("Unmatched", missingFiles.Held!.StorageState);
+        Assert.IsTrue(missingFiles.Held.Evidence!.Items.Any(item => item.Code == "artifact.completeness.spine_content_missing"));
+
+        var deadNavigation = await UploadAsync(EpubTestFixture.BuildMinimalEpubBytes(deadNavigationLinks: 2));
+        Assert.IsTrue(deadNavigation.Approved, "Dead navigation links are a warning only (D-16).");
     }
 
     [TestMethod]

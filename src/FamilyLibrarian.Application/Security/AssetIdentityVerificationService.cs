@@ -40,6 +40,7 @@ public sealed class AssetIdentityVerificationService(
         var result = verifier is null
             ? NoVerifierResult(asset)
             : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Processing, cancellationToken);
+        result = ArtifactHoldPolicy.Apply(asset, result);
 
         if (!result.IsMatch)
         {
@@ -50,7 +51,7 @@ public sealed class AssetIdentityVerificationService(
                 cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Unmatched, clock.UtcNow);
             asset.SetIdentityMismatchReason(result.Reason);
-            asset.SetIdentityHoldCode(ExistingHoldCodes.Classify(result));
+            asset.SetIdentityHoldCode(result.HoldCode ?? ExistingHoldCodes.Classify(result));
             await repository.SaveChangesAsync(cancellationToken);
         }
 
@@ -82,6 +83,7 @@ public sealed class AssetIdentityVerificationService(
         var result = verifier is null
             ? NoVerifierResult(asset)
             : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Unmatched, cancellationToken);
+        result = ArtifactHoldPolicy.Apply(asset, result);
 
         if (result.IsMatch)
         {
@@ -102,7 +104,7 @@ public sealed class AssetIdentityVerificationService(
             // mismatch -- keep the displayed reason current rather than
             // stale from the original hold.
             asset.SetIdentityMismatchReason(result.Reason);
-            asset.SetIdentityHoldCode(ExistingHoldCodes.Classify(result));
+            asset.SetIdentityHoldCode(result.HoldCode ?? ExistingHoldCodes.Classify(result));
             await repository.SaveChangesAsync(cancellationToken);
         }
 

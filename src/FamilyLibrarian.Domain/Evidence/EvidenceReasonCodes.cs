@@ -96,6 +96,18 @@ public static class EvidenceReasonCodes
         public const string ContentInconclusive = "identity.hold.content_inconclusive";
         public const string LanguageConflict = "identity.hold.language_conflict";
         public const string NotAttested = "identity.hold.not_attested";
+
+        /// <summary>No content verifier exists for the format and the only vouching came from an external provider (M1-5b, P1).</summary>
+        public const string AttestedOnlyExternal = "identity.hold.attested_only_external";
+
+        /// <summary>No content verifier exists and the asset has no trustworthy origin to rest an attestation on (M1-5b).</summary>
+        public const string AttestedOnlyUnknownOrigin = "identity.hold.attested_only_unknown_origin";
+
+        /// <summary>The package metadata labels the file a sample, excerpt, preview or teaser (M1-5b).</summary>
+        public const string CompletenessSampleMarker = "identity.hold.completeness_sample_marker";
+
+        /// <summary>Reading-order items point at files that are not in the archive (M1-5b).</summary>
+        public const string CompletenessSpineContentMissing = "identity.hold.completeness_spine_content_missing";
     }
 
     /// <summary>Why the candidate decision is not a match despite no contradiction.</summary>

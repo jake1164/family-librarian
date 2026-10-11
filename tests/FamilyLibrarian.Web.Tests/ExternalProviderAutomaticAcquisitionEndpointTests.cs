@@ -842,7 +842,7 @@ public sealed class ExternalProviderProvenanceEndpointTests
 {
     private sealed record Outcome(
         IReadOnlyList<MediaAsset> Assets, IReadOnlyList<string> AttestationCodes, int SubmitCalls, int JobCount,
-        Guid AdminUserId);
+        Guid AdminUserId, IReadOnlyList<MediaAsset> AssetsBeforeOverride);
 
     private sealed class MutableClock(DateTimeOffset start) : IClock
     {
@@ -874,10 +874,11 @@ public sealed class ExternalProviderProvenanceEndpointTests
     /// so that no retry cooldown or recheck schedule can be what keeps a re-acquisition from happening.
     /// </summary>
     private static async Task<Outcome> RunAsync(
-        string providerId, string outputTitle, int rounds, bool advanceClock, params string[] extraBuiltInIds)
+        string providerId, string outputTitle, int rounds, bool advanceClock, string outputFormat = "epub",
+        bool overrideHeld = false, params string[] extraBuiltInIds)
     {
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
-        var providerClient = new FakeHobbitExternalProviderClient { ProviderId = providerId, OutputTitle = outputTitle };
+        var providerClient = new FakeHobbitExternalProviderClient { ProviderId = providerId, OutputTitle = outputTitle, OutputFormat = outputFormat };
         var clock = new MutableClock(DateTimeOffset.UtcNow);
         await using var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
@@ -937,6 +938,23 @@ public sealed class ExternalProviderProvenanceEndpointTests
             }
         }
 
+        IReadOnlyList<MediaAsset> before;
+        await using (var held = factory.Services.CreateAsyncScope())
+        {
+            before = await held.ServiceProvider.GetRequiredService<AppDbContext>().MediaAssets.AsNoTracking()
+                .Where(asset => asset.AssociatedRequestFormatId == formatId).ToListAsync();
+        }
+
+        if (overrideHeld)
+        {
+            foreach (var asset in before.Where(asset => asset.StorageState == MediaAssetStorageState.Unmatched))
+            {
+                var overridden = await admin.PostAsJsonAsync(
+                    $"/api/v1/admin/media-assets/{asset.Id}/override-identity", new { reason = "Checked by hand; this is the right book." });
+                Assert.IsTrue(overridden.IsSuccessStatusCode, overridden.StatusCode.ToString());
+            }
+        }
+
         await using var verification = factory.Services.CreateAsyncScope();
         var database = verification.ServiceProvider.GetRequiredService<AppDbContext>();
         var assets = await database.MediaAssets.AsNoTracking().Where(asset => asset.AssociatedRequestFormatId == formatId).ToListAsync();
@@ -946,7 +964,7 @@ public sealed class ExternalProviderProvenanceEndpointTests
             .Select(item => item.Code).ToListAsync();
         var adminId = await database.Users.Where(user => user.Email == FamilyLibrarianAppFactory.AdminEmail).Select(user => user.Id).SingleAsync();
         var jobs = await database.ProviderAcquisitionJobs.CountAsync(job => job.RequestFormatId == formatId);
-        return new Outcome(assets, attestations, providerClient.SubmitCalls, jobs, adminId);
+        return new Outcome(assets, attestations, providerClient.SubmitCalls, jobs, adminId, before);
     }
 
     [TestMethod]
@@ -958,7 +976,7 @@ public sealed class ExternalProviderProvenanceEndpointTests
     {
         // The test host shadows the built-in ids "gutendex" (always) and "librivox" (added here) exactly as the
         // production host does, so a same-named external provider cannot even be reached for those two.
-        var outcome = await RunAsync(providerId, "The Hobbit", rounds: 1, advanceClock: false, "librivox");
+        var outcome = await RunAsync(providerId, "The Hobbit", rounds: 1, advanceClock: false, extraBuiltInIds: ["librivox"]);
 
         Assert.IsTrue(outcome.Assets.All(asset =>
                 asset.Origin == AssetOrigin.ExternalProvider && asset.OriginUserId is null),
@@ -974,6 +992,35 @@ public sealed class ExternalProviderProvenanceEndpointTests
             Assert.AreEqual(1, outcome.Assets.Count);
             Assert.AreEqual("artifact.identity_attestation.external_provider_confirmed", outcome.AttestationCodes.Single());
         }
+    }
+
+    [TestMethod]
+    public async Task AnExternalProvidersFileInAFormatWithNoContentCheckIsHeldUntilAnAdministratorOverridesIt()
+    {
+        // P1 (D-15): a MOBI has no content verifier, so the external provider's claim alone cannot make it Trusted.
+        var outcome = await RunAsync("identifier-match-external", "The Hobbit", rounds: 1, advanceClock: false, outputFormat: "mobi", overrideHeld: true);
+
+        var held = outcome.AssetsBeforeOverride.Single();
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, held.StorageState, "Held before Trusted.");
+        Assert.AreEqual(AssetOrigin.ExternalProvider, held.Origin);
+        Assert.IsTrue(held.IdentityPreConfirmed, "The strong pre-download match is unchanged; it simply is not content verification.");
+        Assert.AreEqual("identity.hold.attested_only_external", held.IdentityHoldCode);
+        StringAssert.Contains(held.IdentityMismatchReason, "external provider");
+        Assert.AreEqual(1, outcome.SubmitCalls);
+
+        var released = outcome.Assets.Single();
+        Assert.AreNotEqual(MediaAssetStorageState.Unmatched, released.StorageState, "The administrator's override releases it.");
+        Assert.IsNull(released.IdentityHoldCode);
+    }
+
+    [TestMethod]
+    public async Task AnExternalProvidersVerifiableFileIsStillTrustedWithoutAnyHold()
+    {
+        var outcome = await RunAsync("identifier-match-external", "The Hobbit", rounds: 1, advanceClock: false);
+
+        var asset = outcome.Assets.Single();
+        Assert.AreEqual(MediaAssetStorageState.Trusted, asset.StorageState, "EPUB has a content verifier; unchanged.");
+        Assert.IsNull(asset.IdentityHoldCode);
     }
 
     [TestMethod]
@@ -1013,6 +1060,13 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
 
     public int SubmitCalls { get; private set; }
 
+    /// <summary>"epub" (verifiable) or "mobi" (a format with no content verifier).</summary>
+    public string OutputFormat { get; init; } = "epub";
+
+    private byte[] OutputBytes() => OutputFormat == "mobi" ? MobiTestFixture.Build() : EpubTestFixture.BuildMinimalEpubBytes(OutputTitle);
+
+    private string OutputName => $"the-hobbit.{OutputFormat}";
+
     public Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
         Task.FromResult(new ExternalProviderManifest(
@@ -1038,7 +1092,7 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
                     new ExternalProviderEditionEvidence(
                         "en", null, null, request.Edition?.Identifiers ?? []),
                     new ExternalProviderReleaseEvidence(
-                        null, "epub", null, false, 1, false, null, null, [], null,
+                        null, OutputFormat, null, false, 1, false, null, null, [], null,
                         ExternalProviderDrmStatus.None), SourceSummary: SourceSummary)
             ]
             : [];
@@ -1049,8 +1103,8 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
         string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
         CancellationToken cancellationToken) =>
         Task.FromResult(new ExternalProviderArtifact(
-            new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes(OutputTitle)),
-            "the-hobbit.epub"));
+            new MemoryStream(OutputBytes()),
+            OutputName));
 
     public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
         string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
@@ -1075,7 +1129,8 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
         Task.FromResult<IReadOnlyList<ExternalProviderOutput>>(
         [
             new ExternalProviderOutput(
-                "primary", ProviderOutputKind.File, "primary", "the-hobbit.epub", "application/epub+zip",
+                "primary", ProviderOutputKind.File, "primary", OutputName,
+                OutputFormat == "mobi" ? "application/x-mobipocket-ebook" : "application/epub+zip",
                 null, null, null, null, null)
         ]);
 
@@ -1083,7 +1138,7 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
         string baseUrl, string? apiKey, string jobId, string outputId,
         CancellationToken cancellationToken) =>
         Task.FromResult(new ExternalProviderArtifact(
-            new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes(OutputTitle)), "the-hobbit.epub"));
+            new MemoryStream(OutputBytes()), OutputName));
 
     public Task CancelAcquireAsync(
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>

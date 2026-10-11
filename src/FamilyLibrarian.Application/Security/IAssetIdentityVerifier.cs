@@ -39,6 +39,9 @@ public sealed record AssetIdentityVerificationResult(
     string? Reason = null,
     IReadOnlyList<IdentityFact>? Facts = null)
 {
+    /// <summary>The stable <c>identity.hold.*</c> code when <see cref="ArtifactHoldPolicy"/> turned a match into a hold; otherwise null.</summary>
+    public string? HoldCode { get; init; }
+
     /// <summary>What the verifier observed while deciding. Empty when it reported none.</summary>
     public IReadOnlyList<IdentityFact> Facts { get; init; } = Facts ?? [];
 

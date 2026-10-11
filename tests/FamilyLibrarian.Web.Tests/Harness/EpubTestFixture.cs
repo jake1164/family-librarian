@@ -24,7 +24,9 @@ public static class EpubTestFixture
         string title = "The Hobbit",
         string author = "J. R. R. Tolkien",
         bool withReadingOrder = true,
-        string? subject = null)
+        string? subject = null,
+        int readingOrderFilesMissing = 0,
+        int deadNavigationLinks = 0)
     {
         using var stream = new MemoryStream();
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
@@ -48,6 +50,24 @@ public static class EpubTestFixture
                 </container>
                 """);
 
+            // The reading order: one real chapter, plus (for the completeness tests) items whose files are absent.
+            var manifest = "<item id=\"c1\" href=\"chapter1.xhtml\" media-type=\"application/xhtml+xml\"/>";
+            var spine = "<itemref idref=\"c1\"/>";
+            for (var missing = 1; missing <= readingOrderFilesMissing; missing++)
+            {
+                manifest += $"<item id=\"m{missing}\" href=\"missing{missing}.xhtml\" media-type=\"application/xhtml+xml\"/>";
+                spine += $"<itemref idref=\"m{missing}\"/>";
+            }
+
+            if (deadNavigationLinks > 0)
+            {
+                manifest += "<item id=\"nav\" href=\"nav.xhtml\" properties=\"nav\" media-type=\"application/xhtml+xml\"/>";
+                WriteTextEntry(archive, "OEBPS/nav.xhtml",
+                    "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><nav><a href=\"chapter1.xhtml\">One</a>" +
+                    string.Concat(Enumerable.Range(1, deadNavigationLinks).Select(i => $"<a href=\"gone{i}.xhtml\">Gone {i}</a>")) +
+                    "</nav></body></html>");
+            }
+
             WriteTextEntry(archive, "OEBPS/content.opf", $"""
                 <?xml version="1.0" encoding="UTF-8"?>
                 <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
@@ -56,9 +76,7 @@ public static class EpubTestFixture
                     <dc:creator>{author}</dc:creator>
                     {(subject is null ? string.Empty : $"<dc:subject>{subject}</dc:subject>")}
                   </metadata>
-                  {(withReadingOrder
-                    ? "<manifest><item id=\"c1\" href=\"chapter1.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c1\"/></spine>"
-                    : string.Empty)}
+                  {(withReadingOrder ? $"<manifest>{manifest}</manifest><spine>{spine}</spine>" : string.Empty)}
                 </package>
                 """);
 

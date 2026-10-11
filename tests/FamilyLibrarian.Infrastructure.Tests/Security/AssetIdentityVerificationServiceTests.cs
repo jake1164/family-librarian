@@ -109,6 +109,59 @@ public sealed class AssetIdentityVerificationServiceTests
         }
     }
 
+    /// <summary>M1-5b (P1): no content verifier plus an external provider's claim alone is held, through the existing path.</summary>
+    [TestMethod]
+    [DataRow(AssetOrigin.ExternalProvider, "identity.hold.attested_only_external", false)]
+    [DataRow(AssetOrigin.Unknown, "identity.hold.attested_only_unknown_origin", false)]
+    [DataRow(AssetOrigin.BuiltInProvider, null, true)]
+    public async Task AnAttestedOnlyFormatIsHeldOrTrustedAccordingToItsPersistedOrigin(AssetOrigin origin, string? expectedCode, bool passes)
+    {
+        var asset = CreateProcessingAsset(".mobi", identityPreConfirmed: true, origin);
+        var service = new AssetIdentityVerificationService(
+            new AssetRepository(asset), new RecordingStagingStore(), [], new RecordingAuditWriter(), new FixedClock());
+
+        var result = await service.VerifyAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(passes, result.IsMatch);
+        Assert.AreEqual(passes ? MediaAssetStorageState.Processing : MediaAssetStorageState.Unmatched, asset.StorageState);
+        Assert.AreEqual(expectedCode, asset.IdentityHoldCode);
+        Assert.AreEqual(passes, asset.IdentityMismatchReason is null);
+    }
+
+    [TestMethod]
+    public async Task ARetryOfAHeldAttestedOnlyAssetStaysHeldUntilAnAdministratorOverridesIt()
+    {
+        var asset = CreateProcessingAsset(".mp3", identityPreConfirmed: true, AssetOrigin.ExternalProvider);
+        var repository = new AssetRepository(asset);
+        var staging = new RecordingStagingStore();
+        var service = new AssetIdentityVerificationService(repository, staging, [], new RecordingAuditWriter(), new FixedClock());
+        await service.VerifyAsync(asset.Id, CancellationToken.None);
+
+        var retry = await service.RetryUnmatchedAsync(asset.Id, CancellationToken.None);
+
+        Assert.IsFalse(retry.IsMatch, "Re-running the same deterministic check cannot clear a hold that exists because no check can run.");
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState);
+        Assert.AreEqual("identity.hold.attested_only_external", asset.IdentityHoldCode);
+    }
+
+    [TestMethod]
+    public async Task ACompletenessCueHoldIsPersistedWithItsCode()
+    {
+        var asset = CreateProcessingAsset(".epub", identityPreConfirmed: true, AssetOrigin.ManualUpload);
+        var cue = new IdentityFact("ev", FamilyLibrarian.Domain.Evidence.EvidenceDimension.Completeness,
+            "artifact.completeness.sample_marker_in_metadata", FamilyLibrarian.Domain.Evidence.EvidencePolarity.Condition, "subject:sample");
+        var service = new AssetIdentityVerificationService(
+            new AssetRepository(asset), new RecordingStagingStore(),
+            [new FixedVerifier(AssetIdentityVerificationResult.Match("verifier", [cue]))], new RecordingAuditWriter(), new FixedClock());
+
+        var result = await service.VerifyAsync(asset.Id, CancellationToken.None);
+
+        Assert.IsFalse(result.IsMatch);
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState);
+        Assert.AreEqual("identity.hold.completeness_sample_marker", asset.IdentityHoldCode);
+        StringAssert.Contains(asset.IdentityMismatchReason, "subject:sample");
+    }
+
     [TestMethod]
     public async Task AnAttestedFormatWithNoVerifierStillPassesAsBeforeButIsRecordedAsUncorroborated()
     {
@@ -233,12 +286,14 @@ public sealed class AssetIdentityVerificationServiceTests
             Task.FromResult(result);
     }
 
-    private static MediaAsset CreateProcessingAsset(string format, bool identityPreConfirmed)
+    private static MediaAsset CreateProcessingAsset(
+        string format, bool identityPreConfirmed, AssetOrigin origin = AssetOrigin.BuiltInProvider)
     {
         var asset = new MediaAsset(
             Guid.NewGuid(), null, RequestMediaType.Ebook, format, $"Book{format}", $"asset{format}", 12,
             new string('a', 64), "application/octet-stream", Guid.NewGuid(), null, DateTimeOffset.UtcNow,
-            identityPreConfirmed: identityPreConfirmed);
+            identityPreConfirmed: identityPreConfirmed, origin: origin,
+            originUserId: origin == AssetOrigin.ManualUpload ? Guid.NewGuid() : null);
         asset.TransitionStorageState(MediaAssetStorageState.Processing, DateTimeOffset.UtcNow);
         return asset;
     }
