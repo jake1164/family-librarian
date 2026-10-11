@@ -301,6 +301,7 @@ app.MapMatrixSettingsEndpoints();
 app.MapMatrixIdentityLinkEndpoints();
 app.MapConversationEndpoints();
 app.MapModelTestEndpoints();
+app.MapModelGatewayEndpoints();
 app.MapFeedbackEndpoints();
 app.MapFollowingEndpoints();
 app.MapDeliveryTargetEndpoints();

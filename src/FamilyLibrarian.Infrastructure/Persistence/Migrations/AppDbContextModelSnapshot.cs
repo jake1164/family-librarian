@@ -2271,6 +2271,96 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("follows", "following");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelGatewaySettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("AllowCloud")
+                        .HasColumnType("boolean")
+                        .HasColumnName("allow_cloud");
+
+                    b.Property<int>("ApiKeyFormatVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("api_key_format_version");
+
+                    b.Property<DateTimeOffset?>("ApiKeySetAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("api_key_set_at_utc");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("EndpointUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("endpoint_url");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<string>("ProtectedApiKey")
+                        .HasColumnType("text")
+                        .HasColumnName("protected_api_key");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("model_gateway_settings", "integrations");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelRoleSetting", b =>
+                {
+                    b.Property<Guid>("SettingsId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("settings_id");
+
+                    b.Property<string>("Role")
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("role");
+
+                    b.Property<string>("CloudModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("cloud_model");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<string>("LocalModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("local_model");
+
+                    b.Property<string>("Placement")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("placement");
+
+                    b.HasKey("SettingsId", "Role");
+
+                    b.ToTable("model_role_settings", "integrations");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.ModelTesting.ModelTestSettings", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4536,6 +4626,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelRoleSetting", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.ModelGateway.ModelGatewaySettings", null)
+                        .WithMany("Roles")
+                        .HasForeignKey("SettingsId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Publishing.AudiobookshelfDelivery", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Acquisition.MediaAsset", null)
@@ -4797,6 +4896,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("FamilyLibrarian.Domain.Communications.OutboundCommunication", b =>
                 {
                     b.Navigation("Deliveries");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelGatewaySettings", b =>
+                {
+                    b.Navigation("Roles");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.BookRequest", b =>

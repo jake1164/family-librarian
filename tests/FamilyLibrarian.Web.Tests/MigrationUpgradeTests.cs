@@ -166,6 +166,25 @@ public sealed class MigrationUpgradeTests
     }
 
     [TestMethod]
+    public async Task ModelGatewaySettingsUpgradeIsAdditiveAndStartsEmptyAndDisabled()
+    {
+        const string PreGatewayMigration = "20261011115132_AddModelTestSettings";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await database.GetService<IMigrator>().MigrateAsync(PreGatewayMigration);
+        Assert.IsFalse(await TableExistsAsync(database, "integrations", "model_gateway_settings"));
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        Assert.IsTrue(await TableExistsAsync(database, "integrations", "model_gateway_settings"));
+        Assert.IsTrue(await TableExistsAsync(database, "integrations", "model_role_settings"));
+        Assert.AreEqual(0, await database.ModelGatewaySettingsRows.CountAsync(), "Nothing is configured, so every AI role stays off.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task AssetOriginUpgradeMarksEveryExistingRowLegacyExplicitlyAndProtectsOrigin()
     {
         const string PreOriginMigration = "20261010202850_AddArtifactEvidence";

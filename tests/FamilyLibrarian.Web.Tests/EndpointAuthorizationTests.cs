@@ -58,6 +58,7 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/authentication/oidc/")]
     [DataRow("/api/v1/admin/external-providers/")]
     [DataRow("/api/v1/admin/model-test/")]
+    [DataRow("/api/v1/admin/model-gateway/")]
     [DataRow("/api/v1/admin/provider-catalogs/")]
     [DataRow("/api/v1/notifications/")]
     [DataRow("/api/v1/conversation/status")]

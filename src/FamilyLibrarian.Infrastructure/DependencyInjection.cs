@@ -9,6 +9,7 @@ using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Following;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
+using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Policy;
@@ -27,6 +28,7 @@ using FamilyLibrarian.Infrastructure.LibriVox;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
+using FamilyLibrarian.Infrastructure.ModelGateway;
 using FamilyLibrarian.Infrastructure.ModelTesting;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Policy;
@@ -261,6 +263,11 @@ public static class DependencyInjection
         services.AddSingleton<ModelTestGate>();
         services.AddScoped<ModelTestSettingsService>();
         services.AddScoped<ModelCapabilityTestService>();
+
+        // Production model gateway (alpha.6 M4-0): every role is off until an administrator turns it on.
+        services.AddScoped<IModelGatewaySettingsStore, ModelGatewaySettingsStore>();
+        services.AddScoped<ModelGatewaySettingsService>();
+        services.AddScoped<IModelRoleResolver, ModelRoleResolver>();
 
         // Conversation (alpha.6 M2): everything is off until Conversation:Enabled (and a transport flag) is set.
         services.AddSingleton(provider =>

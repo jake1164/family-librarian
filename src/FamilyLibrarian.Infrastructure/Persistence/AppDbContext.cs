@@ -7,6 +7,7 @@ using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Conversation;
+using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Domain.ModelTesting;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Feedback;
@@ -77,6 +78,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<UserMatrixDestination> UserMatrixDestinations => Set<UserMatrixDestination>();
 
     public DbSet<ModelTestSettings> ModelTestSettingsRows => Set<ModelTestSettings>();
+
+    public DbSet<ModelGatewaySettings> ModelGatewaySettingsRows => Set<ModelGatewaySettings>();
 
     public DbSet<StoredConversationSession> ConversationSessions => Set<StoredConversationSession>();
 
@@ -377,6 +380,39 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+        });
+
+        builder.Entity<ModelGatewaySettings>(entity =>
+        {
+            entity.ToTable("model_gateway_settings", "integrations");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(settings => settings.EndpointUrl).HasColumnName("endpoint_url").HasMaxLength(ModelGatewaySettings.MaxEndpointLength);
+            entity.Property(settings => settings.ProtectedApiKey).HasColumnName("protected_api_key");
+            entity.Property(settings => settings.ApiKeyFormatVersion).HasColumnName("api_key_format_version");
+            entity.Property(settings => settings.ApiKeySetAtUtc).HasColumnName("api_key_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.AllowCloud).HasColumnName("allow_cloud");
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
+            entity.Ignore(settings => settings.HasApiKey);
+            entity.HasMany(settings => settings.Roles).WithOne().HasForeignKey(role => role.SettingsId).OnDelete(DeleteBehavior.Cascade);
+            entity.Navigation(settings => settings.Roles).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        builder.Entity<ModelRoleSetting>(entity =>
+        {
+            entity.ToTable("model_role_settings", "integrations");
+            entity.HasKey(role => new { role.SettingsId, role.Role });
+            entity.Property(role => role.SettingsId).HasColumnName("settings_id");
+            entity.Property(role => role.Role).HasColumnName("role").HasConversion<string>().HasMaxLength(48);
+            entity.Property(role => role.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(role => role.Placement).HasColumnName("placement").HasConversion<string>().HasMaxLength(16);
+            entity.Property(role => role.LocalModel).HasColumnName("local_model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
+            entity.Property(role => role.CloudModel).HasColumnName("cloud_model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
+            entity.Ignore(role => role.ActiveModel);
         });
 
         // Conversation (alpha.6 M2-3): minimal structured state, plus the records that make a replayed message harmless.
