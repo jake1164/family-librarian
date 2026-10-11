@@ -251,6 +251,93 @@ public sealed class MediaAssetQueueEndpointTests
     }
 
     [TestMethod]
+    public async Task AnAudiobookWhoseAudioTrackDeclaresAnotherLanguageIsHeldBeforeItCanBeTrusted()
+    {
+        // A02: title and author match the catalog and the scan is clean, so before M1-4a this reached Trusted
+        // and was published. Now the declared audio language holds it through the existing Unmatched path.
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        var (requestId, formatId) = await CreateRequestAsync(client, "Audiobook");
+
+        var upload = await client.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(M4bTestFixture.Build("The Hobbit", "J. R. R. Tolkien", "deu"), "book.m4b"));
+        Assert.AreEqual(HttpStatusCode.OK, upload.StatusCode);
+        var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        Assert.IsNotNull(imported);
+
+        var queue = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
+        var held = queue!.Assets.Single(asset => asset.AssetId == imported.MediaAssetId);
+        Assert.AreEqual("Unmatched", held.StorageState, "Held before Trusted; never published.");
+        Assert.AreEqual(nameof(SecurityEvaluationStatus.Passed), held.LatestEvaluation!.Status, "Safety checks are unchanged.");
+        Assert.IsEmpty(held.LatestEvaluation.Approvals);
+        StringAssert.Contains(held.IdentityMismatchReason, "declared language");
+
+        var language = held.Evidence!.Items.Single(item => item.Dimension == "Language");
+        Assert.AreEqual("artifact.language.declared_conflicts", language.Code);
+        Assert.AreEqual("Negative", language.Polarity);
+        Assert.AreEqual("deu", language.Value);
+        Assert.AreEqual("artifact.identity_corroboration.corroborated",
+            held.Evidence.Items.Single(item => item.FindingId == "ev-corroboration").Code,
+            "Title and author were corroborated; the hold is for language alone.");
+    }
+
+    [TestMethod]
+    public async Task AnAudiobookWhoseAudioTrackDeclaresTheAcceptedLanguageIsStillApproved()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        var (requestId, formatId) = await CreateRequestAsync(client, "Audiobook");
+
+        var upload = await client.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(M4bTestFixture.Build("The Hobbit", "J. R. R. Tolkien", "eng"), "book.m4b"));
+        var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        Assert.IsNotNull(imported);
+
+        var queue = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
+        Assert.IsFalse(queue!.Assets.Any(asset => asset.AssetId == imported.MediaAssetId), "Existing behavior: approved.");
+        var recent = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/recent?limit=100");
+        var language = recent!.Assets.Single(asset => asset.AssetId == imported.MediaAssetId)
+            .Evidence!.Items.Single(item => item.Dimension == "Language");
+        Assert.AreEqual("artifact.language.declared_matches_request", language.Code);
+        Assert.AreEqual("Positive", language.Polarity);
+    }
+
+    [TestMethod]
+    public async Task AnAudiobookWithNoDeclaredLanguageIsStillApprovedAndTheLanguageStaysUnknown()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        var (requestId, formatId) = await CreateRequestAsync(client, "Audiobook");
+
+        var upload = await client.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(M4bTestFixture.Build("The Hobbit", "J. R. R. Tolkien", audioLanguage: null), "book.m4b"));
+        var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        Assert.IsNotNull(imported);
+
+        var recent = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/recent?limit=100");
+        var asset = recent!.Assets.Single(entry => entry.AssetId == imported.MediaAssetId);
+        Assert.AreNotEqual("Unmatched", asset.StorageState, "Absent language never blocks, exactly as before.");
+        var language = asset.Evidence!.Items.Single(item => item.Dimension == "Language");
+        Assert.AreEqual("artifact.language.not_declared", language.Code);
+        Assert.AreEqual("Unknown", language.Polarity, "Absence is Unknown, never Positive.");
+    }
+
+    [TestMethod]
     public async Task AnEpubWithAnEmptySpineIsRejectedBeforeApprovalAndTheDefectIsRecorded()
     {
         // E03: the title and author match the catalog and the scan is clean, so before M1-3a this
@@ -447,7 +534,10 @@ public sealed class MediaAssetQueueEndpointTests
         return form;
     }
 
-    private static async Task<(Guid RequestId, Guid FormatId)> CreateEbookRequestAsync(HttpClient client)
+    private static Task<(Guid RequestId, Guid FormatId)> CreateEbookRequestAsync(HttpClient client) =>
+        CreateRequestAsync(client, "Ebook");
+
+    private static async Task<(Guid RequestId, Guid FormatId)> CreateRequestAsync(HttpClient client, string mediaType)
     {
         var resolve = await client.PostAsync(
             "/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
@@ -457,12 +547,12 @@ public sealed class MediaAssetQueueEndpointTests
 
         var created = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
+            new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), [mediaType], null, false, false));
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
 
-        var format = request.Formats.Single(format => format.MediaType == "Ebook");
+        var format = request.Formats.Single(format => format.MediaType == mediaType);
         return (request.Id, format.FormatId);
     }
 

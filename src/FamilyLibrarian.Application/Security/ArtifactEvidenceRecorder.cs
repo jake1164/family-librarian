@@ -141,14 +141,18 @@ public sealed class ArtifactEvidenceRecorder(
             var noVerifier = result.VerifierId == NoVerifierId;
             // Only a negative observation about identity itself is a contradiction; a completeness or
             // language cue must never be read as one.
-            var contradicted = result.Facts.Any(fact =>
-                fact.Dimension == EvidenceDimension.IdentityCorroboration && fact.Polarity == EvidencePolarity.Negative);
+            var identityFacts = result.Facts.Where(fact => fact.Dimension == EvidenceDimension.IdentityCorroboration).ToArray();
+            var contradicted = identityFacts.Any(fact => fact.Polarity == EvidencePolarity.Negative);
+            // A hold for a non-identity reason (for example a conflicting declared language) leaves the identity
+            // dimension as the file's title/author actually showed: corroborated, not inconclusive.
+            var identityAgrees = !contradicted && identityFacts.Any(fact => fact.Polarity == EvidencePolarity.Positive);
             var (corroborationCode, corroborationPolarity) = result switch
             {
                 { IsMatch: true } when noVerifier => (EvidenceReasonCodes.ArtifactIdentityCorroboration.Unavailable, EvidencePolarity.Unknown),
                 { IsMatch: true } => (EvidenceReasonCodes.ArtifactIdentityCorroboration.Corroborated, EvidencePolarity.Positive),
                 _ when noVerifier => (EvidenceReasonCodes.ArtifactIdentityCorroboration.Unavailable, EvidencePolarity.Unknown),
                 _ when contradicted => (EvidenceReasonCodes.ArtifactIdentityCorroboration.Contradicted, EvidencePolarity.Negative),
+                _ when identityAgrees => (EvidenceReasonCodes.ArtifactIdentityCorroboration.Corroborated, EvidencePolarity.Positive),
                 _ => (EvidenceReasonCodes.ArtifactIdentityCorroboration.Inconclusive, EvidencePolarity.Unknown)
             };
             Add("ev-corroboration", EvidenceDimension.IdentityCorroboration, corroborationCode, corroborationPolarity,

@@ -78,19 +78,56 @@ internal static class CharacterizationFixtures
         return new MemoryStream(Concat(Box("ftyp", "M4B "u8.ToArray()), moov, Box("mdat", new byte[4096])));
     }
 
-    private static byte[] Tag(string name, string value)
+    /// <summary>
+    /// An M4B whose <c>moov</c> holds the given tracks (see <see cref="Track"/>) and then the <c>ilst</c> tags.
+    /// </summary>
+    public static MemoryStream M4bWithTracks(byte[][] tracks, params (string Name, string Value)[] tags)
+    {
+        var items = tags.Select(tag => Tag(tag.Name, tag.Value)).SelectMany(bytes => bytes).ToArray();
+        var udta = Box("udta", Box("meta", Concat(new byte[4], Box("ilst", items))));
+        var moov = Box("moov", Concat(Concat(tracks), udta));
+        return new MemoryStream(Concat(Box("ftyp", "M4B "u8.ToArray()), moov, Box("mdat", new byte[4096])));
+    }
+
+    /// <summary>A <c>trak</c> with a handler, an optional ISO 639-2 <c>mdhd</c> language and an optional <c>elng</c> tag.</summary>
+    public static byte[] Track(string handler = "soun", string? mdhdLanguage = "eng", string? elng = null, int mdhdVersion = 0)
+    {
+        var parts = new List<byte[]>
+        {
+            Box("hdlr", Concat(new byte[8], Encoding.ASCII.GetBytes(handler), new byte[12], [0]))
+        };
+        if (mdhdLanguage is not null)
+        {
+            var packed = new byte[2];
+            BinaryPrimitives.WriteUInt16BigEndian(packed,
+                (ushort)(((mdhdLanguage[0] - 0x60) << 10) | ((mdhdLanguage[1] - 0x60) << 5) | (mdhdLanguage[2] - 0x60)));
+            var beforeLanguage = mdhdVersion == 0 ? 20 : 32;
+            var versionByte = new byte[beforeLanguage];
+            versionByte[0] = (byte)mdhdVersion;
+            parts.Add(Box("mdhd", Concat(versionByte, packed, new byte[2])));
+        }
+
+        if (elng is not null)
+        {
+            parts.Add(Box("elng", Concat(new byte[4], Encoding.ASCII.GetBytes(elng), [0])));
+        }
+
+        return Box("trak", Box("mdia", Concat(parts.ToArray())));
+    }
+
+    public static byte[] Tag(string name, string value)
     {
         var atomName = name == "aART" ? name : "©" + name;
         var payload = Concat(BitConverter.GetBytes(1).Reverse().ToArray(), new byte[4], Encoding.UTF8.GetBytes(value));
         return Box(atomName, Box("data", payload), latin1Name: true);
     }
 
-    private static byte[] Box(string type, byte[] payload, bool latin1Name = false)
+    public static byte[] Box(string type, byte[] payload, bool latin1Name = false)
     {
         var size = new byte[4];
         BinaryPrimitives.WriteUInt32BigEndian(size, (uint)(payload.Length + 8));
         return Concat(size, (latin1Name ? Encoding.Latin1 : Encoding.ASCII).GetBytes(type), payload);
     }
 
-    private static byte[] Concat(params byte[][] parts) => parts.SelectMany(part => part).ToArray();
+    public static byte[] Concat(params byte[][] parts) => parts.SelectMany(part => part).ToArray();
 }

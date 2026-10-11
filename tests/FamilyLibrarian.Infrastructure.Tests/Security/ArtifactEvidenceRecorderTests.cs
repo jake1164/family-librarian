@@ -223,6 +223,30 @@ public sealed class ArtifactEvidenceRecorderTests
     }
 
     [TestMethod]
+    public async Task ALanguageOnlyHoldIsRecordedInTheLanguageDimensionWhileTitleAndAuthorStayCorroborated()
+    {
+        // M1-4a: title and author agree, the declared audio language conflicts, so the verdict is a hold.
+        var asset = Asset(preConfirmed: true, format: ".m4b");
+        var (recorder, store) = Create();
+        var result = AssetIdentityVerificationResult.Unmatched("m4b-tag-metadata", "declared language deu",
+        [
+            new IdentityFact("ev-title", EvidenceDimension.IdentityCorroboration, EvidenceReasonCodes.ArtifactIdentityCorroboration.TitleAgrees, EvidencePolarity.Positive),
+            new IdentityFact("ev-author", EvidenceDimension.IdentityCorroboration, EvidenceReasonCodes.ArtifactIdentityCorroboration.AuthorAgrees, EvidencePolarity.Positive),
+            new IdentityFact("ev-language", EvidenceDimension.Language, EvidenceReasonCodes.ArtifactLanguage.DeclaredConflicts, EvidencePolarity.Negative, "deu")
+        ]);
+
+        await recorder.RecordIdentityVerificationAsync(asset, result, CancellationToken.None);
+
+        var language = store.Saved.Single(item => item.Dimension == EvidenceDimension.Language);
+        Assert.AreEqual("artifact.language.declared_conflicts", language.Code);
+        Assert.AreEqual(EvidencePolarity.Negative, language.Polarity);
+        Assert.AreEqual("deu", language.Value);
+        Assert.IsFalse(store.Saved.Any(item => item.Code == "artifact.language.not_assessed"));
+        Assert.AreEqual("artifact.identity_corroboration.corroborated", store.Saved.Single(item => item.FindingId == "ev-corroboration").Code,
+            "A language-only hold is not a title/author contradiction and not 'inconclusive'.");
+    }
+
+    [TestMethod]
     public async Task AnUnreadableFileIsInconclusiveNotContradicted()
     {
         var asset = Asset();

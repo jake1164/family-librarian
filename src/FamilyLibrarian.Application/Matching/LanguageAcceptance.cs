@@ -31,6 +31,21 @@ public static class LanguageAcceptance
             ? "en" : acceptedLanguage), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// True when <paramref name="language"/> is a language code or name this policy recognizes (an ISO
+    /// code, a regional tag such as <c>en-US</c>, or an English language name). A value it does not
+    /// recognize says nothing reliable about the language, so a caller that must not guess treats it as
+    /// unknown rather than as a mismatch. Does not change how existing members compare languages.
+    /// </summary>
+    public static bool IsRecognized(string? language)
+    {
+        if (string.IsNullOrWhiteSpace(language)) return false;
+        var value = language.Trim();
+        if (Aliases.ContainsKey(value)) return true;
+        var separator = value.IndexOfAny(['-', '_']);
+        return separator is 2 or 3 && Aliases.ContainsKey(value[..separator]);
+    }
+
+    /// <summary>
     /// True when <paramref name="word"/> is a recognized English *name* of a
     /// language ("Spanish", "German"), resolving it to its two-letter code.
     /// </summary>

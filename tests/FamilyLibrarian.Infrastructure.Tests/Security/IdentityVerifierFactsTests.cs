@@ -76,21 +76,24 @@ public sealed class IdentityVerifierFactsTests
     }
 
     [TestMethod]
-    public async Task AnM4bReportsTitleAndAuthorFactsButNoLanguageFact()
+    public async Task AnM4bReportsTitleAndAuthorFactsAndAnUnknownLanguageWhenNoStandardFieldIsDeclared()
     {
         using var matching = M4b_(("nam", Title), ("ART", Author));
         var match = await M4b.VerifyAsync(Asset(RequestMediaType.Audiobook, ".m4b"), matching, CancellationToken.None);
 
         Assert.IsTrue(match.IsMatch);
         Assert.AreEqual(EvidenceReasonCodes.ArtifactIdentityCorroboration.TitleAgrees, match.Facts.Single(f => f.FindingId == "ev-title").Code);
-        Assert.IsFalse(match.Facts.Any(f => f.Dimension == EvidenceDimension.Language),
-            "The M4B verifier has no language logic; the gap is recorded as not_assessed, not guessed (A02).");
+        // M1-4a: the M4B verifier now reads the standard audio-track language field. With none declared the
+        // language is Unknown (never Positive); it is not guessed from anything else.
+        var language = match.Facts.Single(f => f.Dimension == EvidenceDimension.Language);
+        Assert.AreEqual(EvidenceReasonCodes.ArtifactLanguage.NotDeclared, language.Code);
+        Assert.AreEqual(EvidencePolarity.Unknown, language.Polarity);
 
-        // A02 baseline: a conflicting declared-language tag is not examined, so the verdict is still a match.
+        // A non-standard freeform language tag is not a trustworthy field: still a match, still unknown.
         using var german = M4b_(("nam", Title), ("ART", Author), ("lng", "German"));
         var stillMatches = await M4b.VerifyAsync(Asset(RequestMediaType.Audiobook, ".m4b"), german, CancellationToken.None);
         Assert.IsTrue(stillMatches.IsMatch);
-        Assert.IsFalse(stillMatches.Facts.Any(f => f.Dimension == EvidenceDimension.Language));
+        Assert.AreEqual(EvidenceReasonCodes.ArtifactLanguage.NotDeclared, stillMatches.Facts.Single(f => f.Dimension == EvidenceDimension.Language).Code);
     }
 
     [TestMethod]

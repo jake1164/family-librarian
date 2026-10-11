@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Text;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 
@@ -28,11 +29,18 @@ namespace FamilyLibrarian.Infrastructure.Security;
 /// ends in an unmatched result rather than an exception.
 /// </para>
 /// </remarks>
-public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher bookMatcher) : IAssetIdentityVerifier
+public sealed class M4bAssetIdentityVerifier(
+    IWorkLookup works, IBookMatcher bookMatcher, IBookRequestFulfillmentStore? requestFulfillment = null) : IAssetIdentityVerifier
 {
     private const int MaxBoxesPerLevel = 100_000;
     private const int MaxTagItems = 10_000;
     private const int MaxTagValueBytes = 64 * 1024;
+    private const int MaxTracks = 64;
+    private const int MaxLanguageTagBytes = 35;
+
+    // ISO 639-2 values that explicitly say "no usable language": undetermined, no linguistic content,
+    // uncoded, multiple. They are unknown, never a mismatch.
+    private static readonly string[] UnspecifiedLanguages = ["und", "zxx", "mis", "mul"];
 
     // 0xA9 is the "(c)" byte QuickTime/iTunes use to prefix text-tag atom names.
     private static readonly string[] TitleTags = ["©nam", "©alb"];
@@ -97,16 +105,156 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
         var authorChecked = authors.Count > 0 && !string.IsNullOrWhiteSpace(expected.PrimaryAuthor);
         var authorMatches = !authorChecked || authors.Any(author => bookMatcher.AuthorMatches(expected.PrimaryAuthor, author));
 
-        // Observations only (recorded as evidence); they never feed the verdict below.
-        IdentityFact[] facts =
-        [
+        // A02: the audio track's own declared language (standard container field only) must not contradict
+        // the language accepted for this request. A missing, undetermined, unrecognized or unreadable
+        // value is unknown and is never treated as either a match or a mismatch.
+        var declaredLanguages = await ReadDeclaredLanguagesSafelyAsync(content, cancellationToken);
+        var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
+        var languageAccepted = declaredLanguages is not { Count: > 0 } ||
+            declaredLanguages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage));
+
+        var facts = new List<IdentityFact>
+        {
             IdentityFacts.Title(titles.Count > 0, titleMatches),
             IdentityFacts.Author(authorChecked, authorMatches)
-        ];
-        return titleMatches && authorMatches
-            ? AssetIdentityVerificationResult.Match(Id, facts)
-            : AssetIdentityVerificationResult.Unmatched(Id, DescribeMismatch(
-                expectedTitles, expected.PrimaryAuthor, titles, authors, titleMatches, authorMatches), facts);
+        };
+        if (declaredLanguages is not null)
+        {
+            facts.Add(IdentityFacts.Language(declaredLanguages, languageAccepted));
+        }
+
+        if (titleMatches && authorMatches && languageAccepted)
+        {
+            return AssetIdentityVerificationResult.Match(Id, facts);
+        }
+
+        var reason = titleMatches && authorMatches
+            ? string.Empty
+            : DescribeMismatch(expectedTitles, expected.PrimaryAuthor, titles, authors, titleMatches, authorMatches);
+        if (!languageAccepted)
+        {
+            var languageReason = $"The audiobook's declared language ({string.Join(", ", declaredLanguages!)}) doesn't match the language " +
+                $"accepted for this request{(string.IsNullOrWhiteSpace(acceptedLanguage) ? string.Empty : $" ({acceptedLanguage})")}.";
+            reason = reason.Length == 0 ? languageReason : $"{reason} {languageReason}";
+        }
+
+        return AssetIdentityVerificationResult.Unmatched(Id, reason, facts);
+    }
+
+    private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
+    {
+        if (requestFulfillment is null) return null;
+        var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
+        return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
+    }
+
+    /// <summary>
+    /// The recognized, specified languages declared by the audio tracks, or <see langword="null"/> when the
+    /// container could not be read for language at all (recorded as not assessed, never as a match).
+    /// </summary>
+    private static async Task<List<string>?> ReadDeclaredLanguagesSafelyAsync(Stream content, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ReadDeclaredLanguagesAsync(content, cancellationToken);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads the standard media language of each <em>audio</em> track: the extended language tag (<c>elng</c>,
+    /// BCP 47) when present, otherwise the media header's packed ISO 639-2 code (<c>mdhd</c>). Non-audio tracks
+    /// (chapter text, cover) are ignored, as are tags such as a freeform "language" atom, which are not a
+    /// standard language field and are never trusted. Nothing is detected from the audio itself.
+    /// </summary>
+    private static async Task<List<string>> ReadDeclaredLanguagesAsync(Stream content, CancellationToken cancellationToken)
+    {
+        var languages = new List<string>();
+        var moov = await FindChildAsync(content, 0, content.Length, "moov", cancellationToken);
+        if (moov is null) return languages;
+
+        var position = moov.Value.PayloadStart;
+        var tracks = 0;
+        for (var count = 0; count < MaxBoxesPerLevel; count++)
+        {
+            if (await TryReadBoxAsync(content, position, moov.Value.End, cancellationToken) is not { } box) break;
+            position = box.End;
+            if (box.Type != "trak") continue;
+            if (++tracks > MaxTracks) break;
+
+            if (await FindChildAsync(content, box.PayloadStart, box.End, "mdia", cancellationToken) is not { } mdia) continue;
+            if (await ReadHandlerTypeAsync(content, mdia, cancellationToken) != "soun") continue;
+
+            var declared = await ReadExtendedLanguageAsync(content, mdia, cancellationToken)
+                ?? await ReadMediaHeaderLanguageAsync(content, mdia, cancellationToken);
+            if (declared is not null &&
+                !UnspecifiedLanguages.Contains(declared, StringComparer.OrdinalIgnoreCase) &&
+                LanguageAcceptance.IsRecognized(declared) &&
+                !languages.Contains(declared, StringComparer.OrdinalIgnoreCase))
+            {
+                languages.Add(declared);
+            }
+        }
+
+        return languages;
+    }
+
+    private static async Task<string?> ReadHandlerTypeAsync(Stream content, BoxInfo mdia, CancellationToken cancellationToken)
+    {
+        if (await FindChildAsync(content, mdia.PayloadStart, mdia.End, "hdlr", cancellationToken) is not { } hdlr ||
+            hdlr.End - hdlr.PayloadStart < 12)
+            return null;
+
+        var buffer = new byte[12];
+        content.Position = hdlr.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        return Encoding.Latin1.GetString(buffer, 8, 4);
+    }
+
+    /// <summary><c>elng</c>: a full box (4 bytes) holding a null-terminated BCP 47 tag.</summary>
+    private static async Task<string?> ReadExtendedLanguageAsync(Stream content, BoxInfo mdia, CancellationToken cancellationToken)
+    {
+        if (await FindChildAsync(content, mdia.PayloadStart, mdia.End, "elng", cancellationToken) is not { } elng) return null;
+        var length = (int)Math.Min(elng.End - elng.PayloadStart - 4, MaxLanguageTagBytes);
+        if (length <= 0) return null;
+
+        var buffer = new byte[4 + length];
+        content.Position = elng.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        var text = Encoding.ASCII.GetString(buffer, 4, length).Split('\0')[0].Trim();
+        return text.Length > 0 && text.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_') ? text : null;
+    }
+
+    /// <summary><c>mdhd</c>: version 0 or 1 full box whose packed 15-bit field holds three letters of ISO 639-2.</summary>
+    private static async Task<string?> ReadMediaHeaderLanguageAsync(Stream content, BoxInfo mdia, CancellationToken cancellationToken)
+    {
+        if (await FindChildAsync(content, mdia.PayloadStart, mdia.End, "mdhd", cancellationToken) is not { } mdhd) return null;
+        var available = mdhd.End - mdhd.PayloadStart;
+        if (available < 1) return null;
+
+        var version = new byte[1];
+        content.Position = mdhd.PayloadStart;
+        await ReadExactAsync(content, version, cancellationToken);
+        var languageOffset = version[0] switch { 0 => 20, 1 => 32, _ => -1 };
+        if (languageOffset < 0 || available < languageOffset + 2) return null;
+
+        var packed = new byte[2];
+        content.Position = mdhd.PayloadStart + languageOffset;
+        await ReadExactAsync(content, packed, cancellationToken);
+        var code = BinaryPrimitives.ReadUInt16BigEndian(packed);
+        Span<char> letters = stackalloc char[3];
+        letters[0] = (char)(((code >> 10) & 0x1F) + 0x60);
+        letters[1] = (char)(((code >> 5) & 0x1F) + 0x60);
+        letters[2] = (char)((code & 0x1F) + 0x60);
+        foreach (var letter in letters)
+        {
+            if (letter is < 'a' or > 'z') return null;
+        }
+
+        return new string(letters);
     }
 
     private static List<string> Collect(IReadOnlyDictionary<string, List<string>> tags, string[] names) =>
