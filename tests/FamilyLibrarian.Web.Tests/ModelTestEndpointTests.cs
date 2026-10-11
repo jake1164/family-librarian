@@ -143,7 +143,7 @@ public sealed class ModelTestEndpointTests
         Assert.IsFalse(settings!.IsEnabled);
         Assert.IsFalse(settings.HasApiKey);
         Assert.IsFalse(settings.AllowCloud);
-        Assert.AreEqual(384, settings.MaxOutputTokens);
+        Assert.AreEqual(1_024, settings.MaxOutputTokens);
         Assert.AreEqual(HttpStatusCode.BadRequest, run.StatusCode);
         Assert.IsEmpty(client.Models);
     }
@@ -187,7 +187,7 @@ public sealed class ModelTestEndpointTests
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
         Assert.AreEqual("local/primary", report!.ConfiguredModel);
-        Assert.AreEqual(7, report.Results.Count);
+        Assert.AreEqual(8, report.Results.Count);
         Assert.IsTrue(report.Results.All(result => result.Status is "Passed" or "NotSupported"), string.Join("; ", report.Results.Select(result => $"{result.Check}={result.Status}")));
         Assert.IsTrue(report.TotalTokens > 0);
         Assert.IsTrue(report.TotalLatencyMilliseconds > 0);

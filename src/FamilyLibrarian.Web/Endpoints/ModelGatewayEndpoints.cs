@@ -36,12 +36,13 @@ internal static class ModelGatewayEndpoints
         foreach (var role in request.Roles ?? [])
         {
             if (!Enum.TryParse<ModelRole>(role.Role, ignoreCase: true, out var parsedRole) || !Enum.IsDefined(parsedRole) ||
-                !Enum.TryParse<ModelPlacement>(role.Placement, ignoreCase: true, out var placement) || !Enum.IsDefined(placement))
+                !Enum.TryParse<ModelPlacement>(role.Placement, ignoreCase: true, out var placement) || !Enum.IsDefined(placement) ||
+                !Enum.TryParse<ModelReasoningMode>(string.IsNullOrWhiteSpace(role.Reasoning) ? nameof(ModelReasoningMode.Inherit) : role.Reasoning, ignoreCase: true, out var reasoning) || !Enum.IsDefined(reasoning))
             {
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["roles"] = [$"'{role.Role}' with placement '{role.Placement}' is not a known role."] });
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["roles"] = [$"'{role.Role}' with placement '{role.Placement}' and reasoning '{role.Reasoning}' is not a known role setting."] });
             }
 
-            roles.Add(new ModelRoleCommand(parsedRole, role.IsEnabled, placement, role.LocalModel, role.CloudModel));
+            roles.Add(new ModelRoleCommand(parsedRole, role.IsEnabled, placement, role.LocalModel, role.CloudModel, reasoning));
         }
 
         var limits = request.Limits is null ? null : ToLimits(request.Limits);
@@ -90,7 +91,7 @@ internal static class ModelGatewayEndpoints
         var settings = result.Settings!;
         return Results.Ok(new ModelGatewaySettingsResponse(
             settings.IsEnabled, settings.EndpointUrl, settings.HasApiKey, settings.ApiKeySetAtUtc, settings.AllowCloud,
-            [.. settings.Roles.Select(role => new ModelRoleDto(role.Role.ToString(), role.IsEnabled, role.Placement.ToString(), role.LocalModel, role.CloudModel))],
+            [.. settings.Roles.Select(role => new ModelRoleDto(role.Role.ToString(), role.IsEnabled, role.Placement.ToString(), role.LocalModel, role.CloudModel, role.Reasoning.ToString()))],
             ToDto(settings.Limits), settings.AllowCloudExcerpts));
     }
 

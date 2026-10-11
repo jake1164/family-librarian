@@ -322,7 +322,7 @@ public sealed class ModelExecutionPolicy(
         {
             var connection = new ModelConnection(resolution.Endpoint!, resolution.ApiKey, resolution.Model!, TimeSpan.FromSeconds(limits.TimeoutSeconds));
             response = await client.CompleteAsync(
-                connection, new ModelRequest(request.Messages, maxOutputTokens, request.JsonObjectOutput), cancellationToken);
+                connection, new ModelRequest(request.Messages, maxOutputTokens, request.JsonObjectOutput, Reasoning: resolution.Reasoning), cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -409,6 +409,14 @@ public sealed class ModelExecutionPolicy(
         }
 
         breaker.RecordSuccess(breakerKey);
+
+        // The provider said it stopped at the output cap. Whatever text exists is cut off, so it is never parsed or accepted:
+        // strict validation is not relaxed because a model ran out of tokens.
+        if (response.IsOutputLimited)
+        {
+            return Result(ModelCallOutcome.OutputLimitReached, detail: "The model reached the output limit before it finished its answer.");
+        }
+
         if (string.IsNullOrWhiteSpace(response.Content))
         {
             return Result(ModelCallOutcome.EmptyContent, detail: "The model returned no text.");

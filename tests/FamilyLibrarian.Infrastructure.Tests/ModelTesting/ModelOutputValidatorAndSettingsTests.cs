@@ -85,7 +85,8 @@ public sealed class ModelTestSettingsServiceTests
         Assert.IsFalse(view.AllowCloud);
         Assert.IsFalse(view.HasApiKey);
         Assert.AreEqual(30, view.TimeoutSeconds);
-        Assert.AreEqual(384, view.MaxOutputTokens);
+        Assert.AreEqual(1_024, view.MaxOutputTokens);
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Inherit, view.Reasoning, "Reasoning is never changed unless an administrator asks.");
     }
 
     [TestMethod]
@@ -226,7 +227,8 @@ public sealed class ModelTestingBoundaryTests
 {
     private static readonly HashSet<Type> Allowed =
     [
-        typeof(ICurrentUser), typeof(ICurrentAdministrator), typeof(IClock), typeof(IAuditWriter), typeof(ICredentialProtector)
+        typeof(ICurrentUser), typeof(ICurrentAdministrator), typeof(IClock), typeof(IAuditWriter), typeof(ICredentialProtector),
+        typeof(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode), typeof(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode?)
     ];
 
     [TestMethod]

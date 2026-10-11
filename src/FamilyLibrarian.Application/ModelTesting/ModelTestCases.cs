@@ -45,7 +45,7 @@ internal static class ModelTestCases
 
     public static ModelRequest ConnectivityRequest(int maxOutputTokens) => new(
         [new("system", "You are a connectivity probe. Reply with exactly one word: pong"), new("user", "ping")],
-        Math.Min(maxOutputTokens, 32));
+        maxOutputTokens);
 
     public static ModelRequest IntentRequest(string message, int maxOutputTokens) => new(
         [

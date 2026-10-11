@@ -2541,6 +2541,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(16)")
                         .HasColumnName("placement");
 
+                    b.Property<string>("Reasoning")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("reasoning_mode");
+
                     b.HasKey("SettingsId", "Role");
 
                     b.ToTable("model_role_settings", "integrations");
@@ -2674,6 +2680,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<string>("ProtectedApiKey")
                         .HasColumnType("text")
                         .HasColumnName("protected_api_key");
+
+                    b.Property<string>("Reasoning")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("reasoning_mode");
 
                     b.Property<int>("TimeoutSeconds")
                         .HasColumnType("integer")

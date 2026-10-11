@@ -247,6 +247,40 @@ public sealed class MigrationUpgradeTests
     }
 
     [TestMethod]
+    public async Task ReasoningModeUpgradeKeepsExistingRolesAndTestSettingsOnInherit()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(name => name.EndsWith("_AddModelReasoningMode", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.ExecuteSqlRawAsync(
+            "INSERT INTO integrations.model_gateway_settings (id, is_enabled, endpoint_url, api_key_format_version, allow_cloud, created_at_utc, updated_at_utc) " +
+            "VALUES ('33333333-3333-3333-3333-333333333333', true, 'http://litellm.example.test', 0, false, now(), now())");
+        await database.Database.ExecuteSqlRawAsync(
+            "INSERT INTO integrations.model_role_settings (settings_id, role, is_enabled, placement, local_model) " +
+            "VALUES ('33333333-3333-3333-3333-333333333333', 'CandidateAmbiguityAssessment', true, 'Local', 'local/alias')");
+        await database.Database.ExecuteSqlRawAsync(
+            "INSERT INTO integrations.model_test_settings (id, is_enabled, api_key_format_version, allow_cloud, timeout_seconds, max_output_tokens, created_at_utc, updated_at_utc) " +
+            "VALUES ('44444444-4444-4444-4444-444444444444', true, 0, false, 30, 384, now(), now())");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var gateway = await database.ModelGatewaySettingsRows.AsNoTracking().Include(row => row.Roles).SingleAsync();
+        var role = gateway.FindRole(FamilyLibrarian.Domain.ModelGateway.ModelRole.CandidateAmbiguityAssessment)!;
+        Assert.IsTrue(role.IsEnabled);
+        Assert.AreEqual("local/alias", role.LocalModel);
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Inherit, role.Reasoning, "Existing installs keep sending no reasoning parameter.");
+        var test = await database.ModelTestSettingsRows.AsNoTracking().SingleAsync();
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Inherit, test.Reasoning);
+        Assert.AreEqual(384, test.MaxOutputTokens, "The administrator's stored limit is not silently changed.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task AssetOriginUpgradeMarksEveryExistingRowLegacyExplicitlyAndProtectsOrigin()
     {
         const string PreOriginMigration = "20261010202850_AddArtifactEvidence";

@@ -432,4 +432,83 @@ public sealed class ModelExecutionPolicyTests
         Assert.AreEqual(0, ModelExecutionLimits.Default.CloudDailyRequests, "Cloud use is off until an allowance is granted.");
     }
 
+
+    private static ModelResponse Reply(string? content, string? finish, ModelUsage? usage = null) =>
+        new(true, ModelFailureKind.None, null, content, [], finish, "m", usage ?? new ModelUsage(10, 40, 50), 12);
+
+    private static ModelGatewaySettings WithReasoning(ModelReasoningMode mode)
+    {
+        var settings = new ModelGatewaySettings(Now);
+        settings.Configure("http://litellm.example.test:4000", false, null, Now);
+        settings.ConfigureRole(ModelRole.CandidateAmbiguityAssessment, true, ModelPlacement.Local, "local/alias", null, null, Now, mode);
+        settings.SetEnabled(true, null, Now);
+        return settings;
+    }
+
+    [TestMethod]
+    public async Task ARoleDefaultsToInheritAndSendsNoReasoningRequest()
+    {
+        var rig = new Rig(new ScriptedModel((_, _) => Reply("{}", "stop")));
+
+        await RunAsync(rig, Chat());
+
+        Assert.AreEqual(ModelReasoningMode.Inherit, rig.Model.Calls.Single().Request.Reasoning);
+    }
+
+    [TestMethod]
+    public async Task AnExplicitlyDisabledRoleAsksForNoReasoningAndOtherRolesAreUnaffected()
+    {
+        var settings = WithReasoning(ModelReasoningMode.Disabled);
+        settings.ConfigureRole(ModelRole.ArtifactValidationAssessment, true, ModelPlacement.Local, "local/alias", null, null, Now);
+        var rig = new Rig(new ScriptedModel((_, _) => Reply("{}", "stop")), settings);
+
+        await RunAsync(rig, Chat());
+        await RunAsync(rig, Background());
+
+        Assert.AreEqual(ModelReasoningMode.Disabled, rig.Model.Calls[0].Request.Reasoning);
+        Assert.AreEqual(ModelReasoningMode.Inherit, rig.Model.Calls[1].Request.Reasoning, "Reasoning is per role, never global.");
+    }
+
+    [TestMethod]
+    public async Task EmptyTextWithoutTruncationEvidenceStaysEmptyContent()
+    {
+        foreach (var finish in new string?[] { "stop", null })
+        {
+            var rig = new Rig(new ScriptedModel((_, _) => Reply(string.Empty, finish)));
+
+            var result = await RunAsync(rig, Chat());
+
+            Assert.AreEqual(ModelCallOutcome.EmptyContent, result.Outcome, $"finish={finish ?? "(none)"}: unknown stays unknown.");
+        }
+    }
+
+    [TestMethod]
+    public async Task AReplyThatStoppedAtTheOutputLimitIsClassifiedSeparatelyAndNeverParsed()
+    {
+        var parsed = 0;
+        var rig = new Rig(new ScriptedModel((_, _) => Reply("{\"verdict\":\"Consistent\"", "length")));
+
+        var emptyRig = new Rig(new ScriptedModel((_, _) => Reply(string.Empty, "length")));
+        var truncated = await rig.Policy.ExecuteAsync(Chat(), text => { parsed++; return ModelParse.Ok(text); }, CancellationToken.None);
+        var emptied = await RunAsync(emptyRig, Chat());
+
+        Assert.AreEqual(ModelCallOutcome.OutputLimitReached, truncated.Outcome);
+        Assert.AreEqual(ModelCallOutcome.OutputLimitReached, emptied.Outcome);
+        Assert.AreEqual(0, parsed, "A cut-off reply is never handed to the parser, so it cannot be accepted by accident.");
+        Assert.IsNull(truncated.Value);
+        Assert.AreEqual(50, truncated.Usage!.TotalTokens, "The tokens it spent still count.");
+        Assert.AreEqual(ModelCallOutcome.OutputLimitReached, rig.Ledger.Records.Single().Outcome);
+    }
+
+    [TestMethod]
+    public async Task ARejectedReasoningSettingIsAnUnsupportedCapabilityAndIsNotRetriedOrFallenBack()
+    {
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Fail(ModelFailureKind.UnsupportedCapability, "reasoning not accepted")), WithReasoning(ModelReasoningMode.Disabled));
+
+        var result = await RunAsync(rig, Chat());
+
+        Assert.AreEqual(ModelCallOutcome.UnsupportedCapability, result.Outcome);
+        Assert.AreEqual(1, rig.Model.Calls.Count, "One call: no retry with different parameters, no other model.");
+        Assert.AreEqual(ModelReasoningMode.Disabled, rig.Model.Calls.Single().Request.Reasoning);
+    }
 }

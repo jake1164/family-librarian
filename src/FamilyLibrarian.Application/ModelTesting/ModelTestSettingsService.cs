@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Domain.ModelTesting;
 
 namespace FamilyLibrarian.Application.ModelTesting;
@@ -31,7 +32,8 @@ public sealed record ModelTestSettingsView(
     string? CloudModel,
     bool AllowCloud,
     int TimeoutSeconds,
-    int MaxOutputTokens);
+    int MaxOutputTokens,
+    ModelReasoningMode Reasoning = ModelReasoningMode.Inherit);
 
 public sealed record SaveModelTestSettings(
     string? EndpointUrl,
@@ -40,7 +42,8 @@ public sealed record SaveModelTestSettings(
     string? CloudModel,
     bool AllowCloud,
     int TimeoutSeconds,
-    int MaxOutputTokens);
+    int MaxOutputTokens,
+    ModelReasoningMode Reasoning = ModelReasoningMode.Inherit);
 
 public sealed record ModelTestSettingsResult(bool Succeeded, bool Forbidden, string? Error, ModelTestSettingsView? Settings)
 {
@@ -91,7 +94,7 @@ public sealed class ModelTestSettingsService(
         var settings = await store.GetOrCreateAsync(cancellationToken);
         settings.Configure(
             command.EndpointUrl, command.PrimaryModel, command.ComparisonModel, command.CloudModel, command.AllowCloud,
-            command.TimeoutSeconds, command.MaxOutputTokens, currentUser.UserId, clock.UtcNow);
+            command.TimeoutSeconds, command.MaxOutputTokens, currentUser.UserId, clock.UtcNow, command.Reasoning);
         if (settings.IsEnabled && GetConfigurationError(settings) is not null)
         {
             // A configuration that can no longer run must not stay "enabled".
@@ -101,7 +104,7 @@ public sealed class ModelTestSettingsService(
         await store.SaveChangesAsync(cancellationToken);
         await audit.WriteAsync(
             AuditActions.ModelTestSettingsChanged, AuditSubjectTypes.ModelTest, SubjectId,
-            new { settings.AllowCloud, settings.TimeoutSeconds, settings.MaxOutputTokens }, cancellationToken);
+            new { settings.AllowCloud, settings.TimeoutSeconds, settings.MaxOutputTokens, Reasoning = settings.Reasoning.ToString() }, cancellationToken);
         return ModelTestSettingsResult.Success(ToView(settings));
     }
 
@@ -170,7 +173,7 @@ public sealed class ModelTestSettingsService(
         ? new ModelTestSettingsView(false, null, false, null, null, null, null, false, ModelTestSettings.DefaultTimeoutSeconds, ModelTestSettings.DefaultMaxOutputTokens)
         : new ModelTestSettingsView(
             settings.IsEnabled, settings.EndpointUrl, settings.HasApiKey, settings.ApiKeySetAtUtc, settings.PrimaryModel,
-            settings.ComparisonModel, settings.CloudModel, settings.AllowCloud, settings.TimeoutSeconds, settings.MaxOutputTokens);
+            settings.ComparisonModel, settings.CloudModel, settings.AllowCloud, settings.TimeoutSeconds, settings.MaxOutputTokens, settings.Reasoning);
 
     private bool IsAdministrator() => currentUser.UserId is not null && administrator.IsAdministrator;
 
@@ -211,6 +214,11 @@ public sealed class ModelTestSettingsService(
         if (command.MaxOutputTokens is < ModelTestSettings.MinimumMaxOutputTokens or > ModelTestSettings.MaximumMaxOutputTokens)
         {
             return $"Maximum output tokens must be {ModelTestSettings.MinimumMaxOutputTokens}-{ModelTestSettings.MaximumMaxOutputTokens}.";
+        }
+
+        if (!Enum.IsDefined(command.Reasoning))
+        {
+            return "Choose a valid reasoning setting.";
         }
 
         if (command.AllowCloud && string.IsNullOrWhiteSpace(command.CloudModel))

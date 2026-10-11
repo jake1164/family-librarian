@@ -40,7 +40,11 @@
                 <MudTextField @bind-Value="cloudModel" Label="Cloud model alias (optional)" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
                 <MudStack Row="true" Spacing="2">
                     <MudNumericField T="int" @bind-Value="timeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
-                    <MudNumericField T="int" @bind-Value="maxOutputTokens" Label="Maximum output tokens" Min="16" Max="1024" Variant="Variant.Outlined" />
+                    <MudNumericField T="int" @bind-Value="maxOutputTokens" Label="Maximum output tokens" Min="16" Max="4096" Variant="Variant.Outlined" />
+                    <MudSelect T="string" @bind-Value="reasoning" Label="Model reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;">
+                        <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
+                        <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
+                    </MudSelect>
                 </MudStack>
                 <MudStack Row="true" Spacing="2">
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save settings</MudButton>
@@ -93,7 +97,8 @@
                 {
                     <MudText Typo="Typo.subtitle1">
                         @report.ConfiguredModel@(report.IsCloud ? " (cloud)" : "") ·
-                        @report.TotalCalls call(s) · @(report.TotalTokens?.ToString() ?? "no") token usage reported · @report.TotalLatencyMilliseconds ms
+                        @report.TotalCalls call(s) · @(report.TotalTokens?.ToString() ?? "no") token usage reported · @report.TotalLatencyMilliseconds ms ·
+                        reasoning: @(report.Reasoning == "Disabled" ? "asked off" : "provider default") · output limit @report.MaxOutputTokens
                     </MudText>
                     <MudTable Items="report.Results" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm">
                         <HeaderContent>
@@ -105,7 +110,7 @@
                         </HeaderContent>
                         <RowTemplate>
                             <MudTd DataLabel="Check">@Humanize(context.Check)</MudTd>
-                            <MudTd DataLabel="Result">@context.Status</MudTd>
+                            <MudTd DataLabel="Result">@context.Status@(context.OutputLimitReached ? " (output limit reached)" : "")</MudTd>
                             <MudTd DataLabel="What happened">
                                 @context.Detail
                                 @if (!string.IsNullOrWhiteSpace(context.Sample))
@@ -136,7 +141,8 @@
     private string cloudModel = string.Empty;
     private bool allowCloud;
     private int timeoutSeconds = 30;
-    private int maxOutputTokens = 384;
+    private int maxOutputTokens = 1024;
+    private string reasoning = "Inherit";
     private string apiKey = string.Empty;
     private string target = "Primary";
     private bool confirmCloud;
@@ -167,10 +173,11 @@
         allowCloud = value.AllowCloud;
         timeoutSeconds = value.TimeoutSeconds;
         maxOutputTokens = value.MaxOutputTokens;
+        reasoning = value.Reasoning;
     }
 
     private async Task SaveAsync() => await ApplyResultAsync(
-        await Api.SaveAsync(new SaveModelTestSettingsRequest(endpoint, primaryModel, comparisonModel, cloudModel, allowCloud, timeoutSeconds, maxOutputTokens)),
+        await Api.SaveAsync(new SaveModelTestSettingsRequest(endpoint, primaryModel, comparisonModel, cloudModel, allowCloud, timeoutSeconds, maxOutputTokens, reasoning)),
         "Settings saved.");
 
     private async Task SetApiKeyAsync()
@@ -231,7 +238,8 @@
 
     private static string Humanize(string check) => check switch
     {
-        "Connectivity" => "Connectivity",
+        "Connectivity" => "Connection (transport and key)",
+        "AssistantContent" => "Usable visible reply",
         "IntentClassification" => "Book-intent classification",
         "StructuredJson" => "Structured JSON",
         "MatchAdvisory" => "Book-match advisory (fictional evidence)",

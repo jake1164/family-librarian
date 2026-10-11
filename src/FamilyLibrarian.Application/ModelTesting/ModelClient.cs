@@ -1,3 +1,5 @@
+using FamilyLibrarian.Domain.ModelGateway;
+
 namespace FamilyLibrarian.Application.ModelTesting;
 
 /// <summary>Where and how to reach one model for one call. Resolved fresh each time, since settings can change at any moment.</summary>
@@ -15,7 +17,8 @@ public sealed record ModelRequest(
     IReadOnlyList<ModelChatMessage> Messages,
     int MaxOutputTokens,
     bool JsonObjectOutput = false,
-    IReadOnlyList<ModelToolDefinition>? Tools = null);
+    IReadOnlyList<ModelToolDefinition>? Tools = null,
+    ModelReasoningMode Reasoning = ModelReasoningMode.Inherit);
 
 public enum ModelFailureKind
 {
@@ -29,7 +32,7 @@ public enum ModelFailureKind
     ServerError,
     InvalidResponse,
 
-    /// <summary>The model or gateway rejected a feature of the request (JSON mode, tools, image input).</summary>
+    /// <summary>The model or gateway rejected a feature of the request (JSON mode, tools, image input, or the reasoning setting).</summary>
     UnsupportedCapability
 }
 
@@ -50,6 +53,13 @@ public sealed record ModelResponse(
     ModelUsage? Usage,
     long LatencyMilliseconds)
 {
+    /// <summary>
+    /// True only when the provider said it stopped at the output cap (finish reason <c>length</c>). A missing or other finish
+    /// reason is not evidence of truncation, so this stays false and an empty reply stays "empty".
+    /// </summary>
+    public bool IsOutputLimited =>
+        FinishReason is not null && (FinishReason.Equals("length", StringComparison.OrdinalIgnoreCase) || FinishReason.Equals("max_tokens", StringComparison.OrdinalIgnoreCase));
+
     public static ModelResponse Failed(ModelFailureKind kind, string? detail, long latencyMilliseconds) =>
         new(false, kind, detail, null, [], null, null, null, latencyMilliseconds);
 }

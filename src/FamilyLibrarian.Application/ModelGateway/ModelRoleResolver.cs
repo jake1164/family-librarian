@@ -25,7 +25,8 @@ public sealed record ModelRoleResolution(
     string? Model,
     bool IsCloud,
     ModelExecutionLimits Limits,
-    bool AllowCloudExcerpts = false)
+    bool AllowCloudExcerpts = false,
+    ModelReasoningMode Reasoning = ModelReasoningMode.Inherit)
 {
     public bool IsAvailable => Reason == ModelUnavailableReason.None;
 
@@ -82,6 +83,6 @@ public sealed class ModelRoleResolver(IModelGatewaySettingsStore store, ICredent
             }
         }
 
-        return new ModelRoleResolution(role, ModelUnavailableReason.None, endpoint, apiKey, setting.ActiveModel, isCloud, settings.Limits, isCloud && settings.AllowCloudExcerpts);
+        return new ModelRoleResolution(role, ModelUnavailableReason.None, endpoint, apiKey, setting.ActiveModel, isCloud, settings.Limits, isCloud && settings.AllowCloudExcerpts, setting.Reasoning);
     }
 }

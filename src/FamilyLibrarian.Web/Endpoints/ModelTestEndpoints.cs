@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Contracts.ModelTesting;
+using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Web.Endpoints;
 
@@ -27,12 +28,25 @@ internal static class ModelTestEndpoints
         ToResult(await service.GetAsync(cancellationToken));
 
     private static async Task<IResult> SaveAsync(
-        SaveModelTestSettingsRequest request, ModelTestSettingsService service, CancellationToken cancellationToken) =>
-        ToResult(await service.SaveAsync(
+        SaveModelTestSettingsRequest request, ModelTestSettingsService service, CancellationToken cancellationToken)
+    {
+        if (!TryParseReasoning(request.Reasoning, out var reasoning))
+        {
+            return Invalid("reasoning", "Choose Inherit or Disabled.");
+        }
+
+        return ToResult(await service.SaveAsync(
             new SaveModelTestSettings(
                 request.EndpointUrl, request.PrimaryModel, request.ComparisonModel, request.CloudModel, request.AllowCloud,
-                request.TimeoutSeconds, request.MaxOutputTokens),
+                request.TimeoutSeconds, request.MaxOutputTokens, reasoning),
             cancellationToken));
+    }
+
+    private static bool TryParseReasoning(string? text, out ModelReasoningMode reasoning)
+    {
+        reasoning = ModelReasoningMode.Inherit;
+        return string.IsNullOrWhiteSpace(text) || (Enum.TryParse(text, ignoreCase: true, out reasoning) && Enum.IsDefined(reasoning));
+    }
 
     private static async Task<IResult> SetEnabledAsync(
         SetModelTestEnabledRequest request, ModelTestSettingsService service, CancellationToken cancellationToken) =>
@@ -68,7 +82,20 @@ internal static class ModelTestEndpoints
             }
         }
 
-        var result = await service.RunAsync(new ModelTestRunRequest(target, checks, request.ConfirmCloud), cancellationToken);
+        ModelReasoningMode? reasoningOverride = null;
+        if (!string.IsNullOrWhiteSpace(request.Reasoning))
+        {
+            if (!TryParseReasoning(request.Reasoning, out var parsed))
+            {
+                return Invalid("reasoning", "Choose Inherit or Disabled.");
+            }
+
+            reasoningOverride = parsed;
+        }
+
+        var result = await service.RunAsync(
+            new ModelTestRunRequest(target, checks, request.ConfirmCloud, reasoningOverride, request.TimeoutSeconds, request.MaxOutputTokens),
+            cancellationToken);
         return result.Outcome switch
         {
             ModelTestRunOutcome.Completed => Results.Ok(ToResponse(result.Report!)),
@@ -89,7 +116,7 @@ internal static class ModelTestEndpoints
             ? Results.Ok(new ModelTestSettingsResponse(
                 result.Settings!.IsEnabled, result.Settings.EndpointUrl, result.Settings.HasApiKey, result.Settings.ApiKeySetAtUtc,
                 result.Settings.PrimaryModel, result.Settings.ComparisonModel, result.Settings.CloudModel, result.Settings.AllowCloud,
-                result.Settings.TimeoutSeconds, result.Settings.MaxOutputTokens))
+                result.Settings.TimeoutSeconds, result.Settings.MaxOutputTokens, result.Settings.Reasoning.ToString()))
             : Invalid("modelTest", result.Error!);
     }
 
@@ -100,6 +127,6 @@ internal static class ModelTestEndpoints
         report.Target.ToString(), report.IsCloud, report.ConfiguredModel, report.ReportedModels,
         report.Results.Select(result => new ModelCheckResultResponse(
             result.Check.ToString(), result.Status.ToString(), result.Detail, result.Calls, result.LatencyMilliseconds,
-            result.PromptTokens, result.CompletionTokens, result.TotalTokens, result.Sample)).ToArray(),
-        report.TotalCalls, report.TotalTokens, report.TotalLatencyMilliseconds);
+            result.PromptTokens, result.CompletionTokens, result.TotalTokens, result.Sample, result.OutputLimitReached)).ToArray(),
+        report.TotalCalls, report.TotalTokens, report.TotalLatencyMilliseconds, report.Reasoning.ToString(), report.MaxOutputTokens);
 }

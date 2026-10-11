@@ -380,6 +380,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.AllowCloud).HasColumnName("allow_cloud");
             entity.Property(settings => settings.TimeoutSeconds).HasColumnName("timeout_seconds");
             entity.Property(settings => settings.MaxOutputTokens).HasColumnName("max_output_tokens");
+            entity.Property(settings => settings.Reasoning).HasColumnName("reasoning_mode").HasConversion<string>().HasMaxLength(16);
             entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
             entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
@@ -433,6 +434,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(role => role.Placement).HasColumnName("placement").HasConversion<string>().HasMaxLength(16);
             entity.Property(role => role.LocalModel).HasColumnName("local_model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
             entity.Property(role => role.CloudModel).HasColumnName("cloud_model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
+            entity.Property(role => role.Reasoning).HasColumnName("reasoning_mode").HasConversion<string>().HasMaxLength(16);
             entity.Ignore(role => role.ActiveModel);
         });
 

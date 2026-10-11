@@ -222,4 +222,79 @@ public sealed class OpenAiCompatibleModelClientTests
         Assert.AreEqual(ModelFailureKind.InvalidResponse, response.Failure);
         StringAssert.Contains(response.FailureDetail, "larger than the allowed size");
     }
+
+
+    private static string BodyOf((HttpRequestMessage Request, string Body) seen) => seen.Body;
+
+    [TestMethod]
+    public async Task InheritSendsNoReasoningParameterAtAll()
+    {
+        var (client, handler) = Make(_ => Task.FromResult(Json(HttpStatusCode.OK, Success)));
+
+        await client.CompleteAsync(Connection(), Request(), CancellationToken.None);
+
+        var body = JsonNode.Parse(BodyOf(handler.Seen.Single()))!.AsObject();
+        Assert.IsFalse(body.ContainsKey("reasoning_effort"));
+        Assert.IsFalse(body.ContainsKey("think"));
+        Assert.IsFalse(body.ContainsKey("chat_template_kwargs"));
+    }
+
+    [TestMethod]
+    public async Task DisabledSendsOnlyTheVerifiedReasoningEffortNone()
+    {
+        var (client, handler) = Make(_ => Task.FromResult(Json(HttpStatusCode.OK, Success)));
+
+        await client.CompleteAsync(Connection(), Request() with { Reasoning = FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Disabled }, CancellationToken.None);
+
+        var body = JsonNode.Parse(BodyOf(handler.Seen.Single()))!.AsObject();
+        Assert.AreEqual("none", (string?)body["reasoning_effort"]);
+        Assert.IsFalse(body.ContainsKey("think"));
+        Assert.AreEqual(384, (int?)body["max_tokens"], "The output cap is untouched by the reasoning setting.");
+    }
+
+    [TestMethod]
+    public async Task ARefusedReasoningSettingIsAClassifiedConfigurationErrorAndIsNotRetried()
+    {
+        var (client, handler) = Make(_ => Task.FromResult(Json(HttpStatusCode.BadRequest,
+            "{\"error\":{\"message\":\"Invalid parameter: reasoning_effort is not accepted by model local/primary\"}}")));
+
+        var response = await client.CompleteAsync(
+            Connection(), Request() with { Reasoning = FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Disabled }, CancellationToken.None);
+
+        Assert.IsFalse(response.Succeeded);
+        Assert.AreEqual(ModelFailureKind.UnsupportedCapability, response.Failure);
+        Assert.AreEqual(1, handler.Seen.Count, "No automatic retry without the setting.");
+    }
+
+    [TestMethod]
+    public async Task TheSameRejectionIsNotBlamedOnReasoningWhenNoneWasRequested()
+    {
+        var (client, _) = Make(_ => Task.FromResult(Json(HttpStatusCode.BadRequest, "{\"error\":{\"message\":\"Unrecognized argument: reasoning_effort\"}}")));
+
+        var response = await client.CompleteAsync(Connection(), Request(), CancellationToken.None);
+
+        Assert.AreEqual(ModelFailureKind.BadRequest, response.Failure);
+    }
+
+    [TestMethod]
+    [DataRow("length", true)]
+    [DataRow("LENGTH", true)]
+    [DataRow("max_tokens", true)]
+    [DataRow("stop", false)]
+    [DataRow("content_filter", false)]
+    [DataRow(null, false)]
+    public async Task OnlyAProviderSaidLengthStopCountsAsTruncationEvidence(string? finish, bool expected)
+    {
+        var finishJson = finish is null ? "null" : $"\"{finish}\"";
+        var (client, _) = Make(_ => Task.FromResult(Json(HttpStatusCode.OK,
+            "{\"model\":\"m\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"hidden thought\"},\"finish_reason\":" + finishJson + "}]," +
+            "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":32,\"total_tokens\":33}}")));
+
+        var response = await client.CompleteAsync(Connection(), Request(), CancellationToken.None);
+
+        Assert.IsTrue(response.Succeeded);
+        Assert.AreEqual(expected, response.IsOutputLimited);
+        Assert.AreEqual(string.Empty, response.Content, "Hidden reasoning text is never surfaced as the answer.");
+        Assert.AreEqual(32, response.Usage!.CompletionTokens, "Reasoning tokens stay in the reported usage.");
+    }
 }

@@ -22,7 +22,9 @@ public static class ModelGatewaySecretPurposes
     public const string ApiKey = "model-gateway-api-key";
 }
 
-public sealed record ModelRoleView(ModelRole Role, bool IsEnabled, ModelPlacement Placement, string? LocalModel, string? CloudModel);
+public sealed record ModelRoleView(
+    ModelRole Role, bool IsEnabled, ModelPlacement Placement, string? LocalModel, string? CloudModel,
+    ModelReasoningMode Reasoning = ModelReasoningMode.Inherit);
 
 /// <summary>The settings as an administrator may see them. The API key is never included, only whether one is set.</summary>
 public sealed record ModelGatewaySettingsView(
@@ -35,7 +37,9 @@ public sealed record ModelGatewaySettingsView(
     ModelExecutionLimits Limits,
     bool AllowCloudExcerpts = false);
 
-public sealed record ModelRoleCommand(ModelRole Role, bool IsEnabled, ModelPlacement Placement, string? LocalModel, string? CloudModel);
+public sealed record ModelRoleCommand(
+    ModelRole Role, bool IsEnabled, ModelPlacement Placement, string? LocalModel, string? CloudModel,
+    ModelReasoningMode Reasoning = ModelReasoningMode.Inherit);
 
 /// <param name="Limits">The new limits, or null to leave them as they are.</param>
 /// <param name="AllowCloudExcerpts">Whether details read from files may go to a cloud role, or null to leave it as it is.</param>
@@ -93,7 +97,7 @@ public sealed class ModelGatewaySettingsService(
         settings.Configure(command.EndpointUrl, command.AllowCloud, currentUser.UserId, clock.UtcNow);
         foreach (var role in command.Roles)
         {
-            settings.ConfigureRole(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel, currentUser.UserId, clock.UtcNow);
+            settings.ConfigureRole(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel, currentUser.UserId, clock.UtcNow, role.Reasoning);
         }
 
         if (command.AllowCloudExcerpts is { } excerpts)
@@ -120,7 +124,7 @@ public sealed class ModelGatewaySettingsService(
                 settings.AllowCloud,
                 settings.AllowCloudExcerpts,
                 settings.Limits,
-                Roles = settings.Roles.Select(role => new { Role = role.Role.ToString(), role.IsEnabled, Placement = role.Placement.ToString() })
+                Roles = settings.Roles.Select(role => new { Role = role.Role.ToString(), role.IsEnabled, Placement = role.Placement.ToString(), Reasoning = role.Reasoning.ToString() })
             },
             cancellationToken);
         return ModelGatewaySettingsResult.Success(ToView(settings));
@@ -192,7 +196,7 @@ public sealed class ModelGatewaySettingsService(
             var setting = settings?.FindRole(role);
             return setting is null
                 ? new ModelRoleView(role, false, ModelPlacement.Local, null, null)
-                : new ModelRoleView(role, setting.IsEnabled, setting.Placement, setting.LocalModel, setting.CloudModel);
+                : new ModelRoleView(role, setting.IsEnabled, setting.Placement, setting.LocalModel, setting.CloudModel, setting.Reasoning);
         })],
         settings?.Limits ?? ModelExecutionLimits.Default,
         settings?.AllowCloudExcerpts ?? false);
@@ -219,7 +223,7 @@ public sealed class ModelGatewaySettingsService(
         var seen = new HashSet<ModelRole>();
         foreach (var role in command.Roles)
         {
-            if (!Enum.IsDefined(role.Role) || !Enum.IsDefined(role.Placement) || !seen.Add(role.Role))
+            if (!Enum.IsDefined(role.Role) || !Enum.IsDefined(role.Placement) || !Enum.IsDefined(role.Reasoning) || !seen.Add(role.Role))
             {
                 return "A model role was missing, unknown or repeated.";
             }

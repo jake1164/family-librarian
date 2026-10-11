@@ -2,7 +2,8 @@ namespace FamilyLibrarian.Contracts.ModelGateway;
 
 /// <param name="Role">A role name such as <c>CandidateAmbiguityAssessment</c>.</param>
 /// <param name="Placement"><c>Local</c> or <c>Cloud</c>.</param>
-public sealed record ModelRoleDto(string Role, bool IsEnabled, string Placement, string? LocalModel, string? CloudModel);
+/// <param name="Reasoning"><c>Inherit</c> (send nothing; the default) or <c>Disabled</c> (ask for no hidden reasoning).</param>
+public sealed record ModelRoleDto(string Role, bool IsEnabled, string Placement, string? LocalModel, string? CloudModel, string Reasoning = "Inherit");
 
 /// <summary>The gateway settings. The API key is never returned, only whether one is stored.</summary>
 public sealed record ModelGatewaySettingsResponse(

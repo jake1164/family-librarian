@@ -144,7 +144,7 @@ public sealed class ModelGatewaySettings
 
     public void ConfigureRole(
         ModelRole role, bool isEnabled, ModelPlacement placement, string? localModel, string? cloudModel,
-        Guid? actorUserId, DateTimeOffset updatedAtUtc)
+        Guid? actorUserId, DateTimeOffset updatedAtUtc, ModelReasoningMode reasoning = ModelReasoningMode.Inherit)
     {
         var setting = FindRole(role);
         if (setting is null)
@@ -153,7 +153,7 @@ public sealed class ModelGatewaySettings
             roles.Add(setting);
         }
 
-        setting.Configure(isEnabled, placement, Clean(localModel, MaxModelNameLength), Clean(cloudModel, MaxModelNameLength));
+        setting.Configure(isEnabled, placement, Clean(localModel, MaxModelNameLength), Clean(cloudModel, MaxModelNameLength), reasoning);
         Touch(actorUserId, updatedAtUtc);
     }
 
@@ -222,12 +222,16 @@ public sealed class ModelRoleSetting
 
     public string? CloudModel { get; private set; }
 
+    /// <summary>Whether this role asks its model to skip hidden reasoning. Inherit (the default) sends nothing.</summary>
+    public ModelReasoningMode Reasoning { get; private set; } = ModelReasoningMode.Inherit;
+
     /// <summary>The alias this role would call, by its chosen placement only. Never the other one.</summary>
     public string? ActiveModel => Placement == ModelPlacement.Cloud ? CloudModel : LocalModel;
 
-    internal void Configure(bool isEnabled, ModelPlacement placement, string? localModel, string? cloudModel)
+    internal void Configure(bool isEnabled, ModelPlacement placement, string? localModel, string? cloudModel, ModelReasoningMode reasoning)
     {
         IsEnabled = isEnabled;
+        Reasoning = reasoning;
         Placement = placement;
         LocalModel = localModel;
         CloudModel = cloudModel;

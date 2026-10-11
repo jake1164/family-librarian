@@ -40,6 +40,13 @@ public enum ModelCallOutcome
     /// <summary>The reply was larger than the allowed output size.</summary>
     OutputTooLarge = 9,
 
+    /// <summary>
+    /// The provider said it stopped because the output cap was reached (finish reason "length"), so any text is cut off and is
+    /// never parsed. Often a thinking model spending the cap on reasoning. Distinct from <see cref="EmptyContent"/>, where no
+    /// such evidence exists.
+    /// </summary>
+    OutputLimitReached = 10,
+
     // Refusals: no provider call was made. Never recorded as usage.
     RoleUnavailable = 20,
     InputTooLarge = 21,

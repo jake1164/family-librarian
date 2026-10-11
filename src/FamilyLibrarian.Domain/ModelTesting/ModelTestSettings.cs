@@ -1,3 +1,5 @@
+using FamilyLibrarian.Domain.ModelGateway;
+
 namespace FamilyLibrarian.Domain.ModelTesting;
 
 /// <summary>
@@ -14,9 +16,9 @@ public sealed class ModelTestSettings
     public const int DefaultTimeoutSeconds = 30;
     public const int MinimumTimeoutSeconds = 5;
     public const int MaximumTimeoutSeconds = 120;
-    public const int DefaultMaxOutputTokens = 384;
+    public const int DefaultMaxOutputTokens = 1_024;
     public const int MinimumMaxOutputTokens = 16;
-    public const int MaximumMaxOutputTokens = 1_024;
+    public const int MaximumMaxOutputTokens = 4_096;
     public const int MaxModelNameLength = 128;
     public const int MaxEndpointLength = 512;
 
@@ -58,6 +60,9 @@ public sealed class ModelTestSettings
 
     public int MaxOutputTokens { get; private set; } = DefaultMaxOutputTokens;
 
+    /// <summary>The test harness's own reasoning choice. Independent of any production role's setting; Inherit sends nothing.</summary>
+    public ModelReasoningMode Reasoning { get; private set; } = ModelReasoningMode.Inherit;
+
     public Guid? UpdatedByUserId { get; private set; }
 
     public DateTimeOffset CreatedAtUtc { get; private set; }
@@ -70,7 +75,8 @@ public sealed class ModelTestSettings
 
     public void Configure(
         string? endpointUrl, string? primaryModel, string? comparisonModel, string? cloudModel, bool allowCloud,
-        int timeoutSeconds, int maxOutputTokens, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+        int timeoutSeconds, int maxOutputTokens, Guid? actorUserId, DateTimeOffset updatedAtUtc,
+        ModelReasoningMode reasoning = ModelReasoningMode.Inherit)
     {
         if (timeoutSeconds is < MinimumTimeoutSeconds or > MaximumTimeoutSeconds)
         {
@@ -89,6 +95,7 @@ public sealed class ModelTestSettings
         AllowCloud = allowCloud;
         TimeoutSeconds = timeoutSeconds;
         MaxOutputTokens = maxOutputTokens;
+        Reasoning = reasoning;
         Touch(actorUserId, updatedAtUtc);
     }
 

@@ -116,7 +116,8 @@ public sealed class SemanticFinding
 
     /// <summary>
     /// Whether an identical question is worth asking again. A provider or model problem may pass; a model that answered
-    /// badly will answer the same way for the same evidence, so that result is reused rather than re-bought.
+    /// badly will answer the same way for the same evidence, so that result is reused rather than re-bought. Hitting the output
+    /// limit is not reused: it depends on settings (the cap, reasoning) an administrator can change.
     /// </summary>
     public bool IsReusable => Outcome is ModelCallOutcome.Succeeded or ModelCallOutcome.EmptyContent or ModelCallOutcome.InvalidJson
         or ModelCallOutcome.SchemaRejected or ModelCallOutcome.OutputTooLarge;

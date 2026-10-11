@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.ModelTesting;
+using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Infrastructure.Tests.ModelTesting;
 
@@ -44,7 +45,7 @@ public sealed class ModelCapabilityTestServiceTests
 
         Assert.AreEqual(ModelTestRunOutcome.Completed, result.Outcome);
         Assert.IsTrue(result.Report!.Results.All(item => item.Status is ModelCheckStatus.Passed), string.Join("; ", result.Report.Results.Select(item => $"{item.Check}={item.Status}: {item.Detail}")));
-        Assert.AreEqual(7, result.Report.Results.Count);
+        Assert.AreEqual(8, result.Report.Results.Count, "The seven original checks plus the separate visible-content check.");
         Assert.AreEqual("local/primary", result.Report.ConfiguredModel);
         CollectionAssert.Contains(result.Report.ReportedModels.ToArray(), "reported-model");
         Assert.AreEqual(rig.Model.Calls.Count, result.Report.TotalCalls);
@@ -321,9 +322,9 @@ public sealed class ModelCapabilityTestServiceTests
         var hostile = "pong" + new string('x', 2_000) + "\u0007<script>alert(1)</script>";
         var rig = new Rig((_, _) => ScriptedModel.Ok(hostile));
 
-        var result = await rig.RunAsync(checks: ModelCheck.Connectivity);
+        var result = await rig.RunAsync(checks: ModelCheck.AssistantContent);
 
-        var sample = Of(result, ModelCheck.Connectivity).Sample!;
+        var sample = Of(result, ModelCheck.AssistantContent).Sample!;
         Assert.IsLessThanOrEqualTo(301, sample.Length);
         Assert.IsFalse(sample.Any(char.IsControl));
         var audit = rig.Audit.Events.Single();
@@ -375,5 +376,107 @@ public sealed class ModelCapabilityTestServiceTests
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
             rig.Service.RunAsync(new ModelTestRunRequest(ModelTestTarget.Primary, [ModelCheck.Connectivity], false), cancellation.Token));
         Assert.IsNotNull(rig.Gate.TryEnter(AdminId), "The per-administrator lock was released.");
+    }
+
+
+    private static ModelResponse Reply(string? content, string? finish, ModelUsage? usage = null) =>
+        new(true, ModelFailureKind.None, null, content, [], finish, "reported-model", usage ?? new ModelUsage(10, 5, 15), 12);
+
+    [TestMethod]
+    public async Task ASuccessfulReplyWithNoVisibleTextIsAConnectionNotANetworkFailure()
+    {
+        var rig = new Rig((_, _) => Reply(string.Empty, "stop"));
+
+        var result = await rig.RunAsync(checks: [ModelCheck.Connectivity, ModelCheck.AssistantContent]);
+
+        Assert.AreEqual(ModelCheckStatus.Passed, Of(result, ModelCheck.Connectivity).Status, "The transport worked.");
+        StringAssert.StartsWith(Of(result, ModelCheck.Connectivity).Detail, "Connected");
+        var content = Of(result, ModelCheck.AssistantContent);
+        Assert.AreEqual(ModelCheckStatus.Failed, content.Status, "No usable text is reported separately, as a failure, not as an error.");
+        Assert.IsFalse(content.Detail.Contains("reached", StringComparison.OrdinalIgnoreCase) && content.Detail.Contains("endpoint could not", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(content.OutputLimitReached, "Without a length finish reason truncation is not claimed.");
+    }
+
+    [TestMethod]
+    public async Task AReplyCutOffAtTheOutputLimitIsReportedAsExhaustionAndNeverAccepted()
+    {
+        // A truncated JSON reply that would even parse as a prefix of the right answer.
+        var rig = new Rig((_, request) => Reply(request.JsonObjectOutput ? "{\"title\":\"The Lantern Road\"," : string.Empty, "length"));
+
+        var result = await rig.RunAsync(checks: [ModelCheck.AssistantContent, ModelCheck.StructuredJson, ModelCheck.IntentClassification]);
+
+        Assert.IsTrue(Of(result, ModelCheck.AssistantContent).OutputLimitReached);
+        Assert.AreEqual(ModelCheckStatus.Failed, Of(result, ModelCheck.AssistantContent).Status);
+        Assert.AreEqual(ModelCheckStatus.Failed, Of(result, ModelCheck.StructuredJson).Status);
+        StringAssert.Contains(Of(result, ModelCheck.StructuredJson).Detail, "not accepted");
+        Assert.AreEqual(ModelCheckStatus.Failed, Of(result, ModelCheck.IntentClassification).Status);
+        Assert.IsTrue(Of(result, ModelCheck.IntentClassification).OutputLimitReached);
+    }
+
+    [TestMethod]
+    public async Task TheConnectivityProbeIsTinyButTheContentCheckUsesTheConfiguredLimit()
+    {
+        var rig = new Rig();
+
+        await rig.RunAsync(checks: [ModelCheck.Connectivity, ModelCheck.AssistantContent]);
+
+        Assert.AreEqual(16, rig.Model.Calls[0].Request.MaxOutputTokens);
+        Assert.AreEqual(384, rig.Model.Calls[1].Request.MaxOutputTokens, "No hidden 32-token clamp: the configured limit is used.");
+    }
+
+    [TestMethod]
+    public async Task ThinkingEnabledIsTheDefaultAndSendsNoReasoningSetting()
+    {
+        var rig = new Rig();
+
+        await rig.RunAsync();
+
+        Assert.IsTrue(rig.Model.Calls.All(call => call.Request.Reasoning == ModelReasoningMode.Inherit));
+    }
+
+    [TestMethod]
+    public async Task AReasoningOverrideAppliesToThatRunOnlyAndChangesNoStoredSetting()
+    {
+        var rig = new Rig();
+
+        var result = await rig.Service.RunAsync(
+            new ModelTestRunRequest(ModelTestTarget.Primary, [ModelCheck.AssistantContent], false, ModelReasoningMode.Disabled, 20, 777), CancellationToken.None);
+
+        Assert.AreEqual(ModelTestRunOutcome.Completed, result.Outcome);
+        Assert.AreEqual(ModelReasoningMode.Disabled, rig.Model.Calls.Single().Request.Reasoning);
+        Assert.AreEqual(777, rig.Model.Calls.Single().Request.MaxOutputTokens);
+        Assert.AreEqual(TimeSpan.FromSeconds(20), rig.Model.Calls.Single().Connection.Timeout);
+        Assert.AreEqual(ModelReasoningMode.Disabled, result.Report!.Reasoning);
+        Assert.AreEqual(ModelReasoningMode.Inherit, rig.Store.Settings!.Reasoning, "A run never edits the saved test settings.");
+        Assert.AreEqual(0, rig.Store.Saves);
+        StringAssert.Contains(rig.Audit.Events.Single().Json, "Disabled");
+    }
+
+    [TestMethod]
+    public async Task AnOutOfRangeRunOverrideIsRefusedBeforeAnyCall()
+    {
+        var rig = new Rig();
+
+        var result = await rig.Service.RunAsync(
+            new ModelTestRunRequest(ModelTestTarget.Primary, null, false, null, null, 999_999), CancellationToken.None);
+
+        Assert.AreEqual(ModelTestRunOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, rig.Model.Calls.Count);
+    }
+
+    [TestMethod]
+    public async Task ARejectedReasoningSettingIsReportedAndNeverRetriedWithoutIt()
+    {
+        var rig = new Rig((connection, request) => request.Reasoning == ModelReasoningMode.Disabled
+            ? ScriptedModel.Fail(ModelFailureKind.UnsupportedCapability, "HTTP 400: reasoning_effort is not supported")
+            : ScriptedModel.WellBehaved(connection, request));
+
+        var result = await rig.Service.RunAsync(
+            new ModelTestRunRequest(ModelTestTarget.Primary, [ModelCheck.AssistantContent], false, ModelReasoningMode.Disabled), CancellationToken.None);
+
+        var item = Of(result, ModelCheck.AssistantContent);
+        Assert.AreEqual(ModelCheckStatus.Error, item.Status);
+        StringAssert.Contains(item.Detail, "reasoning");
+        Assert.AreEqual(1, rig.Model.Calls.Count, "Exactly one call: no silent retry with different parameters.");
     }
 }

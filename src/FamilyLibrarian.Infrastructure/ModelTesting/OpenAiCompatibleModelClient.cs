@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FamilyLibrarian.Application.ModelTesting;
+using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Infrastructure.ModelTesting;
 
@@ -49,7 +50,7 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
 
             return response.IsSuccessStatusCode
                 ? ParseSuccess(body, stopwatch.ElapsedMilliseconds)
-                : ClassifyHttpFailure(response.StatusCode, body, connection.ApiKey, stopwatch.ElapsedMilliseconds);
+                : ClassifyHttpFailure(response.StatusCode, body, connection.ApiKey, request.Reasoning, stopwatch.ElapsedMilliseconds);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -85,6 +86,12 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
             ["temperature"] = 0,
             ["stream"] = false
         };
+        if (request.Reasoning == ModelReasoningMode.Disabled)
+        {
+            // The only reasoning parameter ever sent, and only on an explicit opt-in. Verified against LiteLLM with desktop/qwen3.5:9b.
+            body["reasoning_effort"] = "none";
+        }
+
         if (request.JsonObjectOutput)
         {
             body["response_format"] = new JsonObject { ["type"] = "json_object" };
@@ -179,7 +186,7 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
     private static int? ReadInt(JsonObject node, string name) =>
         node[name] is JsonValue value && value.TryGetValue<int>(out var number) && number >= 0 ? number : null;
 
-    private static ModelResponse ClassifyHttpFailure(HttpStatusCode status, string body, string? apiKey, long latency)
+    private static ModelResponse ClassifyHttpFailure(HttpStatusCode status, string body, string? apiKey, ModelReasoningMode reasoning, long latency)
     {
         var message = ErrorMessage(body);
         var detail = Redact($"HTTP {(int)status}" + (message is null ? string.Empty : $": {message}"), apiKey);
@@ -192,6 +199,9 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => ModelFailureKind.Unauthorized,
             HttpStatusCode.NotFound => ModelFailureKind.ModelUnavailable,
             HttpStatusCode.TooManyRequests => ModelFailureKind.RateLimited,
+            // We asked for no reasoning and the request was refused over it: a configuration problem for the administrator to fix,
+            // never a reason to quietly resend the request without the setting.
+            HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity when reasoning == ModelReasoningMode.Disabled && MentionsReasoning(message) => ModelFailureKind.UnsupportedCapability,
             _ when mentionsModel => ModelFailureKind.ModelUnavailable,
             HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity when MentionsUnsupportedCapability(message) => ModelFailureKind.UnsupportedCapability,
             _ when (int)status >= 500 => ModelFailureKind.ServerError,
@@ -199,6 +209,10 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
         };
         return ModelResponse.Failed(kind, detail, latency);
     }
+
+    private static bool MentionsReasoning(string? message) =>
+        message is not null &&
+        (message.Contains("reasoning", StringComparison.OrdinalIgnoreCase) || message.Contains("thinking", StringComparison.OrdinalIgnoreCase));
 
     private static bool MentionsUnsupportedCapability(string? message) =>
         message is not null &&

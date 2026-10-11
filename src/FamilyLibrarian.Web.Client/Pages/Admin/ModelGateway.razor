@@ -57,6 +57,11 @@
                                 </MudSelect>
                                 <MudTextField @bind-Value="role.LocalModel" Label="Local model alias" Variant="Variant.Outlined" />
                                 <MudTextField @bind-Value="role.CloudModel" Label="Cloud model alias" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
+                                <MudSelect T="string" @bind-Value="role.Reasoning" Label="Model reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;"
+                                           HelperText="Leave on 'Provider default' unless this model is known to accept 'off'.">
+                                    <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
+                                    <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
+                                </MudSelect>
                             </MudStack>
                         </MudStack>
                     </MudPaper>
@@ -158,6 +163,7 @@
         public string Placement { get; set; } = "Local";
         public string? LocalModel { get; set; }
         public string? CloudModel { get; set; }
+        public string Reasoning { get; set; } = "Inherit";
     }
 
     private sealed class BudgetEdit
@@ -220,14 +226,14 @@
         };
         roles = [.. value.Roles.Select(role => new RoleEdit
         {
-            Role = role.Role, IsEnabled = role.IsEnabled, Placement = role.Placement, LocalModel = role.LocalModel, CloudModel = role.CloudModel
+            Role = role.Role, IsEnabled = role.IsEnabled, Placement = role.Placement, LocalModel = role.LocalModel, CloudModel = role.CloudModel, Reasoning = role.Reasoning
         })];
     }
 
     private async Task SaveAsync() => await ApplyResultAsync(
         await Api.SaveAsync(new SaveModelGatewaySettingsRequest(
             endpoint, allowCloud,
-            [.. roles.Select(role => new ModelRoleDto(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel))],
+            [.. roles.Select(role => new ModelRoleDto(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel, role.Reasoning))],
             new ModelLimitsDto(
                 limits.TimeoutSeconds, limits.MaxInputCharacters, limits.MaxOutputTokens, limits.MaxConcurrentCalls,
                 ToDto(limits.Interactive), ToDto(limits.Background), limits.CloudDailyRequests, limits.CloudDailyTokens),

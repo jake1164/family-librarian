@@ -3,6 +3,7 @@ using System.Globalization;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Domain.ModelTesting;
 
 namespace FamilyLibrarian.Application.ModelTesting;
@@ -16,7 +17,11 @@ public enum ModelTestTarget
 
 public enum ModelCheck
 {
+    /// <summary>Transport only: the endpoint answered with a well-formed completion. Says nothing about whether the model produced visible text.</summary>
     Connectivity,
+
+    /// <summary>The model produced usable visible text within the output limit. Reported separately from <see cref="Connectivity"/>.</summary>
+    AssistantContent,
     IntentClassification,
     StructuredJson,
     MatchAdvisory,
@@ -43,7 +48,8 @@ public sealed record ModelCheckResult(
     int? PromptTokens,
     int? CompletionTokens,
     int? TotalTokens,
-    string? Sample);
+    string? Sample,
+    bool OutputLimitReached = false);
 
 /// <summary>What one run observed. Informational only: nothing in Family Librarian acts on it.</summary>
 public sealed record ModelTestReport(
@@ -54,7 +60,9 @@ public sealed record ModelTestReport(
     IReadOnlyList<ModelCheckResult> Results,
     int TotalCalls,
     int? TotalTokens,
-    long TotalLatencyMilliseconds);
+    long TotalLatencyMilliseconds,
+    ModelReasoningMode Reasoning = ModelReasoningMode.Inherit,
+    int MaxOutputTokens = 0);
 
 public enum ModelTestRunOutcome
 {
@@ -67,7 +75,12 @@ public enum ModelTestRunOutcome
     Invalid
 }
 
-public sealed record ModelTestRunRequest(ModelTestTarget Target, IReadOnlyList<ModelCheck>? Checks, bool ConfirmCloud);
+/// <param name="Reasoning">This run's reasoning choice; null uses the test setting. Never changes any stored setting.</param>
+/// <param name="TimeoutSeconds">This run's timeout; null uses the test setting.</param>
+/// <param name="MaxOutputTokens">This run's output cap; null uses the test setting.</param>
+public sealed record ModelTestRunRequest(
+    ModelTestTarget Target, IReadOnlyList<ModelCheck>? Checks, bool ConfirmCloud,
+    ModelReasoningMode? Reasoning = null, int? TimeoutSeconds = null, int? MaxOutputTokens = null);
 
 public sealed record ModelTestRunResult(ModelTestRunOutcome Outcome, string? Error, ModelTestReport? Report)
 {
@@ -172,9 +185,19 @@ public sealed class ModelCapabilityTestService(
             return ModelTestRunResult.Refused(ModelTestRunOutcome.Busy, "A model test is already running for you. Wait for it to finish.");
         }
 
-        var connection = new ModelConnection(endpoint, apiKey, model, TimeSpan.FromSeconds(settings.TimeoutSeconds));
+        var timeoutSeconds = request.TimeoutSeconds ?? settings.TimeoutSeconds;
+        var maxOutputTokens = request.MaxOutputTokens ?? settings.MaxOutputTokens;
+        var reasoning = request.Reasoning ?? settings.Reasoning;
+        if (timeoutSeconds is < ModelTestSettings.MinimumTimeoutSeconds or > ModelTestSettings.MaximumTimeoutSeconds ||
+            maxOutputTokens is < ModelTestSettings.MinimumMaxOutputTokens or > ModelTestSettings.MaximumMaxOutputTokens ||
+            !Enum.IsDefined(reasoning))
+        {
+            return ModelTestRunResult.Refused(ModelTestRunOutcome.Invalid, "The timeout, output limit or reasoning choice for this run is out of range.");
+        }
+
+        var connection = new ModelConnection(endpoint, apiKey, model, TimeSpan.FromSeconds(timeoutSeconds));
         var checks = (request.Checks is { Count: > 0 } ? request.Checks : AllChecks).Distinct().Order().ToArray();
-        var run = new Run(client, connection, Math.Min(settings.MaxOutputTokens, ModelTestSettings.MaximumMaxOutputTokens), cancellationToken);
+        var run = new Run(client, connection, maxOutputTokens, reasoning, cancellationToken);
         var results = new List<ModelCheckResult>();
         foreach (var check in checks)
         {
@@ -183,7 +206,7 @@ public sealed class ModelCapabilityTestService(
 
         var report = new ModelTestReport(
             request.Target, isCloud, model, run.ReportedModels.Order(StringComparer.Ordinal).ToArray(), results, run.Calls,
-            run.TotalTokens, run.TotalLatency);
+            run.TotalTokens, run.TotalLatency, reasoning, maxOutputTokens);
 
         // Outcomes and usage only: never the prompts or the model's text.
         await audit.WriteAsync(
@@ -193,10 +216,13 @@ public sealed class ModelCapabilityTestService(
                 Target = request.Target.ToString(),
                 Model = model,
                 IsCloud = isCloud,
+                Reasoning = reasoning.ToString(),
+                MaxOutputTokens = maxOutputTokens,
+                TimeoutSeconds = timeoutSeconds,
                 report.TotalCalls,
                 report.TotalTokens,
                 report.TotalLatencyMilliseconds,
-                Results = results.Select(result => new { Check = result.Check.ToString(), Status = result.Status.ToString(), result.Calls }).ToArray()
+                Results = results.Select(result => new { Check = result.Check.ToString(), Status = result.Status.ToString(), result.Calls, result.OutputLimitReached }).ToArray()
             },
             cancellationToken);
 
@@ -231,6 +257,7 @@ public sealed class ModelCapabilityTestService(
             return check switch
             {
                 ModelCheck.Connectivity => await ConnectivityAsync(scope),
+                ModelCheck.AssistantContent => await AssistantContentAsync(scope),
                 ModelCheck.IntentClassification => await IntentAsync(scope),
                 ModelCheck.StructuredJson => await StructuredJsonAsync(scope),
                 ModelCheck.MatchAdvisory => await MatchAdvisoryAsync(scope),
@@ -245,20 +272,51 @@ public sealed class ModelCapabilityTestService(
         }
     }
 
+    /// <summary>Transport and credentials only. A well-formed reply with no visible text is still a working connection.</summary>
+    private const int ConnectivityOutputTokens = 16;
+
     private static async Task<ModelCheckResult> ConnectivityAsync(CheckScope scope)
     {
-        var response = await scope.CallAsync(ModelTestCases.ConnectivityRequest(scope.MaxOutputTokens));
+        var response = await scope.CallAsync(ModelTestCases.ConnectivityRequest(ConnectivityOutputTokens));
         if (!response.Succeeded)
         {
             return scope.FailedCall(ModelCheck.Connectivity, response);
         }
 
-        var exact = string.Equals(response.Content?.Trim().Trim('.', '!', '"').Trim(), "pong", StringComparison.OrdinalIgnoreCase);
+        var detail = response.IsOutputLimited
+            ? "Connected. The endpoint answered, but stopped at the small output limit this probe uses; see the next check for whether the model gives usable text."
+            : string.IsNullOrWhiteSpace(response.Content)
+                ? "Connected. The endpoint answered with no visible text; see the next check."
+                : "Connected. The endpoint accepted the key and answered.";
+        return scope.Finish(ModelCheck.Connectivity, ModelCheckStatus.Passed, detail, null);
+    }
+
+    /// <summary>Whether the model produces usable visible text within the configured output limit, so thinking-model exhaustion is visible.</summary>
+    private static async Task<ModelCheckResult> AssistantContentAsync(CheckScope scope)
+    {
+        var response = await scope.CallAsync(ModelTestCases.ConnectivityRequest(scope.MaxOutputTokens), abortOnFailure: false);
+        if (!response.Succeeded)
+        {
+            return scope.FailedCall(ModelCheck.AssistantContent, response);
+        }
+
+        if (response.IsOutputLimited)
+        {
+            return scope.Finish(
+                ModelCheck.AssistantContent, ModelCheckStatus.Failed,
+                "The model reached the output limit before it finished. A thinking model may be spending the limit on hidden reasoning: raise the limit, or turn reasoning off if the model supports it.",
+                response.Content);
+        }
+
+        if (string.IsNullOrWhiteSpace(response.Content))
+        {
+            return scope.Finish(ModelCheck.AssistantContent, ModelCheckStatus.Failed, "The model answered with no visible text, and did not say it hit the output limit.", null);
+        }
+
+        var exact = string.Equals(response.Content.Trim().Trim('.', '!', '"').Trim(), "pong", StringComparison.OrdinalIgnoreCase);
         return scope.Finish(
-            ModelCheck.Connectivity,
-            string.IsNullOrWhiteSpace(response.Content) ? ModelCheckStatus.Failed : ModelCheckStatus.Passed,
-            string.IsNullOrWhiteSpace(response.Content) ? "Connected, but the reply was empty." : $"Replied ({(exact ? "followed the exact-reply instruction" : "did not follow the exact-reply instruction")}).",
-            response.Content);
+            ModelCheck.AssistantContent, ModelCheckStatus.Passed,
+            $"Replied with visible text ({(exact ? "followed the exact-reply instruction" : "did not follow the exact-reply instruction")}).", response.Content);
     }
 
     private static async Task<ModelCheckResult> IntentAsync(CheckScope scope)
@@ -276,6 +334,12 @@ public sealed class ModelCapabilityTestService(
             }
 
             lastSample = response.Content;
+            if (response.IsOutputLimited)
+            {
+                problem ??= "the output limit was reached";
+                continue;
+            }
+
             var parsed = ModelOutputValidator.ValidateIntent(response.Content);
             if (!parsed.IsValid)
             {
@@ -301,6 +365,11 @@ public sealed class ModelCapabilityTestService(
         if (!response.Succeeded)
         {
             return scope.FailedCall(ModelCheck.StructuredJson, response);
+        }
+
+        if (response.IsOutputLimited)
+        {
+            return scope.Finish(ModelCheck.StructuredJson, ModelCheckStatus.Failed, "The output limit was reached before the JSON was complete; the cut-off reply was not accepted.", response.Content);
         }
 
         var parsed = ModelOutputValidator.ValidateBookFacts(response.Content);
@@ -330,6 +399,12 @@ public sealed class ModelCapabilityTestService(
             }
 
             sample = response.Content;
+            if (response.IsOutputLimited)
+            {
+                problem ??= "the output limit was reached";
+                continue;
+            }
+
             var parsed = ModelOutputValidator.ValidateMatchAdvisory(response.Content, scenario.EvidenceIds);
             if (!parsed.IsValid)
             {
@@ -373,6 +448,11 @@ public sealed class ModelCapabilityTestService(
                 : scope.FailedCall(ModelCheck.ToolCapability, response);
         }
 
+        if (response.ToolCalls.Count == 0 && response.IsOutputLimited)
+        {
+            return scope.Finish(ModelCheck.ToolCapability, ModelCheckStatus.Failed, "The output limit was reached before the model could answer, so tool calling could not be observed.", response.Content);
+        }
+
         if (response.ToolCalls.Count == 0)
         {
             return scope.Finish(ModelCheck.ToolCapability, ModelCheckStatus.NotSupported, "The model answered in text and did not call the declared tool.", response.Content);
@@ -385,7 +465,7 @@ public sealed class ModelCapabilityTestService(
     }
 
     /// <summary>State for one run: the connection, the running totals and the shared decision to stop after an unreachable endpoint.</summary>
-    private sealed class Run(IModelClient client, ModelConnection connection, int maxOutputTokens, CancellationToken cancellationToken)
+    private sealed class Run(IModelClient client, ModelConnection connection, int maxOutputTokens, ModelReasoningMode reasoning, CancellationToken cancellationToken)
     {
         public CancellationToken CancellationToken => cancellationToken;
 
@@ -404,7 +484,7 @@ public sealed class ModelCapabilityTestService(
         public async Task<ModelResponse> CallAsync(ModelRequest request, string? modelOverride, bool abortOnFailure)
         {
             var response = await client.CompleteAsync(
-                modelOverride is null ? connection : connection with { Model = modelOverride }, request, cancellationToken);
+                modelOverride is null ? connection : connection with { Model = modelOverride }, request with { Reasoning = reasoning }, cancellationToken);
             Calls++;
             TotalLatency += response.LatencyMilliseconds;
             if (response.Usage?.TotalTokens is { } tokens)
@@ -436,6 +516,7 @@ public sealed class ModelCapabilityTestService(
         private int? promptTokens;
         private int? completionTokens;
         private int? totalTokens;
+        private bool outputLimited;
 
         public int MaxOutputTokens => run.MaxOutputTokens;
 
@@ -447,6 +528,7 @@ public sealed class ModelCapabilityTestService(
             promptTokens = Add(promptTokens, response.Usage?.PromptTokens);
             completionTokens = Add(completionTokens, response.Usage?.CompletionTokens);
             totalTokens = Add(totalTokens, response.Usage?.TotalTokens);
+            outputLimited |= response.Succeeded && response.IsOutputLimited;
             return response;
         }
 
@@ -455,7 +537,7 @@ public sealed class ModelCapabilityTestService(
 
         public ModelCheckResult Finish(ModelCheck check, ModelCheckStatus status, string detail, string? sample) =>
             new(check, status, detail, calls, latency, promptTokens, completionTokens, totalTokens,
-                sample is null ? null : Sanitize(sample, SampleLength));
+                sample is null ? null : Sanitize(sample, SampleLength), outputLimited);
 
         private static int? Add(int? current, int? next) => next is null ? current : (current ?? 0) + next;
     }
@@ -468,6 +550,7 @@ public sealed class ModelCapabilityTestService(
         ModelFailureKind.ModelUnavailable => "The endpoint does not know that model alias",
         ModelFailureKind.RateLimited => "The endpoint is rate limiting requests",
         ModelFailureKind.BadRequest => "The endpoint rejected the request",
+        ModelFailureKind.UnsupportedCapability => "The model or endpoint does not support a setting this request used (for example JSON mode, tools, or reasoning off)",
         ModelFailureKind.ServerError => "The endpoint reported a server error",
         ModelFailureKind.InvalidResponse => "The endpoint's reply could not be understood",
         _ => "The call failed"
