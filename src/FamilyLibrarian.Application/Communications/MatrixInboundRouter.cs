@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Audit;
@@ -23,7 +24,9 @@ public sealed class MatrixInboundRouter(
     IMatrixClient matrixClient,
     IClock clock,
     IAuditWriter audit,
-    ProviderInteractionLinkService? providerInteractions = null)
+    ProviderInteractionLinkService? providerInteractions = null,
+    IConversationTurnExecutor? conversation = null,
+    ConversationOptions? conversationOptions = null)
 {
     private static readonly string[] AffirmativeReplies = ["yes", "yep", "y"];
     private static readonly string[] NegativeReplies = ["no", "nope", "n"];
@@ -51,9 +54,22 @@ public sealed class MatrixInboundRouter(
         }
 
         var body = CommandBody(message);
+        var conversationOn = conversation is not null && conversationOptions?.IsEnabledFor(ConversationTransports.Matrix) == true;
+
+        if (message.IsEncrypted)
+        {
+            await HandleEncryptedAsync(destination, message, conversationOn, settings, accessToken, cancellationToken);
+            return;
+        }
 
         if (!destination.IsVerified)
         {
+            // Only the Matrix account the link was requested for may answer its verification code.
+            if (!IsLinkedSender(destination, message))
+            {
+                return;
+            }
+
             await HandleVerificationReplyAsync(destination, body, settings, accessToken, cancellationToken);
             return;
         }
@@ -65,7 +81,59 @@ public sealed class MatrixInboundRouter(
             return;
         }
 
+        // Everything below acts for the linked member, so the sender must be that member's Matrix account.
+        if (!IsLinkedSender(destination, message))
+        {
+            return;
+        }
+
+        // Existing commands keep priority: yes/no still answer the delivery confirmation exactly as before. Only text that
+        // is not one of them can start or continue a conversation, and only when the feature is switched on.
+        if (conversationOn && !IsYesNo(body))
+        {
+            await HandleConversationAsync(destination, message, body, settings, accessToken, cancellationToken);
+            return;
+        }
+
         await HandlePromptableReplyAsync(destination, body, settings, accessToken, cancellationToken);
+    }
+
+    private static bool IsLinkedSender(UserMatrixDestination destination, MatrixInboundMessage message) =>
+        string.Equals(destination.MatrixUserId, message.SenderUserId, StringComparison.Ordinal);
+
+    private static bool IsYesNo(string body) =>
+        AffirmativeReplies.Contains(body, StringComparer.OrdinalIgnoreCase) || NegativeReplies.Contains(body, StringComparer.OrdinalIgnoreCase);
+
+    private async Task HandleConversationAsync(
+        UserMatrixDestination destination, MatrixInboundMessage message, string body, MatrixSettings settings, string accessToken,
+        CancellationToken cancellationToken)
+    {
+        var result = await conversation!.RunMatrixTurnAsync(message, body, cancellationToken);
+        if (result is null || (result.Replayed && !result.DeliveryPending))
+        {
+            return;
+        }
+
+        var sent = await ReplyAsync(settings, accessToken, destination.RoomId!, MatrixReplyFormatter.ToText(result.Reply), cancellationToken);
+        if (sent.Succeeded && result.EventKey is not null)
+        {
+            await conversation.MarkDeliveredAsync(result.EventKey, cancellationToken);
+        }
+    }
+
+    /// <summary>Encrypted rooms are unsupported (alpha.6 D-1). Say so to the linked member, and only when chat is on.</summary>
+    private async Task HandleEncryptedAsync(
+        UserMatrixDestination destination, MatrixInboundMessage message, bool conversationOn, MatrixSettings settings, string accessToken,
+        CancellationToken cancellationToken)
+    {
+        if (!conversationOn || !destination.IsVerified || !IsLinkedSender(destination, message))
+        {
+            return;
+        }
+
+        await ReplyAsync(settings, accessToken, destination.RoomId!,
+            "I can't read encrypted messages. Please chat with me in an unencrypted direct message, or use the Family Librarian web app.",
+            cancellationToken);
     }
 
     private async Task HandleProviderFallbackReplyAsync(

@@ -225,8 +225,11 @@ public sealed class ConversationServiceTests
         harness.Clock.UtcNow += TimeSpan.FromMinutes(harness.Options.IdleExpiryMinutes + 1);
 
         var result = await harness.SayAsync("1");
+        var fresh = await harness.SayAsync("2");
 
         Assert.AreEqual(ConversationReplyKind.NotUnderstood, result.Reply.Kind);
+        StringAssert.Contains(result.Reply.Text, "expired after 20 minutes", "The user is told why the list is gone.");
+        StringAssert.Contains(fresh.Reply.Text, "don't have a list", "Only the first message after expiry gets the expiry notice.");
     }
 
     [TestMethod]

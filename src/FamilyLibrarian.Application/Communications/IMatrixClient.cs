@@ -68,11 +68,17 @@ public sealed record MatrixSendResult(bool Succeeded, string? EventId, string? E
     public static MatrixSendResult Failure(string error) => new(false, null, error);
 }
 
+/// <param name="EventId">The homeserver's id for this event. Used only to make a replayed message harmless.</param>
+/// <param name="IsEncrypted">
+/// The room sent an encrypted event the bot cannot read (alpha.6 D-1: unencrypted rooms only). <see cref="Body"/> is empty.
+/// </param>
 public sealed record MatrixInboundMessage(
     string RoomId,
     string SenderUserId,
     string Body,
-    string? ReplyToEventId = null);
+    string? ReplyToEventId = null,
+    string? EventId = null,
+    bool IsEncrypted = false);
 
 public sealed record MatrixSyncResult(bool Succeeded, string? NextBatch, IReadOnlyList<MatrixInboundMessage> Messages, string? Error)
 {

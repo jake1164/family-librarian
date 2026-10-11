@@ -96,8 +96,10 @@ public sealed class ConversationService(
         var now = clock.UtcNow;
         var session = await sessions.FindAsync(userId, transport, scopeKey, cancellationToken)
             ?? new ConversationSession(userId, transport, scopeKey, ConversationState.Empty(), 0, now, now);
+        var expired = false;
         if (now - session.LastActivityAtUtc > TimeSpan.FromMinutes(options.IdleExpiryMinutes))
         {
+            expired = session.State.Phase != ConversationPhase.Idle;
             session.State = ConversationState.Empty();
             session.TurnCount = 0;
             session.StartedAtUtc = now;
@@ -113,6 +115,13 @@ public sealed class ConversationService(
                 ConversationReply.Of(ConversationReplyKind.Throttled,
                     "We've covered a lot, so I've cleared this conversation. Send your search again to start fresh."),
                 ConversationState.Empty(), null, ResetTurns: true);
+        }
+        else if (expired && parsed.Kind is ConversationCommandKind.Pick or ConversationCommandKind.Request or ConversationCommandKind.Format
+                     or ConversationCommandKind.Details)
+        {
+            plan = Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                $"That search expired after {options.IdleExpiryMinutes} minutes without activity. Tell me the book again and I'll look it up."),
+                ConversationState.Empty());
         }
         else
         {

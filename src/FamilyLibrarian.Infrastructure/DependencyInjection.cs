@@ -261,6 +261,7 @@ public static class DependencyInjection
         services.AddScoped<SeriesPositionService>();
         services.AddScoped<IConversationTools, ConversationBookTools>();
         services.AddScoped<IConversationService, ConversationService>();
+        services.AddScoped<IConversationTurnExecutor, ConversationTurnExecutor>();
         services.AddScoped<MatrixInboundSyncCoordinator>();
         services.AddScoped<IOutboundCommunicationProvider, MatrixOutboundCommunicationProvider>();
 
