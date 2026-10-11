@@ -19,6 +19,7 @@ internal static class ModelGatewayEndpoints
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
         group.MapGet("/", GetAsync);
+        group.MapPost("/connection/resolve", ResolveConnectionAsync);
         group.MapGet("/usage", UsageAsync);
         group.MapPut("/", SaveAsync);
         group.MapPut("/enabled", SetEnabledAsync);
@@ -26,8 +27,33 @@ internal static class ModelGatewayEndpoints
         group.MapDelete("/api-key", ClearApiKeyAsync);
     }
 
-    private static async Task<IResult> GetAsync(ModelGatewaySettingsService service, CancellationToken cancellationToken) =>
-        ToResult(await service.GetAsync(cancellationToken));
+    private static async Task<IResult> GetAsync(
+        ModelGatewaySettingsService service, ModelConnectionService connections, CancellationToken cancellationToken)
+    {
+        // Merges an older model-test connection into the shared one when that is unambiguous, and reports a disagreement.
+        var reconciled = await connections.ReconcileAsync(cancellationToken);
+        return ToResult(await service.GetAsync(cancellationToken), reconciled.Notice);
+    }
+
+    private static async Task<IResult> ResolveConnectionAsync(
+        ResolveModelConnectionRequest request, ModelGatewaySettingsService service, ModelConnectionService connections,
+        CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<ModelConnectionChoice>(request.Keep, ignoreCase: true, out var choice) || !Enum.IsDefined(choice))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["keep"] = ["Choose Shared or LegacyTest."] });
+        }
+
+        var resolved = await connections.ResolveAsync(choice, cancellationToken);
+        if (resolved.Forbidden)
+        {
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        }
+
+        return resolved.Succeeded
+            ? ToResult(await service.GetAsync(cancellationToken), resolved.Notice)
+            : Results.ValidationProblem(new Dictionary<string, string[]> { ["modelGateway"] = [resolved.Error!] });
+    }
 
     private static async Task<IResult> SaveAsync(
         SaveModelGatewaySettingsRequest request, ModelGatewaySettingsService service, CancellationToken cancellationToken)
@@ -76,7 +102,7 @@ internal static class ModelGatewayEndpoints
     private static async Task<IResult> ClearApiKeyAsync(ModelGatewaySettingsService service, CancellationToken cancellationToken) =>
         ToResult(await service.ClearApiKeyAsync(cancellationToken));
 
-    private static IResult ToResult(ModelGatewaySettingsResult result)
+    private static IResult ToResult(ModelGatewaySettingsResult result, ModelConnectionNotice? notice = null)
     {
         if (result.Forbidden)
         {
@@ -92,7 +118,9 @@ internal static class ModelGatewayEndpoints
         return Results.Ok(new ModelGatewaySettingsResponse(
             settings.IsEnabled, settings.EndpointUrl, settings.HasApiKey, settings.ApiKeySetAtUtc, settings.AllowCloud,
             [.. settings.Roles.Select(role => new ModelRoleDto(role.Role.ToString(), role.IsEnabled, role.Placement.ToString(), role.LocalModel, role.CloudModel, role.Reasoning.ToString()))],
-            ToDto(settings.Limits), settings.AllowCloudExcerpts));
+            ToDto(settings.Limits), settings.AllowCloudExcerpts,
+            notice is null ? null : new ModelConnectionNoticeDto(
+                notice.HasConflict, notice.SharedEndpointUrl, notice.SharedHasApiKey, notice.LegacyTestEndpointUrl, notice.LegacyTestHasApiKey, notice.Explanation)));
     }
 
     private static ModelLimitsDto ToDto(ModelExecutionLimits limits) => new(

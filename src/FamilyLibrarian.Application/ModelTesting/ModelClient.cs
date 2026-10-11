@@ -20,6 +20,24 @@ public sealed record ModelRequest(
     IReadOnlyList<ModelToolDefinition>? Tools = null,
     ModelReasoningMode Reasoning = ModelReasoningMode.Inherit);
 
+/// <summary>The connection the test harness should use. The key is a secret: never log, audit or return it.</summary>
+/// <param name="IsLegacyConnection">True when an unresolved disagreement means the harness is still using its own older connection.</param>
+public sealed record ModelTestConnectionInfo(Uri? Endpoint, string? ApiKey, bool IsLegacyConnection, string? Problem);
+
+/// <summary>A production role's configured alias and placement, read only so an administrator can test exactly that model.</summary>
+public sealed record ModelTestRoleTarget(ModelRole Role, string Alias, bool IsCloud);
+
+/// <summary>
+/// The test harness's read-only window onto the production gateway: it can look up the shared connection and a role's model,
+/// and nothing else. There is deliberately no member that changes a role, a switch, a limit or a permission.
+/// </summary>
+public interface IModelTestTargetSource
+{
+    Task<ModelTestConnectionInfo> GetConnectionAsync(CancellationToken cancellationToken);
+
+    Task<ModelTestRoleTarget?> FindRoleTargetAsync(ModelRole role, CancellationToken cancellationToken);
+}
+
 public enum ModelFailureKind
 {
     None = 0,

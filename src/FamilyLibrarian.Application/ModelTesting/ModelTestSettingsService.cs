@@ -21,12 +21,9 @@ public static class ModelTestSecretPurposes
     public const string ApiKey = "model-test-api-key";
 }
 
-/// <summary>The settings as an administrator may see them. The API key is never included, only whether one is set.</summary>
+/// <summary>The test settings as an administrator may see them. The connection (endpoint and key) is the shared gateway one.</summary>
 public sealed record ModelTestSettingsView(
     bool IsEnabled,
-    string? EndpointUrl,
-    bool HasApiKey,
-    DateTimeOffset? ApiKeySetAtUtc,
     string? PrimaryModel,
     string? ComparisonModel,
     string? CloudModel,
@@ -36,7 +33,6 @@ public sealed record ModelTestSettingsView(
     ModelReasoningMode Reasoning = ModelReasoningMode.Inherit);
 
 public sealed record SaveModelTestSettings(
-    string? EndpointUrl,
     string? PrimaryModel,
     string? ComparisonModel,
     string? CloudModel,
@@ -60,7 +56,6 @@ public sealed record ModelTestSettingsResult(bool Succeeded, bool Forbidden, str
 /// </summary>
 public sealed class ModelTestSettingsService(
     IModelTestSettingsStore store,
-    ICredentialProtector protector,
     IAuditWriter audit,
     ICurrentUser currentUser,
     ICurrentAdministrator administrator,
@@ -93,14 +88,8 @@ public sealed class ModelTestSettingsService(
 
         var settings = await store.GetOrCreateAsync(cancellationToken);
         settings.Configure(
-            command.EndpointUrl, command.PrimaryModel, command.ComparisonModel, command.CloudModel, command.AllowCloud,
+            command.PrimaryModel, command.ComparisonModel, command.CloudModel, command.AllowCloud,
             command.TimeoutSeconds, command.MaxOutputTokens, currentUser.UserId, clock.UtcNow, command.Reasoning);
-        if (settings.IsEnabled && GetConfigurationError(settings) is not null)
-        {
-            // A configuration that can no longer run must not stay "enabled".
-            settings.SetEnabled(false, currentUser.UserId, clock.UtcNow);
-        }
-
         await store.SaveChangesAsync(cancellationToken);
         await audit.WriteAsync(
             AuditActions.ModelTestSettingsChanged, AuditSubjectTypes.ModelTest, SubjectId,
@@ -116,11 +105,6 @@ public sealed class ModelTestSettingsService(
         }
 
         var settings = await store.GetOrCreateAsync(cancellationToken);
-        if (enabled && GetConfigurationError(settings) is { } error)
-        {
-            return ModelTestSettingsResult.Invalid(error);
-        }
-
         settings.SetEnabled(enabled, currentUser.UserId, clock.UtcNow);
         await store.SaveChangesAsync(cancellationToken);
         await audit.WriteAsync(
@@ -128,76 +112,16 @@ public sealed class ModelTestSettingsService(
         return ModelTestSettingsResult.Success(ToView(settings));
     }
 
-    public async Task<ModelTestSettingsResult> SetApiKeyAsync(string apiKey, CancellationToken cancellationToken)
-    {
-        if (!IsAdministrator())
-        {
-            return ModelTestSettingsResult.NotAllowed();
-        }
-
-        var trimmed = apiKey?.Trim();
-        if (string.IsNullOrEmpty(trimmed) || trimmed.Length > 2_048 || trimmed.Any(char.IsControl))
-        {
-            return ModelTestSettingsResult.Invalid("Enter an API key (up to 2,048 characters, no control characters).");
-        }
-
-        var settings = await store.GetOrCreateAsync(cancellationToken);
-        settings.SetApiKey(protector.Protect(ModelTestSecretPurposes.ApiKey, trimmed), protector.FormatVersion, currentUser.UserId, clock.UtcNow);
-        await store.SaveChangesAsync(cancellationToken);
-        await audit.WriteAsync(
-            AuditActions.ModelTestSecretSet, AuditSubjectTypes.ModelTest, SubjectId, new { Field = "api_key" }, cancellationToken);
-        return ModelTestSettingsResult.Success(ToView(settings));
-    }
-
-    public async Task<ModelTestSettingsResult> ClearApiKeyAsync(CancellationToken cancellationToken)
-    {
-        if (!IsAdministrator())
-        {
-            return ModelTestSettingsResult.NotAllowed();
-        }
-
-        var settings = await store.GetOrCreateAsync(cancellationToken);
-        settings.ClearApiKey(currentUser.UserId, clock.UtcNow);
-        await store.SaveChangesAsync(cancellationToken);
-        await audit.WriteAsync(
-            AuditActions.ModelTestSecretCleared, AuditSubjectTypes.ModelTest, SubjectId, new { Field = "api_key" }, cancellationToken);
-        return ModelTestSettingsResult.Success(ToView(settings));
-    }
-
-    internal static string? GetConfigurationError(ModelTestSettings settings) =>
-        settings.EndpointUrl is null ? "Set the endpoint URL first."
-        : settings.PrimaryModel is null ? "Set the primary model alias first."
-        : null;
-
     internal static ModelTestSettingsView ToView(ModelTestSettings? settings) => settings is null
-        ? new ModelTestSettingsView(false, null, false, null, null, null, null, false, ModelTestSettings.DefaultTimeoutSeconds, ModelTestSettings.DefaultMaxOutputTokens)
+        ? new ModelTestSettingsView(false, null, null, null, false, ModelTestSettings.DefaultTimeoutSeconds, ModelTestSettings.DefaultMaxOutputTokens)
         : new ModelTestSettingsView(
-            settings.IsEnabled, settings.EndpointUrl, settings.HasApiKey, settings.ApiKeySetAtUtc, settings.PrimaryModel,
-            settings.ComparisonModel, settings.CloudModel, settings.AllowCloud, settings.TimeoutSeconds, settings.MaxOutputTokens, settings.Reasoning);
+            settings.IsEnabled, settings.PrimaryModel, settings.ComparisonModel, settings.CloudModel, settings.AllowCloud,
+            settings.TimeoutSeconds, settings.MaxOutputTokens, settings.Reasoning);
 
     private bool IsAdministrator() => currentUser.UserId is not null && administrator.IsAdministrator;
 
     private static string? Validate(SaveModelTestSettings command)
     {
-        if (!string.IsNullOrWhiteSpace(command.EndpointUrl))
-        {
-            var text = command.EndpointUrl.Trim();
-            if (text.Length > ModelTestSettings.MaxEndpointLength || !Uri.TryCreate(text, UriKind.Absolute, out var uri))
-            {
-                return "The endpoint URL is not valid.";
-            }
-
-            if (uri.Scheme is not ("http" or "https"))
-            {
-                return "The endpoint URL must use http or https.";
-            }
-
-            if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
-            {
-                return "The endpoint URL must not contain credentials, a query string or a fragment. Use the API key field.";
-            }
-        }
-
         foreach (var (label, value) in new[] { ("primary", command.PrimaryModel), ("comparison", command.ComparisonModel), ("cloud", command.CloudModel) })
         {
             if (!string.IsNullOrWhiteSpace(value) && !IsSafeModelName(value.Trim()))

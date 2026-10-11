@@ -14,7 +14,23 @@ public sealed record ModelGatewaySettingsResponse(
     bool AllowCloud,
     IReadOnlyList<ModelRoleDto> Roles,
     ModelLimitsDto Limits,
-    bool AllowCloudExcerpts = false);
+    bool AllowCloudExcerpts = false,
+    ModelConnectionNoticeDto? ConnectionNotice = null);
+
+/// <summary>
+/// Shown only when the older model-test connection and the shared one disagree. Contains no key; both are kept until an
+/// administrator chooses.
+/// </summary>
+public sealed record ModelConnectionNoticeDto(
+    bool HasConflict,
+    string? SharedEndpointUrl,
+    bool SharedHasApiKey,
+    string? LegacyTestEndpointUrl,
+    bool LegacyTestHasApiKey,
+    string? Explanation);
+
+/// <param name="Keep"><c>Shared</c> (discard the older test connection) or <c>LegacyTest</c> (adopt it; production AI is switched off until re-enabled).</param>
+public sealed record ResolveModelConnectionRequest(string Keep);
 
 /// <summary>A daily allowance for one kind of use. Zero stops all calls of that kind; it never means unlimited.</summary>
 public sealed record ModelBudgetDto(int UserDailyRequests, int UserDailyTokens, int InstallationDailyRequests, int InstallationDailyTokens);

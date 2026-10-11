@@ -33,13 +33,16 @@ public sealed class LiveLiteLlmTests
         var now = DateTimeOffset.UtcNow;
         var settings = new ModelTestSettings(now);
         settings.Configure(
-            Env("LITELLM_URL"), Env("LITELLM_MODEL"), Env("LITELLM_COMPARISON_MODEL"), Env("LITELLM_CLOUD_MODEL"), allowCloud,
-            timeoutSeconds: 90, maxOutputTokens: 384, actorUserId: null, now);
-        if (Env("LITELLM_KEY") is { Length: > 0 } key) settings.SetApiKey($"p:{key}", 1, null, now);
+            Env("LITELLM_MODEL"), Env("LITELLM_COMPARISON_MODEL"), Env("LITELLM_CLOUD_MODEL"), allowCloud,
+            timeoutSeconds: 90, maxOutputTokens: 1024, actorUserId: null, now);
         settings.SetEnabled(true, null, now);
         store = new FakeSettingsStore { Settings = settings };
+        var targets = new FakeTargetSource
+        {
+            Connection = new ModelTestConnectionInfo(new Uri(Env("LITELLM_URL")!), Env("LITELLM_KEY") is { Length: > 0 } key ? key : null, false, null)
+        };
         return new ModelCapabilityTestService(
-            store, new PassThroughProtector(), new OpenAiCompatibleModelClient(new DefaultFactory()), new ModelTestGate(),
+            store, targets, new OpenAiCompatibleModelClient(new DefaultFactory()), new ModelTestGate(),
             new CapturingAudit(), new FakeUser(Guid.NewGuid()), new FakeAdmin(true));
     }
 

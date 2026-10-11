@@ -2,6 +2,7 @@ using System.Text.Json;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.ModelTesting;
+using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Domain.ModelTesting;
 
 namespace FamilyLibrarian.Infrastructure.Tests.ModelTesting;
@@ -29,11 +30,30 @@ internal sealed class FakeSettingsStore : IModelTestSettingsStore
     public static ModelTestSettings Configured(bool enabled = true, bool allowCloud = false, string? cloud = null, bool withKey = true)
     {
         var settings = new ModelTestSettings(Now);
-        settings.Configure("http://litellm.example.test:4000", "local/primary", "local/comparison", cloud, allowCloud, 30, 384, null, Now);
-        if (withKey) settings.SetApiKey("p:secret-key-value", 1, null, Now);
+        settings.Configure("local/primary", "local/comparison", cloud, allowCloud, 30, 384, null, Now);
         if (enabled) settings.SetEnabled(true, null, Now);
         return settings;
     }
+}
+
+/// <summary>The test harness's window onto the shared connection and role aliases. Read only, and counts what it was asked.</summary>
+internal sealed class FakeTargetSource : IModelTestTargetSource
+{
+    public ModelTestConnectionInfo Connection { get; set; } =
+        new(new Uri("http://litellm.example.test:4000"), "secret-key-value", false, null);
+
+    public Dictionary<ModelRole, ModelTestRoleTarget> Roles { get; } = [];
+
+    public int ConnectionLookups { get; private set; }
+
+    public Task<ModelTestConnectionInfo> GetConnectionAsync(CancellationToken cancellationToken)
+    {
+        ConnectionLookups++;
+        return Task.FromResult(Connection);
+    }
+
+    public Task<ModelTestRoleTarget?> FindRoleTargetAsync(ModelRole role, CancellationToken cancellationToken) =>
+        Task.FromResult(Roles.GetValueOrDefault(role));
 }
 
 internal sealed class PassThroughProtector : ICredentialProtector

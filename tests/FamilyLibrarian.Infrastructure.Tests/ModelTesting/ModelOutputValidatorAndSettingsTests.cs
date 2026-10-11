@@ -65,11 +65,11 @@ public sealed class ModelTestSettingsServiceTests
     {
         var store = new FakeSettingsStore();
         var audit = new CapturingAudit();
-        return (new ModelTestSettingsService(store, new PassThroughProtector(), audit, new FakeUser(Guid.NewGuid()), new FakeAdmin(admin), new FakeClock()), store, audit);
+        return (new ModelTestSettingsService(store, audit, new FakeUser(Guid.NewGuid()), new FakeAdmin(admin), new FakeClock()), store, audit);
     }
 
     private static SaveModelTestSettings Valid(bool allowCloud = false, string? cloud = null) =>
-        new("http://litellm.example.test:4000/", "local/primary", "local/comparison", cloud, allowCloud, 30, 384);
+        new("local/primary", "local/comparison", cloud, allowCloud, 30, 384);
 
     [TestMethod]
     public async Task FreshSettingsAreOffEmptyAndUseTheConservativeDefaults()
@@ -80,13 +80,22 @@ public sealed class ModelTestSettingsServiceTests
 
         var view = result.Settings!;
         Assert.IsFalse(view.IsEnabled);
-        Assert.IsNull(view.EndpointUrl);
         Assert.IsNull(view.PrimaryModel);
         Assert.IsFalse(view.AllowCloud);
-        Assert.IsFalse(view.HasApiKey);
         Assert.AreEqual(30, view.TimeoutSeconds);
         Assert.AreEqual(1_024, view.MaxOutputTokens);
         Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Inherit, view.Reasoning, "Reasoning is never changed unless an administrator asks.");
+    }
+
+    [TestMethod]
+    public void TheTestSettingsViewCarriesNeitherAnEndpointNorAnythingThatCouldHoldAKey()
+    {
+        var names = typeof(ModelTestSettingsView).GetProperties(BindingFlags.Public | BindingFlags.Instance).Select(property => property.Name).ToArray();
+
+        Assert.IsFalse(names.Any(name => name.Contains("Key", StringComparison.OrdinalIgnoreCase) || name.Contains("Endpoint", StringComparison.OrdinalIgnoreCase)),
+            "The connection is the shared gateway one and is managed in one place only.");
+        var service = typeof(ModelTestSettingsService).GetMethods(BindingFlags.Public | BindingFlags.Instance).Select(method => method.Name).ToArray();
+        Assert.IsFalse(service.Any(name => name.Contains("ApiKey", StringComparison.Ordinal)), "The test service has no credential operation.");
     }
 
     [TestMethod]
@@ -98,9 +107,7 @@ public sealed class ModelTestSettingsServiceTests
         {
             await service.GetAsync(CancellationToken.None),
             await service.SaveAsync(Valid(), CancellationToken.None),
-            await service.SetEnabledAsync(true, CancellationToken.None),
-            await service.SetApiKeyAsync("k", CancellationToken.None),
-            await service.ClearApiKeyAsync(CancellationToken.None)
+            await service.SetEnabledAsync(true, CancellationToken.None)
         };
 
         Assert.IsTrue(results.All(result => result.Forbidden));
@@ -110,62 +117,19 @@ public sealed class ModelTestSettingsServiceTests
     }
 
     [TestMethod]
-    public async Task SavingTrimsTheEndpointAndNeverEnablesByItself()
+    public async Task SavingNeverEnablesByItselfAndNeverTouchesALegacyConnection()
     {
         var (service, store, _) = Make();
+        store.Settings = FakeSettingsStore.Configured(enabled: false);
+        store.Settings.SetLegacyEndpoint("http://legacy.example.test:4000", null, DateTimeOffset.UnixEpoch);
+        store.Settings.SetApiKey("p:legacy-key", 1, null, DateTimeOffset.UnixEpoch);
 
         var result = await service.SaveAsync(Valid(), CancellationToken.None);
 
         Assert.IsTrue(result.Succeeded);
-        Assert.AreEqual("http://litellm.example.test:4000", result.Settings!.EndpointUrl);
-        Assert.IsFalse(store.Settings!.IsEnabled);
-    }
-
-    [TestMethod]
-    public async Task TheApiKeyIsStoredProtectedNeverReturnedAndNeverAudited()
-    {
-        var (service, store, audit) = Make();
-
-        var set = await service.SetApiKeyAsync("  sk-very-secret  ", CancellationToken.None);
-        var read = await service.GetAsync(CancellationToken.None);
-
-        Assert.IsTrue(set.Settings!.HasApiKey);
-        Assert.AreEqual("p:sk-very-secret", store.Settings!.ProtectedApiKey, "Stored through the credential protector, trimmed.");
-        Assert.IsTrue(read.Settings!.HasApiKey);
-        Assert.IsFalse(typeof(ModelTestSettingsView).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Any(property => property.PropertyType == typeof(string) && property.Name.Contains("Key", StringComparison.OrdinalIgnoreCase)),
-            "The view has no property that could carry the key.");
-        Assert.IsFalse(audit.Events.Any(item => item.Json.Contains("secret", StringComparison.OrdinalIgnoreCase)));
-        Assert.AreEqual("model_test.secret_set", audit.Events.Single().Action);
-
-        var cleared = await service.ClearApiKeyAsync(CancellationToken.None);
-        Assert.IsFalse(cleared.Settings!.HasApiKey);
-    }
-
-    [TestMethod]
-    [DataRow("", false)]
-    [DataRow("   ", false)]
-    public async Task ABlankApiKeyIsRejected(string key, bool valid)
-    {
-        var (service, _, _) = Make();
-
-        Assert.AreEqual(valid, (await service.SetApiKeyAsync(key, CancellationToken.None)).Succeeded);
-    }
-
-    [TestMethod]
-    [DataRow("ftp://host/")]
-    [DataRow("not a url")]
-    [DataRow("http://user:pass@host:4000")]
-    [DataRow("http://host:4000/path?key=abc")]
-    [DataRow("http://host:4000/#frag")]
-    public async Task UnsafeEndpointsAreRejected(string endpoint)
-    {
-        var (service, store, _) = Make();
-
-        var result = await service.SaveAsync(Valid() with { EndpointUrl = endpoint }, CancellationToken.None);
-
-        Assert.IsFalse(result.Succeeded);
-        Assert.IsNull(store.Settings);
+        Assert.IsFalse(store.Settings.IsEnabled);
+        Assert.AreEqual("http://legacy.example.test:4000", store.Settings.EndpointUrl, "Saving test settings leaves a not-yet-reconciled connection exactly as it was.");
+        Assert.AreEqual("p:legacy-key", store.Settings.ProtectedApiKey);
     }
 
     [TestMethod]
@@ -206,18 +170,16 @@ public sealed class ModelTestSettingsServiceTests
     }
 
     [TestMethod]
-    public async Task EnablingNeedsAnEndpointAndPrimaryModelAndClearingThemSwitchesTestingOff()
+    public async Task TestingCanBeSwitchedOnAndOffAndIsAudited()
     {
-        var (service, store, _) = Make();
+        var (service, store, audit) = Make();
 
-        Assert.IsFalse((await service.SetEnabledAsync(true, CancellationToken.None)).Succeeded);
-        await service.SaveAsync(Valid(), CancellationToken.None);
         Assert.IsTrue((await service.SetEnabledAsync(true, CancellationToken.None)).Succeeded);
         Assert.IsTrue(store.Settings!.IsEnabled);
+        Assert.IsTrue((await service.SetEnabledAsync(false, CancellationToken.None)).Succeeded);
 
-        await service.SaveAsync(Valid() with { EndpointUrl = null }, CancellationToken.None);
-
-        Assert.IsFalse(store.Settings.IsEnabled, "A configuration that can no longer run is not left enabled.");
+        Assert.IsFalse(store.Settings.IsEnabled);
+        Assert.AreEqual(2, audit.Events.Count);
     }
 }
 
@@ -228,7 +190,8 @@ public sealed class ModelTestingBoundaryTests
     private static readonly HashSet<Type> Allowed =
     [
         typeof(ICurrentUser), typeof(ICurrentAdministrator), typeof(IClock), typeof(IAuditWriter), typeof(ICredentialProtector),
-        typeof(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode), typeof(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode?)
+        typeof(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode), typeof(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode?),
+        typeof(FamilyLibrarian.Domain.ModelGateway.ModelRole), typeof(FamilyLibrarian.Domain.ModelGateway.ModelRole?)
     ];
 
     [TestMethod]

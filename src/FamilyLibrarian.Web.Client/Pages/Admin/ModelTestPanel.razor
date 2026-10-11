@@ -1,0 +1,360 @@
+@using FamilyLibrarian.Contracts.ModelGateway
+@using FamilyLibrarian.Contracts.ModelTesting
+@using FamilyLibrarian.Web.Client.ModelTesting
+@inject ModelTestApiClient Api
+
+@* The "Test models" tab of the AI models page. It reuses the shared endpoint and key from the "Models & roles" tab and can
+   never change a production role, switch, limit or permission: it only reads which model a role is set to use. *@
+
+<MudStack Spacing="4">
+    <MudText Typo="Typo.body1">
+        A manual check of what a model can do, using only made-up books. It runs only when you press a button, never retries,
+        never falls back to another model, and its results change nothing: no matching, request, approval or publishing decision
+        uses them, and the prompts and replies are not stored. It uses the connection and key stored on the "Models &amp; roles" tab.
+    </MudText>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <MudAlert Severity="@(messageIsError ? Severity.Error : Severity.Success)" role="status">@message</MudAlert>
+    }
+
+    @if (!ConnectionReady)
+    {
+        <MudAlert Severity="Severity.Info" Dense="true">Set the endpoint on the "Models &amp; roles" tab before running checks.</MudAlert>
+    }
+
+    @if (settings is null)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" aria-label="Loading test settings" />
+    }
+    else
+    {
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudStack Spacing="3">
+                <MudText Typo="Typo.h5">Test settings</MudText>
+                <MudTextField @bind-Value="primaryModel" Label="Primary local model alias" Variant="Variant.Outlined" />
+                <MudTextField @bind-Value="comparisonModel" Label="Comparison local model alias (optional)" Variant="Variant.Outlined" />
+                <MudSwitch T="bool" @bind-Value="allowCloud" Color="Color.Warning"
+                           Label="Allow testing a cloud model (can use paid or rate-limited services)" />
+                <MudText Typo="Typo.caption">
+                    This switch is separate from the production cloud permission: allowing cloud tests does not let any role use a cloud model, and
+                    the other way round. Each cloud test also needs a confirmation on the run.
+                </MudText>
+                <MudTextField @bind-Value="cloudModel" Label="Cloud model alias (optional)" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudNumericField T="int" @bind-Value="timeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
+                    <MudNumericField T="int" @bind-Value="maxOutputTokens" Label="Maximum output tokens" Min="16" Max="4096" Variant="Variant.Outlined" />
+                    <MudSelect T="string" @bind-Value="reasoning" Label="Model reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;"
+                               HelperText="Test-only; production roles have their own setting.">
+                        <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
+                        <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
+                    </MudSelect>
+                </MudStack>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save test settings</MudButton>
+                <MudDivider />
+                <MudSwitch T="bool" Value="settings.IsEnabled" ValueChanged="SetEnabledAsync" Color="Color.Primary" Disabled="@busy"
+                           Label="Model testing is enabled" />
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudStack Spacing="3">
+                <MudText Typo="Typo.h5">Run the checks</MudText>
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center">
+                    <MudSelect T="string" @bind-Value="target" Label="Model to test" Variant="Variant.Outlined" Style="min-width: 20rem;">
+                        <MudSelectItem Value="@("Primary")" Disabled="@string.IsNullOrWhiteSpace(settings.PrimaryModel)">Primary local: @Show(settings.PrimaryModel)</MudSelectItem>
+                        <MudSelectItem Value="@("Comparison")" Disabled="@string.IsNullOrWhiteSpace(settings.ComparisonModel)">Comparison local: @Show(settings.ComparisonModel)</MudSelectItem>
+                        <MudSelectItem Value="@("Cloud")" Disabled="@(!settings.AllowCloud || string.IsNullOrWhiteSpace(settings.CloudModel))">Cloud: @Show(settings.CloudModel)</MudSelectItem>
+                        @foreach (var role in Roles.Where(role => ActiveAlias(role) is not null))
+                        {
+                            <MudSelectItem Value="@($"Role:{role.Role}")">Role "@RoleTitle(role.Role)": @ActiveAlias(role) (@role.Placement)</MudSelectItem>
+                        }
+                        <MudSelectItem Value="@("Alias")">A test-only alias…</MudSelectItem>
+                    </MudSelect>
+                    @if (target == "Alias")
+                    {
+                        <MudTextField @bind-Value="alias" Label="Test-only model alias" Variant="Variant.Outlined" />
+                        <MudRadioGroup T="string" @bind-Value="aliasPlacement">
+                            <MudRadio Value="@("Local")" Color="Color.Primary">Runs locally</MudRadio>
+                            <MudRadio Value="@("Cloud")" Color="Color.Warning">Runs in the cloud</MudRadio>
+                        </MudRadioGroup>
+                    }
+                </MudStack>
+                @if (target == "Alias")
+                {
+                    <MudText Typo="Typo.caption">You must say where the alias runs: a name is never taken as proof that a model is local.</MudText>
+                }
+                @if (IsCloudTarget)
+                {
+                    <MudCheckBox T="bool" @bind-Value="confirmCloud" Color="Color.Warning" Disabled="@(!settings.AllowCloud)"
+                                 Label="I understand this sends fictional test prompts to a cloud-hosted model" />
+                    @if (!settings.AllowCloud)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true">Switch cloud testing on in the test settings above first.</MudAlert>
+                    }
+                }
+
+                <MudText Typo="Typo.subtitle2">This run only (leave blank to use the saved test settings)</MudText>
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudSelect T="string" @bind-Value="runReasoning" Label="Reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;" Clearable="true">
+                        <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
+                        <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
+                    </MudSelect>
+                    <MudNumericField T="int?" @bind-Value="runTimeout" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
+                    <MudNumericField T="int?" @bind-Value="runMaxTokens" Label="Maximum output tokens" Min="16" Max="4096" Variant="Variant.Outlined" />
+                </MudStack>
+
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(busy || !settings.IsEnabled || !ConnectionReady)" OnClick="RunAsync">
+                    Run all checks
+                </MudButton>
+                @if (!settings.IsEnabled)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true">Turn model testing on above to run the checks.</MudAlert>
+                }
+                @if (busy)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" aria-label="Running model checks" />
+                }
+
+                @if (report is not null)
+                {
+                    <MudText Typo="Typo.subtitle1">
+                        @report.ConfiguredModel@(report.IsCloud ? " (cloud)" : "") ·
+                        @report.TotalCalls call(s) · @(report.TotalTokens?.ToString() ?? "no") token usage reported · @report.TotalLatencyMilliseconds ms ·
+                        reasoning: @(report.Reasoning == "Disabled" ? "asked off" : "provider default") · output limit @report.MaxOutputTokens
+                    </MudText>
+                    <MudTable Items="report.Results" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm">
+                        <HeaderContent>
+                            <MudTh>Check</MudTh>
+                            <MudTh>Result</MudTh>
+                            <MudTh>What happened</MudTh>
+                            <MudTh>Tokens (prompt / reply)</MudTh>
+                            <MudTh>ms</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Check">@Humanize(context.Check)</MudTd>
+                            <MudTd DataLabel="Result">@context.Status@(context.OutputLimitReached ? " (output limit reached)" : "")</MudTd>
+                            <MudTd DataLabel="What happened">
+                                @context.Detail
+                                @if (!string.IsNullOrWhiteSpace(context.Sample))
+                                {
+                                    <MudText Typo="Typo.caption" Style="white-space: pre-wrap;">Excerpt (not stored): @context.Sample</MudText>
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="Tokens">@(context.PromptTokens?.ToString() ?? "–") / @(context.CompletionTokens?.ToString() ?? "–")</MudTd>
+                            <MudTd DataLabel="ms">@context.LatencyMilliseconds</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+
+                    <MudText Typo="Typo.subtitle2">Observed capabilities</MudText>
+                    <ul>
+                        @foreach (var line in Observations(report))
+                        {
+                            <li><MudText Typo="Typo.body2">@line</MudText></li>
+                        }
+                    </ul>
+                    <MudText Typo="Typo.caption">
+                        Informational only. A model's agreement with the made-up test cases is not an accuracy score, and no result is used by
+                        Family Librarian to make a decision.
+                    </MudText>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+</MudStack>
+
+@code {
+    /// <summary>The production roles as currently saved, used only to offer their configured model for testing (read only).</summary>
+    [Parameter] public IReadOnlyList<ModelRoleDto> Roles { get; set; } = [];
+
+    /// <summary>Whether the shared endpoint is set. The key and endpoint themselves are managed on the other tab.</summary>
+    [Parameter] public bool ConnectionReady { get; set; }
+
+    private ModelTestSettingsResponse? settings;
+    private ModelTestReportResponse? report;
+    private string primaryModel = string.Empty;
+    private string comparisonModel = string.Empty;
+    private string cloudModel = string.Empty;
+    private bool allowCloud;
+    private int timeoutSeconds = 30;
+    private int maxOutputTokens = 1024;
+    private string reasoning = "Inherit";
+    private string target = "Primary";
+    private string alias = string.Empty;
+    private string aliasPlacement = string.Empty;
+    private bool confirmCloud;
+    private string? runReasoning;
+    private int? runTimeout;
+    private int? runMaxTokens;
+    private bool busy;
+    private string? message;
+    private bool messageIsError;
+
+    private bool IsCloudTarget => target switch
+    {
+        "Cloud" => true,
+        "Alias" => aliasPlacement == "Cloud",
+        _ when target.StartsWith("Role:", StringComparison.Ordinal) => Roles.FirstOrDefault(role => $"Role:{role.Role}" == target)?.Placement == "Cloud",
+        _ => false
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            Apply(await Api.GetAsync());
+        }
+        catch (HttpRequestException)
+        {
+            message = "Test settings could not be loaded.";
+            messageIsError = true;
+        }
+    }
+
+    private void Apply(ModelTestSettingsResponse value)
+    {
+        settings = value;
+        primaryModel = value.PrimaryModel ?? string.Empty;
+        comparisonModel = value.ComparisonModel ?? string.Empty;
+        cloudModel = value.CloudModel ?? string.Empty;
+        allowCloud = value.AllowCloud;
+        timeoutSeconds = value.TimeoutSeconds;
+        maxOutputTokens = value.MaxOutputTokens;
+        reasoning = value.Reasoning;
+    }
+
+    private async Task SaveAsync() => await ApplyResultAsync(
+        await Api.SaveAsync(new SaveModelTestSettingsRequest(primaryModel, comparisonModel, cloudModel, allowCloud, timeoutSeconds, maxOutputTokens, reasoning)),
+        "Test settings saved.");
+
+    private async Task SetEnabledAsync(bool enabled) => await ApplyResultAsync(await Api.SetEnabledAsync(enabled), enabled ? "Model testing is on." : "Model testing is off.");
+
+    private async Task ApplyResultAsync(ModelTestCallResult<ModelTestSettingsResponse> result, string success)
+    {
+        busy = true;
+        try
+        {
+            messageIsError = !result.Succeeded;
+            message = result.Succeeded ? success : result.Error;
+            if (result.Value is { } value) Apply(value);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task RunAsync()
+    {
+        if (target == "Alias" && aliasPlacement is not ("Local" or "Cloud"))
+        {
+            message = "Say whether the alias runs locally or in the cloud.";
+            messageIsError = true;
+            return;
+        }
+
+        busy = true;
+        report = null;
+        message = null;
+        try
+        {
+            var kind = target.StartsWith("Role:", StringComparison.Ordinal) ? "Role" : target;
+            var role = kind == "Role" ? target["Role:".Length..] : null;
+            var result = await Api.RunAsync(new RunModelTestRequest(
+                kind, null, IsCloudTarget && confirmCloud, string.IsNullOrWhiteSpace(runReasoning) ? null : runReasoning, runTimeout, runMaxTokens,
+                role, kind == "Alias" ? alias : null, kind == "Alias" ? aliasPlacement == "Cloud" : null));
+            if (result.Succeeded)
+            {
+                report = result.Value;
+            }
+            else
+            {
+                message = result.Error;
+                messageIsError = true;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            message = "The request failed.";
+            messageIsError = true;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static string? ActiveAlias(ModelRoleDto role) => role.Placement == "Cloud" ? role.CloudModel : role.LocalModel;
+
+    private static string Show(string? alias) => string.IsNullOrWhiteSpace(alias) ? "(not set)" : alias;
+
+    private static string RoleTitle(string role) => role switch
+    {
+        "IntentInterpretation" => "Understand book requests",
+        "ConversationResponse" => "Phrase conversational replies",
+        "CandidateAmbiguityAssessment" => "Assess ambiguous candidates",
+        "ArtifactValidationAssessment" => "Assess downloaded files",
+        "VisionCoverIdentification" => "Identify books from cover images",
+        _ => role
+    };
+
+    private static string Humanize(string check) => check switch
+    {
+        "Connectivity" => "Connection (transport and key)",
+        "AssistantContent" => "Usable visible reply",
+        "IntentClassification" => "Book-intent classification",
+        "StructuredJson" => "Structured JSON",
+        "MatchAdvisory" => "Book-match advisory (fictional evidence)",
+        "MalformedResponses" => "Malformed-reply handling (offline)",
+        "ModelUnavailable" => "Unknown-model handling",
+        "ToolCapability" => "Tool-calling capability",
+        _ => check
+    };
+
+    private static IEnumerable<string> Observations(ModelTestReportResponse report)
+    {
+        string? Status(string check) => report.Results.FirstOrDefault(result => result.Check == check)?.Status;
+        bool Limited(string check) => report.Results.FirstOrDefault(result => result.Check == check)?.OutputLimitReached == true;
+
+        yield return Status("Connectivity") switch
+        {
+            "Passed" => "Reachable: the endpoint accepted the key and answered.",
+            null => "Connection: not checked in this run.",
+            _ => "Not reachable with the current endpoint, key or alias."
+        };
+
+        if (Status("AssistantContent") is { } content)
+        {
+            yield return content == "Passed"
+                ? "Produces visible replies within the output limit."
+                : Limited("AssistantContent")
+                    ? "Ran out of output before answering: hidden reasoning may be using the limit. Raise the limit, or turn reasoning off if the model supports it."
+                    : "Did not produce usable visible text.";
+        }
+
+        if (Status("StructuredJson") is { } json)
+        {
+            yield return json == "Passed" ? "Replies with valid JSON in the exact required shape." : Limited("StructuredJson") ? "Structured JSON was cut off by the output limit (not accepted)." : "Structured JSON replies were not valid.";
+        }
+
+        if (Status("MatchAdvisory") is { } advisory)
+        {
+            yield return advisory == "Passed" ? "Advisory replies passed the schema and cited only the evidence supplied." : "Advisory replies failed the schema or evidence-id rules.";
+        }
+
+        if (Status("ToolCapability") is { } tools)
+        {
+            yield return tools switch { "Passed" => "Calls a declared tool (nothing is ever executed).", "NotSupported" => "No tool calling observed.", _ => "Tool calling could not be observed." };
+        }
+
+        if (report.Reasoning == "Disabled")
+        {
+            var rejected = report.Results.Any(result => result.Status == "Error" && result.Detail.Contains("setting", StringComparison.OrdinalIgnoreCase));
+            yield return rejected
+                ? "Rejected the 'no reasoning' request: leave reasoning on 'Provider default' for this model."
+                : report.Results.Any(result => result.Calls > 0 && result.Status != "Error")
+                    ? "Accepted the 'no reasoning' request."
+                    : "The 'no reasoning' request could not be observed.";
+        }
+    }
+}

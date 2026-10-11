@@ -157,6 +157,13 @@ public sealed class ModelGatewaySettings
         Touch(actorUserId, updatedAtUtc);
     }
 
+    /// <summary>Sets only the endpoint, leaving cloud permission and every other setting alone (used when merging the older test connection).</summary>
+    public void SetEndpoint(string? endpointUrl, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        EndpointUrl = Clean(endpointUrl, MaxEndpointLength)?.TrimEnd('/');
+        Touch(actorUserId, updatedAtUtc);
+    }
+
     public void SetEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
     {
         IsEnabled = isEnabled;

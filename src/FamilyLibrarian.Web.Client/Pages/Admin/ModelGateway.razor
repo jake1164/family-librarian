@@ -13,7 +13,7 @@
             Everything here is off until you turn it on. Family Librarian only asks a model for advice: it can never accept a match,
             approve a request, lift a security hold, acquire or publish anything, and if a model is unavailable the deterministic
             behaviour carries on unchanged. Each role runs on exactly the model you choose for it, and there is no automatic fall
-            back from a local model to a cloud one.
+            back from a local model to a cloud one. The connection and key below are shared with the "Test models" tab.
         </MudText>
     </div>
 
@@ -28,6 +28,30 @@
     }
     else
     {
+        <MudTabs Elevation="0" Rounded="true" TabPanelsClass="pt-4" KeepPanelsAlive="true">
+        <MudTabPanel Text="Models &amp; roles">
+        <MudStack Spacing="4">
+        @if (notice is { HasConflict: true })
+        {
+            <MudAlert Severity="Severity.Warning" role="alert">
+                <MudText Typo="Typo.subtitle2">Two different connections were found</MudText>
+                <MudText Typo="Typo.body2">@notice.Explanation</MudText>
+                <MudText Typo="Typo.body2">
+                    Shared (used by AI models): @(notice.SharedEndpointUrl ?? "no endpoint")@(notice.SharedHasApiKey ? ", key stored" : ", no key").
+                    Older test connection: @(notice.LegacyTestEndpointUrl ?? "no endpoint")@(notice.LegacyTestHasApiKey ? ", key stored" : ", no key").
+                    No key is ever shown.
+                </MudText>
+                <MudStack Row="true" Spacing="2" Class="mt-2" Wrap="Wrap.Wrap">
+                    <MudButton Variant="Variant.Outlined" Disabled="@busy" OnClick="@(() => ResolveConnectionAsync("Shared"))">
+                        Keep the shared connection and discard the older test one
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="@busy" OnClick="@(() => ResolveConnectionAsync("LegacyTest"))">
+                        Use the older test connection instead (switches AI models off until you turn them back on)
+                    </MudButton>
+                </MudStack>
+            </MudAlert>
+        }
+
         <MudPaper Outlined="true" Class="pa-4">
             <MudStack Spacing="3">
                 <MudText Typo="Typo.h5">Connection</MudText>
@@ -152,10 +176,18 @@
                 }
             </MudStack>
         </MudPaper>
+        </MudStack>
+        </MudTabPanel>
+        <MudTabPanel Text="Test models">
+            <ModelTestPanel Roles="settings.Roles" ConnectionReady="@(!string.IsNullOrWhiteSpace(settings.EndpointUrl))" />
+        </MudTabPanel>
+        </MudTabs>
     }
 </MudStack>
 
 @code {
+    private ModelConnectionNoticeDto? notice;
+
     private sealed class RoleEdit
     {
         public string Role { get; init; } = string.Empty;
@@ -214,6 +246,7 @@
     private void Apply(ModelGatewaySettingsResponse value)
     {
         settings = value;
+        notice = value.ConnectionNotice ?? notice;
         endpoint = value.EndpointUrl ?? string.Empty;
         allowCloud = value.AllowCloud;
         allowCloudExcerpts = value.AllowCloudExcerpts;
@@ -261,6 +294,10 @@
             messageIsError = true;
         }
     }
+
+    private async Task ResolveConnectionAsync(string keep) => await ApplyResultAsync(
+        await Api.ResolveConnectionAsync(keep),
+        keep == "Shared" ? "Kept the shared connection and discarded the older test one." : "Adopted the older test connection. AI models are off until you turn them on.");
 
     private async Task SetApiKeyAsync()
     {

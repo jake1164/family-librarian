@@ -8,6 +8,10 @@ namespace FamilyLibrarian.Domain.ModelTesting;
 /// The API key is stored protected and is write-only outside this aggregate.
 /// </summary>
 /// <remarks>
+/// Since the AI administration consolidation the endpoint and API key are the production gateway's, shared by both. The
+/// <see cref="EndpointUrl"/> and <see cref="ProtectedApiKey"/> here are a legacy copy from installations that configured the
+/// test harness first: they are reconciled into the shared connection (or kept until an administrator resolves a conflict)
+/// and are never written by anything else.
 /// This only configures an administrator's manual test harness. No part of Family Librarian reads these settings to decide
 /// anything about matching, requests, approvals or publishing.
 /// </remarks>
@@ -74,7 +78,7 @@ public sealed class ModelTestSettings
     public bool HasApiKey => !string.IsNullOrWhiteSpace(ProtectedApiKey);
 
     public void Configure(
-        string? endpointUrl, string? primaryModel, string? comparisonModel, string? cloudModel, bool allowCloud,
+        string? primaryModel, string? comparisonModel, string? cloudModel, bool allowCloud,
         int timeoutSeconds, int maxOutputTokens, Guid? actorUserId, DateTimeOffset updatedAtUtc,
         ModelReasoningMode reasoning = ModelReasoningMode.Inherit)
     {
@@ -88,7 +92,6 @@ public sealed class ModelTestSettings
             throw new ArgumentOutOfRangeException(nameof(maxOutputTokens));
         }
 
-        EndpointUrl = Clean(endpointUrl, MaxEndpointLength)?.TrimEnd('/');
         PrimaryModel = Clean(primaryModel, MaxModelNameLength);
         ComparisonModel = Clean(comparisonModel, MaxModelNameLength);
         CloudModel = Clean(cloudModel, MaxModelNameLength);
@@ -102,6 +105,23 @@ public sealed class ModelTestSettings
     public void SetEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
     {
         IsEnabled = isEnabled;
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    /// <summary>Seeds the legacy endpoint. Only the older configuration path and upgrade tests do this.</summary>
+    public void SetLegacyEndpoint(string? endpointUrl, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        EndpointUrl = Clean(endpointUrl, MaxEndpointLength)?.TrimEnd('/');
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    /// <summary>Drops the legacy endpoint and key once they live in (or were deliberately discarded in favour of) the shared connection.</summary>
+    public void ClearConnection(Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        EndpointUrl = null;
+        ProtectedApiKey = null;
+        ApiKeyFormatVersion = 0;
+        ApiKeySetAtUtc = null;
         Touch(actorUserId, updatedAtUtc);
     }
 

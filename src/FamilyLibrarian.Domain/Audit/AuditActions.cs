@@ -9,6 +9,8 @@ public static class AuditActions
     public const string ModelGatewaySettingsChanged = "model_gateway.settings_changed";
     public const string ModelGatewaySecretSet = "model_gateway.secret_set";
     public const string ModelGatewaySecretCleared = "model_gateway.secret_cleared";
+    public const string ModelConnectionReconciled = "model_gateway.connection_reconciled";
+    public const string ModelConnectionResolved = "model_gateway.connection_resolved";
     public const string ProviderEnabled = "provider.enabled";
     public const string ProviderDisabled = "provider.disabled";
     public const string ProviderCredentialSet = "provider.credential_set";

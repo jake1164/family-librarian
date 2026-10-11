@@ -5,7 +5,7 @@ using FamilyLibrarian.Web.Client.Authentication;
 
 namespace FamilyLibrarian.Web.Client.ModelTesting;
 
-/// <summary>Typed client for the administrator-only model test. The API key is write-only: nothing here can read it back.</summary>
+/// <summary>Typed client for the administrator-only model test. It holds no credential: the connection is the shared one on the AI models page.</summary>
 public sealed class ModelTestApiClient(HttpClient httpClient, AntiforgeryTokenProvider antiforgery)
 {
     private const string BasePath = "api/v1/admin/model-test";
@@ -19,12 +19,6 @@ public sealed class ModelTestApiClient(HttpClient httpClient, AntiforgeryTokenPr
 
     public Task<ModelTestCallResult<ModelTestSettingsResponse>> SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
         SendAsync<ModelTestSettingsResponse>(HttpMethod.Put, $"{BasePath}/enabled", new SetModelTestEnabledRequest(enabled), cancellationToken);
-
-    public Task<ModelTestCallResult<ModelTestSettingsResponse>> SetApiKeyAsync(string apiKey, CancellationToken cancellationToken = default) =>
-        SendAsync<ModelTestSettingsResponse>(HttpMethod.Put, $"{BasePath}/api-key", new SetModelTestApiKeyRequest(apiKey), cancellationToken);
-
-    public Task<ModelTestCallResult<ModelTestSettingsResponse>> ClearApiKeyAsync(CancellationToken cancellationToken = default) =>
-        SendAsync<ModelTestSettingsResponse>(HttpMethod.Delete, $"{BasePath}/api-key", null, cancellationToken);
 
     public Task<ModelTestCallResult<ModelTestReportResponse>> RunAsync(RunModelTestRequest request, CancellationToken cancellationToken = default) =>
         SendAsync<ModelTestReportResponse>(HttpMethod.Post, $"{BasePath}/run", request, cancellationToken);

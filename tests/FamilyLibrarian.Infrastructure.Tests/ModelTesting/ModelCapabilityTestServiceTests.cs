@@ -17,12 +17,14 @@ public sealed class ModelCapabilityTestServiceTests
         {
             Model = new ScriptedModel(handler ?? ScriptedModel.WellBehaved);
             Service = new ModelCapabilityTestService(
-                Store, new PassThroughProtector(), Model, Gate, Audit, new FakeUser(signedIn ? AdminId : null), new FakeAdmin(admin));
+                Store, Targets, Model, Gate, Audit, new FakeUser(signedIn ? AdminId : null), new FakeAdmin(admin));
         }
 
         public FakeSettingsStore Store { get; } = new() { Settings = FakeSettingsStore.Configured() };
 
         public ScriptedModel Model { get; }
+
+        public FakeTargetSource Targets { get; } = new();
 
         public ModelTestGate Gate { get; } = new();
 
@@ -116,7 +118,7 @@ public sealed class ModelCapabilityTestServiceTests
         missing.Store.Settings = null;
         var noComparison = new Rig();
         noComparison.Store.Settings = FakeSettingsStore.Configured();
-        noComparison.Store.Settings.Configure("http://litellm.example.test:4000", "local/primary", null, null, false, 30, 384, null, DateTimeOffset.UnixEpoch);
+        noComparison.Store.Settings.Configure("local/primary", null, null, false, 30, 384, null, DateTimeOffset.UnixEpoch);
 
         Assert.AreEqual(ModelTestRunOutcome.Disabled, (await disabled.RunAsync()).Outcome);
         Assert.AreEqual(ModelTestRunOutcome.Disabled, (await missing.RunAsync()).Outcome);
@@ -353,7 +355,7 @@ public sealed class ModelCapabilityTestServiceTests
     public async Task AKeyThatCannotBeDecryptedStopsTheRunBeforeAnyCall()
     {
         var rig = new Rig();
-        rig.Store.Settings!.SetApiKey("corrupt", 1, null, DateTimeOffset.UnixEpoch);
+        rig.Targets.Connection = new ModelTestConnectionInfo(null, null, false, "The stored API key could not be decrypted. Enter it again.");
 
         var result = await rig.RunAsync();
 
@@ -478,5 +480,82 @@ public sealed class ModelCapabilityTestServiceTests
         Assert.AreEqual(ModelCheckStatus.Error, item.Status);
         StringAssert.Contains(item.Detail, "reasoning");
         Assert.AreEqual(1, rig.Model.Calls.Count, "Exactly one call: no silent retry with different parameters.");
+    }
+
+    [TestMethod]
+    public async Task ARoleTargetTestsExactlyThatRolesConfiguredModelAndTouchesNothingElse()
+    {
+        var rig = new Rig();
+        rig.Targets.Roles[ModelRole.IntentInterpretation] = new ModelTestRoleTarget(ModelRole.IntentInterpretation, "role/local-alias", false);
+
+        var result = await rig.Service.RunAsync(
+            new ModelTestRunRequest(ModelTestTarget.Role, [ModelCheck.AssistantContent], false, Role: ModelRole.IntentInterpretation), CancellationToken.None);
+
+        Assert.AreEqual(ModelTestRunOutcome.Completed, result.Outcome);
+        Assert.AreEqual("role/local-alias", result.Report!.ConfiguredModel);
+        Assert.IsFalse(result.Report.IsCloud);
+        Assert.AreEqual("role/local-alias", rig.Model.Calls.Single().Connection.Model);
+    }
+
+    [TestMethod]
+    public async Task ACloudPlacedRoleNeedsTheTestCloudSwitchAndAConfirmationWhateverProductionAllows()
+    {
+        var rig = new Rig();
+        rig.Targets.Roles[ModelRole.ConversationResponse] = new ModelTestRoleTarget(ModelRole.ConversationResponse, "role/cloud-alias", true);
+
+        var off = await rig.Service.RunAsync(new ModelTestRunRequest(ModelTestTarget.Role, [ModelCheck.Connectivity], true, Role: ModelRole.ConversationResponse), CancellationToken.None);
+        rig.Store.Settings = FakeSettingsStore.Configured(allowCloud: true, cloud: "cloud/test");
+        var unconfirmed = await rig.Service.RunAsync(new ModelTestRunRequest(ModelTestTarget.Role, [ModelCheck.Connectivity], false, Role: ModelRole.ConversationResponse), CancellationToken.None);
+        var confirmed = await rig.Service.RunAsync(new ModelTestRunRequest(ModelTestTarget.Role, [ModelCheck.Connectivity], true, Role: ModelRole.ConversationResponse), CancellationToken.None);
+
+        Assert.AreEqual(ModelTestRunOutcome.CloudNotPermitted, off.Outcome);
+        Assert.AreEqual(ModelTestRunOutcome.CloudNotPermitted, unconfirmed.Outcome);
+        Assert.AreEqual(ModelTestRunOutcome.Completed, confirmed.Outcome);
+        Assert.IsTrue(confirmed.Report!.IsCloud);
+        Assert.AreEqual(1, rig.Model.Calls.Count, "Only the confirmed run made a call.");
+    }
+
+    [TestMethod]
+    public async Task ARoleWithNoModelAndAnAliasWithoutADeclaredPlacementAreRefusedBeforeAnyCall()
+    {
+        var rig = new Rig();
+
+        var noRole = await rig.Service.RunAsync(new ModelTestRunRequest(ModelTestTarget.Role, null, false, Role: ModelRole.VisionCoverIdentification), CancellationToken.None);
+        var noRoleChosen = await rig.Service.RunAsync(new ModelTestRunRequest(ModelTestTarget.Role, null, false), CancellationToken.None);
+        var undeclared = await rig.Service.RunAsync(new ModelTestRunRequest(ModelTestTarget.Alias, null, false, Alias: "desktop/looks-local"), CancellationToken.None);
+        var unsafeAlias = await rig.Service.RunAsync(new ModelTestRunRequest(ModelTestTarget.Alias, null, false, Alias: "bad alias;", AliasIsCloud: false), CancellationToken.None);
+
+        Assert.AreEqual(ModelTestRunOutcome.NotConfigured, noRole.Outcome);
+        Assert.AreEqual(ModelTestRunOutcome.Invalid, noRoleChosen.Outcome);
+        Assert.AreEqual(ModelTestRunOutcome.Invalid, undeclared.Outcome, "A name is never taken as proof that a model is local.");
+        Assert.AreEqual(ModelTestRunOutcome.Invalid, unsafeAlias.Outcome);
+        Assert.IsEmpty(rig.Model.Calls);
+    }
+
+    [TestMethod]
+    public async Task ATestOnlyAliasRunsWithItsDeclaredPlacementAndACloudOneIsGatedLikeAnyOther()
+    {
+        var rig = new Rig();
+
+        var local = await rig.Service.RunAsync(new ModelTestRunRequest(ModelTestTarget.Alias, [ModelCheck.Connectivity], false, Alias: "scratch/model", AliasIsCloud: false), CancellationToken.None);
+        var cloudBlocked = await rig.Service.RunAsync(new ModelTestRunRequest(ModelTestTarget.Alias, [ModelCheck.Connectivity], true, Alias: "scratch/model", AliasIsCloud: true), CancellationToken.None);
+
+        Assert.AreEqual(ModelTestRunOutcome.Completed, local.Outcome);
+        Assert.AreEqual("scratch/model", rig.Model.Calls.Single().Connection.Model);
+        Assert.AreEqual(ModelTestRunOutcome.CloudNotPermitted, cloudBlocked.Outcome, "Declared cloud, cloud testing is off.");
+    }
+
+    [TestMethod]
+    public async Task ARunNeverWritesTestSettingsAndMakesNoCallWhenTheSharedConnectionIsMissing()
+    {
+        var rig = new Rig();
+        rig.Targets.Connection = new ModelTestConnectionInfo(null, null, false, "Set the endpoint on the Models & roles tab first.");
+
+        var result = await rig.RunAsync();
+
+        Assert.AreEqual(ModelTestRunOutcome.NotConfigured, result.Outcome);
+        StringAssert.Contains(result.Error!, "Models & roles");
+        Assert.IsEmpty(rig.Model.Calls);
+        Assert.AreEqual(0, rig.Store.Saves);
     }
 }

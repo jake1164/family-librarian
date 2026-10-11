@@ -5,7 +5,7 @@ using FamilyLibrarian.Web.Client.Authentication;
 
 namespace FamilyLibrarian.Web.Client.ModelGateway;
 
-/// <summary>Typed client for the administrator-only model test. The API key is write-only: nothing here can read it back.</summary>
+/// <summary>Typed client for the administrator-only model gateway settings. The API key is write-only: nothing here can read it back.</summary>
 public sealed class ModelGatewayApiClient(HttpClient httpClient, AntiforgeryTokenProvider antiforgery)
 {
     private const string BasePath = "api/v1/admin/model-gateway";
@@ -23,6 +23,9 @@ public sealed class ModelGatewayApiClient(HttpClient httpClient, AntiforgeryToke
 
     public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
         SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/enabled", new SetModelGatewayEnabledRequest(enabled), cancellationToken);
+
+    public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> ResolveConnectionAsync(string keep, CancellationToken cancellationToken = default) =>
+        SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Post, $"{BasePath}/connection/resolve", new ResolveModelConnectionRequest(keep), cancellationToken);
 
     public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SetApiKeyAsync(string apiKey, CancellationToken cancellationToken = default) =>
         SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/api-key", new SetModelGatewayApiKeyRequest(apiKey), cancellationToken);

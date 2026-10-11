@@ -270,6 +270,8 @@ public static class DependencyInjection
         services.AddScoped<IModelGatewaySettingsStore, ModelGatewaySettingsStore>();
         services.AddScoped<ModelGatewaySettingsService>();
         services.AddScoped<IModelRoleResolver, ModelRoleResolver>();
+        services.AddScoped<ModelConnectionService>();
+        services.AddScoped<IModelTestTargetSource>(provider => provider.GetRequiredService<ModelConnectionService>());
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, TimeProvider.System);
         services.AddSingleton<IModelUsageLedger, ModelUsageLedger>();
         services.AddSingleton<ModelExecutionGate>();

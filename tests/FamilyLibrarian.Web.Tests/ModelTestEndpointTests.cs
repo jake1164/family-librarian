@@ -3,9 +3,13 @@ using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text;
 using FamilyLibrarian.Application.Conversation;
+using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Contracts.Authentication;
+using FamilyLibrarian.Contracts.ModelGateway;
 using FamilyLibrarian.Contracts.ModelTesting;
+using FamilyLibrarian.Domain.ModelTesting;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -86,13 +90,34 @@ public sealed class ModelTestEndpointTests
         return http;
     }
 
+    /// <summary>The database is shared by this class's tests; consolidation tests must start without earlier tests' model settings.</summary>
+    private static async Task ResetModelSettingsAsync(FamilyLibrarianAppFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await database.Database.ExecuteSqlRawAsync(
+            "DELETE FROM integrations.model_role_settings; DELETE FROM integrations.model_gateway_settings; DELETE FROM integrations.model_test_settings;");
+    }
+
     private static Task<HttpClient> AdminAsync(FamilyLibrarianAppFactory factory, bool token = true) =>
         SignedInAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword, token);
 
-    private static async Task ConfigureAsync(HttpClient admin, string endpoint = "http://litellm.example.test:4000", bool allowCloud = false, string? cloud = null, bool enable = true)
+    /// <summary>Sets the one shared connection on the AI models page, then the test-only settings.</summary>
+    private static async Task ConfigureAsync(
+        HttpClient admin, string endpoint = "http://litellm.example.test:4000", bool allowCloud = false, string? cloud = null, bool enable = true,
+        string? apiKey = null)
     {
+        using var gateway = await admin.PutAsJsonAsync("/api/v1/admin/model-gateway/",
+            new SaveModelGatewaySettingsRequest(endpoint, false, []));
+        gateway.EnsureSuccessStatusCode();
+        if (apiKey is not null)
+        {
+            using var key = await admin.PutAsJsonAsync("/api/v1/admin/model-gateway/api-key", new SetModelGatewayApiKeyRequest(apiKey));
+            key.EnsureSuccessStatusCode();
+        }
+
         using var saved = await admin.PutAsJsonAsync("/api/v1/admin/model-test/",
-            new SaveModelTestSettingsRequest(endpoint, "local/primary", "local/comparison", cloud, allowCloud, 30, 384));
+            new SaveModelTestSettingsRequest("local/primary", "local/comparison", cloud, allowCloud, 30, 384));
         saved.EnsureSuccessStatusCode();
         if (enable)
         {
@@ -115,7 +140,7 @@ public sealed class ModelTestEndpointTests
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.GetAsync("/api/v1/admin/model-test/")).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden, (await RunAsync(member)).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden,
-            (await member.PutAsJsonAsync("/api/v1/admin/model-test/api-key", new SetModelTestApiKeyRequest("sk-member"))).StatusCode);
+            (await member.PostAsJsonAsync("/api/v1/admin/model-gateway/connection/resolve", new ResolveModelConnectionRequest("Shared"))).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.PutAsJsonAsync("/api/v1/admin/model-test/enabled", new SetModelTestEnabledRequest(true))).StatusCode);
     }
 
@@ -136,12 +161,12 @@ public sealed class ModelTestEndpointTests
         var client = new ScriptedClient(Good);
         await using var factory = Factory(client);
         using var admin = await AdminAsync(factory);
+        await ResetModelSettingsAsync(factory);
 
         var settings = await admin.GetFromJsonAsync<ModelTestSettingsResponse>("/api/v1/admin/model-test/");
         var run = await RunAsync(admin);
 
         Assert.IsFalse(settings!.IsEnabled);
-        Assert.IsFalse(settings.HasApiKey);
         Assert.IsFalse(settings.AllowCloud);
         Assert.AreEqual(1_024, settings.MaxOutputTokens);
         Assert.AreEqual(HttpStatusCode.BadRequest, run.StatusCode);
@@ -149,27 +174,26 @@ public sealed class ModelTestEndpointTests
     }
 
     [TestMethod]
-    public async Task TheApiKeyIsStoredProtectedAndNeverComesBackInAnyResponse()
+    public async Task TheSharedApiKeyIsStoredProtectedAndNeverComesBackInAnyResponseOrAuditRecord()
     {
         await using var factory = Factory();
         using var admin = await AdminAsync(factory);
         const string key = "sk-live-do-not-leak-123456";
 
-        await ConfigureAsync(admin, enable: false);
-        using var set = await admin.PutAsJsonAsync("/api/v1/admin/model-test/api-key", new SetModelTestApiKeyRequest(key));
-        var setBody = await set.Content.ReadAsStringAsync();
-        var read = await admin.GetStringAsync("/api/v1/admin/model-test/");
+        await ConfigureAsync(admin, enable: false, apiKey: key);
+        var gatewayRead = await admin.GetStringAsync("/api/v1/admin/model-gateway/");
+        var testRead = await admin.GetStringAsync("/api/v1/admin/model-test/");
 
-        Assert.IsTrue(set.IsSuccessStatusCode);
-        Assert.IsFalse(setBody.Contains(key, StringComparison.Ordinal));
-        Assert.IsFalse(read.Contains(key, StringComparison.Ordinal));
-        StringAssert.Contains(read, "\"hasApiKey\":true");
+        Assert.IsFalse(gatewayRead.Contains(key, StringComparison.Ordinal));
+        Assert.IsFalse(testRead.Contains(key, StringComparison.Ordinal));
+        StringAssert.Contains(gatewayRead, "\"hasApiKey\":true");
+        Assert.IsFalse(testRead.Contains("apiKey", StringComparison.OrdinalIgnoreCase), "The test settings carry no credential field at all.");
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var stored = await database.ModelTestSettingsRows.AsNoTracking().SingleAsync();
+        var stored = await database.ModelGatewaySettingsRows.AsNoTracking().SingleAsync();
         Assert.IsNotNull(stored.ProtectedApiKey);
         Assert.IsFalse(stored.ProtectedApiKey.Contains(key, StringComparison.Ordinal), "Not stored in the clear.");
-        var audit = await database.AuditEvents.Where(item => item.Action.StartsWith("model_test.")).ToListAsync();
+        var audit = await database.AuditEvents.Where(item => item.Action.StartsWith("model_")).ToListAsync();
         Assert.IsNotEmpty(audit);
         Assert.IsFalse(audit.Any(item => item.Detail != null && item.Detail.Contains(key, StringComparison.Ordinal)), "Not in the audit trail.");
     }
@@ -230,7 +254,7 @@ public sealed class ModelTestEndpointTests
         Assert.AreEqual(HttpStatusCode.BadRequest, (await RunAsync(admin, "Everything")).StatusCode);
         Assert.AreEqual(HttpStatusCode.BadRequest, (await RunAsync(admin, "Primary", false, "DeleteAllBooks")).StatusCode);
         Assert.AreEqual(HttpStatusCode.BadRequest,
-            (await admin.PutAsJsonAsync("/api/v1/admin/model-test/", new SaveModelTestSettingsRequest("ftp://x", "m", null, null, false, 30, 384))).StatusCode);
+            (await admin.PutAsJsonAsync("/api/v1/admin/model-test/", new SaveModelTestSettingsRequest("m", null, null, false, 1, 384))).StatusCode);
     }
 
     [TestMethod]
@@ -321,8 +345,7 @@ public sealed class ModelTestEndpointTests
             "{\"model\":\"stand-in\",\"choices\":[{\"message\":{\"content\":\"pong\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}"));
         await using var factory = Factory();
         using var admin = await AdminAsync(factory);
-        await ConfigureAsync(admin, endpoint: $"http://127.0.0.1:{server.Port}");
-        await admin.PutAsJsonAsync("/api/v1/admin/model-test/api-key", new SetModelTestApiKeyRequest("sk-stand-in"));
+        await ConfigureAsync(admin, endpoint: $"http://127.0.0.1:{server.Port}", apiKey: "sk-stand-in");
 
         using var response = await RunAsync(admin, "Primary", false, "Connectivity");
         var report = await response.Content.ReadFromJsonAsync<ModelTestReportResponse>();
@@ -347,8 +370,7 @@ public sealed class ModelTestEndpointTests
         });
         await using var factory = Factory();
         using var admin = await AdminAsync(factory);
-        await ConfigureAsync(admin, endpoint: $"http://127.0.0.1:{server.Port}");
-        await admin.PutAsJsonAsync("/api/v1/admin/model-test/api-key", new SetModelTestApiKeyRequest("sk-stand-in"));
+        await ConfigureAsync(admin, endpoint: $"http://127.0.0.1:{server.Port}", apiKey: "sk-stand-in");
 
         using var response = await RunAsync(admin, "Primary", false, "Connectivity");
         var report = await response.Content.ReadFromJsonAsync<ModelTestReportResponse>();
@@ -371,5 +393,195 @@ public sealed class ModelTestEndpointTests
 
         StringAssert.Contains(report!.Results.Single().Detail, "refused the API key");
         Assert.AreEqual(1, unauthorized.Seen.Count, "No retry.");
+    }
+
+    // ---- consolidation of the older separate test connection with the shared one ----------------------------------------
+
+    private static async Task SeedLegacyConnectionAsync(FamilyLibrarianAppFactory factory, string endpoint, string? key)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var protector = scope.ServiceProvider.GetRequiredService<ICredentialProtector>();
+        // An upgraded installation has one test-settings row; if the test already created it, the legacy values go into that row.
+        var existing = await database.ModelTestSettingsRows.FirstOrDefaultAsync();
+        var settings = existing ?? new ModelTestSettings(DateTimeOffset.UtcNow);
+        settings.SetLegacyEndpoint(endpoint, null, DateTimeOffset.UtcNow);
+        if (key is not null)
+        {
+            settings.SetApiKey(protector.Protect(ModelTestSecretPurposes.ApiKey, key), protector.FormatVersion, null, DateTimeOffset.UtcNow);
+        }
+
+        if (existing is null)
+        {
+            database.ModelTestSettingsRows.Add(settings);
+        }
+
+        await database.SaveChangesAsync();
+    }
+
+    [TestMethod]
+    public async Task AnUpgradedInstallWithOnlyATestConnectionMovesItToTheSharedOneAndStaysOffAndLocal()
+    {
+        var client = new ScriptedClient(Good);
+        await using var factory = Factory(client);
+        using var admin = await AdminAsync(factory);
+        await ResetModelSettingsAsync(factory);
+        await SeedLegacyConnectionAsync(factory, "http://old-test.example.test:4000", "sk-old-test-key");
+
+        var gateway = await admin.GetFromJsonAsync<ModelGatewaySettingsResponse>("/api/v1/admin/model-gateway/");
+
+        Assert.AreEqual("http://old-test.example.test:4000", gateway!.EndpointUrl);
+        Assert.IsTrue(gateway.HasApiKey);
+        Assert.IsFalse(gateway.IsEnabled, "Moving a connection never turns production AI on.");
+        Assert.IsFalse(gateway.AllowCloud);
+        Assert.IsFalse(gateway.AllowCloudExcerpts);
+        Assert.IsTrue(gateway.Roles.All(role => !role.IsEnabled), "No role is touched.");
+        Assert.IsFalse(gateway.ConnectionNotice!.HasConflict);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var protector = scope.ServiceProvider.GetRequiredService<ICredentialProtector>();
+        var legacy = await database.ModelTestSettingsRows.AsNoTracking().SingleAsync();
+        Assert.IsNull(legacy.EndpointUrl);
+        Assert.IsNull(legacy.ProtectedApiKey, "The duplicate copy of the key is gone.");
+        var stored = await database.ModelGatewaySettingsRows.AsNoTracking().SingleAsync();
+        Assert.AreEqual("sk-old-test-key", protector.Unprotect(ModelGatewaySecretPurposes.ApiKey, stored.ProtectedApiKey!, stored.ApiKeyFormatVersion),
+            "Re-protected under the gateway's own purpose, and still usable.");
+        Assert.IsFalse(stored.ProtectedApiKey!.Contains("sk-old-test-key", StringComparison.Ordinal));
+        var audit = await database.AuditEvents.Where(item => item.Action == "model_gateway.connection_reconciled").ToListAsync();
+        Assert.IsNotEmpty(audit);
+        Assert.IsFalse(audit.Any(item => item.Detail!.Contains("sk-old-test-key", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public async Task ADifferingTestConnectionIsPreservedUntilTheAdministratorResolvesItAndTestsKeepUsingIt()
+    {
+        using var legacyServer = new StandInServer((context, _) => Reply(context, 200,
+            "{\"model\":\"legacy\",\"choices\":[{\"message\":{\"content\":\"pong\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}"));
+        await using var factory = Factory();
+        using var admin = await AdminAsync(factory);
+        await ResetModelSettingsAsync(factory);
+        await ConfigureAsync(admin, endpoint: "http://shared.example.test:4000", apiKey: "sk-shared", enable: true);
+        await SeedLegacyConnectionAsync(factory, $"http://127.0.0.1:{legacyServer.Port}", "sk-legacy");
+
+        var gatewayJson = await admin.GetStringAsync("/api/v1/admin/model-gateway/");
+        using var run = await RunAsync(admin, "Primary", false, "Connectivity");
+        var report = await run.Content.ReadFromJsonAsync<ModelTestReportResponse>();
+
+        StringAssert.Contains(gatewayJson, "\"hasConflict\":true");
+        Assert.IsFalse(gatewayJson.Contains("sk-shared", StringComparison.Ordinal) || gatewayJson.Contains("sk-legacy", StringComparison.Ordinal), "No key in the notice.");
+        StringAssert.Contains(gatewayJson, "http://shared.example.test:4000");
+        Assert.AreEqual("Passed", report!.Results.Single().Status);
+        Assert.AreEqual("Bearer sk-legacy", legacyServer.Seen.Single().Authorization, "Until resolved, tests keep using the connection they always used.");
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.IsNotNull((await database.ModelTestSettingsRows.AsNoTracking().SingleAsync()).EndpointUrl, "Both connections are preserved.");
+            Assert.AreEqual("http://shared.example.test:4000", (await database.ModelGatewaySettingsRows.AsNoTracking().SingleAsync()).EndpointUrl);
+        }
+
+        using var resolved = await admin.PostAsJsonAsync("/api/v1/admin/model-gateway/connection/resolve", new ResolveModelConnectionRequest("Shared"));
+        var after = await resolved.Content.ReadFromJsonAsync<ModelGatewaySettingsResponse>();
+
+        Assert.AreEqual(HttpStatusCode.OK, resolved.StatusCode);
+        Assert.IsFalse(after!.ConnectionNotice!.HasConflict);
+        Assert.AreEqual("http://shared.example.test:4000", after.EndpointUrl);
+        await using var finalScope = factory.Services.CreateAsyncScope();
+        Assert.IsNull((await finalScope.ServiceProvider.GetRequiredService<AppDbContext>().ModelTestSettingsRows.AsNoTracking().SingleAsync()).EndpointUrl);
+    }
+
+    [TestMethod]
+    public async Task AdoptingTheOlderTestConnectionSwitchesProductionAiOffAndNeverEnablesAnything()
+    {
+        await using var factory = Factory();
+        using var admin = await AdminAsync(factory);
+        await ResetModelSettingsAsync(factory);
+        await ConfigureAsync(admin, endpoint: "http://shared.example.test:4000", apiKey: "sk-shared");
+        using var enableGateway = await admin.PutAsJsonAsync("/api/v1/admin/model-gateway/enabled", new SetModelGatewayEnabledRequest(true));
+        enableGateway.EnsureSuccessStatusCode();
+        await SeedLegacyConnectionAsync(factory, "http://old-test.example.test:4000", "sk-legacy");
+        await admin.GetStringAsync("/api/v1/admin/model-gateway/");
+
+        using var resolved = await admin.PostAsJsonAsync("/api/v1/admin/model-gateway/connection/resolve", new ResolveModelConnectionRequest("LegacyTest"));
+        var after = await resolved.Content.ReadFromJsonAsync<ModelGatewaySettingsResponse>();
+
+        Assert.AreEqual("http://old-test.example.test:4000", after!.EndpointUrl);
+        Assert.IsTrue(after.HasApiKey);
+        Assert.IsFalse(after.IsEnabled, "Replacing the production connection is a production change: AI stays off until re-enabled.");
+        Assert.IsFalse(after.AllowCloud);
+    }
+
+    [TestMethod]
+    public async Task ATestRunNeverChangesAProductionRoleASwitchALimitOrACloudPermission()
+    {
+        var client = new ScriptedClient(Good);
+        await using var factory = Factory(client);
+        using var admin = await AdminAsync(factory);
+        await ResetModelSettingsAsync(factory);
+        await ConfigureAsync(admin, apiKey: "sk-shared");
+        using var configured = await admin.PutAsJsonAsync("/api/v1/admin/model-gateway/", new SaveModelGatewaySettingsRequest(
+            "http://litellm.example.test:4000", false,
+            [new ModelRoleDto("CandidateAmbiguityAssessment", false, "Local", "role/alias", null, "Disabled")]));
+        configured.EnsureSuccessStatusCode();
+        string Snapshot(ModelGatewaySettingsResponse value) => System.Text.Json.JsonSerializer.Serialize(value with { ConnectionNotice = null });
+        var before = Snapshot((await admin.GetFromJsonAsync<ModelGatewaySettingsResponse>("/api/v1/admin/model-gateway/"))!);
+        await using var preScope = factory.Services.CreateAsyncScope();
+        var versionBefore = (await preScope.ServiceProvider.GetRequiredService<AppDbContext>().ModelGatewaySettingsRows.AsNoTracking().SingleAsync()).Version;
+
+        using var run = await admin.PostAsJsonAsync("/api/v1/admin/model-test/run",
+            new RunModelTestRequest("Role", ["Connectivity"], false, "Inherit", null, null, "CandidateAmbiguityAssessment"));
+        using var alias = await admin.PostAsJsonAsync("/api/v1/admin/model-test/run",
+            new RunModelTestRequest("Alias", ["Connectivity"], false, null, null, null, null, "scratch/test-only", false));
+
+        Assert.AreEqual(HttpStatusCode.OK, run.StatusCode);
+        Assert.AreEqual(HttpStatusCode.OK, alias.StatusCode);
+        CollectionAssert.Contains(client.Models.ToArray(), "role/alias");
+        CollectionAssert.Contains(client.Models.ToArray(), "scratch/test-only");
+        var after = Snapshot((await admin.GetFromJsonAsync<ModelGatewaySettingsResponse>("/api/v1/admin/model-gateway/"))!);
+        Assert.AreEqual(before, after, "Roles, switches, limits and cloud permissions are byte-for-byte what they were.");
+        await using var scope = factory.Services.CreateAsyncScope();
+        var row = await scope.ServiceProvider.GetRequiredService<AppDbContext>().ModelGatewaySettingsRows.AsNoTracking().SingleAsync();
+        Assert.AreEqual(versionBefore, row.Version, "The gateway row was never written by a test run.");
+    }
+
+    [TestMethod]
+    public async Task CloudTestingIsIndependentOfProductionCloudPermissionInBothDirections()
+    {
+        var client = new ScriptedClient(Good);
+        await using var factory = Factory(client);
+        using var admin = await AdminAsync(factory);
+        await ResetModelSettingsAsync(factory);
+        await ConfigureAsync(admin, apiKey: "sk-shared");
+        // Production allows cloud and a role is cloud-placed; cloud TESTING is still off.
+        using var production = await admin.PutAsJsonAsync("/api/v1/admin/model-gateway/", new SaveModelGatewaySettingsRequest(
+            "http://litellm.example.test:4000", true,
+            [new ModelRoleDto("IntentInterpretation", false, "Cloud", null, "cloud/role-model")]));
+        production.EnsureSuccessStatusCode();
+
+        using var roleRun = await admin.PostAsJsonAsync("/api/v1/admin/model-test/run",
+            new RunModelTestRequest("Role", ["Connectivity"], true, null, null, null, "IntentInterpretation"));
+        using var aliasRun = await admin.PostAsJsonAsync("/api/v1/admin/model-test/run",
+            new RunModelTestRequest("Alias", ["Connectivity"], true, null, null, null, null, "ollama-cloud/anything", true));
+        using var namedLikeLocal = await admin.PostAsJsonAsync("/api/v1/admin/model-test/run",
+            new RunModelTestRequest("Alias", ["Connectivity"], false, null, null, null, null, "desktop/looks-local", true));
+        using var undeclared = await admin.PostAsJsonAsync("/api/v1/admin/model-test/run",
+            new RunModelTestRequest("Alias", ["Connectivity"], false, null, null, null, null, "desktop/looks-local", null));
+
+        Assert.AreEqual(HttpStatusCode.BadRequest, roleRun.StatusCode, "Production cloud permission does not allow a cloud TEST.");
+        Assert.AreEqual(HttpStatusCode.BadRequest, aliasRun.StatusCode);
+        Assert.AreEqual(HttpStatusCode.BadRequest, namedLikeLocal.StatusCode, "A declared-cloud alias is cloud whatever its name suggests, and needs the confirmation.");
+        Assert.AreEqual(HttpStatusCode.BadRequest, undeclared.StatusCode, "Where an alias runs must be stated, never inferred from its name.");
+        Assert.IsEmpty(client.Models, "No model was called.");
+
+        // Switch cloud TESTING on: that does not touch the production permission.
+        using var testCloud = await admin.PutAsJsonAsync("/api/v1/admin/model-test/", new SaveModelTestSettingsRequest("local/primary", null, "cloud/test", true, 30, 384));
+        testCloud.EnsureSuccessStatusCode();
+        using var confirmed = await admin.PostAsJsonAsync("/api/v1/admin/model-test/run",
+            new RunModelTestRequest("Role", ["Connectivity"], true, null, null, null, "IntentInterpretation"));
+
+        Assert.AreEqual(HttpStatusCode.OK, confirmed.StatusCode);
+        Assert.AreEqual("cloud/role-model", client.Models.Single());
+        var gateway = await admin.GetFromJsonAsync<ModelGatewaySettingsResponse>("/api/v1/admin/model-gateway/");
+        Assert.IsTrue(gateway!.AllowCloud, "Unchanged by the test settings.");
+        Assert.IsFalse(gateway.Roles.Single(role => role.Role == "IntentInterpretation").IsEnabled);
     }
 }

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Domain.ModelTesting;
@@ -12,7 +13,13 @@ public enum ModelTestTarget
 {
     Primary,
     Comparison,
-    Cloud
+    Cloud,
+
+    /// <summary>The model a production role is configured to use, looked up read-only. Cloud-ness comes from the role's placement.</summary>
+    Role,
+
+    /// <summary>A test-only alias the administrator typed. Never assumed local: the run must say where it runs.</summary>
+    Alias
 }
 
 public enum ModelCheck
@@ -78,9 +85,13 @@ public enum ModelTestRunOutcome
 /// <param name="Reasoning">This run's reasoning choice; null uses the test setting. Never changes any stored setting.</param>
 /// <param name="TimeoutSeconds">This run's timeout; null uses the test setting.</param>
 /// <param name="MaxOutputTokens">This run's output cap; null uses the test setting.</param>
+/// <param name="Role">Required for <see cref="ModelTestTarget.Role"/>: whose configured model to test.</param>
+/// <param name="Alias">Required for <see cref="ModelTestTarget.Alias"/>: a test-only model alias.</param>
+/// <param name="AliasIsCloud">Required for <see cref="ModelTestTarget.Alias"/>: whether that alias is a cloud model. A name is never trusted to say.</param>
 public sealed record ModelTestRunRequest(
     ModelTestTarget Target, IReadOnlyList<ModelCheck>? Checks, bool ConfirmCloud,
-    ModelReasoningMode? Reasoning = null, int? TimeoutSeconds = null, int? MaxOutputTokens = null);
+    ModelReasoningMode? Reasoning = null, int? TimeoutSeconds = null, int? MaxOutputTokens = null,
+    ModelRole? Role = null, string? Alias = null, bool? AliasIsCloud = null);
 
 public sealed record ModelTestRunResult(ModelTestRunOutcome Outcome, string? Error, ModelTestReport? Report)
 {
@@ -118,7 +129,7 @@ public sealed class ModelTestGate
 /// </summary>
 public sealed class ModelCapabilityTestService(
     IModelTestSettingsStore store,
-    ICredentialProtector protector,
+    IModelTestTargetSource targets,
     IModelClient client,
     ModelTestGate gate,
     IAuditWriter audit,
@@ -150,34 +161,65 @@ public sealed class ModelCapabilityTestService(
             return ModelTestRunResult.Refused(ModelTestRunOutcome.Disabled, "Model testing is turned off.");
         }
 
-        var isCloud = request.Target == ModelTestTarget.Cloud;
+        string? model;
+        bool isCloud;
+        switch (request.Target)
+        {
+            case ModelTestTarget.Primary:
+                (model, isCloud) = (settings.PrimaryModel, false);
+                break;
+            case ModelTestTarget.Comparison:
+                (model, isCloud) = (settings.ComparisonModel, false);
+                break;
+            case ModelTestTarget.Cloud:
+                (model, isCloud) = (settings.CloudModel, true);
+                break;
+            case ModelTestTarget.Role:
+                if (request.Role is not { } role || !Enum.IsDefined(role))
+                {
+                    return ModelTestRunResult.Refused(ModelTestRunOutcome.Invalid, "Choose which role's model to test.");
+                }
+
+                var roleTarget = await targets.FindRoleTargetAsync(role, cancellationToken);
+                if (roleTarget is null)
+                {
+                    return ModelTestRunResult.Refused(ModelTestRunOutcome.NotConfigured, "That role has no model alias configured.");
+                }
+
+                (model, isCloud) = (roleTarget.Alias, roleTarget.IsCloud);
+                break;
+            default:
+                if (string.IsNullOrWhiteSpace(request.Alias) || !ModelConfigurationRules.IsSafeModelName(request.Alias.Trim()))
+                {
+                    return ModelTestRunResult.Refused(ModelTestRunOutcome.Invalid, "Enter a model alias using letters, digits and . _ - : / @ only.");
+                }
+
+                if (request.AliasIsCloud is not { } declaredCloud)
+                {
+                    return ModelTestRunResult.Refused(ModelTestRunOutcome.Invalid, "Say whether that alias runs locally or in the cloud; a name is never assumed to be local.");
+                }
+
+                (model, isCloud) = (request.Alias.Trim(), declaredCloud);
+                break;
+        }
+
+        // Cloud testing has its own switch plus a per-run confirmation, independent of whether any production role may use a cloud model.
         if (isCloud && !(settings.AllowCloud && request.ConfirmCloud))
         {
             return ModelTestRunResult.Refused(
                 ModelTestRunOutcome.CloudNotPermitted,
-                "Cloud tests need cloud testing switched on in settings and an explicit confirmation on this run.");
+                "Cloud tests need cloud testing switched on in the test settings and an explicit confirmation on this run.");
         }
 
-        var model = request.Target switch
+        var connectionInfo = await targets.GetConnectionAsync(cancellationToken);
+        if (connectionInfo.Endpoint is not { } endpoint || model is null)
         {
-            ModelTestTarget.Primary => settings.PrimaryModel,
-            ModelTestTarget.Comparison => settings.ComparisonModel,
-            _ => settings.CloudModel
-        };
-        if (settings.EndpointUrl is null || model is null || !Uri.TryCreate(settings.EndpointUrl, UriKind.Absolute, out var endpoint))
-        {
-            return ModelTestRunResult.Refused(ModelTestRunOutcome.NotConfigured, "The endpoint and the chosen model alias must be configured first.");
+            return ModelTestRunResult.Refused(
+                ModelTestRunOutcome.NotConfigured,
+                connectionInfo.Problem ?? "The endpoint and the chosen model alias must be configured first.");
         }
 
-        string? apiKey = null;
-        if (settings.HasApiKey)
-        {
-            apiKey = protector.Unprotect(ModelTestSecretPurposes.ApiKey, settings.ProtectedApiKey!, settings.ApiKeyFormatVersion);
-            if (apiKey is null)
-            {
-                return ModelTestRunResult.Refused(ModelTestRunOutcome.NotConfigured, "The stored API key could not be decrypted. Enter it again.");
-            }
-        }
+        var apiKey = connectionInfo.ApiKey;
 
         using var lease = gate.TryEnter(administratorId);
         if (lease is null)

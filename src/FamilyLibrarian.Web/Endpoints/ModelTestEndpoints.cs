@@ -19,8 +19,6 @@ internal static class ModelTestEndpoints
         group.MapGet("/", GetAsync);
         group.MapPut("/", SaveAsync);
         group.MapPut("/enabled", SetEnabledAsync);
-        group.MapPut("/api-key", SetApiKeyAsync);
-        group.MapDelete("/api-key", ClearApiKeyAsync);
         group.MapPost("/run", RunAsync);
     }
 
@@ -37,7 +35,7 @@ internal static class ModelTestEndpoints
 
         return ToResult(await service.SaveAsync(
             new SaveModelTestSettings(
-                request.EndpointUrl, request.PrimaryModel, request.ComparisonModel, request.CloudModel, request.AllowCloud,
+                request.PrimaryModel, request.ComparisonModel, request.CloudModel, request.AllowCloud,
                 request.TimeoutSeconds, request.MaxOutputTokens, reasoning),
             cancellationToken));
     }
@@ -52,19 +50,12 @@ internal static class ModelTestEndpoints
         SetModelTestEnabledRequest request, ModelTestSettingsService service, CancellationToken cancellationToken) =>
         ToResult(await service.SetEnabledAsync(request.Enabled, cancellationToken));
 
-    private static async Task<IResult> SetApiKeyAsync(
-        SetModelTestApiKeyRequest request, ModelTestSettingsService service, CancellationToken cancellationToken) =>
-        ToResult(await service.SetApiKeyAsync(request.ApiKey, cancellationToken));
-
-    private static async Task<IResult> ClearApiKeyAsync(ModelTestSettingsService service, CancellationToken cancellationToken) =>
-        ToResult(await service.ClearApiKeyAsync(cancellationToken));
-
     private static async Task<IResult> RunAsync(
         RunModelTestRequest request, ModelCapabilityTestService service, CancellationToken cancellationToken)
     {
         if (!Enum.TryParse<ModelTestTarget>(request.Target, ignoreCase: true, out var target) || !Enum.IsDefined(target))
         {
-            return Invalid("target", "Choose Primary, Comparison or Cloud.");
+            return Invalid("target", "Choose Primary, Comparison, Cloud, Role or Alias.");
         }
 
         List<ModelCheck>? checks = null;
@@ -93,8 +84,21 @@ internal static class ModelTestEndpoints
             reasoningOverride = parsed;
         }
 
+        ModelRole? role = null;
+        if (!string.IsNullOrWhiteSpace(request.Role))
+        {
+            if (!Enum.TryParse<ModelRole>(request.Role, ignoreCase: true, out var parsedRole) || !Enum.IsDefined(parsedRole))
+            {
+                return Invalid("role", $"'{request.Role}' is not a known role.");
+            }
+
+            role = parsedRole;
+        }
+
         var result = await service.RunAsync(
-            new ModelTestRunRequest(target, checks, request.ConfirmCloud, reasoningOverride, request.TimeoutSeconds, request.MaxOutputTokens),
+            new ModelTestRunRequest(
+                target, checks, request.ConfirmCloud, reasoningOverride, request.TimeoutSeconds, request.MaxOutputTokens,
+                role, request.Alias, request.AliasIsCloud),
             cancellationToken);
         return result.Outcome switch
         {
@@ -114,9 +118,8 @@ internal static class ModelTestEndpoints
 
         return result.Succeeded
             ? Results.Ok(new ModelTestSettingsResponse(
-                result.Settings!.IsEnabled, result.Settings.EndpointUrl, result.Settings.HasApiKey, result.Settings.ApiKeySetAtUtc,
-                result.Settings.PrimaryModel, result.Settings.ComparisonModel, result.Settings.CloudModel, result.Settings.AllowCloud,
-                result.Settings.TimeoutSeconds, result.Settings.MaxOutputTokens, result.Settings.Reasoning.ToString()))
+                result.Settings!.IsEnabled, result.Settings.PrimaryModel, result.Settings.ComparisonModel, result.Settings.CloudModel,
+                result.Settings.AllowCloud, result.Settings.TimeoutSeconds, result.Settings.MaxOutputTokens, result.Settings.Reasoning.ToString()))
             : Invalid("modelTest", result.Error!);
     }
 
