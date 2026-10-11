@@ -383,6 +383,7 @@ public static class DependencyInjection
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
+        services.AddScoped<ICurrentAdministrator, HttpContextCurrentAdministrator>();
 
         // Built-in provider settings wiring. The registry is the allowlist of installed
         // providers; enablement and credentials are runtime state, so every

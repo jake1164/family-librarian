@@ -107,7 +107,47 @@ public sealed class ManualImportServiceTests
         Assert.AreEqual("manual_import.staged", context.Audit.Entries[0].Action);
     }
 
+    [TestMethod]
+    public async Task AnAdministratorsManualUploadIsAttestedAndKeepsItsExistingOutcome()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+
+        var result = await context.Service.ImportAsync(
+            request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
+        var asset = context.Repository.Assets.Single();
+        Assert.IsTrue(asset.IdentityPreConfirmed, "Existing behavior: an administrator-chosen file is attested.");
+        Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
+        Assert.AreEqual("manual", context.Repository.Jobs.Single().Candidates.Single().ProviderId);
+        Assert.AreEqual("manual_import.staged", context.Audit.Entries.Single().Action);
+    }
+
+    [TestMethod]
+    public async Task ANonAdministratorCannotUploadOrGainAttestationEvenWhenCallingTheServiceDirectly()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        context.Administrator.IsAdministrator = false;
+
+        var result = await context.Service.ImportAsync(
+            request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+        StringAssert.Contains(result.Error, "administrator");
+        Assert.AreEqual(0, context.StagingStore.WriteCount, "Nothing is written for a non-administrator.");
+        Assert.HasCount(0, context.Repository.Assets);
+        Assert.HasCount(0, context.Repository.Jobs);
+        Assert.HasCount(0, context.Audit.Entries);
+    }
+
     private static MemoryStream Content(string text) => new(Encoding.UTF8.GetBytes(text));
+
+    private sealed class FakeAdministrator(bool isAdministrator) : ICurrentAdministrator
+    {
+        public bool IsAdministrator { get; set; } = isAdministrator;
+    }
 
     private sealed class TestContext
     {
@@ -126,8 +166,11 @@ public sealed class ManualImportServiceTests
                 Audit,
                 new FixedClock());
 
-            Service = new ManualImportService(RequestRepository, Staging);
+            Administrator = new FakeAdministrator(true);
+            Service = new ManualImportService(RequestRepository, Staging, Administrator);
         }
+
+        public FakeAdministrator Administrator { get; }
 
         public FakeAcquisitionRepository Repository { get; }
 

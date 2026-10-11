@@ -36,7 +36,7 @@ public sealed class MediaAsset
         Guid? bundleId = null,
         int? bundleSequence = null,
         int? bundleTrackCount = null,
-        bool identityPreConfirmed = true)
+        bool identityPreConfirmed = false)
     {
         if (workId == Guid.Empty)
         {
@@ -164,6 +164,13 @@ public sealed class MediaAsset
     /// all -- title/author alone, no stronger evidence.
     /// </summary>
     /// <remarks>
+    /// <b>Attestation is explicit (alpha.6 M1-4b).</b> The in-code default is <see langword="false"/>:
+    /// a creation path that does not say otherwise attests nothing, so a future path cannot
+    /// silently vouch for a file it never examined. Every creation site passes the value
+    /// itself. The database default for rows created before this change stays <c>true</c>
+    /// so existing history is untouched. This flag is a statement about the <em>source</em>;
+    /// it is never content verification (see <c>ArtifactEvidence</c>).
+    /// <para>
     /// The application layer's identity verifier only covers EPUB/KEPUB
     /// content today (a known, documented scope limit, not a secret gap).
     /// For every other format, "no verifier supports this file"
@@ -174,8 +181,9 @@ public sealed class MediaAsset
     /// verification dispatcher tell the two cases apart instead of treating
     /// "cannot check" as "checked and fine" for the one case where that
     /// mattered.
+    /// </para>
     /// </remarks>
-    public bool IdentityPreConfirmed { get; private set; } = true;
+    public bool IdentityPreConfirmed { get; private set; }
 
     public DateTimeOffset CreatedAtUtc { get; private set; }
 

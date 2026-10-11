@@ -93,7 +93,8 @@ public sealed class MigrationUpgradeTests
         database.BookRequests.Add(request);
         var asset = new MediaAsset(
             work.Id, editionId: null, RequestMediaType.Ebook, ".epub", "legacy.epub", "legacy-stored.epub", 10,
-            new string('c', 64), "application/epub+zip", request.Formats.Single().Id, sourceAcquisitionCandidateId: null, now);
+            new string('c', 64), "application/epub+zip", request.Formats.Single().Id, sourceAcquisitionCandidateId: null, now,
+            identityPreConfirmed: true); // a pre-M1-4b row: historical value, set explicitly now that the code default is false
         database.MediaAssets.Add(asset);
         await database.SaveChangesAsync();
 

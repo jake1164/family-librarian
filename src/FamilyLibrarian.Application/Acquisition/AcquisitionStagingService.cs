@@ -43,6 +43,7 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
+        bool identityPreConfirmed,
         CancellationToken cancellationToken)
     {
         var extension = Path.GetExtension(originalFilename);
@@ -86,7 +87,8 @@ public sealed class AcquisitionStagingService(
             staged.DetectedMimeType,
             format.Id,
             candidate.Id,
-            now);
+            now,
+            identityPreConfirmed: identityPreConfirmed);
 
         acquisitions.AddJob(job);
         acquisitions.AddAsset(asset);
@@ -130,11 +132,12 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
+        bool identityPreConfirmed,
         CancellationToken cancellationToken)
     {
         return await StageBundleCoreAsync(
             request, format, ToAsyncEnumerable(files), providerId, auditAction,
-            candidateTitle, candidateAuthor, providerJob: null, cancellationToken);
+            candidateTitle, candidateAuthor, identityPreConfirmed, providerJob: null, cancellationToken);
     }
 
     public Task<ManualImportResult> StageExternalBundleAsync(
@@ -148,7 +151,9 @@ public sealed class AcquisitionStagingService(
         AudiobookPartSetSlot? partSetSlot = null) =>
         StageBundleCoreAsync(
             request, format, files, providerId, auditAction,
-            candidateTitle: null, candidateAuthor: null, providerJob, cancellationToken, partSetSlot);
+            candidateTitle: null, candidateAuthor: null,
+            // The external job's own answer, never a silent default (M1-4b).
+            identityPreConfirmed: providerJob.IdentityPreConfirmed, providerJob, cancellationToken, partSetSlot);
 
     private async Task<ManualImportResult> StageBundleCoreAsync(
         BookRequest request,
@@ -158,6 +163,7 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
+        bool identityPreConfirmed,
         ProviderAcquisitionJob? providerJob,
         CancellationToken cancellationToken,
         AudiobookPartSetSlot? partSetSlot = null)
@@ -255,11 +261,9 @@ public sealed class AcquisitionStagingService(
                 bundleId: bundleId,
                 bundleSequence: partSetSlot?.Number ?? (bundleId is null ? null : index + 1),
                 bundleTrackCount: partSetSlot?.Total ?? (bundleId is null ? null : staged.Count),
-                // Default true (manual import, and StageBundleAsync's other
-                // caller -- a built-in provider, which verifies title/author
-                // itself before ever offering a candidate) is correct as-is;
-                // only an external provider's job carries a real answer.
-                identityPreConfirmed: providerJob?.IdentityPreConfirmed ?? true);
+                // Explicit at every creation site (M1-4b): a built-in provider passes true, an
+                // external provider passes its job's value, and nothing defaults to attested.
+                identityPreConfirmed: identityPreConfirmed);
 
             acquisitions.AddAsset(asset);
             if (providerJob is not null && acceptedFiles[index].ExternalOutputId is { } outputId)

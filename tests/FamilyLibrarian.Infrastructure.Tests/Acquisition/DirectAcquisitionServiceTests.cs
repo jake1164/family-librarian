@@ -74,6 +74,20 @@ public sealed class DirectAcquisitionServiceTests
     }
 
     [TestMethod]
+    public async Task ABuiltInProviderFetchIsExplicitlyAttestedAsBefore()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+
+        var result = await context.Service.AcquireAsync(
+            request.Id, format.Id, "gutendex", "1234", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
+        Assert.IsTrue(context.Repository.Assets.Single().IdentityPreConfirmed,
+            "Built-in source attestation is now passed explicitly; the observable result is unchanged.");
+    }
+
+    [TestMethod]
     public async Task AnExternalProviderBroadTitleAuthorMatchRequiresConfirmationBeforeFetching()
     {
         var context = new TestContext();

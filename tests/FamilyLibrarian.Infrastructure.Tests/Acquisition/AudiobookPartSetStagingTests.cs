@@ -69,6 +69,60 @@ public sealed class AudiobookPartSetStagingTests
         Assert.IsNull(context.Repository.Assets.Single().BundleId);
     }
 
+    [TestMethod]
+    [DataRow(true)]
+    [DataRow(false)]
+    public async Task AnExternalProvidersExplicitJobAttestationIsCarriedToTheAssetUnchanged(bool jobValue)
+    {
+        var context = new TestContext();
+        var (request, format) = TestContext.SeedRequest();
+        var job = new ProviderAcquisitionJob(
+            request.Id, format.Id, Guid.NewGuid(), "example-source", null, Guid.NewGuid().ToString("N"),
+            "ref", null, null, Now, identityPreConfirmed: jobValue);
+
+        var result = await context.Staging.StageExternalBundleAsync(
+            request, format, Files("only.m4b"), "example-source", "external.staged", job, CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
+        Assert.AreEqual(jobValue, context.Repository.Assets.Single().IdentityPreConfirmed);
+    }
+
+    [TestMethod]
+    public async Task AnExternalJobThatSaysNothingIsNotAttested()
+    {
+        var context = new TestContext();
+        var (request, format) = TestContext.SeedRequest();
+
+        await context.Staging.StageExternalBundleAsync(
+            request, format, Files("only.m4b"), "example-source", "external.staged",
+            TestContext.NewJob(request, format), CancellationToken.None);
+
+        Assert.IsFalse(context.Repository.Assets.Single().IdentityPreConfirmed,
+            "The job default is false and nothing silently upgrades it to true.");
+    }
+
+    [TestMethod]
+    public async Task ABuiltInBundleCarriesExactlyTheAttestationItsCallerPassed()
+    {
+        foreach (var attested in new[] { true, false })
+        {
+            var context = new TestContext();
+            var (request, format) = TestContext.SeedRequest();
+            DirectAcquisitionFile[] files =
+            [
+                new(new MemoryStream("a"u8.ToArray()), "a.m4b"),
+                new(new MemoryStream("b"u8.ToArray()), "b.m4b")
+            ];
+
+            var result = await context.Staging.StageBundleAsync(
+                request, format, files, "librivox", "direct.staged", candidateTitle: null, candidateAuthor: null,
+                identityPreConfirmed: attested, CancellationToken.None);
+
+            Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
+            Assert.IsTrue(context.Repository.Assets.All(asset => asset.IdentityPreConfirmed == attested));
+        }
+    }
+
     private static async IAsyncEnumerable<DirectAcquisitionFile> Files(params string[] names)
     {
         foreach (var name in names)

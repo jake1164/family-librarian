@@ -166,13 +166,17 @@ public sealed class DirectAcquisitionService(
                     await using var content = files[0].Content;
                     stagedResult = await staging.StageAsync(
                         request, format, content, files[0].Filename, providerId, AuditActions.DirectAcquisitionStaged,
-                        candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
+                        candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor,
+                        // Built-in source attestation: Gutenberg/LibriVox verify title/author with FL's own
+                        // matcher before offering a candidate. A statement about the source, not the file.
+                        identityPreConfirmed: true, cancellationToken);
                 }
                 else
                 {
                     stagedResult = await staging.StageBundleAsync(
                         request, format, files, providerId, AuditActions.DirectAcquisitionStaged,
-                        candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
+                        candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor,
+                        identityPreConfirmed: true, cancellationToken);
                 }
             }
             finally
