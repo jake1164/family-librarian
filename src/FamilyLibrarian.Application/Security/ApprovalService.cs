@@ -127,6 +127,7 @@ public sealed class ApprovalService(
                 MediaAssetStorageState.Unmatched, MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Processing, now);
             asset.SetIdentityMismatchReason(null);
+            asset.SetIdentityHoldCode(null);
         }
         else
         {

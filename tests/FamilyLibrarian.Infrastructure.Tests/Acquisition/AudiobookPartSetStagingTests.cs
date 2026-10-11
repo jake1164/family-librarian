@@ -85,6 +85,7 @@ public sealed class AudiobookPartSetStagingTests
 
         Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
         Assert.AreEqual(jobValue, context.Repository.Assets.Single().IdentityPreConfirmed);
+        Assert.AreEqual(AssetOrigin.ExternalProvider, context.Repository.Assets.Single().Origin);
     }
 
     [TestMethod]
@@ -102,25 +103,70 @@ public sealed class AudiobookPartSetStagingTests
     }
 
     [TestMethod]
-    public async Task ABuiltInBundleCarriesExactlyTheAttestationItsCallerPassed()
+    public async Task ABuiltInBundleIsRecordedAsBuiltInWithItsSourceAttestationAndNoUser()
     {
-        foreach (var attested in new[] { true, false })
-        {
-            var context = new TestContext();
-            var (request, format) = TestContext.SeedRequest();
-            DirectAcquisitionFile[] files =
-            [
-                new(new MemoryStream("a"u8.ToArray()), "a.m4b"),
-                new(new MemoryStream("b"u8.ToArray()), "b.m4b")
-            ];
+        var context = new TestContext();
+        var (request, format) = TestContext.SeedRequest();
+        DirectAcquisitionFile[] files =
+        [
+            new(new MemoryStream("a"u8.ToArray()), "a.m4b"),
+            new(new MemoryStream("b"u8.ToArray()), "b.m4b")
+        ];
 
-            var result = await context.Staging.StageBundleAsync(
-                request, format, files, "librivox", "direct.staged", candidateTitle: null, candidateAuthor: null,
-                identityPreConfirmed: attested, CancellationToken.None);
+        var result = await context.Staging.StageBundleAsync(
+            request, format, files, "librivox", "direct.staged", candidateTitle: null, candidateAuthor: null,
+            AssetProvenance.BuiltInProvider(), CancellationToken.None);
 
-            Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
-            Assert.IsTrue(context.Repository.Assets.All(asset => asset.IdentityPreConfirmed == attested));
-        }
+        Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
+        Assert.IsTrue(context.Repository.Assets.All(asset =>
+            asset is { Origin: AssetOrigin.BuiltInProvider, IdentityPreConfirmed: true, OriginUserId: null }));
+    }
+
+    /// <summary>
+    /// Alpha.6 M1-5a: an external provider chooses its own id. Whatever it calls itself, including the id of the
+    /// manual route or of a built-in provider, its asset is an external-provider asset: no administrator user, no
+    /// built-in origin, and only the job's own confirmation value.
+    /// </summary>
+    [TestMethod]
+    [DataRow("manual", false)]
+    [DataRow("manual", true)]
+    [DataRow("librivox", false)]
+    [DataRow("librivox", true)]
+    [DataRow("gutendex", true)]
+    [DataRow("gutenberg", true)]
+    [DataRow("MANUAL", true)]
+    public async Task AnExternalProviderNamedLikeAPrivilegedSourceGainsNoPrivilegedProvenance(string providerName, bool jobConfirmed)
+    {
+        var context = new TestContext();
+        var (request, format) = TestContext.SeedRequest();
+        var job = new ProviderAcquisitionJob(
+            request.Id, format.Id, Guid.NewGuid(), providerName, null, Guid.NewGuid().ToString("N"),
+            "ref", null, null, Now, identityPreConfirmed: jobConfirmed);
+
+        var result = await context.Staging.StageExternalBundleAsync(
+            request, format, Files("only.m4b"), providerName, "external.staged", job, CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
+        var asset = context.Repository.Assets.Single();
+        Assert.AreEqual(AssetOrigin.ExternalProvider, asset.Origin, $"'{providerName}' must not be mistaken for a privileged source.");
+        Assert.IsNull(asset.OriginUserId, "Only an authenticated manual upload carries a user.");
+        Assert.AreEqual(jobConfirmed, asset.IdentityPreConfirmed, "Only the job's own confirmation applies.");
+        Assert.AreEqual(providerName, context.Repository.Jobs.Single().Candidates.Single().ProviderId,
+            "The provider id is still recorded as a label; it just no longer decides anything.");
+    }
+
+    [TestMethod]
+    public void OnlyTheNamedFactoriesCanBuildProvenanceAndAManualUploadNeedsARealUser()
+    {
+        Assert.IsEmpty(typeof(AssetProvenance).GetConstructors(), "No public constructor: provenance can only come from a named factory.");
+        Assert.Throws<ArgumentException>(() => AssetProvenance.ManualUpload(Guid.Empty));
+
+        var manual = AssetProvenance.ManualUpload(Guid.NewGuid());
+        Assert.AreEqual(AssetOrigin.ManualUpload, manual.Origin);
+        Assert.IsNotNull(manual.UserId);
+        Assert.IsNull(AssetProvenance.BuiltInProvider().UserId);
+        Assert.IsNull(AssetProvenance.ExternalProvider(true).UserId);
+        Assert.AreEqual(AssetOrigin.ExternalProvider, AssetProvenance.ExternalProvider(false).Origin);
     }
 
     private static async IAsyncEnumerable<DirectAcquisitionFile> Files(params string[] names)

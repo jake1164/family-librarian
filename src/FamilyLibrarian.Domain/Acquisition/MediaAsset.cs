@@ -36,7 +36,9 @@ public sealed class MediaAsset
         Guid? bundleId = null,
         int? bundleSequence = null,
         int? bundleTrackCount = null,
-        bool identityPreConfirmed = false)
+        bool identityPreConfirmed = false,
+        AssetOrigin origin = AssetOrigin.Unknown,
+        Guid? originUserId = null)
     {
         if (workId == Guid.Empty)
         {
@@ -80,6 +82,21 @@ public sealed class MediaAsset
                 nameof(associatedRequestFormatId));
         }
 
+        if (!Enum.IsDefined(origin) || origin == AssetOrigin.Legacy)
+        {
+            throw new ArgumentOutOfRangeException(nameof(origin), origin, "A new asset needs a concrete origin (or Unknown); Legacy is reserved for rows that predate it.");
+        }
+
+        if (origin == AssetOrigin.ManualUpload && originUserId is null)
+        {
+            throw new ArgumentException("A manual upload records the authenticated user who made it.", nameof(originUserId));
+        }
+
+        if (origin != AssetOrigin.ManualUpload && originUserId is not null)
+        {
+            throw new ArgumentException("Only a manual upload carries a user; other origins must not claim one.", nameof(originUserId));
+        }
+
         Id = Guid.NewGuid();
         WorkId = workId;
         EditionId = editionId;
@@ -99,6 +116,8 @@ public sealed class MediaAsset
         BundleSequence = bundleSequence;
         BundleTrackCount = bundleTrackCount;
         IdentityPreConfirmed = identityPreConfirmed;
+        Origin = origin;
+        OriginUserId = originUserId;
     }
 
     public Guid Id { get; private set; } = Guid.NewGuid();
@@ -185,6 +204,22 @@ public sealed class MediaAsset
     /// </remarks>
     public bool IdentityPreConfirmed { get; private set; }
 
+    /// <summary>
+    /// Where this asset came from, set once at creation by the creating code path and never reassigned (there is
+    /// deliberately no method that changes it, and the database rejects an update). Rows that predate it read
+    /// <see cref="AssetOrigin.Legacy"/>.
+    /// </summary>
+    public AssetOrigin Origin { get; private set; } = AssetOrigin.Legacy;
+
+    /// <summary>The authenticated administrator behind a <see cref="AssetOrigin.ManualUpload"/>; otherwise <see langword="null"/>.</summary>
+    public Guid? OriginUserId { get; private set; }
+
+    /// <summary>
+    /// A stable <c>identity.hold.*</c> reason code while the asset is held as <see cref="MediaAssetStorageState.Unmatched"/>,
+    /// cleared when the hold ends. Null for a hold recorded before codes existed.
+    /// </summary>
+    public string? IdentityHoldCode { get; private set; }
+
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
     public DateTimeOffset UpdatedAtUtc { get; private set; }
@@ -211,6 +246,9 @@ public sealed class MediaAsset
     /// prior hold must never linger and be read as current).
     /// </summary>
     public void SetIdentityMismatchReason(string? reason) => IdentityMismatchReason = reason;
+
+    /// <summary>Records the stable code for the current identity hold, or clears it with the reason.</summary>
+    public void SetIdentityHoldCode(string? code) => IdentityHoldCode = string.IsNullOrWhiteSpace(code) ? null : code.Trim();
 
     /// <summary>
     /// Why the most recent security evaluation was interrupted and the asset

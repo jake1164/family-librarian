@@ -1,6 +1,5 @@
 using System.Text;
 using FamilyLibrarian.Application.Abstractions;
-using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.Security;
@@ -17,9 +16,6 @@ public interface IArtifactEvidenceStore
     /// (so it cannot poison a later save of an unrelated decision) and returns <see langword="false"/>.
     /// </summary>
     Task<bool> TrySaveAsync(CancellationToken cancellationToken);
-
-    /// <summary>The provider id of the acquisition candidate an asset came from, or <see langword="null"/> when unknown.</summary>
-    Task<string?> FindAcquisitionProviderIdAsync(Guid? acquisitionCandidateId, CancellationToken cancellationToken);
 
     /// <summary>
     /// The most recent record of each kind per asset (history is kept; this is the current view).
@@ -52,10 +48,8 @@ public interface IArtifactEvidenceRecorder
 /// </remarks>
 public sealed class ArtifactEvidenceRecorder(
     IArtifactEvidenceStore store,
-    IEnumerable<IDirectAcquisitionProvider> builtInProviders,
     IClock clock) : IArtifactEvidenceRecorder
 {
-    private const string ManualProviderId = "manual";
     private const string PipelineSource = "pipeline";
 
     public async Task RecordSecurityEvaluationAsync(
@@ -133,10 +127,9 @@ public sealed class ArtifactEvidenceRecorder(
                     asset.Id, asset.Sha256, ArtifactEvidenceRecordKinds.IdentityVerification, recordId,
                     UniqueId(items, findingId), dimension, code, polarity, source, value, toolVersion: null, now));
 
-            var provider = await store.FindAcquisitionProviderIdAsync(asset.SourceAcquisitionCandidateId, cancellationToken);
-            var (attestationCode, attestationPolarity) = Attestation(asset, provider);
+            var (attestationCode, attestationPolarity) = Attestation(asset);
             Add("ev-attestation", EvidenceDimension.IdentityAttestation, attestationCode, attestationPolarity,
-                PipelineSource, $"preConfirmed={asset.IdentityPreConfirmed};provider={provider ?? "unknown"}");
+                PipelineSource, $"preConfirmed={asset.IdentityPreConfirmed};origin={asset.Origin}");
 
             var noVerifier = result.VerifierId == NoVerifierId;
             // Only a negative observation about identity itself is a contradiction; a completeness or
@@ -181,18 +174,26 @@ public sealed class ArtifactEvidenceRecorder(
     /// <summary>The verifier id used when no format-specific verifier exists.</summary>
     public const string NoVerifierId = "not-applicable";
 
-    private (string Code, EvidencePolarity Polarity) Attestation(MediaAsset asset, string? providerId)
+    /// <summary>
+    /// Attestation comes only from the origin persisted when the asset was created. It is never inferred from a
+    /// provider id or name, which an external provider chooses freely. A statement about the source, never the
+    /// file: Weak at most.
+    /// </summary>
+    private static (string Code, EvidencePolarity Polarity) Attestation(MediaAsset asset)
     {
-        // Attestation is a statement about the source, never about the file: Weak at most.
+        if (asset.Origin == AssetOrigin.Legacy)
+            return (EvidenceReasonCodes.ArtifactIdentityAttestation.LegacyUnclassified,
+                asset.IdentityPreConfirmed ? EvidencePolarity.Weak : EvidencePolarity.Unknown);
         if (!asset.IdentityPreConfirmed)
             return (EvidenceReasonCodes.ArtifactIdentityAttestation.None, EvidencePolarity.Unknown);
-        if (providerId is null)
-            return (EvidenceReasonCodes.ArtifactIdentityAttestation.UnknownOrigin, EvidencePolarity.Weak);
-        if (string.Equals(providerId, ManualProviderId, StringComparison.Ordinal))
-            return (EvidenceReasonCodes.ArtifactIdentityAttestation.ManualUpload, EvidencePolarity.Weak);
-        return builtInProviders.Any(provider => string.Equals(provider.Id, providerId, StringComparison.Ordinal))
-            ? (EvidenceReasonCodes.ArtifactIdentityAttestation.BuiltInSource, EvidencePolarity.Weak)
-            : (EvidenceReasonCodes.ArtifactIdentityAttestation.ExternalProviderConfirmed, EvidencePolarity.Weak);
+
+        return asset.Origin switch
+        {
+            AssetOrigin.ManualUpload => (EvidenceReasonCodes.ArtifactIdentityAttestation.ManualUpload, EvidencePolarity.Weak),
+            AssetOrigin.BuiltInProvider => (EvidenceReasonCodes.ArtifactIdentityAttestation.BuiltInSource, EvidencePolarity.Weak),
+            AssetOrigin.ExternalProvider => (EvidenceReasonCodes.ArtifactIdentityAttestation.ExternalProviderConfirmed, EvidencePolarity.Weak),
+            _ => (EvidenceReasonCodes.ArtifactIdentityAttestation.UnknownOrigin, EvidencePolarity.Weak)
+        };
     }
 
     /// <summary>Keeps finding ids unique within one record even if two sources slug to the same text.</summary>

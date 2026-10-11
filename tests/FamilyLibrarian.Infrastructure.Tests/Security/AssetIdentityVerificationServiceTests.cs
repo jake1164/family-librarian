@@ -145,6 +145,94 @@ public sealed class AssetIdentityVerificationServiceTests
         }
     }
 
+    private static AssetIdentityVerificationResult Held(params IdentityFact[] facts) =>
+        AssetIdentityVerificationResult.Unmatched("verifier", "held", facts);
+
+    private static IdentityFact Fact(FamilyLibrarian.Domain.Evidence.EvidenceDimension dimension, FamilyLibrarian.Domain.Evidence.EvidencePolarity polarity) =>
+        new("ev", dimension, "code", polarity);
+
+    /// <summary>M1-5a: the holds that already exist get a stable code; no hold is added and no verdict changes.</summary>
+    [TestMethod]
+    public async Task EveryExistingHoldIsLabeledWithAStableCodeAndAMatchHasNone()
+    {
+        var contradicted = Held(Fact(FamilyLibrarian.Domain.Evidence.EvidenceDimension.IdentityCorroboration, FamilyLibrarian.Domain.Evidence.EvidencePolarity.Negative));
+        var languageOnly = Held(
+            Fact(FamilyLibrarian.Domain.Evidence.EvidenceDimension.IdentityCorroboration, FamilyLibrarian.Domain.Evidence.EvidencePolarity.Positive),
+            Fact(FamilyLibrarian.Domain.Evidence.EvidenceDimension.Language, FamilyLibrarian.Domain.Evidence.EvidencePolarity.Negative));
+        var both = Held(
+            Fact(FamilyLibrarian.Domain.Evidence.EvidenceDimension.IdentityCorroboration, FamilyLibrarian.Domain.Evidence.EvidencePolarity.Negative),
+            Fact(FamilyLibrarian.Domain.Evidence.EvidenceDimension.Language, FamilyLibrarian.Domain.Evidence.EvidencePolarity.Negative));
+        var inconclusive = Held();
+
+        foreach (var (result, expected) in new[]
+                 {
+                     (contradicted, "identity.hold.content_contradicted"),
+                     (languageOnly, "identity.hold.language_conflict"),
+                     (both, "identity.hold.content_contradicted"),
+                     (inconclusive, "identity.hold.content_inconclusive")
+                 })
+        {
+            var asset = CreateProcessingAsset(".epub", identityPreConfirmed: true);
+            var service = new AssetIdentityVerificationService(
+                new AssetRepository(asset), new RecordingStagingStore(), [new FixedVerifier(result)], new RecordingAuditWriter(), new FixedClock());
+
+            var verdict = await service.VerifyAsync(asset.Id, CancellationToken.None);
+
+            Assert.IsFalse(verdict.IsMatch);
+            Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState);
+            Assert.AreEqual(expected, asset.IdentityHoldCode);
+            Assert.AreEqual("held", asset.IdentityMismatchReason, "The human-readable reason is unchanged.");
+        }
+
+        var matching = CreateProcessingAsset(".epub", identityPreConfirmed: true);
+        await new AssetIdentityVerificationService(
+            new AssetRepository(matching), new RecordingStagingStore(), [new MatchingVerifier()], new RecordingAuditWriter(), new FixedClock())
+            .VerifyAsync(matching.Id, CancellationToken.None);
+        Assert.IsNull(matching.IdentityHoldCode);
+    }
+
+    [TestMethod]
+    public async Task TheExistingNoVerifierHoldForAnUnattestedAssetIsLabeledNotAttested()
+    {
+        var asset = CreateProcessingAsset(".mobi", identityPreConfirmed: false);
+        var service = new AssetIdentityVerificationService(
+            new AssetRepository(asset), new RecordingStagingStore(), [], new RecordingAuditWriter(), new FixedClock());
+
+        await service.VerifyAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState);
+        Assert.AreEqual("identity.hold.not_attested", asset.IdentityHoldCode);
+    }
+
+    [TestMethod]
+    public async Task ASuccessfulRetryClearsTheHoldCodeAndAFailedRetryRelabelsIt()
+    {
+        var asset = CreateUnmatchedAsset();
+        asset.SetIdentityHoldCode("identity.hold.content_inconclusive");
+        var staging = new RecordingStagingStore();
+        var repository = new AssetRepository(asset);
+        var contradicted = Held(Fact(FamilyLibrarian.Domain.Evidence.EvidenceDimension.IdentityCorroboration, FamilyLibrarian.Domain.Evidence.EvidencePolarity.Negative));
+
+        await new AssetIdentityVerificationService(repository, staging, [new FixedVerifier(contradicted)], new RecordingAuditWriter(), new FixedClock())
+            .RetryUnmatchedAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual("identity.hold.content_contradicted", asset.IdentityHoldCode, "A still-unmatched retry refreshes the label.");
+
+        await new AssetIdentityVerificationService(repository, staging, [new MatchingVerifier()], new RecordingAuditWriter(), new FixedClock())
+            .RetryUnmatchedAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
+        Assert.IsNull(asset.IdentityHoldCode);
+    }
+
+    private sealed class FixedVerifier(AssetIdentityVerificationResult result) : IAssetIdentityVerifier
+    {
+        public string Id => "verifier";
+
+        public bool Supports(MediaAsset asset) => true;
+
+        public Task<AssetIdentityVerificationResult> VerifyAsync(MediaAsset asset, Stream content, CancellationToken cancellationToken) =>
+            Task.FromResult(result);
+    }
+
     private static MediaAsset CreateProcessingAsset(string format, bool identityPreConfirmed)
     {
         var asset = new MediaAsset(

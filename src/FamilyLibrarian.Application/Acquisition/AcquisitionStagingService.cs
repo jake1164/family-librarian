@@ -43,9 +43,10 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
-        bool identityPreConfirmed,
+        AssetProvenance provenance,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(provenance);
         var extension = Path.GetExtension(originalFilename);
         if (string.IsNullOrEmpty(extension) || !policy.IsExtensionAllowed(format.MediaType, extension))
         {
@@ -88,7 +89,9 @@ public sealed class AcquisitionStagingService(
             format.Id,
             candidate.Id,
             now,
-            identityPreConfirmed: identityPreConfirmed);
+            identityPreConfirmed: provenance.IdentityPreConfirmed,
+            origin: provenance.Origin,
+            originUserId: provenance.UserId);
 
         acquisitions.AddJob(job);
         acquisitions.AddAsset(asset);
@@ -132,12 +135,13 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
-        bool identityPreConfirmed,
+        AssetProvenance provenance,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(provenance);
         return await StageBundleCoreAsync(
             request, format, ToAsyncEnumerable(files), providerId, auditAction,
-            candidateTitle, candidateAuthor, identityPreConfirmed, providerJob: null, cancellationToken);
+            candidateTitle, candidateAuthor, provenance, providerJob: null, cancellationToken);
     }
 
     public Task<ManualImportResult> StageExternalBundleAsync(
@@ -152,8 +156,8 @@ public sealed class AcquisitionStagingService(
         StageBundleCoreAsync(
             request, format, files, providerId, auditAction,
             candidateTitle: null, candidateAuthor: null,
-            // The external job's own answer, never a silent default (M1-4b).
-            identityPreConfirmed: providerJob.IdentityPreConfirmed, providerJob, cancellationToken, partSetSlot);
+            // The external job's own answer, never a silent default (M1-4b), and never a privileged origin (M1-5a).
+            provenance: AssetProvenance.ExternalProvider(providerJob.IdentityPreConfirmed), providerJob, cancellationToken, partSetSlot);
 
     private async Task<ManualImportResult> StageBundleCoreAsync(
         BookRequest request,
@@ -163,7 +167,7 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
-        bool identityPreConfirmed,
+        AssetProvenance provenance,
         ProviderAcquisitionJob? providerJob,
         CancellationToken cancellationToken,
         AudiobookPartSetSlot? partSetSlot = null)
@@ -263,7 +267,9 @@ public sealed class AcquisitionStagingService(
                 bundleTrackCount: partSetSlot?.Total ?? (bundleId is null ? null : staged.Count),
                 // Explicit at every creation site (M1-4b): a built-in provider passes true, an
                 // external provider passes its job's value, and nothing defaults to attested.
-                identityPreConfirmed: identityPreConfirmed);
+                identityPreConfirmed: provenance.IdentityPreConfirmed,
+                origin: provenance.Origin,
+                originUserId: provenance.UserId);
 
             acquisitions.AddAsset(asset);
             if (providerJob is not null && acceptedFiles[index].ExternalOutputId is { } outputId)

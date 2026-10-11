@@ -980,6 +980,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(asset => asset.ScanFailureReason).HasColumnName("scan_failure_reason").HasMaxLength(1_024);
             entity.Property(asset => asset.IdentityPreConfirmed)
                 .HasColumnName("identity_pre_confirmed").HasDefaultValue(true);
+            entity.Property(asset => asset.Origin).HasColumnName("origin").HasConversion<string>().HasMaxLength(32)
+                .HasDefaultValue(AssetOrigin.Legacy);
+            entity.Property(asset => asset.OriginUserId).HasColumnName("origin_user_id");
+            entity.Property(asset => asset.IdentityHoldCode).HasColumnName("identity_hold_code").HasMaxLength(96);
             entity.Property(asset => asset.BundleId).HasColumnName("bundle_id");
             entity.Property(asset => asset.BundleSequence).HasColumnName("bundle_sequence");
             entity.Property(asset => asset.BundleTrackCount).HasColumnName("bundle_track_count");

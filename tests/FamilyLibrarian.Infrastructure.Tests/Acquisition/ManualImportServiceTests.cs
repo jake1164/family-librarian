@@ -119,6 +119,9 @@ public sealed class ManualImportServiceTests
         Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
         var asset = context.Repository.Assets.Single();
         Assert.IsTrue(asset.IdentityPreConfirmed, "Existing behavior: an administrator-chosen file is attested.");
+        Assert.AreEqual(AssetOrigin.ManualUpload, asset.Origin);
+        Assert.AreEqual(TestContext.AdministratorUserId, asset.OriginUserId,
+            "The origin user is the authenticated administrator from the current-user context, not anything the caller supplied.");
         Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
         Assert.AreEqual("manual", context.Repository.Jobs.Single().Candidates.Single().ProviderId);
         Assert.AreEqual("manual_import.staged", context.Audit.Entries.Single().Action);
@@ -142,7 +145,42 @@ public sealed class ManualImportServiceTests
         Assert.HasCount(0, context.Audit.Entries);
     }
 
+    [TestMethod]
+    public async Task AnAdministratorRoleWithoutAnAuthenticatedUserIdCannotCreateAManualUpload()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        context.User.UserId = null;
+
+        var result = await context.Service.ImportAsync(
+            request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, context.StagingStore.WriteCount);
+        Assert.HasCount(0, context.Repository.Assets);
+    }
+
+    [TestMethod]
+    public async Task TheOriginUserFollowsWhoIsActuallyAuthenticatedOnEachCall()
+    {
+        var first = new TestContext();
+        var (request, format) = first.SeedRequest(RequestMediaType.Ebook);
+        var otherAdministrator = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002");
+        first.User.UserId = otherAdministrator;
+
+        await first.Service.ImportAsync(request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
+
+        Assert.AreEqual(otherAdministrator, first.Repository.Assets.Single().OriginUserId);
+    }
+
     private static MemoryStream Content(string text) => new(Encoding.UTF8.GetBytes(text));
+
+    private sealed class FakeCurrentUser(Guid? userId) : ICurrentUser
+    {
+        public Guid? UserId { get; set; } = userId;
+
+        public string? DisplayName => "admin";
+    }
 
     private sealed class FakeAdministrator(bool isAdministrator) : ICurrentAdministrator
     {
@@ -167,10 +205,15 @@ public sealed class ManualImportServiceTests
                 new FixedClock());
 
             Administrator = new FakeAdministrator(true);
-            Service = new ManualImportService(RequestRepository, Staging, Administrator);
+            User = new FakeCurrentUser(AdministratorUserId);
+            Service = new ManualImportService(RequestRepository, Staging, Administrator, User);
         }
 
+        public static readonly Guid AdministratorUserId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+
         public FakeAdministrator Administrator { get; }
+
+        public FakeCurrentUser User { get; }
 
         public FakeAcquisitionRepository Repository { get; }
 

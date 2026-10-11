@@ -1,5 +1,7 @@
 using System.Net.Http.Json;
+using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Catalog;
@@ -831,6 +833,163 @@ public sealed class ExternalProviderReviewCandidatePresentationEndpointTests
     }
 }
 
+/// <summary>
+/// Alpha.6 M1-5a. Provenance is decided by the code path that creates an asset, never by what an external
+/// provider calls itself; and an identity hold can never cause the same candidate to be fetched again.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderProvenanceEndpointTests
+{
+    private sealed record Outcome(
+        IReadOnlyList<MediaAsset> Assets, IReadOnlyList<string> AttestationCodes, int SubmitCalls, int JobCount,
+        Guid AdminUserId);
+
+    private sealed class MutableClock(DateTimeOffset start) : IClock
+    {
+        public DateTimeOffset UtcNow { get; private set; } = start;
+
+        public void Advance(TimeSpan by) => UtcNow += by;
+    }
+
+    private sealed class EmptyBuiltInProvider(string id) : IDirectAcquisitionProvider
+    {
+        public string Id => id;
+
+        public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
+            Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
+
+        public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
+            BookIdentity identity, RequestMediaType mediaType, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
+
+        public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
+            FulfillmentOption fulfillmentOption, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("No option was ever returned to fetch.");
+    }
+
+    /// <summary>
+    /// Registers an external provider under <paramref name="providerId"/>, requests the hobbit, then runs every
+    /// automatic loop <paramref name="rounds"/> times, optionally jumping the clock forward a month between rounds
+    /// so that no retry cooldown or recheck schedule can be what keeps a re-acquisition from happening.
+    /// </summary>
+    private static async Task<Outcome> RunAsync(
+        string providerId, string outputTitle, int rounds, bool advanceClock, params string[] extraBuiltInIds)
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        var providerClient = new FakeHobbitExternalProviderClient { ProviderId = providerId, OutputTitle = outputTitle };
+        var clock = new MutableClock(DateTimeOffset.UtcNow);
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(providerClient);
+                services.RemoveAll<IClock>();
+                services.AddSingleton<IClock>(clock);
+                foreach (var id in extraBuiltInIds)
+                {
+                    services.AddSingleton<IDirectAcquisitionProvider>(new EmptyBuiltInProvider(id));
+                }
+            });
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await ExternalProviderAutomaticFixtureSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+
+        var create = await admin.PostAsJsonAsync(
+            "/api/v1/admin/external-providers/", new CreateExternalProviderRequest(providerId, "Provenance Probe", "http://fake-external.test"));
+        create.EnsureSuccessStatusCode();
+        var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+        Assert.IsNotNull(provider);
+        (await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true))).EnsureSuccessStatusCode();
+        (await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule", new SetExternalProviderRecheckScheduleRequest("Daily"))).EnsureSuccessStatusCode();
+        (await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{provider.Id}/auto-acquire", new SetExternalProviderAutoAcquireEnabledRequest(true))).EnsureSuccessStatusCode();
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync("/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+        var formatId = request.Formats.Single(format => format.MediaType == "Ebook").FormatId;
+
+        for (var round = 0; round < rounds; round++)
+        {
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                await scope.ServiceProvider.GetRequiredService<ExternalProviderRecheckService>().ProcessDueAsync(CancellationToken.None);
+            }
+
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                await scope.ServiceProvider.GetRequiredService<AcquisitionJobPollingService>().ProcessDueAsync(CancellationToken.None);
+            }
+
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                await scope.ServiceProvider.GetRequiredService<AutomaticRequestFulfillmentService>().ProcessPendingAsync(CancellationToken.None);
+            }
+
+            if (advanceClock)
+            {
+                clock.Advance(TimeSpan.FromDays(30));
+            }
+        }
+
+        await using var verification = factory.Services.CreateAsyncScope();
+        var database = verification.ServiceProvider.GetRequiredService<AppDbContext>();
+        var assets = await database.MediaAssets.AsNoTracking().Where(asset => asset.AssociatedRequestFormatId == formatId).ToListAsync();
+        var assetIds = assets.Select(asset => asset.Id).ToArray();
+        var attestations = await database.ArtifactEvidenceItems.AsNoTracking()
+            .Where(item => assetIds.Contains(item.MediaAssetId) && item.Dimension == FamilyLibrarian.Domain.Evidence.EvidenceDimension.IdentityAttestation)
+            .Select(item => item.Code).ToListAsync();
+        var adminId = await database.Users.Where(user => user.Email == FamilyLibrarianAppFactory.AdminEmail).Select(user => user.Id).SingleAsync();
+        var jobs = await database.ProviderAcquisitionJobs.CountAsync(job => job.RequestFormatId == formatId);
+        return new Outcome(assets, attestations, providerClient.SubmitCalls, jobs, adminId);
+    }
+
+    [TestMethod]
+    [DataRow("manual")]
+    [DataRow("gutenberg")]
+    [DataRow("librivox")]
+    [DataRow("gutendex")]
+    public async Task AnExternalProviderNamedLikeAPrivilegedSourceNeverReceivesPrivilegedProvenance(string providerId)
+    {
+        // The test host shadows the built-in ids "gutendex" (always) and "librivox" (added here) exactly as the
+        // production host does, so a same-named external provider cannot even be reached for those two.
+        var outcome = await RunAsync(providerId, "The Hobbit", rounds: 1, advanceClock: false, "librivox");
+
+        Assert.IsTrue(outcome.Assets.All(asset =>
+                asset.Origin == AssetOrigin.ExternalProvider && asset.OriginUserId is null),
+            $"'{providerId}' must never produce a built-in, manual-upload or user-attributed asset: " +
+            string.Join(", ", outcome.Assets.Select(asset => asset.Origin)));
+        Assert.IsFalse(outcome.Assets.Any(asset => asset.OriginUserId == outcome.AdminUserId));
+        Assert.IsFalse(outcome.AttestationCodes.Any(code =>
+                code is "artifact.identity_attestation.manual_upload" or "artifact.identity_attestation.built_in_source"),
+            "Evidence must not label an external provider's asset as a manual upload or a built-in source.");
+        if (providerId is "manual" or "gutenberg")
+        {
+            // Reachable as an external provider: its asset exists and is plainly an external-provider asset.
+            Assert.AreEqual(1, outcome.Assets.Count);
+            Assert.AreEqual("artifact.identity_attestation.external_provider_confirmed", outcome.AttestationCodes.Single());
+        }
+    }
+
+    [TestMethod]
+    public async Task AnIdentityHoldNeverCausesTheSameCandidateToBeFetchedAgainNoMatterHowMuchTimePasses()
+    {
+        // The delivered file is a different book than the search promised: an existing identity hold.
+        var outcome = await RunAsync("identifier-match-external", "A Completely Different Book", rounds: 4, advanceClock: true);
+
+        var asset = outcome.Assets.Single();
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState, "Precondition: the file is held for identity review.");
+        Assert.AreEqual("identity.hold.content_contradicted", asset.IdentityHoldCode);
+        Assert.AreEqual(1, outcome.SubmitCalls, "The held candidate must not be submitted again by any automatic loop.");
+        Assert.AreEqual(1, outcome.JobCount, "No second provider job may be created for the same format.");
+    }
+}
+
 file static class ExternalProviderAutomaticFixtureSupport
 {
     public static async Task SignInAsync(HttpClient client, string email, string password)
@@ -846,10 +1005,18 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
 {
     public string? SourceSummary { get; init; }
 
+    /// <summary>The id the provider declares for itself. An external provider chooses this freely.</summary>
+    public string ProviderId { get; init; } = "identifier-match-external";
+
+    /// <summary>The book the delivered file actually is (its embedded title), independent of what the search claimed.</summary>
+    public string OutputTitle { get; init; } = "The Hobbit";
+
+    public int SubmitCalls { get; private set; }
+
     public Task<ExternalProviderManifest> GetManifestAsync(
         string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
         Task.FromResult(new ExternalProviderManifest(
-            ["2"], "2", null, "identifier-match-external", "Identifier Match External", "1.0.0",
+            ["2"], "2", null, ProviderId, "Identifier Match External", "1.0.0",
             new ProviderCapabilities(["ebook"], ["search", "acquire"], []), null, null, null));
 
     public Task<ExternalProviderHealth> GetHealthAsync(
@@ -882,14 +1049,20 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
         string baseUrl, string? apiKey, string candidateReference, RequestMediaType mediaType,
         CancellationToken cancellationToken) =>
         Task.FromResult(new ExternalProviderArtifact(
-            new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()),
+            new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes(OutputTitle)),
             "the-hobbit.epub"));
 
     public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
         string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
         CancellationToken cancellationToken) =>
-        Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
-            "fake-job-1", ProviderAcquisitionJobLifecycleState.Completed, phase: null, pollAfterSeconds: 0));
+        Task.FromResult(CountedSubmission());
+
+    private ExternalProviderAcquireSubmission CountedSubmission()
+    {
+        SubmitCalls++;
+        return ExternalProviderAcquireSubmission.Accepted(
+            "fake-job-1", ProviderAcquisitionJobLifecycleState.Completed, phase: null, pollAfterSeconds: 0);
+    }
 
     public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
@@ -910,7 +1083,7 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
         string baseUrl, string? apiKey, string jobId, string outputId,
         CancellationToken cancellationToken) =>
         Task.FromResult(new ExternalProviderArtifact(
-            new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()), "the-hobbit.epub"));
+            new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes(OutputTitle)), "the-hobbit.epub"));
 
     public Task CancelAcquireAsync(
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>

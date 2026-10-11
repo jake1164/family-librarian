@@ -393,6 +393,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("format");
 
+                    b.Property<string>("IdentityHoldCode")
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)")
+                        .HasColumnName("identity_hold_code");
+
                     b.Property<string>("IdentityMismatchReason")
                         .HasMaxLength(1024)
                         .HasColumnType("character varying(1024)")
@@ -409,6 +414,18 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("media_type");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("Legacy")
+                        .HasColumnName("origin");
+
+                    b.Property<Guid?>("OriginUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("origin_user_id");
 
                     b.Property<string>("OriginalFilename")
                         .IsRequired()

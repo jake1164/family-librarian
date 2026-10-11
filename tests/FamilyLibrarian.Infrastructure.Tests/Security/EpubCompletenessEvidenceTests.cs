@@ -238,7 +238,7 @@ public sealed class EpubCompletenessEvidenceTests
     {
         var result = await Verify(Book(3, extraMetadata: "<dc:subject xmlns:dc=\"http://purl.org/dc/elements/1.1/\">Sample</dc:subject>"));
         var store = new RecordingStore();
-        var recorder = new ArtifactEvidenceRecorder(store, [], new FixedClock());
+        var recorder = new ArtifactEvidenceRecorder(store, new FixedClock());
 
         await recorder.RecordIdentityVerificationAsync(
             Asset(RequestMediaType.Ebook, ".epub"), result with { Facts = [.. result.Facts, new IdentityFact(
@@ -268,9 +268,6 @@ public sealed class EpubCompletenessEvidenceTests
             _pending.Clear();
             return Task.FromResult(true);
         }
-
-        public Task<string?> FindAcquisitionProviderIdAsync(Guid? acquisitionCandidateId, CancellationToken cancellationToken) =>
-            Task.FromResult<string?>(null);
 
         public Task<IReadOnlyDictionary<Guid, IReadOnlyList<ArtifactEvidence>>> ListLatestAsync(
             IReadOnlyCollection<Guid> assetIds, CancellationToken cancellationToken) =>

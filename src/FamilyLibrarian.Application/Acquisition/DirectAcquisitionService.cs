@@ -169,14 +169,14 @@ public sealed class DirectAcquisitionService(
                         candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor,
                         // Built-in source attestation: Gutenberg/LibriVox verify title/author with FL's own
                         // matcher before offering a candidate. A statement about the source, not the file.
-                        identityPreConfirmed: true, cancellationToken);
+                        provenance: AssetProvenance.BuiltInProvider(), cancellationToken);
                 }
                 else
                 {
                     stagedResult = await staging.StageBundleAsync(
                         request, format, files, providerId, AuditActions.DirectAcquisitionStaged,
                         candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor,
-                        identityPreConfirmed: true, cancellationToken);
+                        provenance: AssetProvenance.BuiltInProvider(), cancellationToken);
                 }
             }
             finally

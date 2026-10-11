@@ -93,6 +93,140 @@ public sealed class ManualImportEndpointTests
         Assert.AreEqual(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // --- alpha.6 M1-5a: provenance comes from the authenticated context, never from the caller ----------------
+
+    [TestMethod]
+    public async Task AnAdministratorsUploadRecordsTheAuthenticatedAdministratorAsItsImmutableOrigin()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var admin = await CreateTokenClientAsync(fixture);
+        var (requestId, formatId) = await CreateEbookRequestAsync(fixture, admin);
+
+        var response = await admin.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(BuildMinimalEpubBytes(), "book.epub"));
+        var result = await response.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var asset = await database.MediaAssets.AsNoTracking().SingleAsync(a => a.Id == result!.MediaAssetId);
+        var adminId = await database.Users.Where(user => user.Email == FamilyLibrarianAppFactory.AdminEmail).Select(user => user.Id).SingleAsync();
+        Assert.AreEqual(AssetOrigin.ManualUpload, asset.Origin);
+        Assert.AreEqual(adminId, asset.OriginUserId, "The origin user is the authenticated administrator.");
+        Assert.IsTrue(asset.IdentityPreConfirmed, "Existing behavior preserved.");
+        var attestation = await database.ArtifactEvidenceItems.AsNoTracking()
+            .SingleAsync(item => item.MediaAssetId == asset.Id && item.Dimension == FamilyLibrarian.Domain.Evidence.EvidenceDimension.IdentityAttestation);
+        Assert.AreEqual("artifact.identity_attestation.manual_upload", attestation.Code);
+    }
+
+    [TestMethod]
+    public async Task AnOrdinaryUsersUploadIsRefusedAndCreatesNothingEvenWhenItClaimsAPrivilegedOrigin()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var owner = await CreateTokenClientAsync(fixture, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(fixture, owner);
+        owner.DefaultRequestHeaders.Add("X-Asset-Origin", "ManualUpload");
+        owner.DefaultRequestHeaders.Add("X-Origin-User-Id", Guid.NewGuid().ToString());
+        var form = BuildUpload(BuildMinimalEpubBytes(), "book.epub");
+        form.Add(new StringContent("ManualUpload"), "origin");
+        form.Add(new StringContent("true"), "identityPreConfirmed");
+
+        var response = await owner.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import?origin=ManualUpload", form);
+
+        Assert.AreEqual(HttpStatusCode.Forbidden, response.StatusCode, "Authorization decides, not claims in the request.");
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(0, await database.MediaAssets.CountAsync(a => a.AssociatedRequestFormatId == formatId));
+    }
+
+    [TestMethod]
+    public async Task ClaimsSuppliedByAnAdministratorInTheRequestAreIgnoredWhenRecordingProvenance()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var admin = await CreateTokenClientAsync(fixture);
+        var (requestId, formatId) = await CreateEbookRequestAsync(fixture, admin);
+        var someoneElse = Guid.NewGuid();
+        admin.DefaultRequestHeaders.Add("X-Asset-Origin", "BuiltInProvider");
+        admin.DefaultRequestHeaders.Add("X-Origin-User-Id", someoneElse.ToString());
+        var form = BuildUpload(BuildMinimalEpubBytes(), "book.epub");
+        form.Add(new StringContent("BuiltInProvider"), "origin");
+        form.Add(new StringContent(someoneElse.ToString()), "originUserId");
+        form.Add(new StringContent("false"), "identityPreConfirmed");
+
+        var response = await admin.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import?origin=Legacy&originUserId={someoneElse}", form);
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var assets = await database.MediaAssets.AsNoTracking().Where(a => a.AssociatedRequestFormatId == formatId).ToListAsync();
+        var adminId = await database.Users.Where(user => user.Email == FamilyLibrarianAppFactory.AdminEmail).Select(user => user.Id).SingleAsync();
+        // Whether the endpoint ignores or rejects the extra input, no asset may carry a claimed identity or origin.
+        Assert.IsTrue(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.BadRequest, response.StatusCode.ToString());
+        Assert.IsTrue(assets.All(a => a.Origin == AssetOrigin.ManualUpload && a.OriginUserId == adminId && a.IdentityPreConfirmed));
+        Assert.IsFalse(assets.Any(a => a.OriginUserId == someoneElse));
+    }
+
+    [TestMethod]
+    public async Task TheDatabaseRefusesToChangeAnAssetsOriginOrOriginUserButStillAllowsOrdinaryUpdates()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var admin = await CreateTokenClientAsync(fixture);
+        var (requestId, formatId) = await CreateEbookRequestAsync(fixture, admin);
+        var response = await admin.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(BuildMinimalEpubBytes(), "book.epub"));
+        var result = await response.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var id = result!.MediaAssetId;
+
+        var origin = await Assert.ThrowsAsync<Exception>(() => database.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE acquisition.media_assets SET origin = {"BuiltInProvider"} WHERE id = {id}"));
+        StringAssert.Contains(origin.ToString(), "immutable");
+        var user = await Assert.ThrowsAsync<Exception>(() => database.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE acquisition.media_assets SET origin_user_id = NULL WHERE id = {id}"));
+        StringAssert.Contains(user.ToString(), "immutable");
+
+        var allowed = await database.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE acquisition.media_assets SET identity_hold_code = {"identity.hold.content_inconclusive"} WHERE id = {id}");
+        Assert.AreEqual(1, allowed, "Only the origin is protected; other columns update as before.");
+        database.ChangeTracker.Clear();
+        Assert.AreEqual(AssetOrigin.ManualUpload, (await database.MediaAssets.AsNoTracking().SingleAsync(a => a.Id == id)).Origin);
+    }
+
+    [TestMethod]
+    public async Task AnIdentityHoldIsLabeledWithItsCodeAndTheCodeClearsWhenAnAdministratorOverridesIt()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var admin = await CreateTokenClientAsync(fixture);
+        var (requestId, formatId) = await CreateEbookRequestAsync(fixture, admin);
+        var response = await admin.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(EpubTestFixture.BuildMinimalEpubBytes("A Different Book", "Someone Else"), "book.epub"));
+        var result = await response.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        var id = result!.MediaAssetId;
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var held = await scope.ServiceProvider.GetRequiredService<AppDbContext>().MediaAssets.AsNoTracking().SingleAsync(a => a.Id == id);
+            Assert.AreEqual(MediaAssetStorageState.Unmatched, held.StorageState);
+            Assert.AreEqual("identity.hold.content_contradicted", held.IdentityHoldCode);
+            Assert.IsNotNull(held.IdentityMismatchReason, "The existing human-readable reason is unchanged.");
+        }
+
+        var overridden = await admin.PostAsJsonAsync(
+            $"/api/v1/admin/media-assets/{id}/override-identity", new { reason = "Checked by hand; this is the right book." });
+        Assert.IsTrue(overridden.IsSuccessStatusCode, overridden.StatusCode.ToString());
+
+        await using var after = fixture.Services.CreateAsyncScope();
+        var released = await after.ServiceProvider.GetRequiredService<AppDbContext>().MediaAssets.AsNoTracking().SingleAsync(a => a.Id == id);
+        Assert.IsNull(released.IdentityHoldCode, "A stale hold code must never outlive the hold.");
+        Assert.IsNull(released.IdentityMismatchReason);
+        Assert.AreEqual(AssetOrigin.ManualUpload, released.Origin);
+    }
+
     [TestMethod]
     public async Task AnUploadWithoutAnAntiforgeryTokenIsRejected()
     {

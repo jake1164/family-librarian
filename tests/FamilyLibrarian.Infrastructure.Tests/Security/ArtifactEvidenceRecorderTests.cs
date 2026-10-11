@@ -1,5 +1,4 @@
 using FamilyLibrarian.Application.Abstractions;
-using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Evidence;
@@ -18,15 +17,24 @@ public sealed class ArtifactEvidenceRecorderTests
     private static readonly DateTimeOffset Now = new(2026, 10, 10, 12, 0, 0, TimeSpan.Zero);
     private static readonly string Hash = new('b', 64);
 
-    private static MediaAsset Asset(bool preConfirmed = true, Guid? candidateId = null, string format = ".epub") => new(
+    private static MediaAsset Asset(
+        bool preConfirmed = true, AssetOrigin origin = AssetOrigin.ExternalProvider, string format = ".epub") => new(
         Guid.NewGuid(), editionId: null, RequestMediaType.Ebook, format, "book" + format, "stored" + format, 1,
-        Hash, "application/epub+zip", Guid.NewGuid(), candidateId, Now, identityPreConfirmed: preConfirmed);
+        Hash, "application/epub+zip", Guid.NewGuid(), null, Now, identityPreConfirmed: preConfirmed,
+        origin: origin, originUserId: origin == AssetOrigin.ManualUpload ? Guid.NewGuid() : null);
 
-    private static (ArtifactEvidenceRecorder Recorder, FakeEvidenceStore Store) Create(
-        Dictionary<Guid, string>? providers = null, bool failingStore = false)
+    /// <summary>A row that predates origin tracking: the only way to hold <see cref="AssetOrigin.Legacy"/>, as loaded from storage.</summary>
+    private static MediaAsset LegacyAsset(bool preConfirmed)
     {
-        var store = new FakeEvidenceStore(providers ?? [], failingStore);
-        return (new ArtifactEvidenceRecorder(store, [new BuiltIn("gutenberg"), new BuiltIn("librivox")], new FixedClock()), store);
+        var asset = Asset(preConfirmed, AssetOrigin.Unknown);
+        typeof(MediaAsset).GetProperty(nameof(MediaAsset.Origin))!.SetValue(asset, AssetOrigin.Legacy);
+        return asset;
+    }
+
+    private static (ArtifactEvidenceRecorder Recorder, FakeEvidenceStore Store) Create(bool failingStore = false)
+    {
+        var store = new FakeEvidenceStore(failingStore);
+        return (new ArtifactEvidenceRecorder(store, new FixedClock()), store);
     }
 
     private static SecurityEvaluation Evaluation(MediaAsset asset, Action<SecurityEvaluation>? configure = null)
@@ -168,9 +176,8 @@ public sealed class ArtifactEvidenceRecorderTests
     [TestMethod]
     public async Task AttestationWithNoContentVerifierIsNeverRecordedAsCorroboration()
     {
-        var candidate = Guid.NewGuid();
-        var asset = Asset(preConfirmed: true, candidate, ".mp3");
-        var (recorder, store) = Create(new() { [candidate] = "librivox" });
+        var asset = Asset(preConfirmed: true, AssetOrigin.BuiltInProvider, ".mp3");
+        var (recorder, store) = Create();
 
         await recorder.RecordIdentityVerificationAsync(
             asset, AssetIdentityVerificationResult.Match(ArtifactEvidenceRecorder.NoVerifierId), CancellationToken.None);
@@ -187,29 +194,47 @@ public sealed class ArtifactEvidenceRecorderTests
     }
 
     [TestMethod]
-    [DataRow("manual", true, "artifact.identity_attestation.manual_upload")]
-    [DataRow("gutenberg", true, "artifact.identity_attestation.built_in_source")]
-    [DataRow("example-source", true, "artifact.identity_attestation.external_provider_confirmed")]
-    [DataRow("example-source", false, "artifact.identity_attestation.none")]
-    [DataRow(null, true, "artifact.identity_attestation.unknown_origin")]
-    public async Task AttestationProvenanceIsDerivedFromTheAcquisitionSource(string? provider, bool preConfirmed, string expectedCode)
+    [DataRow(AssetOrigin.ManualUpload, true, "artifact.identity_attestation.manual_upload", "Weak")]
+    [DataRow(AssetOrigin.BuiltInProvider, true, "artifact.identity_attestation.built_in_source", "Weak")]
+    [DataRow(AssetOrigin.ExternalProvider, true, "artifact.identity_attestation.external_provider_confirmed", "Weak")]
+    [DataRow(AssetOrigin.ExternalProvider, false, "artifact.identity_attestation.none", "Unknown")]
+    [DataRow(AssetOrigin.Unknown, true, "artifact.identity_attestation.unknown_origin", "Weak")]
+    [DataRow(AssetOrigin.Unknown, false, "artifact.identity_attestation.none", "Unknown")]
+    public async Task AttestationProvenanceComesOnlyFromThePersistedOrigin(
+        AssetOrigin origin, bool preConfirmed, string expectedCode, string expectedPolarity)
     {
-        var candidate = provider is null ? (Guid?)null : Guid.NewGuid();
-        var asset = Asset(preConfirmed, candidate);
-        var (recorder, store) = Create(candidate is { } id ? new() { [id] = provider! } : null);
+        var asset = Asset(preConfirmed, origin);
+        var (recorder, store) = Create();
 
         await recorder.RecordIdentityVerificationAsync(
             asset, AssetIdentityVerificationResult.Match(ArtifactEvidenceRecorder.NoVerifierId), CancellationToken.None);
 
-        Assert.AreEqual(expectedCode, store.Saved.Single(item => item.Dimension == EvidenceDimension.IdentityAttestation).Code);
+        var attestation = store.Saved.Single(item => item.Dimension == EvidenceDimension.IdentityAttestation);
+        Assert.AreEqual(expectedCode, attestation.Code);
+        Assert.AreEqual(expectedPolarity, attestation.Polarity.ToString());
+        StringAssert.Contains(attestation.Value, $"origin={origin}");
+    }
+
+    [TestMethod]
+    [DataRow(true, "Weak")]
+    [DataRow(false, "Unknown")]
+    public async Task ARowThatPredatesOriginTrackingIsRecordedAsLegacyAndNothingIsInferredAboutItsSource(bool preConfirmed, string polarity)
+    {
+        var (recorder, store) = Create();
+
+        await recorder.RecordIdentityVerificationAsync(
+            LegacyAsset(preConfirmed), AssetIdentityVerificationResult.Match(ArtifactEvidenceRecorder.NoVerifierId), CancellationToken.None);
+
+        var attestation = store.Saved.Single(item => item.Dimension == EvidenceDimension.IdentityAttestation);
+        Assert.AreEqual("artifact.identity_attestation.legacy_unclassified", attestation.Code);
+        Assert.AreEqual(polarity, attestation.Polarity.ToString());
     }
 
     [TestMethod]
     public async Task AnExplicitContentContradictionIsRecordedEvenWhenTheSourceAttestedTheIdentity()
     {
-        var candidate = Guid.NewGuid();
-        var asset = Asset(preConfirmed: true, candidate);
-        var (recorder, store) = Create(new() { [candidate] = "manual" });
+        var asset = Asset(preConfirmed: true, AssetOrigin.ManualUpload);
+        var (recorder, store) = Create();
         var result = AssetIdentityVerificationResult.Unmatched(
             "epub-package-metadata", "differs",
             [new IdentityFact("ev-title", EvidenceDimension.IdentityCorroboration, EvidenceReasonCodes.ArtifactIdentityCorroboration.TitleDiffers, EvidencePolarity.Negative)]);
@@ -303,7 +328,7 @@ public sealed class ArtifactEvidenceRecorderTests
         Assert.AreEqual(ArtifactEvidence.MaxToolVersionLength, evidence.ToolVersion!.Length);
     }
 
-    private sealed class FakeEvidenceStore(Dictionary<Guid, string> providers, bool failing) : IArtifactEvidenceStore
+    private sealed class FakeEvidenceStore(bool failing) : IArtifactEvidenceStore
     {
         private readonly List<ArtifactEvidence> _pending = [];
 
@@ -322,30 +347,10 @@ public sealed class ArtifactEvidenceRecorderTests
             return Task.FromResult(true);
         }
 
-        public Task<string?> FindAcquisitionProviderIdAsync(Guid? acquisitionCandidateId, CancellationToken cancellationToken) =>
-            Task.FromResult(acquisitionCandidateId is { } id && providers.TryGetValue(id, out var provider) ? provider : null);
-
         public Task<IReadOnlyDictionary<Guid, IReadOnlyList<ArtifactEvidence>>> ListLatestAsync(
             IReadOnlyCollection<Guid> assetIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<ArtifactEvidence>>>(
                 new Dictionary<Guid, IReadOnlyList<ArtifactEvidence>>());
-    }
-
-    private sealed class BuiltIn(string id) : IDirectAcquisitionProvider
-    {
-        public string Id => id;
-
-        public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
-            Guid workId, RequestMediaType mediaType, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
-
-        public Task<IReadOnlyList<FulfillmentOption>> FindDirectAcquisitionsAsync(
-            BookIdentity identity, RequestMediaType mediaType, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<FulfillmentOption>>([]);
-
-        public Task<IReadOnlyList<DirectAcquisitionFile>> FetchAsync(
-            FulfillmentOption fulfillmentOption, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<DirectAcquisitionFile>>([]);
     }
 
     private sealed class FixedClock : IClock

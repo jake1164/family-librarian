@@ -118,6 +118,50 @@ public sealed class MigrationUpgradeTests
         Assert.IsFalse(database.Database.HasPendingModelChanges());
     }
 
+    [TestMethod]
+    public async Task AssetOriginUpgradeMarksEveryExistingRowLegacyExplicitlyAndProtectsOrigin()
+    {
+        const string PreOriginMigration = "20261010202850_AddArtifactEvidence";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var now = DateTimeOffset.UtcNow;
+        var work = new Work("Origin upgrade", null, null, null, PublicationStatus.Published, now);
+        database.Works.Add(work);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        database.BookRequests.Add(request);
+        // Created under the CURRENT model, as a manual upload by a user. Rolling back drops the columns, so this
+        // row is exactly what a pre-M1-5a database holds: no origin at all.
+        var asset = new MediaAsset(
+            work.Id, editionId: null, RequestMediaType.Ebook, ".epub", "legacy.epub", "legacy-stored2.epub", 10,
+            new string('e', 64), "application/epub+zip", request.Formats.Single().Id, sourceAcquisitionCandidateId: null, now,
+            identityPreConfirmed: true, origin: AssetOrigin.ManualUpload, originUserId: userId);
+        database.MediaAssets.Add(asset);
+        await database.SaveChangesAsync();
+
+        await database.GetService<IMigrator>().MigrateAsync(PreOriginMigration);
+        Assert.IsFalse(await ColumnExistsAsync(database, "origin"));
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var preserved = await database.MediaAssets.AsNoTracking().SingleAsync(item => item.Id == asset.Id);
+        Assert.AreEqual(AssetOrigin.Legacy, preserved.Origin, "Explicit 'Legacy', not inferred from anything else.");
+        Assert.IsNull(preserved.OriginUserId);
+        Assert.IsNull(preserved.IdentityHoldCode);
+        Assert.IsTrue(preserved.IdentityPreConfirmed, "The historical attestation value is untouched.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+
+        var rejected = await Assert.ThrowsAsync<Exception>(() => database.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE acquisition.media_assets SET origin = {"ManualUpload"} WHERE id = {asset.Id}"));
+        StringAssert.Contains(rejected.ToString(), "immutable");
+    }
+
+    private static async Task<bool> ColumnExistsAsync(AppDbContext database, string column) =>
+        await database.Database.SqlQuery<bool>(
+            $"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'acquisition' AND table_name = 'media_assets' AND column_name = {column}) AS \"Value\"")
+            .SingleAsync();
+
     private static async Task<bool> TableExistsAsync(AppDbContext database, string schema, string table) =>
         await database.Database.SqlQuery<bool>(
             $"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = {schema} AND table_name = {table}) AS \"Value\"")

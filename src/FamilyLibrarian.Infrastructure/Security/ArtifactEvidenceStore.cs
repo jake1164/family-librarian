@@ -31,15 +31,6 @@ public sealed class ArtifactEvidenceStore(AppDbContext database) : IArtifactEvid
         }
     }
 
-    public async Task<string?> FindAcquisitionProviderIdAsync(
-        Guid? acquisitionCandidateId, CancellationToken cancellationToken) =>
-        acquisitionCandidateId is not { } candidateId
-            ? null
-            : await database.AcquisitionCandidates
-                .Where(candidate => candidate.Id == candidateId)
-                .Select(candidate => candidate.ProviderId)
-                .FirstOrDefaultAsync(cancellationToken);
-
     public async Task<IReadOnlyDictionary<Guid, IReadOnlyList<ArtifactEvidence>>> ListLatestAsync(
         IReadOnlyCollection<Guid> assetIds, CancellationToken cancellationToken)
     {

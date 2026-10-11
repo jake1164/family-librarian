@@ -50,6 +50,7 @@ public sealed class AssetIdentityVerificationService(
                 cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Unmatched, clock.UtcNow);
             asset.SetIdentityMismatchReason(result.Reason);
+            asset.SetIdentityHoldCode(ExistingHoldCodes.Classify(result));
             await repository.SaveChangesAsync(cancellationToken);
         }
 
@@ -91,6 +92,7 @@ public sealed class AssetIdentityVerificationService(
                 cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Processing, clock.UtcNow);
             asset.SetIdentityMismatchReason(null);
+            asset.SetIdentityHoldCode(null);
             await repository.SaveChangesAsync(cancellationToken);
         }
         else if (result.Reason != asset.IdentityMismatchReason)
@@ -100,6 +102,7 @@ public sealed class AssetIdentityVerificationService(
             // mismatch -- keep the displayed reason current rather than
             // stale from the original hold.
             asset.SetIdentityMismatchReason(result.Reason);
+            asset.SetIdentityHoldCode(ExistingHoldCodes.Classify(result));
             await repository.SaveChangesAsync(cancellationToken);
         }
 

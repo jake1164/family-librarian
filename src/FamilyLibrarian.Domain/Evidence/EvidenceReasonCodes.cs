@@ -86,6 +86,18 @@ public static class EvidenceReasonCodes
         public const string MalformedStructure = "candidate.condition.malformed_structure";
     }
 
+    /// <summary>
+    /// Why an asset is held as unmatched (<c>MediaAsset.IdentityHoldCode</c>). Observations of the existing checks'
+    /// outcomes; M1-5a labels the holds that already exist and adds no new hold.
+    /// </summary>
+    public static class IdentityHold
+    {
+        public const string ContentContradicted = "identity.hold.content_contradicted";
+        public const string ContentInconclusive = "identity.hold.content_inconclusive";
+        public const string LanguageConflict = "identity.hold.language_conflict";
+        public const string NotAttested = "identity.hold.not_attested";
+    }
+
     /// <summary>Why the candidate decision is not a match despite no contradiction.</summary>
     public static class CandidateDecision
     {
@@ -103,6 +115,9 @@ public static class EvidenceReasonCodes
         public const string BuiltInSource = "artifact.identity_attestation.built_in_source";
         public const string ExternalProviderConfirmed = "artifact.identity_attestation.external_provider_confirmed";
         public const string UnknownOrigin = "artifact.identity_attestation.unknown_origin";
+
+        /// <summary>A row that predates origin tracking; nothing is inferred about its source.</summary>
+        public const string LegacyUnclassified = "artifact.identity_attestation.legacy_unclassified";
         public const string None = "artifact.identity_attestation.none";
     }
 
