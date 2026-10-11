@@ -417,10 +417,8 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("Origin")
                         .IsRequired()
-                        .ValueGeneratedOnAdd()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
-                        .HasDefaultValue("Legacy")
                         .HasColumnName("origin");
 
                     b.Property<Guid?>("OriginUserId")
@@ -490,7 +488,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("WorkId");
 
-                    b.ToTable("media_assets", "acquisition");
+                    b.ToTable("media_assets", "acquisition", t =>
+                        {
+                            t.HasCheckConstraint("ck_media_assets_origin_defined", "origin IN ('Legacy', 'Unknown', 'ManualUpload', 'BuiltInProvider', 'ExternalProvider')");
+                        });
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", b =>

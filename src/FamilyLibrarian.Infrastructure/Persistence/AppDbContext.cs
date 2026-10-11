@@ -1146,7 +1146,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
         builder.Entity<MediaAsset>(entity =>
         {
-            entity.ToTable("media_assets", "acquisition");
+            entity.ToTable("media_assets", "acquisition", table => table.HasCheckConstraint(
+                "ck_media_assets_origin_defined",
+                "origin IN ('Legacy', 'Unknown', 'ManualUpload', 'BuiltInProvider', 'ExternalProvider')"));
             entity.HasKey(asset => asset.Id);
             entity.Property(asset => asset.Id).HasColumnName("id").ValueGeneratedNever();
             entity.Property(asset => asset.WorkId).HasColumnName("work_id");
@@ -1165,8 +1167,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(asset => asset.ScanFailureReason).HasColumnName("scan_failure_reason").HasMaxLength(1_024);
             entity.Property(asset => asset.IdentityPreConfirmed)
                 .HasColumnName("identity_pre_confirmed").HasDefaultValue(true);
-            entity.Property(asset => asset.Origin).HasColumnName("origin").HasConversion<string>().HasMaxLength(32)
-                .HasDefaultValue(AssetOrigin.Legacy);
+            // No database default: 'Legacy' was written once, explicitly, to rows that predate origin. An insert that does not
+            // state an origin must fail rather than quietly become trusted legacy provenance.
+            entity.Property(asset => asset.Origin).HasColumnName("origin").HasConversion<string>().HasMaxLength(32);
             entity.Property(asset => asset.OriginUserId).HasColumnName("origin_user_id");
             entity.Property(asset => asset.IdentityHoldCode).HasColumnName("identity_hold_code").HasMaxLength(96);
             entity.Property(asset => asset.BundleId).HasColumnName("bundle_id");

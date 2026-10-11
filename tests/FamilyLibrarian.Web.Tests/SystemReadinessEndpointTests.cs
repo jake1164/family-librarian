@@ -51,6 +51,28 @@ public sealed class SystemReadinessEndpointTests
     }
 
     [TestMethod]
+    public async Task ReadinessReportsTheVersionTheBuildWasStampedWithNotAHardCodedOne()
+    {
+        // Directory.Build.props is the one place the release version lives (the Dockerfile overrides it from a tag).
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Directory.Build.props")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.IsNotNull(directory, "Directory.Build.props was not found above the test output.");
+        var stamped = System.Xml.Linq.XDocument.Load(Path.Combine(directory.FullName, "Directory.Build.props"))
+            .Descendants("Version").Single().Value;
+        var fixture = WebTestFixture.Require(_fixture);
+        using var client = await CreateAdminClientWithTokenAsync(fixture);
+
+        var readiness = await client.GetFromJsonAsync<SystemReadinessResponse>("/api/v1/system/readiness");
+
+        Assert.AreEqual(stamped, readiness!.Version);
+        StringAssert.StartsWith(stamped, "1.0.0-alpha.6", "This branch ships as alpha.6.");
+    }
+
+    [TestMethod]
     public async Task AnEnabledExternalProviderWithAFailedTestDegradesSystemReadiness()
     {
         var fixture = WebTestFixture.Require(_fixture);

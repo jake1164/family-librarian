@@ -56,6 +56,22 @@ public sealed class MediaAssetAttestationTests
     }
 
     [TestMethod]
+    public void AnUnsetOriginValueIsRefusedAndNeverBecomesLegacy()
+    {
+        // 0 is what an uninitialised enum holds. It must not be accepted, and nothing may translate it to 'Legacy'.
+        Assert.Throws<ArgumentOutOfRangeException>(() => WithOrigin(default));
+    }
+
+    [TestMethod]
+    public void ARowMaterialisedWithoutAStoredOriginDefaultsToUnknownNotLegacy()
+    {
+        // The private constructor is what the persistence layer uses before it assigns stored values.
+        var materialised = (MediaAsset)Activator.CreateInstance(typeof(MediaAsset), nonPublic: true)!;
+
+        Assert.AreEqual(AssetOrigin.Unknown, materialised.Origin, "An origin that was never set fails closed; it is not trusted legacy provenance.");
+    }
+
+    [TestMethod]
     public void OriginHasNoPublicWayToChangeAfterCreation()
     {
         foreach (var name in new[] { nameof(MediaAsset.Origin), nameof(MediaAsset.OriginUserId) })

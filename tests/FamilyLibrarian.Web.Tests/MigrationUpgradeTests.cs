@@ -319,6 +319,51 @@ public sealed class MigrationUpgradeTests
         StringAssert.Contains(rejected.ToString(), "immutable");
     }
 
+    [TestMethod]
+    public async Task RemovingTheAssetOriginDefaultKeepsHistoricalLegacyRowsAndRejectsAnythingUndefined()
+    {
+        const string PreOriginMigration = "20261010202850_AddArtifactEvidence";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var now = DateTimeOffset.UtcNow;
+        var work = new Work("Origin default removal", null, null, null, PublicationStatus.Published, now);
+        database.Works.Add(work);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        database.BookRequests.Add(request);
+        var asset = new MediaAsset(
+            work.Id, editionId: null, RequestMediaType.Ebook, ".epub", "history.epub", "history-stored.epub", 10,
+            new string('f', 64), "application/epub+zip", request.Formats.Single().Id, sourceAcquisitionCandidateId: null, now,
+            identityPreConfirmed: true, origin: AssetOrigin.ManualUpload, originUserId: userId);
+        database.MediaAssets.Add(asset);
+        await database.SaveChangesAsync();
+
+        // Back to a database that has no origin at all, then forward through the migration that marks history explicitly
+        // and the one that removes the silent default.
+        await database.GetService<IMigrator>().MigrateAsync(PreOriginMigration);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var preserved = await database.MediaAssets.AsNoTracking().SingleAsync(item => item.Id == asset.Id);
+        Assert.AreEqual(AssetOrigin.Legacy, preserved.Origin, "Historical rows keep the explicit meaning they were given.");
+        Assert.IsNull(preserved.OriginUserId);
+        Assert.IsTrue(preserved.IdentityPreConfirmed, "The historical attestation is not reinterpreted.");
+        var defaultValue = await database.Database.SqlQuery<string?>(
+            $"SELECT column_default AS \"Value\" FROM information_schema.columns WHERE table_schema = 'acquisition' AND table_name = 'media_assets' AND column_name = 'origin'")
+            .SingleAsync();
+        Assert.IsNull(defaultValue, "An insert that does not state an origin fails; it can no longer become Legacy by omission.");
+
+        // Provenance spoofing at the database: a row claiming an undefined origin (what an unset enum would write) is refused.
+        var spoof = await Assert.ThrowsAsync<Exception>(() => database.Database.ExecuteSqlRawAsync(
+            "CREATE TEMP TABLE origin_copy AS SELECT * FROM acquisition.media_assets WHERE origin = 'Legacy' LIMIT 1; " +
+            "UPDATE origin_copy SET id = gen_random_uuid(), origin = '0'; " +
+            "INSERT INTO acquisition.media_assets SELECT * FROM origin_copy;"));
+        StringAssert.Contains(spoof.ToString(), "ck_media_assets_origin_defined");
+        Assert.AreEqual(1, await database.MediaAssets.CountAsync(), "The refused insert left nothing behind.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
     private static async Task<bool> ColumnExistsAsync(AppDbContext database, string column) =>
         await database.Database.SqlQuery<bool>(
             $"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'acquisition' AND table_name = 'media_assets' AND column_name = {column}) AS \"Value\"")

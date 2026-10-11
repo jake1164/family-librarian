@@ -206,10 +206,12 @@ public sealed class MediaAsset
 
     /// <summary>
     /// Where this asset came from, set once at creation by the creating code path and never reassigned (there is
-    /// deliberately no method that changes it, and the database rejects an update). Rows that predate it read
-    /// <see cref="AssetOrigin.Legacy"/>.
+    /// deliberately no method that changes it, and the database rejects an update). Rows that predate it were marked
+    /// <see cref="AssetOrigin.Legacy"/> once, explicitly, by the migration that introduced the column. The in-code default
+    /// is <see cref="AssetOrigin.Unknown"/> (fails closed): nothing that is merely unset can become trusted legacy
+    /// provenance, and the database has no default to fall back on either.
     /// </summary>
-    public AssetOrigin Origin { get; private set; } = AssetOrigin.Legacy;
+    public AssetOrigin Origin { get; private set; } = AssetOrigin.Unknown;
 
     /// <summary>The authenticated administrator behind a <see cref="AssetOrigin.ManualUpload"/>; otherwise <see langword="null"/>.</summary>
     public Guid? OriginUserId { get; private set; }
