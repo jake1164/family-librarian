@@ -14,6 +14,11 @@ public sealed class CatalogWorkResolver(
     NotificationService notifications,
     IClock clock)
 {
+    /// <summary>
+    /// One writer at a time creates catalog rows in this process. Held only for the database work, never for a provider call.
+    /// </summary>
+    private static readonly SemaphoreSlim CreationGate = new(1, 1);
+
     private readonly Dictionary<string, IBookMetadataProvider> _providers = providers
         .ToDictionary(provider => provider.Id, StringComparer.OrdinalIgnoreCase);
 
@@ -38,8 +43,55 @@ public sealed class CatalogWorkResolver(
             throw new UnknownMetadataProviderException(providerId);
         }
 
+        // The provider call is slow and touches no catalog data, so it stays outside the gate.
         var candidate = await provider.GetDetailsAsync(externalId, cancellationToken)
             ?? throw new CatalogCandidateNotFoundException(providerId, externalId);
+
+        CatalogWorkResolution resolution;
+        var authorFollowerNotifications = new List<(Guid FollowerUserId, Guid AuthorId, string AuthorName)>();
+        var seriesFollowerNotifications = new List<(Guid FollowerUserId, Guid SeriesId, string SeriesName)>();
+
+        // Creating catalog rows is serialized (a fast, database-only section). Without this, two callers resolving the same
+        // new book, or two new books sharing a new author or series, both pass their "does it exist yet?" check and then
+        // collide on the catalog's unique indexes, failing one of them. Whoever enters second re-checks and finds the first's rows.
+        await CreationGate.WaitAsync(cancellationToken);
+        try
+        {
+            resolution = await CreateOrFindAsync(
+                provider, candidate, providerId, externalId, authorFollowerNotifications, seriesFollowerNotifications, cancellationToken);
+        }
+        finally
+        {
+            CreationGate.Release();
+        }
+
+        if (resolution.WasCreated)
+        {
+            // Only after the catalog write actually commits: a notification for
+            // a Work that failed to save would be worse than not sending one.
+            await NotifyFollowersAsync(
+                resolution.Work, authorFollowerNotifications, seriesFollowerNotifications, cancellationToken);
+        }
+
+        return resolution;
+    }
+
+    private async Task<CatalogWorkResolution> CreateOrFindAsync(
+        IBookMetadataProvider provider,
+        BookCandidate candidate,
+        string providerId,
+        string externalId,
+        List<(Guid FollowerUserId, Guid AuthorId, string AuthorName)> authorFollowerNotifications,
+        List<(Guid FollowerUserId, Guid SeriesId, string SeriesName)> seriesFollowerNotifications,
+        CancellationToken cancellationToken)
+    {
+        // Another caller may have created this reference while we were waiting for the gate.
+        var createdMeanwhile = await catalogRepository.FindWorkByExternalReferenceAsync(providerId, externalId, cancellationToken);
+        if (createdMeanwhile is not null)
+        {
+            return new CatalogWorkResolution(createdMeanwhile, false);
+        }
+
         var observedAtUtc = clock.UtcNow;
         var isbn13s = candidate.Editions
             .Select(edition => edition.Isbn13)
@@ -71,9 +123,6 @@ public sealed class CatalogWorkResolver(
             candidate.PublicationDate is null ? PublicationStatus.Unknown : PublicationStatus.Published,
             observedAtUtc);
 
-        var authorFollowerNotifications = new List<(Guid FollowerUserId, Guid AuthorId, string AuthorName)>();
-        var seriesFollowerNotifications = new List<(Guid FollowerUserId, Guid SeriesId, string SeriesName)>();
-
         await AddAuthorsAsync(work, candidate.Authors, observedAtUtc, authorFollowerNotifications, cancellationToken);
         AddEditions(work, candidate.Editions, observedAtUtc);
         await AddSeriesEntriesAsync(
@@ -86,11 +135,6 @@ public sealed class CatalogWorkResolver(
             candidate.ExternalId,
             observedAtUtc));
         await catalogRepository.SaveChangesAsync(cancellationToken);
-
-        // Only after the catalog write actually commits: a notification for
-        // a Work that failed to save would be worse than not sending one.
-        await NotifyFollowersAsync(
-            work, authorFollowerNotifications, seriesFollowerNotifications, cancellationToken);
 
         return new CatalogWorkResolution(work, true);
     }
