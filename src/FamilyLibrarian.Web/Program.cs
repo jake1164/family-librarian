@@ -300,6 +300,7 @@ app.MapSmtpSettingsEndpoints();
 app.MapMatrixSettingsEndpoints();
 app.MapMatrixIdentityLinkEndpoints();
 app.MapConversationEndpoints();
+app.MapModelTestEndpoints();
 app.MapFeedbackEndpoints();
 app.MapFollowingEndpoints();
 app.MapDeliveryTargetEndpoints();

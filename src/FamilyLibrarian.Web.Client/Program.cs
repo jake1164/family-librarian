@@ -57,6 +57,7 @@ builder.Services.AddScoped<SmtpSettingsApiClient>();
 builder.Services.AddScoped<MatrixSettingsApiClient>();
 builder.Services.AddScoped<MatrixLinkApiClient>();
 builder.Services.AddScoped<FamilyLibrarian.Web.Client.Conversation.ConversationApiClient>();
+builder.Services.AddScoped<FamilyLibrarian.Web.Client.ModelTesting.ModelTestApiClient>();
 builder.Services.AddScoped<FeedbackApiClient>();
 builder.Services.AddScoped<FollowApiClient>();
 builder.Services.AddScoped<DeliveryTargetApiClient>();

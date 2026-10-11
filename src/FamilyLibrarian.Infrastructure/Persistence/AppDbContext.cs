@@ -7,6 +7,7 @@ using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Conversation;
+using FamilyLibrarian.Domain.ModelTesting;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Feedback;
 using FamilyLibrarian.Domain.Following;
@@ -74,6 +75,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<MatrixSettings> MatrixSettings => Set<MatrixSettings>();
 
     public DbSet<UserMatrixDestination> UserMatrixDestinations => Set<UserMatrixDestination>();
+
+    public DbSet<ModelTestSettings> ModelTestSettingsRows => Set<ModelTestSettings>();
 
     public DbSet<StoredConversationSession> ConversationSessions => Set<StoredConversationSession>();
 
@@ -352,6 +355,28 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(destination => destination.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<ModelTestSettings>(entity =>
+        {
+            entity.ToTable("model_test_settings", "integrations");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.IsEnabled).HasColumnName("is_enabled");
+            entity.Property(settings => settings.EndpointUrl).HasColumnName("endpoint_url").HasMaxLength(ModelTestSettings.MaxEndpointLength);
+            entity.Property(settings => settings.ProtectedApiKey).HasColumnName("protected_api_key");
+            entity.Property(settings => settings.ApiKeyFormatVersion).HasColumnName("api_key_format_version");
+            entity.Property(settings => settings.ApiKeySetAtUtc).HasColumnName("api_key_set_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.PrimaryModel).HasColumnName("primary_model").HasMaxLength(ModelTestSettings.MaxModelNameLength);
+            entity.Property(settings => settings.ComparisonModel).HasColumnName("comparison_model").HasMaxLength(ModelTestSettings.MaxModelNameLength);
+            entity.Property(settings => settings.CloudModel).HasColumnName("cloud_model").HasMaxLength(ModelTestSettings.MaxModelNameLength);
+            entity.Property(settings => settings.AllowCloud).HasColumnName("allow_cloud");
+            entity.Property(settings => settings.TimeoutSeconds).HasColumnName("timeout_seconds");
+            entity.Property(settings => settings.MaxOutputTokens).HasColumnName("max_output_tokens");
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
         });
 
         // Conversation (alpha.6 M2-3): minimal structured state, plus the records that make a replayed message harmless.

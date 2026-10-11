@@ -9,6 +9,7 @@ using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Following;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
+using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Policy;
 using FamilyLibrarian.Application.Providers;
@@ -26,6 +27,7 @@ using FamilyLibrarian.Infrastructure.LibriVox;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
+using FamilyLibrarian.Infrastructure.ModelTesting;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Infrastructure.Policy;
 using FamilyLibrarian.Infrastructure.Providers;
@@ -250,6 +252,15 @@ public static class DependencyInjection
         services.AddScoped<IUserMatrixDestinationLookup>(provider => provider.GetRequiredService<UserMatrixDestinationRepository>());
         services.AddScoped<MatrixIdentityLinkService>();
         services.AddScoped<MatrixInboundRouter>();
+
+        // Model connectivity and capability test (alpha.6 M3-5): disabled by default, admin-only, manual.
+        services.AddHttpClient(OpenAiCompatibleModelClient.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        services.AddScoped<IModelClient, OpenAiCompatibleModelClient>();
+        services.AddScoped<IModelTestSettingsStore, ModelTestSettingsStore>();
+        services.AddSingleton<ModelTestGate>();
+        services.AddScoped<ModelTestSettingsService>();
+        services.AddScoped<ModelCapabilityTestService>();
 
         // Conversation (alpha.6 M2): everything is off until Conversation:Enabled (and a transport flag) is set.
         services.AddSingleton(provider =>

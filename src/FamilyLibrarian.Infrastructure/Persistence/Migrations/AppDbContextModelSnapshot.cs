@@ -2271,6 +2271,83 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("follows", "following");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelTesting.ModelTestSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("AllowCloud")
+                        .HasColumnType("boolean")
+                        .HasColumnName("allow_cloud");
+
+                    b.Property<int>("ApiKeyFormatVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("api_key_format_version");
+
+                    b.Property<DateTimeOffset?>("ApiKeySetAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("api_key_set_at_utc");
+
+                    b.Property<string>("CloudModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("cloud_model");
+
+                    b.Property<string>("ComparisonModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("comparison_model");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("EndpointUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("endpoint_url");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<int>("MaxOutputTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_output_tokens");
+
+                    b.Property<string>("PrimaryModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("primary_model");
+
+                    b.Property<string>("ProtectedApiKey")
+                        .HasColumnType("text")
+                        .HasColumnName("protected_api_key");
+
+                    b.Property<int>("TimeoutSeconds")
+                        .HasColumnType("integer")
+                        .HasColumnName("timeout_seconds");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("model_test_settings", "integrations");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Notifications.NotificationEvent", b =>
                 {
                     b.Property<Guid>("Id")

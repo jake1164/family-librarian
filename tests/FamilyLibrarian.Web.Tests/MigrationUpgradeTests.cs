@@ -148,6 +148,24 @@ public sealed class MigrationUpgradeTests
     }
 
     [TestMethod]
+    public async Task ModelTestSettingsUpgradeIsAdditiveAndStartsEmptyAndDisabled()
+    {
+        const string PreModelTestMigration = "20261011105940_AddConversationState";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await database.GetService<IMigrator>().MigrateAsync(PreModelTestMigration);
+        Assert.IsFalse(await TableExistsAsync(database, "integrations", "model_test_settings"));
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        Assert.IsTrue(await TableExistsAsync(database, "integrations", "model_test_settings"));
+        Assert.AreEqual(0, await database.ModelTestSettingsRows.CountAsync(), "Nothing is configured, so testing stays off.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task AssetOriginUpgradeMarksEveryExistingRowLegacyExplicitlyAndProtectsOrigin()
     {
         const string PreOriginMigration = "20261010202850_AddArtifactEvidence";

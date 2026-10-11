@@ -2,6 +2,10 @@ namespace FamilyLibrarian.Domain.Audit;
 
 public static class AuditActions
 {
+    public const string ModelTestSettingsChanged = "model_test.settings_changed";
+    public const string ModelTestSecretSet = "model_test.secret_set";
+    public const string ModelTestSecretCleared = "model_test.secret_cleared";
+    public const string ModelTestRun = "model_test.run";
     public const string ProviderEnabled = "provider.enabled";
     public const string ProviderDisabled = "provider.disabled";
     public const string ProviderCredentialSet = "provider.credential_set";
@@ -118,6 +122,7 @@ public static class AuditActions
 
 public static class AuditSubjectTypes
 {
+    public const string ModelTest = "model_test";
     public const string Provider = "provider";
     public const string Invitation = "invitation";
     public const string Account = "account";

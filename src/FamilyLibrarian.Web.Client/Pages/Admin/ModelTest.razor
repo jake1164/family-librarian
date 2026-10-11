@@ -1,0 +1,243 @@
+@page "/admin/model-test"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.ModelTesting
+@using FamilyLibrarian.Web.Client.ModelTesting
+@inject ModelTestApiClient Api
+
+<PageTitle>Model test · Family Librarian</PageTitle>
+
+<MudStack Spacing="4">
+    <div>
+        <MudText Typo="Typo.h3">Model connectivity test</MudText>
+        <MudText Typo="Typo.body1">
+            An optional, manual check that Family Librarian can reach your LiteLLM (or any OpenAI-compatible) endpoint and what a
+            model can do. It uses only made-up books, runs only when you press a button, never retries, and never falls back to
+            another model. Results are informational: nothing here changes matching, requests, approvals or publishing, and the
+            prompts and replies are not stored.
+        </MudText>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <MudAlert Severity="@(messageIsError ? Severity.Error : Severity.Success)" role="status">@message</MudAlert>
+    }
+
+    @if (settings is null)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" aria-label="Loading settings" />
+    }
+    else
+    {
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudStack Spacing="3">
+                <MudText Typo="Typo.h5">Settings</MudText>
+                <MudTextField @bind-Value="endpoint" Label="Endpoint URL" Variant="Variant.Outlined"
+                              HelperText="For example http://litellm:4000 (no credentials or query string)." />
+                <MudTextField @bind-Value="primaryModel" Label="Primary local model alias" Variant="Variant.Outlined" />
+                <MudTextField @bind-Value="comparisonModel" Label="Comparison local model alias (optional)" Variant="Variant.Outlined" />
+                <MudSwitch T="bool" @bind-Value="allowCloud" Color="Color.Warning"
+                           Label="Allow testing a cloud model (can use paid or rate-limited services)" />
+                <MudTextField @bind-Value="cloudModel" Label="Cloud model alias (optional)" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
+                <MudStack Row="true" Spacing="2">
+                    <MudNumericField T="int" @bind-Value="timeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
+                    <MudNumericField T="int" @bind-Value="maxOutputTokens" Label="Maximum output tokens" Min="16" Max="1024" Variant="Variant.Outlined" />
+                </MudStack>
+                <MudStack Row="true" Spacing="2">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save settings</MudButton>
+                </MudStack>
+
+                <MudDivider />
+                <MudText Typo="Typo.h6">API key</MudText>
+                <MudText Typo="Typo.body2">@(settings.HasApiKey ? "A key is stored (it cannot be shown again)." : "No key is stored.")</MudText>
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                    <MudTextField @bind-Value="apiKey" Label="New API key" InputType="InputType.Password" Variant="Variant.Outlined"
+                                  Class="flex-grow-1" />
+                    <MudButton Variant="Variant.Outlined" Disabled="@(busy || string.IsNullOrWhiteSpace(apiKey))" OnClick="SetApiKeyAsync">Store key</MudButton>
+                    <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="@(busy || !settings.HasApiKey)" OnClick="ClearApiKeyAsync">Remove key</MudButton>
+                </MudStack>
+
+                <MudDivider />
+                <MudSwitch T="bool" Value="settings.IsEnabled" ValueChanged="SetEnabledAsync" Color="Color.Primary" Disabled="@busy"
+                           Label="Model testing is enabled" />
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudStack Spacing="3">
+                <MudText Typo="Typo.h5">Run the checks</MudText>
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center">
+                    <MudSelect T="string" @bind-Value="target" Label="Model to test" Variant="Variant.Outlined" Style="min-width: 16rem;">
+                        <MudSelectItem Value="@("Primary")">Primary local: @Show(settings.PrimaryModel)</MudSelectItem>
+                        <MudSelectItem Value="@("Comparison")" Disabled="@string.IsNullOrWhiteSpace(settings.ComparisonModel)">Comparison local: @Show(settings.ComparisonModel)</MudSelectItem>
+                        <MudSelectItem Value="@("Cloud")" Disabled="@(!settings.AllowCloud || string.IsNullOrWhiteSpace(settings.CloudModel))">Cloud: @Show(settings.CloudModel)</MudSelectItem>
+                    </MudSelect>
+                    @if (target == "Cloud")
+                    {
+                        <MudCheckBox T="bool" @bind-Value="confirmCloud" Color="Color.Warning"
+                                     Label="I understand this sends fictional test prompts to a cloud-hosted model" />
+                    }
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(busy || !settings.IsEnabled)" OnClick="RunAsync">
+                        Run all checks
+                    </MudButton>
+                </MudStack>
+                @if (!settings.IsEnabled)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true">Turn model testing on above to run the checks.</MudAlert>
+                }
+                @if (busy)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" aria-label="Running model checks" />
+                }
+
+                @if (report is not null)
+                {
+                    <MudText Typo="Typo.subtitle1">
+                        @report.ConfiguredModel@(report.IsCloud ? " (cloud)" : "") ·
+                        @report.TotalCalls call(s) · @(report.TotalTokens?.ToString() ?? "no") token usage reported · @report.TotalLatencyMilliseconds ms
+                    </MudText>
+                    <MudTable Items="report.Results" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm">
+                        <HeaderContent>
+                            <MudTh>Check</MudTh>
+                            <MudTh>Result</MudTh>
+                            <MudTh>What happened</MudTh>
+                            <MudTh>Tokens</MudTh>
+                            <MudTh>ms</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Check">@Humanize(context.Check)</MudTd>
+                            <MudTd DataLabel="Result">@context.Status</MudTd>
+                            <MudTd DataLabel="What happened">
+                                @context.Detail
+                                @if (!string.IsNullOrWhiteSpace(context.Sample))
+                                {
+                                    <MudText Typo="Typo.caption" Style="white-space: pre-wrap;">Excerpt (not stored): @context.Sample</MudText>
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="Tokens">@(context.TotalTokens?.ToString() ?? "–")</MudTd>
+                            <MudTd DataLabel="ms">@context.LatencyMilliseconds</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                    <MudText Typo="Typo.caption">
+                        Informational only. A model's agreement with the made-up test cases is not an accuracy score, and no result is used by
+                        Family Librarian to make a decision.
+                    </MudText>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+</MudStack>
+
+@code {
+    private ModelTestSettingsResponse? settings;
+    private ModelTestReportResponse? report;
+    private string endpoint = string.Empty;
+    private string primaryModel = string.Empty;
+    private string comparisonModel = string.Empty;
+    private string cloudModel = string.Empty;
+    private bool allowCloud;
+    private int timeoutSeconds = 30;
+    private int maxOutputTokens = 384;
+    private string apiKey = string.Empty;
+    private string target = "Primary";
+    private bool confirmCloud;
+    private bool busy;
+    private string? message;
+    private bool messageIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            Apply(await Api.GetAsync());
+        }
+        catch (HttpRequestException)
+        {
+            message = "Settings could not be loaded.";
+            messageIsError = true;
+        }
+    }
+
+    private void Apply(ModelTestSettingsResponse value)
+    {
+        settings = value;
+        endpoint = value.EndpointUrl ?? string.Empty;
+        primaryModel = value.PrimaryModel ?? string.Empty;
+        comparisonModel = value.ComparisonModel ?? string.Empty;
+        cloudModel = value.CloudModel ?? string.Empty;
+        allowCloud = value.AllowCloud;
+        timeoutSeconds = value.TimeoutSeconds;
+        maxOutputTokens = value.MaxOutputTokens;
+    }
+
+    private async Task SaveAsync() => await ApplyResultAsync(
+        await Api.SaveAsync(new SaveModelTestSettingsRequest(endpoint, primaryModel, comparisonModel, cloudModel, allowCloud, timeoutSeconds, maxOutputTokens)),
+        "Settings saved.");
+
+    private async Task SetApiKeyAsync()
+    {
+        await ApplyResultAsync(await Api.SetApiKeyAsync(apiKey), "API key stored.");
+        apiKey = string.Empty;
+    }
+
+    private async Task ClearApiKeyAsync() => await ApplyResultAsync(await Api.ClearApiKeyAsync(), "API key removed.");
+
+    private async Task SetEnabledAsync(bool enabled) => await ApplyResultAsync(await Api.SetEnabledAsync(enabled), enabled ? "Model testing is on." : "Model testing is off.");
+
+    private async Task ApplyResultAsync(ModelTestCallResult<ModelTestSettingsResponse> result, string success)
+    {
+        busy = true;
+        try
+        {
+            messageIsError = !result.Succeeded;
+            message = result.Succeeded ? success : result.Error;
+            if (result.Value is { } value) Apply(value);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task RunAsync()
+    {
+        busy = true;
+        report = null;
+        message = null;
+        try
+        {
+            var result = await Api.RunAsync(new RunModelTestRequest(target, null, target == "Cloud" && confirmCloud));
+            if (result.Succeeded)
+            {
+                report = result.Value;
+            }
+            else
+            {
+                message = result.Error;
+                messageIsError = true;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            message = "The request failed.";
+            messageIsError = true;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static string Show(string? alias) => string.IsNullOrWhiteSpace(alias) ? "(not set)" : alias;
+
+    private static string Humanize(string check) => check switch
+    {
+        "Connectivity" => "Connectivity",
+        "IntentClassification" => "Book-intent classification",
+        "StructuredJson" => "Structured JSON",
+        "MatchAdvisory" => "Book-match advisory (fictional evidence)",
+        "MalformedResponses" => "Malformed-reply handling (offline)",
+        "ModelUnavailable" => "Unknown-model handling",
+        "ToolCapability" => "Tool-calling capability",
+        _ => check
+    };
+}
