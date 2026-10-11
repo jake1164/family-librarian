@@ -209,6 +209,21 @@ public sealed class MigrationUpgradeTests
     }
 
     [TestMethod]
+    public async Task SemanticFindingsUpgradeIsAdditiveAndStartsEmpty()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await database.Database.MigrateAsync();
+        var applied = (await database.Database.GetAppliedMigrationsAsync()).ToList();
+        Assert.IsTrue(applied.Any(name => name.EndsWith("_AddSemanticFindings", StringComparison.Ordinal)));
+        Assert.IsTrue(await TableExistsAsync(database, "evidence", "semantic_findings"));
+        Assert.AreEqual(0, await database.SemanticFindings.CountAsync(), "No finding exists until a model role is switched on.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task AssetOriginUpgradeMarksEveryExistingRowLegacyExplicitlyAndProtectsOrigin()
     {
         const string PreOriginMigration = "20261010202850_AddArtifactEvidence";

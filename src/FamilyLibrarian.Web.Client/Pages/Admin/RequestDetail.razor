@@ -223,6 +223,7 @@
                                     @DescribeDebugCandidate(candidate)
                                 </MudText>
                                 <AdminCandidateIdentityEvidence Evidence="candidate.IdentityEvidence" />
+                                <AdminSemanticFinding Finding="candidate.SemanticFinding" />
                                 @if (!string.IsNullOrWhiteSpace(candidate.ReleaseName))
                                 {
                                     <MudText Typo="Typo.caption" Style="font-family: var(--mud-typography-monospace-family, monospace); word-break: break-all;">

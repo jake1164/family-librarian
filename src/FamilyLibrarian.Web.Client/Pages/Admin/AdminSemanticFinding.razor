@@ -1,0 +1,54 @@
+@using FamilyLibrarian.Contracts.Requests
+
+@if (Finding is { } finding)
+{
+    <details class="mt-2" style="overflow-wrap: anywhere;">
+        <summary>AI second opinion (advisory only)</summary>
+        <MudText Typo="Typo.caption" Class="mt-1">
+            A model's note about evidence the fixed rules could not settle. It is shown for information only and never changes the
+            match, the ranking or any approval. Rules said: @finding.DeterministicDecision.
+        </MudText>
+        @if (finding.Verdict is null)
+        {
+            <MudText Typo="Typo.body2">
+                No usable answer from @finding.Model: @Describe(finding.Outcome)@(string.IsNullOrWhiteSpace(finding.FailureDetail) ? "" : $" ({finding.FailureDetail})").
+            </MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2">
+                Model view: <strong>@DescribeVerdict(finding.Verdict)</strong> (@finding.Model@(finding.IsCloud ? ", cloud" : ""), @finding.CreatedAtUtc.ToString("u")).
+            </MudText>
+            <ul class="mb-0">
+                @foreach (var claim in finding.Claims)
+                {
+                    <li><code>@claim.Kind</code> — @claim.Note <span class="mud-typography-caption">(evidence: @string.Join(", ", claim.EvidenceIds))</span></li>
+                }
+            </ul>
+        }
+    </details>
+}
+
+@code {
+    [Parameter] public AdminSemanticFindingResponse? Finding { get; set; }
+
+    private static string DescribeVerdict(string verdict) => verdict switch
+    {
+        "Consistent" => "the evidence looks consistent with the request",
+        "Inconsistent" => "the evidence looks inconsistent with the request",
+        _ => "uncertain"
+    };
+
+    private static string Describe(string outcome) => outcome switch
+    {
+        "EmptyContent" => "the model returned no text",
+        "InvalidJson" => "the reply was not valid JSON",
+        "SchemaRejected" => "the reply broke the required format and was discarded",
+        "OutputTooLarge" => "the reply was too long",
+        "Timeout" => "the model timed out",
+        "TransportFailure" => "the model could not be reached",
+        "ModelUnavailable" => "the model alias is not available",
+        "UnsupportedCapability" => "the model does not support what was asked",
+        _ => outcome
+    };
+}

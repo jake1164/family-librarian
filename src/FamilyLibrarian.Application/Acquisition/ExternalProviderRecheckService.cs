@@ -38,7 +38,8 @@ public sealed class ExternalProviderRecheckService(
     NotificationService notifications,
     IUserAccountStore accounts,
     IAutomaticFulfillmentSignal? fulfillmentSignal = null,
-    AudiobookPartSetAcquisitionService? partSets = null)
+    AudiobookPartSetAcquisitionService? partSets = null,
+    SemanticAssessment.ICandidateSemanticShadow? semanticShadow = null)
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
@@ -133,6 +134,8 @@ public sealed class ExternalProviderRecheckService(
                         var options = await candidateChecker.FindForProviderAsync(
                             provider, identity, format.MediaType, searchCancellation.Token, exclusions);
                         var searchFoundSomething = options.Count > 0;
+                        // Shadow only: hands unsettled candidates to a background reviewer and returns at once.
+                        semanticShadow?.Observe(request.Id, options);
                         // By ID, and by release: a copy that failed is not
                         // tried again just because the same posting turns up
                         // under another reference.

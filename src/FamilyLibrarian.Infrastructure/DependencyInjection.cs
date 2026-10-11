@@ -14,6 +14,7 @@ using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Policy;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Application.SemanticAssessment;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
@@ -31,6 +32,7 @@ using FamilyLibrarian.Infrastructure.Metadata;
 using FamilyLibrarian.Infrastructure.ModelGateway;
 using FamilyLibrarian.Infrastructure.ModelTesting;
 using FamilyLibrarian.Infrastructure.Persistence;
+using FamilyLibrarian.Infrastructure.SemanticAssessment;
 using FamilyLibrarian.Infrastructure.Policy;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Publishing;
@@ -273,6 +275,12 @@ public static class DependencyInjection
         services.AddSingleton<ModelExecutionGate>();
         services.AddSingleton<ModelCircuitBreaker>();
         services.AddScoped<IModelExecutionPolicy, ModelExecutionPolicy>();
+
+        // Shadow semantic analysis (alpha.6 M4-3): advisory findings stored beside, never inside, deterministic results.
+        services.AddScoped<ISemanticFindingStore, SemanticFindingStore>();
+        services.AddScoped<CandidateSemanticAnalyzer>();
+        services.AddSingleton<CandidateSemanticShadowBuffer>();
+        services.AddSingleton<ICandidateSemanticShadow>(provider => provider.GetRequiredService<CandidateSemanticShadowBuffer>());
 
         // Conversation (alpha.6 M2): everything is off until Conversation:Enabled (and a transport flag) is set.
         services.AddSingleton(provider =>

@@ -83,6 +83,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<ModelUsageRecord> ModelUsageRecords => Set<ModelUsageRecord>();
 
+    public DbSet<SemanticFinding> SemanticFindings => Set<SemanticFinding>();
+
     public DbSet<StoredConversationSession> ConversationSessions => Set<StoredConversationSession>();
 
     public DbSet<ProcessedConversationEvent> ProcessedConversationEvents => Set<ProcessedConversationEvent>();
@@ -453,6 +455,32 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(record => record.UsageEstimated).HasColumnName("usage_estimated");
             entity.HasIndex(record => record.OccurredAtUtc);
             entity.HasIndex(record => new { record.UserId, record.OccurredAtUtc });
+        });
+
+        builder.Entity<SemanticFinding>(entity =>
+        {
+            entity.ToTable("semantic_findings", "evidence");
+            entity.HasKey(finding => finding.Id);
+            entity.Property(finding => finding.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(finding => finding.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(16);
+            entity.Property(finding => finding.SubjectReference).HasColumnName("subject_reference").HasMaxLength(SemanticFinding.MaxReferenceLength);
+            entity.Property(finding => finding.RequestId).HasColumnName("request_id");
+            entity.Property(finding => finding.ProviderId).HasColumnName("provider_id").HasMaxLength(64);
+            entity.Property(finding => finding.SchemaId).HasColumnName("schema_id").HasMaxLength(64);
+            entity.Property(finding => finding.EvidenceDigest).HasColumnName("evidence_digest").HasMaxLength(64);
+            entity.Property(finding => finding.DeterministicDecision).HasColumnName("deterministic_decision").HasMaxLength(48);
+            entity.Property(finding => finding.Role).HasColumnName("role").HasConversion<string>().HasMaxLength(48);
+            entity.Property(finding => finding.Model).HasColumnName("model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
+            entity.Property(finding => finding.IsCloud).HasColumnName("is_cloud");
+            entity.Property(finding => finding.Outcome).HasColumnName("outcome").HasConversion<string>().HasMaxLength(32);
+            entity.Property(finding => finding.Verdict).HasColumnName("verdict").HasMaxLength(32);
+            entity.Property(finding => finding.ClaimsJson).HasColumnName("claims_json").HasMaxLength(SemanticFinding.MaxClaimsJsonLength);
+            entity.Property(finding => finding.FailureDetail).HasColumnName("failure_detail").HasMaxLength(SemanticFinding.MaxDetailLength);
+            entity.Property(finding => finding.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Ignore(finding => finding.IsUsable);
+            entity.Ignore(finding => finding.IsReusable);
+            entity.HasIndex(finding => new { finding.Kind, finding.EvidenceDigest, finding.CreatedAtUtc });
+            entity.HasIndex(finding => finding.RequestId);
         });
 
         // Conversation (alpha.6 M2-3): minimal structured state, plus the records that make a replayed message harmless.

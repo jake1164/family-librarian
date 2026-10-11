@@ -5,10 +5,12 @@ using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Application.SemanticAssessment;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.Requests;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
@@ -427,6 +429,8 @@ internal static class AdminRequestEndpoints
         IExternalProviderStore externalProviders,
         IWorkLookup workLookup,
         ExternalCandidateAvailabilityChecker candidateChecker,
+        ISemanticFindingStore semanticFindings,
+        ICandidateSemanticShadow semanticShadow,
         CancellationToken cancellationToken)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
@@ -474,6 +478,14 @@ internal static class AdminRequestEndpoints
                 statusCode: StatusCodes.Status502BadGateway);
         }
 
+        // Shadow only: queue unsettled candidates for a background model review, and show any review already finished.
+        // Neither step can change what is listed below.
+        semanticShadow.Observe(requestId, options);
+        var findings = await semanticFindings.FindLatestAsync(
+            SemanticSubjectKind.Candidate,
+            [.. options.Where(option => option.IdentityAssessment is not null).Select(option => CandidateSemanticEvidence.Digest(option.IdentityAssessment!)).Distinct()],
+            cancellationToken);
+
         return Results.Ok(options.Select(option => new AdminProviderDebugCandidateResponse(
             option.ProviderResultId,
             option.Title ?? string.Empty,
@@ -489,8 +501,17 @@ internal static class AdminRequestEndpoints
             option.RequiresReleaseConfirmation,
             option.ReleaseConcern,
             option.AdminInspectionUri?.ToString(),
-            ToIdentityEvidenceResponse(option))).ToArray());
+            ToIdentityEvidenceResponse(option),
+            option.IdentityAssessment is { } assessment && findings.TryGetValue(CandidateSemanticEvidence.Digest(assessment), out var finding)
+                ? ToResponse(finding)
+                : null)).ToArray());
     }
+
+    private static AdminSemanticFindingResponse ToResponse(SemanticFinding finding) => new(
+        finding.Outcome.ToString(), finding.Verdict,
+        [.. CandidateSemanticAnalyzer.DeserializeClaims(finding.ClaimsJson)
+            .Select(claim => new AdminSemanticClaimResponse(claim.Kind, claim.Stance, claim.EvidenceIds, claim.Note))],
+        finding.FailureDetail, finding.DeterministicDecision, finding.Model, finding.IsCloud, finding.CreatedAtUtc);
 
     private static AdminCandidateIdentityEvidenceResponse? ToIdentityEvidenceResponse(FulfillmentOption option)
     {

@@ -218,7 +218,25 @@ public sealed record AdminProviderDebugCandidateResponse(
     bool RequiresReleaseConfirmation,
     string? ReleaseConcern,
     string? InspectionUri,
-    AdminCandidateIdentityEvidenceResponse? IdentityEvidence = null);
+    AdminCandidateIdentityEvidenceResponse? IdentityEvidence = null,
+    AdminSemanticFindingResponse? SemanticFinding = null);
+
+public sealed record AdminSemanticClaimResponse(string Kind, string Stance, IReadOnlyList<string> EvidenceIds, string Note);
+
+/// <summary>
+/// A model's advisory opinion on one unsettled candidate, kept beside (never inside) the deterministic result. It never
+/// changes the match, the ranking or any approval. <paramref name="Verdict"/> and the claims are present only when the
+/// model gave a valid answer; otherwise <paramref name="Outcome"/> and <paramref name="FailureDetail"/> say what happened.
+/// </summary>
+public sealed record AdminSemanticFindingResponse(
+    string Outcome,
+    string? Verdict,
+    IReadOnlyList<AdminSemanticClaimResponse> Claims,
+    string? FailureDetail,
+    string DeterministicDecision,
+    string Model,
+    bool IsCloud,
+    DateTimeOffset CreatedAtUtc);
 
 public sealed record AdminCandidateSeriesEvidenceResponse(
     string State, string Name, string? RequestedPosition, string? ReleasePosition);
