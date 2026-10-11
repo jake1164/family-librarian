@@ -235,6 +235,11 @@ public sealed class ModelExecutionPolicy(
     private const int CharactersPerTokenEstimate = 3;
     private const int MaxOutputCharactersPerToken = 8;
 
+    /// <summary>One image per call, bounded in size; reserved against the budget as a fixed, generous token cost.</summary>
+    public const int MaxImagesPerCall = 1;
+    public const int MaxImageBytes = 4 * 1024 * 1024;
+    private const int ImageTokenReservation = 1_500;
+
     public async Task<ModelExecution<T>> ExecuteAsync<T>(
         ModelExecutionRequest request, Func<string, ModelParseResult<T>> parse, CancellationToken cancellationToken)
     {
@@ -247,7 +252,14 @@ public sealed class ModelExecutionPolicy(
             return Refused<T>(ModelCallOutcome.RoleUnavailable, $"The {request.Role} role is not available ({resolution.Reason}).");
         }
 
-        if (request.IncludesFileDerivedDetail && resolution.IsCloud && !resolution.AllowCloudExcerpts)
+        var images = request.Messages.SelectMany(message => message.Images ?? []).ToArray();
+        if (images.Length > MaxImagesPerCall || images.Any(image => image.Bytes.Length is 0 or > MaxImageBytes))
+        {
+            return Refused<T>(ModelCallOutcome.InputTooLarge, $"At most {MaxImagesPerCall} image of up to {MaxImageBytes / (1024 * 1024)} MB is allowed.");
+        }
+
+        // A picture someone sent is as private as a detail read from a file: it never goes to a cloud model without the same opt-in.
+        if ((request.IncludesFileDerivedDetail || images.Length > 0) && resolution.IsCloud && !resolution.AllowCloudExcerpts)
         {
             return Refused<T>(ModelCallOutcome.CloudSharingNotAllowed, "Details from files are not allowed to be sent to a cloud model.");
         }
@@ -284,7 +296,9 @@ public sealed class ModelExecutionPolicy(
             return Refused<T>(ModelCallOutcome.ConcurrencyLimited, "Too many model calls are already running.");
         }
 
-        var estimate = (int)Math.Min(int.MaxValue, ((long)inputCharacters + CharactersPerTokenEstimate - 1) / CharactersPerTokenEstimate + maxOutputTokens);
+        var estimate = (int)Math.Min(
+            int.MaxValue,
+            ((long)inputCharacters + CharactersPerTokenEstimate - 1) / CharactersPerTokenEstimate + maxOutputTokens + (long)images.Length * ImageTokenReservation);
         var reservation = new ModelUsageRecord(request.Role, request.Budget, request.UserId, resolution.Model!, resolution.IsCloud, estimate, clock.UtcNow);
         try
         {

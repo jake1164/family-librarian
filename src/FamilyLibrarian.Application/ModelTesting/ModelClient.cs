@@ -3,7 +3,10 @@ namespace FamilyLibrarian.Application.ModelTesting;
 /// <summary>Where and how to reach one model for one call. Resolved fresh each time, since settings can change at any moment.</summary>
 public sealed record ModelConnection(Uri Endpoint, string? ApiKey, string Model, TimeSpan Timeout);
 
-public sealed record ModelChatMessage(string Role, string Content);
+/// <summary>An image sent to a vision-capable model. The bytes were already checked by the caller; this seam only carries them.</summary>
+public sealed record ModelImage(string MimeType, byte[] Bytes);
+
+public sealed record ModelChatMessage(string Role, string Content, IReadOnlyList<ModelImage>? Images = null);
 
 /// <summary>A tool the model is told about so its tool-calling support can be observed. It is never executed.</summary>
 public sealed record ModelToolDefinition(string Name, string Description, string ParametersJsonSchema);

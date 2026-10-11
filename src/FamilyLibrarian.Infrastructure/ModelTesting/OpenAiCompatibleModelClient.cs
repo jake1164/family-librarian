@@ -79,7 +79,7 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
             ["messages"] = new JsonArray([.. request.Messages.Select(message => (JsonNode)new JsonObject
             {
                 ["role"] = message.Role,
-                ["content"] = message.Content
+                ["content"] = BuildContent(message)
             })]),
             ["max_tokens"] = request.MaxOutputTokens,
             ["temperature"] = 0,
@@ -106,6 +106,27 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
         }
 
         return body.ToJsonString();
+    }
+
+    /// <summary>Plain text for an ordinary message; the OpenAI content-parts form when images accompany the text.</summary>
+    private static JsonNode BuildContent(ModelChatMessage message)
+    {
+        if (message.Images is not { Count: > 0 })
+        {
+            return message.Content;
+        }
+
+        var parts = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = message.Content } };
+        foreach (var image in message.Images)
+        {
+            parts.Add(new JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject { ["url"] = $"data:{image.MimeType};base64,{Convert.ToBase64String(image.Bytes)}" }
+            });
+        }
+
+        return parts;
     }
 
     private static async Task<string?> ReadBoundedAsync(HttpResponseMessage response, CancellationToken cancellationToken)

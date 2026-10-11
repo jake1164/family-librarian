@@ -229,7 +229,9 @@ internal sealed class ConversationHarness
 
     public FakeTools Tools { get; } = new();
 
-    public ConversationService Service => new(User, Tools, Sessions, Events, Transaction, Limiter, Options, Clock);
+    public IBookIntentInterpreter? Interpreter { get; set; }
+
+    public ConversationService Service => new(User, Tools, Sessions, Events, Transaction, Limiter, Options, Clock, Interpreter);
 
     public int EventCounter { get; private set; }
 

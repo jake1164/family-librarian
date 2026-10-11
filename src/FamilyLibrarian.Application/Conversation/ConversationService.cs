@@ -29,7 +29,8 @@ public sealed class ConversationService(
     IConversationTransaction transaction,
     IConversationLimiter limiter,
     ConversationOptions options,
-    IClock clock) : IConversationService
+    IClock clock,
+    IBookIntentInterpreter? interpreter = null) : IConversationService
 {
     private const int MaxScopeKeyLength = 200;
     private const int MaxEventIdLength = 255;
@@ -246,7 +247,8 @@ public sealed class ConversationService(
                 return await SearchPlanAsync(parsed.Text!, $"ISBN {parsed.Text}", null, requestIntent: false, state, cancellationToken);
 
             case ConversationCommandKind.Search:
-                return await SearchPlanAsync(parsed.Text!, parsed.Text!, parsed.Formats, parsed.RequestIntent, state, cancellationToken);
+                return await SearchPlanAsync(
+                    parsed.Text!, parsed.Text!, parsed.Formats, parsed.RequestIntent, state, cancellationToken, tryInterpretIfEmpty: true);
 
             case ConversationCommandKind.Details:
                 return Keep(await DetailsReplyAsync(state, parsed.Number!.Value, cancellationToken), state);
@@ -330,11 +332,18 @@ public sealed class ConversationService(
 
     private async Task<TurnPlan> SearchPlanAsync(
         string query, string label, IReadOnlyList<RequestMediaType>? formats, bool requestIntent,
-        ConversationState state, CancellationToken cancellationToken)
+        ConversationState state, CancellationToken cancellationToken, bool tryInterpretIfEmpty = false)
     {
         var found = await tools.SearchBooksAsync(query, options.MaxChoices, cancellationToken);
         if (found.Choices.Count == 0)
         {
+            // The fixed grammar and the catalog both came up empty. Only now, and only for a message that reads like prose rather
+            // than a title, is an optional model asked to reword the search. If it declines or fails, the answer below is unchanged.
+            if (tryInterpretIfEmpty && !found.SomeSourcesUnavailable && await InterpretedPlanAsync(query, formats, state, cancellationToken) is { } interpreted)
+            {
+                return interpreted;
+            }
+
             var none = found.SomeSourcesUnavailable
                 ? $"I couldn't reach the catalog sources just now for “{label}”. Please try again in a minute."
                 : $"I couldn't find anything for “{label}”. Try the title and author, or an ISBN.";
@@ -370,6 +379,65 @@ public sealed class ConversationService(
         return new TurnPlan(
             new ConversationReply(ConversationReplyKind.Choices, lines.ToString(), choices, [], ["1", "cancel"]),
             next, null);
+    }
+
+    /// <summary>
+    /// A model's reading of an unrecognized message, turned into one of the same read-only replies the fixed grammar gives.
+    /// The model can reword a search, route to the person's own status, or call the message off-topic. It cannot choose a
+    /// format, pick a result, or request anything: those stay with the person's own words. Null means "carry on as before".
+    /// </summary>
+    private async Task<TurnPlan?> InterpretedPlanAsync(
+        string text, IReadOnlyList<RequestMediaType>? formats, ConversationState state, CancellationToken cancellationToken)
+    {
+        if (interpreter is null || currentUser.UserId is not { } userId || text.Length < 12 ||
+            text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length < 3)
+        {
+            return null;
+        }
+
+        BookIntentInterpretation? interpretation;
+        try
+        {
+            interpretation = await interpreter.InterpretAsync(userId, text, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return null;
+        }
+
+        switch (interpretation?.Intent)
+        {
+            case BookIntent.OutOfDomain:
+                return new TurnPlan(
+                    ConversationReply.Of(ConversationReplyKind.OutOfDomain,
+                        "I can only help with books: finding them, checking the library, and your book requests. " +
+                        "Try “find The Hobbit”, “status”, or “help”."),
+                    ConversationState.Empty(), null);
+
+            case BookIntent.CheckStatus:
+                return new TurnPlan(await StatusReplyAsync(cancellationToken), ConversationState.Empty(), null);
+
+            case BookIntent.FindBook when interpretation.Title is { } title:
+                var reworded = interpretation.Author is { } author ? $"{title} {author}" : title;
+                if (string.Equals(reworded, text, StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                var plan = await SearchPlanAsync(reworded, reworded, formats, requestIntent: false, state, cancellationToken);
+                return plan.Reply.Kind == ConversationReplyKind.Choices
+                    ? plan with
+                    {
+                        Reply = plan.Reply with
+                        {
+                            Text = $"I wasn't sure what you meant, so I took a guess at “{reworded}”. " + plan.Reply.Text
+                        }
+                    }
+                    : null;
+
+            default:
+                return null;
+        }
     }
 
     private async Task<TurnPlan> PickPlanAsync(

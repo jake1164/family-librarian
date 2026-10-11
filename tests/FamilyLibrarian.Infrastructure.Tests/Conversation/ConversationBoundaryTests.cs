@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Conversation;
@@ -27,6 +28,12 @@ public sealed class ConversationBoundaryTests
         typeof(SeriesPositionService)
     ];
 
+    /// <summary>
+    /// The only conversation types that may reach a model, and only through the governed execution policy (alpha.6 M4-5). The
+    /// engine itself never does: it sees the optional <see cref="IBookIntentInterpreter"/> and nothing model-shaped.
+    /// </summary>
+    private static readonly HashSet<Type> MayUseTheModelExecutionPolicy = [typeof(ModelBookIntentInterpreter), typeof(CoverIdentificationService)];
+
     private static IEnumerable<Type> ConversationTypes() =>
         typeof(IConversationService).Assembly.GetTypes()
             .Where(type => type.Namespace == "FamilyLibrarian.Application.Conversation" && !type.IsNested && !type.IsInterface);
@@ -41,6 +48,7 @@ public sealed class ConversationBoundaryTests
                 var parameterType = parameter.ParameterType;
                 var allowed = parameterType.Namespace == "FamilyLibrarian.Application.Conversation" ||
                               AllowedExternalDependencies.Contains(parameterType) ||
+                              (parameterType == typeof(IModelExecutionPolicy) && MayUseTheModelExecutionPolicy.Contains(type)) ||
                               parameterType.Namespace?.StartsWith("System", StringComparison.Ordinal) == true;
                 Assert.IsTrue(allowed, $"{type.Name} must not depend on {parameterType.FullName}.");
             }
