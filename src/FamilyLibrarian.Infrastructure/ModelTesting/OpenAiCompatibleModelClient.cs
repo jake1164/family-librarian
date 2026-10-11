@@ -210,9 +210,13 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
         return ModelResponse.Failed(kind, detail, latency);
     }
 
+    /// <summary>
+    /// Providers name the setting differently: LiteLLM says "reasoning_effort", an Ollama-backed gateway says "invalid think
+    /// value". Only consulted after we asked for no reasoning and the request was refused as a bad request.
+    /// </summary>
     private static bool MentionsReasoning(string? message) =>
         message is not null &&
-        (message.Contains("reasoning", StringComparison.OrdinalIgnoreCase) || message.Contains("thinking", StringComparison.OrdinalIgnoreCase));
+        (message.Contains("reasoning", StringComparison.OrdinalIgnoreCase) || message.Contains("think", StringComparison.OrdinalIgnoreCase));
 
     private static bool MentionsUnsupportedCapability(string? message) =>
         message is not null &&

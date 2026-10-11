@@ -297,4 +297,28 @@ public sealed class OpenAiCompatibleModelClientTests
         Assert.AreEqual(string.Empty, response.Content, "Hidden reasoning text is never surfaced as the answer.");
         Assert.AreEqual(32, response.Usage!.CompletionTokens, "Reasoning tokens stay in the reported usage.");
     }
+
+    [TestMethod]
+    public async Task AnOllamaStyleThinkValueRefusalIsAConfigurationErrorNotAnUnknownModel()
+    {
+        // Observed from a real LiteLLM gateway in front of Ollama: it names the model group and says "invalid", which used to
+        // look like a missing model alias.
+        var refusal = new JsonObject
+        {
+            ["error"] = new JsonObject
+            {
+                ["message"] = "litellm.BadRequestError: Ollama_chatException - invalid think value: \"none\" (must be high, medium, low, true, or false) " +
+                              "LiteLLM: model group 'local/primary' failed with the error above. No fallback was attempted."
+            }
+        }.ToJsonString();
+        var (client, handler) = Make(_ => Task.FromResult(Json(HttpStatusCode.BadRequest, refusal)));
+
+        var disabled = await client.CompleteAsync(
+            Connection(), Request() with { Reasoning = FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Disabled }, CancellationToken.None);
+        var inherit = await client.CompleteAsync(Connection(), Request(), CancellationToken.None);
+
+        Assert.AreEqual(ModelFailureKind.UnsupportedCapability, disabled.Failure, "We asked for no reasoning and the model refused that setting.");
+        Assert.AreEqual(ModelFailureKind.ModelUnavailable, inherit.Failure, "The identical text without our setting keeps its old meaning.");
+        Assert.AreEqual(2, handler.Seen.Count, "One request per call; nothing was retried.");
+    }
 }
