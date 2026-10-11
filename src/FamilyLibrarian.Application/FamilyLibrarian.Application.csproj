@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <InternalsVisibleTo Include="FamilyLibrarian.Infrastructure.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../FamilyLibrarian.Domain/FamilyLibrarian.Domain.csproj" />
   </ItemGroup>
 </Project>

@@ -385,8 +385,14 @@ public static class DependencyInjection
         services.AddScoped<QuietHoursPreferenceService>();
 
         services.AddHttpContextAccessor();
-        services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
-        services.AddScoped<ICurrentAdministrator, HttpContextCurrentAdministrator>();
+        services.AddScoped<HttpContextCurrentUser>();
+        services.AddScoped<HttpContextCurrentAdministrator>();
+        // One principal holder per scope: an authenticated non-HTTP operation (M2-1) sets it; HTTP scopes never do.
+        services.AddScoped<OperationPrincipalHolder>();
+        services.AddScoped<IOperationPrincipalAccessor>(provider => provider.GetRequiredService<OperationPrincipalHolder>());
+        services.AddScoped<ICurrentUser, OperationAwareCurrentUser>();
+        services.AddScoped<ICurrentAdministrator, OperationAwareCurrentAdministrator>();
+        services.AddScoped<MatrixPrincipalAuthenticator>();
 
         // Built-in provider settings wiring. The registry is the allowlist of installed
         // providers; enablement and credentials are runtime state, so every
