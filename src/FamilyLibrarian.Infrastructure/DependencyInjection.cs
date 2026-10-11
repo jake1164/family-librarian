@@ -204,6 +204,7 @@ public static class DependencyInjection
         services.AddScoped<ICatalogRepository, CatalogRepository>();
         services.AddScoped<OrphanedWorkRetirement>();
         services.AddScoped<CatalogWorkResolver>();
+        services.AddScoped<ICatalogSearchService, CatalogSearchService>();
         services.AddScoped<IWorkFulfillmentOptionsService, WorkFulfillmentOptionsService>();
 
         services.AddScoped<RequestRepository>();
