@@ -258,6 +258,7 @@ public static class DependencyInjection
         services.AddScoped<IConversationSessionStore, EfConversationSessionStore>();
         services.AddScoped<IConversationEventLog, EfConversationEventLog>();
         services.AddScoped<IConversationTransaction, EfConversationTransaction>();
+        services.AddScoped<SeriesPositionService>();
         services.AddScoped<IConversationTools, ConversationBookTools>();
         services.AddScoped<IConversationService, ConversationService>();
         services.AddScoped<MatrixInboundSyncCoordinator>();

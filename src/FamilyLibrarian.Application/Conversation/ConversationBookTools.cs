@@ -29,6 +29,9 @@ public interface IConversationTools
 
     Task<Guid?> ResolveWorkAsync(ConversationChoiceRef choice, CancellationToken cancellationToken);
 
+    /// <summary>Which book sits at a position in a series (null lists the series in order), from series facts already in the catalog.</summary>
+    Task<SeriesLookupResult> FindSeriesBooksAsync(string seriesName, decimal? position, int maxBooks, CancellationToken cancellationToken);
+
     Task<CreateBookRequestResult> CreateBookRequestAsync(
         Guid workId, IReadOnlyList<RequestMediaType> formats, CancellationToken cancellationToken);
 }
@@ -49,7 +52,8 @@ public sealed partial class ConversationBookTools(
     IActiveMetadataProviderResolver providers,
     CatalogWorkResolver works,
     BookRequestService requests,
-    ICandidateAvailabilityService availability) : IConversationTools
+    ICandidateAvailabilityService availability,
+    SeriesPositionService series) : IConversationTools
 {
     private const int MaxDescriptionLength = 400;
 
@@ -126,6 +130,13 @@ public sealed partial class ConversationBookTools(
         if (result.Ebook.Any(option => option.OptionKind == OptionKind.Owned)) owned.Add("ebook");
         if (result.Audiobook.Any(option => option.OptionKind == OptionKind.Owned)) owned.Add("audiobook");
         return new ConversationLibraryResult(candidate.Title, string.Join(", ", candidate.Authors.Take(3)), owned, found.SomeSourcesUnavailable);
+    }
+
+    public async Task<SeriesLookupResult> FindSeriesBooksAsync(
+        string seriesName, decimal? position, int maxBooks, CancellationToken cancellationToken)
+    {
+        RequireUser();
+        return await series.FindAsync(seriesName, position, maxBooks, cancellationToken);
     }
 
     /// <summary>Resolves a search result to a catalog Work, exactly as the web page's "request" action does.</summary>

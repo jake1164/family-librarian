@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Requests;
@@ -146,6 +147,8 @@ internal sealed class FakeTools : IConversationTools
 
     public Dictionary<string, Guid> WorkIds { get; } = [];
 
+    public Dictionary<string, SeriesLookupResult> SeriesResults { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     public static ConversationChoiceRef Choice(string id, string title, string authors = "Mara Quill", string? detail = "2021") =>
         new("fake", id, title, authors, detail);
 
@@ -171,6 +174,12 @@ internal sealed class FakeTools : IConversationTools
     {
         Calls.Add($"library:{text}");
         return Task.FromResult<ConversationLibraryResult?>(new ConversationLibraryResult("Dune", "Frank Herbert", ["ebook"], false));
+    }
+
+    public Task<SeriesLookupResult> FindSeriesBooksAsync(string seriesName, decimal? position, int maxBooks, CancellationToken cancellationToken)
+    {
+        Calls.Add($"series:{seriesName}|{position?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "all"}");
+        return Task.FromResult(SeriesResults.GetValueOrDefault(seriesName) ?? new SeriesLookupResult(SeriesLookupKind.NotFound, null, [], [], []));
     }
 
     public Task<Guid?> ResolveWorkAsync(ConversationChoiceRef choice, CancellationToken cancellationToken)

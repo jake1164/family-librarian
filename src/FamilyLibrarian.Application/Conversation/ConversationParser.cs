@@ -107,6 +107,12 @@ public static partial class ConversationParser
         }
 
         var (searchText, requestIntent, searchFormats) = ReadSearch(message);
+        if (searchText.Length >= 2 && SeriesParser.TryParse(searchText, out var seriesName, out var seriesPosition))
+        {
+            return new(ConversationCommandKind.Series, Text: message, Formats: searchFormats, RequestIntent: requestIntent,
+                SeriesName: seriesName, SeriesPosition: seriesPosition);
+        }
+
         if (searchText.Length < 2)
         {
             return new(ConversationCommandKind.Help);

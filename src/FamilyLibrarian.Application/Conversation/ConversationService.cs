@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Requests;
 
@@ -229,6 +230,9 @@ public sealed class ConversationService(
             case ConversationCommandKind.Library:
                 return Keep(await LibraryReplyAsync(parsed.Text!, cancellationToken), state);
 
+            case ConversationCommandKind.Series:
+                return await SeriesPlanAsync(parsed, state, cancellationToken);
+
             case ConversationCommandKind.Isbn:
                 return await SearchPlanAsync(parsed.Text!, $"ISBN {parsed.Text}", null, requestIntent: false, state, cancellationToken);
 
@@ -249,6 +253,71 @@ public sealed class ConversationService(
                 return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood, "I didn't catch that. Say “help” to see what I can do."), state);
         }
     }
+
+    private async Task<TurnPlan> SeriesPlanAsync(ParsedConversationMessage parsed, ConversationState state, CancellationToken cancellationToken)
+    {
+        var lookup = await tools.FindSeriesBooksAsync(parsed.SeriesName!, parsed.SeriesPosition, options.MaxChoices, cancellationToken);
+        switch (lookup.Kind)
+        {
+            case SeriesLookupKind.NotFound:
+                // Not a series we know of ("The First Book of Samuel"): treat the words as an ordinary search.
+                return await SearchPlanAsync(parsed.Text!, parsed.Text!, parsed.Formats, parsed.RequestIntent, state, cancellationToken);
+
+            case SeriesLookupKind.AmbiguousSeries:
+                return Keep(ConversationReply.Of(ConversationReplyKind.NotUnderstood,
+                    $"More than one series matches “{parsed.SeriesName}”: {string.Join("; ", lookup.AmbiguousSeriesNames)}. " +
+                    "Say which one, for example “book 1 of " + lookup.AmbiguousSeriesNames[0] + "”."), state);
+
+            case SeriesLookupKind.PositionMissing:
+                var known = lookup.KnownPositions.Count == 0
+                    ? "I don't have any numbered books for it"
+                    : $"I know of {string.Join(", ", lookup.KnownPositions.Select(FormatPosition))}";
+                return Keep(ConversationReply.Of(ConversationReplyKind.Text,
+                    $"I found the series {lookup.SeriesName}, but not that book. {known}."), state);
+        }
+
+        var choices = lookup.Books
+            .Where(book => book.ExternalId.Length is > 0 and <= ConversationState.MaxFieldLength)
+            .Select(book => new ConversationChoiceRef(
+                book.ProviderId, book.ExternalId, ConversationState.Clip(book.Title), ConversationState.Clip(book.Authors),
+                ConversationState.Clip(book.Position is null ? book.SeriesName : $"{book.SeriesName} #{FormatPosition(book.Position.Value)}")))
+            .ToList();
+        var label = parsed.SeriesPosition is null ? $"{lookup.SeriesName} in order" : $"{lookup.SeriesName} #{FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)}";
+        var next = new ConversationState
+        {
+            Phase = ConversationPhase.ChoosingBook,
+            Query = ConversationState.Clip(label),
+            Choices = choices,
+            FormatHint = parsed.Formats?.ToList() ?? [],
+            RequestIntent = parsed.RequestIntent
+        };
+        if (choices.Count == 1 && parsed.SeriesPosition is not null && parsed.RequestIntent)
+        {
+            return await PickPlanAsync(next, 1, parsed.Formats, cancellationToken);
+        }
+
+        var shown = choices.Select((choice, index) => new ConversationChoice(index + 1, choice.Title, choice.Authors, choice.Detail)).ToArray();
+        var lines = new StringBuilder(parsed.SeriesPosition is null
+            ? $"{lookup.SeriesName}, in order:"
+            : shown.Length == 1
+                ? $"In {lookup.SeriesName}, book {FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)} is:"
+                : $"More than one book is listed as book {FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)} of {lookup.SeriesName}:");
+        foreach (var choice in shown)
+        {
+            var authors = choice.Authors.Length > 0 ? $" — {choice.Authors}" : "";
+            lines.Append(System.Globalization.CultureInfo.InvariantCulture, $"\n{choice.Number}. {choice.Title}{authors}");
+        }
+
+        lines.Append("\nReply with a number to pick one, or “request 1 audiobook”.");
+        return new TurnPlan(new ConversationReply(ConversationReplyKind.Choices, lines.ToString(), shown, [], ["1", "cancel"]), next, null);
+    }
+
+    private static string FormatPosition(decimal position) => position.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string FormatPositionOrLast(decimal asked, SeriesLookupResult lookup) =>
+        asked == SeriesPositionResolver.LastPosition && lookup.KnownPositions.Count > 0
+            ? FormatPosition(lookup.KnownPositions[^1])
+            : FormatPosition(asked);
 
     private async Task<TurnPlan> SearchPlanAsync(
         string query, string label, IReadOnlyList<RequestMediaType>? formats, bool requestIntent,

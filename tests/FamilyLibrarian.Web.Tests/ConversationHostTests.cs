@@ -136,6 +136,24 @@ public sealed class ConversationHostTests
     }
 
     [TestMethod]
+    public async Task ASeriesPositionIsAnsweredFromSeriesTheCatalogAlreadyRecordsAndAnUnknownPositionIsNotGuessed()
+    {
+        await using var factory = Factory();
+        var user = await CreateLinkedUserAsync(factory);
+        // Requesting the book records its series ("Time Quintet" #1) against the resolved work.
+        await SayAsMatrixAsync(factory, user, "Find A Wrinkle in Time", "$w1");
+        await SayAsMatrixAsync(factory, user, "request 1 ebook", "$w2");
+
+        var first = await SayAsMatrixAsync(factory, user, "the first book of Time Quintet", "$w3");
+        var fifth = await SayAsMatrixAsync(factory, user, "the fifth book of Time Quintet", "$w4");
+
+        Assert.AreEqual(ConversationReplyKind.Choices, first.Reply.Kind);
+        StringAssert.Contains(first.Reply.Text, "A Wrinkle in Time");
+        StringAssert.Contains(fifth.Reply.Text, "not that book");
+        StringAssert.Contains(fifth.Reply.Text, "I know of 1");
+    }
+
+    [TestMethod]
     public async Task WithTheFeatureOffNothingIsSearchedOrStored()
     {
         await using var factory = Factory(enabled: false);

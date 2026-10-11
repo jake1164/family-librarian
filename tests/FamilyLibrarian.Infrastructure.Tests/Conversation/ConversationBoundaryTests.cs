@@ -23,7 +23,8 @@ public sealed class ConversationBoundaryTests
         typeof(IActiveMetadataProviderResolver),
         typeof(CatalogWorkResolver),
         typeof(BookRequestService),
-        typeof(ICandidateAvailabilityService)
+        typeof(ICandidateAvailabilityService),
+        typeof(SeriesPositionService)
     ];
 
     private static IEnumerable<Type> ConversationTypes() =>
@@ -52,7 +53,7 @@ public sealed class ConversationBoundaryTests
         var names = typeof(IConversationTools).GetMethods().Select(method => method.Name).Order().ToArray();
 
         Assert.AreEqual(
-            "CheckLibraryAsync,CreateBookRequestAsync,GetBookDetailsAsync,GetMyRequestsAsync,ResolveWorkAsync,SearchBooksAsync",
+            "CheckLibraryAsync,CreateBookRequestAsync,FindSeriesBooksAsync,GetBookDetailsAsync,GetMyRequestsAsync,ResolveWorkAsync,SearchBooksAsync",
             string.Join(",", names),
             "A new conversation action needs an explicit design and security review.");
         Assert.IsFalse(names.Any(name =>
