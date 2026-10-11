@@ -55,6 +55,35 @@
                     </MudPaper>
                 }
 
+                <MudText Typo="Typo.h5">Limits</MudText>
+                <MudText Typo="Typo.body2">
+                    Every call is bounded and counted. A limit of 0 stops that kind of use entirely; it never means unlimited. Chat and
+                    background checking have separate allowances. Cloud calls also need a non-zero cloud allowance below.
+                </MudText>
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudNumericField T="int" @bind-Value="limits.TimeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
+                    <MudNumericField T="int" @bind-Value="limits.MaxInputCharacters" Label="Max input (characters)" Min="500" Max="60000" Variant="Variant.Outlined" />
+                    <MudNumericField T="int" @bind-Value="limits.MaxOutputTokens" Label="Max output (tokens)" Min="16" Max="2048" Variant="Variant.Outlined" />
+                    <MudNumericField T="int" @bind-Value="limits.MaxConcurrentCalls" Label="Calls at once" Min="1" Max="8" Variant="Variant.Outlined" />
+                </MudStack>
+                <MudText Typo="Typo.subtitle2">Chat, per day</MudText>
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudNumericField T="int" @bind-Value="limits.Interactive.UserDailyRequests" Label="Requests per person" Min="0" Variant="Variant.Outlined" />
+                    <MudNumericField T="int" @bind-Value="limits.Interactive.UserDailyTokens" Label="Tokens per person" Min="0" Variant="Variant.Outlined" />
+                    <MudNumericField T="int" @bind-Value="limits.Interactive.InstallationDailyRequests" Label="Requests, everyone" Min="0" Variant="Variant.Outlined" />
+                    <MudNumericField T="int" @bind-Value="limits.Interactive.InstallationDailyTokens" Label="Tokens, everyone" Min="0" Variant="Variant.Outlined" />
+                </MudStack>
+                <MudText Typo="Typo.subtitle2">Background checking, per day</MudText>
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudNumericField T="int" @bind-Value="limits.Background.InstallationDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" />
+                    <MudNumericField T="int" @bind-Value="limits.Background.InstallationDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" />
+                </MudStack>
+                <MudText Typo="Typo.subtitle2">Cloud allowance, per day (0 = none)</MudText>
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudNumericField T="int" @bind-Value="limits.CloudDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
+                    <MudNumericField T="int" @bind-Value="limits.CloudDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
+                </MudStack>
+
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save settings</MudButton>
 
                 <MudDivider />
@@ -72,6 +101,45 @@
                            Label="AI models are enabled (master switch)" />
             </MudStack>
         </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h5">Use in the last 24 hours</MudText>
+                <MudText Typo="Typo.body2">
+                    Counts only: no prompts, replies or book excerpts are kept. When a model does not say how many tokens it used, the
+                    call is listed as "usage not reported" rather than counted as zero, and the daily allowance is charged a cautious estimate.
+                </MudText>
+                @if (usage is null)
+                {
+                    <MudButton Variant="Variant.Outlined" OnClick="LoadUsageAsync">Show usage</MudButton>
+                }
+                else if (usage.Rows.Count == 0)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true">No model calls in the last 24 hours.</MudAlert>
+                }
+                else
+                {
+                    <MudTable Items="usage.Rows" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm">
+                        <HeaderContent>
+                            <MudTh>Role</MudTh>
+                            <MudTh>Used for</MudTh>
+                            <MudTh>Outcome</MudTh>
+                            <MudTh>Calls</MudTh>
+                            <MudTh>Reported tokens</MudTh>
+                            <MudTh>Usage not reported</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Role">@Title(context.Role)@(context.IsCloud ? " (cloud)" : "")</MudTd>
+                            <MudTd DataLabel="Used for">@(context.Budget == "InteractiveChat" ? "Chat" : "Background")</MudTd>
+                            <MudTd DataLabel="Outcome">@context.Outcome</MudTd>
+                            <MudTd DataLabel="Calls">@context.Calls</MudTd>
+                            <MudTd DataLabel="Reported tokens">@context.ReportedTokens</MudTd>
+                            <MudTd DataLabel="Usage not reported">@context.CallsWithoutUsage</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudStack>
+        </MudPaper>
     }
 </MudStack>
 
@@ -85,6 +153,28 @@
         public string? CloudModel { get; set; }
     }
 
+    private sealed class BudgetEdit
+    {
+        public int UserDailyRequests { get; set; }
+        public int UserDailyTokens { get; set; }
+        public int InstallationDailyRequests { get; set; }
+        public int InstallationDailyTokens { get; set; }
+    }
+
+    private sealed class LimitsEdit
+    {
+        public int TimeoutSeconds { get; set; }
+        public int MaxInputCharacters { get; set; }
+        public int MaxOutputTokens { get; set; }
+        public int MaxConcurrentCalls { get; set; }
+        public BudgetEdit Interactive { get; set; } = new();
+        public BudgetEdit Background { get; set; } = new();
+        public int CloudDailyRequests { get; set; }
+        public int CloudDailyTokens { get; set; }
+    }
+
+    private LimitsEdit limits = new();
+    private ModelUsageResponse? usage;
     private ModelGatewaySettingsResponse? settings;
     private List<RoleEdit> roles = [];
     private string endpoint = string.Empty;
@@ -112,6 +202,13 @@
         settings = value;
         endpoint = value.EndpointUrl ?? string.Empty;
         allowCloud = value.AllowCloud;
+        limits = new LimitsEdit
+        {
+            TimeoutSeconds = value.Limits.TimeoutSeconds, MaxInputCharacters = value.Limits.MaxInputCharacters,
+            MaxOutputTokens = value.Limits.MaxOutputTokens, MaxConcurrentCalls = value.Limits.MaxConcurrentCalls,
+            Interactive = ToEdit(value.Limits.Interactive), Background = ToEdit(value.Limits.Background),
+            CloudDailyRequests = value.Limits.CloudDailyRequests, CloudDailyTokens = value.Limits.CloudDailyTokens
+        };
         roles = [.. value.Roles.Select(role => new RoleEdit
         {
             Role = role.Role, IsEnabled = role.IsEnabled, Placement = role.Placement, LocalModel = role.LocalModel, CloudModel = role.CloudModel
@@ -121,8 +218,33 @@
     private async Task SaveAsync() => await ApplyResultAsync(
         await Api.SaveAsync(new SaveModelGatewaySettingsRequest(
             endpoint, allowCloud,
-            [.. roles.Select(role => new ModelRoleDto(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel))])),
+            [.. roles.Select(role => new ModelRoleDto(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel))],
+            new ModelLimitsDto(
+                limits.TimeoutSeconds, limits.MaxInputCharacters, limits.MaxOutputTokens, limits.MaxConcurrentCalls,
+                ToDto(limits.Interactive), ToDto(limits.Background), limits.CloudDailyRequests, limits.CloudDailyTokens))),
         "Settings saved.");
+
+    private static BudgetEdit ToEdit(ModelBudgetDto budget) => new()
+    {
+        UserDailyRequests = budget.UserDailyRequests, UserDailyTokens = budget.UserDailyTokens,
+        InstallationDailyRequests = budget.InstallationDailyRequests, InstallationDailyTokens = budget.InstallationDailyTokens
+    };
+
+    private static ModelBudgetDto ToDto(BudgetEdit budget) =>
+        new(budget.UserDailyRequests, budget.UserDailyTokens, budget.InstallationDailyRequests, budget.InstallationDailyTokens);
+
+    private async Task LoadUsageAsync()
+    {
+        try
+        {
+            usage = await Api.GetUsageAsync();
+        }
+        catch (HttpRequestException)
+        {
+            message = "Usage could not be loaded.";
+            messageIsError = true;
+        }
+    }
 
     private async Task SetApiKeyAsync()
     {

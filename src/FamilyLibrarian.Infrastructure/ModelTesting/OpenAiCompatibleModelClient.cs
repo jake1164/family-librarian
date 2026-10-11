@@ -172,11 +172,19 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
             HttpStatusCode.NotFound => ModelFailureKind.ModelUnavailable,
             HttpStatusCode.TooManyRequests => ModelFailureKind.RateLimited,
             _ when mentionsModel => ModelFailureKind.ModelUnavailable,
+            HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity when MentionsUnsupportedCapability(message) => ModelFailureKind.UnsupportedCapability,
             _ when (int)status >= 500 => ModelFailureKind.ServerError,
             _ => ModelFailureKind.BadRequest
         };
         return ModelResponse.Failed(kind, detail, latency);
     }
+
+    private static bool MentionsUnsupportedCapability(string? message) =>
+        message is not null &&
+        (message.Contains("not support", StringComparison.OrdinalIgnoreCase) || message.Contains("unsupported", StringComparison.OrdinalIgnoreCase)) &&
+        (message.Contains("response_format", StringComparison.OrdinalIgnoreCase) || message.Contains("json", StringComparison.OrdinalIgnoreCase) ||
+         message.Contains("tool", StringComparison.OrdinalIgnoreCase) || message.Contains("function", StringComparison.OrdinalIgnoreCase) ||
+         message.Contains("image", StringComparison.OrdinalIgnoreCase) || message.Contains("vision", StringComparison.OrdinalIgnoreCase));
 
     private static string? ErrorMessage(string body)
     {

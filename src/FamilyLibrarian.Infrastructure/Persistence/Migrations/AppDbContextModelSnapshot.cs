@@ -2289,6 +2289,42 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("api_key_set_at_utc");
 
+                    b.Property<int>("BackgroundInstallationDailyRequests")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(200)
+                        .HasColumnName("background_installation_daily_requests");
+
+                    b.Property<int>("BackgroundInstallationDailyTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(400000)
+                        .HasColumnName("background_installation_daily_tokens");
+
+                    b.Property<int>("BackgroundUserDailyRequests")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("background_user_daily_requests");
+
+                    b.Property<int>("BackgroundUserDailyTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("background_user_daily_tokens");
+
+                    b.Property<int>("CloudDailyRequests")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("cloud_daily_requests");
+
+                    b.Property<int>("CloudDailyTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("cloud_daily_tokens");
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
@@ -2298,13 +2334,61 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(512)")
                         .HasColumnName("endpoint_url");
 
+                    b.Property<int>("InteractiveInstallationDailyRequests")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(300)
+                        .HasColumnName("interactive_installation_daily_requests");
+
+                    b.Property<int>("InteractiveInstallationDailyTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(600000)
+                        .HasColumnName("interactive_installation_daily_tokens");
+
+                    b.Property<int>("InteractiveUserDailyRequests")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(30)
+                        .HasColumnName("interactive_user_daily_requests");
+
+                    b.Property<int>("InteractiveUserDailyTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(60000)
+                        .HasColumnName("interactive_user_daily_tokens");
+
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("boolean")
                         .HasColumnName("is_enabled");
 
+                    b.Property<int>("MaxConcurrentCalls")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2)
+                        .HasColumnName("max_concurrent_calls");
+
+                    b.Property<int>("MaxInputCharacters")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(12000)
+                        .HasColumnName("max_input_characters");
+
+                    b.Property<int>("MaxOutputTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(512)
+                        .HasColumnName("max_output_tokens");
+
                     b.Property<string>("ProtectedApiKey")
                         .HasColumnType("text")
                         .HasColumnName("protected_api_key");
+
+                    b.Property<int>("TimeoutSeconds")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(30)
+                        .HasColumnName("timeout_seconds");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone")
@@ -2359,6 +2443,81 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasKey("SettingsId", "Role");
 
                     b.ToTable("model_role_settings", "integrations");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BudgetClass")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("budget_class");
+
+                    b.Property<int>("ChargedTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("charged_tokens");
+
+                    b.Property<bool>("IsCloud")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_cloud");
+
+                    b.Property<long?>("LatencyMilliseconds")
+                        .HasColumnType("bigint")
+                        .HasColumnName("latency_ms");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("model");
+
+                    b.Property<DateTimeOffset>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at_utc");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("outcome");
+
+                    b.Property<int?>("ReportedCompletionTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("reported_completion_tokens");
+
+                    b.Property<int?>("ReportedPromptTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("reported_prompt_tokens");
+
+                    b.Property<int?>("ReportedTotalTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("reported_total_tokens");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("role");
+
+                    b.Property<bool>("UsageEstimated")
+                        .HasColumnType("boolean")
+                        .HasColumnName("usage_estimated");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OccurredAtUtc");
+
+                    b.HasIndex("UserId", "OccurredAtUtc");
+
+                    b.ToTable("model_usage_ledger", "integrations");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.ModelTesting.ModelTestSettings", b =>

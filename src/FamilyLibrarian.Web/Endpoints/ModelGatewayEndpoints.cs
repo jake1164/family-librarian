@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Contracts.ModelGateway;
 using FamilyLibrarian.Domain.ModelGateway;
@@ -18,6 +19,7 @@ internal static class ModelGatewayEndpoints
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
         group.MapGet("/", GetAsync);
+        group.MapGet("/usage", UsageAsync);
         group.MapPut("/", SaveAsync);
         group.MapPut("/enabled", SetEnabledAsync);
         group.MapPut("/api-key", SetApiKeyAsync);
@@ -42,7 +44,24 @@ internal static class ModelGatewayEndpoints
             roles.Add(new ModelRoleCommand(parsedRole, role.IsEnabled, placement, role.LocalModel, role.CloudModel));
         }
 
-        return ToResult(await service.SaveAsync(new SaveModelGatewaySettings(request.EndpointUrl, request.AllowCloud, roles), cancellationToken));
+        var limits = request.Limits is null ? null : ToLimits(request.Limits);
+        return ToResult(await service.SaveAsync(new SaveModelGatewaySettings(request.EndpointUrl, request.AllowCloud, roles, limits), cancellationToken));
+    }
+
+    private static async Task<IResult> UsageAsync(
+        ModelGatewaySettingsService settings, IModelUsageLedger ledger, IClock clock, CancellationToken cancellationToken)
+    {
+        // The settings service is the administrator check; usage is only shown to someone it would let read the settings.
+        if ((await settings.GetAsync(cancellationToken)).Forbidden)
+        {
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        }
+
+        var summary = await ledger.SummarizeAsync(clock.UtcNow.AddDays(-1), cancellationToken);
+        return Results.Ok(new ModelUsageResponse(
+            summary.Since,
+            [.. summary.Rows.Select(row => new ModelUsageRowResponse(
+                row.Role.ToString(), row.Budget.ToString(), row.Outcome.ToString(), row.IsCloud, row.Calls, row.ReportedTokens, row.CallsWithoutUsage))]));
     }
 
     private static async Task<IResult> SetEnabledAsync(
@@ -71,6 +90,21 @@ internal static class ModelGatewayEndpoints
         var settings = result.Settings!;
         return Results.Ok(new ModelGatewaySettingsResponse(
             settings.IsEnabled, settings.EndpointUrl, settings.HasApiKey, settings.ApiKeySetAtUtc, settings.AllowCloud,
-            [.. settings.Roles.Select(role => new ModelRoleDto(role.Role.ToString(), role.IsEnabled, role.Placement.ToString(), role.LocalModel, role.CloudModel))]));
+            [.. settings.Roles.Select(role => new ModelRoleDto(role.Role.ToString(), role.IsEnabled, role.Placement.ToString(), role.LocalModel, role.CloudModel))],
+            ToDto(settings.Limits)));
     }
+
+    private static ModelLimitsDto ToDto(ModelExecutionLimits limits) => new(
+        limits.TimeoutSeconds, limits.MaxInputCharacters, limits.MaxOutputTokens, limits.MaxConcurrentCalls,
+        ToDto(limits.Interactive), ToDto(limits.Background), limits.CloudDailyRequests, limits.CloudDailyTokens);
+
+    private static ModelBudgetDto ToDto(ModelBudget budget) =>
+        new(budget.UserDailyRequests, budget.UserDailyTokens, budget.InstallationDailyRequests, budget.InstallationDailyTokens);
+
+    private static ModelExecutionLimits ToLimits(ModelLimitsDto dto) => new(
+        dto.TimeoutSeconds, dto.MaxInputCharacters, dto.MaxOutputTokens, dto.MaxConcurrentCalls,
+        ToBudget(dto.Interactive), ToBudget(dto.Background), dto.CloudDailyRequests, dto.CloudDailyTokens);
+
+    private static ModelBudget ToBudget(ModelBudgetDto? dto) =>
+        dto is null ? new ModelBudget(-1, -1, -1, -1) : new ModelBudget(dto.UserDailyRequests, dto.UserDailyTokens, dto.InstallationDailyRequests, dto.InstallationDailyTokens);
 }

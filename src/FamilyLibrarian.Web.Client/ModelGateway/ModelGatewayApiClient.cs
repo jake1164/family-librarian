@@ -14,6 +14,10 @@ public sealed class ModelGatewayApiClient(HttpClient httpClient, AntiforgeryToke
         await httpClient.GetFromJsonAsync<ModelGatewaySettingsResponse>($"{BasePath}/", cancellationToken)
         ?? throw new InvalidOperationException("The host returned no settings.");
 
+    public async Task<ModelUsageResponse> GetUsageAsync(CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<ModelUsageResponse>($"{BasePath}/usage", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no usage.");
+
     public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SaveAsync(SaveModelGatewaySettingsRequest request, CancellationToken cancellationToken = default) =>
         SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/", request, cancellationToken);
 

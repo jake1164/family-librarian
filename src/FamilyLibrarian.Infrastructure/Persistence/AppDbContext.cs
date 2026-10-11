@@ -81,6 +81,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<ModelGatewaySettings> ModelGatewaySettingsRows => Set<ModelGatewaySettings>();
 
+    public DbSet<ModelUsageRecord> ModelUsageRecords => Set<ModelUsageRecord>();
+
     public DbSet<StoredConversationSession> ConversationSessions => Set<StoredConversationSession>();
 
     public DbSet<ProcessedConversationEvent> ProcessedConversationEvents => Set<ProcessedConversationEvent>();
@@ -398,6 +400,22 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
             entity.Ignore(settings => settings.HasApiKey);
+            entity.Ignore(settings => settings.Limits);
+            var defaults = ModelExecutionLimits.Default;
+            entity.Property(settings => settings.TimeoutSeconds).HasColumnName("timeout_seconds").HasDefaultValue(defaults.TimeoutSeconds);
+            entity.Property(settings => settings.MaxInputCharacters).HasColumnName("max_input_characters").HasDefaultValue(defaults.MaxInputCharacters);
+            entity.Property(settings => settings.MaxOutputTokens).HasColumnName("max_output_tokens").HasDefaultValue(defaults.MaxOutputTokens);
+            entity.Property(settings => settings.MaxConcurrentCalls).HasColumnName("max_concurrent_calls").HasDefaultValue(defaults.MaxConcurrentCalls);
+            entity.Property(settings => settings.CloudDailyRequests).HasColumnName("cloud_daily_requests").HasDefaultValue(defaults.CloudDailyRequests);
+            entity.Property(settings => settings.CloudDailyTokens).HasColumnName("cloud_daily_tokens").HasDefaultValue(defaults.CloudDailyTokens);
+            entity.Property(settings => settings.InteractiveUserDailyRequests).HasColumnName("interactive_user_daily_requests").HasDefaultValue(defaults.Interactive.UserDailyRequests);
+            entity.Property(settings => settings.InteractiveUserDailyTokens).HasColumnName("interactive_user_daily_tokens").HasDefaultValue(defaults.Interactive.UserDailyTokens);
+            entity.Property(settings => settings.InteractiveInstallationDailyRequests).HasColumnName("interactive_installation_daily_requests").HasDefaultValue(defaults.Interactive.InstallationDailyRequests);
+            entity.Property(settings => settings.InteractiveInstallationDailyTokens).HasColumnName("interactive_installation_daily_tokens").HasDefaultValue(defaults.Interactive.InstallationDailyTokens);
+            entity.Property(settings => settings.BackgroundUserDailyRequests).HasColumnName("background_user_daily_requests").HasDefaultValue(defaults.Background.UserDailyRequests);
+            entity.Property(settings => settings.BackgroundUserDailyTokens).HasColumnName("background_user_daily_tokens").HasDefaultValue(defaults.Background.UserDailyTokens);
+            entity.Property(settings => settings.BackgroundInstallationDailyRequests).HasColumnName("background_installation_daily_requests").HasDefaultValue(defaults.Background.InstallationDailyRequests);
+            entity.Property(settings => settings.BackgroundInstallationDailyTokens).HasColumnName("background_installation_daily_tokens").HasDefaultValue(defaults.Background.InstallationDailyTokens);
             entity.HasMany(settings => settings.Roles).WithOne().HasForeignKey(role => role.SettingsId).OnDelete(DeleteBehavior.Cascade);
             entity.Navigation(settings => settings.Roles).UsePropertyAccessMode(PropertyAccessMode.Field);
         });
@@ -413,6 +431,28 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(role => role.LocalModel).HasColumnName("local_model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
             entity.Property(role => role.CloudModel).HasColumnName("cloud_model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
             entity.Ignore(role => role.ActiveModel);
+        });
+
+        builder.Entity<ModelUsageRecord>(entity =>
+        {
+            entity.ToTable("model_usage_ledger", "integrations");
+            entity.HasKey(record => record.Id);
+            entity.Property(record => record.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(record => record.Role).HasColumnName("role").HasConversion<string>().HasMaxLength(48);
+            entity.Property(record => record.BudgetClass).HasColumnName("budget_class").HasConversion<string>().HasMaxLength(32);
+            entity.Property(record => record.UserId).HasColumnName("user_id");
+            entity.Property(record => record.Model).HasColumnName("model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
+            entity.Property(record => record.IsCloud).HasColumnName("is_cloud");
+            entity.Property(record => record.Outcome).HasColumnName("outcome").HasConversion<string>().HasMaxLength(32);
+            entity.Property(record => record.OccurredAtUtc).HasColumnName("occurred_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(record => record.LatencyMilliseconds).HasColumnName("latency_ms");
+            entity.Property(record => record.ReportedPromptTokens).HasColumnName("reported_prompt_tokens");
+            entity.Property(record => record.ReportedCompletionTokens).HasColumnName("reported_completion_tokens");
+            entity.Property(record => record.ReportedTotalTokens).HasColumnName("reported_total_tokens");
+            entity.Property(record => record.ChargedTokens).HasColumnName("charged_tokens");
+            entity.Property(record => record.UsageEstimated).HasColumnName("usage_estimated");
+            entity.HasIndex(record => record.OccurredAtUtc);
+            entity.HasIndex(record => new { record.UserId, record.OccurredAtUtc });
         });
 
         // Conversation (alpha.6 M2-3): minimal structured state, plus the records that make a replayed message harmless.

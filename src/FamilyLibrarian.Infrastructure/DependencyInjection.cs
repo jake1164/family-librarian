@@ -268,6 +268,11 @@ public static class DependencyInjection
         services.AddScoped<IModelGatewaySettingsStore, ModelGatewaySettingsStore>();
         services.AddScoped<ModelGatewaySettingsService>();
         services.AddScoped<IModelRoleResolver, ModelRoleResolver>();
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, TimeProvider.System);
+        services.AddSingleton<IModelUsageLedger, ModelUsageLedger>();
+        services.AddSingleton<ModelExecutionGate>();
+        services.AddSingleton<ModelCircuitBreaker>();
+        services.AddScoped<IModelExecutionPolicy, ModelExecutionPolicy>();
 
         // Conversation (alpha.6 M2): everything is off until Conversation:Enabled (and a transport flag) is set.
         services.AddSingleton(provider =>

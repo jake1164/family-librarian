@@ -23,11 +23,12 @@ public sealed record ModelRoleResolution(
     Uri? Endpoint,
     string? ApiKey,
     string? Model,
-    bool IsCloud)
+    bool IsCloud,
+    ModelExecutionLimits Limits)
 {
     public bool IsAvailable => Reason == ModelUnavailableReason.None;
 
-    public static ModelRoleResolution Unavailable(ModelRole role, ModelUnavailableReason reason) => new(role, reason, null, null, null, false);
+    public static ModelRoleResolution Unavailable(ModelRole role, ModelUnavailableReason reason) => new(role, reason, null, null, null, false, ModelExecutionLimits.Default);
 }
 
 /// <summary>
@@ -80,6 +81,6 @@ public sealed class ModelRoleResolver(IModelGatewaySettingsStore store, ICredent
             }
         }
 
-        return new ModelRoleResolution(role, ModelUnavailableReason.None, endpoint, apiKey, setting.ActiveModel, isCloud);
+        return new ModelRoleResolution(role, ModelUnavailableReason.None, endpoint, apiKey, setting.ActiveModel, isCloud, settings.Limits);
     }
 }

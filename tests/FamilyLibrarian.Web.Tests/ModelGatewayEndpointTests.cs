@@ -4,6 +4,7 @@ using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.ModelGateway;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FamilyLibrarian.Web.Tests;
 
@@ -83,6 +84,75 @@ public sealed class ModelGatewayEndpointTests
         var reread = await admin.GetStringAsync($"{BasePath}/");
         Assert.IsFalse(reread.Contains("sk-super-secret-value", StringComparison.Ordinal));
         Assert.IsTrue((await admin.GetFromJsonAsync<ModelGatewaySettingsResponse>($"{BasePath}/"))!.HasApiKey);
+    }
+
+    [TestMethod]
+    public async Task LimitsDefaultToModestValuesRoundTripAndRejectNonsense()
+    {
+        await using var factory = Factory();
+        using var admin = await SignedInAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+
+        var initial = (await admin.GetFromJsonAsync<ModelGatewaySettingsResponse>($"{BasePath}/"))!.Limits;
+        Assert.AreEqual(30, initial.TimeoutSeconds);
+        Assert.AreEqual(0, initial.CloudDailyRequests, "Cloud allowance is zero until granted.");
+        Assert.AreEqual(30, initial.Interactive.UserDailyRequests);
+
+        var tuned = initial with { MaxConcurrentCalls = 3, Background = new ModelBudgetDto(0, 0, 50, 100_000) };
+        using var saved = await admin.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest(null, false, [], tuned));
+        using var invalid = await admin.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest(null, false, [], initial with { TimeoutSeconds = 1 }));
+        using var negative = await admin.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest(null, false, [], initial with { Interactive = new ModelBudgetDto(-5, 0, 0, 0) }));
+
+        Assert.IsTrue(saved.IsSuccessStatusCode, await saved.Content.ReadAsStringAsync());
+        var reread = (await admin.GetFromJsonAsync<ModelGatewaySettingsResponse>($"{BasePath}/"))!.Limits;
+        Assert.AreEqual(3, reread.MaxConcurrentCalls);
+        Assert.AreEqual(50, reread.Background.InstallationDailyRequests);
+        Assert.AreEqual(HttpStatusCode.BadRequest, invalid.StatusCode);
+        Assert.AreEqual(HttpStatusCode.BadRequest, negative.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task TheLedgerCountsReservationsAndNeverTurnsMissingUsageIntoZero()
+    {
+        await using var factory = Factory();
+        using var scope = factory.Services.CreateScope();
+        var ledger = scope.ServiceProvider.GetRequiredService<FamilyLibrarian.Application.ModelGateway.IModelUsageLedger>();
+        var now = DateTimeOffset.UtcNow;
+        var user = Guid.NewGuid();
+        var withUsage = new FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord(
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.CandidateAmbiguityAssessment, FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.InteractiveChat, user, "m", false, 900, now);
+        var withoutUsage = new FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord(
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.CandidateAmbiguityAssessment, FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.InteractiveChat, user, "m", true, 900, now);
+        var pending = new FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord(
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.ArtifactValidationAssessment, FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.BackgroundValidation, null, "m", false, 700, now);
+        foreach (var record in new[] { withUsage, withoutUsage, pending }) await ledger.AddAsync(record, CancellationToken.None);
+
+        await ledger.CompleteAsync(withUsage.Id, FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.Succeeded, 40,
+            new FamilyLibrarian.Application.ModelTesting.ModelUsage(10, 20, 30), CancellationToken.None);
+        await ledger.CompleteAsync(withoutUsage.Id, FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.EmptyContent, 40, null, CancellationToken.None);
+
+        var totals = await ledger.GetTotalsAsync(FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.InteractiveChat, user, now.AddMinutes(-1), CancellationToken.None);
+        Assert.AreEqual(2, totals.UserRequests);
+        Assert.AreEqual(30 + 900, totals.UserTokens, "Reported usage is used when present; an unreported call keeps its conservative estimate.");
+        Assert.AreEqual(1, totals.CloudRequests);
+        var background = await ledger.GetTotalsAsync(FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.BackgroundValidation, null, now.AddMinutes(-1), CancellationToken.None);
+        Assert.AreEqual(1, background.InstallationRequests, "A pending reservation counts against the budget.");
+
+        var summary = await ledger.SummarizeAsync(now.AddMinutes(-1), CancellationToken.None);
+        var empty = summary.Rows.Single(row => row.Outcome == FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.EmptyContent);
+        Assert.AreEqual(0, empty.ReportedTokens);
+        Assert.AreEqual(1, empty.CallsWithoutUsage, "Missing usage is counted as missing, not as zero tokens.");
+    }
+
+    [TestMethod]
+    public async Task UsageIsAdministratorOnlyAndContainsNoPromptsOrReplies()
+    {
+        await using var factory = Factory();
+        using var member = await SignedInAsync(factory, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
+        using var admin = await SignedInAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+
+        Assert.AreEqual(HttpStatusCode.Forbidden, (await member.GetAsync($"{BasePath}/usage")).StatusCode);
+        var usage = await admin.GetFromJsonAsync<ModelUsageResponse>($"{BasePath}/usage");
+        Assert.IsNotNull(usage);
     }
 
     [TestMethod]

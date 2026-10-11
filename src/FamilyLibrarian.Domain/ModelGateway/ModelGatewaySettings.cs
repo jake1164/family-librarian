@@ -44,6 +44,40 @@ public sealed class ModelGatewaySettings
     /// <summary>Explicit opt-in for any role placed on a cloud alias. Off by default; never implied by a fallback.</summary>
     public bool AllowCloud { get; private set; }
 
+    /// <summary>Timeouts, size caps, concurrency and daily budgets. Defaults are modest; cloud allowances default to zero.</summary>
+    public int TimeoutSeconds { get; private set; } = ModelExecutionLimits.Default.TimeoutSeconds;
+
+    public int MaxInputCharacters { get; private set; } = ModelExecutionLimits.Default.MaxInputCharacters;
+
+    public int MaxOutputTokens { get; private set; } = ModelExecutionLimits.Default.MaxOutputTokens;
+
+    public int MaxConcurrentCalls { get; private set; } = ModelExecutionLimits.Default.MaxConcurrentCalls;
+
+    public int CloudDailyRequests { get; private set; } = ModelExecutionLimits.Default.CloudDailyRequests;
+
+    public int CloudDailyTokens { get; private set; } = ModelExecutionLimits.Default.CloudDailyTokens;
+    public int InteractiveUserDailyRequests { get; private set; } = ModelExecutionLimits.Default.Interactive.UserDailyRequests;
+
+    public int InteractiveUserDailyTokens { get; private set; } = ModelExecutionLimits.Default.Interactive.UserDailyTokens;
+
+    public int InteractiveInstallationDailyRequests { get; private set; } = ModelExecutionLimits.Default.Interactive.InstallationDailyRequests;
+
+    public int InteractiveInstallationDailyTokens { get; private set; } = ModelExecutionLimits.Default.Interactive.InstallationDailyTokens;
+    public int BackgroundUserDailyRequests { get; private set; } = ModelExecutionLimits.Default.Background.UserDailyRequests;
+
+    public int BackgroundUserDailyTokens { get; private set; } = ModelExecutionLimits.Default.Background.UserDailyTokens;
+
+    public int BackgroundInstallationDailyRequests { get; private set; } = ModelExecutionLimits.Default.Background.InstallationDailyRequests;
+
+    public int BackgroundInstallationDailyTokens { get; private set; } = ModelExecutionLimits.Default.Background.InstallationDailyTokens;
+
+    /// <summary>The limits as one value. Persisted as flat columns.</summary>
+    public ModelExecutionLimits Limits => new(
+        TimeoutSeconds, MaxInputCharacters, MaxOutputTokens, MaxConcurrentCalls,
+        new ModelBudget(InteractiveUserDailyRequests, InteractiveUserDailyTokens, InteractiveInstallationDailyRequests, InteractiveInstallationDailyTokens),
+        new ModelBudget(BackgroundUserDailyRequests, BackgroundUserDailyTokens, BackgroundInstallationDailyRequests, BackgroundInstallationDailyTokens),
+        CloudDailyRequests, CloudDailyTokens);
+
     public Guid? UpdatedByUserId { get; private set; }
 
     public DateTimeOffset CreatedAtUtc { get; private set; }
@@ -62,6 +96,31 @@ public sealed class ModelGatewaySettings
     {
         EndpointUrl = Clean(endpointUrl, MaxEndpointLength)?.TrimEnd('/');
         AllowCloud = allowCloud;
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void ConfigureLimits(ModelExecutionLimits limits, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        ArgumentNullException.ThrowIfNull(limits);
+        if (limits.Validate() is { } problem)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limits), problem);
+        }
+
+        TimeoutSeconds = limits.TimeoutSeconds;
+        MaxInputCharacters = limits.MaxInputCharacters;
+        MaxOutputTokens = limits.MaxOutputTokens;
+        MaxConcurrentCalls = limits.MaxConcurrentCalls;
+        CloudDailyRequests = limits.CloudDailyRequests;
+        CloudDailyTokens = limits.CloudDailyTokens;
+        InteractiveUserDailyRequests = limits.Interactive.UserDailyRequests;
+        InteractiveUserDailyTokens = limits.Interactive.UserDailyTokens;
+        InteractiveInstallationDailyRequests = limits.Interactive.InstallationDailyRequests;
+        InteractiveInstallationDailyTokens = limits.Interactive.InstallationDailyTokens;
+        BackgroundUserDailyRequests = limits.Background.UserDailyRequests;
+        BackgroundUserDailyTokens = limits.Background.UserDailyTokens;
+        BackgroundInstallationDailyRequests = limits.Background.InstallationDailyRequests;
+        BackgroundInstallationDailyTokens = limits.Background.InstallationDailyTokens;
         Touch(actorUserId, updatedAtUtc);
     }
 

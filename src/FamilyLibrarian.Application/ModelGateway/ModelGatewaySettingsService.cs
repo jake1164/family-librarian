@@ -31,11 +31,14 @@ public sealed record ModelGatewaySettingsView(
     bool HasApiKey,
     DateTimeOffset? ApiKeySetAtUtc,
     bool AllowCloud,
-    IReadOnlyList<ModelRoleView> Roles);
+    IReadOnlyList<ModelRoleView> Roles,
+    ModelExecutionLimits Limits);
 
 public sealed record ModelRoleCommand(ModelRole Role, bool IsEnabled, ModelPlacement Placement, string? LocalModel, string? CloudModel);
 
-public sealed record SaveModelGatewaySettings(string? EndpointUrl, bool AllowCloud, IReadOnlyList<ModelRoleCommand> Roles);
+/// <param name="Limits">The new limits, or null to leave them as they are.</param>
+public sealed record SaveModelGatewaySettings(
+    string? EndpointUrl, bool AllowCloud, IReadOnlyList<ModelRoleCommand> Roles, ModelExecutionLimits? Limits = null);
 
 public sealed record ModelGatewaySettingsResult(bool Succeeded, bool Forbidden, string? Error, ModelGatewaySettingsView? Settings)
 {
@@ -90,6 +93,11 @@ public sealed class ModelGatewaySettingsService(
             settings.ConfigureRole(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel, currentUser.UserId, clock.UtcNow);
         }
 
+        if (command.Limits is not null)
+        {
+            settings.ConfigureLimits(command.Limits, currentUser.UserId, clock.UtcNow);
+        }
+
         if (settings.IsEnabled && settings.EndpointUrl is null)
         {
             // A gateway that can no longer reach anything must not stay "enabled".
@@ -102,6 +110,7 @@ public sealed class ModelGatewaySettingsService(
             new
             {
                 settings.AllowCloud,
+                settings.Limits,
                 Roles = settings.Roles.Select(role => new { Role = role.Role.ToString(), role.IsEnabled, Placement = role.Placement.ToString() })
             },
             cancellationToken);
@@ -175,7 +184,8 @@ public sealed class ModelGatewaySettingsService(
             return setting is null
                 ? new ModelRoleView(role, false, ModelPlacement.Local, null, null)
                 : new ModelRoleView(role, setting.IsEnabled, setting.Placement, setting.LocalModel, setting.CloudModel);
-        })]);
+        })],
+        settings?.Limits ?? ModelExecutionLimits.Default);
 
     private bool IsAdministrator() => currentUser.UserId is not null && administrator.IsAdministrator;
 
@@ -184,6 +194,11 @@ public sealed class ModelGatewaySettingsService(
         if (ModelConfigurationRules.EndpointError(command.EndpointUrl) is { } endpointError)
         {
             return endpointError;
+        }
+
+        if (command.Limits?.Validate() is { } limitsError)
+        {
+            return limitsError;
         }
 
         var seen = new HashSet<ModelRole>();

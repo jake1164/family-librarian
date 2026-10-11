@@ -11,9 +11,31 @@ public sealed record ModelGatewaySettingsResponse(
     bool HasApiKey,
     DateTimeOffset? ApiKeySetAtUtc,
     bool AllowCloud,
-    IReadOnlyList<ModelRoleDto> Roles);
+    IReadOnlyList<ModelRoleDto> Roles,
+    ModelLimitsDto Limits);
 
-public sealed record SaveModelGatewaySettingsRequest(string? EndpointUrl, bool AllowCloud, IReadOnlyList<ModelRoleDto> Roles);
+/// <summary>A daily allowance for one kind of use. Zero stops all calls of that kind; it never means unlimited.</summary>
+public sealed record ModelBudgetDto(int UserDailyRequests, int UserDailyTokens, int InstallationDailyRequests, int InstallationDailyTokens);
+
+public sealed record ModelLimitsDto(
+    int TimeoutSeconds,
+    int MaxInputCharacters,
+    int MaxOutputTokens,
+    int MaxConcurrentCalls,
+    ModelBudgetDto Interactive,
+    ModelBudgetDto Background,
+    int CloudDailyRequests,
+    int CloudDailyTokens);
+
+/// <param name="Limits">The new limits, or null to leave them unchanged.</param>
+public sealed record SaveModelGatewaySettingsRequest(
+    string? EndpointUrl, bool AllowCloud, IReadOnlyList<ModelRoleDto> Roles, ModelLimitsDto? Limits = null);
+
+/// <param name="ReportedTokens">Tokens the provider reported; calls it reported nothing for are counted in <paramref name="CallsWithoutUsage"/>, not as zero.</param>
+public sealed record ModelUsageRowResponse(
+    string Role, string Budget, string Outcome, bool IsCloud, int Calls, long ReportedTokens, int CallsWithoutUsage);
+
+public sealed record ModelUsageResponse(DateTimeOffset SinceUtc, IReadOnlyList<ModelUsageRowResponse> Rows);
 
 public sealed record SetModelGatewayEnabledRequest(bool Enabled);
 

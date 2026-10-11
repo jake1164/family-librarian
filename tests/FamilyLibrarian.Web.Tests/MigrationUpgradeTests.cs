@@ -185,6 +185,30 @@ public sealed class MigrationUpgradeTests
     }
 
     [TestMethod]
+    public async Task ModelExecutionPolicyUpgradeGivesExistingGatewaySettingsSafeDefaultLimits()
+    {
+        const string PreExecutionPolicyMigration = "20261011132601_AddModelGatewaySettings";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await database.GetService<IMigrator>().MigrateAsync(PreExecutionPolicyMigration);
+        await database.Database.ExecuteSqlRawAsync(
+            "INSERT INTO integrations.model_gateway_settings (id, is_enabled, api_key_format_version, allow_cloud, created_at_utc, updated_at_utc) " +
+            "VALUES ('11111111-1111-1111-1111-111111111111', false, 0, true, now(), now())");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var settings = await database.ModelGatewaySettingsRows.AsNoTracking().SingleAsync();
+        Assert.AreEqual(30, settings.Limits.TimeoutSeconds);
+        Assert.AreEqual(30, settings.Limits.Interactive.UserDailyRequests);
+        Assert.AreEqual(0, settings.Limits.CloudDailyRequests, "An existing cloud opt-in gets no cloud allowance until one is granted.");
+        Assert.IsTrue(await TableExistsAsync(database, "integrations", "model_usage_ledger"));
+        Assert.AreEqual(0, await database.ModelUsageRecords.CountAsync());
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task AssetOriginUpgradeMarksEveryExistingRowLegacyExplicitlyAndProtectsOrigin()
     {
         const string PreOriginMigration = "20261010202850_AddArtifactEvidence";

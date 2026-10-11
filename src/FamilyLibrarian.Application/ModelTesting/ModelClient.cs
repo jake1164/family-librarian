@@ -24,7 +24,10 @@ public enum ModelFailureKind
     RateLimited,
     BadRequest,
     ServerError,
-    InvalidResponse
+    InvalidResponse,
+
+    /// <summary>The model or gateway rejected a feature of the request (JSON mode, tools, image input).</summary>
+    UnsupportedCapability
 }
 
 public sealed record ModelUsage(int? PromptTokens, int? CompletionTokens, int? TotalTokens);
