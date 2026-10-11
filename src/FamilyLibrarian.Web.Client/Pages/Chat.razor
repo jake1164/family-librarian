@@ -1,0 +1,109 @@
+@page "/chat"
+@attribute [Authorize]
+@using FamilyLibrarian.Contracts.Conversation
+@using FamilyLibrarian.Web.Client.Conversation
+@inject ConversationApiClient Conversation
+
+<PageTitle>Chat · Family Librarian</PageTitle>
+
+<MudStack Spacing="4">
+    <div>
+        <MudText Typo="Typo.h3">Chat</MudText>
+        <MudText Typo="Typo.body1">
+            Ask for a book the way you would ask a librarian: a title, an author, an ISBN, or “the third Murderbot book”.
+            Requests go through the same approval process as the rest of Family Librarian. Say “help” to see what I can do.
+        </MudText>
+    </div>
+
+    @if (status is null)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" aria-label="Loading chat" />
+    }
+    else if (!status.Enabled)
+    {
+        <MudAlert Severity="Severity.Info">Chat isn't turned on for this Family Librarian. <MudLink Href="search">Search the catalog</MudLink> instead.</MudAlert>
+    }
+    else
+    {
+        <MudStack Spacing="2" role="log" aria-live="polite" aria-label="Conversation">
+            @foreach (var entry in entries)
+            {
+                if (entry.Reply is null)
+                {
+                    <MudText Typo="Typo.body1" Align="Align.Right" Class="family-librarian-chat-you"><strong>You:</strong> @entry.Text</MudText>
+                }
+                else
+                {
+                    <ConversationReplyView Reply="entry.Reply" OnSend="SendAsync" />
+                }
+            }
+            @if (isSending)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" aria-label="Waiting for an answer" />
+            }
+        </MudStack>
+
+        <form @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudTextField @bind-Value="draft" Label="Message" Variant="Variant.Outlined" Immediate="true"
+                              MaxLength="@status.MaxMessageLength" Disabled="@isSending" AutoFocus="true"
+                              Class="flex-grow-1" aria-label="Message to the librarian" />
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                           Disabled="@(isSending || string.IsNullOrWhiteSpace(draft))">Send</MudButton>
+            </MudStack>
+        </form>
+    }
+</MudStack>
+
+@code {
+    private sealed record Entry(string? Text, ConversationReplyResponse? Reply);
+
+    private readonly List<Entry> entries = [];
+    private ConversationStatusResponse? status;
+    private string draft = string.Empty;
+    private bool isSending;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            status = await Conversation.GetStatusAsync();
+        }
+        catch (HttpRequestException)
+        {
+            status = new ConversationStatusResponse(false, 0);
+        }
+    }
+
+    private Task SubmitAsync()
+    {
+        var text = draft.Trim();
+        draft = string.Empty;
+        return text.Length == 0 ? Task.CompletedTask : SendAsync(text);
+    }
+
+    // A fresh id per message: a retry of the same message (not a repeat of the same words) is what the id protects.
+    private async Task SendAsync(string text)
+    {
+        if (isSending) return;
+        isSending = true;
+        entries.Add(new Entry(text, null));
+        try
+        {
+            var reply = await Conversation.SendAsync(text, Guid.NewGuid().ToString("N"));
+            entries.Add(reply is null
+                ? new Entry(null, Fallback("Chat isn't available right now. Please sign in again or use search."))
+                : new Entry(null, reply));
+        }
+        catch (HttpRequestException)
+        {
+            entries.Add(new Entry(null, Fallback("I couldn't reach Family Librarian just now. Please try again.")));
+        }
+        finally
+        {
+            isSending = false;
+        }
+    }
+
+    private static ConversationReplyResponse Fallback(string text) => new("Unavailable", text, [], [], [], null, false);
+}

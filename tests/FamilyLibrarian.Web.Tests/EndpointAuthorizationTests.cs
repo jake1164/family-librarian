@@ -59,6 +59,7 @@ public sealed class EndpointAuthorizationTests
     [DataRow("/api/v1/admin/external-providers/")]
     [DataRow("/api/v1/admin/provider-catalogs/")]
     [DataRow("/api/v1/notifications/")]
+    [DataRow("/api/v1/conversation/status")]
     [DataRow("/api/v1/interaction-links/jobs/00000000-0000-0000-0000-000000000001/status")]
     [DataRow("/api/v1/interaction-links/jobs/00000000-0000-0000-0000-000000000001/view")]
     public async Task AnAnonymousCallerIsChallengedOnAProtectedRoute(string route)

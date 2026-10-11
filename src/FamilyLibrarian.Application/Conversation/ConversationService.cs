@@ -66,7 +66,7 @@ public sealed class ConversationService(
         using var lease = await limiter.TryEnterAsync(userId, cancellationToken);
         if (lease is null)
         {
-            return Terminal(ConversationReplyKind.Throttled, "You're sending messages quickly. Give me a moment, then try again.");
+            return Terminal(ConversationReplyKind.RateLimited, "You're sending messages quickly. Give me a moment, then try again.");
         }
 
         try

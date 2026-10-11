@@ -281,7 +281,7 @@ public sealed class ConversationServiceTests
 
         var result = await harness.SayAsync(Query);
 
-        Assert.AreEqual(ConversationReplyKind.Throttled, result.Reply.Kind);
+        Assert.AreEqual(ConversationReplyKind.RateLimited, result.Reply.Kind);
         Assert.IsEmpty(harness.Tools.Calls);
     }
 

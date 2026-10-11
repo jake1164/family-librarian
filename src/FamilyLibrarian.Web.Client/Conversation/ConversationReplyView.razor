@@ -1,0 +1,87 @@
+@using FamilyLibrarian.Contracts.Conversation
+@* One answer in the chat. Plain text only: catalog text is never rendered as markup. Buttons only send ordinary messages
+   back through the same chat, so nothing here can do more than typing the same words would. *@
+<MudPaper Outlined="true" Class="pa-3" role="article" aria-label="Chat answer">
+    <MudStack Spacing="2">
+        <MudText Typo="Typo.body1" Style="white-space: pre-line;">@Reply.Text</MudText>
+
+        @if (Reply.Choices.Count > 0)
+        {
+            <ol class="family-librarian-chat-choices" aria-label="Results">
+                @foreach (var choice in Reply.Choices)
+                {
+                    <li value="@choice.Number">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.body2">
+                                <strong>@choice.Title</strong>
+                                @if (!string.IsNullOrWhiteSpace(choice.Authors))
+                                {
+                                    <span> — @choice.Authors</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(choice.Detail))
+                                {
+                                    <span> (@choice.Detail)</span>
+                                }
+                            </MudText>
+                            <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                                       aria-label="@($"Pick {choice.Title}")"
+                                       OnClick="@(() => OnSend.InvokeAsync(choice.Number.ToString(System.Globalization.CultureInfo.InvariantCulture)))">
+                                Pick
+                            </MudButton>
+                            <MudButton Variant="Variant.Text" Size="Size.Small"
+                                       aria-label="@($"Details for {choice.Title}")"
+                                       OnClick="@(() => OnSend.InvokeAsync($"details {choice.Number}"))">
+                                Details
+                            </MudButton>
+                        </MudStack>
+                    </li>
+                }
+            </ol>
+        }
+
+        @if (Reply.Requests.Count > 0)
+        {
+            <ul class="family-librarian-chat-requests" aria-label="Your requests">
+                @foreach (var request in Reply.Requests)
+                {
+                    <li>
+                        <MudText Typo="Typo.body2">
+                            <strong>@request.Title</strong> — @request.Status
+                            @if (request.Formats.Count > 0)
+                            {
+                                <span> (@string.Join("; ", request.Formats))</span>
+                            }
+                        </MudText>
+                    </li>
+                }
+            </ul>
+            <MudLink Href="requests">Open My requests</MudLink>
+        }
+        else if (Reply.RequestId is not null)
+        {
+            <MudLink Href="requests">See it in My requests</MudLink>
+        }
+
+        @if (QuickReplies.Count > 0)
+        {
+            <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap" role="group" aria-label="Quick replies">
+                @foreach (var suggestion in QuickReplies)
+                {
+                    <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => OnSend.InvokeAsync(suggestion))">@suggestion</MudButton>
+                }
+            </MudStack>
+        }
+    </MudStack>
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired]
+    public ConversationReplyResponse Reply { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<string> OnSend { get; set; }
+
+    // Numbered picks already have their own buttons beside each result.
+    private IReadOnlyList<string> QuickReplies =>
+        Reply.SuggestedReplies.Where(suggestion => !string.IsNullOrEmpty(suggestion) && !char.IsDigit(suggestion[0])).ToArray();
+}

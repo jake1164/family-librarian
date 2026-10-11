@@ -32,6 +32,9 @@ public enum ConversationReplyKind
     NotUnderstood,
     Unauthenticated,
     Throttled,
+
+    /// <summary>Too many messages too quickly (or a turn still running); a transport may answer 429.</summary>
+    RateLimited,
     TooLong,
     Disabled,
     Unavailable

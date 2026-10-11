@@ -7,6 +7,7 @@
 @inject IJSRuntime JS
 @inject LiveUpdatesService Updates
 @inject CatalogApiClient Catalog
+@inject FamilyLibrarian.Web.Client.Conversation.ConversationApiClient Conversation
 @using FamilyLibrarian.Contracts.Operations
 @using FamilyLibrarian.Web.Client.Catalog
 @using FamilyLibrarian.Web.Client.Operations
@@ -158,6 +159,10 @@
                    Elevation="2">
             <MudNavMenu>
                 <MudNavLink Href="search" Icon="@Icons.Material.Filled.Search">Search</MudNavLink>
+                @if (conversationEnabled)
+                {
+                    <MudNavLink Href="chat" Icon="@Icons.Material.Filled.Chat">Chat</MudNavLink>
+                }
                 <MudNavLink Href="requests" Icon="@Icons.Material.Filled.MenuBook">My requests</MudNavLink>
                 <MudNavLink Href="reading" Icon="@Icons.Material.Filled.Star">My reading</MudNavLink>
                 <MudNavLink Href="following" Icon="@Icons.Material.Filled.Bookmarks">Following</MudNavLink>
@@ -280,6 +285,7 @@
     private LiveSubscription? liveSubscription;
     private SystemReadinessResponse? systemReadiness;
     private ExternalLibraryLinksResponse? externalLibraryLinks;
+    private bool conversationEnabled;
 
     private int ProviderIssueCount => adminAttention?.ProviderIssues.Count ?? 0;
 
@@ -361,11 +367,13 @@
                 {
                     await RefreshSystemReadinessAsync(token);
                     await RefreshExternalLibraryLinksAsync(token);
+                    await RefreshConversationAsync(token);
                 }
                 else
                 {
                     systemReadiness = null;
                     externalLibraryLinks = null;
+                    conversationEnabled = false;
                 }
                 if (isAdmin)
                 {
@@ -428,6 +436,18 @@
         {
             // Best-effort: a transient failure just leaves the footer chip
             // unset rather than hiding the rest of the app.
+        }
+    }
+
+    private async Task RefreshConversationAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            conversationEnabled = (await Conversation.GetStatusAsync(cancellationToken)).Enabled;
+        }
+        catch (HttpRequestException)
+        {
+            // Best-effort: the Chat link just stays hidden.
         }
     }
 

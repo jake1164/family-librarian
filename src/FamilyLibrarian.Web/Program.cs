@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Threading.RateLimiting;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Acquisition;
@@ -145,6 +146,18 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0
             }));
+    // Web chat (alpha.6 M3-3): a per-member ceiling in front of the engine's own limiter, so a script cannot make the
+    // host do per-message work faster than a person can type. Partitioned by the signed-in member, never by anything
+    // the client sends.
+    options.AddPolicy(ConversationEndpoints.RateLimitPolicy, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
     options.AddFixedWindowLimiter(InteractionLinkEndpoints.GlobalRateLimitPolicy, limiterOptions =>
     {
         limiterOptions.PermitLimit = Math.Max(redemptionAttemptsPerMinute * 20, 100);
@@ -286,6 +299,7 @@ app.MapNotificationEndpoints();
 app.MapSmtpSettingsEndpoints();
 app.MapMatrixSettingsEndpoints();
 app.MapMatrixIdentityLinkEndpoints();
+app.MapConversationEndpoints();
 app.MapFeedbackEndpoints();
 app.MapFollowingEndpoints();
 app.MapDeliveryTargetEndpoints();
