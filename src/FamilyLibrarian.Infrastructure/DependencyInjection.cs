@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
+using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Following;
@@ -18,6 +19,7 @@ using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Acquisition;
 using FamilyLibrarian.Infrastructure.Catalog;
 using FamilyLibrarian.Infrastructure.Communications;
+using FamilyLibrarian.Infrastructure.Conversation;
 using FamilyLibrarian.Infrastructure.Delivery;
 using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Infrastructure.LibriVox;
@@ -248,6 +250,16 @@ public static class DependencyInjection
         services.AddScoped<IUserMatrixDestinationLookup>(provider => provider.GetRequiredService<UserMatrixDestinationRepository>());
         services.AddScoped<MatrixIdentityLinkService>();
         services.AddScoped<MatrixInboundRouter>();
+
+        // Conversation (alpha.6 M2): everything is off until Conversation:Enabled (and a transport flag) is set.
+        services.AddSingleton(provider =>
+            provider.GetRequiredService<IConfiguration>().GetSection("Conversation").Get<ConversationOptions>() ?? new ConversationOptions());
+        services.AddSingleton<IConversationLimiter, ConversationLimiter>();
+        services.AddScoped<IConversationSessionStore, EfConversationSessionStore>();
+        services.AddScoped<IConversationEventLog, EfConversationEventLog>();
+        services.AddScoped<IConversationTransaction, EfConversationTransaction>();
+        services.AddScoped<IConversationTools, ConversationBookTools>();
+        services.AddScoped<IConversationService, ConversationService>();
         services.AddScoped<MatrixInboundSyncCoordinator>();
         services.AddScoped<IOutboundCommunicationProvider, MatrixOutboundCommunicationProvider>();
 

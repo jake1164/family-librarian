@@ -119,6 +119,35 @@ public sealed class MigrationUpgradeTests
     }
 
     [TestMethod]
+    public async Task ConversationStateUpgradeIsAdditiveAndKeepsExistingRequests()
+    {
+        const string PreConversationMigration = "20261011034107_AddAssetOriginAndHoldCode";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var now = DateTimeOffset.UtcNow;
+        var work = new Work("Conversation upgrade", null, null, null, PublicationStatus.Published, now);
+        database.Works.Add(work);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        database.BookRequests.Add(request);
+        await database.SaveChangesAsync();
+
+        await database.GetService<IMigrator>().MigrateAsync(PreConversationMigration);
+        Assert.IsFalse(await TableExistsAsync(database, "conversation", "processed_events"));
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        foreach (var table in new[] { "sessions", "processed_events", "request_keys" })
+        {
+            Assert.IsTrue(await TableExistsAsync(database, "conversation", table), table);
+        }
+
+        Assert.IsTrue(await database.BookRequests.AnyAsync(item => item.Id == request.Id), "Existing requests are untouched.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task AssetOriginUpgradeMarksEveryExistingRowLegacyExplicitlyAndProtectsOrigin()
     {
         const string PreOriginMigration = "20261010202850_AddArtifactEvidence";

@@ -6,6 +6,7 @@ using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Communications;
+using FamilyLibrarian.Domain.Conversation;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Feedback;
 using FamilyLibrarian.Domain.Following;
@@ -73,6 +74,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<MatrixSettings> MatrixSettings => Set<MatrixSettings>();
 
     public DbSet<UserMatrixDestination> UserMatrixDestinations => Set<UserMatrixDestination>();
+
+    public DbSet<StoredConversationSession> ConversationSessions => Set<StoredConversationSession>();
+
+    public DbSet<ProcessedConversationEvent> ProcessedConversationEvents => Set<ProcessedConversationEvent>();
+
+    public DbSet<ConversationRequestKey> ConversationRequestKeys => Set<ConversationRequestKey>();
 
     public DbSet<UserWorkFeedback> UserWorkFeedback => Set<UserWorkFeedback>();
 
@@ -345,6 +352,52 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(destination => destination.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Conversation (alpha.6 M2-3): minimal structured state, plus the records that make a replayed message harmless.
+        builder.Entity<StoredConversationSession>(entity =>
+        {
+            entity.ToTable("sessions", "conversation");
+            entity.HasKey(session => session.Id);
+            entity.Property(session => session.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(session => session.UserId).HasColumnName("user_id");
+            entity.Property(session => session.Transport).HasColumnName("transport").HasMaxLength(16);
+            entity.Property(session => session.ScopeKey).HasColumnName("scope_key").HasMaxLength(200);
+            entity.Property(session => session.StateJson).HasColumnName("state_json").HasMaxLength(StoredConversationSession.MaxStateLength);
+            entity.Property(session => session.TurnCount).HasColumnName("turn_count");
+            entity.Property(session => session.StartedAtUtc).HasColumnName("started_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(session => session.LastActivityAtUtc).HasColumnName("last_activity_at_utc").HasColumnType("timestamp with time zone");
+            entity.HasIndex(session => new { session.UserId, session.Transport, session.ScopeKey }).IsUnique();
+            entity.HasOne<AppUser>().WithMany().HasForeignKey(session => session.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<ProcessedConversationEvent>(entity =>
+        {
+            entity.ToTable("processed_events", "conversation");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(item => item.UserId).HasColumnName("user_id");
+            entity.Property(item => item.Transport).HasColumnName("transport").HasMaxLength(16);
+            entity.Property(item => item.ScopeKey).HasColumnName("scope_key").HasMaxLength(200);
+            entity.Property(item => item.EventId).HasColumnName("event_id").HasMaxLength(255);
+            entity.Property(item => item.ReplyJson).HasColumnName("reply_json").HasMaxLength(ProcessedConversationEvent.MaxReplyLength);
+            entity.Property(item => item.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(item => item.DeliveredAtUtc).HasColumnName("delivered_at_utc").HasColumnType("timestamp with time zone");
+            // The idempotency guard: a message id is processed once per place.
+            entity.HasIndex(item => new { item.Transport, item.ScopeKey, item.EventId }).IsUnique();
+            entity.HasIndex(item => item.CreatedAtUtc);
+            entity.HasOne<AppUser>().WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<ConversationRequestKey>(entity =>
+        {
+            entity.ToTable("request_keys", "conversation");
+            entity.HasKey(item => item.Key);
+            entity.Property(item => item.Key).HasColumnName("key").HasMaxLength(64).ValueGeneratedNever();
+            entity.Property(item => item.UserId).HasColumnName("user_id");
+            entity.Property(item => item.RequestId).HasColumnName("request_id");
+            entity.Property(item => item.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.HasOne<AppUser>().WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 

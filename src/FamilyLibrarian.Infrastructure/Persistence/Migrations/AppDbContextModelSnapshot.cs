@@ -1793,6 +1793,133 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("user_matrix_destinations", "communications");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.ConversationRequestKey", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("key");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid?>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("request_keys", "conversation");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.ProcessedConversationEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<DateTimeOffset?>("DeliveredAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("delivered_at_utc");
+
+                    b.Property<string>("EventId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("event_id");
+
+                    b.Property<string>("ReplyJson")
+                        .HasMaxLength(8000)
+                        .HasColumnType("character varying(8000)")
+                        .HasColumnName("reply_json");
+
+                    b.Property<string>("ScopeKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("scope_key");
+
+                    b.Property<string>("Transport")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("transport");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Transport", "ScopeKey", "EventId")
+                        .IsUnique();
+
+                    b.ToTable("processed_events", "conversation");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.StoredConversationSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("LastActivityAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_activity_at_utc");
+
+                    b.Property<string>("ScopeKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("scope_key");
+
+                    b.Property<DateTimeOffset>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at_utc");
+
+                    b.Property<string>("StateJson")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("state_json");
+
+                    b.Property<string>("Transport")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("transport");
+
+                    b.Property<int>("TurnCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("turn_count");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Transport", "ScopeKey")
+                        .IsUnique();
+
+                    b.ToTable("sessions", "conversation");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Delivery.DeliveryAttempt", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4235,6 +4362,33 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Communications.UserMatrixDestination", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.ConversationRequestKey", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.ProcessedConversationEvent", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.StoredConversationSession", b =>
                 {
                     b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
                         .WithMany()
