@@ -24,7 +24,13 @@ public enum EvidenceDimension
     Completeness = 5,
 
     /// <summary>Malware and safety scanning results.</summary>
-    Security = 6
+    Security = 6,
+
+    /// <summary>
+    /// Measured audio properties (duration, codec, bitrate, chapters, track position). Deliberately its own
+    /// dimension: a measurement is never identity evidence and never an input to an identity verdict (M1-4c).
+    /// </summary>
+    AudioTechnical = 7
 }
 
 /// <summary>
@@ -156,4 +162,5 @@ public static class ArtifactEvidenceRecordKinds
     public const string SecurityEvaluation = "security-evaluation";
     public const string IdentityVerification = "identity-verification";
     public const string IdentityOverride = "identity-override";
+    public const string TechnicalInspection = "technical-inspection";
 }

@@ -192,6 +192,10 @@ public sealed class AssetIdentityVerificationServiceTests
             MediaAsset asset, Guid? administratorUserId, string? overriddenHoldCode, string reason, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
+        public Task RecordTechnicalInspectionAsync(
+            MediaAsset asset, IReadOnlyList<IdentityFact> findings, string source, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
         public Task RecordIdentityVerificationAsync(
             MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken)
         {

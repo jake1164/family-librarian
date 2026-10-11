@@ -255,6 +255,36 @@ public sealed class AudioValidator : IAssetValidator
         return new ValidationOutcome(false, "No valid MPEG audio frame was found.");
     }
 
+    /// <summary>What an MPEG audio frame header declares (M1-4c measurement; the validator's pass/fail logic is unchanged).</summary>
+    internal readonly record struct Mp3FrameInfo(
+        string MpegVersion, int Layer, int BitrateKbps, int SampleRateHz, int SamplesPerFrame, int FrameLengthBytes, bool IsMono);
+
+    /// <summary>
+    /// Describes a structurally valid MPEG audio frame header using the same tables and validity rules as
+    /// <see cref="TryParseFrameHeader"/>.
+    /// </summary>
+    internal static bool TryDescribeFrameHeader(ReadOnlySpan<byte> header, out Mp3FrameInfo info)
+    {
+        info = default;
+        if (header.Length < 4 || !TryParseFrameHeader(header, out var frameLength))
+        {
+            return false;
+        }
+
+        var versionId = (header[1] >> 3) & 0x03;
+        var layerNumber = ((header[1] >> 1) & 0x03) switch { 3 => 1, 2 => 2, _ => 3 };
+        var bitrateIndex = (header[2] >> 4) & 0x0F;
+        var sampleRateIndex = (header[2] >> 2) & 0x03;
+        var isMpeg1 = versionId == 3;
+        var sampleRate = versionId switch { 3 => SampleRateHzMpeg1[sampleRateIndex], 2 => SampleRateHzMpeg2[sampleRateIndex], _ => SampleRateHzMpeg25[sampleRateIndex] };
+        var bitrate = (isMpeg1 ? BitrateKbpsMpeg1[layerNumber] : BitrateKbpsMpeg2[layerNumber])[bitrateIndex];
+        var samplesPerFrame = layerNumber switch { 1 => 384, 2 => 1152, _ => isMpeg1 ? 1152 : 576 };
+        info = new Mp3FrameInfo(
+            versionId switch { 3 => "mpeg1", 2 => "mpeg2", _ => "mpeg2.5" }, layerNumber, bitrate, sampleRate, samplesPerFrame,
+            frameLength, IsMono: ((header[3] >> 6) & 0x03) == 3);
+        return true;
+    }
+
     private static bool TryParseFrameHeader(ReadOnlySpan<byte> header, out int frameLengthBytes)
     {
         frameLengthBytes = 0;

@@ -5,6 +5,7 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Evidence;
 
 namespace FamilyLibrarian.Infrastructure.Security;
 
@@ -146,6 +147,133 @@ public sealed class M4bAssetIdentityVerifier(
         if (requestFulfillment is null) return null;
         var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
         return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
+    }
+
+    /// <summary>
+    /// M1-4c: measured properties of the first audio track (duration from its media header, codec from its sample entry,
+    /// average bitrate from file size over duration) and the Nero chapter count. Bounded header reads only. A value that
+    /// cannot be read is reported as unavailable or not found, never guessed. Independent of identity.
+    /// </summary>
+    internal static async Task<IReadOnlyList<IdentityFact>> InspectTechnicalAsync(Stream content, CancellationToken cancellationToken)
+    {
+        double? seconds = null;
+        string? codec = null;
+        int? chapters = null;
+        try
+        {
+            if (await FindChildAsync(content, 0, content.Length, "moov", cancellationToken) is { } moov)
+            {
+                var position = moov.PayloadStart;
+                var tracks = 0;
+                for (var count = 0; count < MaxBoxesPerLevel && seconds is null; count++)
+                {
+                    if (await TryReadBoxAsync(content, position, moov.End, cancellationToken) is not { } box) break;
+                    position = box.End;
+                    if (box.Type != "trak") continue;
+                    if (++tracks > MaxTracks) break;
+                    if (await FindChildAsync(content, box.PayloadStart, box.End, "mdia", cancellationToken) is not { } mdia) continue;
+                    if (await ReadHandlerTypeAsync(content, mdia, cancellationToken) != "soun") continue;
+
+                    seconds = await ReadMediaDurationSecondsAsync(content, mdia, cancellationToken);
+                    codec = await ReadSampleEntryFormatAsync(content, mdia, cancellationToken);
+                }
+
+                if (await FindChildAsync(content, moov.PayloadStart, moov.End, "udta", cancellationToken) is { } udta &&
+                    await FindChildAsync(content, udta.PayloadStart, udta.End, "chpl", cancellationToken) is { } chpl)
+                {
+                    chapters = await ReadNeroChapterCountAsync(content, chpl, cancellationToken);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException)
+        {
+            // Unreadable parts stay unmeasured.
+        }
+
+        List<IdentityFact> facts = [];
+        if (seconds is > 0)
+        {
+            facts.Add(new("ev-audio-duration", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.DurationMeasured,
+                EvidencePolarity.Unknown, $"seconds={Math.Round(seconds.Value)};basis=media_header"));
+            facts.Add(new("ev-audio-bitrate", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.Bitrate,
+                EvidencePolarity.Unknown, $"kbps_avg={Math.Round(content.Length * 8d / seconds.Value / 1000d)};basis=file_size_over_duration"));
+        }
+        else
+        {
+            facts.Add(new("ev-audio-duration", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.DurationUnavailable,
+                EvidencePolarity.Unknown, "no readable audio media header"));
+        }
+
+        if (codec is not null)
+        {
+            facts.Add(new("ev-audio-codec", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.Codec, EvidencePolarity.Unknown, codec));
+        }
+
+        facts.Add(chapters is > 0
+            ? new IdentityFact("ev-audio-chapters", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.ChaptersCounted,
+                EvidencePolarity.Unknown, chapters.Value.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            : new IdentityFact("ev-audio-chapters", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.ChaptersNotFound,
+                EvidencePolarity.Unknown, "no chapter list in the container"));
+        return facts;
+    }
+
+    /// <summary><c>mdhd</c>: version 0 has 32-bit timescale at 12 and duration at 16; version 1 has timescale at 20 and a 64-bit duration at 24.</summary>
+    private static async Task<double?> ReadMediaDurationSecondsAsync(Stream content, BoxInfo mdia, CancellationToken cancellationToken)
+    {
+        if (await FindChildAsync(content, mdia.PayloadStart, mdia.End, "mdhd", cancellationToken) is not { } mdhd) return null;
+        var available = mdhd.End - mdhd.PayloadStart;
+        if (available < 1) return null;
+
+        var toRead = (int)Math.Min(available, 32);
+        var buffer = new byte[toRead];
+        content.Position = mdhd.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        uint timescale;
+        ulong duration;
+        if (buffer[0] == 0 && toRead >= 20)
+        {
+            timescale = BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(12, 4));
+            duration = BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(16, 4));
+        }
+        else if (buffer[0] == 1 && toRead >= 32)
+        {
+            timescale = BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(20, 4));
+            duration = BinaryPrimitives.ReadUInt64BigEndian(buffer.AsSpan(24, 8));
+        }
+        else
+        {
+            return null;
+        }
+
+        return timescale == 0 || duration == 0 || duration == uint.MaxValue || duration == ulong.MaxValue ? null : (double)duration / timescale;
+    }
+
+    /// <summary><c>minf/stbl/stsd</c>: four bytes version/flags, four of entry count, then the first entry's size and four-character format.</summary>
+    private static async Task<string?> ReadSampleEntryFormatAsync(Stream content, BoxInfo mdia, CancellationToken cancellationToken)
+    {
+        if (await FindChildAsync(content, mdia.PayloadStart, mdia.End, "minf", cancellationToken) is not { } minf ||
+            await FindChildAsync(content, minf.PayloadStart, minf.End, "stbl", cancellationToken) is not { } stbl ||
+            await FindChildAsync(content, stbl.PayloadStart, stbl.End, "stsd", cancellationToken) is not { } stsd ||
+            stsd.End - stsd.PayloadStart < 16)
+        {
+            return null;
+        }
+
+        var buffer = new byte[16];
+        content.Position = stsd.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        var format = Encoding.Latin1.GetString(buffer, 12, 4);
+        return format.All(character => char.IsAsciiLetterOrDigit(character) || character is ' ' or '-' or '_') ? format.Trim() : null;
+    }
+
+    /// <summary>Nero <c>chpl</c> (version 1): four bytes version/flags, four reserved, then a one-byte chapter count.</summary>
+    private static async Task<int?> ReadNeroChapterCountAsync(Stream content, BoxInfo chpl, CancellationToken cancellationToken)
+    {
+        if (chpl.End - chpl.PayloadStart < 9) return null;
+        var buffer = new byte[9];
+        content.Position = chpl.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        return buffer[0] == 1 ? buffer[8] : null;
     }
 
     /// <summary>

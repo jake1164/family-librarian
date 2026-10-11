@@ -3,6 +3,8 @@ using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
 
 namespace FamilyLibrarian.Application.Security;
@@ -27,7 +29,8 @@ public sealed class SecurityEvaluationService(
     IEnumerable<IAssetValidator> validators,
     IAuditWriter audit,
     IClock clock,
-    IArtifactEvidenceRecorder? evidence = null) : ISecurityEvaluationRunner
+    IArtifactEvidenceRecorder? evidence = null,
+    IEnumerable<IAssetTechnicalInspector>? technicalInspectors = null) : ISecurityEvaluationRunner
 {
     private const string PolicyVersion = "v1";
 
@@ -145,6 +148,7 @@ public sealed class SecurityEvaluationService(
             foreach (var validator in validators)
                 toolVersions[validator.Id] = validator.GetType().Assembly.GetName().Version?.ToString();
             await evidence.RecordSecurityEvaluationAsync(asset, evaluation, toolVersions, cancellationToken);
+            await RecordTechnicalEvidenceAsync(asset, evaluation, cancellationToken);
         }
 
         if (evaluation.Status == SecurityEvaluationStatus.Failed &&
@@ -155,6 +159,96 @@ public sealed class SecurityEvaluationService(
 
         return SecurityEvaluationResult.Success(
             evaluation.Id, evaluation.Status, evaluation.CreatedAtUtc, evaluation.CompletedAtUtc);
+    }
+
+    /// <summary>Bounds the header read so a hostile or slow file cannot hold the evaluation open.</summary>
+    private static readonly TimeSpan TechnicalInspectionTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// M1-4c: measured audio properties, recorded as their own evidence after the decision exists. Not run for a failed
+    /// evaluation (its bytes are rejected or destroyed), and never able to change anything: any failure is swallowed.
+    /// </summary>
+    private async Task RecordTechnicalEvidenceAsync(
+        MediaAsset asset, SecurityEvaluation evaluation, CancellationToken cancellationToken)
+    {
+        if (evidence is null || asset.MediaType != RequestMediaType.Audiobook || evaluation.Status == SecurityEvaluationStatus.Failed)
+        {
+            return;
+        }
+
+        var findings = new List<IdentityFact>();
+        try
+        {
+            var inspector = technicalInspectors?.FirstOrDefault(candidate => candidate.Supports(asset));
+            if (inspector is null)
+            {
+                findings.Add(new("ev-audio-not-assessed", EvidenceDimension.AudioTechnical,
+                    EvidenceReasonCodes.ArtifactAudio.NotAssessed, EvidencePolarity.Unknown, "no inspector for this format"));
+            }
+            else
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(TechnicalInspectionTimeout);
+                try
+                {
+                    await using var content = await stagingStore.OpenAsync(
+                        MediaAssetStorageState.Processing, asset.StoredFilename, timeout.Token);
+                    findings.AddRange(await inspector.InspectAsync(asset, content, timeout.Token));
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    findings.Add(new("ev-audio-duration", EvidenceDimension.AudioTechnical,
+                        EvidenceReasonCodes.ArtifactAudio.DurationUnavailable, EvidencePolarity.Unknown, "inspection did not complete"));
+                }
+            }
+
+            try
+            {
+                findings.AddRange(await TrackSetFindingsAsync(asset, cancellationToken));
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // The set view is an extra; the measurements above are still worth recording.
+            }
+
+            await evidence.RecordTechnicalInspectionAsync(asset, findings, $"inspector:{technicalInspectors?.FirstOrDefault(candidate => candidate.Supports(asset))?.Id ?? "none"}", cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Evidence is best effort and must never alter the decision it describes.
+        }
+    }
+
+    /// <summary>The track's position in a numbered set, and any absent or repeated positions among the staged tracks.</summary>
+    private async Task<IEnumerable<IdentityFact>> TrackSetFindingsAsync(MediaAsset asset, CancellationToken cancellationToken)
+    {
+        if (asset is not { BundleId: { } bundleId, BundleSequence: { } position, BundleTrackCount: { } total })
+        {
+            return [];
+        }
+
+        var findings = new List<IdentityFact>
+        {
+            new("ev-audio-track", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.TrackPosition,
+                EvidencePolarity.Unknown, $"{position}/{total}")
+        };
+        var siblings = await repository.FindAssetsByBundleIdAsync(bundleId, cancellationToken);
+        var present = siblings.Select(sibling => sibling.BundleSequence).OfType<int>().ToArray();
+        var missing = Enumerable.Range(1, total).Except(present).Take(20).ToArray();
+        if (missing.Length > 0)
+        {
+            findings.Add(new("ev-audio-gap", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.TrackSetGap,
+                EvidencePolarity.Condition, $"missing={string.Join(",", missing)}"));
+        }
+
+        var repeated = present.GroupBy(sequence => sequence).Where(group => group.Count() > 1).Select(group => group.Key).Take(20).ToArray();
+        if (repeated.Length > 0)
+        {
+            findings.Add(new("ev-audio-duplicate", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.TrackSetDuplicate,
+                EvidencePolarity.Condition, $"repeated={string.Join(",", repeated)}"));
+        }
+
+        return findings;
     }
 
     private const int MaxFailureReasonLength = 1_024;

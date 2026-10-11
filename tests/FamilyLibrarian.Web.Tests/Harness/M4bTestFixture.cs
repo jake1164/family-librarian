@@ -9,22 +9,29 @@ namespace FamilyLibrarian.Web.Tests.Harness;
 /// </summary>
 public static class M4bTestFixture
 {
-    public static byte[] Build(string title, string author, string? audioLanguage)
+    public static byte[] Build(string title, string author, string? audioLanguage, uint? durationSeconds = null)
     {
         var tags = Concat(Tag("nam", title), Tag("ART", author));
         var udta = Box("udta", Box("meta", Concat(new byte[4], Box("ilst", tags))));
-        var track = audioLanguage is null ? [] : AudioTrack(audioLanguage);
+        var track = audioLanguage is null ? [] : AudioTrack(audioLanguage, durationSeconds);
         var moov = Box("moov", Concat(track, udta));
         return Concat(Box("ftyp", "M4B "u8.ToArray()), moov, Box("mdat", new byte[4096]));
     }
 
-    private static byte[] AudioTrack(string language)
+    private static byte[] AudioTrack(string language, uint? durationSeconds)
     {
         var packed = new byte[2];
         BinaryPrimitives.WriteUInt16BigEndian(packed,
             (ushort)(((language[0] - 0x60) << 10) | ((language[1] - 0x60) << 5) | (language[2] - 0x60)));
         var hdlr = Box("hdlr", Concat(new byte[8], "soun"u8.ToArray(), new byte[12], [0]));
-        var mdhd = Box("mdhd", Concat(new byte[20], packed, new byte[2]));
+        var header = new byte[20];
+        if (durationSeconds is { } seconds)
+        {
+            BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(12), 1_000);
+            BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(16), seconds * 1_000);
+        }
+
+        var mdhd = Box("mdhd", Concat(header, packed, new byte[2]));
         return Box("trak", Box("mdia", Concat(hdlr, mdhd)));
     }
 

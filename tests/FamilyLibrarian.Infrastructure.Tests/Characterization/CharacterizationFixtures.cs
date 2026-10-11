@@ -90,7 +90,9 @@ internal static class CharacterizationFixtures
     }
 
     /// <summary>A <c>trak</c> with a handler, an optional ISO 639-2 <c>mdhd</c> language and an optional <c>elng</c> tag.</summary>
-    public static byte[] Track(string handler = "soun", string? mdhdLanguage = "eng", string? elng = null, int mdhdVersion = 0)
+    public static byte[] Track(
+        string handler = "soun", string? mdhdLanguage = "eng", string? elng = null, int mdhdVersion = 0,
+        uint timescale = 0, ulong duration = 0, string? codec = null)
     {
         var parts = new List<byte[]>
         {
@@ -104,6 +106,17 @@ internal static class CharacterizationFixtures
             var beforeLanguage = mdhdVersion == 0 ? 20 : 32;
             var versionByte = new byte[beforeLanguage];
             versionByte[0] = (byte)mdhdVersion;
+            if (mdhdVersion == 0)
+            {
+                BinaryPrimitives.WriteUInt32BigEndian(versionByte.AsSpan(12), timescale);
+                BinaryPrimitives.WriteUInt32BigEndian(versionByte.AsSpan(16), (uint)duration);
+            }
+            else
+            {
+                BinaryPrimitives.WriteUInt32BigEndian(versionByte.AsSpan(20), timescale);
+                BinaryPrimitives.WriteUInt64BigEndian(versionByte.AsSpan(24), duration);
+            }
+
             parts.Add(Box("mdhd", Concat(versionByte, packed, new byte[2])));
         }
 
@@ -112,8 +125,17 @@ internal static class CharacterizationFixtures
             parts.Add(Box("elng", Concat(new byte[4], Encoding.ASCII.GetBytes(elng), [0])));
         }
 
+        if (codec is not null)
+        {
+            var entry = Box(codec, new byte[8]);
+            parts.Add(Box("minf", Box("stbl", Box("stsd", Concat(new byte[4], [0, 0, 0, 1], entry)))));
+        }
+
         return Box("trak", Box("mdia", Concat(parts.ToArray())));
     }
+
+    /// <summary>A Nero <c>chpl</c> chapter list box (version 1) for <c>moov/udta</c>.</summary>
+    public static byte[] Chapters(byte count) => Box("chpl", Concat([1, 0, 0, 0], new byte[4], [count]));
 
     public static byte[] Tag(string name, string value)
     {

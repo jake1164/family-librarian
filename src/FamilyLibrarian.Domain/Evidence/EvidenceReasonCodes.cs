@@ -202,6 +202,26 @@ public static class EvidenceReasonCodes
         public const string DuplicateReadingOrderItems = "artifact.completeness.duplicate_reading_order_items";
     }
 
+    /// <summary>
+    /// Measurements of an audiobook file taken from its headers. Informational: none of these codes is, or feeds, an identity
+    /// or approval decision. A measurement that could not be taken is Unknown, never a guess.
+    /// </summary>
+    public static class ArtifactAudio
+    {
+        public const string DurationMeasured = "artifact.audio.duration_measured";
+        public const string DurationUnavailable = "artifact.audio.duration_unavailable";
+        public const string Codec = "artifact.audio.codec";
+        public const string Bitrate = "artifact.audio.bitrate";
+        public const string ChaptersCounted = "artifact.audio.chapters_counted";
+        public const string ChaptersNotFound = "artifact.audio.chapters_not_found";
+        public const string TrackPosition = "artifact.audio.track_position";
+
+        /// <summary>Tracks of a numbered set are absent. Evidence only; the set is not judged here.</summary>
+        public const string TrackSetGap = "artifact.audio.track_set_gap";
+        public const string TrackSetDuplicate = "artifact.audio.track_set_duplicate";
+        public const string NotAssessed = "artifact.audio.not_assessed";
+    }
+
     /// <summary>Malware and safety scanning results.</summary>
     public static class ArtifactSecurity
     {

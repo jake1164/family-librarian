@@ -36,6 +36,10 @@ public interface IArtifactEvidenceRecorder
     Task RecordIdentityVerificationAsync(
         MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken);
 
+    /// <summary>Records measured technical properties (M1-4c) as their own record. Never part of an identity record.</summary>
+    Task RecordTechnicalInspectionAsync(
+        MediaAsset asset, IReadOnlyList<IdentityFact> findings, string source, CancellationToken cancellationToken);
+
     /// <summary>
     /// Records that an administrator approved a held asset on their own judgment, so the evidence no longer reads as
     /// though the hold simply stands. Identifies the administrator by id only (no name or email).
@@ -169,6 +173,32 @@ public sealed class ArtifactEvidenceRecorder(
                     EvidencePolarity.Unknown, $"verifier:{result.VerifierId}", null);
             }
 
+            store.Add(items);
+            await store.TrySaveAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Evidence is best effort and must never alter the decision it describes.
+        }
+    }
+
+    public async Task RecordTechnicalInspectionAsync(
+        MediaAsset asset, IReadOnlyList<IdentityFact> findings, string source, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (findings.Count == 0) return;
+            var recordId = Guid.NewGuid();
+            var now = clock.UtcNow;
+            var items = new List<ArtifactEvidence>();
+            foreach (var finding in findings.Where(finding => finding.Dimension == EvidenceDimension.AudioTechnical))
+            {
+                items.Add(new ArtifactEvidence(
+                    asset.Id, asset.Sha256, ArtifactEvidenceRecordKinds.TechnicalInspection, recordId,
+                    UniqueId(items, finding.FindingId), finding.Dimension, finding.Code, finding.Polarity, source, finding.Value, toolVersion: null, now));
+            }
+
+            if (items.Count == 0) return;
             store.Add(items);
             await store.TrySaveAsync(cancellationToken);
         }

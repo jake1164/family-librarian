@@ -366,6 +366,33 @@ public sealed class MediaAssetQueueEndpointTests
     }
 
     [TestMethod]
+    public async Task AnAudiobookGetsMeasuredAudioEvidenceAndApprovalIsUnchanged()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        var token = await WebTestFixture.GetAntiforgeryTokenAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token);
+        var (requestId, formatId) = await CreateRequestAsync(client, "Audiobook");
+
+        var upload = await client.PostAsync(
+            $"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(M4bTestFixture.Build("The Hobbit", "J. R. R. Tolkien", "eng", durationSeconds: 5_400), "book.m4b"));
+        var imported = await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>();
+        Assert.IsNotNull(imported);
+
+        var queue = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/");
+        Assert.IsFalse(queue!.Assets.Any(asset => asset.AssetId == imported.MediaAssetId), "Measuring changes no decision: still approved.");
+        var recent = await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/recent?limit=100");
+        var measured = recent!.Assets.Single(entry => entry.AssetId == imported.MediaAssetId).Evidence!.Items
+            .Where(item => item.Dimension == "AudioTechnical").ToList();
+        Assert.IsTrue(measured.All(item => item.RecordKind == "technical-inspection" && item.Polarity == "Unknown"));
+        Assert.AreEqual("seconds=5400;basis=media_header", measured.Single(item => item.Code == "artifact.audio.duration_measured").Value);
+        Assert.IsTrue(measured.Any(item => item.Code == "artifact.audio.chapters_not_found"), "No chapter list is stated, not invented.");
+    }
+
+    [TestMethod]
     public async Task AnAudiobookWithNoDeclaredLanguageIsStillApprovedAndTheLanguageStaysUnknown()
     {
         var fixture = WebTestFixture.Require(_fixture);
