@@ -7,13 +7,18 @@ namespace FamilyLibrarian.Application.ModelGateway;
 /// <summary>What one governed model call asks for. Contains no tool the model could use to change anything.</summary>
 /// <param name="UserId">Who the call is on behalf of. Required for interactive chat; null for background work.</param>
 /// <param name="MaxOutputTokens">A tighter output cap than the configured one; never a looser one.</param>
+/// <param name="IncludesFileDerivedDetail">
+/// True when the messages carry anything read out of a downloaded file (embedded titles, headings, tags, validator text).
+/// Such a request is refused for a cloud role unless the separate cloud-excerpt opt-in is on, whatever the caller decided.
+/// </param>
 public sealed record ModelExecutionRequest(
     ModelRole Role,
     ModelBudgetClass Budget,
     Guid? UserId,
     IReadOnlyList<ModelChatMessage> Messages,
     bool JsonObjectOutput = false,
-    int? MaxOutputTokens = null);
+    int? MaxOutputTokens = null,
+    bool IncludesFileDerivedDetail = false);
 
 /// <summary>The result of interpreting model text. A failure names which kind, so it can be recorded and shown honestly.</summary>
 public sealed record ModelParseResult<T>(T? Value, ModelCallOutcome Failure, string? Detail)
@@ -240,6 +245,11 @@ public sealed class ModelExecutionPolicy(
         if (!resolution.IsAvailable)
         {
             return Refused<T>(ModelCallOutcome.RoleUnavailable, $"The {request.Role} role is not available ({resolution.Reason}).");
+        }
+
+        if (request.IncludesFileDerivedDetail && resolution.IsCloud && !resolution.AllowCloudExcerpts)
+        {
+            return Refused<T>(ModelCallOutcome.CloudSharingNotAllowed, "Details from files are not allowed to be sent to a cloud model.");
         }
 
         var limits = resolution.Limits;

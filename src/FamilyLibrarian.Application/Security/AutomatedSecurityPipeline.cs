@@ -14,7 +14,8 @@ public sealed class AutomatedSecurityPipeline(
     ISecurityEvaluationRunner evaluations,
     IPolicyAssetApprovalService approvals,
     IAssetIdentityVerificationService identity,
-    ISecurityEvaluationRepository? repository = null)
+    ISecurityEvaluationRepository? repository = null,
+    SemanticAssessment.IArtifactSemanticShadow? semanticShadow = null)
 {
     private const string CleanScanPolicyName = "clean-security-evaluation-v1";
 
@@ -29,6 +30,8 @@ public sealed class AutomatedSecurityPipeline(
             if (approval.Outcome != ApprovalOutcome.Success && approval.Outcome != ApprovalOutcome.IdentityUnmatched)
                 throw new InvalidOperationException(approval.Error ?? "The clean security result could not be approved.");
         }
+        // Shadow only: tells a background reviewer the evidence changed. It cannot affect the result returned here.
+        semanticShadow?.Observe(assetId);
         return result;
     }
 
@@ -48,6 +51,19 @@ public sealed class AutomatedSecurityPipeline(
     /// cannot be scanned/identity-checked.
     /// </summary>
     public async Task<IReadOnlyList<SecurityEvaluationResult>> EvaluateBundleAsync(
+        IReadOnlyList<Guid> assetIds,
+        CancellationToken cancellationToken)
+    {
+        var results = await EvaluateBundleCoreAsync(assetIds, cancellationToken);
+        foreach (var assetId in assetIds)
+        {
+            semanticShadow?.Observe(assetId);
+        }
+
+        return results;
+    }
+
+    private async Task<IReadOnlyList<SecurityEvaluationResult>> EvaluateBundleCoreAsync(
         IReadOnlyList<Guid> assetIds,
         CancellationToken cancellationToken)
     {
@@ -134,8 +150,10 @@ public sealed class AutomatedSecurityPipeline(
         CancellationToken cancellationToken)
     {
         var result = await identity.RetryUnmatchedAsync(assetId, cancellationToken);
-        return result.IsMatch
+        var outcome = result.IsMatch
             ? await approvals.ApproveByPolicyAsync(assetId, CleanScanPolicyName, cancellationToken)
             : ApprovalResult.IdentityUnmatched();
+        semanticShadow?.Observe(assetId);
+        return outcome;
     }
 }

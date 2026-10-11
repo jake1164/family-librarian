@@ -156,6 +156,28 @@ public sealed class ModelGatewayEndpointTests
     }
 
     [TestMethod]
+    public async Task SendingFileDetailsToACloudModelIsASeparateOptInThatNeedsCloudUse()
+    {
+        await using var factory = Factory();
+        using var admin = await SignedInAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+
+        Assert.IsFalse((await admin.GetFromJsonAsync<ModelGatewaySettingsResponse>($"{BasePath}/"))!.AllowCloudExcerpts);
+        using var refused = await admin.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest(null, false, [], null, true));
+        using var cloudOnly = await admin.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest(null, true, [], null, null));
+        var afterCloudOnly = (await cloudOnly.Content.ReadFromJsonAsync<ModelGatewaySettingsResponse>())!;
+        using var both = await admin.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest(null, true, [], null, true));
+        var afterBoth = (await both.Content.ReadFromJsonAsync<ModelGatewaySettingsResponse>())!;
+        using var cloudOff = await admin.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest(null, false, []));
+        var afterOff = (await cloudOff.Content.ReadFromJsonAsync<ModelGatewaySettingsResponse>())!;
+
+        Assert.AreEqual(HttpStatusCode.BadRequest, refused.StatusCode);
+        Assert.IsTrue(afterCloudOnly.AllowCloud);
+        Assert.IsFalse(afterCloudOnly.AllowCloudExcerpts, "Allowing cloud use does not allow sharing file details.");
+        Assert.IsTrue(afterBoth.AllowCloudExcerpts);
+        Assert.IsFalse(afterOff.AllowCloudExcerpts, "Switching cloud use off switches detail sharing off too.");
+    }
+
+    [TestMethod]
     public async Task ConfiguringRolesRoundTripsAndCloudNeedsExplicitOptIn()
     {
         await using var factory = Factory();

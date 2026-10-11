@@ -2376,6 +2376,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("allow_cloud");
 
+                    b.Property<bool>("AllowCloudExcerpts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("allow_cloud_excerpts");
+
                     b.Property<int>("ApiKeyFormatVersion")
                         .HasColumnType("integer")
                         .HasColumnName("api_key_format_version");

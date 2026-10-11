@@ -36,6 +36,13 @@
                 <MudSwitch T="bool" @bind-Value="allowCloud" Color="Color.Warning"
                            Label="Allow roles to use cloud models (can send book data off this server and use paid or rate-limited services)" />
 
+                <MudSwitch T="bool" @bind-Value="allowCloudExcerpts" Color="Color.Warning" Disabled="@(!allowCloud)"
+                           Label="Also allow details read from downloaded files (embedded titles, headings, language tags) to be sent to a cloud model" />
+                <MudText Typo="Typo.caption">
+                    Separate from the switch above and off by default. Without it, a cloud model reviewing a file sees only the names and
+                    outcomes of the checks, never anything read out of the file. Local models always see the recorded details.
+                </MudText>
+
                 <MudText Typo="Typo.h5">Roles</MudText>
                 @foreach (var role in roles)
                 {
@@ -179,6 +186,7 @@
     private List<RoleEdit> roles = [];
     private string endpoint = string.Empty;
     private bool allowCloud;
+    private bool allowCloudExcerpts;
     private string apiKey = string.Empty;
     private bool busy;
     private string? message;
@@ -202,6 +210,7 @@
         settings = value;
         endpoint = value.EndpointUrl ?? string.Empty;
         allowCloud = value.AllowCloud;
+        allowCloudExcerpts = value.AllowCloudExcerpts;
         limits = new LimitsEdit
         {
             TimeoutSeconds = value.Limits.TimeoutSeconds, MaxInputCharacters = value.Limits.MaxInputCharacters,
@@ -221,7 +230,8 @@
             [.. roles.Select(role => new ModelRoleDto(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel))],
             new ModelLimitsDto(
                 limits.TimeoutSeconds, limits.MaxInputCharacters, limits.MaxOutputTokens, limits.MaxConcurrentCalls,
-                ToDto(limits.Interactive), ToDto(limits.Background), limits.CloudDailyRequests, limits.CloudDailyTokens))),
+                ToDto(limits.Interactive), ToDto(limits.Background), limits.CloudDailyRequests, limits.CloudDailyTokens),
+            allowCloud && allowCloudExcerpts)),
         "Settings saved.");
 
     private static BudgetEdit ToEdit(ModelBudgetDto budget) => new()

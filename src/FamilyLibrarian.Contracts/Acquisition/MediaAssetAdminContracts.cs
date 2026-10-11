@@ -20,7 +20,23 @@ public sealed record MediaAssetAdminResponse(
     string? ScanFailureReason = null,
     ArtifactEvidenceResponse? Evidence = null,
     string? IdentityHoldCode = null,
-    string? Origin = null);
+    string? Origin = null,
+    AdminArtifactSemanticFindingResponse? SemanticFinding = null);
+
+public sealed record AdminArtifactSemanticClaimResponse(string Kind, string Stance, IReadOnlyList<string> EvidenceIds, string Note);
+
+/// <summary>
+/// A model's advisory note about a file's recorded evidence. It never holds, releases, approves or rejects anything.
+/// <paramref name="Verdict"/> and the claims are present only when the model gave a valid answer.
+/// </summary>
+public sealed record AdminArtifactSemanticFindingResponse(
+    string Outcome,
+    string? Verdict,
+    IReadOnlyList<AdminArtifactSemanticClaimResponse> Claims,
+    string? FailureDetail,
+    string Model,
+    bool IsCloud,
+    DateTimeOffset CreatedAtUtc);
 
 /// <summary>One persisted artifact-evidence finding. <c>(RecordId, FindingId)</c> cites it.</summary>
 public sealed record ArtifactEvidenceItemResponse(

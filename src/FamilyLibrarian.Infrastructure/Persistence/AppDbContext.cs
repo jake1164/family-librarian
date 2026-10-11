@@ -397,6 +397,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.ApiKeyFormatVersion).HasColumnName("api_key_format_version");
             entity.Property(settings => settings.ApiKeySetAtUtc).HasColumnName("api_key_set_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.AllowCloud).HasColumnName("allow_cloud");
+            entity.Property(settings => settings.AllowCloudExcerpts).HasColumnName("allow_cloud_excerpts").HasDefaultValue(false);
             entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
             entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");

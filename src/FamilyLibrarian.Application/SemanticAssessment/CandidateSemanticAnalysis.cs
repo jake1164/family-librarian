@@ -21,6 +21,10 @@ public interface ISemanticFindingStore
     Task<IReadOnlyDictionary<string, SemanticFinding>> FindLatestAsync(
         SemanticSubjectKind kind, IReadOnlyCollection<string> evidenceDigests, CancellationToken cancellationToken);
 
+    /// <summary>The newest finding for each subject (for example an asset id), for showing alongside that subject.</summary>
+    Task<IReadOnlyDictionary<string, SemanticFinding>> FindLatestForSubjectsAsync(
+        SemanticSubjectKind kind, IReadOnlyCollection<string> subjectReferences, CancellationToken cancellationToken);
+
     /// <summary>Adds the finding. Two identical findings stored concurrently are harmless: readers take the newest.</summary>
     Task AddAsync(SemanticFinding finding, CancellationToken cancellationToken);
 }

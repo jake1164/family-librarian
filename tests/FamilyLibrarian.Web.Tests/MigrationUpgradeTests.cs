@@ -224,6 +224,29 @@ public sealed class MigrationUpgradeTests
     }
 
     [TestMethod]
+    public async Task CloudExcerptOptInUpgradeLeavesExistingCloudSettingsWithNoDetailSharing()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(name => name.EndsWith("_AddArtifactSemanticSettings", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.ExecuteSqlRawAsync(
+            "INSERT INTO integrations.model_gateway_settings (id, is_enabled, api_key_format_version, allow_cloud, created_at_utc, updated_at_utc) " +
+            "VALUES ('22222222-2222-2222-2222-222222222222', true, 0, true, now(), now())");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var settings = await database.ModelGatewaySettingsRows.AsNoTracking().SingleAsync();
+        Assert.IsTrue(settings.AllowCloud);
+        Assert.IsFalse(settings.AllowCloudExcerpts, "An existing cloud opt-in must not silently start sharing file details.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task AssetOriginUpgradeMarksEveryExistingRowLegacyExplicitlyAndProtectsOrigin()
     {
         const string PreOriginMigration = "20261010202850_AddArtifactEvidence";

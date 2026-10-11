@@ -1,0 +1,51 @@
+@using FamilyLibrarian.Contracts.Acquisition
+
+@* Per docs/07-ui-conventions.md: no status chips and no colour semantics. This note is advisory text only. *@
+@if (Finding is { } finding)
+{
+    <details class="mt-1" style="overflow-wrap: anywhere;">
+        <summary>AI second opinion (advisory only)</summary>
+        <p class="mb-1"><small>
+            A model's note about this file's recorded evidence. It never holds, releases, approves or rejects anything, and a
+            security or identity hold stays exactly as the fixed rules left it.
+        </small></p>
+        @if (finding.Verdict is null)
+        {
+            <p class="mb-0">No usable answer from @finding.Model: @Describe(finding.Outcome)@(string.IsNullOrWhiteSpace(finding.FailureDetail) ? "" : $" ({finding.FailureDetail})").</p>
+        }
+        else
+        {
+            <p class="mb-1">Model view: <strong>@DescribeVerdict(finding.Verdict)</strong> (@finding.Model@(finding.IsCloud ? ", cloud" : ""), @finding.CreatedAtUtc.ToString("u")).</p>
+            <ul class="mb-0">
+                @foreach (var claim in finding.Claims)
+                {
+                    <li><code>@claim.Kind</code> — @claim.Note <small>(evidence: @string.Join(", ", claim.EvidenceIds))</small></li>
+                }
+            </ul>
+        }
+    </details>
+}
+
+@code {
+    [Parameter] public AdminArtifactSemanticFindingResponse? Finding { get; set; }
+
+    private static string DescribeVerdict(string verdict) => verdict switch
+    {
+        "Consistent" => "the recorded evidence looks consistent with what the file was staged as",
+        "Inconsistent" => "the recorded evidence looks inconsistent with what the file was staged as",
+        _ => "uncertain"
+    };
+
+    private static string Describe(string outcome) => outcome switch
+    {
+        "EmptyContent" => "the model returned no text",
+        "InvalidJson" => "the reply was not valid JSON",
+        "SchemaRejected" => "the reply broke the required format and was discarded",
+        "OutputTooLarge" => "the reply was too long",
+        "Timeout" => "the model timed out",
+        "TransportFailure" => "the model could not be reached",
+        "ModelUnavailable" => "the model alias is not available",
+        "UnsupportedCapability" => "the model does not support what was asked",
+        _ => outcome
+    };
+}

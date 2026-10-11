@@ -32,13 +32,16 @@ public sealed record ModelGatewaySettingsView(
     DateTimeOffset? ApiKeySetAtUtc,
     bool AllowCloud,
     IReadOnlyList<ModelRoleView> Roles,
-    ModelExecutionLimits Limits);
+    ModelExecutionLimits Limits,
+    bool AllowCloudExcerpts = false);
 
 public sealed record ModelRoleCommand(ModelRole Role, bool IsEnabled, ModelPlacement Placement, string? LocalModel, string? CloudModel);
 
 /// <param name="Limits">The new limits, or null to leave them as they are.</param>
+/// <param name="AllowCloudExcerpts">Whether details read from files may go to a cloud role, or null to leave it as it is.</param>
 public sealed record SaveModelGatewaySettings(
-    string? EndpointUrl, bool AllowCloud, IReadOnlyList<ModelRoleCommand> Roles, ModelExecutionLimits? Limits = null);
+    string? EndpointUrl, bool AllowCloud, IReadOnlyList<ModelRoleCommand> Roles, ModelExecutionLimits? Limits = null,
+    bool? AllowCloudExcerpts = null);
 
 public sealed record ModelGatewaySettingsResult(bool Succeeded, bool Forbidden, string? Error, ModelGatewaySettingsView? Settings)
 {
@@ -93,6 +96,11 @@ public sealed class ModelGatewaySettingsService(
             settings.ConfigureRole(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel, currentUser.UserId, clock.UtcNow);
         }
 
+        if (command.AllowCloudExcerpts is { } excerpts)
+        {
+            settings.SetAllowCloudExcerpts(excerpts, currentUser.UserId, clock.UtcNow);
+        }
+
         if (command.Limits is not null)
         {
             settings.ConfigureLimits(command.Limits, currentUser.UserId, clock.UtcNow);
@@ -110,6 +118,7 @@ public sealed class ModelGatewaySettingsService(
             new
             {
                 settings.AllowCloud,
+                settings.AllowCloudExcerpts,
                 settings.Limits,
                 Roles = settings.Roles.Select(role => new { Role = role.Role.ToString(), role.IsEnabled, Placement = role.Placement.ToString() })
             },
@@ -185,7 +194,8 @@ public sealed class ModelGatewaySettingsService(
                 ? new ModelRoleView(role, false, ModelPlacement.Local, null, null)
                 : new ModelRoleView(role, setting.IsEnabled, setting.Placement, setting.LocalModel, setting.CloudModel);
         })],
-        settings?.Limits ?? ModelExecutionLimits.Default);
+        settings?.Limits ?? ModelExecutionLimits.Default,
+        settings?.AllowCloudExcerpts ?? false);
 
     private bool IsAdministrator() => currentUser.UserId is not null && administrator.IsAdministrator;
 
@@ -194,6 +204,11 @@ public sealed class ModelGatewaySettingsService(
         if (ModelConfigurationRules.EndpointError(command.EndpointUrl) is { } endpointError)
         {
             return endpointError;
+        }
+
+        if (command.AllowCloudExcerpts == true && !command.AllowCloud)
+        {
+            return "Allow cloud use before allowing file details to be sent to a cloud model.";
         }
 
         if (command.Limits?.Validate() is { } limitsError)

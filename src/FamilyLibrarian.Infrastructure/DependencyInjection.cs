@@ -281,6 +281,9 @@ public static class DependencyInjection
         services.AddScoped<CandidateSemanticAnalyzer>();
         services.AddSingleton<CandidateSemanticShadowBuffer>();
         services.AddSingleton<ICandidateSemanticShadow>(provider => provider.GetRequiredService<CandidateSemanticShadowBuffer>());
+        services.AddScoped<ArtifactSemanticAnalyzer>();
+        services.AddSingleton<ArtifactSemanticShadowBuffer>();
+        services.AddSingleton<IArtifactSemanticShadow>(provider => provider.GetRequiredService<ArtifactSemanticShadowBuffer>());
 
         // Conversation (alpha.6 M2): everything is off until Conversation:Enabled (and a transport flag) is set.
         services.AddSingleton(provider =>

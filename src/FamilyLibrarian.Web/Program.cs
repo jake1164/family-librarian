@@ -45,6 +45,7 @@ builder.Services.AddHostedService<CatalogSearchRunHostedService>();
 builder.Services.AddSingleton<SecurityEvaluationScheduler>();
 builder.Services.AddHostedService<SecurityEvaluationHostedService>();
 builder.Services.AddHostedService<FamilyLibrarian.Web.Acquisition.CandidateSemanticShadowHostedService>();
+builder.Services.AddHostedService<FamilyLibrarian.Web.Acquisition.ArtifactSemanticShadowHostedService>();
 builder.Services.AddSingleton<AutomaticFulfillmentSignal>();
 builder.Services.AddSingleton<IAutomaticFulfillmentSignal>(
     services => services.GetRequiredService<AutomaticFulfillmentSignal>());

@@ -46,7 +46,10 @@ public enum ModelCallOutcome
     BudgetExhausted = 22,
     ConcurrencyLimited = 23,
     CircuitOpen = 24,
-    PolicyUnavailable = 25
+    PolicyUnavailable = 25,
+
+    /// <summary>File-derived detail was about to go to a cloud model without the separate excerpt opt-in.</summary>
+    CloudSharingNotAllowed = 26
 }
 
 /// <summary>The administrator-tunable bounds on model use. Defaults follow the approved chat limits and are deliberately modest.</summary>

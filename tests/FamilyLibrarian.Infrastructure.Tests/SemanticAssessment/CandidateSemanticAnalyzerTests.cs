@@ -25,6 +25,11 @@ internal sealed class FakeFindingStore : ISemanticFindingStore
         Task.FromResult<IReadOnlyDictionary<string, SemanticFinding>>(Findings.Where(f => f.Kind == kind && evidenceDigests.Contains(f.EvidenceDigest))
             .GroupBy(f => f.EvidenceDigest).ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.CreatedAtUtc).First()));
 
+    public Task<IReadOnlyDictionary<string, SemanticFinding>> FindLatestForSubjectsAsync(
+        SemanticSubjectKind kind, IReadOnlyCollection<string> subjectReferences, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<string, SemanticFinding>>(Findings.Where(f => f.Kind == kind && subjectReferences.Contains(f.SubjectReference))
+            .GroupBy(f => f.SubjectReference).ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.CreatedAtUtc).First()));
+
     public Task AddAsync(SemanticFinding finding, CancellationToken cancellationToken)
     {
         if (FailAdds) throw new InvalidOperationException("database down");

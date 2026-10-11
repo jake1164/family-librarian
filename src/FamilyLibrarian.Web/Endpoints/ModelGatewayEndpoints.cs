@@ -45,7 +45,7 @@ internal static class ModelGatewayEndpoints
         }
 
         var limits = request.Limits is null ? null : ToLimits(request.Limits);
-        return ToResult(await service.SaveAsync(new SaveModelGatewaySettings(request.EndpointUrl, request.AllowCloud, roles, limits), cancellationToken));
+        return ToResult(await service.SaveAsync(new SaveModelGatewaySettings(request.EndpointUrl, request.AllowCloud, roles, limits, request.AllowCloudExcerpts), cancellationToken));
     }
 
     private static async Task<IResult> UsageAsync(
@@ -91,7 +91,7 @@ internal static class ModelGatewayEndpoints
         return Results.Ok(new ModelGatewaySettingsResponse(
             settings.IsEnabled, settings.EndpointUrl, settings.HasApiKey, settings.ApiKeySetAtUtc, settings.AllowCloud,
             [.. settings.Roles.Select(role => new ModelRoleDto(role.Role.ToString(), role.IsEnabled, role.Placement.ToString(), role.LocalModel, role.CloudModel))],
-            ToDto(settings.Limits)));
+            ToDto(settings.Limits), settings.AllowCloudExcerpts));
     }
 
     private static ModelLimitsDto ToDto(ModelExecutionLimits limits) => new(

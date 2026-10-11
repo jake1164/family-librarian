@@ -44,6 +44,12 @@ public sealed class ModelGatewaySettings
     /// <summary>Explicit opt-in for any role placed on a cloud alias. Off by default; never implied by a fallback.</summary>
     public bool AllowCloud { get; private set; }
 
+    /// <summary>
+    /// A second, separate opt-in: whether details read out of a downloaded file (embedded titles, headings, language tags,
+    /// validator messages) may be sent to a cloud-placed role. Off by default and meaningless unless <see cref="AllowCloud"/> is on.
+    /// </summary>
+    public bool AllowCloudExcerpts { get; private set; }
+
     /// <summary>Timeouts, size caps, concurrency and daily budgets. Defaults are modest; cloud allowances default to zero.</summary>
     public int TimeoutSeconds { get; private set; } = ModelExecutionLimits.Default.TimeoutSeconds;
 
@@ -96,6 +102,18 @@ public sealed class ModelGatewaySettings
     {
         EndpointUrl = Clean(endpointUrl, MaxEndpointLength)?.TrimEnd('/');
         AllowCloud = allowCloud;
+        if (!allowCloud)
+        {
+            AllowCloudExcerpts = false;
+        }
+
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void SetAllowCloudExcerpts(bool allow, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        // Sharing file-derived detail with a cloud model can only be on while cloud use itself is allowed.
+        AllowCloudExcerpts = allow && AllowCloud;
         Touch(actorUserId, updatedAtUtc);
     }
 

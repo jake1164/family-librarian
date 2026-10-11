@@ -1,5 +1,7 @@
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Security;
+using FamilyLibrarian.Application.SemanticAssessment;
+using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Web.Acquisition;
@@ -31,6 +33,7 @@ internal static class SecurityQueueEndpoints
     private static async Task<IResult> ListRecentMediaAssetsAsync(
         int? limit,
         MediaAssetQueueService queue,
+        ISemanticFindingStore semanticFindings,
         CancellationToken cancellationToken)
     {
         var maximumCount = limit ?? 50;
@@ -43,18 +46,31 @@ internal static class SecurityQueueEndpoints
         }
 
         var entries = await queue.ListRecentAsync(maximumCount, cancellationToken);
-        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(ToMediaAssetAdminResponse).ToArray()));
+        var findings = await LoadFindingsAsync(semanticFindings, entries, cancellationToken);
+        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(entry => ToMediaAssetAdminResponse(entry, findings)).ToArray()));
     }
 
     private static async Task<IResult> ListMediaAssetsAsync(
         MediaAssetQueueService queue,
+        ISemanticFindingStore semanticFindings,
         CancellationToken cancellationToken)
     {
         var entries = await queue.ListAsync(cancellationToken);
-        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(ToMediaAssetAdminResponse).ToArray()));
+        var findings = await LoadFindingsAsync(semanticFindings, entries, cancellationToken);
+        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(entry => ToMediaAssetAdminResponse(entry, findings)).ToArray()));
     }
 
-    internal static MediaAssetAdminResponse ToMediaAssetAdminResponse(MediaAssetQueueEntry entry) => new(
+    /// <summary>Advisory model notes for the listed files. Display only: nothing here influences the entries.</summary>
+    private static Task<IReadOnlyDictionary<string, SemanticFinding>> LoadFindingsAsync(
+        ISemanticFindingStore store, IReadOnlyList<MediaAssetQueueEntry> entries, CancellationToken cancellationToken) =>
+        store.FindLatestForSubjectsAsync(
+            SemanticSubjectKind.Artifact, [.. entries.Select(entry => entry.Asset.AssetId.ToString("N"))], cancellationToken);
+
+    internal static MediaAssetAdminResponse ToMediaAssetAdminResponse(MediaAssetQueueEntry entry) =>
+        ToMediaAssetAdminResponse(entry, null);
+
+    internal static MediaAssetAdminResponse ToMediaAssetAdminResponse(
+        MediaAssetQueueEntry entry, IReadOnlyDictionary<string, SemanticFinding>? findings) => new(
         entry.Asset.AssetId,
         entry.Asset.RequestId,
         entry.Asset.WorkId,
@@ -84,7 +100,14 @@ internal static class SecurityQueueEndpoints
         entry.Asset.ScanFailureReason,
         ToEvidenceResponse(entry.Evidence),
         entry.Asset.IdentityHoldCode,
-        entry.Asset.Origin.ToString());
+        entry.Asset.Origin.ToString(),
+        findings is not null && findings.TryGetValue(entry.Asset.AssetId.ToString("N"), out var finding)
+            ? new AdminArtifactSemanticFindingResponse(
+                finding.Outcome.ToString(), finding.Verdict,
+                [.. CandidateSemanticAnalyzer.DeserializeClaims(finding.ClaimsJson)
+                    .Select(claim => new AdminArtifactSemanticClaimResponse(claim.Kind, claim.Stance, claim.EvidenceIds, claim.Note))],
+                finding.FailureDetail, finding.Model, finding.IsCloud, finding.CreatedAtUtc)
+            : null);
 
     private static ArtifactEvidenceResponse ToEvidenceResponse(IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence> evidence) =>
         evidence.Count == 0
