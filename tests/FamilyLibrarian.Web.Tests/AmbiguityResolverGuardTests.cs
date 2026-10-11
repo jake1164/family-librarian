@@ -9,9 +9,12 @@ namespace FamilyLibrarian.Web.Tests;
 /// Alpha.6 defense in depth. Since the R01 safety fix <see cref="BookMatchService"/>
 /// treats an <see cref="IAmbiguityResolver"/> pick as advisory and never promotes it
 /// to a Match, so this is no longer the only protection. It still forbids any
-/// resolver other than <see cref="NoOpAmbiguityResolver"/> in the product assemblies
-/// until the M4-2 model-gateway design deliberately introduces one; adding one must
-/// fail this test and force that review.
+/// resolver other than <see cref="NoOpAmbiguityResolver"/> in the product assemblies.
+/// D-7 resolution (M4-2): model-backed semantic analysis does not implement this seam
+/// at all. It produces separately stored, evidence-cited findings
+/// (<c>FamilyLibrarian.Application.SemanticAssessment</c>) that cannot carry a candidate
+/// or a decision, so there is nothing for a resolver to promote. Adding a resolver here
+/// must still fail this test and force a deliberate review.
 /// </summary>
 [TestClass]
 public sealed class AmbiguityResolverGuardTests

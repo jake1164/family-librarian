@@ -12,6 +12,8 @@ namespace FamilyLibrarian.Application.Matching;
 /// <see cref="BookMatchResult.AdvisoryPick"/> and leaves the result
 /// <see cref="BookMatchDecision.Ambiguous"/>; it never promotes the pick to a
 /// <see cref="BookMatchDecision.Match"/>. Return <c>null</c> when there is no suggestion.
+/// Model-backed analysis deliberately does not use this seam (alpha.6 D-7): it records evidence-cited findings beside the
+/// deterministic result instead of naming a candidate.
 /// </remarks>
 public interface IAmbiguityResolver
 {
