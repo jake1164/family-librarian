@@ -12,6 +12,109 @@ namespace FamilyLibrarian.Infrastructure.Tests.Security;
 public sealed class AssetIdentityVerificationServiceTests
 {
     [TestMethod]
+    [DataRow(320, false)]
+    [DataRow(null, true)]
+    public async Task ARealThreeChapterEpubIsComparedWithCatalogLengthBeforeTheHoldPolicy(int? pages, bool match)
+    {
+        var asset = CreateProcessingAsset(".epub", true);
+        var work = new FamilyLibrarian.Application.Publishing.WorkSummary(asset.WorkId, "Iron Flame", "Rebecca Yarros", [], CatalogPageCount: pages);
+        var lookup = new EpubCorroboratedAuthorTests.Lookup(work);
+        var staging = new EpubStaging(EpubCorroboratedAuthorTests.Book());
+        var service = new AssetIdentityVerificationService(new AssetRepository(asset), staging,
+            [new FamilyLibrarian.Infrastructure.Security.EpubAssetIdentityVerifier(lookup, new FamilyLibrarian.Application.Matching.DeterministicBookMatcher(),
+                new FamilyLibrarian.Infrastructure.Tests.Characterization.CharacterizationFixtures.NoRequestStore())],
+            new RecordingAuditWriter(), new FixedClock(), expectedProfiles: new ExpectedArtifactProfileSource(lookup,
+                new FamilyLibrarian.Infrastructure.Tests.Characterization.CharacterizationFixtures.NoRequestStore()));
+        var result = await service.VerifyAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(match, result.IsMatch);
+        Assert.AreEqual(match ? null : "identity.hold.length_far_below_expected", asset.IdentityHoldCode);
+        Assert.AreEqual("words=6000;items=3;basis=xhtml_text", result.Facts.Single(f => f.Code == "profile.text.word_count").Value);
+    }
+
+    [TestMethod]
+    public async Task AStoredBundleDurationIsComparedAndSurvivesRetryWithoutReplayingAnOldComparison()
+    {
+        var asset = CreateProcessingAsset(".m4b", true);
+        var store = new ProfileStore();
+        var recorder = new ArtifactEvidenceRecorder(store, new FixedClock());
+        await recorder.RecordTechnicalInspectionAsync(asset, [AudioDurations.TotalDuration(14000, 20)], "profile:audio-bundle", CancellationToken.None);
+        var source = new ProfileSource { Profile = ArtifactProfileComparerTests.Expected(seconds: 72000) };
+        var service = new AssetIdentityVerificationService(new AssetRepository(asset), new RecordingStagingStore(),
+            [new MatchingVerifier()], new RecordingAuditWriter(), new FixedClock(), recorder, source, store);
+        var held = await service.VerifyAsync(asset.Id, CancellationToken.None);
+        Assert.IsFalse(held.IsMatch);
+        Assert.AreEqual("identity.hold.duration_far_below_expected", asset.IdentityHoldCode);
+        Assert.AreEqual("seconds=14000;tracks=20", held.Facts.Single(f => f.Code == "profile.audio.total_duration").Value);
+        source.Profile = source.Profile with { CatalogAudioSeconds = null };
+        Assert.IsTrue((await service.RetryUnmatchedAsync(asset.Id, CancellationToken.None)).IsMatch);
+        source.Profile = source.Profile with { CatalogAudioSeconds = 72000 };
+        Assert.IsFalse((await service.VerifyAsync(asset.Id, CancellationToken.None)).IsMatch,
+            "The raw total remains available after an identity pass records a newer profile.");
+    }
+
+    [TestMethod]
+    public async Task AudioMeasurementsAreRecordedOncePerTrackPerEvaluationAcrossRetryAndReverification()
+    {
+        var assets = new[] { CreateProcessingAsset(".mp3", true), CreateProcessingAsset(".mp3", true) };
+        var store = new ProfileStore();
+        var recorder = new ArtifactEvidenceRecorder(store, new FixedClock());
+        foreach (var asset in assets)
+        {
+            await recorder.RecordTechnicalInspectionAsync(asset, [AudioDurations.TotalDuration(14000, 2)], "profile:audio-bundle", CancellationToken.None);
+            var source = new ProfileSource { Profile = ArtifactProfileComparerTests.Expected(seconds: 72000) };
+            var service = new AssetIdentityVerificationService(new AssetRepository(asset), new RecordingStagingStore(),
+                [new MatchingVerifier()], new RecordingAuditWriter(), new FixedClock(), recorder, source, store);
+            Assert.IsFalse((await service.VerifyAsync(asset.Id, CancellationToken.None)).IsMatch);
+            source.Profile = source.Profile with { CatalogAudioSeconds = null };
+            Assert.IsTrue((await service.RetryUnmatchedAsync(asset.Id, CancellationToken.None)).IsMatch);
+            source.Profile = source.Profile with { CatalogAudioSeconds = 72000 };
+            Assert.IsFalse((await service.VerifyAsync(asset.Id, CancellationToken.None)).IsMatch);
+            var measurements = store.Rows.Where(row => row.MediaAssetId == asset.Id && row.Code == "profile.audio.total_duration").ToArray();
+            Assert.HasCount(1, measurements, "Identity and retry must reuse the measured profile, never record it again.");
+            Assert.HasCount(1, measurements.Select(row => row.RecordId).Distinct().ToArray());
+            await recorder.RecordTechnicalInspectionAsync(asset, [AudioDurations.TotalDuration(36000, 2)], "profile:audio-bundle", CancellationToken.None);
+            Assert.IsTrue((await service.RetryUnmatchedAsync(asset.Id, CancellationToken.None)).IsMatch,
+                "A fresh evaluation replaces the comparison basis with its new measurement.");
+            Assert.IsTrue((await service.VerifyAsync(asset.Id, CancellationToken.None)).IsMatch);
+            measurements = store.Rows.Where(row => row.MediaAssetId == asset.Id && row.Code == "profile.audio.total_duration").ToArray();
+            Assert.HasCount(2, measurements, "Two evaluations produce exactly two measurement records per track.");
+            Assert.HasCount(2, measurements.Select(row => row.RecordId).Distinct().ToArray());
+        }
+    }
+
+    private sealed class ProfileSource : IExpectedArtifactProfileSource
+    {
+        public required ExpectedArtifactProfile Profile { get; set; }
+        public Task<ExpectedArtifactProfile?> FindAsync(MediaAsset asset, CancellationToken cancellationToken) => Task.FromResult<ExpectedArtifactProfile?>(Profile);
+    }
+
+    private sealed class ProfileStore : IArtifactEvidenceStore
+    {
+        private readonly List<FamilyLibrarian.Domain.Evidence.ArtifactEvidence> _rows = [];
+        public IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence> Rows => _rows;
+        public Task<IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence>> ListLatestAudioMeasurementsAsync(MediaAsset asset, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence>>(_rows.Where(row => row.MediaAssetId == asset.Id && row.Sha256 == asset.Sha256 &&
+                row.Code is "profile.audio.total_duration" or "profile.audio.chapter_titles").GroupBy(row => row.Code).Select(group => group.Last()).ToArray());
+        public void Add(IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence> evidence) => _rows.AddRange(evidence);
+        public Task<bool> TrySaveAsync(CancellationToken cancellationToken) => Task.FromResult(true);
+        public Task<IReadOnlyDictionary<Guid, IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence>>> ListLatestAsync(
+            IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+        {
+            var result = _rows.Where(row => ids.Contains(row.MediaAssetId)).GroupBy(row => row.MediaAssetId)
+                .ToDictionary(group => group.Key, group => (IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence>)group
+                    .GroupBy(row => row.RecordKind).SelectMany(kind => kind.Where(row => row.RecordId == kind.Last().RecordId)).ToArray());
+            return Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence>>>(result);
+        }
+    }
+
+    private sealed class EpubStaging(byte[] bytes) : IAssetStagingStore
+    {
+        public Task<StagedFile> WriteToQuarantineAsync(Stream content, string originalFilename, long maxSizeBytes, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<Stream> OpenAsync(MediaAssetStorageState zone, string storedFilename, CancellationToken cancellationToken) => Task.FromResult<Stream>(new MemoryStream(bytes));
+        public Task MoveAsync(MediaAssetStorageState fromZone, MediaAssetStorageState toZone, string storedFilename, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    [TestMethod]
     public async Task ARetryReturnsAMatchingUnmatchedAssetToProcessing()
     {
         var asset = CreateUnmatchedAsset();

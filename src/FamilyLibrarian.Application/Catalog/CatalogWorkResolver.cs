@@ -105,6 +105,7 @@ public sealed class CatalogWorkResolver(
 
         if (existingByIsbn is not null)
         {
+            existingByIsbn.SetCatalogLength(candidate.PageCount is > 0 ? candidate.PageCount : null, null, provider.Id, observedAtUtc);
             catalogRepository.AddExternalReference(new ExternalReference(
                 provider.Id,
                 ExternalReferenceEntityType.Work,
@@ -124,6 +125,7 @@ public sealed class CatalogWorkResolver(
             observedAtUtc);
 
         await AddAuthorsAsync(work, candidate.Authors, observedAtUtc, authorFollowerNotifications, cancellationToken);
+        work.SetCatalogLength(candidate.PageCount is > 0 ? candidate.PageCount : null, null, provider.Id, observedAtUtc);
         AddEditions(work, candidate.Editions, observedAtUtc);
         await AddSeriesEntriesAsync(
             work, candidate.Series, observedAtUtc, seriesFollowerNotifications, cancellationToken);

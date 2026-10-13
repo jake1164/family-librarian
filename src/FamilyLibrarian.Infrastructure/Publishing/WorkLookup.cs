@@ -48,6 +48,8 @@ public sealed class WorkLookup(AppDbContext database) : IWorkLookup
             firstEdition?.PublicationDate?.Year,
             firstEdition?.Publisher,
             alternateTitles,
-            work.FirstPublicationDate);
+            work.FirstPublicationDate,
+            work.CatalogPageCount,
+            work.CatalogAudioDurationSeconds);
     }
 }

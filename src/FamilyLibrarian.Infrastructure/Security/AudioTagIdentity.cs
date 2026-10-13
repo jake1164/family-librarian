@@ -62,8 +62,12 @@ internal static class AudioTagIdentity
             .ToArray();
 
         // Title: the album names the book; a track title alone cannot contradict or confirm it.
-        var titleMatches = albumTitle is not null &&
-            expectedTitles.Any(expectedTitle => bookMatcher.TitleMatches(expectedTitle, albumTitle));
+        var edition = AudioEditionMarker.Strip(albumTitle ?? trackTitle ?? "");
+        var titleAuthor = expected.PrimaryAuthor ?? "Unknown";
+        var titleMatches = albumTitle is not null && expectedTitles.Any(expectedTitle => edition.Marker is null
+            ? bookMatcher.TitleMatches(expectedTitle, albumTitle)
+            : bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, edition.CoreTitle, titleAuthor));
+        facts.AddRange(edition.Facts(acceptedLanguage));
         if (albumTitle is not null)
         {
             facts.Add(IdentityFacts.Title(declared: true, agrees: titleMatches));
@@ -87,15 +91,15 @@ internal static class AudioTagIdentity
             .Where(language => language.Length > 0 && !UnspecifiedLanguages.Contains(language, StringComparer.OrdinalIgnoreCase) &&
                 LanguageAcceptance.IsRecognized(language))
             .ToArray();
-        var languageConflict = false;
+        var languageConflict = edition.IsGerman && !LanguageAcceptance.IsAcceptedOrUnspecified("de", acceptedLanguage);
         var inferredConflict = false;
         if (declared.Length > 0)
         {
             var accepted = declared.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage));
             facts.Add(IdentityFacts.Language(declared, accepted));
-            languageConflict = !accepted;
+            languageConflict |= !accepted;
         }
-        else if (FindCue(tags, albumTitle, trackTitle, asset.OriginalFilename) is { } cue)
+        else if (!edition.IsGerman && FindCue(tags, albumTitle, trackTitle, asset.OriginalFilename) is { } cue)
         {
             var accepted = LanguageAcceptance.IsAcceptedOrUnspecified(cue.Language, acceptedLanguage);
             if (!accepted)

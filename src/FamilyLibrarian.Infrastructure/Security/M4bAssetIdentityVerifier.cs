@@ -101,8 +101,9 @@ public sealed class M4bAssetIdentityVerifier(
         // -- the author tags are judged separately below, and a file with none
         // is judged on its exact title alone.
         var titleAuthor = string.IsNullOrWhiteSpace(expected.PrimaryAuthor) ? "Unknown" : expected.PrimaryAuthor;
+        var editions = titles.Select(AudioEditionMarker.Strip).ToArray();
         var titleMatches = titles.Any(title => expectedTitles.Any(expectedTitle =>
-            bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, title, titleAuthor)));
+            bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, AudioEditionMarker.Strip(title).CoreTitle, titleAuthor)));
         var authorChecked = authors.Count > 0 && !string.IsNullOrWhiteSpace(expected.PrimaryAuthor);
         var authorMatches = !authorChecked || authors.Any(author => bookMatcher.AuthorMatches(expected.PrimaryAuthor, author));
 
@@ -123,6 +124,10 @@ public sealed class M4bAssetIdentityVerifier(
         {
             facts.Add(IdentityFacts.Language(declaredLanguages, languageAccepted));
         }
+        facts.AddRange(editions.SelectMany(edition => edition.Facts(acceptedLanguage)).Distinct());
+        var markerLanguageConflict = editions.Any(edition => edition.IsGerman) &&
+            !LanguageAcceptance.IsAcceptedOrUnspecified("de", acceptedLanguage);
+        languageAccepted &= !markerLanguageConflict;
 
         if (titleMatches && authorMatches && languageAccepted)
         {
@@ -134,7 +139,8 @@ public sealed class M4bAssetIdentityVerifier(
             : DescribeMismatch(expectedTitles, expected.PrimaryAuthor, titles, authors, titleMatches, authorMatches);
         if (!languageAccepted)
         {
-            var languageReason = $"The audiobook's declared language ({string.Join(", ", declaredLanguages!)}) doesn't match the language " +
+            var languageReason = (markerLanguageConflict ? "The audiobook's German edition marker conflicts with the language " :
+                $"The audiobook's declared language ({string.Join(", ", declaredLanguages!)}) doesn't match the language ") +
                 $"accepted for this request{(string.IsNullOrWhiteSpace(acceptedLanguage) ? string.Empty : $" ({acceptedLanguage})")}.";
             reason = reason.Length == 0 ? languageReason : $"{reason} {languageReason}";
         }

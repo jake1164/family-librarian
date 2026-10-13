@@ -20,8 +20,11 @@ namespace FamilyLibrarian.Application.Security;
 /// provider (unvetted third-party code), or an asset with no concrete origin, is held. The provider's id or name never
 /// enters into it.</item>
 /// <item><b>Completeness cues.</b> An explicit sample/excerpt/preview/teaser marker, or reading-order items whose files
-/// are missing, hold the asset for a librarian. Missing table-of-contents targets and duplicated reading-order files are
-/// warnings only, and a file with no cue is never promoted to complete.</item>
+/// are missing, hold the asset for a librarian. Missing table-of-contents targets hold only at two or more missing entries
+/// and at least 10% of entries (OQ-4). Smaller navigation defects and duplicate reading-order files remain evidence.
+/// A file with no cue is never promoted to complete.</item>
+/// <item><b>Expected profile.</b> A conflicting series position, explicit abridgement, or a clear catalog-length shortfall
+/// holds. Moderate shortfalls and inferred heading language remain evidence; unknown measurements never hold.</item>
 /// <item><b>Legacy rows</b> (created before origin existed) keep their prior behavior: no retroactive holds.</item>
 /// </list>
 /// </remarks>
@@ -65,6 +68,33 @@ public static class ArtifactHoldPolicy
                     $"Part of the book's reading order points at files that are not in the EPUB ({fact.Value}), so it may be " +
                     "truncated. A librarian must confirm it is complete."));
             }
+        }
+
+        foreach (var fact in result.Facts)
+        {
+            if (fact.Code == EvidenceReasonCodes.ArtifactCompleteness.TocTargetsMissing &&
+                fact.Dimension == EvidenceDimension.Completeness && fact.Polarity == EvidencePolarity.Condition &&
+                ArtifactProfileComparer.MissingTocMeetsHoldThreshold(fact.Value))
+                holds.Add((EvidenceReasonCodes.IdentityHold.TocEntriesMissing,
+                    $"The table of contents points at missing files ({fact.Value}); a librarian must confirm completeness."));
+            if (fact.Dimension != EvidenceDimension.Profile) continue;
+            var hold = fact.Code switch
+            {
+                EvidenceReasonCodes.ProfileComparison.SeriesPositionDiffers when fact.Polarity == EvidencePolarity.Negative =>
+                    (EvidenceReasonCodes.IdentityHold.SeriesPositionDiffers, "The file declares a different position in the requested series."),
+                EvidenceReasonCodes.ProfileComparison.LengthFarBelowExpected when fact.Polarity == EvidencePolarity.Negative =>
+                    (EvidenceReasonCodes.IdentityHold.LengthFarBelowExpected, "The text is less than a quarter of the catalog length."),
+                EvidenceReasonCodes.ProfileComparison.DurationFarBelowExpected when fact.Polarity == EvidencePolarity.Negative =>
+                    (EvidenceReasonCodes.IdentityHold.DurationFarBelowExpected, "The listening time is less than a quarter of the catalog duration."),
+                EvidenceReasonCodes.ProfileComparison.AbridgedMarker when fact.Polarity == EvidencePolarity.Condition =>
+                    (EvidenceReasonCodes.IdentityHold.AbridgedMarker, "The file explicitly identifies an abridged edition."),
+                EvidenceReasonCodes.ProfileComparison.TocEntriesMissing when fact.Polarity == EvidencePolarity.Condition &&
+                    ArtifactProfileComparer.MissingTocMeetsHoldThreshold(fact.Value) =>
+                    (EvidenceReasonCodes.IdentityHold.TocEntriesMissing, "The table of contents points at missing files above the completeness threshold."),
+                _ => ((string?)null, (string?)null)
+            };
+            if (hold.Item1 is not null && !holds.Any(existing => existing.Code == hold.Item1))
+                holds.Add((hold.Item1, hold.Item2!));
         }
 
         return holds.Count == 0

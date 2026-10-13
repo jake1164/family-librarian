@@ -205,16 +205,21 @@ public sealed class KindleDeliveryPersistenceTests
     /// </summary>
     private static async Task<Guid> SeedLegacyRequestAsync(AppDbContext database, DeliveryTarget target)
     {
-        var work = new Work("Review book", null, null, null, PublicationStatus.Published, Now);
-        database.Works.Add(work);
-        await database.SaveChangesAsync();
+        var workId = Guid.NewGuid();
+        await database.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO catalog.works
+                (id, canonical_title, normalized_title, description, cover_url, first_publication_date,
+                 publication_status, is_retired, replaced_by_id, created_at_utc, updated_at_utc)
+            VALUES ({workId}, 'Review book', 'REVIEW BOOK', NULL, NULL, NULL,
+                'Published', false, NULL, {Now}, {Now})
+            """);
 
         var requestId = Guid.NewGuid();
         await database.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO requests.book_requests
                 (id, user_id, work_id, status, requester_note, admin_note, requires_manual_fulfillment,
                  version_kind, version_details, requested_at_utc, status_changed_at_utc, created_at_utc, updated_at_utc)
-            VALUES ({requestId}, {target.UserId}, {work.Id}, 'PendingAcquisition', NULL, NULL, false,
+            VALUES ({requestId}, {target.UserId}, {workId}, 'PendingAcquisition', NULL, NULL, false,
                 NULL, NULL, {Now}, {Now}, {Now}, {Now})
             """);
         await database.Database.ExecuteSqlInterpolatedAsync($"""

@@ -115,6 +115,16 @@ internal static class EpubProfileInspector
 
         AddIfPresent(facts, "ev-profile-publisher", EvidenceReasonCodes.ArtifactProfile.PackagePublisher, FirstDc("publisher"));
         AddIfPresent(facts, "ev-profile-date", EvidenceReasonCodes.ArtifactProfile.PackageDate, FirstDc("date"));
+        foreach (var field in package.Descendants().Where(e => e.Name.LocalName is "title" or "description" or "subject" &&
+                     e.Name.NamespaceName.Contains("purl.org/dc", StringComparison.Ordinal)).Take(20))
+        {
+            if (ArtifactProfileComparer.FindAbridgedMarker(field.Value) is { } marker)
+            {
+                facts.Add(new IdentityFact("ev-package-abridged", EvidenceDimension.Profile,
+                    EvidenceReasonCodes.ProfileComparison.AbridgedMarker, EvidencePolarity.Condition, marker));
+                break;
+            }
+        }
 
         var identifiers = package.Descendants()
             .Where(element => element.Name.LocalName == "identifier" && element.Name.NamespaceName.Contains("purl.org/dc", StringComparison.Ordinal))

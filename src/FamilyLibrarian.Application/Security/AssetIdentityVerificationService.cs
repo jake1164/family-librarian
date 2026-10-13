@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Evidence;
 
 namespace FamilyLibrarian.Application.Security;
 
@@ -24,7 +25,8 @@ public sealed class AssetIdentityVerificationService(
     IAuditWriter audit,
     IClock clock,
     IArtifactEvidenceRecorder? evidence = null,
-    IExpectedArtifactProfileSource? expectedProfiles = null) : IAssetIdentityVerificationService
+    IExpectedArtifactProfileSource? expectedProfiles = null,
+    IArtifactEvidenceStore? profileEvidence = null) : IAssetIdentityVerificationService
 {
     private readonly IExpectedArtifactProfileSource? _expectedProfiles = expectedProfiles;
 
@@ -66,7 +68,7 @@ public sealed class AssetIdentityVerificationService(
             cancellationToken);
 
         // Evidence only: recorded after the verdict above is saved and audited.
-        if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, result, cancellationToken);
+        if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, ForRecording(result), cancellationToken);
 
         return result;
     }
@@ -118,7 +120,7 @@ public sealed class AssetIdentityVerificationService(
             new { AssetId = assetId, result.VerifierId, result.IsMatch, result.Reason, Retried = true },
             cancellationToken);
 
-        if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, result, cancellationToken);
+        if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, ForRecording(result), cancellationToken);
 
         return result;
     }
@@ -139,11 +141,24 @@ public sealed class AssetIdentityVerificationService(
     private async Task<AssetIdentityVerificationResult> CompareProfileAsync(
         MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken)
     {
-        if (_expectedProfiles is null) return result;
-        var expected = await _expectedProfiles.FindAsync(asset, cancellationToken);
-        if (expected is null) return result;
-        return result with { Facts = [.. result.Facts, .. ArtifactProfileComparer.Compare(result.Facts, expected)] };
+        if (_expectedProfiles is null || await _expectedProfiles.FindAsync(asset, cancellationToken) is not { } expected)
+            return result;
+        var facts = result.Facts.ToList();
+        if (profileEvidence is not null)
+        {
+            // These measurements were recorded by the inspectors. Reuse them for comparison, never re-record them.
+            var stored = await profileEvidence.ListLatestAudioMeasurementsAsync(asset, cancellationToken);
+            facts.AddRange(stored.Where(f => !facts.Any(current => current.Code == f.Code && current.FindingId == f.FindingId))
+                .Select(f => new IdentityFact(f.FindingId, f.Dimension, f.Code, f.Polarity, f.Value)));
+        }
+        facts.AddRange(ArtifactProfileComparer.Compare(facts, expected));
+        return result with { Facts = facts };
     }
+
+    private AssetIdentityVerificationResult ForRecording(AssetIdentityVerificationResult result) => profileEvidence is null
+        ? result
+        : result with { Facts = result.Facts.Where(f => f.Code is not
+            (EvidenceReasonCodes.ArtifactProfile.AudioTotalDuration or EvidenceReasonCodes.ArtifactProfile.AudioChapterTitles)).ToArray() };
 
     private async Task<AssetIdentityVerificationResult> VerifySafelyAsync(
         IAssetIdentityVerifier verifier,

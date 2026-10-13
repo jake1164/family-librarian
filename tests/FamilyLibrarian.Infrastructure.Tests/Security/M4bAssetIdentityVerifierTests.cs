@@ -15,6 +15,25 @@ public sealed class M4bAssetIdentityVerifierTests
     private const string Copyright = "©";
 
     [TestMethod]
+    [DataRow("Iron Flame (Abridged)", false)]
+    [DataRow("Iron Flame (Unabridged)", true)]
+    [DataRow("Iron Flame - Ungekürzt", false)]
+    public async Task TheExpectedProfileDistinguishesAbridgedAndUnabridgedAlbums(string album, bool expectedMatch)
+    {
+        var asset = CreateAsset(".m4b");
+        var verified = await CreateVerifier("Iron Flame", "Rebecca Yarros").VerifyAsync(
+            asset, BuildM4b(Tag("alb", album), Tag("ART", "Rebecca Yarros")), CancellationToken.None);
+        var result = ArtifactHoldPolicy.Apply(asset, verified);
+
+        Assert.AreEqual(expectedMatch, result.IsMatch);
+        Assert.IsTrue(result.Facts.Any(f => f.Code == "artifact.identity_title.agrees"));
+        if (album.EndsWith("(Abridged)", StringComparison.Ordinal))
+            Assert.AreEqual("identity.hold.abridged_marker", result.HoldCode);
+        if (album.EndsWith("Ungekürzt", StringComparison.Ordinal))
+            Assert.IsTrue(result.Facts.Any(f => f.Code == "artifact.language.cue_conflicts" && f.Polarity == FamilyLibrarian.Domain.Evidence.EvidencePolarity.Negative));
+    }
+
+    [TestMethod]
     public async Task OnlyM4bFilesAreSupported()
     {
         var verifier = CreateVerifier("Fourth Wing", "Rebecca Yarros");

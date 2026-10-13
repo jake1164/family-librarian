@@ -21,6 +21,35 @@ namespace FamilyLibrarian.Web.Tests;
 [TestClass]
 public sealed class MigrationUpgradeTests
 {
+    [TestMethod]
+    public async Task CatalogLengthUpgradeLeavesHistoricalLengthsUnknownAndRoundTripsNewMeasurements()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var work = new Work("Catalog length upgrade", null, null, null, PublicationStatus.Published, DateTimeOffset.UtcNow);
+        database.Works.Add(work);
+        await database.SaveChangesAsync();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddCatalogLength", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var legacy = await database.Works.SingleAsync(w => w.Id == work.Id);
+        Assert.AreEqual("Catalog length upgrade", legacy.CanonicalTitle);
+        Assert.IsNull(legacy.CatalogPageCount);
+        Assert.IsNull(legacy.CatalogAudioDurationSeconds);
+        Assert.IsNull(legacy.CatalogLengthSource);
+        legacy.SetCatalogLength(320, 72000, "example-source", DateTimeOffset.UtcNow);
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+        var summary = await new FamilyLibrarian.Infrastructure.Publishing.WorkLookup(database).FindAsync(work.Id, CancellationToken.None);
+        Assert.IsNotNull(summary);
+        Assert.AreEqual(320, summary.CatalogPageCount);
+        Assert.AreEqual(72000, summary.CatalogAudioSeconds);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
     // This is the schema after M5 and before the M5.5 account/invitation
     // migrations. It is a meaningful historical deployment state: requests
     // already exist and must remain upgradeable as the vertical slice grows.

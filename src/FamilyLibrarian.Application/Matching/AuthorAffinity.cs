@@ -91,7 +91,7 @@ public static class AuthorAffinity
     }
 
     /// <summary>Optimal string alignment: insertion, deletion, substitution or one adjacent transposition each cost one.</summary>
-    private static int EditDistance(string expected, string actual)
+    internal static int EditDistance(string expected, string actual)
     {
         var table = new int[expected.Length + 1, actual.Length + 1];
         for (var i = 0; i <= expected.Length; i++) table[i, 0] = i;

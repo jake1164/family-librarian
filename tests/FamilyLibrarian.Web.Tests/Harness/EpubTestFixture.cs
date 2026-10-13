@@ -26,7 +26,8 @@ public static class EpubTestFixture
         bool withReadingOrder = true,
         string? subject = null,
         int readingOrderFilesMissing = 0,
-        int deadNavigationLinks = 0)
+        int deadNavigationLinks = 0,
+        int? totalNavigationEntries = null)
     {
         using var stream = new MemoryStream();
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
@@ -64,6 +65,8 @@ public static class EpubTestFixture
                 manifest += "<item id=\"nav\" href=\"nav.xhtml\" properties=\"nav\" media-type=\"application/xhtml+xml\"/>";
                 WriteTextEntry(archive, "OEBPS/nav.xhtml",
                     "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><nav><a href=\"chapter1.xhtml\">One</a>" +
+                    string.Concat(Enumerable.Range(2, (totalNavigationEntries ?? deadNavigationLinks + 1) - deadNavigationLinks - 1)
+                        .Select(i => $"<a href=\"chapter1.xhtml#section-{i}\">Section {i}</a>")) +
                     string.Concat(Enumerable.Range(1, deadNavigationLinks).Select(i => $"<a href=\"gone{i}.xhtml\">Gone {i}</a>")) +
                     "</nav></body></html>");
             }

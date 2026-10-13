@@ -275,6 +275,26 @@ public sealed class MediaAssetQueueEndpointTests
     }
 
     [TestMethod]
+    public async Task TwoMissingTocTargetsOfTenAreHeldBeforeApproval()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        await using var factory = CreateFactory(fixture, new DeterministicFakeMalwareScanner(ScanResultStatus.Clean));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await SignInAsAdminAsync(client);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(client));
+        var (requestId, formatId) = await CreateEbookRequestAsync(client);
+        var upload = await client.PostAsync($"/api/v1/admin/requests/{requestId}/formats/{formatId}/manual-import",
+            BuildUpload(EpubTestFixture.BuildMinimalEpubBytes(deadNavigationLinks: 2, totalNavigationEntries: 10), "book.epub"));
+        upload.EnsureSuccessStatusCode();
+        var imported = (await upload.Content.ReadFromJsonAsync<ManualImportResultResponse>())!;
+        var queue = (await client.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/"))!;
+        var held = queue.Assets.Single(asset => asset.AssetId == imported.MediaAssetId);
+        Assert.AreEqual("Unmatched", held.StorageState);
+        Assert.AreEqual("identity.hold.toc_entries_missing", held.IdentityHoldCode);
+        Assert.IsTrue(held.Evidence!.Items.Any(item => item.Code == "artifact.completeness.toc_targets_missing" && item.Value == "2/10"));
+    }
+
+    [TestMethod]
     public async Task AnEpubWhoseReadingOrderPointsAtMissingFilesIsHeldButMissingNavigationTargetsAreOnlyAWarning()
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -299,7 +319,7 @@ public sealed class MediaAssetQueueEndpointTests
         Assert.AreEqual("Unmatched", missingFiles.Held!.StorageState);
         Assert.IsTrue(missingFiles.Held.Evidence!.Items.Any(item => item.Code == "artifact.completeness.spine_content_missing"));
 
-        var deadNavigation = await UploadAsync(EpubTestFixture.BuildMinimalEpubBytes(deadNavigationLinks: 2));
+        var deadNavigation = await UploadAsync(EpubTestFixture.BuildMinimalEpubBytes(deadNavigationLinks: 2, totalNavigationEntries: 30));
         Assert.IsTrue(deadNavigation.Approved, "Dead navigation links are a warning only (D-16).");
     }
 

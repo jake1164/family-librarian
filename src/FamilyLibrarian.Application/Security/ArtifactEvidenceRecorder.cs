@@ -23,6 +23,17 @@ public interface IArtifactEvidenceStore
     /// </summary>
     Task<IReadOnlyDictionary<Guid, IReadOnlyList<ArtifactEvidence>>> ListLatestAsync(
         IReadOnlyCollection<Guid> assetIds, CancellationToken cancellationToken);
+
+    /// <summary>Latest raw audio measurements for these exact bytes, independent of newer comparison records.</summary>
+    async Task<IReadOnlyList<ArtifactEvidence>> ListLatestAudioMeasurementsAsync(MediaAsset asset, CancellationToken cancellationToken)
+    {
+        var records = await ListLatestAsync([asset.Id], cancellationToken);
+        return records.TryGetValue(asset.Id, out var rows)
+            ? rows.Where(row => row.Sha256 == asset.Sha256 && row.RecordKind == ArtifactEvidenceRecordKinds.ArtifactProfile &&
+                row.Dimension == EvidenceDimension.Profile && row.Code is
+                    EvidenceReasonCodes.ArtifactProfile.AudioTotalDuration or EvidenceReasonCodes.ArtifactProfile.AudioChapterTitles).ToArray()
+            : [];
+    }
 }
 
 /// <summary>Records what the existing security and identity checks already observed. Evidence only.</summary>

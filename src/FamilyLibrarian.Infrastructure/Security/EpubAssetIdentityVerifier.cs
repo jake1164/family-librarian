@@ -90,9 +90,21 @@ public sealed class EpubAssetIdentityVerifier(
                 IdentityFacts.Title(titles.Count > 0, titleMatches),
                 IdentityFacts.Author(creators.Count > 0, authorMatches)
             };
-            // The artifact profile (package metadata, word count, structure titles) describes the file in its own
-            // Profile dimension; it is recorded beside this check and is never an input to the verdict (AUTOFIND 3c).
+            // Package facts stay separate from identity; a spelling-only author exception needs their independent
+            // corroboration, and expected-profile comparisons are applied by the identity service before holds.
             facts.AddRange(EpubProfileInspector.Inspect(archive, rootfilePath));
+            var exactTitle = titles.Any(title => expectedTitles.Any(wanted =>
+                bookMatcher.StrictTitleAuthorMatches(wanted, expected.PrimaryAuthor, title, expected.PrimaryAuthor)));
+            if (!authorMatches && exactTitle &&
+                ArtifactProfileComparer.HasCorroboration(facts, expected.Series ?? [], expected.Isbn13s) &&
+                creators.Any(creator => AuthorSpelling.IsVariant(expected.PrimaryAuthor, creator)))
+            {
+                authorMatches = true;
+                facts[facts.FindIndex(f => f.FindingId == "ev-author")] = new IdentityFact("ev-author",
+                    FamilyLibrarian.Domain.Evidence.EvidenceDimension.IdentityCorroboration,
+                    FamilyLibrarian.Domain.Evidence.EvidenceReasonCodes.ArtifactIdentityCorroboration.AuthorSpellingVariant,
+                    FamilyLibrarian.Domain.Evidence.EvidencePolarity.Weak);
+            }
             if (!titleMatches || !authorMatches)
             {
                 return AssetIdentityVerificationResult.Unmatched(Id, DescribeTitleAuthorMismatch(

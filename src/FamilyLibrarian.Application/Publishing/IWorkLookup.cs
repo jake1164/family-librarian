@@ -39,4 +39,6 @@ public sealed record WorkSummary(
     int? PublicationYear = null,
     string? Publisher = null,
     IReadOnlyList<string>? AlternateTitles = null,
-    DateOnly? FirstPublicationDate = null);
+    DateOnly? FirstPublicationDate = null,
+    int? CatalogPageCount = null,
+    int? CatalogAudioSeconds = null);

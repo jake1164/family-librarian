@@ -34,6 +34,6 @@ public sealed class ExpectedArtifactProfileSource(
         var language = request?.Formats.SingleOrDefault(f => f.Id == asset.AssociatedRequestFormatId)?.AcceptedLanguage;
         var peer = peers is null ? null : await peers.FindAsync(asset, cancellationToken);
         return new(work.Title, work.AlternateTitles ?? [], work.PrimaryAuthor, work.Series ?? [], work.Isbn13s,
-            language, null, null, false, peer?.MedianSizeBytes, peer?.Count, asset.SizeBytes);
+            language, work.CatalogPageCount, work.CatalogAudioSeconds, false, peer?.MedianSizeBytes, peer?.Count, asset.SizeBytes);
     }
 }

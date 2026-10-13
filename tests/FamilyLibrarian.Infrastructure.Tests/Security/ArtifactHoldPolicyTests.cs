@@ -126,7 +126,7 @@ public sealed class ArtifactHoldPolicyTests
     }
 
     [TestMethod]
-    public void MissingNavigationTargetsAndDuplicateReadingOrderFilesAreWarningsNotHolds()
+    public void MissingNavigationAboveTheOwnerThresholdHoldsAndDuplicateReadingOrderRemainsEvidence()
     {
         var result = ArtifactHoldPolicy.Apply(
             Asset(AssetOrigin.ExternalProvider, format: ".epub"),
@@ -134,8 +134,8 @@ public sealed class ArtifactHoldPolicyTests
                 Cue("artifact.completeness.toc_targets_missing", "3/10"),
                 Cue("artifact.completeness.duplicate_reading_order_items", "2")));
 
-        Assert.IsTrue(result.IsMatch);
-        Assert.IsNull(result.HoldCode);
+        Assert.IsFalse(result.IsMatch);
+        Assert.AreEqual("identity.hold.toc_entries_missing", result.HoldCode);
     }
 
     [TestMethod]

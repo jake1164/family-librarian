@@ -1456,6 +1456,19 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(1000)")
                         .HasColumnName("canonical_title");
 
+                    b.Property<int?>("CatalogAudioDurationSeconds")
+                        .HasColumnType("integer")
+                        .HasColumnName("catalog_audio_duration_seconds");
+
+                    b.Property<string>("CatalogLengthSource")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("catalog_length_source");
+
+                    b.Property<int?>("CatalogPageCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("catalog_page_count");
+
                     b.Property<string>("CoverUrl")
                         .HasMaxLength(2048)
                         .HasColumnType("character varying(2048)")

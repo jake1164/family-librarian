@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -56,5 +57,17 @@ public sealed class ArtifactEvidenceStore(AppDbContext database) : IArtifactEvid
                     .OrderBy(item => item.RecordKind, StringComparer.Ordinal)
                     .ThenBy(item => item.FindingId, StringComparer.Ordinal)
                     .ToArray());
+    }
+
+    public async Task<IReadOnlyList<ArtifactEvidence>> ListLatestAudioMeasurementsAsync(
+        MediaAsset asset, CancellationToken cancellationToken)
+    {
+        var rows = await database.ArtifactEvidenceItems.AsNoTracking()
+            .Where(row => row.MediaAssetId == asset.Id && row.Sha256 == asset.Sha256 &&
+                row.RecordKind == ArtifactEvidenceRecordKinds.ArtifactProfile && row.Dimension == EvidenceDimension.Profile &&
+                (row.Code == EvidenceReasonCodes.ArtifactProfile.AudioTotalDuration || row.Code == EvidenceReasonCodes.ArtifactProfile.AudioChapterTitles))
+            .OrderByDescending(row => row.RecordedAtUtc).ToListAsync(cancellationToken);
+        // Comparisons append their own evidence. They must not hide the original measured duration on a later retry.
+        return rows.GroupBy(row => row.Code).Select(group => group.First()).ToArray();
     }
 }

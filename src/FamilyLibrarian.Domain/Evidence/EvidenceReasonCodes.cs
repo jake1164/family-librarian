@@ -108,6 +108,11 @@ public static class EvidenceReasonCodes
 
         /// <summary>Reading-order items point at files that are not in the archive (M1-5b).</summary>
         public const string CompletenessSpineContentMissing = "identity.hold.completeness_spine_content_missing";
+        public const string SeriesPositionDiffers = "identity.hold.series_position_differs";
+        public const string LengthFarBelowExpected = "identity.hold.length_far_below_expected";
+        public const string DurationFarBelowExpected = "identity.hold.duration_far_below_expected";
+        public const string AbridgedMarker = "identity.hold.abridged_marker";
+        public const string TocEntriesMissing = "identity.hold.toc_entries_missing";
     }
 
     /// <summary>Why the candidate decision is not a match despite no contradiction.</summary>
@@ -159,6 +164,7 @@ public static class EvidenceReasonCodes
         public const string AuthorAgrees = "artifact.identity_author.agrees";
         public const string AuthorDiffers = "artifact.identity_author.differs";
         public const string AuthorAbsent = "artifact.identity_author.absent";
+        public const string AuthorSpellingVariant = "artifact.identity.author_spelling_variant";
 
         /// <summary>The file carries no readable title or author tags at all (3a). Unknown, never a contradiction.</summary>
         public const string TagsAbsent = "artifact.identity.tags_absent";
@@ -180,6 +186,7 @@ public static class EvidenceReasonCodes
 
         /// <summary>A language cue word in the album, title or file name (for example "ungekürzt") conflicts with the request.</summary>
         public const string CueConflicts = "artifact.language.cue_conflicts";
+        public const string CueMatchesRequest = "artifact.language.cue_matches_request";
 
         /// <summary>The descriptive tags are written in a language other than the accepted one. Inferred, so evidence only.</summary>
         public const string InferredConflicts = "artifact.language.inferred_conflicts";
@@ -250,10 +257,23 @@ public static class EvidenceReasonCodes
     }
 
     /// <summary>
-    /// Measured or declared description of the file (AUTOFIND 3c). Every profile finding is Unknown polarity: it describes
-    /// the file and judges nothing. Titles stored under AF-3 are structure (table-of-contents entries, h1/h2 headings,
-    /// section names), never running text.
+    /// Comparisons of bounded artifact facts with the catalog expectation. Only the explicit findings named by policy hold.
     /// </summary>
+    public static class ProfileComparison
+    {
+        public const string SizePeerOutlier = "profile.compare.size_peer_outlier";
+        public const string SeriesPositionDiffers = "profile.compare.series_position_differs";
+        public const string SeriesPositionAgrees = "profile.compare.series_position_agrees";
+        public const string LengthFarBelowExpected = "profile.compare.length_far_below_expected";
+        public const string LengthBelowExpected = "profile.compare.length_below_expected";
+        public const string DurationFarBelowExpected = "profile.compare.duration_far_below_expected";
+        public const string DurationBelowExpected = "profile.compare.duration_below_expected";
+        public const string AbridgedMarker = "profile.compare.abridged_marker";
+        public const string HeadingsOtherLanguage = "profile.compare.headings_other_language";
+        public const string TocEntriesMissing = "profile.compare.toc_entries_missing";
+        public const string IdentifierAgrees = "profile.compare.identifier_agrees";
+    }
+
     public static class ArtifactProfile
     {
         public const string PackagePublisher = "profile.package.imprint";
@@ -281,9 +301,5 @@ public static class EvidenceReasonCodes
         public const string FrontMatter = "profile.section.front_matter";
         public const string BackMatter = "profile.section.back_matter";
     }
-    /// <summary>Evidence from deterministic comparisons, independent of safety gates.</summary>
-    public static class ProfileComparison
-    {
-        public const string SizePeerOutlier = "profile.compare.size_peer_outlier";
-    }
+
 }

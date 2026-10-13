@@ -1268,9 +1268,28 @@ complete numbered-audiobook grouping policy. EPUB package identity verification 
 same title set after download. M4B audiobooks are verified the same way from
 their embedded iTunes-style tags: the title (`nam`/`alb`) must match, and the
 author/artist tags (`ART`/`aART`/`wrt`), when present, must include a match;
-a file with no author tag is judged on title alone. Formats with no verifier
-(for example MP3 or MOBI) that were not independently confirmed before
-download are held for a librarian's review.
+a file with no author tag is judged on title alone. MP3 and OGG/Opus identity
+checks use embedded album and author tags; a section title alone does not
+identify the book. Missing tags preserve the source's attested outcome rather
+than being recorded as content verification. Formats with no verifier, such as
+MOBI, remain subject to source-attestation review.
+
+An EPUB author spelling difference may pass only with an exact title and an
+independent package ISBN-13 or matching series name and position. Component
+counts and first letters must agree, with at most two edits per component.
+Audio strips one terminal abridged/unabridged edition marker in the supported
+English or German forms before requiring an exact core title. Explicit
+abridgement holds the file; German wording remains a language cue.
+
+Catalog page counts are filled from metadata on creation or ISBN reuse only
+while unknown; later values do not overwrite them. A text below 25% of the
+catalog estimate (250 words per page) holds only for works of at least 80 pages.
+An audio duration below 25% of a known catalog duration also holds; absent
+catalog lengths remain unknown. Missing TOC targets hold only when at least two
+entries and at least 10% of entries are missing. Moderate shortfalls and
+inferred heading language are evidence only. These identity holds occur before
+approval and publishing and remain reviewable; the security and structure gates
+are unchanged.
 
 When a scheduled external acquisition starts, its durable job records the median size of other pooled, requester-reviewable candidates in the same format, provided at least three peers have a positive known size. After staging, the exact job output links that snapshot to the asset, including across restarts. A download smaller than 30% of the median produces Weak `profile.compare.size_peer_outlier` evidence. This finding never holds a file or changes acquisition eligibility; two peers or unknown measurements produce no finding.
 

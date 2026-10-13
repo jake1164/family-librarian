@@ -1689,6 +1689,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(work => work.Description).HasColumnName("description").HasMaxLength(16_000);
             entity.Property(work => work.CoverUrl).HasColumnName("cover_url").HasMaxLength(2_048);
             entity.Property(work => work.FirstPublicationDate).HasColumnName("first_publication_date");
+            entity.Property(work => work.CatalogPageCount).HasColumnName("catalog_page_count");
+            entity.Property(work => work.CatalogAudioDurationSeconds).HasColumnName("catalog_audio_duration_seconds");
+            entity.Property(work => work.CatalogLengthSource).HasColumnName("catalog_length_source").HasMaxLength(64);
             entity.Property(work => work.PublicationStatus).HasColumnName("publication_status").HasConversion<string>().HasMaxLength(32);
             entity.Property(work => work.IsRetired).HasColumnName("is_retired");
             entity.Property(work => work.ReplacedById).HasColumnName("replaced_by_id");
