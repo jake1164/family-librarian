@@ -6,14 +6,13 @@
 
 <PageTitle>AI models · Family Librarian</PageTitle>
 
-<MudStack Spacing="4">
+<MudStack Spacing="3">
     <div>
         <MudText Typo="Typo.h3">AI models</MudText>
         <MudText Typo="Typo.body1">
-            Everything here is off until you turn it on. Family Librarian only asks a model for advice: it can never accept a match,
-            approve a request, lift a security hold, acquire or publish anything, and if a model is unavailable the deterministic
-            behaviour carries on unchanged. Each role runs on exactly the model you choose for it, and there is no automatic fall
-            back from a local model to a cloud one. The connection and key below are shared with the "Test models" tab.
+            Family Librarian only asks a model for advice: it can never accept a match, approve a request, lift a security hold,
+            acquire or publish anything, and if a model is unavailable the deterministic behaviour carries on unchanged. Each role
+            runs on exactly the model you choose for it, and there is no automatic fall back from a local model to a cloud one.
         </MudText>
     </div>
 
@@ -28,159 +27,230 @@
     }
     else
     {
-        <MudTabs Elevation="0" Rounded="true" TabPanelsClass="pt-4" KeepPanelsAlive="true">
-        <MudTabPanel Text="Models &amp; roles">
-        <MudStack Spacing="4">
-        @if (notice is { HasConflict: true })
-        {
-            <MudAlert Severity="Severity.Warning" role="alert">
-                <MudText Typo="Typo.subtitle2">Two different connections were found</MudText>
-                <MudText Typo="Typo.body2">@notice.Explanation</MudText>
-                <MudText Typo="Typo.body2">
-                    Shared (used by AI models): @(notice.SharedEndpointUrl ?? "no endpoint")@(notice.SharedHasApiKey ? ", key stored" : ", no key").
-                    Older test connection: @(notice.LegacyTestEndpointUrl ?? "no endpoint")@(notice.LegacyTestHasApiKey ? ", key stored" : ", no key").
-                    No key is ever shown.
-                </MudText>
-                <MudStack Row="true" Spacing="2" Class="mt-2" Wrap="Wrap.Wrap">
-                    <MudButton Variant="Variant.Outlined" Disabled="@busy" OnClick="@(() => ResolveConnectionAsync("Shared"))">
-                        Keep the shared connection and discard the older test one
-                    </MudButton>
-                    <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="@busy" OnClick="@(() => ResolveConnectionAsync("LegacyTest"))">
-                        Use the older test connection instead (switches AI models off until you turn them back on)
-                    </MudButton>
-                </MudStack>
-            </MudAlert>
-        }
-
         <MudPaper Outlined="true" Class="pa-4">
-            <MudStack Spacing="3">
-                <MudText Typo="Typo.h5">Connection</MudText>
-                <MudTextField @bind-Value="endpoint" Label="Endpoint URL" Variant="Variant.Outlined"
-                              HelperText="Any OpenAI-compatible endpoint, for example your LiteLLM address (no credentials or query string)." />
-                <MudSwitch T="bool" @bind-Value="allowCloud" Color="Color.Warning"
-                           Label="Allow roles to use cloud models (can send book data off this server and use paid or rate-limited services)" />
+            <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <div>
+                    <MudText Typo="Typo.h6">AI models are @(settings.IsEnabled ? "on" : "off")</MudText>
+                    <MudText Typo="Typo.body2">
+                        The master switch. While it is off nothing below runs and chat works exactly as it does without AI. It takes effect
+                        immediately; it does not wait for "Save settings".
+                    </MudText>
+                    @if (string.IsNullOrWhiteSpace(settings.EndpointUrl))
+                    {
+                        <MudText Typo="Typo.caption">Set the endpoint on the Connection tab first.</MudText>
+                    }
+                </div>
+                <MudSwitch T="bool" Value="settings.IsEnabled" ValueChanged="SetEnabledAsync" Color="Color.Primary" Disabled="@busy"
+                           aria-label="AI models master switch" />
+            </MudStack>
+        </MudPaper>
 
-                <MudSwitch T="bool" @bind-Value="allowCloudExcerpts" Color="Color.Warning" Disabled="@(!allowCloud)"
-                           Label="Also allow details read from downloaded files (embedded titles, headings, language tags) to be sent to a cloud model" />
-                <MudText Typo="Typo.caption">
-                    Separate from the switch above and off by default. Without it, a cloud model reviewing a file sees only the names and
-                    outcomes of the checks, never anything read out of the file. Local models always see the recorded details.
-                </MudText>
-
-                <MudText Typo="Typo.h5">Roles</MudText>
-                @foreach (var role in roles)
-                {
-                    <MudPaper Outlined="true" Class="pa-3">
-                        <MudStack Spacing="2">
-                            <MudSwitch T="bool" @bind-Value="role.IsEnabled" Color="Color.Primary" Label="@Title(role.Role)" />
-                            <MudText Typo="Typo.body2">@Describe(role.Role)</MudText>
-                            <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                <MudSelect T="string" @bind-Value="role.Placement" Label="Runs on" Variant="Variant.Outlined" Style="min-width: 12rem;">
-                                    <MudSelectItem Value="@("Local")">Local model</MudSelectItem>
-                                    <MudSelectItem Value="@("Cloud")" Disabled="@(!allowCloud)">Cloud model</MudSelectItem>
-                                </MudSelect>
-                                <MudTextField @bind-Value="role.LocalModel" Label="Local model alias" Variant="Variant.Outlined" />
-                                <MudTextField @bind-Value="role.CloudModel" Label="Cloud model alias" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
-                                <MudSelect T="string" @bind-Value="role.Reasoning" Label="Model reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;"
-                                           HelperText="Leave on 'Provider default' unless this model is known to accept 'off'.">
-                                    <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
-                                    <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
-                                </MudSelect>
+        <MudTabs Elevation="0" Rounded="true" TabPanelsClass="pt-4" KeepPanelsAlive="true">
+            <MudTabPanel Text="Connection">
+                <MudStack Spacing="3">
+                    @if (notice is { HasConflict: true })
+                    {
+                        <MudAlert Severity="Severity.Warning" role="alert">
+                            <MudText Typo="Typo.subtitle2">Two different connections were found</MudText>
+                            <MudText Typo="Typo.body2">@notice.Explanation</MudText>
+                            <MudText Typo="Typo.body2">
+                                Shared (used by AI models): @(notice.SharedEndpointUrl ?? "no endpoint")@(notice.SharedHasApiKey ? ", key stored" : ", no key").
+                                Older test connection: @(notice.LegacyTestEndpointUrl ?? "no endpoint")@(notice.LegacyTestHasApiKey ? ", key stored" : ", no key").
+                                No key is ever shown.
+                            </MudText>
+                            <MudStack Row="true" Spacing="2" Class="mt-2" Wrap="Wrap.Wrap">
+                                <MudButton Variant="Variant.Outlined" Disabled="@busy" OnClick="@(() => ResolveConnectionAsync("Shared"))">
+                                    Keep the shared connection and discard the older test one
+                                </MudButton>
+                                <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="@busy" OnClick="@(() => ResolveConnectionAsync("LegacyTest"))">
+                                    Use the older test connection instead (switches AI models off until you turn them back on)
+                                </MudButton>
                             </MudStack>
+                        </MudAlert>
+                    }
+
+                    <MudPaper Outlined="true" Class="pa-4">
+                        <MudStack Spacing="3">
+                            <MudText Typo="Typo.h5">Endpoint</MudText>
+                            <MudText Typo="Typo.body2">
+                                One OpenAI-compatible endpoint serves every role and the "Test models" tab. LiteLLM works, and so does any server that
+                                speaks the same <code>/v1/chat/completions</code> and <code>/v1/models</code> API, such as Ollama. Cloud models are
+                                reached through the same endpoint (for example a LiteLLM alias for a hosted model); Family Librarian does not
+                                call hosted services directly.
+                            </MudText>
+                            <MudTextField @bind-Value="endpoint" Label="Endpoint URL" Variant="Variant.Outlined"
+                                          HelperText="For example http://litellm:4000 or http://ollama:11434 (no credentials or query string)." />
+
+                            <MudDivider />
+                            <MudText Typo="Typo.h6">API key</MudText>
+                            <MudText Typo="Typo.body2">@(settings.HasApiKey ? "A key is stored (it cannot be shown again)." : "No key is stored.")</MudText>
+                            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                                <MudTextField @bind-Value="apiKey" Label="New API key" InputType="InputType.Password" Variant="Variant.Outlined"
+                                              Class="flex-grow-1" />
+                                <MudButton Variant="Variant.Outlined" Disabled="@(busy || string.IsNullOrWhiteSpace(apiKey))" OnClick="SetApiKeyAsync">Store key</MudButton>
+                                <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="@(busy || !settings.HasApiKey)" OnClick="ClearApiKeyAsync">Remove key</MudButton>
+                            </MudStack>
+
+                            <MudDivider />
+                            <MudText Typo="Typo.h6">Models on this endpoint</MudText>
+                            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                                <MudButton Variant="Variant.Outlined" Disabled="@(busy || modelsLoading || string.IsNullOrWhiteSpace(settings.EndpointUrl))" OnClick="LoadModelsAsync">
+                                    Refresh model list
+                                </MudButton>
+                                @if (modelsLoading)
+                                {
+                                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" aria-label="Reading the model list" />
+                                }
+                                else if (modelsProblem is not null)
+                                {
+                                    <MudText Typo="Typo.body2">@modelsProblem</MudText>
+                                }
+                                else if (models.Count > 0)
+                                {
+                                    <MudText Typo="Typo.body2">@models.Count model@(models.Count == 1 ? "" : "s") available to choose from on the Roles and Test models tabs.</MudText>
+                                }
+                            </MudStack>
+                            <MudText Typo="Typo.caption">
+                                The list is read from the saved endpoint and key. It is only a convenience for picking a name: a model that is not
+                                listed can still be typed.
+                            </MudText>
+
+                            <MudDivider />
+                            <MudText Typo="Typo.h6">Cloud use</MudText>
+                            <MudSwitch T="bool" @bind-Value="allowCloud" Color="Color.Warning"
+                                       Label="Allow roles to use cloud models (can send book data off this server and use paid or rate-limited services)" />
+                            <MudSwitch T="bool" @bind-Value="allowCloudExcerpts" Color="Color.Warning" Disabled="@(!allowCloud)"
+                                       Label="Also allow details read from downloaded files (embedded titles, headings, language tags) to be sent to a cloud model" />
+                            <MudText Typo="Typo.caption">
+                                The second switch is separate and off by default. Without it, a cloud model reviewing a file sees only the names and
+                                outcomes of the checks, never anything read out of the file. Local models always see the recorded details. Which models
+                                count as "cloud" is your decision per role: a name is never taken as proof that a model is local.
+                            </MudText>
+
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save settings</MudButton>
                         </MudStack>
                     </MudPaper>
-                }
-
-                <MudText Typo="Typo.h5">Limits</MudText>
-                <MudText Typo="Typo.body2">
-                    Every call is bounded and counted. A limit of 0 stops that kind of use entirely; it never means unlimited. Chat and
-                    background checking have separate allowances. Cloud calls also need a non-zero cloud allowance below.
-                </MudText>
-                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                    <MudNumericField T="int" @bind-Value="limits.TimeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
-                    <MudNumericField T="int" @bind-Value="limits.MaxInputCharacters" Label="Max input (characters)" Min="500" Max="60000" Variant="Variant.Outlined" />
-                    <MudNumericField T="int" @bind-Value="limits.MaxOutputTokens" Label="Max output (tokens)" Min="16" Max="2048" Variant="Variant.Outlined" />
-                    <MudNumericField T="int" @bind-Value="limits.MaxConcurrentCalls" Label="Calls at once" Min="1" Max="8" Variant="Variant.Outlined" />
                 </MudStack>
-                <MudText Typo="Typo.subtitle2">Chat, per day</MudText>
-                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                    <MudNumericField T="int" @bind-Value="limits.Interactive.UserDailyRequests" Label="Requests per person" Min="0" Variant="Variant.Outlined" />
-                    <MudNumericField T="int" @bind-Value="limits.Interactive.UserDailyTokens" Label="Tokens per person" Min="0" Variant="Variant.Outlined" />
-                    <MudNumericField T="int" @bind-Value="limits.Interactive.InstallationDailyRequests" Label="Requests, everyone" Min="0" Variant="Variant.Outlined" />
-                    <MudNumericField T="int" @bind-Value="limits.Interactive.InstallationDailyTokens" Label="Tokens, everyone" Min="0" Variant="Variant.Outlined" />
-                </MudStack>
-                <MudText Typo="Typo.subtitle2">Background checking, per day</MudText>
-                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                    <MudNumericField T="int" @bind-Value="limits.Background.InstallationDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" />
-                    <MudNumericField T="int" @bind-Value="limits.Background.InstallationDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" />
-                </MudStack>
-                <MudText Typo="Typo.subtitle2">Cloud allowance, per day (0 = none)</MudText>
-                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                    <MudNumericField T="int" @bind-Value="limits.CloudDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
-                    <MudNumericField T="int" @bind-Value="limits.CloudDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
-                </MudStack>
+            </MudTabPanel>
 
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save settings</MudButton>
-
-                <MudDivider />
-                <MudText Typo="Typo.h6">API key</MudText>
-                <MudText Typo="Typo.body2">@(settings.HasApiKey ? "A key is stored (it cannot be shown again)." : "No key is stored.")</MudText>
-                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-                    <MudTextField @bind-Value="apiKey" Label="New API key" InputType="InputType.Password" Variant="Variant.Outlined"
-                                  Class="flex-grow-1" />
-                    <MudButton Variant="Variant.Outlined" Disabled="@(busy || string.IsNullOrWhiteSpace(apiKey))" OnClick="SetApiKeyAsync">Store key</MudButton>
-                    <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="@(busy || !settings.HasApiKey)" OnClick="ClearApiKeyAsync">Remove key</MudButton>
+            <MudTabPanel Text="Roles">
+                <MudStack Spacing="3">
+                    <MudText Typo="Typo.body2">
+                        Turn on only the roles you want. Each runs on the one model you pick here. "Model reasoning" should stay on "Provider default"
+                        unless that model is known to accept "no reasoning"; models that think before answering can use up the small output limit
+                        and return nothing, in which case ask for no reasoning.
+                    </MudText>
+                    @foreach (var role in roles)
+                    {
+                        <MudPaper Outlined="true" Class="pa-3">
+                            <MudStack Spacing="2">
+                                <MudSwitch T="bool" @bind-Value="role.IsEnabled" Color="Color.Primary" Label="@Title(role.Role)" />
+                                <MudText Typo="Typo.body2">@Describe(role.Role)</MudText>
+                                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                                    <MudSelect T="string" @bind-Value="role.Placement" Label="Runs on" Variant="Variant.Outlined" Style="min-width: 12rem;">
+                                        <MudSelectItem Value="@("Local")">Local model</MudSelectItem>
+                                        <MudSelectItem Value="@("Cloud")" Disabled="@(!allowCloud)">Cloud model</MudSelectItem>
+                                    </MudSelect>
+                                    @if (role.Placement == "Cloud")
+                                    {
+                                        <ModelAliasPicker @bind-Value="role.CloudModel" Models="models" Label="Cloud model" Class="flex-grow-1" Disabled="@(!allowCloud)" />
+                                    }
+                                    else
+                                    {
+                                        <ModelAliasPicker @bind-Value="role.LocalModel" Models="models" Label="Local model" Class="flex-grow-1" />
+                                    }
+                                    <MudSelect T="string" @bind-Value="role.Reasoning" Label="Model reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;">
+                                        <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
+                                        <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
+                                    </MudSelect>
+                                </MudStack>
+                            </MudStack>
+                        </MudPaper>
+                    }
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save settings</MudButton>
                 </MudStack>
+            </MudTabPanel>
 
-                <MudDivider />
-                <MudSwitch T="bool" Value="settings.IsEnabled" ValueChanged="SetEnabledAsync" Color="Color.Primary" Disabled="@busy"
-                           Label="AI models are enabled (master switch)" />
-            </MudStack>
-        </MudPaper>
+            <MudTabPanel Text="Limits &amp; usage">
+                <MudStack Spacing="3">
+                    <MudPaper Outlined="true" Class="pa-4">
+                        <MudStack Spacing="3">
+                            <MudText Typo="Typo.h5">Limits</MudText>
+                            <MudText Typo="Typo.body2">
+                                Every call is bounded and counted. A limit of 0 stops that kind of use entirely; it never means unlimited. Chat and
+                                background checking have separate allowances. Cloud calls also need a non-zero cloud allowance below.
+                            </MudText>
+                            <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                                <MudNumericField T="int" @bind-Value="limits.TimeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
+                                <MudNumericField T="int" @bind-Value="limits.MaxInputCharacters" Label="Max input (characters)" Min="500" Max="60000" Variant="Variant.Outlined" />
+                                <MudNumericField T="int" @bind-Value="limits.MaxOutputTokens" Label="Max output (tokens)" Min="16" Max="2048" Variant="Variant.Outlined" />
+                                <MudNumericField T="int" @bind-Value="limits.MaxConcurrentCalls" Label="Calls at once" Min="1" Max="8" Variant="Variant.Outlined" />
+                            </MudStack>
+                            <MudText Typo="Typo.subtitle2">Chat, per day</MudText>
+                            <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                                <MudNumericField T="int" @bind-Value="limits.Interactive.UserDailyRequests" Label="Requests per person" Min="0" Variant="Variant.Outlined" />
+                                <MudNumericField T="int" @bind-Value="limits.Interactive.UserDailyTokens" Label="Tokens per person" Min="0" Variant="Variant.Outlined" />
+                                <MudNumericField T="int" @bind-Value="limits.Interactive.InstallationDailyRequests" Label="Requests, everyone" Min="0" Variant="Variant.Outlined" />
+                                <MudNumericField T="int" @bind-Value="limits.Interactive.InstallationDailyTokens" Label="Tokens, everyone" Min="0" Variant="Variant.Outlined" />
+                            </MudStack>
+                            <MudText Typo="Typo.subtitle2">Background checking, per day</MudText>
+                            <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                                <MudNumericField T="int" @bind-Value="limits.Background.InstallationDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" />
+                                <MudNumericField T="int" @bind-Value="limits.Background.InstallationDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" />
+                            </MudStack>
+                            <MudText Typo="Typo.subtitle2">Cloud allowance, per day (0 = none)</MudText>
+                            <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                                <MudNumericField T="int" @bind-Value="limits.CloudDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
+                                <MudNumericField T="int" @bind-Value="limits.CloudDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
+                            </MudStack>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save settings</MudButton>
+                        </MudStack>
+                    </MudPaper>
 
-        <MudPaper Outlined="true" Class="pa-4">
-            <MudStack Spacing="2">
-                <MudText Typo="Typo.h5">Use in the last 24 hours</MudText>
-                <MudText Typo="Typo.body2">
-                    Counts only: no prompts, replies or book excerpts are kept. When a model does not say how many tokens it used, the
-                    call is listed as "usage not reported" rather than counted as zero, and the daily allowance is charged a cautious estimate.
-                </MudText>
-                @if (usage is null)
-                {
-                    <MudButton Variant="Variant.Outlined" OnClick="LoadUsageAsync">Show usage</MudButton>
-                }
-                else if (usage.Rows.Count == 0)
-                {
-                    <MudAlert Severity="Severity.Info" Dense="true">No model calls in the last 24 hours.</MudAlert>
-                }
-                else
-                {
-                    <MudTable Items="usage.Rows" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm">
-                        <HeaderContent>
-                            <MudTh>Role</MudTh>
-                            <MudTh>Used for</MudTh>
-                            <MudTh>Outcome</MudTh>
-                            <MudTh>Calls</MudTh>
-                            <MudTh>Reported tokens</MudTh>
-                            <MudTh>Usage not reported</MudTh>
-                        </HeaderContent>
-                        <RowTemplate>
-                            <MudTd DataLabel="Role">@Title(context.Role)@(context.IsCloud ? " (cloud)" : "")</MudTd>
-                            <MudTd DataLabel="Used for">@(context.Budget == "InteractiveChat" ? "Chat" : "Background")</MudTd>
-                            <MudTd DataLabel="Outcome">@context.Outcome</MudTd>
-                            <MudTd DataLabel="Calls">@context.Calls</MudTd>
-                            <MudTd DataLabel="Reported tokens">@context.ReportedTokens</MudTd>
-                            <MudTd DataLabel="Usage not reported">@context.CallsWithoutUsage</MudTd>
-                        </RowTemplate>
-                    </MudTable>
-                }
-            </MudStack>
-        </MudPaper>
-        </MudStack>
-        </MudTabPanel>
-        <MudTabPanel Text="Test models">
-            <ModelTestPanel Roles="settings.Roles" ConnectionReady="@(!string.IsNullOrWhiteSpace(settings.EndpointUrl))" />
-        </MudTabPanel>
+                    <MudPaper Outlined="true" Class="pa-4">
+                        <MudStack Spacing="2">
+                            <MudText Typo="Typo.h5">Use in the last 24 hours</MudText>
+                            <MudText Typo="Typo.body2">
+                                Counts only: no prompts, replies or book excerpts are kept. When a model does not say how many tokens it used, the
+                                call is listed as "usage not reported" rather than counted as zero, and the daily allowance is charged a cautious estimate.
+                            </MudText>
+                            @if (usage is null)
+                            {
+                                <MudButton Variant="Variant.Outlined" OnClick="LoadUsageAsync">Show usage</MudButton>
+                            }
+                            else if (usage.Rows.Count == 0)
+                            {
+                                <MudAlert Severity="Severity.Info" Dense="true">No model calls in the last 24 hours.</MudAlert>
+                            }
+                            else
+                            {
+                                <MudTable Items="usage.Rows" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm">
+                                    <HeaderContent>
+                                        <MudTh>Role</MudTh>
+                                        <MudTh>Used for</MudTh>
+                                        <MudTh>Outcome</MudTh>
+                                        <MudTh>Calls</MudTh>
+                                        <MudTh>Reported tokens</MudTh>
+                                        <MudTh>Usage not reported</MudTh>
+                                    </HeaderContent>
+                                    <RowTemplate>
+                                        <MudTd DataLabel="Role">@Title(context.Role)@(context.IsCloud ? " (cloud)" : "")</MudTd>
+                                        <MudTd DataLabel="Used for">@(context.Budget == "InteractiveChat" ? "Chat" : "Background")</MudTd>
+                                        <MudTd DataLabel="Outcome">@context.Outcome</MudTd>
+                                        <MudTd DataLabel="Calls">@context.Calls</MudTd>
+                                        <MudTd DataLabel="Reported tokens">@context.ReportedTokens</MudTd>
+                                        <MudTd DataLabel="Usage not reported">@context.CallsWithoutUsage</MudTd>
+                                    </RowTemplate>
+                                </MudTable>
+                            }
+                        </MudStack>
+                    </MudPaper>
+                </MudStack>
+            </MudTabPanel>
+
+            <MudTabPanel Text="Test models">
+                <ModelTestPanel Roles="settings.Roles" Models="models" ConnectionReady="@(!string.IsNullOrWhiteSpace(settings.EndpointUrl))" />
+            </MudTabPanel>
         </MudTabs>
     }
 </MudStack>
@@ -222,6 +292,9 @@
     private ModelUsageResponse? usage;
     private ModelGatewaySettingsResponse? settings;
     private List<RoleEdit> roles = [];
+    private IReadOnlyList<string> models = [];
+    private string? modelsProblem;
+    private bool modelsLoading;
     private string endpoint = string.Empty;
     private bool allowCloud;
     private bool allowCloudExcerpts;
@@ -240,6 +313,12 @@
         {
             message = "Settings could not be loaded.";
             messageIsError = true;
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(settings?.EndpointUrl))
+        {
+            await LoadModelsAsync();
         }
     }
 
@@ -263,15 +342,23 @@
         })];
     }
 
-    private async Task SaveAsync() => await ApplyResultAsync(
-        await Api.SaveAsync(new SaveModelGatewaySettingsRequest(
-            endpoint, allowCloud,
-            [.. roles.Select(role => new ModelRoleDto(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel, role.Reasoning))],
-            new ModelLimitsDto(
-                limits.TimeoutSeconds, limits.MaxInputCharacters, limits.MaxOutputTokens, limits.MaxConcurrentCalls,
-                ToDto(limits.Interactive), ToDto(limits.Background), limits.CloudDailyRequests, limits.CloudDailyTokens),
-            allowCloud && allowCloudExcerpts)),
-        "Settings saved.");
+    private async Task SaveAsync()
+    {
+        var endpointBefore = settings?.EndpointUrl;
+        await ApplyResultAsync(
+            await Api.SaveAsync(new SaveModelGatewaySettingsRequest(
+                endpoint, allowCloud,
+                [.. roles.Select(role => new ModelRoleDto(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel, role.Reasoning))],
+                new ModelLimitsDto(
+                    limits.TimeoutSeconds, limits.MaxInputCharacters, limits.MaxOutputTokens, limits.MaxConcurrentCalls,
+                    ToDto(limits.Interactive), ToDto(limits.Background), limits.CloudDailyRequests, limits.CloudDailyTokens),
+                allowCloud && allowCloudExcerpts)),
+            "Settings saved.");
+        if (!messageIsError && !string.Equals(endpointBefore, settings?.EndpointUrl, StringComparison.Ordinal))
+        {
+            await LoadModelsAsync();
+        }
+    }
 
     private static BudgetEdit ToEdit(ModelBudgetDto budget) => new()
     {
@@ -281,6 +368,26 @@
 
     private static ModelBudgetDto ToDto(BudgetEdit budget) =>
         new(budget.UserDailyRequests, budget.UserDailyTokens, budget.InstallationDailyRequests, budget.InstallationDailyTokens);
+
+    private async Task LoadModelsAsync()
+    {
+        modelsLoading = true;
+        try
+        {
+            var result = await Api.GetModelsAsync();
+            models = result.Models;
+            modelsProblem = result.Problem;
+        }
+        catch (HttpRequestException)
+        {
+            models = [];
+            modelsProblem = "The model list could not be loaded. You can still type a model name.";
+        }
+        finally
+        {
+            modelsLoading = false;
+        }
+    }
 
     private async Task LoadUsageAsync()
     {
@@ -295,17 +402,26 @@
         }
     }
 
-    private async Task ResolveConnectionAsync(string keep) => await ApplyResultAsync(
-        await Api.ResolveConnectionAsync(keep),
-        keep == "Shared" ? "Kept the shared connection and discarded the older test one." : "Adopted the older test connection. AI models are off until you turn them on.");
+    private async Task ResolveConnectionAsync(string keep)
+    {
+        await ApplyResultAsync(
+            await Api.ResolveConnectionAsync(keep),
+            keep == "Shared" ? "Kept the shared connection and discarded the older test one." : "Adopted the older test connection. AI models are off until you turn them on.");
+        await LoadModelsAsync();
+    }
 
     private async Task SetApiKeyAsync()
     {
         await ApplyResultAsync(await Api.SetApiKeyAsync(apiKey), "API key stored.");
         apiKey = string.Empty;
+        await LoadModelsAsync();
     }
 
-    private async Task ClearApiKeyAsync() => await ApplyResultAsync(await Api.ClearApiKeyAsync(), "API key removed.");
+    private async Task ClearApiKeyAsync()
+    {
+        await ApplyResultAsync(await Api.ClearApiKeyAsync(), "API key removed.");
+        await LoadModelsAsync();
+    }
 
     private async Task SetEnabledAsync(bool enabled) => await ApplyResultAsync(await Api.SetEnabledAsync(enabled), enabled ? "AI models are on." : "AI models are off.");
 

@@ -63,3 +63,6 @@ public sealed record ModelUsageResponse(DateTimeOffset SinceUtc, IReadOnlyList<M
 public sealed record SetModelGatewayEnabledRequest(bool Enabled);
 
 public sealed record SetModelGatewayApiKeyRequest(string ApiKey);
+
+/// <summary>The models the endpoint says it serves. <paramref name="Problem"/> is set (and the list empty) when it could not be read; a name can always be typed.</summary>
+public sealed record ModelListResponse(IReadOnlyList<string> Models, string? Problem);

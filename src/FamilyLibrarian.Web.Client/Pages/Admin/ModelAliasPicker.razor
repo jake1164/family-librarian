@@ -1,0 +1,33 @@
+@* A model name chosen from the list the endpoint reports, but never limited to it: gateways can serve aliases they do not list,
+   so a typed name is always accepted. Used wherever an administrator picks a model. *@
+
+<MudAutocomplete T="string" Value="Value" ValueChanged="OnValueChangedAsync" Label="@Label" Variant="Variant.Outlined"
+                 SearchFunc="SearchAsync" CoerceValue="true" CoerceText="false" ResetValueOnEmptyText="true" Clearable="true"
+                 OpenOnFocus="true" MaxItems="80" Disabled="Disabled" HelperText="@Helper" Class="@Class" />
+
+@code {
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "Model";
+    [Parameter] public IReadOnlyList<string> Models { get; set; } = [];
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string? HelperText { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    private string? Helper =>
+        !string.IsNullOrWhiteSpace(HelperText) ? HelperText
+        : Models.Count > 0 && !string.IsNullOrWhiteSpace(Value) && !Models.Contains(Value, StringComparer.Ordinal)
+            ? "Not in the endpoint's model list. It will be used exactly as typed."
+            : null;
+
+    private Task<IEnumerable<string>> SearchAsync(string? text, CancellationToken cancellationToken) =>
+        Task.FromResult<IEnumerable<string>>(string.IsNullOrWhiteSpace(text)
+            ? Models
+            : Models.Where(model => model.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    private async Task OnValueChangedAsync(string? value)
+    {
+        Value = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        await ValueChanged.InvokeAsync(Value);
+    }
+}

@@ -48,9 +48,25 @@ public sealed class ModelGatewayEndpointTests
 
         Assert.AreEqual(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"{BasePath}/")).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.GetAsync($"{BasePath}/")).StatusCode);
+        Assert.AreEqual(HttpStatusCode.Forbidden, (await member.GetAsync($"{BasePath}/models")).StatusCode);
+        Assert.AreEqual(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"{BasePath}/models")).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest(null, false, []))).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.PutAsJsonAsync($"{BasePath}/enabled", new SetModelGatewayEnabledRequest(true))).StatusCode);
         Assert.AreEqual(HttpStatusCode.Forbidden, (await member.PutAsJsonAsync($"{BasePath}/api-key", new SetModelGatewayApiKeyRequest("sk-member"))).StatusCode);
+    }
+
+    [TestMethod]
+    public async Task TheModelListWithoutAnEndpointIsAnEmptyListAndAFriendlyProblemNotAnError()
+    {
+        await using var factory = Factory();
+        using var admin = await SignedInAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        using var cleared = await admin.PutAsJsonAsync($"{BasePath}/", new SaveModelGatewaySettingsRequest("", false, []));
+        Assert.IsTrue(cleared.IsSuccessStatusCode, await cleared.Content.ReadAsStringAsync());
+
+        var list = await admin.GetFromJsonAsync<ModelListResponse>($"{BasePath}/models");
+
+        Assert.IsEmpty(list!.Models);
+        StringAssert.Contains(list.Problem, "endpoint");
     }
 
     [TestMethod]

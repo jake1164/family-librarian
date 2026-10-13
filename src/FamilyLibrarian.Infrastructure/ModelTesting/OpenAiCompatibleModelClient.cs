@@ -15,7 +15,7 @@ namespace FamilyLibrarian.Infrastructure.ModelTesting;
 /// provider failure becomes a classified <see cref="ModelResponse"/> rather than an exception, and the API key is never
 /// written to a failure message.
 /// </summary>
-public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFactory) : IModelClient
+public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFactory) : IModelClient, IModelCatalogClient
 {
     public const string HttpClientName = "model-test";
     public const int MaxResponseBytes = 256 * 1024;
@@ -66,10 +66,80 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
         }
     }
 
-    public static Uri BuildUri(Uri endpoint)
+    public const int MaxListedModels = 500;
+    private const int MaxModelIdLength = 200;
+
+    public static Uri BuildUri(Uri endpoint) => BuildUri(endpoint, "chat/completions");
+
+    public static Uri BuildModelsUri(Uri endpoint) => BuildUri(endpoint, "models");
+
+    private static Uri BuildUri(Uri endpoint, string resource)
     {
         var text = endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/');
-        return new Uri(text.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) ? $"{text}/chat/completions" : $"{text}/v1/chat/completions");
+        return new Uri(text.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) ? $"{text}/{resource}" : $"{text}/v1/{resource}");
+    }
+
+    public async Task<ModelListResult> ListModelsAsync(Uri endpoint, string? apiKey, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(timeout);
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Get, BuildModelsUri(endpoint));
+            if (!string.IsNullOrEmpty(apiKey))
+            {
+                message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            }
+
+            using var client = httpClientFactory.CreateClient(HttpClientName);
+            using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, limit.Token);
+            var body = await ReadBoundedAsync(response, limit.Token);
+            if (body is null)
+            {
+                return ModelListResult.Failed(ModelFailureKind.InvalidResponse, "The model list was larger than the allowed size.");
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var failure = ClassifyHttpFailure(response.StatusCode, body, apiKey, ModelReasoningMode.Inherit, 0);
+                return ModelListResult.Failed(failure.Failure, failure.FailureDetail);
+            }
+
+            return ParseModelList(body);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return ModelListResult.Failed(ModelFailureKind.Timeout, $"No answer within {timeout.TotalSeconds:0} seconds.");
+        }
+        catch (HttpRequestException exception)
+        {
+            return ModelListResult.Failed(ModelFailureKind.Unreachable, Redact(exception.Message, apiKey));
+        }
+        catch (JsonException)
+        {
+            return ModelListResult.Failed(ModelFailureKind.InvalidResponse, "The model list was not valid JSON.");
+        }
+    }
+
+    /// <summary>Reads <c>{"data":[{"id":"..."}]}</c>. Names are bounded, de-duplicated and sorted; anything else in the reply is ignored.</summary>
+    internal static ModelListResult ParseModelList(string body)
+    {
+        if ((JsonNode.Parse(body) as JsonObject)?["data"] is not JsonArray data)
+        {
+            return ModelListResult.Failed(ModelFailureKind.InvalidResponse, "The reply had no model list.");
+        }
+
+        var ids = data
+            .Select(item => (item as JsonObject)?["id"] is JsonValue id && id.TryGetValue<string>(out var text) ? text.Trim() : null)
+            .Where(id => !string.IsNullOrEmpty(id) && id.Length <= MaxModelIdLength && !id.Any(char.IsControl))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxListedModels)
+            .Select(id => id!)
+            .ToArray();
+        return new ModelListResult(true, ModelFailureKind.None, null, ids);
     }
 
     private static string BuildBody(ModelConnection connection, ModelRequest request)

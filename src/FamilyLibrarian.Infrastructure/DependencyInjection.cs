@@ -261,6 +261,7 @@ public static class DependencyInjection
         services.AddHttpClient(OpenAiCompatibleModelClient.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddScoped<IModelClient, OpenAiCompatibleModelClient>();
+        services.AddScoped<IModelCatalogClient, OpenAiCompatibleModelClient>();
         services.AddScoped<IModelTestSettingsStore, ModelTestSettingsStore>();
         services.AddSingleton<ModelTestGate>();
         services.AddScoped<ModelTestSettingsService>();
@@ -271,6 +272,7 @@ public static class DependencyInjection
         services.AddScoped<ModelGatewaySettingsService>();
         services.AddScoped<IModelRoleResolver, ModelRoleResolver>();
         services.AddScoped<ModelConnectionService>();
+        services.AddScoped<ModelCatalogService>();
         services.AddScoped<IModelTestTargetSource>(provider => provider.GetRequiredService<ModelConnectionService>());
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, TimeProvider.System);
         services.AddSingleton<IModelUsageLedger, ModelUsageLedger>();

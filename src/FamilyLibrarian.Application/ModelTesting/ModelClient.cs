@@ -92,3 +92,18 @@ public interface IModelClient
 {
     Task<ModelResponse> CompleteAsync(ModelConnection connection, ModelRequest request, CancellationToken cancellationToken);
 }
+
+/// <summary>The model names a gateway says it serves. Names only: nothing else about a model is trusted or kept.</summary>
+public sealed record ModelListResult(bool Succeeded, ModelFailureKind Failure, string? FailureDetail, IReadOnlyList<string> ModelIds)
+{
+    public static ModelListResult Failed(ModelFailureKind kind, string? detail) => new(false, kind, detail, []);
+}
+
+/// <summary>
+/// Asks an OpenAI-compatible endpoint which models it serves (<c>GET /v1/models</c>) so an administrator can choose one from a
+/// list. One request, no retries and no redirects. It is a convenience only: a model that is not listed can still be typed.
+/// </summary>
+public interface IModelCatalogClient
+{
+    Task<ModelListResult> ListModelsAsync(Uri endpoint, string? apiKey, TimeSpan timeout, CancellationToken cancellationToken);
+}

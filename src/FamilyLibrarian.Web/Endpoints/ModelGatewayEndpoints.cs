@@ -21,6 +21,7 @@ internal static class ModelGatewayEndpoints
         group.MapGet("/", GetAsync);
         group.MapPost("/connection/resolve", ResolveConnectionAsync);
         group.MapGet("/usage", UsageAsync);
+        group.MapGet("/models", ListModelsAsync);
         group.MapPut("/", SaveAsync);
         group.MapPut("/enabled", SetEnabledAsync);
         group.MapPut("/api-key", SetApiKeyAsync);
@@ -89,6 +90,14 @@ internal static class ModelGatewayEndpoints
             summary.Since,
             [.. summary.Rows.Select(row => new ModelUsageRowResponse(
                 row.Role.ToString(), row.Budget.ToString(), row.Outcome.ToString(), row.IsCloud, row.Calls, row.ReportedTokens, row.CallsWithoutUsage))]));
+    }
+
+    private static async Task<IResult> ListModelsAsync(ModelCatalogService catalog, CancellationToken cancellationToken)
+    {
+        var result = await catalog.ListAsync(cancellationToken);
+        return result.Forbidden
+            ? Results.StatusCode(StatusCodes.Status403Forbidden)
+            : Results.Ok(new ModelListResponse(result.Models, result.Problem));
     }
 
     private static async Task<IResult> SetEnabledAsync(

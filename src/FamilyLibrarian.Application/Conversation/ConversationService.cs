@@ -332,18 +332,22 @@ public sealed class ConversationService(
 
     private async Task<TurnPlan> SearchPlanAsync(
         string query, string label, IReadOnlyList<RequestMediaType>? formats, bool requestIntent,
-        ConversationState state, CancellationToken cancellationToken, bool tryInterpretIfEmpty = false)
+        ConversationState state, CancellationToken cancellationToken, bool tryInterpretIfEmpty = false, string? lead = null)
     {
         var found = await tools.SearchBooksAsync(query, options.MaxChoices, cancellationToken);
+
+        // An optional model is asked to reword the search in two cases only: the catalog found nothing, or the message reads like
+        // a sentence rather than a title and none of the results is that exact title (a fuzzy catalog will happily return five
+        // unrelated books for a question). If it declines, fails, or its guess finds nothing, the ordinary answer below is unchanged.
+        var interpret = tryInterpretIfEmpty && !found.SomeSourcesUnavailable &&
+            (found.Choices.Count == 0 || (ConversationProse.LooksLikeProse(query) && !ConversationProse.HasExactTitle(found.Choices, query)));
+        if (interpret && await InterpretedPlanAsync(query, formats, state, cancellationToken) is { } interpreted)
+        {
+            return interpreted;
+        }
+
         if (found.Choices.Count == 0)
         {
-            // The fixed grammar and the catalog both came up empty. Only now, and only for a message that reads like prose rather
-            // than a title, is an optional model asked to reword the search. If it declines or fails, the answer below is unchanged.
-            if (tryInterpretIfEmpty && !found.SomeSourcesUnavailable && await InterpretedPlanAsync(query, formats, state, cancellationToken) is { } interpreted)
-            {
-                return interpreted;
-            }
-
             var none = found.SomeSourcesUnavailable
                 ? $"I couldn't reach the catalog sources just now for “{label}”. Please try again in a minute."
                 : $"I couldn't find anything for “{label}”. Try the title and author, or an ISBN.";
@@ -359,7 +363,7 @@ public sealed class ConversationService(
             RequestIntent = requestIntent
         };
         var choices = found.Choices.Select((choice, index) => new ConversationChoice(index + 1, choice.Title, choice.Authors, choice.Detail)).ToArray();
-        var lines = new StringBuilder($"I found these for “{label}”:");
+        var lines = new StringBuilder(lead ?? $"I found these for “{label}”:");
         foreach (var choice in choices)
         {
             var authors = choice.Authors.Length > 0 ? $" — {choice.Authors}" : "";
@@ -398,7 +402,7 @@ public sealed class ConversationService(
         BookIntentInterpretation? interpretation;
         try
         {
-            interpretation = await interpreter.InterpretAsync(userId, text, cancellationToken);
+            interpretation = await interpreter.InterpretAsync(userId, text, state.Query, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -424,16 +428,10 @@ public sealed class ConversationService(
                     return null;
                 }
 
-                var plan = await SearchPlanAsync(reworded, reworded, formats, requestIntent: false, state, cancellationToken);
-                return plan.Reply.Kind == ConversationReplyKind.Choices
-                    ? plan with
-                    {
-                        Reply = plan.Reply with
-                        {
-                            Text = $"I wasn't sure what you meant, so I took a guess at “{reworded}”. " + plan.Reply.Text
-                        }
-                    }
-                    : null;
+                var plan = await SearchPlanAsync(
+                    reworded, reworded, formats, requestIntent: false, state, cancellationToken,
+                    lead: $"I wasn't sure what you meant, so I took a guess at “{reworded}”. I found these:");
+                return plan.Reply.Kind == ConversationReplyKind.Choices ? plan : null;
 
             default:
                 return null;

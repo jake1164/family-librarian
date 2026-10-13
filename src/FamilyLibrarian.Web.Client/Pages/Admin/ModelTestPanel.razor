@@ -32,15 +32,15 @@
         <MudPaper Outlined="true" Class="pa-4">
             <MudStack Spacing="3">
                 <MudText Typo="Typo.h5">Test settings</MudText>
-                <MudTextField @bind-Value="primaryModel" Label="Primary local model alias" Variant="Variant.Outlined" />
-                <MudTextField @bind-Value="comparisonModel" Label="Comparison local model alias (optional)" Variant="Variant.Outlined" />
+                <ModelAliasPicker @bind-Value="primaryModel" Models="Models" Label="Primary local model" />
+                <ModelAliasPicker @bind-Value="comparisonModel" Models="Models" Label="Comparison local model (optional)" />
                 <MudSwitch T="bool" @bind-Value="allowCloud" Color="Color.Warning"
                            Label="Allow testing a cloud model (can use paid or rate-limited services)" />
                 <MudText Typo="Typo.caption">
                     This switch is separate from the production cloud permission: allowing cloud tests does not let any role use a cloud model, and
                     the other way round. Each cloud test also needs a confirmation on the run.
                 </MudText>
-                <MudTextField @bind-Value="cloudModel" Label="Cloud model alias (optional)" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
+                <ModelAliasPicker @bind-Value="cloudModel" Models="Models" Label="Cloud model (optional)" Disabled="@(!allowCloud)" />
                 <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
                     <MudNumericField T="int" @bind-Value="timeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
                     <MudNumericField T="int" @bind-Value="maxOutputTokens" Label="Maximum output tokens" Min="16" Max="4096" Variant="Variant.Outlined" />
@@ -73,7 +73,7 @@
                     </MudSelect>
                     @if (target == "Alias")
                     {
-                        <MudTextField @bind-Value="alias" Label="Test-only model alias" Variant="Variant.Outlined" />
+                        <ModelAliasPicker @bind-Value="alias" Models="Models" Label="Test-only model" />
                         <MudRadioGroup T="string" @bind-Value="aliasPlacement">
                             <MudRadio Value="@("Local")" Color="Color.Primary">Runs locally</MudRadio>
                             <MudRadio Value="@("Cloud")" Color="Color.Warning">Runs in the cloud</MudRadio>
@@ -168,19 +168,21 @@
     [Parameter] public IReadOnlyList<ModelRoleDto> Roles { get; set; } = [];
 
     /// <summary>Whether the shared endpoint is set. The key and endpoint themselves are managed on the other tab.</summary>
+    [Parameter] public IReadOnlyList<string> Models { get; set; } = [];
+
     [Parameter] public bool ConnectionReady { get; set; }
 
     private ModelTestSettingsResponse? settings;
     private ModelTestReportResponse? report;
-    private string primaryModel = string.Empty;
-    private string comparisonModel = string.Empty;
-    private string cloudModel = string.Empty;
+    private string? primaryModel = string.Empty;
+    private string? comparisonModel = string.Empty;
+    private string? cloudModel = string.Empty;
     private bool allowCloud;
     private int timeoutSeconds = 30;
     private int maxOutputTokens = 1024;
     private string reasoning = "Inherit";
     private string target = "Primary";
-    private string alias = string.Empty;
+    private string? alias = string.Empty;
     private string aliasPlacement = string.Empty;
     private bool confirmCloud;
     private string? runReasoning;
