@@ -30,7 +30,8 @@ public sealed class SecurityEvaluationService(
     IAuditWriter audit,
     IClock clock,
     IArtifactEvidenceRecorder? evidence = null,
-    IEnumerable<IAssetTechnicalInspector>? technicalInspectors = null) : ISecurityEvaluationRunner
+    IEnumerable<IAssetTechnicalInspector>? technicalInspectors = null,
+    IEnumerable<IAssetProfileInspector>? profileInspectors = null) : ISecurityEvaluationRunner
 {
     private const string PolicyVersion = "v1";
 
@@ -200,6 +201,23 @@ public sealed class SecurityEvaluationService(
                     findings.Add(new("ev-audio-duration", EvidenceDimension.AudioTechnical,
                         EvidenceReasonCodes.ArtifactAudio.DurationUnavailable, EvidencePolarity.Unknown, "inspection did not complete"));
                 }
+            }
+
+            // The artifact profile (total duration, chapter names) is its own pass over the same bounded headers.
+            try
+            {
+                if (profileInspectors?.FirstOrDefault(candidate => candidate.Supports(asset)) is { } profileInspector)
+                {
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeout.CancelAfter(TechnicalInspectionTimeout);
+                    await using var content = await stagingStore.OpenAsync(
+                        MediaAssetStorageState.Processing, asset.StoredFilename, timeout.Token);
+                    findings.AddRange(await profileInspector.InspectAsync(asset, content, timeout.Token));
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                // The profile is an extra; the measurements are still worth recording.
             }
 
             try

@@ -162,7 +162,8 @@ public sealed class ArtifactEvidenceRecorder(
             Add("ev-corroboration", EvidenceDimension.IdentityCorroboration, corroborationCode, corroborationPolarity,
                 $"verifier:{result.VerifierId}", null);
 
-            foreach (var fact in result.Facts)
+            // A profile fact describes the file; it is not part of the identity record and is kept in its own pass.
+            foreach (var fact in result.Facts.Where(fact => fact.Dimension != EvidenceDimension.Profile))
             {
                 Add(fact.FindingId, fact.Dimension, fact.Code, fact.Polarity, $"verifier:{result.VerifierId}", fact.Value);
             }
@@ -173,6 +174,8 @@ public sealed class ArtifactEvidenceRecorder(
                     EvidencePolarity.Unknown, $"verifier:{result.VerifierId}", null);
             }
 
+            items.AddRange(ProfileItems(
+                asset, result.Facts, $"verifier:{result.VerifierId}", now));
             store.Add(items);
             await store.TrySaveAsync(cancellationToken);
         }
@@ -198,6 +201,7 @@ public sealed class ArtifactEvidenceRecorder(
                     UniqueId(items, finding.FindingId), finding.Dimension, finding.Code, finding.Polarity, source, finding.Value, toolVersion: null, now));
             }
 
+            items.AddRange(ProfileItems(asset, findings, source, now));
             if (items.Count == 0) return;
             store.Add(items);
             await store.TrySaveAsync(cancellationToken);
@@ -258,6 +262,29 @@ public sealed class ArtifactEvidenceRecorder(
             AssetOrigin.ExternalProvider => (EvidenceReasonCodes.ArtifactIdentityAttestation.ExternalProviderConfirmed, EvidencePolarity.Weak),
             _ => (EvidenceReasonCodes.ArtifactIdentityAttestation.UnknownOrigin, EvidencePolarity.Weak)
         };
+    }
+
+    /// <summary>
+    /// The profile-dimension findings of a pass as one <see cref="ArtifactEvidenceRecordKinds.ArtifactProfile"/> record, beside the
+    /// pass that observed them. Empty when the pass reported none.
+    /// </summary>
+    private static List<ArtifactEvidence> ProfileItems(
+        MediaAsset asset, IEnumerable<IdentityFact> findings, string source, DateTimeOffset recordedAtUtc)
+    {
+        var profile = findings.Where(finding => finding.Dimension == EvidenceDimension.Profile).ToArray();
+        var items = new List<ArtifactEvidence>(profile.Length);
+        if (profile.Length == 0) return items;
+
+        var recordId = Guid.NewGuid();
+        foreach (var finding in profile)
+        {
+            items.Add(new ArtifactEvidence(
+                asset.Id, asset.Sha256, ArtifactEvidenceRecordKinds.ArtifactProfile, recordId,
+                UniqueId(items, finding.FindingId), EvidenceDimension.Profile, finding.Code, finding.Polarity, source,
+                finding.Value, toolVersion: null, recordedAtUtc));
+        }
+
+        return items;
     }
 
     /// <summary>Keeps finding ids unique within one record even if two sources slug to the same text.</summary>

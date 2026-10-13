@@ -248,4 +248,37 @@ public static class EvidenceReasonCodes
         public const string ScanError = "artifact.security.scan_error";
         public const string ScannerUnavailable = "artifact.security.scanner_unavailable";
     }
+
+    /// <summary>
+    /// Measured or declared description of the file (AUTOFIND 3c). Every profile finding is Unknown polarity: it describes
+    /// the file and judges nothing. Titles stored under AF-3 are structure (table-of-contents entries, h1/h2 headings,
+    /// section names), never running text.
+    /// </summary>
+    public static class ArtifactProfile
+    {
+        public const string PackagePublisher = "profile.package.imprint";
+        public const string PackageDate = "profile.package.date";
+        public const string PackageIdentifier = "profile.package.identifier";
+        public const string PackageLanguage = "profile.package.language";
+
+        /// <summary>Value <c>{name}#{index}</c>.</summary>
+        public const string PackageSeries = "profile.package.series";
+
+        /// <summary>Value <c>words={n};items={m};basis=xhtml_text</c>.</summary>
+        public const string TextWordCount = "profile.text.word_count";
+
+        /// <summary>Why no word count was taken: a CJK or Thai package language, a bound, or unreadable content.</summary>
+        public const string TextWordCountUnavailable = "profile.text.word_count_unavailable";
+
+        /// <summary>Value <c>seconds={n};tracks={k}</c>.</summary>
+        public const string AudioTotalDuration = "profile.audio.total_duration";
+
+        /// <summary>The first ten chapter names, joined by " / ".</summary>
+        public const string AudioChapterTitles = "profile.audio.chapter_titles";
+
+        public const string TocEntry = "profile.toc.entry";
+        public const string Heading = "profile.heading.title";
+        public const string FrontMatter = "profile.section.front_matter";
+        public const string BackMatter = "profile.section.back_matter";
+    }
 }

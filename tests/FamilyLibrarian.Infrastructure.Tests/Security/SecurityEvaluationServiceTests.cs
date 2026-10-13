@@ -260,6 +260,55 @@ public sealed class SecurityEvaluationServiceTests
             throw new InvalidDataException("hostile header");
     }
 
+    private sealed class FixedProfileInspector(bool throws = false) : IAssetProfileInspector
+    {
+        public string Id => "fixed-profile";
+
+        public bool Supports(MediaAsset asset) => true;
+
+        public Task<IReadOnlyList<IdentityFact>> InspectAsync(MediaAsset asset, Stream content, CancellationToken cancellationToken) =>
+            throws
+                ? throw new InvalidDataException("hostile header")
+                : Task.FromResult<IReadOnlyList<IdentityFact>>(
+                    [new IdentityFact("ev-profile-duration", EvidenceDimension.Profile, EvidenceReasonCodes.ArtifactProfile.AudioTotalDuration,
+                        EvidencePolarity.Unknown, "seconds=60;tracks=1")]);
+    }
+
+    [TestMethod]
+    public async Task AnAudiobooksProfileIsReportedWithItsMeasurementsAndChangesNothing()
+    {
+        var plain = new TestContext();
+        var plainAsset = plain.SeedAudioTrack();
+        var plainResult = await plain.CreateService(new AlwaysCleanScanner()).EvaluateAsync(plainAsset.Id, CancellationToken.None);
+
+        var profiled = new TestContext();
+        var asset = profiled.SeedAudioTrack();
+        var recorder = new CapturingRecorder(profiled.Repository);
+        var result = await profiled.CreateService(new AlwaysCleanScanner(), recorder, [new FixedInspector(Duration())], [new FixedProfileInspector()])
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(plainResult.Status, result.Status);
+        Assert.AreEqual(plain.Repository.SaveCount, profiled.Repository.SaveCount);
+        var findings = recorder.Technical.Single().Findings;
+        Assert.IsTrue(findings.Any(finding => finding.Code == EvidenceReasonCodes.ArtifactAudio.DurationMeasured));
+        Assert.IsTrue(findings.Any(finding => finding.Dimension == EvidenceDimension.Profile));
+    }
+
+    [TestMethod]
+    public async Task AProfileInspectorThatThrowsStillLeavesTheMeasurementsRecorded()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAudioTrack();
+        var recorder = new CapturingRecorder(context.Repository);
+
+        var result = await context.CreateService(new AlwaysCleanScanner(), recorder, [new FixedInspector(Duration())], [new FixedProfileInspector(throws: true)])
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(SecurityEvaluationStatus.Passed, result.Status);
+        var findings = recorder.Technical.Single().Findings;
+        Assert.AreEqual(EvidenceReasonCodes.ArtifactAudio.DurationMeasured, findings.Single().Code);
+    }
+
     private static IdentityFact Duration() => new(
         "ev-audio-duration", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.DurationMeasured,
         EvidencePolarity.Unknown, "seconds=60;basis=media_header");
@@ -466,8 +515,9 @@ public sealed class SecurityEvaluationServiceTests
         }
 
         public SecurityEvaluationService CreateService(
-            IMalwareScanner scanner, IArtifactEvidenceRecorder? evidence = null, IAssetTechnicalInspector[]? inspectors = null) =>
-            new(Repository, StagingStore, [scanner], [], Audit, Clock, evidence, inspectors);
+            IMalwareScanner scanner, IArtifactEvidenceRecorder? evidence = null, IAssetTechnicalInspector[]? inspectors = null,
+            IAssetProfileInspector[]? profileInspectors = null) =>
+            new(Repository, StagingStore, [scanner], [], Audit, Clock, evidence, inspectors, profileInspectors);
 
         public MediaAsset SeedAudioTrack(Guid? bundleId = null, int? sequence = null, int? total = null, string format = ".m4b")
         {

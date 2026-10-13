@@ -266,6 +266,51 @@ public sealed class M4bAssetIdentityVerifier(
         return format.All(character => char.IsAsciiLetterOrDigit(character) || character is ' ' or '-' or '_') ? format.Trim() : null;
     }
 
+    /// <summary>
+    /// AUTOFIND 3c: the names of the first <paramref name="maximum"/> chapters of the Nero <c>chpl</c> list (each entry is an
+    /// 8-byte start time, a one-byte title length and that many UTF-8 bytes). One bounded read of the atom, never of the media
+    /// payload; empty when there is no list or it cannot be read safely. QuickTime text-track chapters are not parsed.
+    /// </summary>
+    internal static async Task<IReadOnlyList<string>> ReadChapterTitlesAsync(
+        Stream content, int maximum, CancellationToken cancellationToken)
+    {
+        const int MaxChplBytes = 64 * 1024;
+        var titles = new List<string>();
+        try
+        {
+            if (await FindChildAsync(content, 0, content.Length, "moov", cancellationToken) is not { } moov ||
+                await FindChildAsync(content, moov.PayloadStart, moov.End, "udta", cancellationToken) is not { } udta ||
+                await FindChildAsync(content, udta.PayloadStart, udta.End, "chpl", cancellationToken) is not { } chpl)
+            {
+                return titles;
+            }
+
+            var available = chpl.End - chpl.PayloadStart;
+            if (available < 9) return titles;
+            var buffer = new byte[(int)Math.Min(available, MaxChplBytes)];
+            content.Position = chpl.PayloadStart;
+            await ReadExactAsync(content, buffer, cancellationToken);
+            if (buffer[0] != 1) return titles;
+
+            var declared = buffer[8];
+            var position = 9;
+            for (var index = 0; index < declared && titles.Count < maximum && position + 9 <= buffer.Length; index++)
+            {
+                var length = buffer[position + 8];
+                position += 9;
+                if (position + length > buffer.Length) break;
+                if (Encoding.UTF8.GetString(buffer, position, length).Trim() is { Length: > 0 } title) titles.Add(title);
+                position += length;
+            }
+        }
+        catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException)
+        {
+            // Unreadable parts stay unmeasured.
+        }
+
+        return titles;
+    }
+
     /// <summary>Nero <c>chpl</c> (version 1): four bytes version/flags, four reserved, then a one-byte chapter count.</summary>
     private static async Task<int?> ReadNeroChapterCountAsync(Stream content, BoxInfo chpl, CancellationToken cancellationToken)
     {

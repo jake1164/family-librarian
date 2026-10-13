@@ -38,7 +38,11 @@ public static class ArtifactSemanticEvidence
     {
         var findings = new List<EvidenceFinding>();
         var used = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var item in evidence.OrderBy(item => item.RecordKind, StringComparer.Ordinal).ThenBy(item => item.FindingId, StringComparer.Ordinal).Take(MaxFindingsShown))
+        // Profile findings (table-of-contents and heading titles, word counts) describe the file at length. They are not shown to the
+        // shadow reviewer: up to ~100 of them would crowd the identity findings out of the bounded prompt, and handing a model
+        // structure text is a separate, role-gated step (AUTOFIND Phase 8).
+        foreach (var item in evidence.Where(item => item.Dimension != EvidenceDimension.Profile)
+                     .OrderBy(item => item.RecordKind, StringComparer.Ordinal).ThenBy(item => item.FindingId, StringComparer.Ordinal).Take(MaxFindingsShown))
         {
             var id = $"{ShortKind(item.RecordKind)}.{item.FindingId}";
             for (var suffix = 2; !used.Add(id); suffix++)

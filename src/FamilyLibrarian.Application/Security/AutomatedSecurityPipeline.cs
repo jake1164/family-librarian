@@ -15,7 +15,8 @@ public sealed class AutomatedSecurityPipeline(
     IPolicyAssetApprovalService approvals,
     IAssetIdentityVerificationService identity,
     ISecurityEvaluationRepository? repository = null,
-    SemanticAssessment.IArtifactSemanticShadow? semanticShadow = null)
+    SemanticAssessment.IArtifactSemanticShadow? semanticShadow = null,
+    IAudioBundleProfile? audioBundleProfile = null)
 {
     private const string CleanScanPolicyName = "clean-security-evaluation-v1";
 
@@ -108,6 +109,9 @@ public sealed class AutomatedSecurityPipeline(
                 return assetIds.Select(id => results.GetValueOrDefault(id) ?? SecurityEvaluationResult.Invalid(
                     "A sibling track did not pass every security check.")).ToArray();
         }
+
+        // Evidence only (AUTOFIND 3c): the set's total listening time, recorded on every track. Best effort.
+        if (audioBundleProfile is not null) await audioBundleProfile.RecordAsync(assets, cancellationToken);
 
         // Every track is verified before the set is judged (M1-5b), so each held track carries its own hold and
         // an administrator sees the whole set rather than one held track and untouched others.

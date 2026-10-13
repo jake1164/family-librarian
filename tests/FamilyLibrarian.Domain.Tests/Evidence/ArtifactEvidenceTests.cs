@@ -60,6 +60,6 @@ public sealed class ArtifactEvidenceTests
     [TestMethod]
     public void IdentityAttestationAndContentCorroborationAreSeparateDimensions()
     {
-        Assert.AreEqual(7, Enum.GetValues<EvidenceDimension>().Length, "Language, structure, completeness, security and audio measurements are also distinct.");
+        Assert.AreEqual(8, Enum.GetValues<EvidenceDimension>().Length, "Language, structure, completeness, security, audio measurements and the file profile are also distinct.");
     }
 }

@@ -30,7 +30,14 @@ public enum EvidenceDimension
     /// Measured audio properties (duration, codec, bitrate, chapters, track position). Deliberately its own
     /// dimension: a measurement is never identity evidence and never an input to an identity verdict (M1-4c).
     /// </summary>
-    AudioTechnical = 7
+    AudioTechnical = 7,
+
+    /// <summary>
+    /// Measured or declared description of the file (package metadata, word count, table-of-contents and heading titles,
+    /// audio total duration, chapter names). Never an identity verdict: a profile fact describes what is in the file and
+    /// is compared with what was expected only by a separate comparison (AUTOFIND 3c/3d).
+    /// </summary>
+    Profile = 8
 }
 
 /// <summary>
@@ -46,6 +53,11 @@ public enum EvidenceDimension
 /// or tool version, a language tag, a validator's short message. Book text, audio,
 /// long excerpts and chat transcripts are never persisted here
 /// (<see cref="MaxValueLength"/> enforces the bound).
+/// </para>
+/// <para>
+/// Structure is not book text. Under owner decision AF-3 the titles of table-of-contents entries and h1/h2 headings, and
+/// the names of front- and back-matter sections, may be stored as <see cref="EvidenceDimension.Profile"/> findings,
+/// each bounded and stripped of control characters. Running text, excerpts and the words of a chapter still may not.
 /// </para>
 /// </remarks>
 public sealed class ArtifactEvidence
@@ -163,4 +175,5 @@ public static class ArtifactEvidenceRecordKinds
     public const string IdentityVerification = "identity-verification";
     public const string IdentityOverride = "identity-override";
     public const string TechnicalInspection = "technical-inspection";
+    public const string ArtifactProfile = "artifact-profile";
 }

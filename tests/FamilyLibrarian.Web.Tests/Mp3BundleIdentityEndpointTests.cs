@@ -24,6 +24,7 @@ namespace FamilyLibrarian.Web.Tests;
 public sealed class Mp3BundleIdentityEndpointTests
 {
     private const int Tracks = 20;
+    private const int Frames = 100;
 
     private static byte[] Frame(string id, string text)
     {
@@ -45,8 +46,8 @@ public sealed class Mp3BundleIdentityEndpointTests
     private static byte[] Audio(byte fill)
     {
         const int frameLength = 144 * 128 * 1000 / 44100;
-        var bytes = new byte[frameLength * 2];
-        for (var frame = 0; frame < 2; frame++)
+        var bytes = new byte[frameLength * Frames];
+        for (var frame = 0; frame < Frames; frame++)
         {
             var offset = frame * frameLength;
             bytes[offset] = 0xFF;
@@ -121,6 +122,15 @@ public sealed class Mp3BundleIdentityEndpointTests
         var assets = await LoadAsync(factory, ids);
         Assert.IsTrue(assets.All(asset => asset.StorageState == MediaAssetStorageState.Trusted && asset.IdentityHoldCode is null),
             string.Join(", ", assets.Select(asset => $"{asset.StorageState}/{asset.IdentityHoldCode}")));
+
+        // AUTOFIND 3c: the set's total listening time is recorded once across all tracks, on every track.
+        await using var scope = factory.Services.CreateAsyncScope();
+        var totals = await scope.ServiceProvider.GetRequiredService<AppDbContext>().ArtifactEvidenceItems.AsNoTracking()
+            .Where(item => ids.Contains(item.MediaAssetId) && item.Code == "profile.audio.total_duration").ToListAsync();
+        Assert.AreEqual(Tracks, totals.Count);
+        Assert.AreEqual(1, totals.Select(item => item.Value).Distinct().Count());
+        StringAssert.EndsWith(totals[0].Value, $";tracks={Tracks}");
+        Assert.IsTrue(totals.All(item => item.RecordKind == "artifact-profile"));
     }
 
     [TestMethod]

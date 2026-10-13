@@ -399,6 +399,9 @@ public static class DependencyInjection
         services.AddScoped<IAssetIdentityVerifier, OggAssetIdentityVerifier>();
         services.AddSingleton<IAssetTechnicalInspector, M4bTechnicalInspector>();
         services.AddSingleton<IAssetTechnicalInspector, Mp3TechnicalInspector>();
+        services.AddSingleton<IAssetProfileInspector, M4bProfileInspector>();
+        services.AddSingleton<IAssetProfileInspector, Mp3ProfileInspector>();
+        services.AddScoped<IAudioBundleProfile, AudioBundleProfile>();
 
         services.AddScoped<IAcquisitionBoundaryGuard, AcquisitionBoundaryGuard>();
         services.AddScoped<ISecurityEvaluationRepository, SecurityEvaluationRepository>();

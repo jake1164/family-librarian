@@ -90,6 +90,9 @@ public sealed class EpubAssetIdentityVerifier(
                 IdentityFacts.Title(titles.Count > 0, titleMatches),
                 IdentityFacts.Author(creators.Count > 0, authorMatches)
             };
+            // The artifact profile (package metadata, word count, structure titles) describes the file in its own
+            // Profile dimension; it is recorded beside this check and is never an input to the verdict (AUTOFIND 3c).
+            facts.AddRange(EpubProfileInspector.Inspect(archive, rootfilePath));
             if (!titleMatches || !authorMatches)
             {
                 return AssetIdentityVerificationResult.Unmatched(Id, DescribeTitleAuthorMismatch(
