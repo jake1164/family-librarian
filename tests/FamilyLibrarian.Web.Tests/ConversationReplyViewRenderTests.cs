@@ -78,6 +78,44 @@ public sealed class ConversationReplyViewRenderTests
     }
 
     [TestMethod]
+    public async Task AStatusReplyShowsEachRequestOnceNotInTheTextAndAgainInTheList()
+    {
+        var html = await RenderAsync(Reply("Your requests:\n\u2022 The Lantern Road \u2014 Pending acquisition (ebook: Requested)",
+            requests: [new ConversationRequestSummaryResponse(Guid.NewGuid(), "The Lantern Road", "Mara Quill", "Pending acquisition", ["ebook: Requested"])]));
+
+        StringAssert.Contains(html, "Your requests:");
+        Assert.AreEqual(1, CountOf(html, "The Lantern Road"), "The request appears only in the structured list.");
+    }
+
+    [TestMethod]
+    public async Task SearchResultsAreNotRepeatedInTheTextButTheLeadAndInstructionsStay()
+    {
+        var html = await RenderAsync(Reply(
+            "I found these for \u201cdune\u201d:\n1. Dune \u2014 Frank Herbert (en)\n2. Dune Messiah \u2014 Frank Herbert (en)\nReply with a number to pick one, \u201cdetails 2\u201d for more.",
+            [new ConversationChoiceResponse(1, "Dune", "Frank Herbert", "en"), new ConversationChoiceResponse(2, "Dune Messiah", "Frank Herbert", "en")]));
+
+        StringAssert.Contains(html, "I found these for");
+        StringAssert.Contains(html, "Reply with a number to pick one");
+        Assert.IsFalse(html.Contains("2. Dune Messiah", StringComparison.Ordinal), "The numbered text line is dropped; the list item remains.");
+        StringAssert.Contains(html, "<strong>Dune Messiah</strong>");
+    }
+
+    [TestMethod]
+    public void TextIsLeftAloneWhenThereAreNoStructuredItemsOrOnlyAnotherKindOfLine()
+    {
+        var plain = new ConversationReplyResponse("Text", "1. not a result\n• not a request", [], [], [], null, false);
+        var onlyRequests = new ConversationReplyResponse(
+            "Status", "Your requests:\n• A\n1. kept because there are no structured choices", [],
+            [new ConversationRequestSummaryResponse(Guid.NewGuid(), "A", "", "Pending", [])], [], null, false);
+
+        Assert.AreEqual("1. not a result\n• not a request", ConversationReplyText.ForStructuredDisplay(plain));
+        Assert.AreEqual("Your requests:\n1. kept because there are no structured choices", ConversationReplyText.ForStructuredDisplay(onlyRequests));
+    }
+
+    private static int CountOf(string haystack, string needle) =>
+        (haystack.Length - haystack.Replace(needle, string.Empty, StringComparison.Ordinal).Length) / needle.Length;
+
+    [TestMethod]
     public async Task AnAnswerIsAnnouncedAsAnArticleForAssistiveTechnology()
     {
         var html = await RenderAsync(Reply("Hello"));

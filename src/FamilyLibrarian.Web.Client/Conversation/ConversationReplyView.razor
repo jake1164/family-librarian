@@ -3,7 +3,10 @@
    back through the same chat, so nothing here can do more than typing the same words would. *@
 <MudPaper Outlined="true" Class="pa-3" role="article" aria-label="Chat answer">
     <MudStack Spacing="2">
-        <MudText Typo="Typo.body1" Style="white-space: pre-line;">@Reply.Text</MudText>
+        @if (DisplayText.Length > 0)
+        {
+            <MudText Typo="Typo.body1" Style="white-space: pre-line;">@DisplayText</MudText>
+        }
 
         @if (Reply.Choices.Count > 0)
         {
@@ -80,6 +83,10 @@
 
     [Parameter]
     public EventCallback<string> OnSend { get; set; }
+
+    // The same reply text is sent to Matrix, which has no lists or buttons, so it spells out every result and request. Here the
+    // structured lists below show them, so the lines that only repeat those are left out; the lead-in and the instructions stay.
+    private string DisplayText => ConversationReplyText.ForStructuredDisplay(Reply);
 
     // Numbered picks already have their own buttons beside each result.
     private IReadOnlyList<string> QuickReplies =>
