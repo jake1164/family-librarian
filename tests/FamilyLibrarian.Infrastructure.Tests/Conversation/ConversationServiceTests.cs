@@ -250,6 +250,26 @@ public sealed class ConversationServiceTests
     }
 
     [TestMethod]
+    public async Task CancelStartsOverIncludingTheTurnCountAndTheOfferedList()
+    {
+        var harness = new ConversationHarness().WithResults(Query);
+        harness.Options.MaxTurnsPerSession = 3;
+        await harness.SayAsync(Query);
+        await harness.SayAsync("details 1");
+        await harness.SayAsync("details 2");
+
+        var cancelled = await harness.SayAsync("cancel");
+        var afterwards = await harness.SayAsync("details 1");
+        var search = await harness.SayAsync(Query);
+        var again = await harness.SayAsync("details 1");
+
+        Assert.AreEqual(ConversationReplyKind.Cancelled, cancelled.Reply.Kind);
+        StringAssert.Contains(afterwards.Reply.Text, "don't have a list", "The offered list is gone.");
+        Assert.AreEqual(ConversationReplyKind.Choices, search.Reply.Kind, "The turn count was reset, so a fourth countable message is not throttled.");
+        Assert.AreEqual(ConversationReplyKind.Details, again.Reply.Kind);
+    }
+
+    [TestMethod]
     public async Task HelpCancelAndStatusAreNotCappedByTheTurnLimit()
     {
         var harness = new ConversationHarness();

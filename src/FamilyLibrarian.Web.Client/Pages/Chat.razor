@@ -2,6 +2,8 @@
 @attribute [Authorize]
 @using FamilyLibrarian.Contracts.Conversation
 @using FamilyLibrarian.Web.Client.Conversation
+@using System.Diagnostics
+@implements IDisposable
 @inject ConversationApiClient Conversation
 
 <PageTitle>Chat · Family Librarian</PageTitle>
@@ -35,11 +37,16 @@
                 else
                 {
                     <ConversationReplyView Reply="entry.Reply" OnSend="SendAsync" />
+                    @if (entry.Elapsed is { } elapsed)
+                    {
+                        <MudText Typo="Typo.caption" Class="family-librarian-chat-elapsed">Answered in @FormatElapsed(elapsed)</MudText>
+                    }
                 }
             }
             @if (isSending)
             {
                 <MudProgressLinear Indeterminate="true" Color="Color.Primary" aria-label="Waiting for an answer" />
+                <MudText Typo="Typo.caption">Working… @FormatElapsed(stopwatch?.Elapsed ?? TimeSpan.Zero)</MudText>
             }
         </MudStack>
 
@@ -50,18 +57,22 @@
                               Class="flex-grow-1" aria-label="Message to the librarian" />
                 <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
                            Disabled="@(isSending || string.IsNullOrWhiteSpace(draft))">Send</MudButton>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.RestartAlt" Disabled="@(isSending || entries.Count == 0)"
+                           OnClick="StartOverAsync">New conversation</MudButton>
             </MudStack>
         </form>
     }
 </MudStack>
 
 @code {
-    private sealed record Entry(string? Text, ConversationReplyResponse? Reply);
+    private sealed record Entry(string? Text, ConversationReplyResponse? Reply, TimeSpan? Elapsed = null);
 
     private readonly List<Entry> entries = [];
     private ConversationStatusResponse? status;
     private string draft = string.Empty;
     private bool isSending;
+    private Stopwatch? stopwatch;
+    private Timer? ticker;
 
     protected override async Task OnInitializedAsync()
     {
@@ -88,22 +99,67 @@
         if (isSending) return;
         isSending = true;
         entries.Add(new Entry(text, null));
+        StartClock();
         try
         {
             var reply = await Conversation.SendAsync(text, Guid.NewGuid().ToString("N"));
             entries.Add(reply is null
-                ? new Entry(null, Fallback("Chat isn't available right now. Please sign in again or use search."))
-                : new Entry(null, reply));
+                ? new Entry(null, Fallback("Chat isn't available right now. Please sign in again or use search."), stopwatch?.Elapsed)
+                : new Entry(null, reply, stopwatch?.Elapsed));
         }
         catch (HttpRequestException)
         {
-            entries.Add(new Entry(null, Fallback("I couldn't reach Family Librarian just now. Please try again.")));
+            entries.Add(new Entry(null, Fallback("I couldn't reach Family Librarian just now. Please try again."), stopwatch?.Elapsed));
         }
         finally
         {
+            StopClock();
             isSending = false;
         }
     }
+
+    // Clears what is on screen and, through the ordinary "cancel" message, what the host remembers: the offered list, any
+    // pending format question and the turn count. The answer is not shown; the page simply starts empty.
+    private async Task StartOverAsync()
+    {
+        if (isSending) return;
+        isSending = true;
+        entries.Clear();
+        StartClock();
+        try
+        {
+            await Conversation.SendAsync("cancel", Guid.NewGuid().ToString("N"));
+        }
+        catch (HttpRequestException)
+        {
+            entries.Add(new Entry(null, Fallback("I cleared the screen but couldn't reach Family Librarian to reset the conversation. Say \"cancel\" to try again.")));
+        }
+        finally
+        {
+            StopClock();
+            isSending = false;
+        }
+    }
+
+    private void StartClock()
+    {
+        stopwatch = Stopwatch.StartNew();
+        ticker = new Timer(_ => _ = InvokeAsync(StateHasChanged), null, TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500));
+    }
+
+    private void StopClock()
+    {
+        ticker?.Dispose();
+        ticker = null;
+        stopwatch?.Stop();
+    }
+
+    private static string FormatElapsed(TimeSpan elapsed) =>
+        elapsed.TotalSeconds < 10
+            ? $"{elapsed.TotalSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)} s"
+            : $"{elapsed.TotalSeconds.ToString("0", System.Globalization.CultureInfo.InvariantCulture)} s";
+
+    public void Dispose() => ticker?.Dispose();
 
     private static ConversationReplyResponse Fallback(string text) => new("Unavailable", text, [], [], [], null, false);
 }

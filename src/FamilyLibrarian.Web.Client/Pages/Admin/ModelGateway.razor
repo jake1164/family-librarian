@@ -107,7 +107,10 @@
                                 }
                                 else if (models.Count > 0)
                                 {
-                                    <MudText Typo="Typo.body2">@models.Count model@(models.Count == 1 ? "" : "s") available to choose from on the Roles and Test models tabs.</MudText>
+                                    <MudText Typo="Typo.body2" role="status">
+                                        @models.Count model@(models.Count == 1 ? "" : "s") available to choose from on the Roles and Test models tabs
+                                        (read at @modelsReadAt?.ToLocalTime().ToString("HH:mm:ss")).
+                                    </MudText>
                                 }
                             </MudStack>
                             <MudText Typo="Typo.caption">
@@ -295,6 +298,7 @@
     private IReadOnlyList<string> models = [];
     private string? modelsProblem;
     private bool modelsLoading;
+    private DateTimeOffset? modelsReadAt;
     private string endpoint = string.Empty;
     private bool allowCloud;
     private bool allowCloudExcerpts;
@@ -377,6 +381,7 @@
             var result = await Api.GetModelsAsync();
             models = result.Models;
             modelsProblem = result.Problem;
+            modelsReadAt = DateTimeOffset.UtcNow;
         }
         catch (HttpRequestException)
         {

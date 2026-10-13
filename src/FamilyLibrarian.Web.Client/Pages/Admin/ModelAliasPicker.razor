@@ -20,8 +20,10 @@
             ? "Not in the endpoint's model list. It will be used exactly as typed."
             : null;
 
+    // Opening the list shows the whole thing, even when the box already holds the chosen model: filtering by that text would
+    // leave only the model that is already selected. Typing anything else narrows the list.
     private Task<IEnumerable<string>> SearchAsync(string? text, CancellationToken cancellationToken) =>
-        Task.FromResult<IEnumerable<string>>(string.IsNullOrWhiteSpace(text)
+        Task.FromResult<IEnumerable<string>>(string.IsNullOrWhiteSpace(text) || string.Equals(text.Trim(), Value, StringComparison.Ordinal)
             ? Models
             : Models.Where(model => model.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase)));
 

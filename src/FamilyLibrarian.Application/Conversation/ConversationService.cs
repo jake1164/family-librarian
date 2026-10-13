@@ -227,7 +227,7 @@ public sealed class ConversationService(
 
             case ConversationCommandKind.Cancel:
                 return new TurnPlan(ConversationReply.Of(ConversationReplyKind.Cancelled, "Okay, cleared. Tell me a book to look for whenever you're ready."),
-                    ConversationState.Empty(), null);
+                    ConversationState.Empty(), null, ResetTurns: true);
 
             case ConversationCommandKind.OutOfDomain:
                 return Keep(ConversationReply.Of(ConversationReplyKind.OutOfDomain,
