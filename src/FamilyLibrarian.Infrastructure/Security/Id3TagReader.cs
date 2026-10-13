@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Text;
+using FamilyLibrarian.Application.Security;
 
 namespace FamilyLibrarian.Infrastructure.Security;
 
@@ -13,12 +14,13 @@ internal sealed record Id3Tags(
     IReadOnlyList<string> Composers,
     IReadOnlyList<string> Languages,
     string? Genre,
-    string? Comment)
+    string? Comment,
+    IReadOnlyList<IdentityFact>? ProfileFacts = null)
 {
     /// <summary>Artist, album artist and composer: any of them may carry the author.</summary>
     public IEnumerable<string> AuthorCandidates => AlbumArtists.Concat(Artists).Concat(Composers);
 
-    public AudioTags ToAudioTags() => new(Source, Title, Album, AuthorCandidates.ToArray(), Languages, Genre, Comment);
+    public AudioTags ToAudioTags() => new(Source, Title, Album, AuthorCandidates.ToArray(), Languages, Genre, Comment, ProfileFacts);
 
     public bool HasAnything =>
         Title is not null || Album is not null || Artists.Count > 0 || AlbumArtists.Count > 0 ||
@@ -49,9 +51,12 @@ internal static class Id3TagReader
 
         try
         {
-            return await ReadV2Async(content, cancellationToken) is { HasAnything: true } v2
-                ? v2
-                : await ReadV1Async(content, cancellationToken);
+            var v2 = await ReadV2Async(content, cancellationToken);
+            if (v2 is { HasAnything: true }) return v2;
+            var v1 = await ReadV1Async(content, cancellationToken);
+            // New descriptive tags must not hide the identity the existing ID3v1 fallback already read.
+            return v1 is not null ? v1 with { ProfileFacts = v2?.ProfileFacts }
+                : v2?.ProfileFacts is { Count: > 0 } ? v2 : null;
         }
         catch (OperationCanceledException)
         {
@@ -124,6 +129,7 @@ internal static class Id3TagReader
         var albumArtists = new List<string>();
         var composers = new List<string>();
         var languages = new List<string>();
+        var profile = new AudioProfileTags();
         var frameHeader = major == 2 ? 6 : HeaderBytes;
         for (var frames = 0; frames < MaxFrames && position + frameHeader <= body.Length; frames++)
         {
@@ -188,6 +194,14 @@ internal static class Id3TagReader
             }
 
             var bytes = major == 4 && (frameFlags & 0x0002) != 0 ? Unsynchronise(data.ToArray()) : data.ToArray();
+            if (kind == FrameKind.UserText)
+            {
+                var text = bytes.Length > 1 ? DecodeString(bytes[0], bytes.AsSpan(1)) : "";
+                var valuesWithDescription = text.Replace("\uFEFF", string.Empty, StringComparison.Ordinal).Split('\0');
+                if (valuesWithDescription.Length >= 2 && valuesWithDescription[0].Length > 0)
+                    profile.Add(valuesWithDescription[0], valuesWithDescription[1]);
+                continue;
+            }
             var values = kind == FrameKind.Comment ? DecodeComment(bytes) : DecodeText(bytes);
             if (values.Count == 0)
             {
@@ -196,6 +210,8 @@ internal static class Id3TagReader
 
             switch (kind)
             {
+                case FrameKind.MovementName: profile.Add("mvnm", values[0]); break;
+                case FrameKind.MovementIndex: profile.Add("mvin", values[0]); break;
                 case FrameKind.Title: title ??= values[0]; break;
                 case FrameKind.Album: album ??= values[0]; break;
                 case FrameKind.Artist: artists.AddRange(values); break;
@@ -207,7 +223,7 @@ internal static class Id3TagReader
             }
         }
 
-        return new Id3Tags($"id3v2.{major}", title, album, artists, albumArtists, composers, languages, genre, comment);
+        return new Id3Tags($"id3v2.{major}", title, album, artists, albumArtists, composers, languages, genre, comment, profile.Facts());
     }
 
     private static async Task<Id3Tags?> ReadV1Async(Stream content, CancellationToken cancellationToken)
@@ -239,7 +255,7 @@ internal static class Id3TagReader
         return value.Length == 0 ? null : value;
     }
 
-    private enum FrameKind { None, Title, Album, Artist, AlbumArtist, Composer, Language, Genre, Comment }
+    private enum FrameKind { None, Title, Album, Artist, AlbumArtist, Composer, Language, Genre, Comment, UserText, MovementName, MovementIndex }
 
     private static FrameKind Classify(string id) => id switch
     {
@@ -251,6 +267,9 @@ internal static class Id3TagReader
         "TLAN" or "TLA" => FrameKind.Language,
         "TCON" or "TCO" => FrameKind.Genre,
         "COMM" or "COM" => FrameKind.Comment,
+        "TXXX" => FrameKind.UserText,
+        "MVNM" => FrameKind.MovementName,
+        "MVIN" => FrameKind.MovementIndex,
         _ => FrameKind.None
     };
 

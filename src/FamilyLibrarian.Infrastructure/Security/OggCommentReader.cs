@@ -73,6 +73,7 @@ internal static class OggCommentReader
         string? title = null, album = null, genre = null, comment = null;
         var authors = new List<string>();
         var languages = new List<string>();
+        var profile = new AudioProfileTags();
         foreach (var entry in comments)
         {
             var separator = entry.IndexOf('=', StringComparison.Ordinal);
@@ -90,6 +91,7 @@ internal static class OggCommentReader
 
             switch (key)
             {
+                case "SERIES" or "SERIES-PART" or "ISBN" or "ASIN": profile.Add(key, value); break;
                 case "TITLE": title ??= value; break;
                 case "ALBUM": album ??= value; break;
                 case "ARTIST" or "ALBUMARTIST" or "COMPOSER" or "AUTHOR": authors.Add(value); break;
@@ -99,8 +101,9 @@ internal static class OggCommentReader
             }
         }
 
-        var tags = new AudioTags(source, title, album, authors, languages, genre, comment);
-        return title is null && album is null && authors.Count == 0 && languages.Count == 0 && genre is null && comment is null
+        var facts = profile.Facts();
+        var tags = new AudioTags(source, title, album, authors, languages, genre, comment, facts);
+        return title is null && album is null && authors.Count == 0 && languages.Count == 0 && genre is null && comment is null && facts.Count == 0
             ? null
             : tags;
     }

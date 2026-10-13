@@ -294,6 +294,9 @@ public static class EvidenceReasonCodes
         public const string AudioTotalDuration = "profile.audio.total_duration";
 
         /// <summary>The first ten chapter names, joined by " / ".</summary>
+        public const string AudioSeriesPosition = "profile.audio.series_position";
+        public const string AudioAsin = "profile.audio.asin";
+        public const string AudioTagTruncated = "profile.audio.tag_truncated";
         public const string AudioChapterTitles = "profile.audio.chapter_titles";
 
         public const string TocEntry = "profile.toc.entry";

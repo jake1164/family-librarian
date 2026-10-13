@@ -17,7 +17,8 @@ internal sealed record AudioTags(
     IReadOnlyList<string> AuthorCandidates,
     IReadOnlyList<string> Languages,
     string? Genre,
-    string? Comment);
+    string? Comment,
+    IReadOnlyList<IdentityFact>? ProfileFacts = null);
 
 /// <summary>
 /// The one comparison of audio tags with the Work being fulfilled, shared by every tag-based audio verifier so MP3 and
@@ -46,7 +47,7 @@ internal static class AudioTagIdentity
         {
             return WithFacts(NoVerifierOutcome.For(asset),
                 [new IdentityFact("ev-tags", EvidenceDimension.IdentityCorroboration,
-                    EvidenceReasonCodes.ArtifactIdentityCorroboration.TagsAbsent, EvidencePolarity.Unknown)]);
+                    EvidenceReasonCodes.ArtifactIdentityCorroboration.TagsAbsent, EvidencePolarity.Unknown), .. tags?.ProfileFacts ?? []]);
         }
 
         var facts = new List<IdentityFact>
@@ -54,6 +55,8 @@ internal static class AudioTagIdentity
             new("ev-tag-source", EvidenceDimension.IdentityCorroboration,
                 EvidenceReasonCodes.ArtifactIdentityCorroboration.TagSource, EvidencePolarity.Unknown, tags.Source)
         };
+
+        facts.AddRange(tags.ProfileFacts ?? []);
 
         var expectedTitles = new[] { expected.Title }
             .Concat(expected.AlternateTitles ?? [])
@@ -83,7 +86,15 @@ internal static class AudioTagIdentity
 
         var authorChecked = authors.Length > 0 && !string.IsNullOrWhiteSpace(expected.PrimaryAuthor);
         var authorMatches = authorChecked && authors.Any(author => bookMatcher.AuthorMatches(expected.PrimaryAuthor, author));
-        facts.Add(IdentityFacts.Author(authorChecked, authorMatches));
+        var spellingVariant = authorChecked && !authorMatches && albumTitle is not null &&
+            expectedTitles.Any(title => bookMatcher.StrictTitleAuthorMatches(title, titleAuthor, edition.CoreTitle, titleAuthor)) &&
+            ArtifactProfileComparer.HasCorroboration(facts, expected.Series ?? [], expected.Isbn13s) &&
+            authors.Any(author => AuthorSpelling.IsVariant(expected.PrimaryAuthor, author));
+        authorMatches |= spellingVariant;
+        facts.Add(spellingVariant
+            ? new IdentityFact("ev-author", EvidenceDimension.IdentityCorroboration,
+                EvidenceReasonCodes.ArtifactIdentityCorroboration.AuthorSpellingVariant, EvidencePolarity.Weak)
+            : IdentityFacts.Author(authorChecked, authorMatches));
 
         // Language. A declared tag always wins; otherwise a cue word; otherwise the language of the descriptive text.
         var declared = tags.Languages

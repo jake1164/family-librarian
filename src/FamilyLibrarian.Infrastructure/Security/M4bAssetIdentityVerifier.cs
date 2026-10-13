@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Text;
+using System.Globalization;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
@@ -36,6 +37,7 @@ public sealed class M4bAssetIdentityVerifier(
     private const int MaxBoxesPerLevel = 100_000;
     private const int MaxTagItems = 10_000;
     private const int MaxTagValueBytes = 64 * 1024;
+    private const int MaxProfileTagValueBytes = 4096;
     private const int MaxTracks = 64;
     private const int MaxLanguageTagBytes = 35;
 
@@ -81,12 +83,16 @@ public sealed class M4bAssetIdentityVerifier(
                 Id, "The audiobook's metadata could not be read safely -- it may be malformed.");
         }
 
+        var profile = new AudioProfileTags();
+        if (tags.TryGetValue("©mvn", out var series)) profile.Add("mvnm", series[0]);
+        if (tags.TryGetValue("©mvi", out var position)) profile.Add("mvin", position[0]);
+        var profileFacts = profile.Facts();
         var titles = Collect(tags, TitleTags);
         var authors = Collect(tags, AuthorTags);
         if (titles.Count == 0 && authors.Count == 0)
         {
             return AssetIdentityVerificationResult.Unmatched(
-                Id, "The audiobook has no embedded title or author tags, so it can't be compared with the catalog entry.");
+                Id, "The audiobook has no embedded title or author tags, so it can't be compared with the catalog entry.", profileFacts);
         }
 
         var expectedTitles = new[] { expected.Title }
@@ -123,6 +129,15 @@ public sealed class M4bAssetIdentityVerifier(
         if (declaredLanguages is not null)
         {
             facts.Add(IdentityFacts.Language(declaredLanguages, languageAccepted));
+        }
+        facts.AddRange(profileFacts);
+        if (authorChecked && !authorMatches && titleMatches &&
+            ArtifactProfileComparer.HasCorroboration(facts, expected.Series ?? [], expected.Isbn13s) &&
+            authors.Any(author => AuthorSpelling.IsVariant(expected.PrimaryAuthor, author)))
+        {
+            authorMatches = true;
+            facts[facts.FindIndex(f => f.FindingId == "ev-author")] = new IdentityFact("ev-author", EvidenceDimension.IdentityCorroboration,
+                EvidenceReasonCodes.ArtifactIdentityCorroboration.AuthorSpellingVariant, EvidencePolarity.Weak);
         }
         facts.AddRange(editions.SelectMany(edition => edition.Facts(acceptedLanguage)).Distinct());
         var markerLanguageConflict = editions.Any(edition => edition.IsGerman) &&
@@ -518,7 +533,9 @@ public sealed class M4bAssetIdentityVerifier(
             }
 
             position = item.End;
-            if (!TitleTags.Contains(item.Type) && !AuthorTags.Contains(item.Type))
+            var profileTag = item.Type is "©mvn" or "©mvi";
+            if ((!TitleTags.Contains(item.Type) && !AuthorTags.Contains(item.Type) && !profileTag) ||
+                profileTag && result.ContainsKey(item.Type))
             {
                 continue;
             }
@@ -527,7 +544,9 @@ public sealed class M4bAssetIdentityVerifier(
             while (await TryReadBoxAsync(content, dataPosition, item.End, cancellationToken) is { } data)
             {
                 dataPosition = data.End;
-                var text = data.Type == "data" ? await ReadTextValueAsync(content, data, cancellationToken) : null;
+                var text = data.Type != "data" ? null : item.Type == "©mvi"
+                    ? await ReadMovementIndexAsync(content, data, cancellationToken)
+                    : await ReadTextValueAsync(content, data, profileTag ? MaxProfileTagValueBytes : MaxTagValueBytes, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(text))
                 {
                     if (!result.TryGetValue(item.Type, out var values))
@@ -536,6 +555,7 @@ public sealed class M4bAssetIdentityVerifier(
                     }
 
                     values.Add(text);
+                    if (profileTag) break;
                 }
             }
         }
@@ -547,10 +567,10 @@ public sealed class M4bAssetIdentityVerifier(
     /// <c>data</c> atom layout: 1 byte version, 3 bytes type indicator (1 =
     /// UTF-8 text), 4 bytes locale, then the value. Anything else is ignored.
     /// </summary>
-    private static async Task<string?> ReadTextValueAsync(Stream content, BoxInfo data, CancellationToken cancellationToken)
+    private static async Task<string?> ReadTextValueAsync(Stream content, BoxInfo data, int maxValueBytes, CancellationToken cancellationToken)
     {
         var valueLength = data.End - data.PayloadStart - 8;
-        if (valueLength <= 0 || valueLength > MaxTagValueBytes)
+        if (valueLength <= 0 || valueLength > maxValueBytes)
         {
             return null;
         }
@@ -560,6 +580,19 @@ public sealed class M4bAssetIdentityVerifier(
         await ReadExactAsync(content, buffer, cancellationToken);
         var typeIndicator = BinaryPrimitives.ReadUInt32BigEndian(buffer) & 0x00FFFFFF;
         return typeIndicator == 1 ? Encoding.UTF8.GetString(buffer, 8, buffer.Length - 8).Trim() : null;
+    }
+
+    private static async Task<string?> ReadMovementIndexAsync(Stream content, BoxInfo data, CancellationToken cancellationToken)
+    {
+        var length = data.End - data.PayloadStart - 8;
+        if (length is not (1 or 2 or 3 or 4 or 8)) return null;
+        var buffer = new byte[8 + (int)length];
+        content.Position = data.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        if ((BinaryPrimitives.ReadUInt32BigEndian(buffer) & 0x00FFFFFF) != 21 || (buffer[8] & 0x80) != 0) return null;
+        long index = 0;
+        foreach (var value in buffer.AsSpan(8)) index = (index << 8) | value;
+        return index > 0 ? index.ToString(CultureInfo.InvariantCulture) : null;
     }
 
     private static async Task<BoxInfo?> FindChildAsync(

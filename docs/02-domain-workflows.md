@@ -1274,9 +1274,11 @@ identify the book. Missing tags preserve the source's attested outcome rather
 than being recorded as content verification. Formats with no verifier, such as
 MOBI, remain subject to source-attestation review.
 
-An EPUB author spelling difference may pass only with an exact title and an
-independent package ISBN-13 or matching series name and position. Component
+An EPUB or tagged audiobook author spelling difference may pass only with an exact title
+and an independent embedded ISBN-13 or matching series name and position. Component
 counts and first letters must agree, with at most two edits per component.
+Only confirmed, bounded audio metadata supplies corroboration; ASIN remains
+evidence only, and truncated metadata cannot fabricate agreement.
 Audio strips one terminal abridged/unabridged edition marker in the supported
 English or German forms before requiring an exact core title. Explicit
 abridgement holds the file; German wording remains a language cue.
