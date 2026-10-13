@@ -159,6 +159,15 @@ public static class EvidenceReasonCodes
         public const string AuthorAgrees = "artifact.identity_author.agrees";
         public const string AuthorDiffers = "artifact.identity_author.differs";
         public const string AuthorAbsent = "artifact.identity_author.absent";
+
+        /// <summary>The file carries no readable title or author tags at all (3a). Unknown, never a contradiction.</summary>
+        public const string TagsAbsent = "artifact.identity.tags_absent";
+
+        /// <summary>Which tag format the identity values were read from (for example id3v2.3). A description, never a verdict.</summary>
+        public const string TagSource = "artifact.identity.tag_source";
+
+        /// <summary>Only a track-level title tag exists; track titles such as "Chapter 01" say nothing about the book. Unknown.</summary>
+        public const string TitleTrackOnly = "artifact.identity_title.track_title_only";
     }
 
     /// <summary>The language the file itself declares, compared with the language accepted for the request.</summary>
@@ -168,6 +177,15 @@ public static class EvidenceReasonCodes
         public const string DeclaredConflicts = "artifact.language.declared_conflicts";
         public const string NotDeclared = "artifact.language.not_declared";
         public const string NotAssessed = "artifact.language.not_assessed";
+
+        /// <summary>A language cue word in the album, title or file name (for example "ungekürzt") conflicts with the request.</summary>
+        public const string CueConflicts = "artifact.language.cue_conflicts";
+
+        /// <summary>The descriptive tags are written in a language other than the accepted one. Inferred, so evidence only.</summary>
+        public const string InferredConflicts = "artifact.language.inferred_conflicts";
+
+        /// <summary>The descriptive tags are written in the accepted language.</summary>
+        public const string InferredMatchesRequest = "artifact.language.inferred_matches_request";
     }
 
     /// <summary>Container and format validator results.</summary>
