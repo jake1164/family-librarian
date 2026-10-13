@@ -412,6 +412,8 @@ public static class DependencyInjection
         services.AddScoped<ApprovalService>();
         services.AddScoped<IPolicyAssetApprovalService>(provider => provider.GetRequiredService<ApprovalService>());
         services.AddScoped<AssetDiscardService>();
+        services.AddScoped<IArtifactPeerProfileSource, ArtifactPeerProfileSource>();
+        services.AddScoped<IExpectedArtifactProfileSource, ExpectedArtifactProfileSource>();
         services.AddScoped<AssetIdentityVerificationService>();
         services.AddScoped<IAssetIdentityVerificationService>(provider =>
             provider.GetRequiredService<AssetIdentityVerificationService>());

@@ -23,8 +23,11 @@ public sealed class AssetIdentityVerificationService(
     IEnumerable<IAssetIdentityVerifier> verifiers,
     IAuditWriter audit,
     IClock clock,
-    IArtifactEvidenceRecorder? evidence = null) : IAssetIdentityVerificationService
+    IArtifactEvidenceRecorder? evidence = null,
+    IExpectedArtifactProfileSource? expectedProfiles = null) : IAssetIdentityVerificationService
 {
+    private readonly IExpectedArtifactProfileSource? _expectedProfiles = expectedProfiles;
+
     public async Task<AssetIdentityVerificationResult> VerifyAsync(
         Guid assetId,
         CancellationToken cancellationToken)
@@ -40,7 +43,7 @@ public sealed class AssetIdentityVerificationService(
         var result = verifier is null
             ? NoVerifierOutcome.For(asset)
             : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Processing, cancellationToken);
-        result = ArtifactHoldPolicy.Apply(asset, result);
+        result = ArtifactHoldPolicy.Apply(asset, await CompareProfileAsync(asset, result, cancellationToken));
 
         if (!result.IsMatch)
         {
@@ -83,7 +86,7 @@ public sealed class AssetIdentityVerificationService(
         var result = verifier is null
             ? NoVerifierOutcome.For(asset)
             : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Unmatched, cancellationToken);
-        result = ArtifactHoldPolicy.Apply(asset, result);
+        result = ArtifactHoldPolicy.Apply(asset, await CompareProfileAsync(asset, result, cancellationToken));
 
         if (result.IsMatch)
         {
@@ -131,6 +134,15 @@ public sealed class AssetIdentityVerificationService(
             asset.StoredFilename,
             cancellationToken);
         return await verifier.VerifyAsync(asset, content, cancellationToken);
+    }
+
+    private async Task<AssetIdentityVerificationResult> CompareProfileAsync(
+        MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken)
+    {
+        if (_expectedProfiles is null) return result;
+        var expected = await _expectedProfiles.FindAsync(asset, cancellationToken);
+        if (expected is null) return result;
+        return result with { Facts = [.. result.Facts, .. ArtifactProfileComparer.Compare(result.Facts, expected)] };
     }
 
     private async Task<AssetIdentityVerificationResult> VerifySafelyAsync(

@@ -80,7 +80,8 @@ public sealed class DirectAcquisitionService(
         bool allowDownloadTimeDrmValidation = false,
         bool isAutomaticAcquisition = false,
         AudiobookPartSetMember? partSet = null,
-        SearchVariantRef? searchVariant = null)
+        SearchVariantRef? searchVariant = null,
+        PeerSizeEvidence? peerSizeEvidence = null)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
@@ -352,6 +353,9 @@ public sealed class DirectAcquisitionService(
         {
             job.AssignToPartSet(partSet.SetId, partSet.Number, partSet.Total);
         }
+
+        if (isAutomaticAcquisition && partSet is null && peerSizeEvidence is { } peers)
+            job.SetPeerSizeEvidence(peers.MedianSizeBytes, peers.Count);
 
         providerAcquisitionJobs.Add(job);
         await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);

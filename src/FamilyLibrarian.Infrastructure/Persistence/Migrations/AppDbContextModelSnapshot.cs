@@ -631,6 +631,14 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("part_total");
 
+                    b.Property<int?>("PeerCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("peer_count");
+
+                    b.Property<long?>("PeerMedianSizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("peer_median_size_bytes");
+
                     b.Property<string>("Phase")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")

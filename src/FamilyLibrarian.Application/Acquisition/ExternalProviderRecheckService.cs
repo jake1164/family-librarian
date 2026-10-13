@@ -319,7 +319,8 @@ public sealed class ExternalProviderRecheckService(
                                 IsStrong(automaticMatches[0], ExternalCandidateExclusions.None))
                             {
                                 await TryExtraAttemptAsync(
-                                    request, format, provider, work.Title, automaticMatches[0], search, waitingNext, cancellationToken);
+                                    request, format, provider, work.Title, automaticMatches[0], search, waitingNext,
+                                    PeerSizeEvidence.From(automaticMatches[0], ReviewableForRequester(options, work.Language)), cancellationToken);
                                 break;
                             }
 
@@ -362,7 +363,8 @@ public sealed class ExternalProviderRecheckService(
                                 allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(automaticMatches[0]),
                                 isAutomaticAcquisition: true,
                                 // Re-derive the option by the very search that found it.
-                                searchVariant: search.VariantOf(automaticMatches[0]));
+                                searchVariant: search.VariantOf(automaticMatches[0]),
+                                peerSizeEvidence: PeerSizeEvidence.From(automaticMatches[0], ReviewableForRequester(options, work.Language)));
 
                             // A clean download of the wrong book is the exact
                             // case the retry loop exists for, so it is routed
@@ -916,13 +918,13 @@ public sealed class ExternalProviderRecheckService(
     /// </summary>
     private async Task TryExtraAttemptAsync(
         BookRequest request, RequestFormat format, ExternalProvider provider, string workTitle, FulfillmentOption option,
-        PooledSearch search, DateTimeOffset nextCheck, CancellationToken cancellationToken)
+        PooledSearch search, DateTimeOffset nextCheck, PeerSizeEvidence? peers, CancellationToken cancellationToken)
     {
         search.MarkSelected(option, clock.UtcNow);
         var (result, identityFailure) = await security.AcquireEvaluateAndVerifyAsync(
             request.Id, format.Id, provider.ProviderId, option.ProviderResultId, cancellationToken,
             allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(option), isAutomaticAcquisition: true,
-            searchVariant: search.VariantOf(option));
+            searchVariant: search.VariantOf(option), peerSizeEvidence: peers);
 
         if (result.Outcome == ManualImportOutcome.Success && identityFailure is null)
         {

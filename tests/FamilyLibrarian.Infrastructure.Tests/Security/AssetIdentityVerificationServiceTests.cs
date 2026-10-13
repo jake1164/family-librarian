@@ -284,6 +284,43 @@ public sealed class AssetIdentityVerificationServiceTests
         Assert.IsNull(asset.IdentityHoldCode);
     }
 
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task PeerSizeOutlierIsRecordedWithoutHoldingAMatchIncludingRetry(bool retry)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var asset = new MediaAsset(Guid.NewGuid(), null, RequestMediaType.Ebook, ".epub", "Book.epub", "asset.epub",
+            600_000, new string('a', 64), "application/epub+zip", Guid.NewGuid(), null, now,
+            identityPreConfirmed: true, origin: AssetOrigin.ExternalProvider);
+        asset.TransitionStorageState(MediaAssetStorageState.Processing, now);
+        if (retry) asset.TransitionStorageState(MediaAssetStorageState.Unmatched, now);
+        var recorder = new CapturingIdentityRecorder();
+        var result = await RunAsync();
+        Assert.IsTrue(result.IsMatch);
+        Assert.IsNull(result.HoldCode);
+        Assert.IsNull(asset.IdentityHoldCode);
+        Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
+        var finding = recorder.LastResult!.Facts.Single(f => f.Code == "profile.compare.size_peer_outlier");
+        Assert.AreEqual(FamilyLibrarian.Domain.Evidence.EvidencePolarity.Weak, finding.Polarity);
+        Assert.AreEqual("bytes=600000;peer_median_bytes=4000000;peers=3", finding.Value);
+
+        async Task<AssetIdentityVerificationResult> RunAsync()
+        {
+            var service = new AssetIdentityVerificationService(new AssetRepository(asset), new RecordingStagingStore(),
+                [new MatchingVerifier()], new RecordingAuditWriter(), new FixedClock(), recorder, new PeerExpectedSource());
+            return retry ? await service.RetryUnmatchedAsync(asset.Id, CancellationToken.None)
+                : await service.VerifyAsync(asset.Id, CancellationToken.None);
+        }
+    }
+
+    private sealed class PeerExpectedSource : IExpectedArtifactProfileSource
+    {
+        public Task<ExpectedArtifactProfile?> FindAsync(MediaAsset asset, CancellationToken cancellationToken) =>
+            Task.FromResult<ExpectedArtifactProfile?>(new("Book", [], null, [], [], "en", null, null, false,
+                4_000_000, 3, asset.SizeBytes));
+    }
+
     private sealed class FixedVerifier(AssetIdentityVerificationResult result) : IAssetIdentityVerifier
     {
         public string Id => "verifier";

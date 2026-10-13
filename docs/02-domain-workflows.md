@@ -1272,6 +1272,8 @@ a file with no author tag is judged on title alone. Formats with no verifier
 (for example MP3 or MOBI) that were not independently confirmed before
 download are held for a librarian's review.
 
+When a scheduled external acquisition starts, its durable job records the median size of other pooled, requester-reviewable candidates in the same format, provided at least three peers have a positive known size. After staging, the exact job output links that snapshot to the asset, including across restarts. A download smaller than 30% of the median produces Weak `profile.compare.size_peer_outlier` evidence. This finding never holds a file or changes acquisition eligibility; two peers or unknown measurements produce no finding.
+
 When automatic acquisition is disabled or the remaining candidates need a
 human review, Family Librarian does not ask a requester to guess between rows
 whose available evidence provides no meaningful distinction. The requester

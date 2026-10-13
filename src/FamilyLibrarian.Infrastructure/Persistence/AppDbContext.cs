@@ -1031,6 +1031,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(job => job.AcquireToken).HasColumnName("acquire_token").HasColumnType("text");
             entity.Property(job => job.AcquireRequestId).HasColumnName("acquire_request_id");
             entity.Property(job => job.IsAutomaticAcquisition).HasColumnName("is_automatic_acquisition");
+            entity.Property(job => job.PeerMedianSizeBytes).HasColumnName("peer_median_size_bytes");
+            entity.Property(job => job.PeerCount).HasColumnName("peer_count");
             entity.Property(job => job.CandidateFingerprint).HasColumnName("candidate_fingerprint").HasMaxLength(64);
             entity.Property(job => job.IdentityPreConfirmed)
                 .HasColumnName("identity_pre_confirmed").HasDefaultValue(false);

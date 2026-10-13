@@ -281,4 +281,9 @@ public static class EvidenceReasonCodes
         public const string FrontMatter = "profile.section.front_matter";
         public const string BackMatter = "profile.section.back_matter";
     }
+    /// <summary>Evidence from deterministic comparisons, independent of safety gates.</summary>
+    public static class ProfileComparison
+    {
+        public const string SizePeerOutlier = "profile.compare.size_peer_outlier";
+    }
 }

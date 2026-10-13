@@ -49,6 +49,58 @@ public sealed class MigrationUpgradeTests
     private const string PreShareHouseholdRequestsMigration = "20260830231952_AddOutboundCommunications";
 
     [TestMethod]
+    public async Task PeerSizeUpgradeKeepsHistoricalNullsAndResolvesTheExactStagedOutputAfterRestart()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var work = new Work("Peer upgrade", null, null, null, PublicationStatus.Published, now);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        var provider = new FamilyLibrarian.Domain.Providers.ExternalProvider("example-peer-source", "Peer Source", "http://example.test", now);
+        var formatId = request.Formats.Single().Id;
+        var job = new ProviderAcquisitionJob(request.Id, formatId, provider.Id, provider.ProviderId, null,
+            "peer-upgrade", "chosen", null, null, now, isAutomaticAcquisition: true);
+        database.Works.Add(work);
+        database.BookRequests.Add(request);
+        database.ExternalProviders.Add(provider);
+        database.ProviderAcquisitionJobs.Add(job);
+        await database.SaveChangesAsync();
+        await database.GetService<IMigrator>().MigrateAsync("20261013191530_AddSearchVariantAttempts");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var restored = await database.ProviderAcquisitionJobs.SingleAsync(row => row.Id == job.Id);
+        Assert.IsNull(restored.PeerMedianSizeBytes);
+        Assert.IsNull(restored.PeerCount);
+        restored.SetPeerSizeEvidence(4_000_000, 3);
+        var asset = new MediaAsset(work.Id, null, RequestMediaType.Ebook, ".epub", "book.epub", "peer-book.epub",
+            600_000, new string('a', 64), "application/epub+zip", formatId, null, now,
+            identityPreConfirmed: true, origin: AssetOrigin.ExternalProvider);
+        database.MediaAssets.Add(asset);
+        restored.AddOutput("book", ProviderOutputKind.File, "ebook", "book.epub", "application/epub+zip", 600_000,
+            null, null, null, null, now).LinkAsset(asset.Id);
+        await database.SaveChangesAsync();
+        await using var restarted = fixture.Services.CreateAsyncScope();
+        var restartedDb = restarted.ServiceProvider.GetRequiredService<AppDbContext>();
+        var persistedAsset = await restartedDb.MediaAssets.SingleAsync(row => row.Id == asset.Id);
+        var source = restarted.ServiceProvider.GetRequiredService<FamilyLibrarian.Application.Security.IExpectedArtifactProfileSource>();
+        var profile = await source.FindAsync(persistedAsset, CancellationToken.None);
+        Assert.IsNotNull(profile);
+        Assert.AreEqual(4_000_000L, profile.PeerMedianSizeBytes);
+        Assert.AreEqual(3, profile.PeerCount);
+        Assert.AreEqual(600_000L, profile.AssetSizeBytes);
+        var comparison = FamilyLibrarian.Application.Security.ArtifactProfileComparer.Compare([], profile);
+        Assert.HasCount(1, comparison);
+        Assert.AreEqual(EvidencePolarity.Weak, comparison[0].Polarity);
+        var unlinked = new MediaAsset(work.Id, null, RequestMediaType.Ebook, ".epub", "other.epub", "other.epub",
+            600_000, new string('b', 64), "application/epub+zip", formatId, null, now);
+        Assert.IsNull((await source.FindAsync(unlinked, CancellationToken.None))!.PeerMedianSizeBytes,
+            "A request-level latest job must never supply another asset's peers.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task SourceSummaryUpgradePreservesLegacyCandidatesAsNullAndRoundTripsNewEvidence()
     {
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
