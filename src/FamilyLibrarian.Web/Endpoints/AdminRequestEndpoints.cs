@@ -41,6 +41,7 @@ internal static class AdminRequestEndpoints
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-interaction", GetProviderInteractionForRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-attempts", ListProviderAttemptsAsync);
+        adminRequests.MapGet("/{requestId:guid}/search-variants", ListSearchVariantsAsync);
         adminRequests.MapGet(
             "/{requestId:guid}/formats/{formatId:guid}/providers/{providerId}/debug-search",
             DebugSearchProviderAsync);
@@ -410,6 +411,33 @@ internal static class AdminRequestEndpoints
             .ToArray());
     }
 
+
+    /// <summary>AUTOFIND 2b: how each provider was searched for this request, one line per format and provider.</summary>
+    private static async Task<IResult> ListSearchVariantsAsync(
+        Guid requestId,
+        IRequestRepository requests,
+        IProviderAttemptRepository attempts,
+        CancellationToken cancellationToken)
+    {
+        if (await requests.FindRequestForAdminAsync(requestId, cancellationToken) is null)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Ok((await attempts.ListVariantAttemptsForRequestAsync(requestId, cancellationToken))
+            .GroupBy(row => (row.RequestFormatId, row.ProviderId))
+            .Select(group =>
+            {
+                var last = group.Max(row => row.LastTriedAtUtc);
+                var foundBy = group.Where(row => row.FoundSelectedAtUtc is not null)
+                    .OrderByDescending(row => row.FoundSelectedAtUtc).Select(row => row.VariantKind).FirstOrDefault();
+                var summary = $"Searched {group.Count()} way(s) at {group.Key.ProviderId}, last on {last:yyyy-MM-dd HH:mm} UTC" +
+                    (foundBy is null ? string.Empty : $"; found by {foundBy}");
+                return new SearchVariantSummaryResponse(
+                    group.Key.RequestFormatId, group.Key.ProviderId, group.Count(), last, foundBy, summary);
+            })
+            .ToArray());
+    }
     /// <summary>
     /// ADMIN-DEBUG-1: asks one admin-registered external provider right now,
     /// outside its recheck schedule, and returns its raw results plus the

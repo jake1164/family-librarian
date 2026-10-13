@@ -1042,6 +1042,64 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("provider_interaction_claims", "acquisition");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.SearchVariantAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("FirstTriedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_tried_at_utc");
+
+                    b.Property<DateTimeOffset?>("FoundSelectedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("found_selected_at_utc");
+
+                    b.Property<int>("LastResultCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_result_count");
+
+                    b.Property<DateTimeOffset>("LastTriedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_tried_at_utc");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<Guid>("RequestFormatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_format_id");
+
+                    b.Property<int>("TimesTried")
+                        .HasColumnType("integer")
+                        .HasColumnName("times_tried");
+
+                    b.Property<string>("VariantKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("variant_key");
+
+                    b.Property<string>("VariantKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("variant_kind");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestFormatId");
+
+                    b.HasIndex("RequestFormatId", "ProviderId", "VariantKind", "VariantKey")
+                        .IsUnique();
+
+                    b.ToTable("search_variant_attempts", "acquisition");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Audit.AuditEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3818,6 +3876,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("request_id");
 
+                    b.Property<string>("SearchVariant")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("search_variant");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(512)
@@ -4720,6 +4783,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasOne("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", null)
                         .WithMany()
                         .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.SearchVariantAttempt", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
+                        .WithMany()
+                        .HasForeignKey("RequestFormatId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

@@ -179,4 +179,17 @@ public static class SearchVariantPlanner
 public sealed record SearchVariantRef(SearchVariantKind Kind, string Key)
 {
     public bool IsBase => Kind == SearchVariantKind.Base;
+
+    /// <summary>The stored form, <c>Kind:key</c>.</summary>
+    public string ToStored() => $"{Kind}:{Key}";
+
+    /// <summary>Reads the stored form; null for nothing, or for anything that is not a known kind.</summary>
+    public static SearchVariantRef? FromStored(string? stored)
+    {
+        if (string.IsNullOrEmpty(stored)) return null;
+        var colon = stored.IndexOf(':', StringComparison.Ordinal);
+        return colon > 0 && Enum.TryParse<SearchVariantKind>(stored[..colon], out var kind) && Enum.IsDefined(kind)
+            ? new SearchVariantRef(kind, stored[(colon + 1)..])
+            : null;
+    }
 }

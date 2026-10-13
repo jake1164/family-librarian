@@ -104,6 +104,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<ProviderAcquisitionJobOutput> ProviderAcquisitionJobOutputs => Set<ProviderAcquisitionJobOutput>();
 
     public DbSet<ProviderAttempt> ProviderAttempts => Set<ProviderAttempt>();
+    public DbSet<SearchVariantAttempt> SearchVariantAttempts => Set<SearchVariantAttempt>();
 
     public DbSet<ProviderInteractionClaim> ProviderInteractionClaims => Set<ProviderInteractionClaim>();
 
@@ -759,6 +760,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(candidate => candidate.AdminInspectionUri).HasColumnName("admin_inspection_uri").HasMaxLength(2048);
             entity.Property(candidate => candidate.AdminSourceSummary).HasColumnName("admin_source_summary").HasMaxLength(120);
             entity.Property(candidate => candidate.ReleaseName).HasColumnName("release_name").HasMaxLength(1024);
+            entity.Property(candidate => candidate.SearchVariant).HasColumnName("search_variant").HasMaxLength(RequestReviewCandidate.MaxSearchVariantLength);
             entity.Property(candidate => candidate.TitleIsRequestFallback)
                 .HasColumnName("title_is_request_fallback").HasDefaultValue(false);
             entity.Property(candidate => candidate.DisplayOrder).HasColumnName("display_order");
@@ -1142,6 +1144,31 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(attempt => attempt.RequestFormatId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<SearchVariantAttempt>(entity =>
+        {
+            entity.ToTable("search_variant_attempts", "acquisition");
+            entity.HasKey(row => row.Id);
+            entity.Property(row => row.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(row => row.RequestFormatId).HasColumnName("request_format_id");
+            entity.Property(row => row.ProviderId).HasColumnName("provider_id").HasMaxLength(128).IsRequired();
+            entity.Property(row => row.VariantKind).HasColumnName("variant_kind").HasMaxLength(SearchVariantAttempt.MaxKindLength).IsRequired();
+            entity.Property(row => row.VariantKey).HasColumnName("variant_key").HasMaxLength(SearchVariantAttempt.MaxKeyLength).IsRequired();
+            entity.Property(row => row.FirstTriedAtUtc).HasColumnName("first_tried_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(row => row.LastTriedAtUtc).HasColumnName("last_tried_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(row => row.LastResultCount).HasColumnName("last_result_count");
+            entity.Property(row => row.TimesTried).HasColumnName("times_tried");
+            entity.Property(row => row.FoundSelectedAtUtc).HasColumnName("found_selected_at_utc").HasColumnType("timestamp with time zone");
+
+            entity.HasIndex(row => new { row.RequestFormatId, row.ProviderId, row.VariantKind, row.VariantKey }).IsUnique();
+            entity.HasIndex(row => row.RequestFormatId);
+
+            // The memory belongs to the format and goes with it, unlike the append-only lookup ledger.
+            entity.HasOne<RequestFormat>()
+                .WithMany()
+                .HasForeignKey(row => row.RequestFormatId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<MediaAsset>(entity =>

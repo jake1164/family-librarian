@@ -160,6 +160,10 @@
                         </MudListItem>
                     }
                 </MudList>
+                @foreach (var line in searchVariants)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block">@line.Summary</MudText>
+                }
             }
 
             @if (externalProviders.Count > 0)
@@ -470,6 +474,7 @@
     private AdminBookRequestResponse? request;
     private WorkFulfillmentOptionsResponse? fulfillment;
     private IReadOnlyList<ProviderAttemptResponse> providerAttempts = [];
+    private IReadOnlyList<SearchVariantSummaryResponse> searchVariants = [];
     private ProviderInteractionResponse? waitingInteraction;
     private string? adminNote;
     private string? transitionReason;
@@ -514,6 +519,7 @@
         {
             fulfillment = null;
             providerAttempts = [];
+            searchVariants = [];
             waitingInteraction = null;
             request = null;
         }
@@ -544,6 +550,9 @@
             var attempts = await Requests.GetProviderAttemptsAsync(loadingRequestId);
             if (loadingRequestId != RequestId) return;
             providerAttempts = attempts;
+            // How each source was searched is a footnote to the activity list; losing it must not hide the list.
+            try { searchVariants = await Requests.GetSearchVariantsAsync(loadingRequestId); }
+            catch (HttpRequestException) { searchVariants = []; }
         }
         catch (HttpRequestException)
         {

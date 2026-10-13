@@ -354,7 +354,8 @@ public sealed class AutomaticRequestFulfillmentService(
         RequestFormat format,
         FulfillmentOption option,
         CancellationToken cancellationToken,
-        bool confirmLowConfidenceMatch = false)
+        bool confirmLowConfidenceMatch = false,
+        SearchVariantRef? searchVariant = null)
     {
         ManualImportResult result;
         try
@@ -366,7 +367,8 @@ public sealed class AutomaticRequestFulfillmentService(
                 option.ProviderResultId,
                 cancellationToken,
                 confirmLowConfidenceMatch,
-                isAutomaticAcquisition: true);
+                isAutomaticAcquisition: true,
+                searchVariant: searchVariant);
         }
         catch (Exception exception) when (exception is IOException or HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
@@ -581,7 +583,9 @@ public sealed class AutomaticRequestFulfillmentService(
         // has been resolved -- a failure already re-flags the request as
         // SecurityOrIdentityFailure via AcquireOptionAsync, which the caller
         // will see on its next load.
-        await AcquireOptionAsync(request, format, option, cancellationToken, confirmLowConfidenceMatch: true);
+        await AcquireOptionAsync(
+            request, format, option, cancellationToken, confirmLowConfidenceMatch: true,
+            searchVariant: SearchVariantRef.FromStored(candidate.SearchVariant));
         return PreferenceAmbiguityResolutionOutcome.Resolved;
     }
 

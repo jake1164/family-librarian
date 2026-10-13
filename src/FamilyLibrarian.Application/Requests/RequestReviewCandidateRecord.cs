@@ -18,7 +18,7 @@ namespace FamilyLibrarian.Application.Requests;
 /// </remarks>
 public static class RequestReviewCandidateRecord
 {
-    public static RequestReviewCandidateInput From(Guid requestFormatId, FulfillmentOption option)
+    public static RequestReviewCandidateInput From(Guid requestFormatId, FulfillmentOption option, string? searchVariant = null)
     {
         var sourceTitle = Trimmed(option.Title);
         return new RequestReviewCandidateInput(
@@ -32,7 +32,8 @@ public static class RequestReviewCandidateRecord
             option.AdminInspectionUri?.ToString(),
             Trimmed(option.ReleaseName),
             sourceTitle is null,
-            option.AdminSourceSummary);
+            option.AdminSourceSummary,
+            searchVariant);
     }
 
     /// <summary>

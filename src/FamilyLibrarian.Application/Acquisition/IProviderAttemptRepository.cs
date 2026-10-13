@@ -34,5 +34,19 @@ public interface IProviderAttemptRepository
 
     void Add(ProviderAttempt attempt);
 
+    /// <summary>The remembered search variants for one requested format and provider (AUTOFIND 2b). Tracked, so a change is saved with the ledger.</summary>
+    Task<IReadOnlyList<SearchVariantAttempt>> ListVariantAttemptsAsync(
+        Guid requestFormatId, string providerId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<SearchVariantAttempt>>([]);
+
+    /// <summary>Every remembered variant for a request, for the administrator's summary.</summary>
+    Task<IReadOnlyList<SearchVariantAttempt>> ListVariantAttemptsForRequestAsync(
+        Guid requestId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<SearchVariantAttempt>>([]);
+
+    void AddVariantAttempt(SearchVariantAttempt attempt)
+    {
+    }
+
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }

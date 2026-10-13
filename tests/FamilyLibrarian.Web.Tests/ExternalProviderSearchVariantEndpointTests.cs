@@ -27,7 +27,9 @@ internal sealed record VariantOutcome(
 internal static class VariantScenario
 {
     public static async Task<VariantOutcome> RunAsync(
-        WebTestFixture fixture, VariantSearchProviderClient client, string providerId, int passes = 1, string? directResultId = null)
+        WebTestFixture fixture, VariantSearchProviderClient client, string providerId, int passes = 1, string? directResultId = null,
+        bool autoAcquire = true, Func<FamilyLibrarianAppFactory, BookRequestResponse, int, Task>? beforePass = null,
+        Func<FamilyLibrarianAppFactory, HttpClient, BookRequestResponse, Task>? afterwards = null)
     {
         await using var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
@@ -62,7 +64,7 @@ internal static class VariantScenario
             new SetExternalProviderRecheckScheduleRequest("Daily"))).EnsureSuccessStatusCode();
         (await admin.PutAsJsonAsync(
             $"/api/v1/admin/external-providers/{provider.Id}/auto-acquire",
-            new SetExternalProviderAutoAcquireEnabledRequest(true))).EnsureSuccessStatusCode();
+            new SetExternalProviderAutoAcquireEnabledRequest(autoAcquire))).EnsureSuccessStatusCode();
 
         var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
@@ -84,6 +86,7 @@ internal static class VariantScenario
 
         for (var pass = 0; pass < (directResultId is null ? passes : 0); pass++)
         {
+            if (beforePass is not null) await beforePass(factory, request, pass);
             await using var scope = factory.Services.CreateAsyncScope();
             await scope.ServiceProvider.GetRequiredService<ExternalProviderRecheckService>()
                 .ProcessDueAsync(CancellationToken.None);
@@ -92,6 +95,7 @@ internal static class VariantScenario
         var attempts = await admin.GetFromJsonAsync<ProviderAttemptResponse[]>(
             $"/api/v1/admin/requests/{request.Id}/provider-attempts");
         Assert.IsNotNull(attempts);
+        if (afterwards is not null) await afterwards(factory, admin, request);
         return new(attempts, client, request.Id, direct);
     }
 }
@@ -370,6 +374,15 @@ internal sealed class VariantSearchProviderClient(
             new ExternalProviderEditionEvidence(language, null, null, echoIdentifiers ?? []),
             new ExternalProviderReleaseEvidence(
                 "Tolkien - The Hobbit (epub)", "epub", 1_200_000, false, 1, false, null, null, [], null,
+                ExternalProviderDrmStatus.None));
+
+    public static ExternalProviderCandidate Unrelated(string reference) =>
+        new(reference,
+            new ExternalProviderWorkEvidence(
+                "Garden Birds of Europe", null, [new BookAuthor("Someone Unrelated", "author")], [], []),
+            new ExternalProviderEditionEvidence("en", null, null, []),
+            new ExternalProviderReleaseEvidence(
+                "Garden Birds of Europe (epub)", "epub", 900_000, false, 1, false, null, null, [], null,
                 ExternalProviderDrmStatus.None));
 
     public Task<ExternalProviderManifest> GetManifestAsync(

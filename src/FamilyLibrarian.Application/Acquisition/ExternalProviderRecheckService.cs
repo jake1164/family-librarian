@@ -133,8 +133,25 @@ public sealed class ExternalProviderRecheckService(
                         var alreadyTried = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) > 0;
 
                         // Several one-dimension searches are pooled, then judged once exactly as a single search was.
+                        var retryPass = latest?.Outcome == ProviderAttemptOutcome.Retrying;
+                        var cycleStart = DateTimeOffset.MinValue;
+                        if (retryPass)
+                        {
+                            // The current cycle's searches all ran after the previous cycle's closing lookup (the second-latest
+                            // lookup that was not itself a step of the retry loop). The cycle's own closing lookup is written
+                            // after its searches, so it cannot be the boundary.
+                            cycleStart = (await attempts.ListForRequestAsync(request.Id, cancellationToken))
+                                .Where(attempt => attempt.RequestFormatId == format.Id &&
+                                    string.Equals(attempt.ProviderId, provider.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+                                    attempt.Outcome != ProviderAttemptOutcome.Retrying)
+                                .Select(attempt => attempt.AttemptedAtUtc)
+                                .OrderDescending().Skip(1)
+                                .DefaultIfEmpty(DateTimeOffset.MinValue).First();
+                        }
+
                         var search = await SearchPooledAsync(
-                            provider, identity, format.MediaType, exclusions, searchCancellation, cancellationToken);
+                            provider, identity, format.MediaType, exclusions, searchCancellation, format.Id, retryPass, cycleStart,
+                            cancellationToken);
                         var options = search.Options;
                         if (search.RateLimitedFor is { } rateLimitedFor)
                         {
@@ -227,7 +244,7 @@ public sealed class ExternalProviderRecheckService(
                                 var setReason = $"A complete {completeSet.Total}-part audiobook set was found, but it " +
                                     $"could not be fetched. {started.Error}";
                                 var setRecorded = await MarkForCandidateReviewAsync(
-                                    request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates,
+                                    request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates, search,
                                     setReason, cancellationToken);
                                 AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
                                     setRecorded
@@ -278,7 +295,7 @@ public sealed class ExternalProviderRecheckService(
                         {
                             var exhaustedReason = DescribeExhaustedAttempts(request, format, provider);
                             var exhaustedRecorded = await MarkForCandidateReviewAsync(
-                                request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates,
+                                request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates, search,
                                 exhaustedReason, cancellationToken);
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
                                 exhaustedRecorded
@@ -291,6 +308,7 @@ public sealed class ExternalProviderRecheckService(
 
                         if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled)
                         {
+                            search.MarkSelected(automaticMatches[0], clock.UtcNow);
                             var (acquireResult, identityFailure) = await security.AcquireEvaluateAndVerifyAsync(
                                 request.Id,
                                 format.Id,
@@ -359,8 +377,9 @@ public sealed class ExternalProviderRecheckService(
                             continue;
                         }
 
+                        search.MarkSelected(reviewCandidates[0], clock.UtcNow);
                         var recorded = await MarkForCandidateReviewAsync(
-                            request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates,
+                            request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates, search,
                             DescribeCandidateReviewReason(reviewCandidates, provider.AutoAcquireEnabled), cancellationToken);
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
                             recorded
@@ -435,8 +454,17 @@ public sealed class ExternalProviderRecheckService(
     private sealed record PooledSearch(
         IReadOnlyList<FulfillmentOption> Options,
         IReadOnlyDictionary<string, SearchVariantRef> Found,
-        TimeSpan? RateLimitedFor)
+        TimeSpan? RateLimitedFor,
+        IReadOnlyList<SearchVariantAttempt> Memory)
     {
+        /// <summary>Remembers that this candidate (downloaded, or first in review) came from the variant that found it.</summary>
+        public void MarkSelected(FulfillmentOption option, DateTimeOffset at)
+        {
+            var variant = VariantOf(option);
+            Memory.FirstOrDefault(row => row.VariantKind == variant.Kind.ToString() && row.VariantKey == variant.Key)
+                ?.MarkFoundSelected(at);
+        }
+
         public SearchVariantRef VariantOf(FulfillmentOption option) =>
             Found.GetValueOrDefault(option.ProviderResultId) ?? new SearchVariantRef(SearchVariantKind.Base, string.Empty);
     }
@@ -448,9 +476,11 @@ public sealed class ExternalProviderRecheckService(
     /// </summary>
     private async Task<PooledSearch> SearchPooledAsync(
         ExternalProvider provider, BookIdentity identity, RequestMediaType mediaType, ExternalCandidateExclusions exclusions,
-        CancellationTokenSource searchCancellation, CancellationToken cancellationToken)
+        CancellationTokenSource searchCancellation, Guid requestFormatId, bool retryPass, DateTimeOffset cycleStartUtc,
+        CancellationToken cancellationToken)
     {
         var plan = SearchVariantPlanner.Plan(identity, mediaType);
+        var memory = (await attempts.ListVariantAttemptsAsync(requestFormatId, provider.ProviderId, cancellationToken)).ToList();
         var pool = new List<FulfillmentOption>();
         var found = new Dictionary<string, SearchVariantRef>(StringComparer.Ordinal);
         var clockStart = clock.UtcNow;
@@ -459,6 +489,16 @@ public sealed class ExternalProviderRecheckService(
         {
             // A time guard for one provider pass, not a search budget: variants not reached run on the next recheck.
             if (index > 0 && clock.UtcNow - clockStart > PassTimeCap) break;
+
+            // A retry pass rebuilds the pool only to get fresh acquire tokens: the base search and the variants that
+            // returned something this cycle. A scheduled recheck runs the whole list again.
+            var kind = plan[index].Kind.ToString();
+            var remembered = memory.FirstOrDefault(row => row.VariantKind == kind && row.VariantKey == plan[index].Key);
+            if (retryPass && index > 0 && !(remembered is { LastResultCount: > 0 } && remembered.LastTriedAtUtc >= cycleStartUtc))
+            {
+                continue;
+            }
+
             searchCancellation.CancelAfter(BackgroundSearchTimeout);
             IReadOnlyList<FulfillmentOption> raw;
             try
@@ -472,12 +512,23 @@ public sealed class ExternalProviderRecheckService(
                 break;
             }
 
+            if (remembered is null)
+            {
+                remembered = new SearchVariantAttempt(requestFormatId, provider.ProviderId, kind, plan[index].Key, clock.UtcNow, raw.Count);
+                memory.Add(remembered);
+                attempts.AddVariantAttempt(remembered);
+            }
+            else
+            {
+                remembered.RecordTry(clock.UtcNow, raw.Count);
+            }
+
             Merge(pool, found, raw, plan[index].Ref, mediaType);
             if (pool.Any(option => IsStrong(option, exclusions))) break;
         }
 
         return new PooledSearch(
-            ExternalCandidateAvailabilityChecker.SelectOneStrictCandidate(pool, mediaType, exclusions), found, rateLimited);
+            ExternalCandidateAvailabilityChecker.SelectOneStrictCandidate(pool, mediaType, exclusions), found, rateLimited, memory);
     }
 
     /// <summary>Same record id keeps the first; the same release under another id keeps the higher-ranked.</summary>
@@ -715,6 +766,7 @@ public sealed class ExternalProviderRecheckService(
         string workTitle,
         string? workAuthor,
         FulfillmentOption[] options,
+        PooledSearch search,
         string reason,
         CancellationToken cancellationToken)
     {
@@ -735,7 +787,7 @@ public sealed class ExternalProviderRecheckService(
         // that none of them was the requested book.
         var candidates = options
             .Select(option => RequestReviewCandidateRecord.WithCatalogFallback(
-                RequestReviewCandidateRecord.From(format.Id, option), workTitle, workAuthor))
+                RequestReviewCandidateRecord.From(format.Id, option, search.VariantOf(option).ToStored()), workTitle, workAuthor))
             .ToArray();
 
         if (request.Status == RequestStatus.PendingAcquisition)

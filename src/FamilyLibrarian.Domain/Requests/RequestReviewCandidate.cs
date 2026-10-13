@@ -16,7 +16,7 @@ public sealed class RequestReviewCandidate
         Guid requestId, Guid requestFormatId, string providerId, string providerResultId, string title,
         string? author, string? language, string? details, string? adminInspectionUri,
         string? releaseName, bool titleIsRequestFallback,
-        int displayOrder, DateTimeOffset createdAtUtc, string? adminSourceSummary = null)
+        int displayOrder, DateTimeOffset createdAtUtc, string? adminSourceSummary = null, string? searchVariant = null)
     {
         RequestId = requestId;
         RequestFormatId = requestFormatId;
@@ -32,6 +32,7 @@ public sealed class RequestReviewCandidate
         TitleIsRequestFallback = titleIsRequestFallback;
         DisplayOrder = displayOrder;
         CreatedAtUtc = createdAtUtc;
+        SearchVariant = searchVariant is { Length: > 0 } && searchVariant.Length <= MaxSearchVariantLength ? searchVariant : null;
     }
 
     public Guid Id { get; private set; } = Guid.NewGuid();
@@ -81,6 +82,15 @@ public sealed class RequestReviewCandidate
     /// recording the substitution keeps that from being invisible again.
     /// </summary>
     public bool TitleIsRequestFallback { get; private set; }
+
+    /// <summary>Longest stored variant: a kind name, a colon, and a variant key of at most 256 characters.</summary>
+    public const int MaxSearchVariantLength = 300;
+
+    /// <summary>
+    /// The search variant that found this candidate, as <c>Kind:key</c> (AUTOFIND 2a/2b), so accepting it re-derives it with
+    /// exactly that search. Null for a candidate stored before the variant was recorded, which falls back to a walk.
+    /// </summary>
+    public string? SearchVariant { get; private set; }
 
     public int DisplayOrder { get; private set; }
 
