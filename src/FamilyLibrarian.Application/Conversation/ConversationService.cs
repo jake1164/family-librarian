@@ -30,7 +30,8 @@ public sealed class ConversationService(
     IConversationLimiter limiter,
     ConversationOptions options,
     IClock clock,
-    IBookIntentInterpreter? interpreter = null) : IConversationService
+    IBookIntentInterpreter? interpreter = null,
+    IConversationDiagnostics? diagnostics = null) : IConversationService
 {
     private const int MaxScopeKeyLength = 200;
     private const int MaxEventIdLength = 255;
@@ -77,7 +78,10 @@ public sealed class ConversationService(
                 return Replay(seen, userId, turn.Transport, scopeKey, eventId);
             }
 
-            return await ProcessAsync(userId, turn.Transport, scopeKey, eventId, text, cancellationToken);
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var processed = await ProcessAsync(userId, turn.Transport, scopeKey, eventId, text, cancellationToken);
+            diagnostics?.StepCompleted(ConversationSteps.Turn, System.Diagnostics.Stopwatch.GetElapsedTime(started), processed.Reply.Kind.ToString());
+            return processed;
         }
         catch (ConversationUnauthenticatedException)
         {
@@ -400,14 +404,19 @@ public sealed class ConversationService(
         }
 
         BookIntentInterpretation? interpretation;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             interpretation = await interpreter.InterpretAsync(userId, text, state.Query, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            diagnostics?.StepCompleted(ConversationSteps.Interpreter, System.Diagnostics.Stopwatch.GetElapsedTime(started), "failed");
             return null;
         }
+
+        diagnostics?.StepCompleted(
+            ConversationSteps.Interpreter, System.Diagnostics.Stopwatch.GetElapsedTime(started), interpretation?.Intent.ToString() ?? "none");
 
         switch (interpretation?.Intent)
         {
@@ -536,6 +545,14 @@ public sealed class ConversationService(
         }
 
         var by = result.Authors.Length > 0 ? $" by {result.Authors}" : "";
+        if (result.Incomplete)
+        {
+            // Ran out of time waiting on a source: that says nothing about whether the library has it.
+            return ConversationReply.Of(ConversationReplyKind.Library, result.Authors.Length > 0
+                ? $"I found “{result.Title}”{by}, but couldn't finish checking the library in time because a source didn't respond. Try again in a minute."
+                : $"I couldn't finish checking the library for “{query}” in time because a source didn't respond. Try again in a minute.");
+        }
+
         var text = result.OwnedFormats.Count > 0
             ? $"Yes: “{result.Title}”{by} is in the library as {string.Join(" and ", result.OwnedFormats)}."
             : $"Not yet: “{result.Title}”{by} isn't in the library. Say “get {query}” to request it.";

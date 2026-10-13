@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
@@ -13,8 +14,9 @@ public sealed class ConversationUnauthenticatedException() : Exception("No authe
 public sealed record ConversationSearchResult(
     IReadOnlyList<ConversationChoiceRef> Choices, bool SomeSourcesUnavailable, IReadOnlyList<BookCandidate> Candidates);
 
+/// <param name="Incomplete">The check ran out of time (or the catalog could not be reached), so "not in the library" is unknown, not a finding.</param>
 public sealed record ConversationLibraryResult(
-    string Title, string Authors, IReadOnlyList<string> OwnedFormats, bool SourcesUnavailable);
+    string Title, string Authors, IReadOnlyList<string> OwnedFormats, bool SourcesUnavailable, bool Incomplete = false);
 
 /// <summary>The complete action surface of a conversation. See <see cref="ConversationBookTools"/>.</summary>
 public interface IConversationTools
@@ -53,8 +55,12 @@ public sealed partial class ConversationBookTools(
     CatalogWorkResolver works,
     BookRequestService requests,
     ICandidateAvailabilityService availability,
-    SeriesPositionService series) : IConversationTools
+    SeriesPositionService series,
+    IConversationDiagnostics? diagnostics = null,
+    ConversationTimeBudgets? budgets = null) : IConversationTools
 {
+    private readonly ConversationTimeBudgets timeBudgets = budgets ?? ConversationTimeBudgets.Default;
+
     private const int MaxDescriptionLength = 400;
 
     private static readonly KeyedAsyncLock ResolveLocks = new();
@@ -68,7 +74,15 @@ public sealed partial class ConversationBookTools(
             return new ConversationSearchResult([], false, []);
         }
 
-        var outcome = await search.SearchAsync(query, cancellationToken);
+        var started = Stopwatch.GetTimestamp();
+        var outcome = await WithinBudgetAsync(token => search.SearchAsync(query, token), timeBudgets.Search, cancellationToken);
+        diagnostics?.StepCompleted(ConversationSteps.CatalogSearch, Stopwatch.GetElapsedTime(started), outcome is null ? "timed-out" : "ok");
+        if (outcome is null)
+        {
+            // Out of time: say the sources did not answer, rather than report an empty catalog.
+            return new ConversationSearchResult([], true, []);
+        }
+
         var candidates = outcome.Candidates.Take(maxChoices).ToArray();
         var choices = candidates
             .Where(candidate => candidate.ExternalId.Length is > 0 and <= ConversationState.MaxFieldLength)
@@ -92,9 +106,14 @@ public sealed partial class ConversationBookTools(
         }
 
         BookCandidate? candidate;
+        var started = Stopwatch.GetTimestamp();
         try
         {
-            candidate = await provider.GetDetailsAsync(choice.ExternalId, cancellationToken);
+            candidate = await WithinBudgetAsync(
+                async token => new Found<BookCandidate>(await provider.GetDetailsAsync(choice.ExternalId, token)), timeBudgets.Details, cancellationToken) is { } found
+                ? found.Value
+                : null;
+            diagnostics?.StepCompleted(ConversationSteps.BookDetails, Stopwatch.GetElapsedTime(started), candidate is null ? "none" : "ok");
         }
         catch (Exception exception) when (exception is HttpRequestException or System.Text.Json.JsonException
             || (exception is OperationCanceledException && !cancellationToken.IsCancellationRequested))
@@ -119,7 +138,8 @@ public sealed partial class ConversationBookTools(
         var found = await SearchBooksAsync(text, 1, cancellationToken);
         if (found.Candidates.Count == 0)
         {
-            return null;
+            // Nothing found because the sources did not answer is not the same as "not in the catalog".
+            return found.SomeSourcesUnavailable ? new ConversationLibraryResult(text, string.Empty, [], true, Incomplete: true) : null;
         }
 
         var candidate = found.Candidates[0];
@@ -127,7 +147,14 @@ public sealed partial class ConversationBookTools(
             candidate.Title,
             candidate.Authors.Count > 0 ? candidate.Authors[0] : null,
             candidate.Editions.Select(edition => edition.Isbn13).OfType<string>().Distinct().ToArray());
-        var result = await availability.GetAvailabilityAsync(identity, cancellationToken);
+        var started = Stopwatch.GetTimestamp();
+        var result = await WithinBudgetAsync(token => availability.GetAvailabilityAsync(identity, token), timeBudgets.Availability, cancellationToken);
+        diagnostics?.StepCompleted(ConversationSteps.LibraryAvailability, Stopwatch.GetElapsedTime(started), result is null ? "timed-out" : "ok");
+        if (result is null)
+        {
+            return new ConversationLibraryResult(candidate.Title, string.Join(", ", candidate.Authors.Take(3)), [], true, Incomplete: true);
+        }
+
         var owned = new List<string>();
         if (result.Ebook.Any(option => option.OptionKind == OptionKind.Owned)) owned.Add("ebook");
         if (result.Audiobook.Any(option => option.OptionKind == OptionKind.Owned)) owned.Add("audiobook");
@@ -138,7 +165,12 @@ public sealed partial class ConversationBookTools(
         string seriesName, decimal? position, int maxBooks, CancellationToken cancellationToken)
     {
         RequireUser();
-        return await series.FindAsync(seriesName, position, maxBooks, cancellationToken);
+        var started = Stopwatch.GetTimestamp();
+        var result = await WithinBudgetAsync(token => series.FindAsync(seriesName, position, maxBooks, token), timeBudgets.Search, cancellationToken);
+        diagnostics?.StepCompleted(ConversationSteps.SeriesLookup, Stopwatch.GetElapsedTime(started), result is null ? "timed-out" : result.Kind.ToString());
+
+        // Out of time reads as "not a series we know", which falls back to an ordinary (also time-boxed) search.
+        return result ?? new SeriesLookupResult(SeriesLookupKind.NotFound, null, [], [], []);
     }
 
     /// <summary>Resolves a search result to a catalog Work, exactly as the web page's "request" action does.</summary>
@@ -171,6 +203,32 @@ public sealed partial class ConversationBookTools(
     }
 
     private Guid RequireUser() => currentUser.UserId ?? throw new ConversationUnauthenticatedException();
+
+    /// <summary>Lets <see cref="WithinBudgetAsync"/> tell "the call returned nothing" from "we stopped waiting".</summary>
+    private sealed record Found<T>(T? Value) where T : class;
+
+    /// <summary>
+    /// Runs a slow lookup for at most <paramref name="budget"/>. On timeout the lookup is asked to stop and we stop waiting for it
+    /// even if it ignores that, returning null. Only the caller's own cancellation propagates.
+    /// </summary>
+    private static async Task<T?> WithinBudgetAsync<T>(Func<CancellationToken, Task<T>> work, TimeSpan budget, CancellationToken cancellationToken)
+        where T : class
+    {
+        using var limited = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limited.CancelAfter(budget);
+        try
+        {
+            return await work(limited.Token).WaitAsync(budget, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
 
     public static string DescribeCandidate(BookCandidate candidate)
     {

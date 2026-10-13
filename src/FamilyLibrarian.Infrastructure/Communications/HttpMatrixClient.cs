@@ -101,6 +101,30 @@ public sealed class HttpMatrixClient(IHttpClientFactory httpClientFactory) : IMa
         }
     }
 
+    public async Task SetTypingAsync(
+        MatrixSettings settings, string accessToken, string roomId, bool typing, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(settings.BotUserId))
+        {
+            return;
+        }
+
+        try
+        {
+            using var client = CreateClient(settings, accessToken);
+            // The indicator expires by itself after the timeout, so a crash can never leave it on.
+            var payload = typing
+                ? new JsonObject { ["typing"] = true, ["timeout"] = 45_000 }
+                : new JsonObject { ["typing"] = false };
+            var requestUri = $"_matrix/client/v3/rooms/{Uri.EscapeDataString(roomId)}/typing/{Uri.EscapeDataString(settings.BotUserId)}";
+            using var response = await client.PutAsJsonAsync(requestUri, payload, cancellationToken);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            // Cosmetic only.
+        }
+    }
+
     public async Task<MatrixSendResult> SendRichMessageAsync(
         MatrixSettings settings, string accessToken, string roomId, string plainBody, string htmlBody,
         CancellationToken cancellationToken)

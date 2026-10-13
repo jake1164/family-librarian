@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
+using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
@@ -151,6 +152,80 @@ public sealed class MatrixInboundRouterTests
         StringAssert.Contains(context.MatrixClient.LastReply, "didn't understand");
     }
 
+    private static readonly string[] OnSendOff = ["typing:on", "send", "typing:off"];
+    private static readonly string[] OnOff = ["typing:on", "typing:off"];
+    private static readonly string[] SendOnly = ["send"];
+
+    // ---- typing indicator while a chat answer is prepared ---------------------------------------------------------------
+
+    private sealed class FakeTurnExecutor(Func<Task<ConversationTurnResult?>> run) : IConversationTurnExecutor
+    {
+        public Task<ConversationTurnResult?> RunMatrixTurnAsync(MatrixInboundMessage message, string text, CancellationToken cancellationToken) => run();
+
+        public Task MarkDeliveredAsync(ConversationEventKey key, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private static ConversationTurnResult Answer(string text) =>
+        new(ConversationReply.Of(ConversationReplyKind.Text, text), Replayed: false, DeliveryPending: false, EventKey: null);
+
+    private static TestContext ChatContext(Func<Task<ConversationTurnResult?>> run, out UserMatrixDestination destination)
+    {
+        var context = new TestContext(
+            new FakeTurnExecutor(run),
+            new ConversationOptions { Enabled = true, MatrixEnabled = true });
+        context.ConfigureMatrix();
+        destination = context.SeedVerifiedDestination();
+        return context;
+    }
+
+    [TestMethod]
+    public async Task TheTypingIndicatorIsShownWhileAChatAnswerIsPreparedAndClearedAfterTheReply()
+    {
+        var context = ChatContext(() => Task.FromResult<ConversationTurnResult?>(Answer("Here you go.")), out var destination);
+
+        await context.Router.HandleMessageAsync(
+            new MatrixInboundMessage(destination.RoomId!, destination.MatrixUserId!, "help", EventId: "$e1"), CancellationToken.None);
+
+        CollectionAssert.AreEqual(OnSendOff, context.MatrixClient.Log.ToArray());
+        Assert.AreEqual("Here you go.", context.MatrixClient.LastReply);
+    }
+
+    [TestMethod]
+    public async Task TheTypingIndicatorIsClearedEvenWhenTheTurnFails()
+    {
+        var context = ChatContext(() => throw new InvalidOperationException("boom"), out var destination);
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => context.Router.HandleMessageAsync(
+            new MatrixInboundMessage(destination.RoomId!, destination.MatrixUserId!, "help", EventId: "$e1"), CancellationToken.None));
+
+        CollectionAssert.AreEqual(OnOff, context.MatrixClient.Log.ToArray());
+    }
+
+    [TestMethod]
+    public async Task AFailingTypingIndicatorNeverStopsTheAnswer()
+    {
+        var context = ChatContext(() => Task.FromResult<ConversationTurnResult?>(Answer("Still answered.")), out var destination);
+        context.MatrixClient.TypingThrows = true;
+
+        await context.Router.HandleMessageAsync(
+            new MatrixInboundMessage(destination.RoomId!, destination.MatrixUserId!, "help", EventId: "$e1"), CancellationToken.None);
+
+        Assert.AreEqual("Still answered.", context.MatrixClient.LastReply);
+    }
+
+    [TestMethod]
+    public async Task NoTypingIndicatorIsShownForMessagesThatAreNotChat()
+    {
+        var context = new TestContext();
+        context.ConfigureMatrix();
+        var destination = context.SeedPendingDestination();
+
+        await context.Router.HandleMessageAsync(
+            new MatrixInboundMessage(destination.RoomId!, destination.MatrixUserId!, "000000"), CancellationToken.None);
+
+        CollectionAssert.AreEqual(SendOnly, context.MatrixClient.Log.ToArray());
+    }
+
     private sealed class TestContext
     {
         public FakeMatrixSettingsStore SettingsStore { get; } = new();
@@ -160,7 +235,7 @@ public sealed class MatrixInboundRouterTests
         public FakeMatrixClient MatrixClient { get; } = new();
         public MatrixInboundRouter Router { get; }
 
-        public TestContext()
+        public TestContext(IConversationTurnExecutor? conversation = null, ConversationOptions? conversationOptions = null)
         {
             var clock = new FixedClock();
             var currentUser = new StubCurrentUser();
@@ -172,7 +247,8 @@ public sealed class MatrixInboundRouterTests
 
             Router = new MatrixInboundRouter(
                 DestinationStore, CommunicationStore, deliveryAttempts, SettingsStore,
-                new FakeCredentialProtector(), MatrixClient, clock, new NullAuditWriter());
+                new FakeCredentialProtector(), MatrixClient, clock, new NullAuditWriter(),
+                conversation: conversation, conversationOptions: conversationOptions);
         }
 
         public void ConfigureMatrix()
@@ -434,6 +510,16 @@ public sealed class MatrixInboundRouterTests
     {
         public string? LastReply { get; private set; }
 
+        public List<string> Log { get; } = [];
+
+        public bool TypingThrows { get; set; }
+
+        public Task SetTypingAsync(MatrixSettings settings, string accessToken, string roomId, bool typing, CancellationToken cancellationToken)
+        {
+            Log.Add(typing ? "typing:on" : "typing:off");
+            return TypingThrows ? throw new HttpRequestException("homeserver is unwell") : Task.CompletedTask;
+        }
+
         public Task<ConnectionTestOutcome> TestConnectionAsync(
             MatrixSettings settings, string accessToken, CancellationToken cancellationToken) =>
             Task.FromResult(new ConnectionTestOutcome(true, "ok"));
@@ -446,6 +532,7 @@ public sealed class MatrixInboundRouterTests
             MatrixSettings settings, string accessToken, string roomId, string text, CancellationToken cancellationToken)
         {
             LastReply = text;
+            Log.Add("send");
             return Task.FromResult(SendResult.Success());
         }
 

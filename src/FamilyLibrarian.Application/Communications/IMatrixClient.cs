@@ -28,6 +28,13 @@ public interface IMatrixClient
         MatrixSettings settings, string accessToken, string roomId, string text, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Shows (or clears) the bot's "typing..." indicator in a room while a slow answer is prepared. Cosmetic and best effort:
+    /// a failure must never affect the answer. The default does nothing, so a client that cannot show it needs no code.
+    /// </summary>
+    Task SetTypingAsync(MatrixSettings settings, string accessToken, string roomId, bool typing, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    /// <summary>
     /// Sends an HTML-formatted message and returns the homeserver's event id —
     /// HUMAN-ACQ-1 needs the id to later edit this same message (<see cref="EditMessageAsync"/>).
     /// <paramref name="plainBody"/> is the fallback for clients that ignore <c>formatted_body</c>.

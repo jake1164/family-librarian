@@ -293,6 +293,7 @@ public static class DependencyInjection
         services.AddSingleton(provider =>
             provider.GetRequiredService<IConfiguration>().GetSection("Conversation").Get<ConversationOptions>() ?? new ConversationOptions());
         services.AddSingleton<IConversationLimiter, ConversationLimiter>();
+        services.AddSingleton<IConversationDiagnostics, ConversationDiagnostics>();
         services.AddScoped<IConversationSessionStore, EfConversationSessionStore>();
         services.AddScoped<IConversationEventLog, EfConversationEventLog>();
         services.AddScoped<IConversationTransaction, EfConversationTransaction>();

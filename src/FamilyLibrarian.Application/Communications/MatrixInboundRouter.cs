@@ -108,16 +108,40 @@ public sealed class MatrixInboundRouter(
         UserMatrixDestination destination, MatrixInboundMessage message, string body, MatrixSettings settings, string accessToken,
         CancellationToken cancellationToken)
     {
-        var result = await conversation!.RunMatrixTurnAsync(message, body, cancellationToken);
-        if (result is null || (result.Replayed && !result.DeliveryPending))
+        // A slow answer (a hung catalog source) would otherwise leave the person looking at nothing. The indicator stays on
+        // until the reply has been sent (or the turn has failed), then is cleared.
+        await SetTypingAsync(settings, accessToken, destination.RoomId!, typing: true, cancellationToken);
+        try
         {
-            return;
-        }
+            var result = await conversation!.RunMatrixTurnAsync(message, body, cancellationToken);
+            if (result is null || (result.Replayed && !result.DeliveryPending))
+            {
+                return;
+            }
 
-        var sent = await ReplyAsync(settings, accessToken, destination.RoomId!, MatrixReplyFormatter.ToText(result.Reply), cancellationToken);
-        if (sent.Succeeded && result.EventKey is not null)
+            var sent = await ReplyAsync(settings, accessToken, destination.RoomId!, MatrixReplyFormatter.ToText(result.Reply), cancellationToken);
+            if (sent.Succeeded && result.EventKey is not null)
+            {
+                await conversation.MarkDeliveredAsync(result.EventKey, cancellationToken);
+            }
+        }
+        finally
         {
-            await conversation.MarkDeliveredAsync(result.EventKey, cancellationToken);
+            await SetTypingAsync(settings, accessToken, destination.RoomId!, typing: false, CancellationToken.None);
+        }
+    }
+
+    /// <summary>Cosmetic "typing..." indicator. Brief, best effort, and never allowed to affect the answer.</summary>
+    private async Task SetTypingAsync(MatrixSettings settings, string accessToken, string roomId, bool typing, CancellationToken cancellationToken)
+    {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(TimeSpan.FromSeconds(3));
+        try
+        {
+            await matrixClient.SetTypingAsync(settings, accessToken, roomId, typing, limit.Token);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
         }
     }
 

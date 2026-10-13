@@ -170,10 +170,12 @@ internal sealed class FakeTools : IConversationTools
         return Task.FromResult(Requests);
     }
 
+    public ConversationLibraryResult? NextLibraryResult { get; set; }
+
     public Task<ConversationLibraryResult?> CheckLibraryAsync(string text, CancellationToken cancellationToken)
     {
         Calls.Add($"library:{text}");
-        return Task.FromResult<ConversationLibraryResult?>(new ConversationLibraryResult("Dune", "Frank Herbert", ["ebook"], false));
+        return Task.FromResult<ConversationLibraryResult?>(NextLibraryResult ?? new ConversationLibraryResult("Dune", "Frank Herbert", ["ebook"], false));
     }
 
     public Task<SeriesLookupResult> FindSeriesBooksAsync(string seriesName, decimal? position, int maxBooks, CancellationToken cancellationToken)
@@ -231,7 +233,9 @@ internal sealed class ConversationHarness
 
     public IBookIntentInterpreter? Interpreter { get; set; }
 
-    public ConversationService Service => new(User, Tools, Sessions, Events, Transaction, Limiter, Options, Clock, Interpreter);
+    public IConversationDiagnostics? Diagnostics { get; set; }
+
+    public ConversationService Service => new(User, Tools, Sessions, Events, Transaction, Limiter, Options, Clock, Interpreter, Diagnostics);
 
     public int EventCounter { get; private set; }
 
