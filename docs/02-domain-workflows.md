@@ -1185,8 +1185,19 @@ to automatic acquisition. Project Gutenberg has effective `Once` behavior: each 
 is recorded and it is not repeatedly queried. Admin-registered external
 providers default to `Manual`, but an administrator may select `Daily` or
 `Weekly` per enabled provider. A scheduled external lookup calls the provider over its registered API URL
-and records the outcome; a result moves the request to
-`NeedsReview` and never downloads the external artifact automatically.
+and records the outcome. With automatic acquisition disabled, candidates go to
+`NeedsReview`; with it enabled, an eligible candidate proceeds through the normal
+security and identity checks within the provider's attempt limit.
+
+Preference reviews and reviews opened after that limit keep being searched.
+Their wait slows from daily to monthly with age, anchored on the publication
+date when it is later than the request date, otherwise on the request date;
+the provider's own interval remains the minimum wait. A new eligible copy
+withdraws a pending preference question with a requester notice. After a spent
+budget, only a new strong candidate may get an extra attempt: at most one per
+recheck and at most the provider's attempt limit in total. Failed copies and
+reposts remain excluded. Requests requiring manual fulfillment are excluded,
+and batches consider the least recently searched requests first.
 
 Project Gutenberg discovery reads the locally imported daily RDF catalogue, so it
 continues to work when external catalogue APIs are blocked. LibriVox discovery

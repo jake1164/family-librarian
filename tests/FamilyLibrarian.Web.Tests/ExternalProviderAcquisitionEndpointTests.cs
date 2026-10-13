@@ -175,10 +175,13 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     public async Task AScheduledExternalLookupCreatesAnAdminVisibleReviewRecordWithoutDownloading()
     {
         var fixture = WebTestFixture.Require(_fixture);
+        var clock = new ReviewRecheckClock();
         await using var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
             services =>
             {
+                services.RemoveAll<FamilyLibrarian.Application.Abstractions.IClock>();
+                services.AddSingleton<FamilyLibrarian.Application.Abstractions.IClock>(clock);
                 services.RemoveAll<IExternalProviderClient>();
                 services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient());
             });
@@ -226,7 +229,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var attempt = attempts.Single();
         Assert.AreEqual("scheduled-external", attempt.ProviderId);
         Assert.AreEqual("CandidatesFound", attempt.Outcome);
-        Assert.IsNull(attempt.NextEligibleCheckAtUtc);
+        Assert.AreEqual(clock.UtcNow.AddDays(1), attempt.NextEligibleCheckAtUtc);
 
         await using var verificationScope = factory.Services.CreateAsyncScope();
         var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();

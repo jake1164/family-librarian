@@ -354,6 +354,52 @@ public sealed class BookRequest
         TransitionTo(RequestStatus.PendingAcquisition, actorUserId, "The requester chose to keep looking for a better match.", atUtc);
     }
 
+
+    /// <summary>
+    /// A recheck found a copy that needs no answer (AUTOFIND 2c), so the question put to the requesters is withdrawn: the
+    /// stored candidates are dropped and the request returns to automatic acquisition. Only a preference review can be
+    /// withdrawn this way.
+    /// </summary>
+    public void WithdrawPreferenceReviewForAutomaticCandidate(string reason, DateTimeOffset atUtc)
+    {
+        if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
+        {
+            throw new InvalidOperationException("Only a preference-ambiguity review can be withdrawn this way.");
+        }
+
+        // TransitionTo clears the category and candidates when it leaves NeedsReview.
+        TransitionTo(RequestStatus.PendingAcquisition, actorUserId: null, reason, atUtc);
+    }
+
+    /// <summary>
+    /// A new copy fetched after the attempt budget was spent passed its checks (AUTOFIND 2c), so the review that asked for a
+    /// librarian is no longer needed. A no-op unless the request is still in a security/identity (or uncategorised) review.
+    /// </summary>
+    public bool WithdrawReviewForSuccessfulAttempt(string reason, DateTimeOffset atUtc)
+    {
+        if (Status != RequestStatus.NeedsReview || RequiresManualFulfillment ||
+            ReviewCategory is not (null or RequestReviewCategory.SecurityOrIdentityFailure))
+        {
+            return false;
+        }
+
+        TransitionTo(RequestStatus.PendingAcquisition, actorUserId: null, reason, atUtc);
+        return true;
+    }
+
+    /// <summary>Adds a note to the history of a review that stays open, without changing its status or candidates.</summary>
+    public void AddReviewNote(string note, DateTimeOffset atUtc)
+    {
+        if (Status != RequestStatus.NeedsReview)
+        {
+            throw new InvalidOperationException("Only a request under review has a review history to add to.");
+        }
+
+        UpdatedAtUtc = atUtc;
+        _statusHistory.Add(new RequestStatusHistory(
+            Id, RequestStatus.NeedsReview, RequestStatus.NeedsReview, actorUserId: null,
+            CleanNote(note, MaxReasonLength, nameof(note)), atUtc));
+    }
     /// <summary>
     /// Records that unattended acquisition fetched one candidate and it failed
     /// a post-download check, so the next automatic pass advances to the next

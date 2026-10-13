@@ -58,7 +58,9 @@ public interface IRequestRepository
     Task<IReadOnlyList<BookRequest>> ListPendingForAutomaticFulfillmentAsync(
         int maximumCount,
         CancellationToken cancellationToken,
-        bool includeNeedsReview = false) =>
+        bool includeNeedsReview = false,
+        bool includeSpentBudgetReviews = false,
+        bool orderByLeastRecentlyAttempted = false) =>
         Task.FromResult<IReadOnlyList<BookRequest>>([]);
 
     /// <summary>Whether this requested format already has an acquired artifact.</summary>

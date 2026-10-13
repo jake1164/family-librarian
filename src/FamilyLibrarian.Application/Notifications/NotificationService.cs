@@ -46,6 +46,23 @@ public sealed class NotificationService(
             subjectId: requestId.ToString(),
             cancellationToken);
 
+    /// <summary>
+    /// AUTOFIND 2c: a later search found a copy that needs no answer, so the question put to the requester is withdrawn
+    /// ("found a standalone copy; no answer needed").
+    /// </summary>
+    public Task RecordReviewWithdrawnAsync(
+        Guid userId, Guid requestId, string workTitle, string? reason, CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.SingleUser,
+            userId,
+            NotificationCategories.RequestReviewWithdrawn,
+            NotificationSeverity.Info,
+            title: $"A copy of \"{workTitle}\" was found; no answer needed",
+            detail: reason,
+            subjectType: NotificationSubjectTypes.BookRequest,
+            subjectId: requestId.ToString(),
+            cancellationToken);
+
     public Task RecordRequestStatusForUserAsync(
         Guid userId, Guid requestId, string workTitle, RequestStatus to, CancellationToken cancellationToken)
     {

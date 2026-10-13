@@ -27,6 +27,7 @@ public interface IWorkLookup
 /// example, an original-language edition title), never provider-supplied
 /// labels or inferred translations.
 /// </param>
+/// <param name="FirstPublicationDate">From the catalog Work; null when unknown. Anchors the AF-10 recheck scale.</param>
 public sealed record WorkSummary(
     Guid WorkId,
     string Title,
@@ -37,4 +38,5 @@ public sealed record WorkSummary(
     string? Language = null,
     int? PublicationYear = null,
     string? Publisher = null,
-    IReadOnlyList<string>? AlternateTitles = null);
+    IReadOnlyList<string>? AlternateTitles = null,
+    DateOnly? FirstPublicationDate = null);

@@ -110,11 +110,13 @@ public sealed class RequestRepository(
     public async Task<IReadOnlyList<BookRequest>> ListPendingForAutomaticFulfillmentAsync(
         int maximumCount,
         CancellationToken cancellationToken,
-        bool includeNeedsReview = false)
+        bool includeNeedsReview = false,
+        bool includeSpentBudgetReviews = false,
+        bool orderByLeastRecentlyAttempted = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
 
-        return await database.BookRequests
+        var query = database.BookRequests
             .Include(request => request.Participants)
             .Include(request => request.Formats)
             .Include(request => request.StatusHistory)
@@ -123,8 +125,23 @@ public sealed class RequestRepository(
             .Where(request => !request.RequiresManualFulfillment &&
                 (request.Status == RequestStatus.PendingAcquisition ||
                  (includeNeedsReview && request.Status == RequestStatus.NeedsReview &&
-                  request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity)))
-            .OrderBy(request => request.RequestedAtUtc)
+                  request.ReviewCategory == RequestReviewCategory.PreferenceAmbiguity) ||
+                 // A review opened after the attempt budget was spent (the recheck leaves its category unset). The caller
+                 // decides per format whether the budget really is spent.
+                 (includeSpentBudgetReviews && request.Status == RequestStatus.NeedsReview &&
+                  (request.ReviewCategory == null || request.ReviewCategory == RequestReviewCategory.SecurityOrIdentityFailure))));
+
+        // Oldest request first starves everything past the first batch once enough older requests are not yet due. Least
+        // recently looked-at first (never looked-at first of all) lets every request come round.
+        var ordered = orderByLeastRecentlyAttempted
+            ? query
+                .OrderBy(request => database.ProviderAttempts.Any(attempt => attempt.RequestId == request.Id) ? 1 : 0)
+                .ThenBy(request => database.ProviderAttempts
+                    .Where(attempt => attempt.RequestId == request.Id)
+                    .Max(attempt => (DateTimeOffset?)attempt.AttemptedAtUtc))
+                .ThenBy(request => request.RequestedAtUtc)
+            : query.OrderBy(request => request.RequestedAtUtc);
+        return await ordered
             .Take(maximumCount)
             .ToArrayAsync(cancellationToken);
     }

@@ -56,7 +56,11 @@ public sealed class ExternalProviderRecheckService(
             return 0;
         }
 
-        var pending = await requests.ListPendingForAutomaticFulfillmentAsync(BatchSize, cancellationToken);
+        // Requests waiting on a person, or whose attempt budget is spent, stay in the batch (AF-10, OQ-5); least recently looked at
+        // first so a batch of not-yet-due requests cannot starve the ones behind it.
+        var pending = await requests.ListPendingForAutomaticFulfillmentAsync(
+            BatchSize, cancellationToken, includeNeedsReview: true, includeSpentBudgetReviews: true,
+            orderByLeastRecentlyAttempted: true);
         if (pending.Count == 0)
         {
             return 0;
@@ -77,6 +81,15 @@ public sealed class ExternalProviderRecheckService(
                 {
                     var latest = await attempts.FindLatestForFormatAsync(format.Id, provider.ProviderId, cancellationToken);
                     if (!IsDue(latest, request, clock.UtcNow))
+                    {
+                        continue;
+                    }
+
+                    // A review that is not a preference question is rechecked only once the attempt budget is spent: that is the
+                    // request left waiting for a better copy. Any other NeedsReview request belongs to a librarian.
+                    if (request.Status == RequestStatus.NeedsReview &&
+                        request.ReviewCategory != RequestReviewCategory.PreferenceAmbiguity &&
+                        request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) < provider.AutomaticAttemptLimit)
                     {
                         continue;
                     }
@@ -130,6 +143,11 @@ public sealed class ExternalProviderRecheckService(
                         // rather than re-nominating the one that just failed.
                         var exclusions = ExternalCandidateExclusions.From(
                             request.DeclinedCandidates, provider.ProviderId, format.Id);
+                        // How long to leave this request before looking again when it is waiting: the provider cadence, or
+                        // the AF-10 sliding scale from the publication (or request) date, whichever is longer.
+                        var waitingNext = clock.UtcNow + MaxInterval(
+                            ToInterval(provider.RecheckSchedule),
+                            RecheckSchedule.WaitingInterval(work.FirstPublicationDate, request.RequestedAtUtc, clock.UtcNow));
                         var alreadyTried = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) > 0;
 
                         // Several one-dimension searches are pooled, then judged once exactly as a single search was.
@@ -175,7 +193,7 @@ public sealed class ExternalProviderRecheckService(
                         {
                             var exhaustedReason = DescribeExhaustedAttempts(request, format, provider);
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
-                                exhaustedReason, nextEligibleCheckAtUtc: null);
+                                exhaustedReason, waitingNext);
                             await MarkForReviewAsync(request, work.Title, exhaustedReason, cancellationToken);
                             break;
                         }
@@ -250,7 +268,7 @@ public sealed class ExternalProviderRecheckService(
                                     setRecorded
                                         ? setReason
                                         : $"{setReason} This request is already under review for a different reason.",
-                                    nextEligibleCheckAtUtc: null);
+                                    waitingNext);
                             }
 
                             break;
@@ -293,6 +311,18 @@ public sealed class ExternalProviderRecheckService(
                         if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled &&
                             failuresSoFar >= provider.AutomaticAttemptLimit)
                         {
+                            // One extra attempt for a candidate that is new, strong and within the cap (OQ-5, OQ-14): it
+                            // downloads with the review still open. Anything else only waits.
+                            if (request.Status == RequestStatus.NeedsReview &&
+                                request.ReviewCategory != RequestReviewCategory.PreferenceAmbiguity &&
+                                failuresSoFar - provider.AutomaticAttemptLimit < provider.AutomaticAttemptLimit &&
+                                IsStrong(automaticMatches[0], ExternalCandidateExclusions.None))
+                            {
+                                await TryExtraAttemptAsync(
+                                    request, format, provider, work.Title, automaticMatches[0], search, waitingNext, cancellationToken);
+                                break;
+                            }
+
                             var exhaustedReason = DescribeExhaustedAttempts(request, format, provider);
                             var exhaustedRecorded = await MarkForCandidateReviewAsync(
                                 request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates, search,
@@ -302,12 +332,26 @@ public sealed class ExternalProviderRecheckService(
                                     ? exhaustedReason
                                     : $"{exhaustedReason} This request is already under review for a different " +
                                       "reason; it will be reconsidered once that is resolved.",
-                                nextEligibleCheckAtUtc: null);
+                                waitingNext);
                             break;
                         }
 
                         if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled)
                         {
+                            // A copy that needs no answer makes a pending question moot: withdraw it, tell the requesters, and
+                            // carry on into the download. The status changes before any attempt row is written, so the next
+                            // pass is not due at once.
+                            if (request is { Status: RequestStatus.NeedsReview, ReviewCategory: RequestReviewCategory.PreferenceAmbiguity })
+                            {
+                                request.WithdrawPreferenceReviewForAutomaticCandidate("Found a copy that needs no answer.", clock.UtcNow);
+                                foreach (var requesterId in request.ActiveRequesterIds)
+                                {
+                                    await notifications.RecordReviewWithdrawnAsync(
+                                        requesterId, request.Id, work.Title,
+                                        "Found a standalone copy; no answer is needed.", cancellationToken);
+                                }
+                            }
+
                             search.MarkSelected(automaticMatches[0], clock.UtcNow);
                             var (acquireResult, identityFailure) = await security.AcquireEvaluateAndVerifyAsync(
                                 request.Id,
@@ -328,7 +372,7 @@ public sealed class ExternalProviderRecheckService(
                             {
                                 await RecordAutomaticFailureAsync(
                                     request, format, provider, work.Title, automaticMatches[0], identityFailure,
-                                    cancellationToken);
+                                    waitingNext, cancellationToken);
                                 break;
                             }
 
@@ -366,14 +410,14 @@ public sealed class ExternalProviderRecheckService(
                             await RecordAutomaticFailureAsync(
                                 request, format, provider, work.Title, automaticMatches[0],
                                 acquireResult.Error ?? "The automatic copy could not be acquired.",
-                                cancellationToken);
+                                waitingNext, cancellationToken);
                             break;
                         }
 
                         if (reviewCandidates.Length == 0)
                         {
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.NoMatch,
-                                DescribeNoAcceptableCopy(options, work.Language), nextCheck);
+                                DescribeNoAcceptableCopy(options, work.Language), waitingNext);
                             continue;
                         }
 
@@ -386,7 +430,7 @@ public sealed class ExternalProviderRecheckService(
                                 ? $"Found {reviewCandidates.Length} candidate(s); choose a reviewed candidate before acquisition."
                                 : $"Found {reviewCandidates.Length} candidate(s), but this request is already under " +
                                   "review for a different reason; it will be reconsidered once that is resolved.",
-                            nextEligibleCheckAtUtc: null);
+                            waitingNext);
                         break;
                     }
                     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested &&
@@ -838,7 +882,7 @@ public sealed class ExternalProviderRecheckService(
     /// </remarks>
     private async Task RecordAutomaticFailureAsync(
         BookRequest request, RequestFormat format, ExternalProvider provider, string workTitle,
-        FulfillmentOption option, string reason, CancellationToken cancellationToken)
+        FulfillmentOption option, string reason, DateTimeOffset exhaustedNextCheck, CancellationToken cancellationToken)
     {
         request.RecordAutomaticCandidateFailure(
             format.Id, provider.ProviderId, option.ProviderResultId, reason, clock.UtcNow,
@@ -849,7 +893,7 @@ public sealed class ExternalProviderRecheckService(
         {
             AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
                 AutomaticAttemptNarrative.Exhausted(reason, failures, provider.AutomaticAttemptLimit),
-                nextEligibleCheckAtUtc: null);
+                exhaustedNextCheck);
             await MarkForReviewAsync(request, workTitle, reason, cancellationToken);
             return;
         }
@@ -861,6 +905,48 @@ public sealed class ExternalProviderRecheckService(
             AutomaticAttemptNarrative.Advancing(reason, failures, provider.AutomaticAttemptLimit),
             nextEligibleCheckAtUtc: clock.UtcNow);
         fulfillmentSignal?.Request();
+    }
+
+    private static TimeSpan MaxInterval(TimeSpan first, TimeSpan second) => first >= second ? first : second;
+
+    /// <summary>
+    /// The one extra attempt a spent budget allows (AUTOFIND 2c, owner answers OQ-5 and OQ-14): a new, strong candidate is
+    /// downloaded while the review stays open. Success withdraws the review; a failure rules the candidate out, adds a note to
+    /// the open review and sends no second notification. Never advances to the next candidate by itself.
+    /// </summary>
+    private async Task TryExtraAttemptAsync(
+        BookRequest request, RequestFormat format, ExternalProvider provider, string workTitle, FulfillmentOption option,
+        PooledSearch search, DateTimeOffset nextCheck, CancellationToken cancellationToken)
+    {
+        search.MarkSelected(option, clock.UtcNow);
+        var (result, identityFailure) = await security.AcquireEvaluateAndVerifyAsync(
+            request.Id, format.Id, provider.ProviderId, option.ProviderResultId, cancellationToken,
+            allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(option), isAutomaticAcquisition: true,
+            searchVariant: search.VariantOf(option));
+
+        if (result.Outcome == ManualImportOutcome.Success && identityFailure is null)
+        {
+            AddAttempt(request, format, provider, ProviderAttemptOutcome.Acquired,
+                "Found a stronger new copy after the attempt limit; it passed its checks.", nextEligibleCheckAtUtc: null);
+            request.WithdrawReviewForSuccessfulAttempt("A newer copy passed its checks.", clock.UtcNow);
+            return;
+        }
+
+        if (result.Outcome == ManualImportOutcome.AcquisitionInProgress)
+        {
+            AddAttempt(request, format, provider, ProviderAttemptOutcome.Submitted,
+                "Found a stronger new copy after the attempt limit; trying it once.", nextEligibleCheckAtUtc: null);
+            return;
+        }
+
+        var reason = identityFailure ?? result.Error ?? "The automatic copy could not be acquired.";
+        request.RecordAutomaticCandidateFailure(
+            format.Id, provider.ProviderId, option.ProviderResultId, reason, clock.UtcNow,
+            ExternalReleaseFingerprint.Compute(option.ReleaseName, option.SizeBytes));
+        request.AddReviewNote($"A newer copy was tried once after the attempt limit and also failed: {reason}", clock.UtcNow);
+        AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+            $"A stronger new copy was tried once after the attempt limit and failed: {reason}", nextCheck);
+        _ = workTitle;
     }
 
     /// <summary>

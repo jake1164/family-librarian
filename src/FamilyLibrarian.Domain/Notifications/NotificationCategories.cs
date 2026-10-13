@@ -14,6 +14,9 @@ public static class NotificationCategories
     /// </summary>
     public const string RequestPreferenceAmbiguity = "request.preference_ambiguity";
 
+    /// <summary>AUTOFIND 2c: tells a requester the question put to them is withdrawn because a copy that needs no answer was found.</summary>
+    public const string RequestReviewWithdrawn = "request.review_withdrawn";
+
     /// <summary>
     /// KINDLE-7: sent once a <c>DeliveryAttempt</c> reaches
     /// <c>DeliveryAttemptStatus.Submitted</c>, asking the user to confirm it
