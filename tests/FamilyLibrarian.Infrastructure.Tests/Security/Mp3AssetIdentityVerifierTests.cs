@@ -33,6 +33,40 @@ public sealed class Mp3AssetIdentityVerifierTests
     // ---- parsing -------------------------------------------------------------------------------------------------
 
     [TestMethod]
+    public async Task LibriVoxId3v1SectionTitleUsesTheBookAlbumAndAuthorAndIsNotHeld()
+    {
+        var tag = new byte[128];
+        Encoding.ASCII.GetBytes("TAG").CopyTo(tag, 0);
+        Encoding.Latin1.GetBytes("Chapters 1-3").CopyTo(tag, 3);
+        Encoding.Latin1.GetBytes("Jane Austen").CopyTo(tag, 33);
+        Encoding.Latin1.GetBytes("Pride and Prejudice").CopyTo(tag, 63);
+
+        // Two MPEG-1 Layer III frames at 64 kbps and 44.1 kHz, followed only by an ID3v1 tag.
+        var frame = new byte[208];
+        new byte[] { 0xFF, 0xFB, 0x50, 0x00 }.CopyTo(frame, 0);
+        var bytes = Concat(frame, frame, tag);
+        var parsed = await ReadAsync(bytes);
+        Assert.IsNotNull(parsed);
+        Assert.AreEqual("id3v1", parsed.Source);
+        Assert.AreEqual("Chapters 1-3", parsed.Title);
+        Assert.AreEqual("Pride and Prejudice", parsed.Album);
+        AssertValues(parsed.Artists, "Jane Austen");
+
+        var asset = AssetFor(AssetOrigin.BuiltInProvider);
+        asset.TransitionStorageState(MediaAssetStorageState.Processing, DateTimeOffset.UtcNow);
+        var service = new AssetIdentityVerificationService(
+            new Repository(asset), new Staging(bytes),
+            [CreateVerifier("Pride and Prejudice", "Jane Austen")], new Audit(), new Clock());
+
+        var result = await service.VerifyAsync(asset.Id, CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch);
+        Assert.AreEqual("mp3-id3-tags", result.VerifierId, "The tags establish identity rather than falling back to attestation.");
+        Assert.IsNull(result.HoldCode);
+        Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState, "The built-in recording is not moved to Unmatched.");
+    }
+
+    [TestMethod]
     public async Task Id3v23LatinTextFramesAreRead()
     {
         var tags = await ReadAsync(Mp3(Id3.Tag(3, Id3.Text("TALB", "The Terminal List"), Id3.Text("TPE1", "Jack Carr"),
