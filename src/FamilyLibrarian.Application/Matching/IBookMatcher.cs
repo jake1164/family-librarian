@@ -2,9 +2,9 @@ namespace FamilyLibrarian.Application.Matching;
 
 /// <summary>
 /// Deterministic, synchronous, no-I/O matching decision over a set of
-/// destination candidates already fetched by the caller. See
-/// docs/family-librarian-book-matching-design-findings.md for the rationale
-/// behind refusing to guess among ambiguous candidates.
+/// destination candidates already fetched by the caller. Ambiguous candidates
+/// are never guessed between: more than one plausible match is reported as
+/// ambiguous.
 /// </summary>
 public interface IBookMatcher
 {

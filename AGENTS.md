@@ -62,6 +62,18 @@ file before proposing, changing, or reviewing code.
 - Move a plan to `.ai_docs/done/` only after its stated acceptance criterion is met. Move plans superseded by consolidation to `.ai_docs/archive/`; do not call them done. Retain completed-plan evidence there for later audit.
 - At the end of any implementation slice, reconcile the master plan and affected curated documentation. An unchecked plan item may not be silently abandoned: explicitly mark it active, deferred (with prerequisite), blocked, or out of scope.
 
+### Keep `.ai_docs/` small, current and consolidated
+
+`.ai_docs/` is deliberately outside git, so nothing in it can be recovered once deleted, and nobody reviews it. Keeping it tidy is the agent's job, not the owner's.
+
+- **Root holds only current files:** the master plan, the active detailed plans, and active evidence reports. Finished work goes to `done/`, superseded work to `archive/`. Nothing else lives at the root.
+- **Extend, don't multiply.** Before creating a file, look for an existing plan or status document for that slice and update it. Do not create parallel "status", "handoff", "notes" or "summary" files for work that already has a plan. A new file must appear in the master plan's plan registry in the same session it is created.
+- **This covers more than markdown.** Logs, build and test output, spike or probe projects, screenshots, scripts and downloaded tooling (`node_modules`, browsers, SDKs) are scratch. Do not leave them in `.ai_docs/`: use the session scratchpad or a temporary `.ai_docs/scratch/<topic>/`, and delete it when the task ends. Record the result in the plan (command, counts, outcome) instead of keeping the raw output. Keep only small evidence that a finished plan explicitly cites, under `done/<topic>-evidence/`.
+- **Agent-written design notes, findings and rationale belong here, not in git.** Put them in `.ai_docs/reference/`. Do not add them to `docs/` (curated, human-owned) or anywhere else tracked unless the owner explicitly asks, and never make code comments, `README.md` or `docs/` depend on a file under `.ai_docs/`: a comment states its own rationale in a sentence instead of pointing at a section number.
+- **Moving is allowed; deleting plans is not** without the owner's say-so. Deleting scratch you created yourself (logs, probe projects, tooling) is expected once it is no longer needed. Before deleting anything you did not create, look at it, and compare it with its counterpart if it is a copy.
+- **File-sync conflict copies** (`*.sync-conflict-*`) are not plans. If one appears, compare it with the original, report any unique content to the owner, and remove it once nothing is lost.
+- **Reconcile before you finish a slice:** the master plan registry matches the folder, finished plans have moved, and scratch is gone. As a sanity check, `.ai_docs/` should be a few megabytes; if it is not, something that should have been scratch was left behind.
+
 ## Scope discipline
 
 - Read `README.md` and the relevant documents in `docs/` before changing design-sensitive code.

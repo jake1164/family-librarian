@@ -16,8 +16,7 @@ namespace FamilyLibrarian.Application.Matching;
 /// matches anything -- including records of the right book sitting in the
 /// index.
 /// <para>
-/// Per docs/family-librarian-book-matching-design-findings.md §5 this
-/// classifies qualifiers rather than stripping everything after punctuation:
+/// This classifies qualifiers rather than stripping everything after punctuation:
 /// a qualifier carrying a derivative, combined-work, or multi-volume marker
 /// (<c>Abridged</c>, <c>Box Set</c>, <c>Books 1-3</c>, <c>A / B</c>) changes
 /// what the item <em>is</em> and is never dropped. Reduction is also never

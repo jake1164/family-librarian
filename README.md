@@ -12,7 +12,6 @@ This repository contains the current design documents for **Family Librarian**, 
 4. [External Provider HTTP Protocol (v2)](docs/04-external-provider-http-protocol.md)
 5. [Deployment, Backup, and Recovery](docs/06-deployment-and-recovery.md)
 6. [UI Conventions](docs/07-ui-conventions.md)
-7. [Book Matching Design Findings](docs/family-librarian-book-matching-design-findings.md)
 
 Release history is in the [Changelog](CHANGELOG.md).
 

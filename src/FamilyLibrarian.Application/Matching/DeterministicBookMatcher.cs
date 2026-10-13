@@ -158,8 +158,7 @@ public sealed class DeterministicBookMatcher : IBookMatcher
     /// Known, cheap textual markers of a different product than the one
     /// requested, even when the requested title appears in it as a
     /// substring — e.g. "Summary of Debt of Honor" or "Debt of Honor /
-    /// Executive Orders". Not exhaustive; see
-    /// docs/family-librarian-book-matching-design-findings.md §5/§6/§8 — a
+    /// Executive Orders". Not exhaustive. A
     /// title-substring match is grounds for further comparison, not
     /// automatic identity, and a derivative or combined-work title is
     /// negative evidence even when otherwise unambiguous.

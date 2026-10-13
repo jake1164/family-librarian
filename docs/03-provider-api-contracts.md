@@ -401,11 +401,11 @@ matching entry rather than the first: a single distinct book ID is accepted,
 while more than one distinct ID is treated as ambiguous and returns "not found"
 rather than guessing. It also rejects an otherwise-matching entry whose title
 carries a known derivative/combined-work marker (e.g. "Summary of Debt of
-Honor", "Debt of Honor / Executive Orders") — see
-`docs/family-librarian-book-matching-design-findings.md` §5/§6/§8. This guard
+Honor", "Debt of Honor / Executive Orders"): a title-substring match is grounds
+for further comparison, never automatic identity. This guard
 is a fixed, non-exhaustive keyword list, not the fuller
-`ExpectedBookProfile`/`CandidateMatchResult` evidence model that document
-describes for the separate acquisition-provider matching pipeline — that
+`ExpectedBookProfile`/`CandidateMatchResult` evidence model that was sketched
+early on for the separate acquisition-provider matching pipeline — that
 remains future work if CWA correlation needs it. Still weaker than full
 identifier-first matching: a missing `<author>` element on a CWA entry is not
 treated as a mismatch (CWA's OPDS template does not reliably include one),
