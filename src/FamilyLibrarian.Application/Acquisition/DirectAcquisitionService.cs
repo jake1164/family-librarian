@@ -59,6 +59,10 @@ public sealed class DirectAcquisitionService(
     /// (DI-registered) <see cref="IDirectAcquisitionProvider"/> such as
     /// Gutenberg -- those are FL-vetted, not arbitrary third-party code.
     /// </param>
+    /// <param name="searchVariant">
+    /// The search variant that found the candidate (recheck, or a review pick that stored it). Null re-derives by the base
+    /// search and then walks the planned variants, so a candidate stored without a key is still found.
+    /// </param>
     /// <param name="allowDownloadTimeDrmValidation">
     /// Internal scheduled-recheck path only. It permits a Safe, strict-match
     /// candidate whose *metadata* DRM state is unknown to submit one provider
@@ -75,7 +79,8 @@ public sealed class DirectAcquisitionService(
         bool confirmLowConfidenceMatch = false,
         bool allowDownloadTimeDrmValidation = false,
         bool isAutomaticAcquisition = false,
-        AudiobookPartSetMember? partSet = null)
+        AudiobookPartSetMember? partSet = null,
+        SearchVariantRef? searchVariant = null)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
@@ -223,19 +228,32 @@ public sealed class DirectAcquisitionService(
         var exclusions = Providers.ExternalCandidateExclusions.From(
             request.DeclinedCandidates, providerId, format.Id, exceptResultId: providerResultId);
 
+        // With the variant that found the candidate, re-run exactly that search. Without one (a review pick stored
+        // before the key existed) run the base search and then walk the planned variants in order until the candidate
+        // turns up. Either way the options are verified against the requested work, never the variant.
         IReadOnlyList<FulfillmentOption> externalOptions;
+        FulfillmentOption? externalOption;
         try
         {
             externalOptions = await externalCandidateChecker.FindForProviderAsync(
-                externalProvider, identity, format.MediaType, cancellationToken, exclusions);
+                externalProvider, identity, format.MediaType, cancellationToken, exclusions, searchVariant);
+            externalOption = FindOption(externalOptions, providerResultId);
+            if (externalOption is null && searchVariant is null)
+            {
+                foreach (var planned in SearchVariantPlanner.Plan(identity, format.MediaType).Skip(1))
+                {
+                    externalOptions = await externalCandidateChecker.FindForProviderAsync(
+                        externalProvider, identity, format.MediaType, cancellationToken, exclusions, planned.Ref);
+                    externalOption = FindOption(externalOptions, providerResultId);
+                    if (externalOption is not null) break;
+                }
+            }
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
             return ManualImportResult.Invalid($"The provider could not be reached: {exception.Message}");
         }
 
-        var externalOption = externalOptions.FirstOrDefault(
-            candidateOption => string.Equals(candidateOption.ProviderResultId, providerResultId, StringComparison.Ordinal));
         if (externalOption is null)
         {
             return ManualImportResult.Invalid("That option is no longer available.");
@@ -392,4 +410,7 @@ public sealed class DirectAcquisitionService(
             option.ReleaseConcern,
             ExternalReleasePolicy.UnknownDrmConfirmationReason,
             StringComparison.Ordinal);
+
+    private static FulfillmentOption? FindOption(IReadOnlyList<FulfillmentOption> options, string providerResultId) =>
+        options.FirstOrDefault(option => string.Equals(option.ProviderResultId, providerResultId, StringComparison.Ordinal));
 }

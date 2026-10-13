@@ -132,8 +132,15 @@ public sealed class ExternalProviderRecheckService(
                             request.DeclinedCandidates, provider.ProviderId, format.Id);
                         var alreadyTried = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) > 0;
 
-                        var options = await candidateChecker.FindForProviderAsync(
-                            provider, identity, format.MediaType, searchCancellation.Token, exclusions);
+                        // Several one-dimension searches are pooled, then judged once exactly as a single search was.
+                        var search = await SearchPooledAsync(
+                            provider, identity, format.MediaType, exclusions, searchCancellation, cancellationToken);
+                        var options = search.Options;
+                        if (search.RateLimitedFor is { } rateLimitedFor)
+                        {
+                            nextCheck = clock.UtcNow + rateLimitedFor;
+                        }
+
                         var searchFoundSomething = options.Count > 0;
                         // Shadow only: hands unsettled candidates to a background reviewer and returns at once.
                         semanticShadow?.Observe(request.Id, options);
@@ -203,7 +210,8 @@ public sealed class ExternalProviderRecheckService(
                         // for each part, and publishes only if every part passes.
                         if (format.MediaType == RequestMediaType.Audiobook && provider.AutoAcquireEnabled &&
                             partSets is not null &&
-                            AudiobookPartSetSelector.TrySelect(reviewableOptions) is { } completeSet)
+                            AudiobookPartSetSelector.TrySelect(
+                                [.. reviewableOptions.Where(option => search.VariantOf(option).IsBase)]) is { } completeSet)
                         {
                             var started = await partSets.StartAsync(
                                 request.Id, format.Id, provider.ProviderId, completeSet, cancellationToken);
@@ -290,7 +298,9 @@ public sealed class ExternalProviderRecheckService(
                                 automaticMatches[0].ProviderResultId,
                                 cancellationToken,
                                 allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(automaticMatches[0]),
-                                isAutomaticAcquisition: true);
+                                isAutomaticAcquisition: true,
+                                // Re-derive the option by the very search that found it.
+                                searchVariant: search.VariantOf(automaticMatches[0]));
 
                             // A clean download of the wrong book is the exact
                             // case the retry loop exists for, so it is routed
@@ -375,6 +385,12 @@ public sealed class ExternalProviderRecheckService(
                     {
                         throw;
                     }
+                    catch (HttpRequestException exception) when (RateLimitWait(exception) is { } wait)
+                    {
+                        AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                            $"The provider asked Family Librarian to slow down; retrying after {clock.UtcNow + wait:yyyy-MM-dd HH:mm} UTC.",
+                            clock.UtcNow + wait);
+                    }
                     catch (HttpRequestException exception) when (IsTransientProviderOutage(exception))
                     {
                         // The provider was unreachable or momentarily
@@ -412,6 +428,101 @@ public sealed class ExternalProviderRecheckService(
 
         return checks;
     }
+
+    private static readonly TimeSpan RateLimitFloor = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan PassTimeCap = TimeSpan.FromMinutes(6);
+
+    private sealed record PooledSearch(
+        IReadOnlyList<FulfillmentOption> Options,
+        IReadOnlyDictionary<string, SearchVariantRef> Found,
+        TimeSpan? RateLimitedFor)
+    {
+        public SearchVariantRef VariantOf(FulfillmentOption option) =>
+            Found.GetValueOrDefault(option.ProviderResultId) ?? new SearchVariantRef(SearchVariantKind.Base, string.Empty);
+    }
+
+    /// <summary>
+    /// Runs the planned variants in order (each at most once per pass), pooling and de-duplicating what they return, and stops
+    /// early on a strong candidate. Then applies the single-strict-winner step once to the pool. A rate-limit answer (or, once
+    /// something has been found, any later failure) ends the list; the pool so far is still judged.
+    /// </summary>
+    private async Task<PooledSearch> SearchPooledAsync(
+        ExternalProvider provider, BookIdentity identity, RequestMediaType mediaType, ExternalCandidateExclusions exclusions,
+        CancellationTokenSource searchCancellation, CancellationToken cancellationToken)
+    {
+        var plan = SearchVariantPlanner.Plan(identity, mediaType);
+        var pool = new List<FulfillmentOption>();
+        var found = new Dictionary<string, SearchVariantRef>(StringComparer.Ordinal);
+        var clockStart = clock.UtcNow;
+        TimeSpan? rateLimited = null;
+        for (var index = 0; index < plan.Count; index++)
+        {
+            // A time guard for one provider pass, not a search budget: variants not reached run on the next recheck.
+            if (index > 0 && clock.UtcNow - clockStart > PassTimeCap) break;
+            searchCancellation.CancelAfter(BackgroundSearchTimeout);
+            IReadOnlyList<FulfillmentOption> raw;
+            try
+            {
+                raw = await candidateChecker.SearchVariantAsync(provider, identity, mediaType, plan[index], searchCancellation.Token);
+            }
+            catch (Exception exception) when (pool.Count > 0 && !cancellationToken.IsCancellationRequested &&
+                                              (exception is HttpRequestException || exception is OperationCanceledException))
+            {
+                rateLimited = exception is HttpRequestException http ? RateLimitWait(http) : null;
+                break;
+            }
+
+            Merge(pool, found, raw, plan[index].Ref, mediaType);
+            if (pool.Any(option => IsStrong(option, exclusions))) break;
+        }
+
+        return new PooledSearch(
+            ExternalCandidateAvailabilityChecker.SelectOneStrictCandidate(pool, mediaType, exclusions), found, rateLimited);
+    }
+
+    /// <summary>Same record id keeps the first; the same release under another id keeps the higher-ranked.</summary>
+    private static void Merge(
+        List<FulfillmentOption> pool, Dictionary<string, SearchVariantRef> found,
+        IReadOnlyList<FulfillmentOption> added, SearchVariantRef variant, RequestMediaType mediaType)
+    {
+        foreach (var option in added)
+        {
+            if (found.ContainsKey(option.ProviderResultId))
+            {
+                continue;
+            }
+
+            var fingerprint = ExternalReleaseFingerprint.Compute(option.ReleaseName, option.SizeBytes);
+            var twin = fingerprint is null ? null : pool.FirstOrDefault(existing =>
+                ExternalReleaseFingerprint.Compute(existing.ReleaseName, existing.SizeBytes) == fingerprint);
+            if (twin is null)
+            {
+                pool.Add(option);
+                found[option.ProviderResultId] = variant;
+            }
+            else if (ExternalCandidateRanker.Rank([twin, option], mediaType)[0] == option)
+            {
+                pool[pool.IndexOf(twin)] = option;
+                found.Remove(twin.ProviderResultId);
+                found[option.ProviderResultId] = variant;
+            }
+        }
+    }
+
+    /// <summary>An identifier or strict title-and-author copy with nothing left for a person to confirm.</summary>
+    private static bool IsStrong(FulfillmentOption option, ExternalCandidateExclusions exclusions) =>
+        option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor &&
+        !option.RequiresLanguageConfirmation &&
+        (!option.RequiresReleaseConfirmation || IsUnknownDrmOnlyConcern(option)) &&
+        !exclusions.Excludes(option);
+
+    /// <summary>How long to leave a provider alone after it asked to be slowed down; null when the failure is not a rate limit.</summary>
+    private static TimeSpan? RateLimitWait(HttpRequestException exception) => exception switch
+    {
+        ExternalProviderRateLimitedException limited => limited.RetryAfter is { } after && after > RateLimitFloor ? after : RateLimitFloor,
+        { StatusCode: System.Net.HttpStatusCode.TooManyRequests } => RateLimitFloor,
+        _ => null
+    };
 
     /// <summary>No HTTP status means the request never completed (refused, reset, DNS); 502-504 mean the provider or its gateway was briefly down.</summary>
     private static bool IsTransientProviderOutage(HttpRequestException exception) =>

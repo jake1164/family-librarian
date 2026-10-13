@@ -126,35 +126,40 @@ public sealed class ExternalCandidateAvailabilityChecker(
     public async Task<IReadOnlyList<FulfillmentOption>> FindForProviderAsync(
         Domain.Providers.ExternalProvider provider, BookIdentity identity,
         RequestMediaType mediaType, CancellationToken cancellationToken,
-        Providers.ExternalCandidateExclusions? exclusions = null)
+        Providers.ExternalCandidateExclusions? exclusions = null,
+        Acquisition.SearchVariantRef? variant = null)
+    {
+        // No variant is the base search, exactly as before variants existed. A variant is the one search that found a
+        // candidate, re-run to re-derive it; one the current catalog data no longer plans yields nothing.
+        var search = variant is null || variant.IsBase
+            ? Acquisition.SearchVariantPlanner.BaseVariant(identity)
+            : Acquisition.SearchVariantPlanner.Plan(identity, mediaType).FirstOrDefault(candidate => candidate.Ref == variant);
+        return search is null
+            ? []
+            : SelectOneStrictCandidate(
+                await SearchVariantAsync(provider, identity, mediaType, search, cancellationToken), mediaType, exclusions);
+    }
+
+    /// <summary>
+    /// Searches with <paramref name="variant"/>'s request shape and independently verifies every result against
+    /// <paramref name="identity"/> -- the requested work, never the variant that found it -- so a result an
+    /// alternate title or series search surfaces is judged exactly like one the base search surfaces. Returns
+    /// the options without the single-strict-winner step so a caller can pool several variants first.
+    /// </summary>
+    public async Task<IReadOnlyList<FulfillmentOption>> SearchVariantAsync(
+        Domain.Providers.ExternalProvider provider, BookIdentity identity, RequestMediaType mediaType,
+        Acquisition.SearchVariant variant, CancellationToken cancellationToken)
     {
         var apiKey = provider.HasApiKey
             ? protector.Unprotect(
                 Providers.ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
             : null;
 
-        var isbn13 = identity.Isbn13Candidates.FirstOrDefault();
-        // Search on the title without its subtitle so a long catalog title still
-        // finds the release; the verification below still uses the full identity.
-        var work = new Providers.ExternalProviderWorkEvidence(
-            Providers.ExternalSearchTitle.Build(identity.Title),
-            Subtitle: null,
-            Authors: identity.Authors ?? (identity.Author is null
-                ? []
-                : [new Providers.BookAuthor(identity.Author, "author")]),
-            Series: identity.Series ?? [],
-            Identifiers: []);
-        var edition = new Providers.ExternalProviderEditionEvidence(
-            identity.Language,
-            identity.PublicationYear,
-            identity.Publisher,
-            Identifiers: isbn13 is null ? [] : [new Providers.BookIdentifier("isbn13", isbn13)]);
-
         var candidates = await externalProviderClient.SearchAsync(
             provider.BaseUrl,
             apiKey,
             new Providers.ExternalProviderSearchRequest(
-                Guid.NewGuid(), mediaType, work, edition,
+                Guid.NewGuid(), mediaType, variant.Work, variant.Edition,
                 mediaType == RequestMediaType.Ebook
                     ? new Providers.ExternalProviderSearchConstraints(Formats: Providers.ExternalEbookFormatPolicy.SearchFormats)
                     : null),
@@ -298,7 +303,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
                 ReleaseConcern = $"{option.ReleaseConcern} {Providers.ExternalAudiobookPartSetAssessment.For(option, options).Description}"
             }).ToArray();
         }
-        return SelectOneStrictCandidate(options, mediaType, exclusions);
+        return options;
     }
 
     /// <summary>
@@ -321,7 +326,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
     /// re-posting of it -- and the request with no confirmed candidate at all.
     /// </para>
     /// </remarks>
-    private static IReadOnlyList<FulfillmentOption> SelectOneStrictCandidate(
+    internal static IReadOnlyList<FulfillmentOption> SelectOneStrictCandidate(
         IReadOnlyList<FulfillmentOption> options,
         RequestMediaType mediaType,
         Providers.ExternalCandidateExclusions? exclusions)

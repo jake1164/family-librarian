@@ -20,7 +20,8 @@ public sealed class DirectAcquisitionSecurityService(
         CancellationToken cancellationToken,
         bool confirmLowConfidenceMatch = false,
         bool allowDownloadTimeDrmValidation = false,
-        bool isAutomaticAcquisition = false)
+        bool isAutomaticAcquisition = false,
+        SearchVariantRef? searchVariant = null)
     {
         var result = await acquisitions.AcquireAsync(
             requestId,
@@ -30,7 +31,8 @@ public sealed class DirectAcquisitionSecurityService(
             cancellationToken,
             confirmLowConfidenceMatch,
             allowDownloadTimeDrmValidation,
-            isAutomaticAcquisition);
+            isAutomaticAcquisition,
+            searchVariant: searchVariant);
 
         if (result.Outcome == ManualImportOutcome.Success)
         {
@@ -73,11 +75,12 @@ public sealed class DirectAcquisitionSecurityService(
         CancellationToken cancellationToken,
         bool confirmLowConfidenceMatch = false,
         bool allowDownloadTimeDrmValidation = false,
-        bool isAutomaticAcquisition = false)
+        bool isAutomaticAcquisition = false,
+        SearchVariantRef? searchVariant = null)
     {
         var result = await AcquireAndEvaluateAsync(
             requestId, requestFormatId, providerId, providerResultId, cancellationToken,
-            confirmLowConfidenceMatch, allowDownloadTimeDrmValidation, isAutomaticAcquisition);
+            confirmLowConfidenceMatch, allowDownloadTimeDrmValidation, isAutomaticAcquisition, searchVariant);
 
         if (result.Outcome != ManualImportOutcome.Success || assets is null)
         {
