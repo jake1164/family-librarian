@@ -18,6 +18,8 @@ internal sealed record Id3Tags(
     /// <summary>Artist, album artist and composer: any of them may carry the author.</summary>
     public IEnumerable<string> AuthorCandidates => AlbumArtists.Concat(Artists).Concat(Composers);
 
+    public AudioTags ToAudioTags() => new(Source, Title, Album, AuthorCandidates.ToArray(), Languages, Genre, Comment);
+
     public bool HasAnything =>
         Title is not null || Album is not null || Artists.Count > 0 || AlbumArtists.Count > 0 ||
         Composers.Count > 0 || Languages.Count > 0 || Genre is not null || Comment is not null;
