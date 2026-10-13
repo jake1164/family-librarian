@@ -59,13 +59,17 @@
                                 No key is ever shown.
                             </MudText>
                             <MudStack Row="true" Spacing="2" Class="mt-2" Wrap="Wrap.Wrap">
-                                <MudButton Variant="Variant.Outlined" Disabled="@busy" OnClick="@(() => ResolveConnectionAsync("Shared"))">
+                                <MudButton Variant="Variant.Outlined" Disabled="@(busy || form.HasUnsavedChanges)" OnClick="@(() => ResolveConnectionAsync("Shared"))">
                                     Keep the shared connection and discard the older test one
                                 </MudButton>
-                                <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="@busy" OnClick="@(() => ResolveConnectionAsync("LegacyTest"))">
+                                <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="@(busy || form.HasUnsavedChanges)" OnClick="@(() => ResolveConnectionAsync("LegacyTest"))">
                                     Use the older test connection instead (switches AI models off until you turn them back on)
                                 </MudButton>
                             </MudStack>
+                            @if (form.HasUnsavedChanges)
+                            {
+                                <MudText Typo="Typo.caption">Save or reload your other changes first: choosing a connection replaces the settings below.</MudText>
+                            }
                         </MudAlert>
                     }
 
@@ -78,7 +82,7 @@
                                 reached through the same endpoint (for example a LiteLLM alias for a hosted model); Family Librarian does not
                                 call hosted services directly.
                             </MudText>
-                            <MudTextField @bind-Value="endpoint" Label="Endpoint URL" Variant="Variant.Outlined"
+                            <MudTextField @bind-Value="form.Endpoint" Label="Endpoint URL" Variant="Variant.Outlined"
                                           HelperText="For example http://litellm:4000 or http://ollama:11434 (no credentials or query string)." />
 
                             <MudDivider />
@@ -120,9 +124,9 @@
 
                             <MudDivider />
                             <MudText Typo="Typo.h6">Cloud use</MudText>
-                            <MudSwitch T="bool" @bind-Value="allowCloud" Color="Color.Warning"
+                            <MudSwitch T="bool" @bind-Value="form.AllowCloud" Color="Color.Warning"
                                        Label="Allow roles to use cloud models (can send book data off this server and use paid or rate-limited services)" />
-                            <MudSwitch T="bool" @bind-Value="allowCloudExcerpts" Color="Color.Warning" Disabled="@(!allowCloud)"
+                            <MudSwitch T="bool" @bind-Value="form.AllowCloudExcerpts" Color="Color.Warning" Disabled="@(!form.AllowCloud)"
                                        Label="Also allow details read from downloaded files (embedded titles, headings, language tags) to be sent to a cloud model" />
                             <MudText Typo="Typo.caption">
                                 The second switch is separate and off by default. Without it, a cloud model reviewing a file sees only the names and
@@ -130,7 +134,7 @@
                                 count as "cloud" is your decision per role: a name is never taken as proof that a model is local.
                             </MudText>
 
-                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save settings</MudButton>
+                            @SaveBar(false)
                         </MudStack>
                     </MudPaper>
                 </MudStack>
@@ -143,26 +147,30 @@
                         unless that model is known to accept "no reasoning"; models that think before answering can use up the small output limit
                         and return nothing, in which case ask for no reasoning.
                     </MudText>
-                    @foreach (var role in roles)
+                    @if (AiOff)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true">@AiOffExplanation</MudAlert>
+                    }
+                    @foreach (var role in form.Roles)
                     {
                         <MudPaper Outlined="true" Class="pa-3">
                             <MudStack Spacing="2">
-                                <MudSwitch T="bool" @bind-Value="role.IsEnabled" Color="Color.Primary" Label="@Title(role.Role)" />
+                                <MudSwitch T="bool" @bind-Value="role.IsEnabled" Color="Color.Primary" Label="@Title(role.Role)" Disabled="@AiOff" />
                                 <MudText Typo="Typo.body2">@Describe(role.Role)</MudText>
                                 <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                    <MudSelect T="string" @bind-Value="role.Placement" Label="Runs on" Variant="Variant.Outlined" Style="min-width: 12rem;">
+                                    <MudSelect T="string" @bind-Value="role.Placement" Label="Runs on" Variant="Variant.Outlined" Style="min-width: 12rem;" Disabled="@AiOff">
                                         <MudSelectItem Value="@("Local")">Local model</MudSelectItem>
-                                        <MudSelectItem Value="@("Cloud")" Disabled="@(!allowCloud)">Cloud model</MudSelectItem>
+                                        <MudSelectItem Value="@("Cloud")" Disabled="@(!form.AllowCloud)">Cloud model</MudSelectItem>
                                     </MudSelect>
                                     @if (role.Placement == "Cloud")
                                     {
-                                        <ModelAliasPicker @bind-Value="role.CloudModel" Models="models" Label="Cloud model" Class="flex-grow-1" Disabled="@(!allowCloud)" />
+                                        <ModelAliasPicker @bind-Value="role.CloudModel" Models="models" Label="Cloud model" Class="flex-grow-1" Disabled="@(AiOff || !form.AllowCloud)" />
                                     }
                                     else
                                     {
-                                        <ModelAliasPicker @bind-Value="role.LocalModel" Models="models" Label="Local model" Class="flex-grow-1" />
+                                        <ModelAliasPicker @bind-Value="role.LocalModel" Models="models" Label="Local model" Class="flex-grow-1" Disabled="@AiOff" />
                                     }
-                                    <MudSelect T="string" @bind-Value="role.Reasoning" Label="Model reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;">
+                                    <MudSelect T="string" @bind-Value="role.Reasoning" Label="Model reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;" Disabled="@AiOff">
                                         <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
                                         <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
                                     </MudSelect>
@@ -170,7 +178,7 @@
                             </MudStack>
                         </MudPaper>
                     }
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save settings</MudButton>
+                    @SaveBar(AiOff)
                 </MudStack>
             </MudTabPanel>
 
@@ -183,30 +191,34 @@
                                 Every call is bounded and counted. A limit of 0 stops that kind of use entirely; it never means unlimited. Chat and
                                 background checking have separate allowances. Cloud calls also need a non-zero cloud allowance below.
                             </MudText>
+                            @if (AiOff)
+                            {
+                                <MudAlert Severity="Severity.Info" Dense="true">@AiOffExplanation</MudAlert>
+                            }
                             <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                <MudNumericField T="int" @bind-Value="limits.TimeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
-                                <MudNumericField T="int" @bind-Value="limits.MaxInputCharacters" Label="Max input (characters)" Min="500" Max="60000" Variant="Variant.Outlined" />
-                                <MudNumericField T="int" @bind-Value="limits.MaxOutputTokens" Label="Max output (tokens)" Min="16" Max="2048" Variant="Variant.Outlined" />
-                                <MudNumericField T="int" @bind-Value="limits.MaxConcurrentCalls" Label="Calls at once" Min="1" Max="8" Variant="Variant.Outlined" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.TimeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.MaxInputCharacters" Label="Max input (characters)" Min="500" Max="60000" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.MaxOutputTokens" Label="Max output (tokens)" Min="16" Max="2048" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.MaxConcurrentCalls" Label="Calls at once" Min="1" Max="8" Variant="Variant.Outlined" Disabled="@AiOff" />
                             </MudStack>
                             <MudText Typo="Typo.subtitle2">Chat, per day</MudText>
                             <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                <MudNumericField T="int" @bind-Value="limits.Interactive.UserDailyRequests" Label="Requests per person" Min="0" Variant="Variant.Outlined" />
-                                <MudNumericField T="int" @bind-Value="limits.Interactive.UserDailyTokens" Label="Tokens per person" Min="0" Variant="Variant.Outlined" />
-                                <MudNumericField T="int" @bind-Value="limits.Interactive.InstallationDailyRequests" Label="Requests, everyone" Min="0" Variant="Variant.Outlined" />
-                                <MudNumericField T="int" @bind-Value="limits.Interactive.InstallationDailyTokens" Label="Tokens, everyone" Min="0" Variant="Variant.Outlined" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.Interactive.UserDailyRequests" Label="Requests per person" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.Interactive.UserDailyTokens" Label="Tokens per person" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.Interactive.InstallationDailyRequests" Label="Requests, everyone" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.Interactive.InstallationDailyTokens" Label="Tokens, everyone" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
                             </MudStack>
                             <MudText Typo="Typo.subtitle2">Background checking, per day</MudText>
                             <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                <MudNumericField T="int" @bind-Value="limits.Background.InstallationDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" />
-                                <MudNumericField T="int" @bind-Value="limits.Background.InstallationDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.Background.InstallationDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.Background.InstallationDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
                             </MudStack>
                             <MudText Typo="Typo.subtitle2">Cloud allowance, per day (0 = none)</MudText>
                             <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                <MudNumericField T="int" @bind-Value="limits.CloudDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
-                                <MudNumericField T="int" @bind-Value="limits.CloudDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@(!allowCloud)" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.CloudDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@(AiOff || !form.AllowCloud)" />
+                                <MudNumericField T="int" @bind-Value="form.Limits.CloudDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@(AiOff || !form.AllowCloud)" />
                             </MudStack>
-                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save settings</MudButton>
+                            @SaveBar(AiOff)
                         </MudStack>
                     </MudPaper>
 
@@ -259,49 +271,17 @@
 </MudStack>
 
 @code {
+    private const string AiOffExplanation =
+        "AI models are off. Turn them on with the master switch above to choose models and limits.";
+
     private ModelConnectionNoticeDto? notice;
-
-    private sealed class RoleEdit
-    {
-        public string Role { get; init; } = string.Empty;
-        public bool IsEnabled { get; set; }
-        public string Placement { get; set; } = "Local";
-        public string? LocalModel { get; set; }
-        public string? CloudModel { get; set; }
-        public string Reasoning { get; set; } = "Inherit";
-    }
-
-    private sealed class BudgetEdit
-    {
-        public int UserDailyRequests { get; set; }
-        public int UserDailyTokens { get; set; }
-        public int InstallationDailyRequests { get; set; }
-        public int InstallationDailyTokens { get; set; }
-    }
-
-    private sealed class LimitsEdit
-    {
-        public int TimeoutSeconds { get; set; }
-        public int MaxInputCharacters { get; set; }
-        public int MaxOutputTokens { get; set; }
-        public int MaxConcurrentCalls { get; set; }
-        public BudgetEdit Interactive { get; set; } = new();
-        public BudgetEdit Background { get; set; } = new();
-        public int CloudDailyRequests { get; set; }
-        public int CloudDailyTokens { get; set; }
-    }
-
-    private LimitsEdit limits = new();
+    private readonly ModelGatewayForm form = new();
     private ModelUsageResponse? usage;
     private ModelGatewaySettingsResponse? settings;
-    private List<RoleEdit> roles = [];
     private IReadOnlyList<string> models = [];
     private string? modelsProblem;
     private bool modelsLoading;
     private DateTimeOffset? modelsReadAt;
-    private string endpoint = string.Empty;
-    private bool allowCloud;
-    private bool allowCloudExcerpts;
     private string apiKey = string.Empty;
     private bool busy;
     private string? message;
@@ -326,52 +306,35 @@
         }
     }
 
+    /// <summary>Roles and limits are locked while the master switch is off; the connection stays editable.</summary>
+    private bool AiOff => settings is { IsEnabled: false };
+
+    private RenderFragment SaveBar(bool locked) =>
+        @<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(busy || locked)" OnClick="SaveAsync">Save settings</MudButton>
+            @if (form.HasUnsavedChanges)
+            {
+                <MudText Typo="Typo.caption" role="status">You have unsaved changes.</MudText>
+            }
+        </MudStack>;
+
+    /// <summary>Loads the host's settings into the page, replacing every field (after a load, save or connection choice).</summary>
     private void Apply(ModelGatewaySettingsResponse value)
     {
         settings = value;
         notice = value.ConnectionNotice ?? notice;
-        endpoint = value.EndpointUrl ?? string.Empty;
-        allowCloud = value.AllowCloud;
-        allowCloudExcerpts = value.AllowCloudExcerpts;
-        limits = new LimitsEdit
-        {
-            TimeoutSeconds = value.Limits.TimeoutSeconds, MaxInputCharacters = value.Limits.MaxInputCharacters,
-            MaxOutputTokens = value.Limits.MaxOutputTokens, MaxConcurrentCalls = value.Limits.MaxConcurrentCalls,
-            Interactive = ToEdit(value.Limits.Interactive), Background = ToEdit(value.Limits.Background),
-            CloudDailyRequests = value.Limits.CloudDailyRequests, CloudDailyTokens = value.Limits.CloudDailyTokens
-        };
-        roles = [.. value.Roles.Select(role => new RoleEdit
-        {
-            Role = role.Role, IsEnabled = role.IsEnabled, Placement = role.Placement, LocalModel = role.LocalModel, CloudModel = role.CloudModel, Reasoning = role.Reasoning
-        })];
+        form.Load(value);
     }
 
     private async Task SaveAsync()
     {
         var endpointBefore = settings?.EndpointUrl;
-        await ApplyResultAsync(
-            await Api.SaveAsync(new SaveModelGatewaySettingsRequest(
-                endpoint, allowCloud,
-                [.. roles.Select(role => new ModelRoleDto(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel, role.Reasoning))],
-                new ModelLimitsDto(
-                    limits.TimeoutSeconds, limits.MaxInputCharacters, limits.MaxOutputTokens, limits.MaxConcurrentCalls,
-                    ToDto(limits.Interactive), ToDto(limits.Background), limits.CloudDailyRequests, limits.CloudDailyTokens),
-                allowCloud && allowCloudExcerpts)),
-            "Settings saved.");
+        await ApplyResultAsync(await Api.SaveAsync(form.ToRequest()), "Settings saved.");
         if (!messageIsError && !string.Equals(endpointBefore, settings?.EndpointUrl, StringComparison.Ordinal))
         {
             await LoadModelsAsync();
         }
     }
-
-    private static BudgetEdit ToEdit(ModelBudgetDto budget) => new()
-    {
-        UserDailyRequests = budget.UserDailyRequests, UserDailyTokens = budget.UserDailyTokens,
-        InstallationDailyRequests = budget.InstallationDailyRequests, InstallationDailyTokens = budget.InstallationDailyTokens
-    };
-
-    private static ModelBudgetDto ToDto(BudgetEdit budget) =>
-        new(budget.UserDailyRequests, budget.UserDailyTokens, budget.InstallationDailyRequests, budget.InstallationDailyTokens);
 
     private async Task LoadModelsAsync()
     {
@@ -417,27 +380,47 @@
 
     private async Task SetApiKeyAsync()
     {
-        await ApplyResultAsync(await Api.SetApiKeyAsync(apiKey), "API key stored.");
+        await ApplyResultAsync(await Api.SetApiKeyAsync(apiKey), "API key stored.", keepUnsavedEdits: true);
         apiKey = string.Empty;
         await LoadModelsAsync();
     }
 
     private async Task ClearApiKeyAsync()
     {
-        await ApplyResultAsync(await Api.ClearApiKeyAsync(), "API key removed.");
+        await ApplyResultAsync(await Api.ClearApiKeyAsync(), "API key removed.", keepUnsavedEdits: true);
         await LoadModelsAsync();
     }
 
-    private async Task SetEnabledAsync(bool enabled) => await ApplyResultAsync(await Api.SetEnabledAsync(enabled), enabled ? "AI models are on." : "AI models are off.");
+    private async Task SetEnabledAsync(bool enabled) =>
+        await ApplyResultAsync(await Api.SetEnabledAsync(enabled), enabled ? "AI models are on." : "AI models are off.", keepUnsavedEdits: true);
 
-    private async Task ApplyResultAsync(ModelGatewayCallResult<ModelGatewaySettingsResponse> result, string success)
+    /// <param name="keepUnsavedEdits">
+    /// True for calls that do not save the form (master switch, API key): the host's reply updates what it owns, but
+    /// anything typed and not yet saved stays on the page instead of being replaced by the stored settings.
+    /// </param>
+    private async Task ApplyResultAsync(ModelGatewayCallResult<ModelGatewaySettingsResponse> result, string success, bool keepUnsavedEdits = false)
     {
         busy = true;
         try
         {
             messageIsError = !result.Succeeded;
             message = result.Succeeded ? success : result.Error;
-            if (result.Value is { } value) Apply(value);
+            if (result.Value is { } value)
+            {
+                if (!keepUnsavedEdits)
+                {
+                    Apply(value);
+                }
+                else
+                {
+                    settings = value;
+                    notice = value.ConnectionNotice ?? notice;
+                    if (form.Refresh(value) && result.Succeeded)
+                    {
+                        message += " Your unsaved changes are still here: press \"Save settings\" to keep them.";
+                    }
+                }
+            }
         }
         finally
         {
