@@ -178,6 +178,12 @@ public static partial class ExternalReleaseNameEvidence
             else if (Packaging.Contains(token) || Regex.IsMatch(token, @"^(?:\d{1,3}(?:ST|ND|RD|TH)|(?:1[4-9]|20)\d{2})$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) consumed[index] = true;
             else if (token == "S" && index > 0 && consumed[index - 1]) consumed[index] = true;
         }
+        // A cue word ("ungekürzt") states a language only when no language was named outright.
+        if (language is null && LanguageCueWords.TryFind(tokens, consumed, out var cueLanguage, out var cueStart, out var cueLength))
+        {
+            language = cueLanguage;
+            Mark(cueStart, cueLength);
+        }
         var contradiction = seriesEvidence.FirstOrDefault(value => value.State == IdentityEvidenceState.Conflicting);
         return new(title?.IsPositive == true, affinity.HasStrongSupport, language, narrator, format,
             tokens.Where((_, index) => !consumed[index]).ToArray(),

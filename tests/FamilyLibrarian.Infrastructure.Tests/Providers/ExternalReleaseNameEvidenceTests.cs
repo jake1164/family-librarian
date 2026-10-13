@@ -1,3 +1,5 @@
+using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Providers;
@@ -251,6 +253,66 @@ public sealed class ExternalReleaseNameEvidenceTests
             verdict.IsStrictWorkAssertion,
             $"unexplained: [{string.Join(", ", verdict.UnexplainedTokens)}]");
     }
+
+    /// <summary>AUTOFIND 0d: a release that states its language only through a cue word.</summary>
+    [TestMethod]
+    [DataRow("Jack Carr The Terminal List Die Abschussliste (ungekürzt)", "de")]
+    [DataRow("Jack Carr The Terminal List Die Abschussliste (ungekuerzt)", "de")]
+    [DataRow("Jack Carr The Terminal List Hörbuch", "de")]
+    [DataRow("Jack Carr The Terminal List Hoerbuch", "de")]
+    [DataRow("Jack Carr The Terminal List Hörspiel", "de")]
+    [DataRow("Jack Carr The Terminal List livre audio", "fr")]
+    [DataRow("Jack Carr The Terminal List lu par Paul Dupont", "fr")]
+    [DataRow("Jack Carr The Terminal List intégrale", "fr")]
+    public void ALanguageCueWordResolvesTheReleaseLanguage(string release, string language) =>
+        Assert.AreEqual(language, ExternalReleaseNameEvidence.Evaluate(
+            release, ["The Terminal List"], "Jack Carr").AssertedLanguage);
+
+    [TestMethod]
+    [DataRow("Jack Carr The Terminal List Unabridged")]
+    [DataRow("Jack Carr The Terminal List read by Ray Porter")]
+    [DataRow("Jack Carr The Terminal List Audiobook")]
+    public void AReleaseWithoutALanguageCueAssertsNoLanguage(string release) =>
+        Assert.IsNull(ExternalReleaseNameEvidence.Evaluate(
+            release, ["The Terminal List"], "Jack Carr").AssertedLanguage);
+
+    [TestMethod]
+    public void ALanguageNameWinsOverACueWord() =>
+        Assert.AreEqual("fr", ExternalReleaseNameEvidence.Evaluate(
+            "Jack Carr The Terminal List French Hörbuch", ["The Terminal List"], "Jack Carr").AssertedLanguage);
+
+    [TestMethod]
+    public void ACueWordLanguageConflictsWithTheRequestedLanguageAndBlocksTheCandidate()
+    {
+        var requested = new BookIdentity("The Terminal List", "Jack Carr", []);
+        var candidate = new ExternalProviderCandidate(
+            "custom-scheme:german-1",
+            ExternalProviderWorkEvidence.Empty,
+            Release: Release("Jack Carr The Terminal List Die Abschussliste (ungekürzt)"));
+
+        var assessment = DeterministicCandidateIdentityResolver.Assess(requested, candidate);
+
+        Assert.AreEqual("de", assessment.ReleaseEvidence.AssertedLanguage);
+        Assert.AreEqual(IdentityEvidenceState.Conflicting, assessment.LanguageEvidence);
+        Assert.AreEqual(WorkIdentityDecision.Mismatch, assessment.Decision);
+    }
+
+    [TestMethod]
+    public void AStructuredEditionLanguageStillWinsOverACueWord()
+    {
+        var requested = new BookIdentity("The Terminal List", "Jack Carr", []);
+        var candidate = new ExternalProviderCandidate(
+            "custom-scheme:english-1",
+            ExternalProviderWorkEvidence.Empty,
+            new ExternalProviderEditionEvidence("en", null, null, []),
+            Release("Jack Carr The Terminal List Hörbuch"));
+
+        Assert.AreNotEqual(IdentityEvidenceState.Conflicting,
+            DeterministicCandidateIdentityResolver.Assess(requested, candidate).LanguageEvidence);
+    }
+
+    private static ExternalProviderReleaseEvidence Release(string name) =>
+        new(name, null, null, null, null, null, null, null, [], null);
 
     [TestMethod]
     public void AReleaseOfADifferentSeriesVolumeStaysUnexplained()

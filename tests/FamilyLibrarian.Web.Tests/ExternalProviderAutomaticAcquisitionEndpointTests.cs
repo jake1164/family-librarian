@@ -1150,9 +1150,10 @@ file sealed class FakeHobbitExternalProviderClient : IExternalProviderClient
 }
 
 /// <summary>
-/// Always returns a plausible-looking but unrelated title/author, no matter
-/// what it was actually searched for -- never an Identifier-basis match
-/// against any real Work, so it always requires review.
+/// Always returns one result that states no title or author, no matter what it
+/// was searched for -- never an Identifier-basis match against any real Work,
+/// and not contradicting one either (AUTOFIND Phase 1 discards results that do),
+/// so it always requires review.
 /// </summary>
 file sealed class WrongTitleExternalProviderClient : IExternalProviderClient
 {
@@ -1172,7 +1173,7 @@ file sealed class WrongTitleExternalProviderClient : IExternalProviderClient
         CancellationToken cancellationToken)
     {
         IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-            ? [ExternalProviderCandidate.FromSimple("wrong-title-1", "Dim Sum of Fears", "Someone Unrelated", "epub", null)]
+            ? [ExternalProviderCandidate.FromSimple("wrong-title-1", "", null, "epub", null)]
             : [];
         return Task.FromResult(candidates);
     }

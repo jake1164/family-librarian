@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
@@ -187,6 +188,12 @@ public sealed class ExternalProviderRecheckService(
 
                         reviewableOptions = ExternalCandidateRanker.Rank(reviewableOptions, format.MediaType).ToArray();
 
+                        // Only a result that could be this book is worth a person's time. A result that
+                        // contradicts the requested work, or exists only in another language, is recorded
+                        // as no acceptable copy: the request keeps waiting and nobody is asked to choose.
+                        // Automatic acquisition below still sees every option; this narrows review only.
+                        var reviewCandidates = ReviewableForRequester(reviewableOptions, work.Language);
+
                         // A provider that lists one audiobook as separately
                         // numbered fragments ("1 of 2", "2 of 2") has no single
                         // record that is the whole book. When every part of one
@@ -212,7 +219,7 @@ public sealed class ExternalProviderRecheckService(
                                 var setReason = $"A complete {completeSet.Total}-part audiobook set was found, but it " +
                                     $"could not be fetched. {started.Error}";
                                 var setRecorded = await MarkForCandidateReviewAsync(
-                                    request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
+                                    request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates,
                                     setReason, cancellationToken);
                                 AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
                                     setRecorded
@@ -263,7 +270,7 @@ public sealed class ExternalProviderRecheckService(
                         {
                             var exhaustedReason = DescribeExhaustedAttempts(request, format, provider);
                             var exhaustedRecorded = await MarkForCandidateReviewAsync(
-                                request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
+                                request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates,
                                 exhaustedReason, cancellationToken);
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
                                 exhaustedRecorded
@@ -335,13 +342,20 @@ public sealed class ExternalProviderRecheckService(
                             break;
                         }
 
+                        if (reviewCandidates.Length == 0)
+                        {
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.NoMatch,
+                                DescribeNoAcceptableCopy(options, work.Language), nextCheck);
+                            continue;
+                        }
+
                         var recorded = await MarkForCandidateReviewAsync(
-                            request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
-                            DescribeCandidateReviewReason(reviewableOptions, provider.AutoAcquireEnabled), cancellationToken);
+                            request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates,
+                            DescribeCandidateReviewReason(reviewCandidates, provider.AutoAcquireEnabled), cancellationToken);
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
                             recorded
-                                ? $"Found {reviewableOptions.Count} candidate(s); choose a reviewed candidate before acquisition."
-                                : $"Found {reviewableOptions.Count} candidate(s), but this request is already under " +
+                                ? $"Found {reviewCandidates.Length} candidate(s); choose a reviewed candidate before acquisition."
+                                : $"Found {reviewCandidates.Length} candidate(s), but this request is already under " +
                                   "review for a different reason; it will be reconsidered once that is resolved.",
                             nextEligibleCheckAtUtc: null);
                         break;
@@ -547,16 +561,57 @@ public sealed class ExternalProviderRecheckService(
     /// for an unrelated reason in the same pass, and there is nothing this
     /// provider can add to that.
     /// </returns>
+    /// <summary>
+    /// What a person may be asked to choose between: not blocked by the identity assessment (a rule-level
+    /// contradiction of title, language or edition) and in the accepted language. Author spelling alone never
+    /// blocks. The checker's own result is untouched because browsing callers and the admin debug search show it all.
+    /// </summary>
+    private static FulfillmentOption[] ReviewableForRequester(
+        IReadOnlyList<FulfillmentOption> options, string? acceptedLanguage) =>
+        options.Where(option =>
+            option.AcquisitionAssessment?.Suitability != AcquisitionSuitability.Blocked &&
+            LanguageAcceptance.IsAcceptedOrUnspecified(option.Language, acceptedLanguage)).ToArray();
+
+    private static string DescribeNoAcceptableCopy(IReadOnlyList<FulfillmentOption> options, string? acceptedLanguage)
+    {
+        var otherLanguages = options
+            .Where(option => !LanguageAcceptance.IsAcceptedOrUnspecified(option.Language, acceptedLanguage))
+            .Select(option => option.Language!).ToArray();
+        return otherLanguages.Length == options.Count
+            ? "Found only editions in other languages (" +
+              string.Join(", ", otherLanguages.Select(DescribeLanguage).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)) + ")."
+            : $"Found {options.Count} result(s); none of them is this book.";
+    }
+
+    private static string DescribeLanguage(string language)
+    {
+        var code = language.Trim();
+        var separator = code.IndexOfAny(['-', '_']);
+        try
+        {
+            return CultureInfo.GetCultureInfo(separator > 0 ? code[..separator] : code).EnglishName;
+        }
+        catch (CultureNotFoundException)
+        {
+            return code;
+        }
+    }
+
     private async Task<bool> MarkForCandidateReviewAsync(
         BookRequest request,
         RequestFormat format,
         ExternalProvider provider,
         string workTitle,
         string? workAuthor,
-        IReadOnlyList<FulfillmentOption> options,
+        FulfillmentOption[] options,
         string reason,
         CancellationToken cancellationToken)
     {
+        if (options.Length == 0)
+        {
+            return false;
+        }
+
         // The stored review may collapse records that are identical to the
         // requester, so do not report the raw provider result count as though
         // it were the number of choices a person will see.

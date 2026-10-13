@@ -40,6 +40,32 @@ public sealed class EpubAssetIdentityVerifierTests
     }
 
     [TestMethod]
+    public async Task ACatalogAuthorQualifierDoesNotHoldAnOtherwiseMatchingPackage()
+    {
+        var verifier = CreateVerifier("The Terminal List", "Carr, Jack (Joint pseudonym)");
+
+        var result = await verifier.VerifyAsync(
+            CreateAsset(),
+            BuildEpub("The Terminal List", "Jack Carr"),
+            CancellationToken.None);
+
+        Assert.IsTrue(result.IsMatch);
+    }
+
+    [TestMethod]
+    public async Task ACatalogAuthorQualifierDoesNotExcuseADifferentCreator()
+    {
+        var verifier = CreateVerifier("The Terminal List", "Carr, Jack (Joint pseudonym)");
+
+        var result = await verifier.VerifyAsync(
+            CreateAsset(),
+            BuildEpub("The Terminal List", "Jack Carroll"),
+            CancellationToken.None);
+
+        Assert.IsFalse(result.IsMatch);
+    }
+
+    [TestMethod]
     public async Task ATitleDifferingOnlyByALeadingArticleIsAccepted()
     {
         var verifier = CreateVerifier("Green Mummy", "Fergus Hume");

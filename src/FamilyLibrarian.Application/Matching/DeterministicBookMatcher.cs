@@ -259,7 +259,7 @@ public sealed class DeterministicBookMatcher : IBookMatcher
     {
         var tokens = new HashSet<string>(StringComparer.Ordinal);
         var token = new StringBuilder();
-        foreach (var character in value.Normalize(NormalizationForm.FormKC))
+        foreach (var character in AuthorNameForm.Canonical(value).Normalize(NormalizationForm.FormKC))
         {
             if (char.IsLetterOrDigit(character))
             {

@@ -13,11 +13,11 @@ public sealed record AuthorAffinityResult(
 
 public static class AuthorAffinity
 {
-    private static readonly HashSet<string> Suffixes = new(StringComparer.Ordinal) { "JR", "SR", "II", "III", "IV" };
+    private static readonly HashSet<string> Suffixes = AuthorNameForm.Suffixes;
 
     public static AuthorAffinityResult Evaluate(string? wanted, string? detected, bool structured = true)
     {
-        var expected = Tokens(Reorder(wanted));
+        var expected = Tokens(wanted);
         var observed = Tokens(detected);
         AuthorAffinityResult Result(AuthorAffinityKind kind, int score, string first = "unknown", string last = "unknown") =>
             new(kind, score, wanted, detected, first, last);
@@ -25,9 +25,13 @@ public static class AuthorAffinity
             return Result(AuthorAffinityKind.Unknown, 0);
         if (expected.ToHashSet(StringComparer.Ordinal).SetEquals(observed))
             return Result(AuthorAffinityKind.Exact, 100, "exact", "exact");
-        // Single-component requested names support exact evidence only.
+        // A single-component requested name ("Homer") can only be supported by that exact component.
         if (expected.Length < 2)
+        {
+            if (observed.Contains(expected[0], StringComparer.Ordinal))
+                return Result(AuthorAffinityKind.LastOnly, 70, "unknown", "exact");
             return Result(structured ? AuthorAffinityKind.Conflict : AuthorAffinityKind.Unknown, structured ? -100 : 0);
+        }
         var first = Best(expected[0], observed, allowInitial: true);
         var last = Best(expected[^1], observed, allowInitial: false);
         // An incompatible full component is contradictory, rather than a partial match.
@@ -55,22 +59,14 @@ public static class AuthorAffinity
 
     internal static bool IsSupportingToken(string? wanted, string token)
     {
-        var expected = Tokens(Reorder(wanted));
+        var expected = Tokens(wanted);
         if (expected.Length == 0) return false;
         return Suffixes.Contains(token) || expected.Contains(token, StringComparer.Ordinal) ||
             Match(expected[0], token, true) != "unknown" || Match(expected[^1], token, false) != "unknown";
     }
 
-    private static string? Reorder(string? name)
-    {
-        if (name is null) return null;
-        var parts = name.Split(',');
-        return parts.Length == 2 && !Suffixes.Contains(parts[1].Trim().TrimEnd('.').ToUpperInvariant())
-            ? $"{parts[1]} {parts[0]}" : name;
-    }
-
     private static string[] Tokens(string? value) => string.IsNullOrWhiteSpace(value) ? [] :
-        DeterministicBookMatcher.NormalizeWords(value).ToUpperInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        DeterministicBookMatcher.NormalizeWords(AuthorNameForm.Canonical(value)).ToUpperInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Where(token => !Suffixes.Contains(token)).ToArray();
 
     private static string Best(string expected, string[] observed, bool allowInitial) =>
@@ -81,18 +77,35 @@ public static class AuthorAffinity
     {
         if (expected == actual) return "exact";
         if (allowInitial && actual.Length == 1 && expected.Length > 1 && actual[0] == expected[0]) return "initial";
-        // One insertion/deletion/substitution only; short names are never fuzzed.
-        if (Math.Min(expected.Length, actual.Length) < 5 || Math.Max(expected.Length, actual.Length) > 64 ||
-            Math.Abs(expected.Length - actual.Length) > 1) return "unknown";
-        var previous = Enumerable.Range(0, actual.Length + 1).ToArray();
+        return IsFuzzyCandidate(expected, actual) && EditDistance(expected, actual) == 1 ? "fuzzy" : "unknown";
+    }
+
+    // One edit only. Names of five or more letters may differ anywhere; a name of four letters
+    // (or a three-letter form of one) only when the first letter agrees. Shorter names are never fuzzed.
+    private static bool IsFuzzyCandidate(string expected, string actual)
+    {
+        var shorter = Math.Min(expected.Length, actual.Length);
+        var longer = Math.Max(expected.Length, actual.Length);
+        if (longer > 64 || longer - shorter > 1) return false;
+        return shorter >= 5 || shorter >= 3 && longer >= 4 && expected[0] == actual[0];
+    }
+
+    /// <summary>Optimal string alignment: insertion, deletion, substitution or one adjacent transposition each cost one.</summary>
+    private static int EditDistance(string expected, string actual)
+    {
+        var table = new int[expected.Length + 1, actual.Length + 1];
+        for (var i = 0; i <= expected.Length; i++) table[i, 0] = i;
+        for (var j = 0; j <= actual.Length; j++) table[0, j] = j;
         for (var i = 1; i <= expected.Length; i++)
         {
-            var current = new int[actual.Length + 1];
-            current[0] = i;
             for (var j = 1; j <= actual.Length; j++)
-                current[j] = Math.Min(Math.Min(previous[j] + 1, current[j - 1] + 1), previous[j - 1] + (expected[i - 1] == actual[j - 1] ? 0 : 1));
-            previous = current;
+            {
+                var cost = expected[i - 1] == actual[j - 1] ? 0 : 1;
+                table[i, j] = Math.Min(Math.Min(table[i - 1, j] + 1, table[i, j - 1] + 1), table[i - 1, j - 1] + cost);
+                if (i > 1 && j > 1 && expected[i - 1] == actual[j - 2] && expected[i - 2] == actual[j - 1])
+                    table[i, j] = Math.Min(table[i, j], table[i - 2, j - 2] + 1);
+            }
         }
-        return previous[^1] == 1 ? "fuzzy" : "unknown";
+        return table[expected.Length, actual.Length];
     }
 }

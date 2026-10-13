@@ -162,13 +162,7 @@ public static class BookCandidateGrouper
         // Strip trailing notes some providers include (e.g. "Carr, Jack (Joint
         // pseudonym)") and reorder "Last, First" to "First Last" so it lines up
         // with the form other providers use for the same person.
-        var openParenIndex = author.IndexOf('(');
-        var withoutParenthetical = (openParenIndex < 0 ? author : author[..openParenIndex]).Trim();
-
-        var commaIndex = withoutParenthetical.IndexOf(',');
-        var reordered = commaIndex > 0 && commaIndex < withoutParenthetical.Length - 1
-            ? $"{withoutParenthetical[(commaIndex + 1)..].Trim()} {withoutParenthetical[..commaIndex].Trim()}"
-            : withoutParenthetical;
+        var reordered = Matching.AuthorNameForm.Canonical(author);
 
         return reordered.Length == 0 ? string.Empty : CatalogText.NormalizeForMatch(reordered);
     }

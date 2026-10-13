@@ -248,6 +248,26 @@ public sealed class DeterministicBookMatcherTests
             "Threshing Day",
             "Rebecca Yarros"));
 
+    /// <summary>
+    /// AUTOFIND 0a: the catalog's "Carr, Jack (Joint pseudonym)" is noise
+    /// around the same person, so removing the qualifier and the comma order
+    /// must not widen matching to a different, longer name.
+    /// </summary>
+    [TestMethod]
+    [DataRow("Carr, Jack (Joint pseudonym)", "Jack Carr", true)]
+    [DataRow("Carr, Jack", "Jack Carr", true)]
+    [DataRow("Jack Carr (Editor)", "Jack Carr", true)]
+    [DataRow("Jack Carr", "Carr, Jack (Joint pseudonym)", true)]
+    [DataRow("Jack Carr", "Jack Carroll", false)]
+    [DataRow("Carr, Jack (Joint pseudonym)", "Jack Carroll", false)]
+    public void AuthorQualifiersAndNameOrderAreNoiseNotEvidence(string expected, string candidate, bool matches) =>
+        Assert.AreEqual(matches, matcher.AuthorMatches(expected, candidate));
+
+    [TestMethod]
+    public void AStrictTitleAuthorMatchIgnoresACatalogAuthorQualifier() =>
+        Assert.IsTrue(matcher.StrictTitleAuthorMatches(
+            "The Terminal List", "Carr, Jack (Joint pseudonym)", "The Terminal List", "Jack Carr"));
+
     [TestMethod]
     public void AnUnrelatedBookSharingAWordIsStillRejected()
     {
