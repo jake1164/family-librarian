@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -16,6 +17,20 @@ public sealed class SecurityEvaluationRepository(AppDbContext database) : ISecur
         await database.MediaAssets
             .Where(asset => asset.BundleId == bundleId)
             .OrderBy(asset => asset.BundleSequence)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<MediaAsset>> ListHeldAssetsOfSettledFormatsAsync(
+        int maximumCount, CancellationToken cancellationToken) =>
+        await (
+            from asset in database.MediaAssets
+            join format in database.RequestFormats on asset.AssociatedRequestFormatId equals format.Id
+            join request in database.BookRequests on format.RequestId equals request.Id
+            where (asset.StorageState == MediaAssetStorageState.Unmatched || asset.StorageState == MediaAssetStorageState.Rejected) &&
+                (format.Status == RequestFormatStatus.Available || format.Status == RequestFormatStatus.Cancelled ||
+                    request.Status == RequestStatus.Available || request.Status == RequestStatus.Cancelled)
+            orderby asset.UpdatedAtUtc
+            select asset)
+            .Take(maximumCount)
             .ToListAsync(cancellationToken);
 
     public Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken) =>

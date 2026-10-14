@@ -85,14 +85,13 @@ public sealed class AcquisitionJobPollingService(
         if (HasOutlivedItsTimeLimit(job) is { } limit)
         {
             // A provider that never finishes (on the lab: an NZB its indexer would not hand over, retried every few
-            // seconds for a day) must not hold the request hostage. Ask it to stop and release the job, best effort,
-            // then record a failure so the retry loop moves on to the next copy or a librarian.
+            // seconds for a day) must not hold the request hostage. Ask it to stop, best effort, then record a failure
+            // (which also releases the job) so the retry loop moves on to the next copy or a librarian.
             if (job.ProviderJobId is { } providerJobId)
             {
                 try
                 {
                     await client.CancelAcquireAsync(provider.BaseUrl, apiKey, providerJobId, cancellationToken);
-                    await client.TryDeleteAcquireAsync(provider.BaseUrl, apiKey, providerJobId, cancellationToken);
                 }
                 catch (Exception exception) when (exception is HttpRequestException or ExternalProviderProtocolException or TimeoutException)
                 {
@@ -520,8 +519,21 @@ public sealed class AcquisitionJobPollingService(
         // security/structure check rejected it. For the retry loop that is a failed copy exactly like a failed
         // download. Without this the format kept its "Submitted" attempt with no next check, so the request was
         // neither retried nor sent to review. A part of a set is judged as a whole by the part-set path instead.
-        if (job.IsAutomaticAcquisition && job.PartSetId is null &&
-            await FindUnusableFileReasonAsync(stageResult.MediaAssetIds, cancellationToken) is { } unusable)
+        var unusable = job.PartSetId is null
+            ? await FindUnusableFileReasonAsync(stageResult.MediaAssetIds, cancellationToken)
+            : null;
+        if (unusable is null && job.PartSetId is null)
+        {
+            // The ledger's last word on this copy. Without it the "Submitted" row stayed the latest one and the
+            // activity page showed a download that had long since reached the library as "In progress".
+            attempts.Add(new ProviderAttempt(
+                job.RequestId, job.RequestFormatId, job.ProviderId, ProviderAttemptOutcome.Acquired,
+                "Downloaded. The copy was received and passed on for checking and publishing.", clock.UtcNow,
+                nextEligibleCheckAtUtc: null));
+            await attempts.SaveChangesAsync(cancellationToken);
+        }
+
+        if (job.IsAutomaticAcquisition && unusable is not null)
         {
             var now = clock.UtcNow;
             var automatic = await RecordAutomaticCandidateFailureAsync(job, unusable, cancellationToken);
@@ -533,6 +545,7 @@ public sealed class AcquisitionJobPollingService(
             await attempts.SaveChangesAsync(cancellationToken);
             if (automatic.AdvancesToNextCandidate)
             {
+                await MarkRuledOutAsync(stageResult.MediaAssetIds, now, cancellationToken);
                 fulfillmentSignal?.Request();
             }
         }
@@ -544,6 +557,37 @@ public sealed class AcquisitionJobPollingService(
                 new { job.Id, job.RequestId, job.RequestFormatId, job.ProviderId }, cancellationToken);
         }
 
+    }
+
+    /// <summary>
+    /// Releases a failed job at the provider (protocol v2 DELETE), best effort. Only completed jobs used to be released,
+    /// so every failed download's files stayed on the provider's disk: on the lab, all four leftover folders (3.3 GB)
+    /// belonged to failed jobs. A failure here leaves the provider's own retention to clean up.
+    /// </summary>
+    private async Task ReleaseAtProviderAsync(ProviderAcquisitionJob job, CancellationToken cancellationToken)
+    {
+        if (job.ProviderJobId is not { } providerJobId)
+        {
+            return;
+        }
+
+        try
+        {
+            var provider = await externalProviders.FindAsync(job.ExternalProviderId, cancellationToken);
+            if (provider is null)
+            {
+                return;
+            }
+
+            var apiKey = provider.HasApiKey
+                ? protector.Unprotect(ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
+                : null;
+            await client.TryDeleteAcquireAsync(provider.BaseUrl, apiKey, providerJobId, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Best effort: the failure itself is still recorded.
+        }
     }
 
     /// <summary>How long a provider job may stay queued, or keep running, before it is treated as failed.</summary>
@@ -587,6 +631,30 @@ public sealed class AcquisitionJobPollingService(
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Marks a held copy the loop has moved past, so the security queue shows it as settled rather than as an identity
+    /// review nobody needs to do. An exhausted budget leaves the mark off: the request then goes to a librarian, and
+    /// that copy is one of the things to look at.
+    /// </summary>
+    private async Task MarkRuledOutAsync(IReadOnlyList<Guid> assetIds, DateTimeOffset atUtc, CancellationToken cancellationToken)
+    {
+        if (assets is null)
+        {
+            return;
+        }
+
+        foreach (var assetId in assetIds)
+        {
+            var asset = await assets.FindAssetAsync(assetId, cancellationToken);
+            if (asset?.StorageState is MediaAssetStorageState.Unmatched or MediaAssetStorageState.Rejected or MediaAssetStorageState.Quarantine)
+            {
+                asset.MarkRuledOut(atUtc);
+            }
+        }
+
+        await assets.SaveChangesAsync(cancellationToken);
     }
 
     /// <summary>Rules the job's candidate out and reports whether the provider's attempt budget allows another copy.</summary>
@@ -695,6 +763,7 @@ public sealed class AcquisitionJobPollingService(
                 string.Equals(attempt.ProviderId, job.ProviderId, StringComparison.OrdinalIgnoreCase) &&
                 attempt.Summary.StartsWith("CANDIDATE_CHANGED:", StringComparison.Ordinal));
         job.RecordFailure(errorCode, errorMessage, retryable, retryAfterSeconds, detailsJson, now);
+        await ReleaseAtProviderAsync(job, cancellationToken);
 
         // One part of an automatic set failing fails the whole set: the other
         // parts stop, anything staged is destroyed and a librarian is asked.

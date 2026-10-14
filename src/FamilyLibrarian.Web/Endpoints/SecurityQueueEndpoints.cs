@@ -109,7 +109,8 @@ internal static class SecurityQueueEndpoints
                 finding.FailureDetail, finding.Model, finding.IsCloud, finding.CreatedAtUtc)
             : null,
         entry.Asset.BundleId,
-        entry.Asset.BundleTrackCount);
+        entry.Asset.BundleTrackCount,
+        entry.Asset.RuledOutAtUtc);
 
     private static ArtifactEvidenceResponse ToEvidenceResponse(IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence> evidence) =>
         evidence.Count == 0

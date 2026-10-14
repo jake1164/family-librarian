@@ -26,10 +26,16 @@ public sealed class FulfilledFormatDownloadCancellation(
 {
     public const string ErrorCode = "FORMAT_FULFILLED";
 
-    public async Task CancelRemainingAsync(Guid requestFormatId, CancellationToken cancellationToken)
+    /// <param name="deliveredAssetIds">
+    /// The file(s) that fulfilled the format. The job that produced them is still finishing when publishing runs (it is
+    /// marked complete only after its files are evaluated), so it must not be cancelled as though it were a rival copy.
+    /// </param>
+    public async Task CancelRemainingAsync(
+        Guid requestFormatId, IReadOnlyCollection<Guid> deliveredAssetIds, CancellationToken cancellationToken)
     {
         var active = await jobs.ListActiveForFormatAsync(requestFormatId, cancellationToken);
-        foreach (var job in active)
+        foreach (var job in active.Where(job =>
+                     !job.Outputs.Any(output => output.MediaAssetId is { } assetId && deliveredAssetIds.Contains(assetId))))
         {
             await ReleaseAtProviderAsync(job, cancellationToken);
             job.Cancel("Another copy of this book is already in the library.", clock.UtcNow, ErrorCode);

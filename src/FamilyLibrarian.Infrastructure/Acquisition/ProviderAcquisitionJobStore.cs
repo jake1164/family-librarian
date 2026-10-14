@@ -60,6 +60,7 @@ public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProvid
     public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListActiveForFormatAsync(
         Guid requestFormatId, CancellationToken cancellationToken) =>
         await database.ProviderAcquisitionJobs
+            .Include(job => job.Outputs)
             .Where(job => job.RequestFormatId == requestFormatId &&
                 (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Queued ||
                  job.LifecycleState == ProviderAcquisitionJobLifecycleState.Running ||

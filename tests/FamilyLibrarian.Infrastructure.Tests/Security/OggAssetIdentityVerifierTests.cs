@@ -204,7 +204,7 @@ public sealed class OggAssetIdentityVerifierTests
     }
 
     [TestMethod]
-    public async Task AGermanDescriptionWithNoLanguageTagPreventsClearing()
+    public async Task AGermanDescriptionWithNoLanguageTagIsALanguageConflict()
     {
         var bytes = Vorbis("ALBUM=The Terminal List - Die Abschussliste", "ARTIST=Jack Carr", "GENRE=Spionage-Thriller", "DESCRIPTION=" + GermanBlurb);
 
@@ -213,8 +213,8 @@ public sealed class OggAssetIdentityVerifierTests
             var asset = AssetFor(origin);
             var result = await VerifyAsync(bytes, origin, asset);
 
-            Assert.AreEqual(ArtifactEvidenceRecorder.NoVerifierId, result.VerifierId);
-            Assert.AreEqual(NoVerifierOutcome.For(asset).IsMatch, result.IsMatch);
+            Assert.AreNotEqual(ArtifactEvidenceRecorder.NoVerifierId, result.VerifierId);
+            Assert.IsFalse(result.IsMatch);
             Assert.AreEqual("inferred:de", result.Facts.Single(fact => fact.FindingId == "ev-language-inferred").Value);
         }
     }

@@ -13,13 +13,14 @@ public sealed class AlternateWorkTitlesTests
     [DataRow("Yarros, Rebecca")]
     [DataRow("REBECCA YARROS")]
     [DataRow("Yarros")]
+    // Reduces to "Rebecca Yarros" (subtitle after " - " removed), the form search and acceptance use: the second lab run.
+    [DataRow("Rebecca Yarros - Onyx Storm (The Empyrean Book 3) (2025)")]
     public void ATitleThatIsOnlyTheAuthorsNameIsNotUsable(string title) =>
         Assert.IsFalse(AlternateWorkTitles.IsUsable(title, Authors));
 
     [TestMethod]
     [DataRow("Alas de ónix")]
     [DataRow("Onyx Storm Rebecca Yarros")]
-    [DataRow("Rebecca Yarros - Onyx Storm (The Empyrean Book 3) (2025)")]
     [DataRow("Onyx Storm (Wing and Claw Collection)")]
     public void ATitleWithItsOwnWordsIsKept(string title) =>
         Assert.IsTrue(AlternateWorkTitles.IsUsable(title, Authors));

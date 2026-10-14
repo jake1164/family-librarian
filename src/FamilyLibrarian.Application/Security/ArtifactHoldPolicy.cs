@@ -24,7 +24,8 @@ namespace FamilyLibrarian.Application.Security;
 /// and at least 10% of entries (OQ-4). Smaller navigation defects and duplicate reading-order files remain evidence.
 /// A file with no cue is never promoted to complete.</item>
 /// <item><b>Expected profile.</b> A conflicting series position, explicit abridgement, or a clear catalog-length shortfall
-/// holds. Moderate shortfalls and inferred heading language remain evidence; unknown measurements never hold.</item>
+/// holds. Moderate shortfalls and inferred heading language remain evidence (an audiobook's clearly inferred
+/// description language is a language conflict decided by its verifier, before this policy); unknown measurements never hold.</item>
 /// <item><b>Legacy rows</b> (created before origin existed) keep their prior behavior: no retroactive holds.</item>
 /// </list>
 /// </remarks>
@@ -42,20 +43,7 @@ public static class ArtifactHoldPolicy
 
         var holds = new List<(string Code, string Reason)>();
 
-        // A content check that ran but was overruled by the file's own text reads as German (or another language) falls
-        // back to attestation; say so, rather than claim that no check exists for the format.
-        var inferredLanguage = result.Facts.FirstOrDefault(fact => fact.Code == EvidenceReasonCodes.ArtifactLanguage.InferredConflicts);
         if (result.VerifierId == ArtifactEvidenceRecorder.NoVerifierId &&
-            asset.Origin is not (AssetOrigin.ManualUpload or AssetOrigin.BuiltInProvider) &&
-            inferredLanguage is not null)
-        {
-            holds.Add((asset.Origin == AssetOrigin.ExternalProvider
-                    ? EvidenceReasonCodes.IdentityHold.AttestedOnlyExternal
-                    : EvidenceReasonCodes.IdentityHold.AttestedOnlyUnknownOrigin,
-                $"The file's tags name the requested book, but its description and other text read as another language " +
-                $"({inferredLanguage.Value}) than the one requested. A librarian must confirm it before it is trusted."));
-        }
-        else if (result.VerifierId == ArtifactEvidenceRecorder.NoVerifierId &&
             asset.Origin is not (AssetOrigin.ManualUpload or AssetOrigin.BuiltInProvider))
         {
             holds.Add(asset.Origin == AssetOrigin.ExternalProvider

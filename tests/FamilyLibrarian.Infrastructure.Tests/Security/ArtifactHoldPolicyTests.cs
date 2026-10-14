@@ -61,22 +61,6 @@ public sealed class ArtifactHoldPolicyTests
         Assert.AreEqual(NoVerifier, result.VerifierId, "The recorder still reports 'no content verifier' for it.");
     }
 
-    // The lab's German MP3 set: the tag check ran and found German text, so "no content check exists" was untrue.
-    [TestMethod]
-    public void AnAttestedOnlyHoldCausedByInferredLanguageSaysSo()
-    {
-        var inferred = new IdentityFact(
-            "ev-language-inferred", EvidenceDimension.Language, EvidenceReasonCodes.ArtifactLanguage.InferredConflicts,
-            EvidencePolarity.Negative, "inferred:de");
-
-        var result = ArtifactHoldPolicy.Apply(Asset(AssetOrigin.ExternalProvider), Matched(NoVerifier, inferred));
-
-        Assert.IsFalse(result.IsMatch);
-        Assert.AreEqual("identity.hold.attested_only_external", result.HoldCode, "The hold itself is unchanged.");
-        StringAssert.Contains(result.Reason, "read as another language (inferred:de)");
-        Assert.DoesNotContain("No content check exists", result.Reason!);
-    }
-
     [TestMethod]
     public void AnAttestedOnlyFormatWithNoTrustworthyOriginIsHeldToo()
     {

@@ -14,6 +14,32 @@ namespace FamilyLibrarian.Infrastructure.Tests.Providers;
 [TestClass]
 public sealed class ExternalReleaseNameEvidenceTests
 {
+    // The second lab run downloaded book 6 for "The Terminal List" (book 1): the series is named after book one. The
+    // colon here is the U+A789 look-alike the real release used.
+    [TestMethod]
+    [DataRow("Only the Dead꞉ Terminal List, 6 - Jack Carr - 2023 (miok) [Audiobook] (Thriller)")]
+    [DataRow("Only the Dead: Terminal List, 6 - Jack Carr")]
+    [DataRow("Only the Dead: Terminal List #6 - Jack Carr")]
+    [DataRow("Only the Dead: Terminal List Book 6 - Jack Carr")]
+    public void TheRequestedTitleUsedOnlyAsAnotherBooksSeriesLabelIsNotATitleMatch(string release)
+    {
+        var verdict = ExternalReleaseNameEvidence.Evaluate(release, ["The terminal list"], "Jack Carr");
+
+        Assert.IsFalse(verdict.AssertsExpectedTitle, release);
+        Assert.IsFalse(verdict.IsStrictWorkAssertion, release);
+    }
+
+    [TestMethod]
+    [DataRow("The Terminal List - Jack Carr (Terminal List 1)")]
+    [DataRow("Jack Carr - The Terminal List")]
+    [DataRow("Terminal List: The Terminal List, 1 - Jack Carr")]
+    public void TheRequestedTitleIsStillMatchedWhenItIsTheReleasesOwnTitleOrBookOne(string release)
+    {
+        var verdict = ExternalReleaseNameEvidence.Evaluate(release, ["The terminal list"], "Jack Carr");
+
+        Assert.IsTrue(verdict.AssertsExpectedTitle, release);
+    }
+
     [TestMethod]
     public void JoinedBookNumberAndFormatInTheLiveNameAreExplained()
     {

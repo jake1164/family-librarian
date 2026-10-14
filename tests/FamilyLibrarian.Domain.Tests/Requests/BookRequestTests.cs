@@ -352,4 +352,31 @@ public sealed class BookRequestTests
 
     private static BookRequest Create(params RequestMediaType[] mediaTypes) =>
         new(UserId, WorkId, mediaTypes, null, CreatedAt);
+
+    // The lab: a review reason built from three long provider failures exceeded the limit, the domain threw, and the
+    // background pass that moves every request forward failed on each run.
+    [TestMethod]
+    public void AReasonTheSystemWroteIsTrimmedToFitInsteadOfRejected()
+    {
+        var request = new BookRequest(UserId, WorkId, [RequestMediaType.Audiobook], null, CreatedAt);
+        var longReason = string.Concat(Enumerable.Repeat("Attempt did not work out because of a long provider message. ", 40));
+
+        request.TransitionTo(RequestStatus.NeedsReview, actorUserId: null, longReason, CreatedAt.AddMinutes(1));
+
+        Assert.AreEqual(RequestStatus.NeedsReview, request.Status);
+        var recorded = request.StatusHistory.Last().Reason!;
+        Assert.AreEqual(BookRequest.MaxReasonLength, recorded.Length);
+        Assert.EndsWith("…", recorded);
+    }
+
+    [TestMethod]
+    public void AReasonAPersonWroteMustFitAndARejectedOneChangesNothing()
+    {
+        var request = new BookRequest(UserId, WorkId, [RequestMediaType.Audiobook], null, CreatedAt);
+        var tooLong = new string('x', BookRequest.MaxReasonLength + 1);
+
+        Assert.ThrowsExactly<ArgumentException>(() =>
+            request.TransitionTo(RequestStatus.Cancelled, actorUserId: UserId, tooLong, CreatedAt.AddMinutes(1)));
+        Assert.AreEqual(RequestStatus.PendingAcquisition, request.Status, "A rejected reason must leave the request as it was.");
+    }
 }

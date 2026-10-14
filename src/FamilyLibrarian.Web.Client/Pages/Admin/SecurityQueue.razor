@@ -59,7 +59,7 @@ else
                        contradict the "Scan stalled" chip, so the storage chip is dropped. *@
                     @if (!IsScanStalled(asset))
                     {
-                        <RequestStatusChip Status="@asset.StorageState" />
+                        <RequestStatusChip Status="@StorageStatus(asset)" />
                     }
                     <RequestStatusChip Status="@ScanStatus(asset)" />
                 </MudStack>
@@ -81,7 +81,14 @@ else
                     <MudLink Href="@($"admin/requests/{asset.RequestId}")">View request</MudLink>
                 @if (asset.StorageState == "Unmatched")
                 {
-                    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined">
+                    <MudAlert Severity="@(IsRuledOut(asset) ? Severity.Normal : Severity.Warning)" Dense="true" Variant="Variant.Outlined">
+                        @if (IsRuledOut(asset))
+                        {
+                            <MudText Typo="Typo.body2" Class="mb-1">
+                                Nothing to decide: the automatic search ruled this copy out and went on to another one. It is
+                                kept until the request format is settled, in case you want to release it, and deleted after.
+                            </MudText>
+                        }
                         <MudText Typo="Typo.body2">
                             @(asset.IdentityMismatchReason ?? "The file's embedded metadata could not be matched to the catalog entry, but no further detail was recorded.")
                         </MudText>
@@ -285,6 +292,12 @@ else
             loading = false;
         }
     }
+
+    private static bool IsRuledOut(MediaAssetAdminResponse asset) =>
+        asset.StorageState == "Unmatched" && asset.RuledOutAtUtc is not null;
+
+    private static string StorageStatus(MediaAssetAdminResponse asset) =>
+        IsRuledOut(asset) ? "RuledOut" : asset.StorageState;
 
     private static string ScanStatus(MediaAssetAdminResponse asset) => asset.StorageState switch
     {

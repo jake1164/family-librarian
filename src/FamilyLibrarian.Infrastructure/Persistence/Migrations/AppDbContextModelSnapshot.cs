@@ -18,7 +18,7 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("identity")
-                .HasAnnotation("ProductVersion", "10.0.12")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -430,6 +430,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasMaxLength(1024)
                         .HasColumnType("character varying(1024)")
                         .HasColumnName("original_filename");
+
+                    b.Property<DateTimeOffset?>("RuledOutAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ruled_out_at_utc");
 
                     b.Property<string>("ScanFailureReason")
                         .HasMaxLength(1024)

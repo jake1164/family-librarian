@@ -23,7 +23,8 @@ public sealed record MediaAssetAdminResponse(
     string? Origin = null,
     AdminArtifactSemanticFindingResponse? SemanticFinding = null,
     Guid? BundleId = null,
-    int? BundleTrackCount = null);
+    int? BundleTrackCount = null,
+    DateTimeOffset? RuledOutAtUtc = null);
 
 public sealed record AdminArtifactSemanticClaimResponse(string Kind, string Stance, IReadOnlyList<string> EvidenceIds, string Note);
 

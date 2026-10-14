@@ -1201,6 +1201,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(asset => asset.Origin).HasColumnName("origin").HasConversion<string>().HasMaxLength(32);
             entity.Property(asset => asset.OriginUserId).HasColumnName("origin_user_id");
             entity.Property(asset => asset.IdentityHoldCode).HasColumnName("identity_hold_code").HasMaxLength(96);
+            entity.Property(asset => asset.RuledOutAtUtc).HasColumnName("ruled_out_at_utc");
             entity.Property(asset => asset.BundleId).HasColumnName("bundle_id");
             entity.Property(asset => asset.BundleSequence).HasColumnName("bundle_sequence");
             entity.Property(asset => asset.BundleTrackCount).HasColumnName("bundle_track_count");

@@ -222,6 +222,12 @@ public sealed class MediaAsset
     /// </summary>
     public string? IdentityHoldCode { get; private set; }
 
+    /// <summary>
+    /// When the automatic search judged this copy unusable and went on to another one, or null. Such a held copy no
+    /// longer needs a decision; it is kept, releasable, only until its request format is settled.
+    /// </summary>
+    public DateTimeOffset? RuledOutAtUtc { get; private set; }
+
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
     public DateTimeOffset UpdatedAtUtc { get; private set; }
@@ -251,6 +257,9 @@ public sealed class MediaAsset
 
     /// <summary>Records the stable code for the current identity hold, or clears it with the reason.</summary>
     public void SetIdentityHoldCode(string? code) => IdentityHoldCode = string.IsNullOrWhiteSpace(code) ? null : code.Trim();
+
+    /// <summary>Records that the automatic search ruled this copy out; the first time stands.</summary>
+    public void MarkRuledOut(DateTimeOffset atUtc) => RuledOutAtUtc ??= atUtc;
 
     /// <summary>
     /// Why the most recent security evaluation was interrupted and the asset

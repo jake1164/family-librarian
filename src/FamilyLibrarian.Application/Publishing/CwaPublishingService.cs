@@ -220,7 +220,7 @@ public sealed class CwaPublishingService(
         await MarkRequestFormatAvailableAsync(asset, import, title, cancellationToken);
         asset.TransitionStorageState(MediaAssetStorageState.Archived, clock.UtcNow);
         await repository.SaveChangesAsync(cancellationToken);
-        await CancelRemainingDownloadsAsync(asset.AssociatedRequestFormatId, cancellationToken);
+        await CancelRemainingDownloadsAsync(asset.AssociatedRequestFormatId, [asset.Id], cancellationToken);
 
         // Cleanup runs only after the Available/Archived state is
         // durably saved -- see DeleteTrustedBytesAsync.
@@ -359,7 +359,8 @@ public sealed class CwaPublishingService(
     }
 
     /// <summary>The format is in the library: stop any other provider still downloading it. Never fails the publish.</summary>
-    private async Task CancelRemainingDownloadsAsync(Guid requestFormatId, CancellationToken cancellationToken)
+    private async Task CancelRemainingDownloadsAsync(
+        Guid requestFormatId, IReadOnlyCollection<Guid> deliveredAssetIds, CancellationToken cancellationToken)
     {
         if (remainingDownloads is null)
         {
@@ -368,7 +369,7 @@ public sealed class CwaPublishingService(
 
         try
         {
-            await remainingDownloads.CancelRemainingAsync(requestFormatId, cancellationToken);
+            await remainingDownloads.CancelRemainingAsync(requestFormatId, deliveredAssetIds, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

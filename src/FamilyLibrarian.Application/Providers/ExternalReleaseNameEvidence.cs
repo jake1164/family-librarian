@@ -33,6 +33,17 @@ public static partial class ExternalReleaseNameEvidence
             .Select(value => ReleaseTitleMatcher.Evaluate(value, tokens))
             .OrderBy(value => value.State switch { IdentityEvidenceState.Exact => 0, IdentityEvidenceState.Compatible => 1, IdentityEvidenceState.Fuzzy => 2, _ => 3 })
             .FirstOrDefault();
+        if (title?.IsPositive == true && IsSeriesLabelForAnotherBook(name, tokens, title))
+        {
+            // "Only the Dead: Terminal List, 6" names book 6 of a series that is called after book 1. The requested
+            // title is present only as that series label, so it asserts nothing about this release's own title.
+            title = title with
+            {
+                State = IdentityEvidenceState.Conflicting,
+                Reason = "The requested title appears only as a series name after another title, with another position."
+            };
+        }
+
         if (title?.IsPositive == true)
         {
             Mark(title.Start, title.Length);
@@ -221,6 +232,34 @@ public static partial class ExternalReleaseNameEvidence
         }
         return name;
     }
+
+    /// <summary>
+    /// The matched title phrase follows another title ending in a colon and is followed by a series position other
+    /// than 1. Book one of a series often shares the series' name, so position 1 is never treated as a different book.
+    /// </summary>
+    private static bool IsSeriesLabelForAnotherBook(string name, IReadOnlyList<string> tokens, ReleaseTitleEvidence title)
+    {
+        if (title.Start == 0)
+        {
+            return false;
+        }
+
+        var phrase = string.Join(@"[\W_]+", tokens.Skip(title.Start).Take(title.Length).Select(Regex.Escape));
+        var match = Regex.Match(name, $@"(?<before>.*\p{{L}}.*?)(?<colon>[:\uA789\uFF1A])[\W_]*{phrase}(?<after>.*)$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var position = SeriesPositionAfterTitle().Match(match.Groups["after"].Value);
+        return position.Success &&
+            decimal.TryParse(position.Groups["position"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var value) &&
+            value != 1m;
+    }
+
+    [GeneratedRegex(@"^[\s,._-]*(?:#|BOOK[\W_]+|VOL(?:UME)?[\W_.]*)?(?<position>\d+(?:\.\d+)?)(?![\p{L}\p{N}])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex SeriesPositionAfterTitle();
 
     [GeneratedRegex(@"^(?<name>[\p{L}]+(?:[. _-]+[\p{L}]+){0,7})[. _-]+\[?(?<position>\d+(?:\.\d+)?)\]?$", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex SeriesPrefix();

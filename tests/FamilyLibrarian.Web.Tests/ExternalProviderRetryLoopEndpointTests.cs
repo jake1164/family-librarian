@@ -139,6 +139,9 @@ public sealed class ExternalProviderRetryLoopEndpointTests
         Assert.IsFalse(
             attempts.Any(attempt => attempt.Outcome == "Failed"),
             "One bad copy followed by a good one is not a failure anywhere in the ledger.");
+        Assert.IsTrue(
+            attempts.Any(attempt => attempt.Outcome == "Acquired"),
+            "The copy that arrived must close its 'Submitted' row, or the activity page shows it in progress for ever.");
 
         // The row for a fetch names the release, so the history reads as a
         // sequence of specific copies rather than identical "submitted" lines.
@@ -432,6 +435,7 @@ public sealed class ExternalProviderIdentityHoldRetryEndpointTests
             var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var held = await database.MediaAssets.SingleAsync(asset => asset.WorkId == work.Id);
             Assert.AreEqual(MediaAssetStorageState.Unmatched, held.StorageState, "The wrong book is held, not trusted.");
+            Assert.IsNotNull(held.RuledOutAtUtc, "The queue must show the held copy as settled, not as a review to do.");
 
             var declined = await database.DeclinedRequestCandidates
                 .Where(candidate => candidate.RequestId == request.Id)
@@ -452,6 +456,27 @@ public sealed class ExternalProviderIdentityHoldRetryEndpointTests
         Assert.AreEqual(
             RetryLoopExternalProviderClient.SucceedingReference, client.LastSubmittedCandidate,
             "The next pass must fetch the next ranked copy, not wait forever on the held one.");
+
+        // The held copy stays (releasable) while the request is open, and is deleted once it is settled.
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var discards = scope.ServiceProvider.GetRequiredService<FamilyLibrarian.Application.Security.AssetDiscardService>();
+            Assert.AreEqual(0, await discards.DiscardSettledHeldCopiesAsync(50, CancellationToken.None));
+
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var persisted = await database.BookRequests.SingleAsync(entity => entity.Id == request.Id);
+            persisted.TransitionTo(RequestStatus.Cancelled, null, "Test: the requester withdrew.", DateTimeOffset.UtcNow);
+            await database.SaveChangesAsync();
+        }
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var discards = scope.ServiceProvider.GetRequiredService<FamilyLibrarian.Application.Security.AssetDiscardService>();
+            Assert.AreEqual(1, await discards.DiscardSettledHeldCopiesAsync(50, CancellationToken.None));
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var held = await database.MediaAssets.SingleAsync(asset => asset.WorkId == work.Id);
+            Assert.AreEqual(MediaAssetStorageState.Destroyed, held.StorageState);
+        }
     }
 }
 
@@ -595,6 +620,9 @@ public sealed class ExternalProviderJobTimeLimitEndpointTests
             Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Failed, job.LifecycleState);
             Assert.AreEqual("PROVIDER_TIMEOUT", job.ErrorCode);
             Assert.HasCount(1, client.CancelledJobs, "The provider must be asked to stop the job it never finished.");
+            CollectionAssert.Contains(
+                client.DeletedJobs, client.CancelledJobs[0],
+                "A failed job must be released at the provider, or its downloaded files stay on its disk.");
             var declined = await database.DeclinedRequestCandidates.SingleAsync(candidate => candidate.RequestId == request.Id);
             Assert.AreEqual(RetryLoopExternalProviderClient.FailingReference, declined.ProviderResultId);
         }
@@ -669,7 +697,7 @@ public sealed class ExternalProviderFulfilledFormatCancellationEndpointTests
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             await scope.ServiceProvider.GetRequiredService<FulfilledFormatDownloadCancellation>()
-                .CancelRemainingAsync(formatId, CancellationToken.None);
+                .CancelRemainingAsync(formatId, [], CancellationToken.None);
         }
 
         await using (var scope = factory.Services.CreateAsyncScope())
@@ -771,6 +799,8 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
     public bool FailingJobNeverFinishes { get; init; }
 
     public List<string> CancelledJobs { get; } = [];
+
+    public List<string> DeletedJobs { get; } = [];
 
     /// <summary>When set, the failing candidate's job completes but its file is a different book.</summary>
     public bool FailingJobDeliversWrongBook { get; init; }
@@ -917,6 +947,9 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
     }
 
     public Task DeleteAcquireAsync(
-        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
-        Task.CompletedTask;
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
+    {
+        DeletedJobs.Add(jobId);
+        return Task.CompletedTask;
+    }
 }

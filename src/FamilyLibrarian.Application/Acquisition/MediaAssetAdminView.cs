@@ -21,4 +21,5 @@ public sealed record MediaAssetAdminView(
     string? IdentityHoldCode = null,
     AssetOrigin Origin = AssetOrigin.Legacy,
     Guid? BundleId = null,
-    int? BundleTrackCount = null);
+    int? BundleTrackCount = null,
+    DateTimeOffset? RuledOutAtUtc = null);

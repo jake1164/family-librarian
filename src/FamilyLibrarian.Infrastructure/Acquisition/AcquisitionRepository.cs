@@ -50,7 +50,8 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
                 asset.IdentityHoldCode,
                 asset.Origin,
                 asset.BundleId,
-                asset.BundleTrackCount);
+                asset.BundleTrackCount,
+                asset.RuledOutAtUtc);
 
         return await query.ToArrayAsync(cancellationToken);
     }
@@ -83,7 +84,8 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
                 asset.IdentityHoldCode,
                 asset.Origin,
                 asset.BundleId,
-                asset.BundleTrackCount);
+                asset.BundleTrackCount,
+                asset.RuledOutAtUtc);
 
         return await query.Take(maximumCount).ToArrayAsync(cancellationToken);
     }

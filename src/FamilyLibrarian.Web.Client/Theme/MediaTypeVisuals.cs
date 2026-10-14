@@ -138,7 +138,8 @@ public static class MediaTypeVisuals
         "Rejected" or "Destroyed" or "Failed" => Color.Error,
         "NeedsReview" => Color.Warning,
         "NotAvailable" => Color.Error,
-        "Cancelled" => Color.Default,
+        // A held copy the automatic search has already moved past: settled, nothing to decide.
+        "Cancelled" or "RuledOut" => Color.Default,
         "PendingAcquisition" or "Requested" => ProgressColor(progressCode),
         _ => Color.Default
     };
@@ -169,6 +170,7 @@ public static class MediaTypeVisuals
         "Failed" => "Scan failed",
         "Destroyed" => "File deleted",
         "Unmatched" => "Identity review required",
+        "RuledOut" => "Ruled out",
         "PendingAcquisition" or "Requested" => "Waiting",
         "NeedsReview" => "Needs review",
         "NotAvailable" => "Not available",

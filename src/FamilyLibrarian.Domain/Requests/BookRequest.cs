@@ -228,7 +228,7 @@ public sealed class BookRequest
         UpdatedAtUtc = atUtc;
         _statusHistory.Add(new RequestStatusHistory(
             Id, RequestStatus.NeedsReview, RequestStatus.NeedsReview, actorUserId: null,
-            CleanNote(reason, MaxReasonLength, nameof(reason)), atUtc));
+            SystemReason(reason), atUtc));
     }
 
     /// <summary>
@@ -296,7 +296,7 @@ public sealed class BookRequest
         UpdatedAtUtc = atUtc;
         _statusHistory.Add(new RequestStatusHistory(
             Id, RequestStatus.NeedsReview, RequestStatus.NeedsReview, actorUserId: null,
-            CleanNote(reason, MaxReasonLength, nameof(reason)), atUtc));
+            SystemReason(reason), atUtc));
     }
 
     /// <summary>
@@ -497,6 +497,9 @@ public sealed class BookRequest
             throw new InvalidRequestTransitionException(Status, to);
         }
 
+        // Validated before anything changes, so a rejected reason leaves the request exactly as it was. A person's
+        // reason must fit; a reason the system wrote is trimmed to fit instead (see SystemReason).
+        var note = actorUserId is null ? SystemReason(reason) : CleanNote(reason, MaxReasonLength, nameof(reason));
         var from = Status;
 
         // A NeedsReview review (and any offered candidates) is only ever
@@ -543,7 +546,7 @@ public sealed class BookRequest
             from,
             to,
             actorUserId,
-            CleanNote(reason, MaxReasonLength, nameof(reason)),
+            note,
             atUtc));
     }
 
@@ -581,6 +584,22 @@ public sealed class BookRequest
     {
         AdminNote = CleanNote(adminNote, MaxAdminNoteLength, nameof(adminNote));
         UpdatedAtUtc = atUtc;
+    }
+
+    /// <summary>
+    /// A reason the system composed (provider failures, review summaries) is trimmed to fit rather than rejected. It
+    /// is often assembled from provider messages of unbounded length; rejecting it threw out of the background pass
+    /// and stopped every request on the lab from advancing.
+    /// </summary>
+    private static string? SystemReason(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= MaxReasonLength ? trimmed : trimmed[..(MaxReasonLength - 1)].TrimEnd() + "…";
     }
 
     private static string? CleanNote(string? value, int maxLength, string parameterName)

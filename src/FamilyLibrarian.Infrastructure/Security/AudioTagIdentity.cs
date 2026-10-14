@@ -103,7 +103,7 @@ internal static class AudioTagIdentity
                 LanguageAcceptance.IsRecognized(language))
             .ToArray();
         var languageConflict = edition.IsGerman && !LanguageAcceptance.IsAcceptedOrUnspecified("de", acceptedLanguage);
-        var inferredConflict = false;
+        string? inferredLanguage = null;
         if (declared.Length > 0)
         {
             var accepted = declared.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage));
@@ -132,7 +132,15 @@ internal static class AudioTagIdentity
                         : EvidenceReasonCodes.ArtifactLanguage.InferredConflicts,
                     accepted ? EvidencePolarity.Positive : EvidencePolarity.Negative,
                     $"inferred:{inferred}"));
-                inferredConflict = !accepted;
+                // The inference only decides on plentiful, one-sided evidence (see LanguageFunctionWords), so a
+                // conflict is as firm as a declared tag. Held as "identity review" instead, the lab's German edition of
+                // an English request sat in the queue looking like an open question after the retry loop had already
+                // moved on.
+                if (!accepted)
+                {
+                    inferredLanguage = inferred;
+                    languageConflict = true;
+                }
             }
         }
 
@@ -143,13 +151,13 @@ internal static class AudioTagIdentity
         {
             return AssetIdentityVerificationResult.Unmatched(
                 verifierId,
-                Describe(expectedTitles, expected.PrimaryAuthor, albumTitle, authors, declared, acceptedLanguage,
+                Describe(expectedTitles, expected.PrimaryAuthor, albumTitle, authors, declared, inferredLanguage, acceptedLanguage,
                     titleContradicted, authorContradicted, languageConflict),
                 facts);
         }
 
-        // Positive title and author evidence is the only thing that clears; text written in another language prevents it.
-        if (titleMatches && authorMatches && !inferredConflict)
+        // Positive title and author evidence is the only thing that clears.
+        if (titleMatches && authorMatches)
         {
             return AssetIdentityVerificationResult.Match(verifierId, facts);
         }
@@ -184,7 +192,7 @@ internal static class AudioTagIdentity
 
     private static string Describe(
         IReadOnlyList<string> expectedTitles, string? expectedAuthor, string? albumTitle, IReadOnlyList<string> authors,
-        string[] declaredLanguages, string? acceptedLanguage,
+        string[] declaredLanguages, string? inferredLanguage, string? acceptedLanguage,
         bool titleContradicted, bool authorContradicted, bool languageConflict)
     {
         var parts = new List<string>();
@@ -203,7 +211,9 @@ internal static class AudioTagIdentity
         {
             var language = declaredLanguages.Length > 0
                 ? $"The audiobook's declared language ({Bounded(string.Join(", ", declaredLanguages))}) doesn't match"
-                : "The audiobook's album, title or file name is worded in another language, which doesn't match";
+                : inferredLanguage is not null
+                    ? $"The audiobook's description and other text are written in another language ({inferredLanguage}), which doesn't match"
+                    : "The audiobook's album, title or file name is worded in another language, which doesn't match";
             var languageReason = $"{language} the language accepted for this request" +
                 $"{(string.IsNullOrWhiteSpace(acceptedLanguage) ? string.Empty : $" ({acceptedLanguage})")}.";
             reason = reason.Length == 0 ? languageReason : $"{reason} {languageReason}";

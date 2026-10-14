@@ -405,7 +405,7 @@ public sealed class Mp3AssetIdentityVerifierTests
     }
 
     [TestMethod]
-    public async Task TheRealLabShapeIsNotClearedBecauseItsDescriptionIsGerman()
+    public async Task TheRealLabShapeIsALanguageConflictBecauseItsDescriptionIsGerman()
     {
         // Verified on the lab: ID3v2.3, TALB begins with the English title, narrator in TCOM, German COMM and TCON,
         // no TLAN, and no cue word anywhere.
@@ -420,10 +420,11 @@ public sealed class Mp3AssetIdentityVerifierTests
         {
             var asset = AssetFor(origin);
             var result = await VerifyAsync(CreateVerifier("The Terminal List", "Jack Carr"), labShape, asset);
-            var expected = NoVerifierOutcome.For(asset);
 
-            Assert.AreEqual(ArtifactEvidenceRecorder.NoVerifierId, result.VerifierId, "Exactly the unverifiable-format outcome.");
-            Assert.AreEqual(expected.IsMatch, result.IsMatch);
+            // A firm wrong-language result, from every origin: not an "identity review" that looks like an open question.
+            Assert.AreNotEqual(ArtifactEvidenceRecorder.NoVerifierId, result.VerifierId);
+            Assert.IsFalse(result.IsMatch);
+            StringAssert.Contains(result.Reason, "written in another language (de)");
             Assert.IsTrue(result.Facts.Any(fact => fact.FindingId == "ev-title" && fact.Polarity == EvidencePolarity.Positive));
             Assert.IsTrue(result.Facts.Any(fact => fact.FindingId == "ev-author" && fact.Polarity == EvidencePolarity.Positive));
             var inferred = result.Facts.Single(fact => fact.FindingId == "ev-language-inferred");
@@ -500,10 +501,14 @@ public sealed class Mp3AssetIdentityVerifierTests
         Assert.IsNull(asset.IdentityHoldCode);
     }
 
+    // A clearly German description is as firm as a declared language tag, whoever supplied the file: the lab's German
+    // set otherwise sat in the queue as an "identity review" after the retry loop had already moved on.
     [TestMethod]
-    public async Task TheRealLabShapeFromAnExternalProviderStaysHeldAsAttestedOnly()
+    [DataRow(AssetOrigin.ExternalProvider)]
+    [DataRow(AssetOrigin.BuiltInProvider)]
+    public async Task TheRealLabShapeIsHeldWithTheLanguageConflictCode(AssetOrigin origin)
     {
-        var (service, asset) = Service(AssetOrigin.ExternalProvider, Mp3(Id3.Tag(3,
+        var (service, asset) = Service(origin, Mp3(Id3.Tag(3,
             Id3.Text("TALB", "THE TERMINAL LIST - Die Abschussliste"), Id3.Text("TPE1", "Jack Carr"), Id3.Text("TPE2", "Jack Carr"),
             Id3.Text("TCOM", "Josef Vossenkuhl"), Id3.Text("TCON", "Spionage-Thriller; Thriller"), Id3.Comment(GermanBlurb))));
 
@@ -511,22 +516,8 @@ public sealed class Mp3AssetIdentityVerifierTests
 
         Assert.IsFalse(result.IsMatch);
         Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState);
-        Assert.AreEqual("identity.hold.attested_only_external", asset.IdentityHoldCode);
-        Assert.AreEqual(ArtifactEvidenceRecorder.NoVerifierId, result.VerifierId);
-    }
-
-    [TestMethod]
-    public async Task TheRealLabShapeFromABuiltInProviderKeepsItsAttestedMatch()
-    {
-        var (service, asset) = Service(AssetOrigin.BuiltInProvider, Mp3(Id3.Tag(3,
-            Id3.Text("TALB", "THE TERMINAL LIST - Die Abschussliste"), Id3.Text("TPE1", "Jack Carr"),
-            Id3.Text("TCON", "Spionage-Thriller; Thriller"), Id3.Comment(GermanBlurb))));
-
-        var result = await service.VerifyAsync(asset.Id, CancellationToken.None);
-
-        Assert.IsTrue(result.IsMatch);
-        Assert.AreEqual(ArtifactEvidenceRecorder.NoVerifierId, result.VerifierId);
-        Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
+        Assert.AreEqual("identity.hold.language_conflict", asset.IdentityHoldCode);
+        StringAssert.Contains(asset.IdentityMismatchReason, "written in another language (de)");
     }
 
     [TestMethod]
