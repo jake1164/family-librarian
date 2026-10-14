@@ -47,5 +47,9 @@ public interface IProviderAcquisitionJobStore
 
     void Add(ProviderAcquisitionJob job);
 
+    /// <summary>Jobs for this format that have not finished: queued, running or waiting on a person.</summary>
+    Task<IReadOnlyList<ProviderAcquisitionJob>> ListActiveForFormatAsync(Guid requestFormatId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>([]);
+
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }

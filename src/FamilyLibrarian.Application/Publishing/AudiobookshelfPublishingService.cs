@@ -33,7 +33,8 @@ public sealed class AudiobookshelfPublishingService(
     IBookRequestFulfillmentStore requestFulfillment,
     IAuditWriter audit,
     IClock clock,
-    NotificationService notifications)
+    NotificationService notifications,
+    Acquisition.FulfilledFormatDownloadCancellation? remainingDownloads = null)
 {
     public async Task PublishAsync(MediaAsset asset, CancellationToken cancellationToken)
     {
@@ -153,6 +154,7 @@ public sealed class AudiobookshelfPublishingService(
                 await MarkRequestFormatAvailableAsync(asset.AssociatedRequestFormatId, title, cancellationToken);
                 ArchiveTrusted([asset]);
                 await repository.SaveChangesAsync(cancellationToken);
+                await CancelRemainingDownloadsAsync(asset.AssociatedRequestFormatId, cancellationToken);
                 await AuditPublishedAsync(asset.Id, cancellationToken);
                 await DeleteTrustedBytesAsync([asset], cancellationToken);
                 return;
@@ -265,6 +267,7 @@ public sealed class AudiobookshelfPublishingService(
                 await MarkRequestFormatAvailableAsync(tracks[0].AssociatedRequestFormatId, title, cancellationToken);
                 ArchiveTrusted(tracks);
                 await repository.SaveChangesAsync(cancellationToken);
+                await CancelRemainingDownloadsAsync(tracks[0].AssociatedRequestFormatId, cancellationToken);
                 await AuditBundlePublishedAsync(bundleId, cancellationToken);
                 await DeleteTrustedBytesAsync(tracks, cancellationToken);
                 return;
@@ -374,6 +377,7 @@ public sealed class AudiobookshelfPublishingService(
                 await MarkRequestFormatAvailableAsync(assets[0].AssociatedRequestFormatId, title, cancellationToken);
                 ArchiveTrusted(assets);
                 await repository.SaveChangesAsync(cancellationToken);
+                await CancelRemainingDownloadsAsync(assets[0].AssociatedRequestFormatId, cancellationToken);
 
                 // Cleanup runs only after the Delivered/Archived state is
                 // durably saved -- see DeleteTrustedBytesAsync.
@@ -453,6 +457,24 @@ public sealed class AudiobookshelfPublishingService(
         foreach (var requesterId in request.SatisfiedRequesterIds.Except(previouslySatisfied))
             await notifications.RecordRequestStatusForUserAsync(
                 requesterId, request.Id, title, RequestStatus.Available, cancellationToken);
+    }
+
+    /// <summary>The format is in the library: stop any other provider still downloading it. Never fails the publish.</summary>
+    private async Task CancelRemainingDownloadsAsync(Guid requestFormatId, CancellationToken cancellationToken)
+    {
+        if (remainingDownloads is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await remainingDownloads.CancelRemainingAsync(requestFormatId, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Best effort: a copy that still arrives is caught by the pre-upload existing-item check.
+        }
     }
 
     private Task AuditPublishedAsync(Guid assetId, CancellationToken cancellationToken) =>

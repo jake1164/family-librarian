@@ -57,6 +57,15 @@ public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProvid
             .OrderBy(job => job.PartNumber)
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListActiveForFormatAsync(
+        Guid requestFormatId, CancellationToken cancellationToken) =>
+        await database.ProviderAcquisitionJobs
+            .Where(job => job.RequestFormatId == requestFormatId &&
+                (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Queued ||
+                 job.LifecycleState == ProviderAcquisitionJobLifecycleState.Running ||
+                 job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting))
+            .ToArrayAsync(cancellationToken);
+
     public void Add(ProviderAcquisitionJob job) => database.ProviderAcquisitionJobs.Add(job);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);

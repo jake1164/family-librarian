@@ -604,6 +604,87 @@ public sealed class ExternalProviderJobTimeLimitEndpointTests
     }
 }
 
+/// <summary>
+/// Once a format is in the library, a download still running for it elsewhere is waste (and on a metered source,
+/// spent quota). In its own database.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderFulfilledFormatCancellationEndpointTests
+{
+    private static WebTestFixture? _fixture;
+
+    [ClassInitialize]
+    public static async Task InitializeAsync(TestContext testContext)
+    {
+        ArgumentNullException.ThrowIfNull(testContext);
+        _fixture = await WebTestFixture.CreateAsync();
+    }
+
+    [ClassCleanup]
+    public static async Task CleanupAsync()
+    {
+        if (_fixture is not null)
+        {
+            await _fixture.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task AFulfilledFormatCancelsAndReleasesEveryDownloadStillRunningForIt()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var client = new RetryLoopExternalProviderClient { FailingJobNeverFinishes = true };
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(client);
+            });
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await RetryLoopSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(
+            AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await RetryLoopSupport.RegisterProviderAsync(admin, providerId: "still-downloading");
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+        await RetryLoopSupport.RunRecheckAsync(factory);
+
+        Guid formatId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var job = await database.ProviderAcquisitionJobs.SingleAsync(entity => entity.RequestId == request.Id);
+            Assert.AreNotEqual(ProviderAcquisitionJobLifecycleState.Cancelled, job.LifecycleState);
+            formatId = job.RequestFormatId;
+        }
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<FulfilledFormatDownloadCancellation>()
+                .CancelRemainingAsync(formatId, CancellationToken.None);
+        }
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var job = await database.ProviderAcquisitionJobs.SingleAsync(entity => entity.RequestId == request.Id);
+            Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Cancelled, job.LifecycleState);
+            Assert.AreEqual(FulfilledFormatDownloadCancellation.ErrorCode, job.ErrorCode);
+            Assert.IsNull(job.NextPollAtUtc, "A cancelled job is never polled again.");
+        }
+
+        Assert.HasCount(1, client.CancelledJobs, "The provider must be told to stop downloading.");
+    }
+}
+
 file static class RetryLoopSupport
 {
     public static async Task SignInAsync(HttpClient client, string email, string password)

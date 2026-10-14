@@ -87,6 +87,26 @@ public sealed class CwaPublishingServiceTests
         Assert.AreEqual(1, context.Transport.WriteCount);
     }
 
+    // The lab: two copies of one ebook from two sources were both published, so the library showed it twice.
+    [TestMethod]
+    public async Task ABookAlreadyInTheLibraryIsNotSentAgainAndTheExistingCopyFulfilsTheFormat()
+    {
+        var context = context_Configured();
+        var asset = context.CreateAsset();
+        context.CatalogClient.NextBookId = "17";
+        context.CatalogClient.AlreadyInLibrary = true;
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        Assert.AreEqual(0, context.Transport.WriteCount, "A duplicate must not be sent to CWA.");
+        var import = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
+        Assert.IsNotNull(import);
+        Assert.AreEqual(LibraryImportStatus.Available, import.Status);
+        Assert.AreEqual("17", import.ExternalBookId, "The existing CWA entry stands in for this copy.");
+        Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState, "The duplicate's local copy is archived.");
+        Assert.IsTrue(context.Audit.Entries.Any(entry => entry.Action == FamilyLibrarian.Domain.Audit.AuditActions.AssetPublishSkippedDuplicate));
+    }
+
     [TestMethod]
     public async Task PublishPassesTheWorksKnownIsbnsToTheCatalogClient()
     {
@@ -372,7 +392,7 @@ public sealed class CwaPublishingServiceTests
             Assets = new FakeAssetLookup();
             StagingStore = new FakeStagingStore();
             TransportFactory = new FakeTransportFactory(Transport);
-            CatalogClient = new FakeCatalogClient();
+            CatalogClient = new FakeCatalogClient { Transport = Transport };
             RequestFulfillment = new FakeRequestFulfillmentStore();
             WorkLookup = new FakeWorkLookup();
             Audit = new RecordingAuditWriter();
@@ -568,6 +588,14 @@ public sealed class CwaPublishingServiceTests
 
     private sealed class FakeCatalogClient : ICwaCatalogClient
     {
+        /// <summary>
+        /// Like a real CWA, the catalog only lists a book once a file has been imported, unless the test says the
+        /// book was already in the library. Before the duplicate check the catalog was only asked after a write.
+        /// </summary>
+        public FakeTransport? Transport { get; init; }
+
+        public bool AlreadyInLibrary { get; set; }
+
         public string? NextBookId { get; set; }
 
         public string? NextLanguage { get; set; }
@@ -584,6 +612,11 @@ public sealed class CwaPublishingServiceTests
         {
             LastIsbn13Candidates = isbn13Candidates;
             LastAcceptedLanguage = acceptedLanguage;
+            if (Transport is { WriteCount: 0 } && !AlreadyInLibrary)
+            {
+                return Task.FromResult(BookMatchResult.NoMatchResult);
+            }
+
             if (NextAmbiguousCandidates is not null)
             {
                 return Task.FromResult(BookMatchResult.Ambiguous(NextAmbiguousCandidates));

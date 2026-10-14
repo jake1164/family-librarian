@@ -359,11 +359,11 @@ public sealed class ProviderAcquisitionJob
     }
 
     /// <summary>
-    /// Stops tracking this job because the audiobook set it belongs to has been
-    /// abandoned (another part failed, or the set could not be fully started).
-    /// A job that already finished is left exactly as it is.
+    /// Stops tracking this job: by default because the audiobook set it belongs to has been abandoned (another part
+    /// failed, or the set could not be fully started), or with another code, such as a format another copy already
+    /// fulfilled. A job that already finished is left exactly as it is.
     /// </summary>
-    public void Cancel(string reason, DateTimeOffset atUtc)
+    public void Cancel(string reason, DateTimeOffset atUtc, string errorCode = "PART_SET_ABANDONED")
     {
         if (IsTerminal(LifecycleState))
         {
@@ -371,7 +371,7 @@ public sealed class ProviderAcquisitionJob
         }
 
         ApplyState(ProviderAcquisitionJobLifecycleState.Cancelled, phase: null, atUtc);
-        ErrorCode = "PART_SET_ABANDONED";
+        ErrorCode = errorCode;
         ErrorMessage = reason.Length <= 1_024 ? reason : reason[..1_024];
         NextPollAtUtc = null;
         UpdatedAtUtc = atUtc;
