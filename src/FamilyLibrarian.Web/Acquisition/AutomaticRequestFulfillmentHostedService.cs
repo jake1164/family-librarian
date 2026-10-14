@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Security;
 
 namespace FamilyLibrarian.Web.Acquisition;
 
@@ -13,6 +14,7 @@ public sealed partial class AutomaticRequestFulfillmentHostedService(
     ILogger<AutomaticRequestFulfillmentHostedService> logger) : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(2);
+    private const int HeldCopyCleanupBatch = 50;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -48,6 +50,26 @@ public sealed partial class AutomaticRequestFulfillmentHostedService(
 
             try
             {
+                // Its own step, so a cleanup problem never stops fulfilment (or the reverse).
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var discards = scope.ServiceProvider.GetRequiredService<AssetDiscardService>();
+                var deleted = await discards.DiscardSettledHeldCopiesAsync(HeldCopyCleanupBatch, stoppingToken);
+                if (deleted > 0)
+                {
+                    LogDeletedHeldCopies(deleted);
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                LogHeldCopyCleanupFailed(exception);
+            }
+
+            try
+            {
                 // Wakes early when a failed copy has just been ruled out, so
                 // the next candidate starts immediately rather than at the
                 // next sweep; otherwise this is the same fixed interval as
@@ -78,4 +100,16 @@ public sealed partial class AutomaticRequestFulfillmentHostedService(
         Level = LogLevel.Warning,
         Message = "Automatic request-fulfillment pass failed.")]
     private partial void LogProcessingPassFailed(Exception exception);
+
+    [LoggerMessage(
+        EventId = 4,
+        Level = LogLevel.Information,
+        Message = "Deleted {FileCount} held copies whose request format is settled.")]
+    private partial void LogDeletedHeldCopies(int fileCount);
+
+    [LoggerMessage(
+        EventId = 5,
+        Level = LogLevel.Warning,
+        Message = "Deleting held copies of settled request formats failed.")]
+    private partial void LogHeldCopyCleanupFailed(Exception exception);
 }
