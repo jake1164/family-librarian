@@ -82,6 +82,30 @@ public sealed class AcquisitionJobPollingService(
                 ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)
             : null;
 
+        if (HasOutlivedItsTimeLimit(job) is { } limit)
+        {
+            // A provider that never finishes (on the lab: an NZB its indexer would not hand over, retried every few
+            // seconds for a day) must not hold the request hostage. Ask it to stop and release the job, best effort,
+            // then record a failure so the retry loop moves on to the next copy or a librarian.
+            if (job.ProviderJobId is { } providerJobId)
+            {
+                try
+                {
+                    await client.CancelAcquireAsync(provider.BaseUrl, apiKey, providerJobId, cancellationToken);
+                    await client.TryDeleteAcquireAsync(provider.BaseUrl, apiKey, providerJobId, cancellationToken);
+                }
+                catch (Exception exception) when (exception is HttpRequestException or ExternalProviderProtocolException or TimeoutException)
+                {
+                    // The provider may be the very thing that is broken; the local failure is still recorded.
+                }
+            }
+
+            await RecordFailureAsync(job, "PROVIDER_TIMEOUT",
+                $"The provider did not finish this copy within {limit.TotalHours:0} hours.",
+                false, null, null, wasWaitingForInteraction, cancellationToken);
+            return;
+        }
+
         if (job.ProviderJobId is null)
         {
             var request = await requests.FindRequestForAdminAsync(job.RequestId, cancellationToken);
@@ -520,6 +544,26 @@ public sealed class AcquisitionJobPollingService(
                 new { job.Id, job.RequestId, job.RequestFormatId, job.ProviderId }, cancellationToken);
         }
 
+    }
+
+    /// <summary>How long a provider job may stay queued, or keep running, before it is treated as failed.</summary>
+    internal static readonly TimeSpan MaxQueuedAge = TimeSpan.FromHours(12);
+
+    internal static readonly TimeSpan MaxRunningAge = TimeSpan.FromHours(48);
+
+    /// <summary>
+    /// The limit a still-active job has exceeded, measured from when it was created, or null. A job waiting on a person
+    /// (a verification challenge) has no limit here: that wait is the administrator's, not the provider's.
+    /// </summary>
+    private TimeSpan? HasOutlivedItsTimeLimit(ProviderAcquisitionJob job)
+    {
+        var limit = job.LifecycleState switch
+        {
+            ProviderAcquisitionJobLifecycleState.Queued => MaxQueuedAge,
+            ProviderAcquisitionJobLifecycleState.Running => MaxRunningAge,
+            _ => (TimeSpan?)null
+        };
+        return limit is { } value && clock.UtcNow - job.CreatedAtUtc > value ? value : null;
     }
 
     /// <summary>Why a staged file cannot be used, or null when every file is trusted or still awaiting a decision.</summary>

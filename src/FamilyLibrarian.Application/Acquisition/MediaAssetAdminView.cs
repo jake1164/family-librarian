@@ -19,4 +19,6 @@ public sealed record MediaAssetAdminView(
     string? IdentityMismatchReason = null,
     string? ScanFailureReason = null,
     string? IdentityHoldCode = null,
-    AssetOrigin Origin = AssetOrigin.Legacy);
+    AssetOrigin Origin = AssetOrigin.Legacy,
+    Guid? BundleId = null,
+    int? BundleTrackCount = null);

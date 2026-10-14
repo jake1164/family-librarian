@@ -107,7 +107,9 @@ internal static class SecurityQueueEndpoints
                 [.. CandidateSemanticAnalyzer.DeserializeClaims(finding.ClaimsJson)
                     .Select(claim => new AdminArtifactSemanticClaimResponse(claim.Kind, claim.Stance, claim.EvidenceIds, claim.Note))],
                 finding.FailureDetail, finding.Model, finding.IsCloud, finding.CreatedAtUtc)
-            : null);
+            : null,
+        entry.Asset.BundleId,
+        entry.Asset.BundleTrackCount);
 
     private static ArtifactEvidenceResponse ToEvidenceResponse(IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence> evidence) =>
         evidence.Count == 0

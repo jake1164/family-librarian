@@ -25,28 +25,42 @@ public sealed class AssetDiscardService(
             return AssetDiscardResult.NotFound();
         }
 
-        if (asset.StorageState is not (
-            MediaAssetStorageState.Quarantine or
-            MediaAssetStorageState.Rejected or
-            MediaAssetStorageState.Unmatched))
+        if (!IsDiscardable(asset))
         {
             return AssetDiscardResult.Invalid("Only quarantined, rejected, or unmatched files can be deleted.");
         }
 
-        var previousState = asset.StorageState;
-        await stagingStore.DeleteAsync(previousState, asset.StoredFilename, cancellationToken);
-        asset.TransitionStorageState(MediaAssetStorageState.Destroyed, clock.UtcNow);
-        await repository.SaveChangesAsync(cancellationToken);
+        // A multi-track set is one book: a set with a track removed is useless, and deleting it one track at a time
+        // meant twenty clicks for twenty files. Every sibling still awaiting a decision goes with it; a trusted or
+        // published track never does.
+        var targets = asset.BundleId is { } bundleId
+            ? (await repository.FindAssetsByBundleIdAsync(bundleId, cancellationToken)).Where(IsDiscardable).ToArray()
+            : [asset];
+        if (targets.All(target => target.Id != asset.Id))
+        {
+            targets = [asset, .. targets];
+        }
 
-        await audit.WriteAsync(
-            AuditActions.AssetDestroyed,
-            AuditSubjectTypes.MediaAsset,
-            assetId.ToString(),
-            new { AssetId = assetId, ActorUserId = currentUser.UserId, PreviousState = previousState.ToString() },
-            cancellationToken);
+        foreach (var target in targets)
+        {
+            var previousState = target.StorageState;
+            await stagingStore.DeleteAsync(previousState, target.StoredFilename, cancellationToken);
+            target.TransitionStorageState(MediaAssetStorageState.Destroyed, clock.UtcNow);
+            await repository.SaveChangesAsync(cancellationToken);
+
+            await audit.WriteAsync(
+                AuditActions.AssetDestroyed,
+                AuditSubjectTypes.MediaAsset,
+                target.Id.ToString(),
+                new { AssetId = target.Id, ActorUserId = currentUser.UserId, PreviousState = previousState.ToString() },
+                cancellationToken);
+        }
 
         return AssetDiscardResult.Success();
     }
+
+    private static bool IsDiscardable(MediaAsset asset) => asset.StorageState is
+        MediaAssetStorageState.Quarantine or MediaAssetStorageState.Rejected or MediaAssetStorageState.Unmatched;
 }
 
 public sealed record AssetDiscardResult(AssetDiscardOutcome Outcome, string? Error)

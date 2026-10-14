@@ -48,7 +48,9 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
                 asset.IdentityMismatchReason,
                 asset.ScanFailureReason,
                 asset.IdentityHoldCode,
-                asset.Origin);
+                asset.Origin,
+                asset.BundleId,
+                asset.BundleTrackCount);
 
         return await query.ToArrayAsync(cancellationToken);
     }
@@ -79,7 +81,9 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
                 asset.IdentityMismatchReason,
                 asset.ScanFailureReason,
                 asset.IdentityHoldCode,
-                asset.Origin);
+                asset.Origin,
+                asset.BundleId,
+                asset.BundleTrackCount);
 
         return await query.Take(maximumCount).ToArrayAsync(cancellationToken);
     }

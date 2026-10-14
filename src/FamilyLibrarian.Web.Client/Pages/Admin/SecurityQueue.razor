@@ -47,7 +47,7 @@ else if (assets.Count == 0)
 else
 {
     <MudExpansionPanels MultiExpansion="true" Outlined="true" Elevation="0">
-        @foreach (var asset in assets)
+        @foreach (var (asset, setCount) in Cards())
         {
             <MudExpansionPanel @key="asset.AssetId" Gutters="true">
                 <TitleContent>
@@ -68,6 +68,12 @@ else
                     @asset.OriginalFilename (@FormatSize(asset.SizeBytes)) — received
                     @asset.CreatedAtUtc.ToLocalTime().ToString("g")
                 </MudText>
+                @if (setCount > 1)
+                {
+                    <MudText Typo="Typo.caption">
+                        One audiobook set: @setCount tracks in this state, shown once. Deleting or overriding applies to the whole set.
+                    </MudText>
+                }
                 </TitleContent>
 
                 <ChildContent>
@@ -228,6 +234,16 @@ else
 
 @code {
     private IReadOnlyList<MediaAssetAdminResponse>? assets;
+
+    /// <summary>
+    /// One card per file, except that the tracks of one audiobook set in the same state (and for the same reason) are one
+    /// card: twenty identical cards for one held set buried everything else in the queue.
+    /// </summary>
+    private IEnumerable<(MediaAssetAdminResponse Asset, int SetCount)> Cards() => (assets ?? [])
+        .GroupBy(asset => asset.BundleId is { } bundleId
+            ? $"{bundleId:N}|{asset.StorageState}|{asset.IdentityHoldCode}"
+            : asset.AssetId.ToString("N"))
+        .Select(group => (group.First(), group.Count()));
     private bool loadFailed;
     private Guid? busyAssetId;
     private Guid? overridingAssetId;

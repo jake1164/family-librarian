@@ -519,6 +519,91 @@ public sealed class ExternalProviderSingleDownloadPerFormatEndpointTests
     }
 }
 
+/// <summary>
+/// A provider job that never finishes, in its own database. On the lab one sat "queued" for nineteen hours while the
+/// provider retried an NZB its indexer would not hand over; nothing in Family Librarian ever gave up on it.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderJobTimeLimitEndpointTests
+{
+    private static WebTestFixture? _fixture;
+
+    [ClassInitialize]
+    public static async Task InitializeAsync(TestContext testContext)
+    {
+        ArgumentNullException.ThrowIfNull(testContext);
+        _fixture = await WebTestFixture.CreateAsync();
+    }
+
+    [ClassCleanup]
+    public static async Task CleanupAsync()
+    {
+        if (_fixture is not null)
+        {
+            await _fixture.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task AJobQueuedPastItsTimeLimitIsCancelledFailedAndTheNextCopyIsTried()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var client = new RetryLoopExternalProviderClient { FailingJobNeverFinishes = true };
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(client);
+            });
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await RetryLoopSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(
+            AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await RetryLoopSupport.RegisterProviderAsync(admin, providerId: "stuck-source");
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        await RetryLoopSupport.RunPollingAsync(factory);
+
+        // Within its time limit a slow job is simply still in progress.
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var job = await database.ProviderAcquisitionJobs.SingleAsync(entity => entity.RequestId == request.Id);
+            Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Queued, job.LifecycleState);
+
+            // Age it past the queued limit and make it due.
+            await database.Database.ExecuteSqlInterpolatedAsync(
+                $"update acquisition.provider_acquisition_jobs set created_at_utc = {DateTimeOffset.UtcNow.AddHours(-13)}, next_poll_at_utc = {DateTimeOffset.UtcNow.AddSeconds(-1)} where id = {job.Id}");
+        }
+
+        await RetryLoopSupport.RunPollingAsync(factory);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var job = await database.ProviderAcquisitionJobs.SingleAsync(entity => entity.RequestId == request.Id);
+            Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Failed, job.LifecycleState);
+            Assert.AreEqual("PROVIDER_TIMEOUT", job.ErrorCode);
+            Assert.HasCount(1, client.CancelledJobs, "The provider must be asked to stop the job it never finished.");
+            var declined = await database.DeclinedRequestCandidates.SingleAsync(candidate => candidate.RequestId == request.Id);
+            Assert.AreEqual(RetryLoopExternalProviderClient.FailingReference, declined.ProviderResultId);
+        }
+
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        Assert.AreEqual(RetryLoopExternalProviderClient.SucceedingReference, client.LastSubmittedCandidate);
+    }
+}
+
 file static class RetryLoopSupport
 {
     public static async Task SignInAsync(HttpClient client, string email, string password)
@@ -601,6 +686,11 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
 
     public bool FailingSubmissionIsTerminal { get; init; }
 
+    /// <summary>When set, the failing candidate's job is reported queued forever, like a provider stuck retrying.</summary>
+    public bool FailingJobNeverFinishes { get; init; }
+
+    public List<string> CancelledJobs { get; } = [];
+
     /// <summary>When set, the failing candidate's job completes but its file is a different book.</summary>
     public bool FailingJobDeliversWrongBook { get; init; }
 
@@ -678,7 +768,10 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
                 throw new HttpRequestException("The provider accepted the job, but its response was lost.");
         }
         var state = FailingSubmissionIsTerminal && request.CandidateReference == FailingReference
-            ? FailingJobState : ProviderAcquisitionJobLifecycleState.Running;
+            ? FailingJobState
+            : FailingJobNeverFinishes && request.CandidateReference == FailingReference
+                ? ProviderAcquisitionJobLifecycleState.Queued
+                : ProviderAcquisitionJobLifecycleState.Running;
         return Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
             jobId, state, phase: null, pollAfterSeconds: 0));
     }
@@ -688,6 +781,13 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
     {
         StatusPollCount++;
         var isFailing = _jobCandidates.GetValueOrDefault(jobId) == FailingReference && !FailingJobDeliversWrongBook;
+        if (_jobCandidates.GetValueOrDefault(jobId) == FailingReference && FailingJobNeverFinishes)
+        {
+            return Task.FromResult(new ExternalProviderJobStatus(
+                jobId, ProviderAcquisitionJobLifecycleState.Queued, Phase: "resolving", Interaction: null, Progress: null,
+                Error: null, PollAfterSeconds: 0));
+        }
+
         if (isFailing && FailingJobBreaksProtocol)
         {
             throw new ExternalProviderProtocolException("The provider reported an unrecognized job state 'complete'.");
@@ -729,8 +829,11 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
             "the-hobbit.epub"));
 
     public Task CancelAcquireAsync(
-        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
-        Task.CompletedTask;
+        string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
+    {
+        CancelledJobs.Add(jobId);
+        return Task.CompletedTask;
+    }
 
     public Task DeleteAcquireAsync(
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>
