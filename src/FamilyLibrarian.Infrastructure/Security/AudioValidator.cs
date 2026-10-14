@@ -63,7 +63,7 @@ public sealed class AudioValidator : IAssetValidator
     public Task<ValidationOutcome> ValidateAsync(
         MediaAsset asset, Stream content, CancellationToken cancellationToken) => asset.Format switch
     {
-        var format when string.Equals(format, ".m4b", StringComparison.OrdinalIgnoreCase) =>
+        var format when Mp4Audio.IsContainerFormat(format) =>
             ValidateM4bAsync(content, cancellationToken),
         var format when string.Equals(format, ".mp3", StringComparison.OrdinalIgnoreCase) =>
             ValidateMp3Async(content, cancellationToken),

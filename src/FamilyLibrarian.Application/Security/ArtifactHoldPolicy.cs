@@ -42,7 +42,20 @@ public static class ArtifactHoldPolicy
 
         var holds = new List<(string Code, string Reason)>();
 
+        // A content check that ran but was overruled by the file's own text reads as German (or another language) falls
+        // back to attestation; say so, rather than claim that no check exists for the format.
+        var inferredLanguage = result.Facts.FirstOrDefault(fact => fact.Code == EvidenceReasonCodes.ArtifactLanguage.InferredConflicts);
         if (result.VerifierId == ArtifactEvidenceRecorder.NoVerifierId &&
+            asset.Origin is not (AssetOrigin.ManualUpload or AssetOrigin.BuiltInProvider) &&
+            inferredLanguage is not null)
+        {
+            holds.Add((asset.Origin == AssetOrigin.ExternalProvider
+                    ? EvidenceReasonCodes.IdentityHold.AttestedOnlyExternal
+                    : EvidenceReasonCodes.IdentityHold.AttestedOnlyUnknownOrigin,
+                $"The file's tags name the requested book, but its description and other text read as another language " +
+                $"({inferredLanguage.Value}) than the one requested. A librarian must confirm it before it is trusted."));
+        }
+        else if (result.VerifierId == ArtifactEvidenceRecorder.NoVerifierId &&
             asset.Origin is not (AssetOrigin.ManualUpload or AssetOrigin.BuiltInProvider))
         {
             holds.Add(asset.Origin == AssetOrigin.ExternalProvider

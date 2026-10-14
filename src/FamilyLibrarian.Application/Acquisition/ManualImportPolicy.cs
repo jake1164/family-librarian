@@ -24,7 +24,8 @@ public sealed class ManualImportPolicy
     public IList<string> AllowedEbookExtensions { get; set; } =
         [".epub", ".azw3", ".mobi", ".azw", ".fb2", ".fbz", ".kepub", ".prc", ".docx"];
 
-    public IList<string> AllowedAudiobookExtensions { get; set; } = [".m4b", ".mp3", ".ogg"];
+    // .m4a is the same MP4 container as .m4b and is validated and verified the same way; many audiobooks ship as one.
+    public IList<string> AllowedAudiobookExtensions { get; set; } = [".m4b", ".m4a", ".mp3", ".ogg"];
 
     /// <summary>
     /// Upper bound on how many track files a multi-file audiobook

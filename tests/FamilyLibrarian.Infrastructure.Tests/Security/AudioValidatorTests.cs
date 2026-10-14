@@ -30,6 +30,15 @@ public sealed class AudioValidatorTests
     }
 
     [TestMethod]
+    public async Task AnM4aIsValidatedAsTheSameMp4Container()
+    {
+        Assert.IsTrue((await Validate(BuildValidM4bBytes(), ".m4a")).IsValid);
+        Assert.IsFalse(
+            (await Validate("not an mp4 container at all"u8.ToArray(), ".m4a")).IsValid,
+            "An .m4a must get the MP4 structural check, not the skip every unknown format gets.");
+    }
+
+    [TestMethod]
     public async Task AStructurallyValidM4bPasses()
     {
         var outcome = await ValidateM4b(BuildValidM4bBytes());

@@ -51,8 +51,7 @@ public sealed class M4bAssetIdentityVerifier(
 
     public string Id => "m4b-tag-metadata";
 
-    public bool Supports(MediaAsset asset) =>
-        string.Equals(asset.Format, ".m4b", StringComparison.OrdinalIgnoreCase);
+    public bool Supports(MediaAsset asset) => Mp4Audio.IsContainerFormat(asset.Format);
 
     public async Task<AssetIdentityVerificationResult> VerifyAsync(
         MediaAsset asset,
@@ -108,8 +107,17 @@ public sealed class M4bAssetIdentityVerifier(
         // is judged on its exact title alone.
         var titleAuthor = string.IsNullOrWhiteSpace(expected.PrimaryAuthor) ? "Unknown" : expected.PrimaryAuthor;
         var editions = titles.Select(AudioEditionMarker.Strip).ToArray();
-        var titleMatches = titles.Any(title => expectedTitles.Any(expectedTitle =>
-            bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, AudioEditionMarker.Strip(title).CoreTitle, titleAuthor)));
+        // A trailing series designation ("Fourth Wing: Fourth Wing, Book 1") is packaging, not a different title, as
+        // long as its number agrees with the catalog's series position; the remaining title must still be exact.
+        var titleMatches = titles.Any(title =>
+        {
+            var core = AudioEditionMarker.Strip(title).CoreTitle;
+            var withoutSeries = AudioSeriesDesignation.StripConsistentWith(core, expected.Series ?? []);
+            return expectedTitles.Any(expectedTitle =>
+                bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, core, titleAuthor) ||
+                (withoutSeries is not null &&
+                 bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, withoutSeries, titleAuthor)));
+        });
         var authorChecked = authors.Count > 0 && !string.IsNullOrWhiteSpace(expected.PrimaryAuthor);
         var authorMatches = !authorChecked || authors.Any(author => bookMatcher.AuthorMatches(expected.PrimaryAuthor, author));
 

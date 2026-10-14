@@ -150,7 +150,17 @@ public sealed class RequestRepository(
         Guid requestFormatId,
         CancellationToken cancellationToken) =>
         database.MediaAssets.AnyAsync(
-            asset => asset.AssociatedRequestFormatId == requestFormatId,
+            asset => asset.AssociatedRequestFormatId == requestFormatId &&
+                asset.StorageState != MediaAssetStorageState.Unmatched &&
+                asset.StorageState != MediaAssetStorageState.Rejected &&
+                asset.StorageState != MediaAssetStorageState.Destroyed,
+            cancellationToken);
+
+    public Task<bool> HasDownloadInProgressAsync(Guid requestFormatId, CancellationToken cancellationToken) =>
+        database.ProviderAcquisitionJobs.AnyAsync(
+            job => job.RequestFormatId == requestFormatId &&
+                (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Queued ||
+                 job.LifecycleState == ProviderAcquisitionJobLifecycleState.Running),
             cancellationToken);
 
     public Task<BookRequest?> FindByFormatIdAsync(

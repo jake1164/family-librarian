@@ -364,6 +364,161 @@ public sealed class ExternalProviderCancelledJobEndpointTests
     }
 }
 
+/// <summary>
+/// A background job that completes but delivers the wrong book, in its own database. Identity verification holds the
+/// file; the hold must rule the candidate out and advance exactly like a failed download. Before this was handled the
+/// request was left with a "Submitted" attempt and no next check: never retried, never reviewed.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderIdentityHoldRetryEndpointTests
+{
+    private static WebTestFixture? _fixture;
+
+    [ClassInitialize]
+    public static async Task InitializeAsync(TestContext testContext)
+    {
+        ArgumentNullException.ThrowIfNull(testContext);
+        _fixture = await WebTestFixture.CreateAsync();
+    }
+
+    [ClassCleanup]
+    public static async Task CleanupAsync()
+    {
+        if (_fixture is not null)
+        {
+            await _fixture.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task ACompletedJobWhoseFileIsHeldForIdentityAdvancesToTheNextCandidate()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var client = new RetryLoopExternalProviderClient { FailingJobDeliversWrongBook = true };
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(client);
+            });
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await RetryLoopSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(
+            AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await RetryLoopSupport.RegisterProviderAsync(admin, providerId: "identity-hold-external");
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        Assert.AreEqual(RetryLoopExternalProviderClient.FailingReference, client.LastSubmittedCandidate);
+
+        var wakeUp = factory.Services.GetRequiredService<FamilyLibrarian.Web.Acquisition.AutomaticFulfillmentSignal>();
+        Assert.IsFalse(await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None));
+        await RetryLoopSupport.RunPollingAsync(factory);
+        Assert.IsTrue(
+            await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None),
+            "A held wrong book must ask the fulfillment worker to try the next copy now.");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var held = await database.MediaAssets.SingleAsync(asset => asset.WorkId == work.Id);
+            Assert.AreEqual(MediaAssetStorageState.Unmatched, held.StorageState, "The wrong book is held, not trusted.");
+
+            var declined = await database.DeclinedRequestCandidates
+                .Where(candidate => candidate.RequestId == request.Id)
+                .ToListAsync();
+            Assert.HasCount(1, declined, "The held copy must be ruled out so it is not fetched again.");
+            Assert.AreEqual(RetryLoopExternalProviderClient.FailingReference, declined[0].ProviderResultId);
+
+            var retrying = await database.ProviderAttempts.SingleAsync(attempt =>
+                attempt.RequestId == request.Id && attempt.Outcome == ProviderAttemptOutcome.Retrying);
+            Assert.Contains("Attempt 1 of 3", retrying.Summary);
+            Assert.IsNotNull(retrying.NextEligibleCheckAtUtc, "Advancing must make the format due again at once.");
+
+            var persisted = await database.BookRequests.SingleAsync(entity => entity.Id == request.Id);
+            Assert.AreEqual(RequestStatus.PendingAcquisition, persisted.Status);
+        }
+
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        Assert.AreEqual(
+            RetryLoopExternalProviderClient.SucceedingReference, client.LastSubmittedCandidate,
+            "The next pass must fetch the next ranked copy, not wait forever on the held one.");
+    }
+}
+
+/// <summary>
+/// One download per format at a time, in its own database. On the lab a second source started the same ebook two
+/// minutes after the first, while the first was still downloading, spending a metered download on a duplicate.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderSingleDownloadPerFormatEndpointTests
+{
+    private static WebTestFixture? _fixture;
+
+    [ClassInitialize]
+    public static async Task InitializeAsync(TestContext testContext)
+    {
+        ArgumentNullException.ThrowIfNull(testContext);
+        _fixture = await WebTestFixture.CreateAsync();
+    }
+
+    [ClassCleanup]
+    public static async Task CleanupAsync()
+    {
+        if (_fixture is not null)
+        {
+            await _fixture.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task ASecondSourceDoesNotStartTheSameFormatWhileTheFirstIsStillDownloading()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        var client = new RetryLoopExternalProviderClient();
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(client);
+            });
+
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await RetryLoopSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(
+            AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await RetryLoopSupport.RegisterProviderAsync(admin, providerId: "first-source");
+        await RetryLoopSupport.RegisterProviderAsync(admin, providerId: "second-source");
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        Assert.IsTrue(created.IsSuccessStatusCode);
+
+        // The first pass submits one download, which is still running (the job is never polled here).
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        Assert.HasCount(1, client.SubmittedCandidates);
+
+        // The other source has never been asked, so it is due; it must still wait for the running download.
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        Assert.HasCount(
+            1, client.SubmittedCandidates,
+            "A second source must not start a parallel download of the same format.");
+    }
+}
+
 file static class RetryLoopSupport
 {
     public static async Task SignInAsync(HttpClient client, string email, string password)
@@ -445,6 +600,9 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
     public bool FailingJobBreaksProtocol { get; init; }
 
     public bool FailingSubmissionIsTerminal { get; init; }
+
+    /// <summary>When set, the failing candidate's job completes but its file is a different book.</summary>
+    public bool FailingJobDeliversWrongBook { get; init; }
 
     public bool LoseFirstSubmissionResponse { get; init; }
 
@@ -529,7 +687,7 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
     {
         StatusPollCount++;
-        var isFailing = _jobCandidates.GetValueOrDefault(jobId) == FailingReference;
+        var isFailing = _jobCandidates.GetValueOrDefault(jobId) == FailingReference && !FailingJobDeliversWrongBook;
         if (isFailing && FailingJobBreaksProtocol)
         {
             throw new ExternalProviderProtocolException("The provider reported an unrecognized job state 'complete'.");
@@ -565,7 +723,10 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
     public Task<ExternalProviderArtifact> GetOutputAsync(
         string baseUrl, string? apiKey, string jobId, string outputId, CancellationToken cancellationToken) =>
         Task.FromResult(new ExternalProviderArtifact(
-            new MemoryStream(EpubTestFixture.BuildMinimalEpubBytes()), "the-hobbit.epub"));
+            new MemoryStream(FailingJobDeliversWrongBook && _jobCandidates.GetValueOrDefault(jobId) == FailingReference
+                ? EpubTestFixture.BuildMinimalEpubBytes(title: "The Silmarillion")
+                : EpubTestFixture.BuildMinimalEpubBytes()),
+            "the-hobbit.epub"));
 
     public Task CancelAcquireAsync(
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>

@@ -40,7 +40,8 @@ public sealed class ExternalProviderRecheckService(
     IUserAccountStore accounts,
     IAutomaticFulfillmentSignal? fulfillmentSignal = null,
     AudiobookPartSetAcquisitionService? partSets = null,
-    SemanticAssessment.ICandidateSemanticShadow? semanticShadow = null)
+    SemanticAssessment.ICandidateSemanticShadow? semanticShadow = null,
+    ManualImportPolicy? importPolicy = null)
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
@@ -72,7 +73,10 @@ public sealed class ExternalProviderRecheckService(
             var work = await workLookup.FindAsync(request.WorkId, cancellationToken);
             foreach (var format in request.Formats.Where(format => format.Status == RequestFormatStatus.Requested))
             {
-                if (await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken))
+                // One download per format at a time: a second source starting the same book while the first is still
+                // downloading only spends a (possibly metered) download on a duplicate.
+                if (await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken) ||
+                    await requests.HasDownloadInProgressAsync(format.Id, cancellationToken))
                 {
                     continue;
                 }
@@ -215,10 +219,13 @@ public sealed class ExternalProviderRecheckService(
                         // puts an unknown container last, and the
                         // post-download audio structural validator remains the
                         // gate on whether the bytes are a usable audiobook.
+                        // A stated container that the configured import policy refuses (FLAC, Opus...) is never
+                        // usable, however well it ranks: fetching it only spends a download on a file staging rejects.
                         var reviewableOptions = format.MediaType == RequestMediaType.Audiobook
                             ? options.Where(option =>
                                 string.IsNullOrWhiteSpace(option.Format) ||
-                                AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format)).ToArray()
+                                (AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format) &&
+                                 IsImportableAudiobookFormat(option.Format))).ToArray()
                             : options;
                         reviewableOptions = CollapseEquivalentReviewOptions(reviewableOptions);
                         if (reviewableOptions.Count == 0)
@@ -725,6 +732,10 @@ public sealed class ExternalProviderRecheckService(
         var account = await accounts.FindAsync(requesterUserId, cancellationToken);
         return account?.AudiobookNarrationPreference ?? AudiobookNarrationPreference.PreferHuman;
     }
+
+    private bool IsImportableAudiobookFormat(string format) =>
+        importPolicy is null ||
+        importPolicy.IsExtensionAllowed(RequestMediaType.Audiobook, "." + format.Trim().TrimStart('.'));
 
     private static bool IsUnknownDrmOnlyConcern(FulfillmentOption option) =>
         option.DrmStatus == "unknown" &&

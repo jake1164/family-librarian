@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Infrastructure.Persistence;
@@ -29,11 +30,13 @@ public sealed class WorkLookup(AppDbContext database) : IWorkLookup
         // best-effort source for the fields that live only on an Edition,
         // not a per-format-authoritative choice.
         var firstEdition = work.Editions.OrderBy(edition => edition.CreatedAtUtc).FirstOrDefault();
+        var authorNames = orderedAuthors.Select(workAuthor => workAuthor.Author.CanonicalName).ToArray();
         var alternateTitles = work.Editions
             .Select(edition => edition.Title?.Trim())
             .Where(title => !string.IsNullOrWhiteSpace(title) &&
                             !string.Equals(title, work.CanonicalTitle, StringComparison.Ordinal))
             .Cast<string>()
+            .Where(title => AlternateWorkTitles.IsUsable(title, authorNames))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 

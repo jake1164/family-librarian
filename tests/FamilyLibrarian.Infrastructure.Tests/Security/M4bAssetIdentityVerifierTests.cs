@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Text;
 using FamilyLibrarian.Application.Matching;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
@@ -31,6 +32,23 @@ public sealed class M4bAssetIdentityVerifierTests
             Assert.AreEqual("identity.hold.abridged_marker", result.HoldCode);
         if (album.EndsWith("Ungekürzt", StringComparison.Ordinal))
             Assert.IsTrue(result.Facts.Any(f => f.Code == "artifact.language.cue_conflicts" && f.Polarity == FamilyLibrarian.Domain.Evidence.EvidencePolarity.Negative));
+    }
+
+    // The lab's first Fourth Wing copy was a single "Fourth Wing by Rececca Yarros.m4a": the same MP4 container.
+    [TestMethod]
+    public async Task AnM4aAudiobookIsCheckedExactlyLikeAnM4b()
+    {
+        var verifier = CreateVerifier("Fourth Wing", "Rebecca Yarros");
+        Assert.IsTrue(verifier.Supports(CreateAsset(".m4a")));
+        Assert.IsTrue(verifier.Supports(CreateAsset(".M4A")));
+
+        var right = await verifier.VerifyAsync(
+            CreateAsset(".m4a"), BuildM4b(Tag("nam", "Fourth Wing"), Tag("ART", "Rebecca Yarros")), CancellationToken.None);
+        var wrong = await verifier.VerifyAsync(
+            CreateAsset(".m4a"), BuildM4b(Tag("nam", "Iron Flame"), Tag("ART", "Rebecca Yarros")), CancellationToken.None);
+
+        Assert.IsTrue(right.IsMatch);
+        Assert.IsFalse(wrong.IsMatch);
     }
 
     [TestMethod]
@@ -249,8 +267,29 @@ public sealed class M4bAssetIdentityVerifierTests
         verifier.VerifyAsync(CreateAsset(".m4b"), content, CancellationToken.None);
 
     private static M4bAssetIdentityVerifier CreateVerifier(
-        string title, string author, IReadOnlyList<string>? alternateTitles = null) =>
-        new(new StubWorkLookup(title, author, alternateTitles), new DeterministicBookMatcher());
+        string title, string author, IReadOnlyList<string>? alternateTitles = null, IReadOnlyList<BookSeries>? series = null) =>
+        new(new StubWorkLookup(title, author, alternateTitles, series), new DeterministicBookMatcher());
+
+    // The lab case: the right Fourth Wing audiobook was held because its title tag carries a series designation.
+    [TestMethod]
+    [DataRow("Fourth Wing: Fourth Wing, Book 1", "1", true)]
+    [DataRow("Fourth Wing: Fourth Wing, Book 1", null, true)]
+    [DataRow("Fourth Wing (The Empyrean #1)", "1", true)]
+    [DataRow("Fourth Wing, Book 1 (Unabridged)", "1", true)]
+    [DataRow("Fourth Wing - Book 1", "1", true)]
+    [DataRow("Fourth Wing: Fourth Wing, Book 2", "1", false)]
+    [DataRow("Fourth Wing, Part 1", "1", false)]
+    [DataRow("Fourth Wing: Iron Flame", "1", false)]
+    public async Task ATrailingSeriesDesignationConsistentWithTheCatalogIsNotADifferentTitle(
+        string album, string? position, bool expectedMatch)
+    {
+        IReadOnlyList<BookSeries>? series = position is null ? null : [new BookSeries("The Empyrean", position)];
+        var result = await VerifyAsync(
+            CreateVerifier("Fourth Wing", "Rebecca Yarros", series: series),
+            BuildM4b(Tag("nam", album), Tag("ART", "Rebecca Yarros")));
+
+        Assert.AreEqual(expectedMatch, result.IsMatch, album);
+    }
 
     private static MediaAsset CreateAsset(string format) => new(
         Guid.NewGuid(),
@@ -307,9 +346,9 @@ public sealed class M4bAssetIdentityVerifierTests
     private static byte[] Concat(params byte[][] parts) => parts.SelectMany(part => part).ToArray();
 
     private sealed class StubWorkLookup(
-        string title, string author, IReadOnlyList<string>? alternateTitles = null) : IWorkLookup
+        string title, string author, IReadOnlyList<string>? alternateTitles = null, IReadOnlyList<BookSeries>? series = null) : IWorkLookup
     {
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, title, author, [], AlternateTitles: alternateTitles));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, title, author, [], Series: series, AlternateTitles: alternateTitles));
     }
 }

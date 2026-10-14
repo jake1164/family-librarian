@@ -25,6 +25,7 @@ public static class KnownFormatContentTypes
             [".docx"] = "application/zip",
             [".mp3"] = "audio/mpeg",
             [".m4b"] = "audio/mp4",
+            [".m4a"] = "audio/mp4",
             [".ogg"] = "audio/ogg"
         };
 }

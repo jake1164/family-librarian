@@ -35,7 +35,8 @@ public sealed class AcquisitionJobPollingService(
     IAuditWriter audit,
     IClock clock,
     IAutomaticFulfillmentSignal? fulfillmentSignal = null,
-    AudiobookPartSetFailureService? partSetFailures = null)
+    AudiobookPartSetFailureService? partSetFailures = null,
+    ISecurityEvaluationRepository? assets = null)
 {
     private const int BatchSize = 25;
     private static readonly TimeSpan DiskSpaceRecheckDelay = TimeSpan.FromMinutes(15);
@@ -491,6 +492,27 @@ public sealed class AcquisitionJobPollingService(
             nextPollAtUtc: null, clock.UtcNow);
         await jobs.SaveChangesAsync(cancellationToken);
 
+        // The download worked but the file did not: verification held it (the wrong book, the wrong language) or a
+        // security/structure check rejected it. For the retry loop that is a failed copy exactly like a failed
+        // download. Without this the format kept its "Submitted" attempt with no next check, so the request was
+        // neither retried nor sent to review. A part of a set is judged as a whole by the part-set path instead.
+        if (job.IsAutomaticAcquisition && job.PartSetId is null &&
+            await FindUnusableFileReasonAsync(stageResult.MediaAssetIds, cancellationToken) is { } unusable)
+        {
+            var now = clock.UtcNow;
+            var automatic = await RecordAutomaticCandidateFailureAsync(job, unusable, cancellationToken);
+            attempts.Add(new ProviderAttempt(
+                job.RequestId, job.RequestFormatId, job.ProviderId,
+                automatic.AdvancesToNextCandidate ? ProviderAttemptOutcome.Retrying : ProviderAttemptOutcome.Failed,
+                DescribeAutomaticFailure(unusable, automatic), now,
+                nextEligibleCheckAtUtc: automatic.AdvancesToNextCandidate ? now : null));
+            await attempts.SaveChangesAsync(cancellationToken);
+            if (automatic.AdvancesToNextCandidate)
+            {
+                fulfillmentSignal?.Request();
+            }
+        }
+
         if (wasWaitingForInteraction)
         {
             await audit.WriteAsync(
@@ -499,6 +521,55 @@ public sealed class AcquisitionJobPollingService(
         }
 
     }
+
+    /// <summary>Why a staged file cannot be used, or null when every file is trusted or still awaiting a decision.</summary>
+    private async Task<string?> FindUnusableFileReasonAsync(IReadOnlyList<Guid> assetIds, CancellationToken cancellationToken)
+    {
+        if (assets is null)
+        {
+            return null;
+        }
+
+        foreach (var assetId in assetIds)
+        {
+            var asset = await assets.FindAssetAsync(assetId, cancellationToken);
+            switch (asset?.StorageState)
+            {
+                case MediaAssetStorageState.Unmatched:
+                    return asset.IdentityMismatchReason ?? "The fetched copy did not match the requested book.";
+                case MediaAssetStorageState.Rejected or MediaAssetStorageState.Destroyed:
+                    return asset.ScanFailureReason ?? "The fetched copy failed a security or structure check.";
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Rules the job's candidate out and reports whether the provider's attempt budget allows another copy.</summary>
+    private async Task<ExternalFailureOutcome> RecordAutomaticCandidateFailureAsync(
+        ProviderAcquisitionJob job, string reason, CancellationToken cancellationToken)
+    {
+        // The attempt budget belongs to the provider that was asked, so it is read from the provider row rather than
+        // assumed. A provider that has since been deleted falls back to the registration default, which still bounds
+        // the loop.
+        var failedProvider = await externalProviders.FindAsync(job.ExternalProviderId, cancellationToken);
+        return await automaticFulfillment.RecordExternalAcquisitionFailureAsync(
+            job.RequestId,
+            job.RequestFormatId,
+            job.ProviderId,
+            job.CandidateReference,
+            job.CandidateFingerprint,
+            failedProvider?.AutomaticAttemptLimit ?? Domain.Providers.ExternalProvider.DefaultAutomaticAttemptLimit,
+            reason,
+            cancellationToken);
+    }
+
+    private static string DescribeAutomaticFailure(string reason, ExternalFailureOutcome automatic) =>
+        automatic.FailuresSoFar <= 0
+            ? reason
+            : automatic.AdvancesToNextCandidate
+                ? AutomaticAttemptNarrative.Advancing(reason, automatic.FailuresSoFar, automatic.AttemptLimit)
+                : AutomaticAttemptNarrative.Exhausted(reason, automatic.FailuresSoFar, automatic.AttemptLimit);
 
     /// <summary>
     /// An ordinary job's assets are evaluated and approved at once. A part of
@@ -602,23 +673,10 @@ public sealed class AcquisitionJobPollingService(
         ExternalFailureOutcome? automaticOutcome = null;
         if (job.IsAutomaticAcquisition && (!candidateChanged || alreadyRetriedStaleCandidate))
         {
-            // The attempt budget belongs to the provider that was asked, so it
-            // is read from the provider row rather than assumed. A provider
-            // that has since been deleted falls back to the registration
-            // default, which still bounds the loop.
-            var failedProvider = await externalProviders.FindAsync(job.ExternalProviderId, cancellationToken);
             var reason = candidateChanged
                 ? "The provider reported that this copy changed twice. A librarian must refresh the source before another automatic attempt."
                 : errorMessage ?? "The automatic copy could not be acquired.";
-            automaticOutcome = await automaticFulfillment.RecordExternalAcquisitionFailureAsync(
-                job.RequestId,
-                job.RequestFormatId,
-                job.ProviderId,
-                job.CandidateReference,
-                job.CandidateFingerprint,
-                failedProvider?.AutomaticAttemptLimit ?? Domain.Providers.ExternalProvider.DefaultAutomaticAttemptLimit,
-                reason,
-                cancellationToken);
+            automaticOutcome = await RecordAutomaticCandidateFailureAsync(job, reason, cancellationToken);
             advancedToNextCandidate = automaticOutcome.AdvancesToNextCandidate;
         }
 
@@ -634,10 +692,7 @@ public sealed class AcquisitionJobPollingService(
         }
         else if (automaticOutcome is { } automatic && automatic.FailuresSoFar > 0)
         {
-            var failureReason = errorMessage ?? "The acquisition failed.";
-            summary = advancedToNextCandidate
-                ? AutomaticAttemptNarrative.Advancing(failureReason, automatic.FailuresSoFar, automatic.AttemptLimit)
-                : AutomaticAttemptNarrative.Exhausted(failureReason, automatic.FailuresSoFar, automatic.AttemptLimit);
+            summary = DescribeAutomaticFailure(errorMessage ?? "The acquisition failed.", automatic);
         }
         else
         {

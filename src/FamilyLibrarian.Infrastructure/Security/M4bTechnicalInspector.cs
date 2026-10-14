@@ -8,7 +8,7 @@ public sealed class M4bTechnicalInspector : IAssetTechnicalInspector
 {
     public string Id => "m4b-headers";
 
-    public bool Supports(MediaAsset asset) => string.Equals(asset.Format, ".m4b", StringComparison.OrdinalIgnoreCase);
+    public bool Supports(MediaAsset asset) => Mp4Audio.IsContainerFormat(asset.Format);
 
     public Task<IReadOnlyList<IdentityFact>> InspectAsync(MediaAsset asset, Stream content, CancellationToken cancellationToken) =>
         M4bAssetIdentityVerifier.InspectTechnicalAsync(content, cancellationToken);

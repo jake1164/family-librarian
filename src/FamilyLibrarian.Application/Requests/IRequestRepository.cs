@@ -63,7 +63,18 @@ public interface IRequestRepository
         bool orderByLeastRecentlyAttempted = false) =>
         Task.FromResult<IReadOnlyList<BookRequest>>([]);
 
-    /// <summary>Whether this requested format already has an acquired artifact.</summary>
+    /// <summary>
+    /// Whether any provider is already downloading a copy for this format (queued or running). A second source must
+    /// not start a parallel download of the same book; a job waiting on a person (for example a verification
+    /// challenge) does not count, so it cannot hold every other source back indefinitely.
+    /// </summary>
+    Task<bool> HasDownloadInProgressAsync(Guid requestFormatId, CancellationToken cancellationToken) =>
+        Task.FromResult(false);
+
+    /// <summary>
+    /// Whether this requested format already has a file that is usable or still being checked. A file that was held
+    /// for identity, rejected or destroyed does not count: it must not stop the search for another copy.
+    /// </summary>
     Task<bool> HasAcquiredArtifactAsync(
         Guid requestFormatId,
         CancellationToken cancellationToken) =>
