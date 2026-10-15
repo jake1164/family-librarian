@@ -92,6 +92,9 @@ public sealed class ExternalProviderConfidenceLevelEndpointTests
     [DataRow("Rebecca", true, "Standard", "Ebook", null, true)]
     [DataRow("Rebeca Yaros", false, "Standard", "Audiobook", "Strict", false)]
     [DataRow("Rebeca Yaros", false, "Standard", "Audiobook", null, true)]
+    [DataRow("Rebecca Yarros", false, "SuggestOnly", "Ebook", null, false)]
+    [DataRow("Rebecca Yarros", false, "Strict", "Audiobook", "SuggestOnly", false)]
+    [DataRow("Rebecca Yarros", false, "SuggestOnly", "Audiobook", "Strict", true)]
     public async Task ScheduledSelectionHonorsLevelAndFormatOverride(string? author, bool agreement, string level, string mediaType, string? audioOverride, bool fetched)
     {
         var title = author == "Rebeca Yaross" ? "Iron Flame" : "Fourth Wing";
@@ -104,6 +107,36 @@ public sealed class ExternalProviderConfidenceLevelEndpointTests
                 "An ineligible candidate must go directly to review, without spending an automatic attempt."));
         Assert.AreEqual(fetched ? 1 : 0, submitted.Count, "The provider level must gate the candidate tier on the scheduled path.");
         if (fetched) Assert.AreEqual("example-record", submitted.Single());
+    }
+
+    [TestMethod]
+    public async Task SuggestOnlyPersistsAtEveryLevelAndALibrarianCanChooseAStrongCopy()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        var client = new VariantSearchProviderClient(_ => [VariantSearchProviderClient.Hobbit("reviewed-copy", withAuthor: true)]);
+        await VariantScenario.RunAsync(fixture, client, "suggest-only-source", providerConfidence: "SuggestOnly",
+            afterwards: async (factory, admin, request) =>
+            {
+                Assert.IsEmpty(client.SubmittedCandidates, "Even a strong match waits for a librarian.");
+                await using var scope = factory.Services.CreateAsyncScope();
+                var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var provider = await database.ExternalProviders.SingleAsync();
+                var saved = await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{provider.Id}/confidence-level",
+                    new { level = "SuggestOnly", ebook = "SuggestOnly", audiobook = "SuggestOnly" });
+                Assert.AreEqual(HttpStatusCode.OK, saved.StatusCode);
+                var status = await saved.Content.ReadFromJsonAsync<ExternalProviderResponse>();
+                Assert.IsNotNull(status);
+                Assert.AreEqual("SuggestOnly", status.ConfidenceLevel);
+                Assert.AreEqual("SuggestOnly", status.EbookConfidenceLevel);
+                Assert.AreEqual("SuggestOnly", status.AudiobookConfidenceLevel);
+                var candidate = await database.RequestReviewCandidates.SingleAsync(row => row.RequestId == request.Id);
+                var current = await database.BookRequests.Include(row => row.StatusHistory).SingleAsync(row => row.Id == request.Id);
+                StringAssert.Contains(current.StatusHistory.Single(row => row.ToStatus == RequestStatus.NeedsReview).Reason!, "suggest only");
+                var pick = await admin.PostAsJsonAsync($"/api/v1/admin/requests/{request.Id}/needs-review/resolve",
+                    new ResolveNeedsReviewRequest(candidate.Id, current.Version));
+                Assert.IsTrue(pick.IsSuccessStatusCode, pick.StatusCode.ToString());
+            });
+        CollectionAssert.AreEqual(new List<string> { "reviewed-copy" }, client.SubmittedCandidates);
     }
 
     [TestMethod]
@@ -130,6 +163,8 @@ public sealed class ExternalProviderConfidenceLevelEndpointTests
         await ConfidenceScenario.SignInAsync(admin);
         async Task<ExternalProviderResponse[]> ListAsync() => (await admin.GetFromJsonAsync<ExternalProviderResponse[]>("/api/v1/admin/external-providers/"))!;
         var providers = await ListAsync();
+        Assert.IsTrue(providers.All(provider => provider.RecheckSchedule == "Manual"),
+            "Removing the switch and changing the creation default must preserve existing saved schedules.");
         var raw = await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/external-providers/");
         Assert.IsTrue(raw[0].TryGetProperty("confidenceLevel", out var level), "Migrated sources must expose their default level.");
         Assert.AreEqual("Standard", level.GetString());
@@ -183,7 +218,6 @@ internal static class ConfidenceScenario
             var configured = await database.ExternalProviders.SingleAsync(row => row.Id == provider.Id);
             configured.SetEnabled(true, null, DateTimeOffset.UtcNow);
             configured.SetRecheckSchedule(ProviderRecheckSchedule.Daily, null, DateTimeOffset.UtcNow);
-            configured.SetAutoAcquireEnabled(true, null, DateTimeOffset.UtcNow);
             configured.SetConfidenceLevels(Enum.Parse<ProviderConfidenceLevel>(level), null,
                 audioOverride is null ? null : Enum.Parse<ProviderConfidenceLevel>(audioOverride), null, DateTimeOffset.UtcNow);
             var work = new Work(title, null, null, null, PublicationStatus.Published, DateTimeOffset.UtcNow);

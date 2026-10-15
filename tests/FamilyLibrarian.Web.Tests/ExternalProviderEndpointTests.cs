@@ -143,7 +143,7 @@ public sealed class ExternalProviderEndpointTests
             new CreateExternalProviderRequest("scheduled-provider", "Scheduled Provider", "http://provider.test"));
         var created = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
         Assert.IsNotNull(created);
-        Assert.AreEqual("Manual", created.RecheckSchedule);
+        Assert.AreEqual("Daily", created.RecheckSchedule);
 
         var scheduled = await client.PutAsJsonAsync(
             $"/api/v1/admin/external-providers/{created.Id}/recheck-schedule",
@@ -159,36 +159,30 @@ public sealed class ExternalProviderEndpointTests
         Assert.AreEqual(HttpStatusCode.BadRequest, invalid.StatusCode);
     }
 
+    // Download confidence decides what may be fetched; there is no separate automatic-download switch.
     [TestMethod]
-    public async Task AnAdminCanSeparatelyToggleAutomaticAcquisition()
+    public async Task ANewSourceIsRecheckedDailyAndHasNoAutomaticDownloadSwitch()
     {
         var fixture = WebTestFixture.Require(_fixture);
         using var client = await CreateAdminClientWithTokenAsync(fixture);
 
         var create = await client.PostAsJsonAsync(
             "/api/v1/admin/external-providers/",
-            new CreateExternalProviderRequest("auto-acquire-provider", "Auto Acquire Provider", "http://provider.test"));
+            new CreateExternalProviderRequest("daily-by-default-provider", "Daily By Default", "http://provider.test"));
         var created = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
         Assert.IsNotNull(created);
-        Assert.IsFalse(created.AutoAcquireEnabled, "A newly registered provider must default to automatic-acquire disabled.");
+        Assert.AreEqual("Daily", created.RecheckSchedule, "A source that found nothing is asked again daily unless an administrator says otherwise.");
+        using var payload = System.Text.Json.JsonDocument.Parse(await create.Content.ReadAsStringAsync());
+        Assert.IsFalse(payload.RootElement.TryGetProperty("autoAcquireEnabled", out _), "The removed switch must not remain in the admin contract.");
 
-        var enabled = await client.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{created.Id}/auto-acquire",
-            new SetExternalProviderAutoAcquireEnabledRequest(true));
-        Assert.AreEqual(HttpStatusCode.OK, enabled.StatusCode);
-        var afterEnable = await enabled.Content.ReadFromJsonAsync<ExternalProviderResponse>();
-        Assert.IsNotNull(afterEnable);
-        Assert.IsTrue(afterEnable.AutoAcquireEnabled);
-        // Independent of recheck schedule -- enabling one must not implicitly change the other.
-        Assert.AreEqual("Manual", afterEnable.RecheckSchedule);
+        var removed = await client.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{created.Id}/auto-acquire", new { enabled = false });
+        Assert.IsFalse(removed.IsSuccessStatusCode, "The automatic-download switch no longer exists.");
 
-        var disabled = await client.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{created.Id}/auto-acquire",
-            new SetExternalProviderAutoAcquireEnabledRequest(false));
-        Assert.AreEqual(HttpStatusCode.OK, disabled.StatusCode);
-        var afterDisable = await disabled.Content.ReadFromJsonAsync<ExternalProviderResponse>();
-        Assert.IsNotNull(afterDisable);
-        Assert.IsFalse(afterDisable.AutoAcquireEnabled);
+        var manual = await client.PutAsJsonAsync(
+            $"/api/v1/admin/external-providers/{created.Id}/recheck-schedule",
+            new SetExternalProviderRecheckScheduleRequest("Manual"));
+        Assert.AreEqual(HttpStatusCode.OK, manual.StatusCode, "Manual stays available as a choice.");
     }
 
     [TestMethod]

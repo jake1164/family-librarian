@@ -7,6 +7,7 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Acquisition;
@@ -207,6 +208,12 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.Invalid("That provider is not available.");
         }
 
+        if (isAutomaticAcquisition && !confirmLowConfidenceMatch &&
+            externalProvider.EffectiveConfidence(format.MediaType) == ProviderConfidenceLevel.SuggestOnly)
+        {
+            return ManualImportResult.LowConfidenceMatchConfirmationRequired();
+        }
+
         if (ExternalCandidateAvailabilityChecker.IsKnownSearchUnavailable(externalProvider))
         {
             return ManualImportResult.Invalid(
@@ -317,7 +324,7 @@ public sealed class DirectAcquisitionService(
                 allowed = sameWork is not null && CandidateConfidence.Allows(level, sameWork.Tier) &&
                     string.Equals(sameWork.Winner.ProviderResultId, providerResultId, StringComparison.Ordinal);
             }
-            needsIdentityConfirmation = !externalProvider.AutoAcquireEnabled || !allowed;
+            needsIdentityConfirmation = !allowed;
         }
         if (partSet is null &&
             needsIdentityConfirmation &&

@@ -224,10 +224,11 @@ including on shared requests; source/security/publishing diagnostics remain admi
 
 Each admin request detail page includes an append-only provider-activity
 timeline, including no-match, found-candidate, blocked, failed, and acquired
-outcomes. External sources default to **Manual**; an admin can opt a source into
-daily or weekly discovery rechecks. Automatic downloads require a separate
-administrator opt-in and a candidate permitted by the source's download confidence
-level, with optional ebook and audiobook overrides. Every downloaded copy passes
+outcomes. New external sources default to **Daily** discovery rechecks; an admin
+can choose Manual or Weekly instead. Existing sources retain their saved schedule.
+Enabled sources download candidates permitted by the source's download confidence
+level, with optional ebook and audiobook overrides. **Suggest only** keeps a source
+available for discovery and review while a librarian chooses each download. Every downloaded copy passes
 the normal security and content checks; other candidates go to review.
 
 In VS Code, the Run and Debug selector provides three Compose-backed container

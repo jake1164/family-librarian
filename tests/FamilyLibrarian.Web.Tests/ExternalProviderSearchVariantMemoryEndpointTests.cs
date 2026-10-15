@@ -11,7 +11,8 @@ namespace FamilyLibrarian.Web.Tests;
 
 // AUTOFIND 2b. Which search variants were tried for a request format and provider is remembered ("last tried at", not "done
 // forever"): a scheduled recheck re-runs the whole list, a retry pass re-runs only the base search and variants that returned
-// something, and the variant that found the chosen candidate is stored with it so a review pick re-runs exactly that search.
+// something, and the variant that found the chosen candidate is stored with it so a review pick starts with that search.
+// A candidate below the confidence threshold also rebuilds the pool before the explicit human confirmation is applied.
 // Demo Hobbit work: variants are base, other ISBN, "Middle-earth 0", "Tolkien, J. R. R.".
 
 [TestClass]
@@ -100,16 +101,16 @@ public sealed class ExternalProviderSearchVariantMemoryEndpointTests
     }
 
     [TestMethod]
-    public async Task AReviewCandidateStoresItsVariantAndAPickReRunsExactlyThatSearch()
+    public async Task AReviewCandidateStoresItsVariantAndAPickRevalidatesItBeforeRebuildingConfidence()
     {
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
         var client = new VariantSearchProviderClient(request =>
-            request.Work.Title == "Middle-earth 0" ? [VariantSearchProviderClient.Hobbit("series-hit", withAuthor: true)] : []);
+            request.Work.Title == "Middle-earth 0" ? [VariantSearchProviderClient.Hobbit("series-hit", withAuthor: false)] : []);
         string? stored = null;
         int searchesBeforePick = 0;
         HttpResponseMessage? pick = null;
 
-        await VariantScenario.RunAsync(fixture, client, "variant-memory-review", autoAcquire: false,
+        await VariantScenario.RunAsync(fixture, client, "variant-memory-review", providerConfidence: "Strict",
             afterwards: async (factory, admin, request) =>
             {
                 await using var scope = factory.Services.CreateAsyncScope();
@@ -126,7 +127,10 @@ public sealed class ExternalProviderSearchVariantMemoryEndpointTests
         Assert.AreEqual("SeriesPosition:MIDDLE-EARTH#0", stored);
         Assert.IsTrue(pick!.IsSuccessStatusCode, pick.StatusCode.ToString());
         Assert.AreEqual("series-hit", client.SubmittedCandidates.Single());
-        Assert.AreEqual(1, client.SearchedTitles.Count - searchesBeforePick, "The stored variant is re-run alone, with no walk.");
+        CollectionAssert.AreEqual(
+            new List<string> { "Middle-earth 0", "The Hobbit", "The Hobbit", "The Hobbit" },
+            client.SearchedTitles.Skip(searchesBeforePick).ToList(),
+            "Revalidation starts with the stored variant, then rebuilds the confidence pool from the other variants for this uncorroborated candidate.");
     }
 
     [TestMethod]

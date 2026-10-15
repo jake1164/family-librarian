@@ -205,6 +205,33 @@ public sealed class AudiobookPartSetIncompleteSetEndpointTests
     }
 }
 
+[TestClass]
+public sealed class AudiobookPartSetSuggestOnlyEndpointTests
+{
+    [TestMethod]
+    public async Task SuggestOnlyReviewsACompleteSetWithoutSubmittingAnyPart()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        var provider = new PartSetExternalProviderClient();
+        await using var scenario = await PartSetScenario.StartAsync(fixture, provider, confidence: "SuggestOnly");
+        await using (var directScope = scenario.Factory.Services.CreateAsyncScope())
+        {
+            var result = await directScope.ServiceProvider.GetRequiredService<DirectAcquisitionService>().AcquireMemberAsync(
+                scenario.RequestId, scenario.FormatId, "part-set-external", "part-1",
+                new AudiobookPartSetMember(Guid.NewGuid(), 1, 2, ["part-1", "part-2"]), CancellationToken.None);
+            Assert.AreEqual(ManualImportOutcome.LowConfidenceMatchConfirmationRequired, result.Outcome,
+                "A multipart submission must recheck Suggest only even if discovery previously selected the set.");
+        }
+        await scenario.RecheckAsync();
+        Assert.AreEqual("CandidatesFound", (await scenario.AttemptsAsync()).Single().Outcome);
+        Assert.AreEqual(0, provider.Submissions);
+        await using var scope = scenario.Factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(0, await database.ProviderAcquisitionJobs.CountAsync(job => job.RequestId == scenario.RequestId));
+        Assert.AreEqual(RequestStatus.NeedsReview, (await database.BookRequests.SingleAsync(row => row.Id == scenario.RequestId)).Status);
+    }
+}
+
 file sealed class PartSetScenario : IAsyncDisposable
 {
     private PartSetScenario(FamilyLibrarianAppFactory factory, HttpClient admin, Guid requestId, Guid formatId)
@@ -223,7 +250,7 @@ file sealed class PartSetScenario : IAsyncDisposable
 
     public Guid FormatId { get; }
 
-    public static async Task<PartSetScenario> StartAsync(WebTestFixture fixture, PartSetExternalProviderClient client)
+    public static async Task<PartSetScenario> StartAsync(WebTestFixture fixture, PartSetExternalProviderClient client, string confidence = "Strict")
     {
         var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
@@ -249,15 +276,15 @@ file sealed class PartSetScenario : IAsyncDisposable
             new CreateExternalProviderRequest("part-set-external", "Part Set External", "http://fake-external.test"));
         var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
         Assert.IsNotNull(provider);
+        if (confidence != "Strict")
+            (await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{provider.Id}/confidence-level",
+                new { level = confidence })).EnsureSuccessStatusCode();
         (await admin.PutAsJsonAsync(
             $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true)))
             .EnsureSuccessStatusCode();
         (await admin.PutAsJsonAsync(
             $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule",
             new SetExternalProviderRecheckScheduleRequest("Daily"))).EnsureSuccessStatusCode();
-        (await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/auto-acquire",
-            new SetExternalProviderAutoAcquireEnabledRequest(true))).EnsureSuccessStatusCode();
 
         var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();

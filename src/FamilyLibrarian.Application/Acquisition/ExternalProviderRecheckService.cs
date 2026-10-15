@@ -17,8 +17,8 @@ namespace FamilyLibrarian.Application.Acquisition;
 
 /// <summary>
 /// Rechecks administrator-approved external providers on their configured
-/// cadence. Automatic downloads require the separate AutoAcquireEnabled toggle
-/// and confidence permitted by the provider's effective level. Identity,
+/// cadence. Automatic downloads require confidence permitted by the provider's
+/// effective level. Identity,
 /// language, release and attempt-budget gates apply before submission; every
 /// downloaded file still passes security and content validation.
 /// </summary>
@@ -246,7 +246,8 @@ public sealed class ExternalProviderRecheckService(
                         // fetch them all; anything weaker keeps the ordinary
                         // review path below. The set is re-derived server-side
                         // for each part, and publishes only if every part passes.
-                        if (format.MediaType == RequestMediaType.Audiobook && provider.AutoAcquireEnabled &&
+                        if (format.MediaType == RequestMediaType.Audiobook &&
+                            provider.EffectiveConfidence(format.MediaType) != ProviderConfidenceLevel.SuggestOnly &&
                             partSets is not null &&
                             AudiobookPartSetSelector.TrySelect(
                                 [.. reviewableOptions.Where(option => search.VariantOf(option).IsBase)]) is { } completeSet)
@@ -309,7 +310,7 @@ public sealed class ExternalProviderRecheckService(
                         // rather than walking further down a list that may be
                         // costing real transfers against a metered source.
                         var failuresSoFar = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId);
-                        if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled &&
+                        if (automaticMatches.Length == 1 &&
                             failuresSoFar >= provider.AutomaticAttemptLimit)
                         {
                             // One extra attempt for a candidate that is new, strong and within the cap (OQ-5, OQ-14): it
@@ -338,7 +339,7 @@ public sealed class ExternalProviderRecheckService(
                             break;
                         }
 
-                        if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled)
+                        if (automaticMatches.Length == 1)
                         {
                             // A copy that needs no answer makes a pending question moot: withdraw it, tell the requesters, and
                             // carry on into the download. The status changes before any attempt row is written, so the next
@@ -428,7 +429,9 @@ public sealed class ExternalProviderRecheckService(
                         search.MarkSelected(reviewCandidates[0], clock.UtcNow);
                         var recorded = await MarkForCandidateReviewAsync(
                             request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates, search,
-                            DescribeCandidateReviewReason(reviewCandidates, provider.AutoAcquireEnabled), cancellationToken);
+                            provider.EffectiveConfidence(format.MediaType) == ProviderConfidenceLevel.SuggestOnly
+                                ? "This source is set to suggest only. A librarian must verify and choose a copy before downloading."
+                                : DescribeCandidateReviewReason(reviewCandidates), cancellationToken);
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
                             recorded
                                 ? $"Found {reviewCandidates.Length} candidate(s); choose a reviewed candidate before acquisition."
@@ -955,9 +958,7 @@ public sealed class ExternalProviderRecheckService(
             : $"{summary}. A librarian must choose a source.";
     }
 
-    private static string DescribeCandidateReviewReason(
-        IReadOnlyList<FulfillmentOption> options,
-        bool autoAcquireEnabled)
+    private static string DescribeCandidateReviewReason(IReadOnlyList<FulfillmentOption> options)
     {
         var hasConfirmedWorkIdentity = options.Any(option =>
             option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle);
@@ -974,8 +975,6 @@ public sealed class ExternalProviderRecheckService(
         if (releaseConcerns.Length > 0)
             return $"Matching titles were found. {string.Join(" ", releaseConcerns)}";
 
-        return autoAcquireEnabled
-            ? "Several matching copies need a librarian comparison before acquisition."
-            : "Matching copies were found, but automatic acquisition is disabled. A librarian will verify and select one.";
+        return "Several matching copies need a librarian comparison before acquisition.";
     }
 }

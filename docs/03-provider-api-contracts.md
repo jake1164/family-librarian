@@ -129,8 +129,8 @@ every number remains review evidence by default: numbering alone cannot
 establish the same audiobook edition. It must not claim a partial or
 ambiguous set is a complete audiobook.
 
-A provider registered with automatic acquisition enabled may have a complete
-set fetched without review, but only when one provider returns exactly one
+An enabled provider whose effective download confidence is not Suggest only may
+have a complete set fetched without review, but only when one provider returns exactly one
 compatible record for every number `1..N` (`2 <= N <= 8`), each record's only
 release concern is that it is a fragment (no sample, collection, abridged or
 DRM concern, no language confirmation), each has a plausible title and no
@@ -501,14 +501,16 @@ MANUAL   No background lookup; an administrator explicitly checks it.
 ```
 
 The bundled Project Gutenberg and LibriVox implementations have effective
-`ONCE` behavior. Registered external providers default to `MANUAL`; an administrator may explicitly select
-`DAILY` or `WEEKLY` for each enabled provider. The application owns that policy,
-not the provider manifest.
+`ONCE` behavior. Newly registered external providers default to `DAILY`; an administrator may select
+`MANUAL` or `WEEKLY` for each enabled provider. Existing providers retain their saved
+schedule. The application owns that policy, not the provider manifest.
 
-Scheduled automatic downloads also require administrator opt-in and the source's
-effective download confidence. Strict permits strong identity; Standard adds
+Enabled sources download candidates permitted by the source's effective download
+confidence. Strict permits strong identity; Standard adds
 corroborated close calls; Liberal also permits incomplete author metadata on a
-plausible title. Ebook and audiobook overrides optionally replace the source
+plausible title. Suggest only (`SuggestOnly` in the admin API) finds copies for
+review and requires a librarian's selection before downloading, including multipart
+audiobooks. Ebook and audiobook overrides optionally replace the source
 level. New sources default to Strict; migrated sources default to Standard with
 an administrator review notice until their levels are saved. The confidence
 setting is local administration policy and adds nothing to the provider protocol.

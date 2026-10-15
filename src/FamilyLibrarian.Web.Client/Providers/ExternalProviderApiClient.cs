@@ -42,12 +42,6 @@ public sealed class ExternalProviderApiClient(HttpClient httpClient, Antiforgery
             HttpMethod.Put, $"{ProvidersPath}/{id}/recheck-schedule",
             new SetExternalProviderRecheckScheduleRequest(recheckSchedule), cancellationToken);
 
-    public Task<ExternalProviderResult> SetProviderAutoAcquireEnabledAsync(
-        Guid id, bool enabled, CancellationToken cancellationToken = default) =>
-        SendProviderAsync(
-            HttpMethod.Put, $"{ProvidersPath}/{id}/auto-acquire",
-            new SetExternalProviderAutoAcquireEnabledRequest(enabled), cancellationToken);
-
     public Task<ExternalProviderResult> SetProviderAutomaticAttemptLimitAsync(
         Guid id, int limit, CancellationToken cancellationToken = default) =>
         SendProviderAsync(

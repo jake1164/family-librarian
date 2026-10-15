@@ -35,6 +35,14 @@ public sealed class CandidateConfidenceTests
     }
 
     [TestMethod]
+    [DataRow("Strong")]
+    [DataRow("CloseCall")]
+    [DataRow("LiberalOnly")]
+    [DataRow("NotEligible")]
+    public void SuggestOnlyNeverPermitsAnUnattendedDownload(string tier) =>
+        Assert.IsFalse(Allows("SuggestOnly", tier));
+
+    [TestMethod]
     [DataRow("fuzzy-title")]
     [DataRow("language")]
     [DataRow("condition")]

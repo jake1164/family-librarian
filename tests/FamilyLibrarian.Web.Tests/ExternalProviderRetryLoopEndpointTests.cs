@@ -913,10 +913,6 @@ file static class RetryLoopSupport
             $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule",
             new SetExternalProviderRecheckScheduleRequest("Daily")))
             .EnsureSuccessStatusCode();
-        (await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/auto-acquire",
-            new SetExternalProviderAutoAcquireEnabledRequest(true)))
-            .EnsureSuccessStatusCode();
 
         if (attemptLimit is not { } limit)
         {

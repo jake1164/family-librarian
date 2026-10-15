@@ -96,8 +96,6 @@ public static class AuditActions
     public const string ExternalProviderTested = "external_provider.tested";
     public const string ExternalProviderRemoved = "external_provider.removed";
     public const string ExternalProviderRecheckScheduleChanged = "external_provider.recheck_schedule_changed";
-    public const string ExternalProviderAutoAcquireEnabled = "external_provider.auto_acquire_enabled";
-    public const string ExternalProviderAutoAcquireDisabled = "external_provider.auto_acquire_disabled";
     public const string ExternalProviderAutomaticAttemptLimitChanged = "external_provider.automatic_attempt_limit_changed";
     public const string ExternalProviderConfidenceLevelsChanged = "external_provider.confidence_levels_changed";
     public const string ExternalProviderAcquisitionStaged = "external_provider_acquisition.staged";

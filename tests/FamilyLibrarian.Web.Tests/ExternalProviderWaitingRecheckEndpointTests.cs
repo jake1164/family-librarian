@@ -209,9 +209,6 @@ internal sealed class WaitingHarness : IAsyncDisposable
             $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule", new SetExternalProviderRecheckScheduleRequest("Daily")))
             .EnsureSuccessStatusCode();
         (await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/auto-acquire", new SetExternalProviderAutoAcquireEnabledRequest(true)))
-            .EnsureSuccessStatusCode();
-        (await admin.PutAsJsonAsync(
             $"/api/v1/admin/external-providers/{provider.Id}/automatic-attempt-limit",
             new SetExternalProviderAutomaticAttemptLimitRequest(attemptLimit))).EnsureSuccessStatusCode();
         return new WaitingHarness(factory, admin, client, fixture);

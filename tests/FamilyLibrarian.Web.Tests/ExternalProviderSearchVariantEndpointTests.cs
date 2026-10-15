@@ -28,7 +28,7 @@ internal static class VariantScenario
 {
     public static async Task<VariantOutcome> RunAsync(
         WebTestFixture fixture, VariantSearchProviderClient client, string providerId, int passes = 1, string? directResultId = null,
-        bool autoAcquire = true, Func<FamilyLibrarianAppFactory, BookRequestResponse, int, Task>? beforePass = null,
+        Func<FamilyLibrarianAppFactory, BookRequestResponse, int, Task>? beforePass = null,
         Func<FamilyLibrarianAppFactory, HttpClient, BookRequestResponse, Task>? afterwards = null,
         string? providerConfidence = null)
     {
@@ -63,9 +63,6 @@ internal static class VariantScenario
         (await admin.PutAsJsonAsync(
             $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule",
             new SetExternalProviderRecheckScheduleRequest("Daily"))).EnsureSuccessStatusCode();
-        (await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/auto-acquire",
-            new SetExternalProviderAutoAcquireEnabledRequest(autoAcquire))).EnsureSuccessStatusCode();
 
         if (providerConfidence is not null)
             (await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{provider.Id}/confidence-level",

@@ -22,7 +22,6 @@ internal static class ExternalProviderEndpoints
         adminExternalProviders.MapPut("/{id:guid}/details", SetExternalProviderDetailsAsync);
         adminExternalProviders.MapPut("/{id:guid}/enabled", SetExternalProviderEnabledAsync);
         adminExternalProviders.MapPut("/{id:guid}/recheck-schedule", SetExternalProviderRecheckScheduleAsync);
-        adminExternalProviders.MapPut("/{id:guid}/auto-acquire", SetExternalProviderAutoAcquireEnabledAsync);
         adminExternalProviders.MapPut("/{id:guid}/automatic-attempt-limit", SetExternalProviderAutomaticAttemptLimitAsync);
         adminExternalProviders.MapPut("/{id:guid}/confidence-level", SetExternalProviderConfidenceLevelAsync);
         adminExternalProviders.MapPut("/{id:guid}/api-key", SetExternalProviderApiKeyAsync);
@@ -66,11 +65,6 @@ internal static class ExternalProviderEndpoints
         return ToExternalProviderResult(await service.SetRecheckScheduleAsync(id, schedule, cancellationToken));
     }
 
-    private static async Task<IResult> SetExternalProviderAutoAcquireEnabledAsync(
-        Guid id, SetExternalProviderAutoAcquireEnabledRequest request, ExternalProviderAdminService service,
-        CancellationToken cancellationToken) =>
-        ToExternalProviderResult(await service.SetAutoAcquireEnabledAsync(id, request.Enabled, cancellationToken));
-
     private static async Task<IResult> SetExternalProviderAutomaticAttemptLimitAsync(
         Guid id, SetExternalProviderAutomaticAttemptLimitRequest request, ExternalProviderAdminService service,
         CancellationToken cancellationToken) =>
@@ -86,7 +80,7 @@ internal static class ExternalProviderEndpoints
             request.Ebook is not null && !TryLevel(request.Ebook, out _) ||
             request.Audiobook is not null && !TryLevel(request.Audiobook, out _))
             return Results.ValidationProblem(new Dictionary<string, string[]>
-            { ["confidenceLevel"] = ["Choose Strict, Standard, or Liberal; use no override to inherit the source level."] });
+            { ["confidenceLevel"] = ["Choose Strict, Standard, Liberal, or SuggestOnly; use no override to inherit the source level."] });
 
         var ebook = request.Ebook is null ? (ProviderConfidenceLevel?)null : Enum.Parse<ProviderConfidenceLevel>(request.Ebook, ignoreCase: true);
         var audiobook = request.Audiobook is null ? (ProviderConfidenceLevel?)null : Enum.Parse<ProviderConfidenceLevel>(request.Audiobook, ignoreCase: true);
@@ -131,7 +125,6 @@ internal static class ExternalProviderEndpoints
         status.BaseUrl,
         status.IsEnabled,
         status.RecheckSchedule,
-        status.AutoAcquireEnabled,
         status.AutomaticAttemptLimit,
         status.HasApiKey,
         status.ApiKeyHint,

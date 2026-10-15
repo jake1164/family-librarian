@@ -99,9 +99,9 @@ internal static class NoAcceptableCopyScenario
     }
 
     public static ExternalProviderCandidate Result(
-        string reference, string title, string author, string? language = "en") =>
+        string reference, string title, string? author, string? language = "en") =>
         new(reference,
-            new ExternalProviderWorkEvidence(title, null, [new BookAuthor(author, "author")], [], []),
+            new ExternalProviderWorkEvidence(title, null, author is null ? [] : [new BookAuthor(author, "author")], [], []),
             new ExternalProviderEditionEvidence(language, null, null, []),
             new ExternalProviderReleaseEvidence(null, "epub", 1_048_576, false, 1, false, null, null, [], null,
                 ExternalProviderDrmStatus.None));
@@ -208,7 +208,7 @@ public sealed class ExternalProviderBlockedAndPlausibleEndpointTests
             WebTestFixture.Require(_fixture),
             [
                 NoAcceptableCopyScenario.Result("unrelated-1", "Garden Birds of Europe", "Someone Unrelated"),
-                NoAcceptableCopyScenario.Result("plausible-1", "The Hobbit", "J. R. R. Tolkien"),
+                NoAcceptableCopyScenario.Result("plausible-1", "The Hobbit", null),
             ]);
 
         Assert.AreEqual("CandidatesFound", outcome.Attempt.Outcome);

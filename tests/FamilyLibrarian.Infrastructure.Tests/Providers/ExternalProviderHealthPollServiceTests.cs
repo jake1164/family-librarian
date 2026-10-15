@@ -34,6 +34,7 @@ public sealed class ExternalProviderHealthPollServiceTests
         var context = new TestContext();
         var provider = NewProvider("manual-source");
         provider.SetEnabled(true, null, Now);
+        provider.SetRecheckSchedule(ProviderRecheckSchedule.Manual, null, Now);
         Assert.AreEqual(ProviderRecheckSchedule.Manual, provider.RecheckSchedule);
         context.Store.Add(provider);
         context.Client.Health = Healthy;

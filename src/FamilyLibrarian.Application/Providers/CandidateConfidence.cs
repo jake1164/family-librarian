@@ -36,6 +36,7 @@ public static class CandidateConfidence
 
     public static bool Allows(ProviderConfidenceLevel level, CandidateConfidenceTier tier) => level switch
     {
+        ProviderConfidenceLevel.SuggestOnly => false,
         ProviderConfidenceLevel.Strict => tier == CandidateConfidenceTier.Strong,
         ProviderConfidenceLevel.Standard => tier is CandidateConfidenceTier.Strong or CandidateConfidenceTier.CloseCall,
         ProviderConfidenceLevel.Liberal => tier is CandidateConfidenceTier.Strong or CandidateConfidenceTier.CloseCall or CandidateConfidenceTier.LiberalOnly,

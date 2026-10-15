@@ -40,8 +40,7 @@ public sealed class ExternalProvider
         DisplayName = RequireText(displayName, nameof(displayName));
         BaseUrl = RequireText(baseUrl, nameof(baseUrl));
         IsEnabled = false;
-        RecheckSchedule = ProviderRecheckSchedule.Manual;
-        AutoAcquireEnabled = false;
+        RecheckSchedule = DefaultRecheckSchedule;
         AutomaticAttemptLimit = DefaultAutomaticAttemptLimit;
         ConfidenceReviewedAtUtc = createdAtUtc;
         CreatedAtUtc = createdAtUtc;
@@ -59,26 +58,14 @@ public sealed class ExternalProvider
 
     public bool IsEnabled { get; private set; }
 
-    /// <summary>
-    /// Administrator-controlled retry cadence for discovery only. On its own
-    /// it never authorizes unattended acquisition from this external
-    /// provider — a due recheck that finds a high-confidence candidate is
-    /// still just recorded for review unless <see cref="AutoAcquireEnabled"/>
-    /// is separately turned on for this provider.
-    /// </summary>
-    public ProviderRecheckSchedule RecheckSchedule { get; private set; }
+    /// <summary>The recheck cadence a newly registered provider starts with: a source that found nothing is asked again daily.</summary>
+    public const ProviderRecheckSchedule DefaultRecheckSchedule = ProviderRecheckSchedule.Daily;
 
     /// <summary>
-    /// A separate, explicit admin toggle authorizing unattended acquisition
-    /// of a candidate permitted by the effective confidence level found on a
-    /// scheduled recheck. Defaults to <c>false</c> for every newly registered
-    /// provider, regardless of what its manifest claims to support or
-    /// whether <see cref="RecheckSchedule"/> is set — never inferred from
-    /// either, and freely settable at any time. Confidence classification and
-    /// the per-format gate live in <c>ExternalProviderRecheckService</c>;
-    /// every download still passes security and content validation.
+    /// Administrator-controlled retry cadence for discovery. Which candidates are then downloaded without a person is
+    /// decided by the effective confidence level. Every download still passes security and content validation.
     /// </summary>
-    public bool AutoAcquireEnabled { get; private set; }
+    public ProviderRecheckSchedule RecheckSchedule { get; private set; }
 
     /// <summary>The attempt budget a newly registered provider starts with.</summary>
     public const int DefaultAutomaticAttemptLimit = 3;
@@ -227,12 +214,6 @@ public sealed class ExternalProvider
         DateTimeOffset updatedAtUtc)
     {
         RecheckSchedule = schedule;
-        Touch(actorUserId, updatedAtUtc);
-    }
-
-    public void SetAutoAcquireEnabled(bool isEnabled, Guid? actorUserId, DateTimeOffset updatedAtUtc)
-    {
-        AutoAcquireEnabled = isEnabled;
         Touch(actorUserId, updatedAtUtc);
     }
 

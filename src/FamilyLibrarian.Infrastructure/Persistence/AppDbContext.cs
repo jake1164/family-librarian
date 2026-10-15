@@ -900,7 +900,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(provider => provider.BaseUrl).HasColumnName("base_url").HasMaxLength(1_024).IsRequired();
             entity.Property(provider => provider.IsEnabled).HasColumnName("is_enabled");
             entity.Property(provider => provider.RecheckSchedule).HasColumnName("recheck_schedule").HasConversion<string>().HasMaxLength(32);
-            entity.Property(provider => provider.AutoAcquireEnabled).HasColumnName("auto_acquire_enabled");
             entity.Property(provider => provider.AutomaticAttemptLimit).HasColumnName("automatic_attempt_limit");
             entity.Property(provider => provider.ConfidenceLevel).HasColumnName("confidence_level")
                 .HasConversion<string>().HasMaxLength(16).HasDefaultValue(ProviderConfidenceLevel.Standard);

@@ -384,9 +384,8 @@
                 <MudDivider Class="my-2" />
                 <MudText Typo="Typo.subtitle2">Automatic rechecks</MudText>
                 <MudText Typo="Typo.body2" Class="mb-2">
-                    Choose whether this source should look again for requests that did not have a high-confidence
-                    automatic copy. This only controls how often FL looks — whether a found candidate is downloaded
-                    without review is a separate setting below.
+                    Choose how often this source should look again for unfulfilled requests. New sources start at Daily.
+                    The download confidence below decides which copies may be downloaded without a person.
                 </MudText>
                 <MudText Typo="Typo.caption" Class="mb-2">
                     This does not affect the health/search/acquire chips below — Family Librarian checks this
@@ -405,16 +404,6 @@
                     <MudText Typo="Typo.caption">Enable this source to allow its selected recheck schedule to run.</MudText>
                 }
 
-                <MudSwitch T="bool" Value="provider.AutoAcquireEnabled" Disabled="@providersBusy"
-                           ValueChanged="@(enabled => SetProviderAutoAcquireEnabledAsync(provider.Id, enabled))"
-                           Label="Automatically download a high-confidence match found on a scheduled recheck" />
-                <MudText Typo="Typo.body2" Class="mb-2">
-                    Off by default for every provider. When off, a candidate this source finds — even one FL can
-                    confirm by ISBN — is only ever recorded for librarian review, never downloaded automatically.
-                    When on, the download confidence below determines which candidates can be fetched;
-                    every download still passes the security and content checks.
-                </MudText>
-
                 <MudNumericField T="int" Value="provider.AutomaticAttemptLimit" Disabled="@providersBusy"
                                  Min="1" Max="10" Step="1" Immediate="false"
                                  Label="Candidates to try before asking a librarian"
@@ -423,7 +412,7 @@
                            Disabled="providersBusy" Class="mt-2 mb-2">
                     @foreach (var level in ConfidenceLevels)
                     {
-                        <MudSelectItem T="string" Value="@level">@level — @ConfidenceDescription(level)</MudSelectItem>
+                        <MudSelectItem T="string" Value="@level">@ConfidenceLabel(level) — @ConfidenceDescription(level)</MudSelectItem>
                     }
                 </MudSelect>
                 <MudSelect T="string" Label="Ebook confidence override" @bind-Value="GetConfidenceDraft(provider).Ebook"
@@ -431,7 +420,7 @@
                     <MudSelectItem T="string" Value="@("Inherit")">Use source confidence</MudSelectItem>
                     @foreach (var level in ConfidenceLevels)
                     {
-                        <MudSelectItem T="string" Value="@level">@level — @ConfidenceDescription(level)</MudSelectItem>
+                        <MudSelectItem T="string" Value="@level">@ConfidenceLabel(level) — @ConfidenceDescription(level)</MudSelectItem>
                     }
                 </MudSelect>
                 <MudSelect T="string" Label="Audiobook confidence override" @bind-Value="GetConfidenceDraft(provider).Audiobook"
@@ -439,7 +428,7 @@
                     <MudSelectItem T="string" Value="@("Inherit")">Use source confidence</MudSelectItem>
                     @foreach (var level in ConfidenceLevels)
                     {
-                        <MudSelectItem T="string" Value="@level">@level — @ConfidenceDescription(level)</MudSelectItem>
+                        <MudSelectItem T="string" Value="@level">@ConfidenceLabel(level) — @ConfidenceDescription(level)</MudSelectItem>
                     }
                 </MudSelect>
                 <MudButton OnClick="@(() => SaveConfidenceAsync(provider))" Disabled="providersBusy" Variant="Variant.Outlined">
@@ -604,7 +593,7 @@
     private string? newCatalogUrl;
 
     private IReadOnlyList<ExternalProviderResponse>? providers;
-    private static readonly string[] ConfidenceLevels = ["Strict", "Standard", "Liberal"];
+    private static readonly string[] ConfidenceLevels = ["Strict", "Standard", "Liberal", "SuggestOnly"];
     private readonly Dictionary<Guid, ConfidenceDraft> confidenceDrafts = [];
 
     private sealed class ConfidenceDraft(ExternalProviderResponse provider)
@@ -621,11 +610,14 @@
         return draft;
     }
 
+    private static string ConfidenceLabel(string level) => level == "SuggestOnly" ? "Suggest only" : level;
+
     private static string ConfidenceDescription(string level) => level switch
     {
         "Strict" => "Download only copies with strong identity evidence.",
         "Standard" => "Also download close matches supported by author or independent work evidence.",
         "Liberal" => "Also download a single plausible copy with incomplete metadata, then validate it.",
+        "SuggestOnly" => "Find copies for review; a librarian chooses before downloading.",
         _ => string.Empty
     };
 
@@ -1137,26 +1129,6 @@
         try
         {
             var result = await Api.SetProviderRecheckScheduleAsync(id, schedule);
-            if (!result.Succeeded)
-            {
-                Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);
-                return;
-            }
-
-            await LoadProvidersAsync();
-        }
-        finally
-        {
-            providersBusy = false;
-        }
-    }
-
-    private async Task SetProviderAutoAcquireEnabledAsync(Guid id, bool enabled)
-    {
-        providersBusy = true;
-        try
-        {
-            var result = await Api.SetProviderAutoAcquireEnabledAsync(id, enabled);
             if (!result.Succeeded)
             {
                 Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error);

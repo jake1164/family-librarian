@@ -2961,10 +2961,6 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(16)")
                         .HasColumnName("audiobook_confidence_level");
 
-                    b.Property<bool>("AutoAcquireEnabled")
-                        .HasColumnType("boolean")
-                        .HasColumnName("auto_acquire_enabled");
-
                     b.Property<int>("AutomaticAttemptLimit")
                         .HasColumnType("integer")
                         .HasColumnName("automatic_attempt_limit");

@@ -174,7 +174,8 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     [TestMethod]
     public async Task AScheduledExternalLookupCreatesAnAdminVisibleReviewRecordWithoutDownloading()
     {
-        var fixture = WebTestFixture.Require(_fixture);
+        // Other tests register enabled sources; Daily defaults make them due too. Isolate this review scenario.
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
         var clock = new ReviewRecheckClock();
         await using var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
@@ -183,7 +184,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
                 services.RemoveAll<FamilyLibrarian.Application.Abstractions.IClock>();
                 services.AddSingleton<FamilyLibrarian.Application.Abstractions.IClock>(clock);
                 services.RemoveAll<IExternalProviderClient>();
-                services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient());
+                services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient(withAuthor: false));
             });
 
         using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -208,7 +209,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
         Assert.IsNotNull(work);
         var created = await admin.PostAsJsonAsync(
-            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
+            "/api/v1/requests/", new CreateBookRequestRequest(await fixture.CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
 
@@ -397,7 +398,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     }
 
     /// <summary>Always finds "the-hobbit"-matching searches and fetches a real, minimal, valid EPUB.</summary>
-    private sealed class FakeExternalProviderClient(string providerId = "fake-external") : IExternalProviderClient
+    private sealed class FakeExternalProviderClient(string providerId = "fake-external", bool withAuthor = true) : IExternalProviderClient
     {
         public ExternalProviderJobStatus? Status { get; set; }
         public Task<ExternalProviderManifest> GetManifestAsync(
@@ -416,7 +417,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             CancellationToken cancellationToken)
         {
             IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-                ? [ExternalProviderCandidate.FromSimple("fake-hobbit-1", "The Hobbit", "J. R. R. Tolkien", "epub", null)]
+                ? [ExternalProviderCandidate.FromSimple("fake-hobbit-1", "The Hobbit", withAuthor ? "J. R. R. Tolkien" : null, "epub", null)]
                 : [];
             return Task.FromResult(candidates);
         }

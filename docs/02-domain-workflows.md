@@ -1183,14 +1183,17 @@ unchanged.
 This is intentionally limited to the bundled provider that explicitly opts in
 to automatic acquisition. Project Gutenberg has effective `Once` behavior: each outcome
 is recorded and it is not repeatedly queried. Admin-registered external
-providers default to `Manual`, but an administrator may select `Daily` or
-`Weekly` per enabled provider. A scheduled external lookup calls the provider over its registered API URL
-and records the outcome. With automatic acquisition disabled, candidates go to
-`NeedsReview`; with it enabled, an eligible candidate proceeds through the normal
-security and identity checks within the provider's attempt limit.
+providers default to `Daily`, but an administrator may select `Manual` or
+`Weekly` per enabled provider. Existing providers retain their saved schedule.
+A scheduled external lookup calls the provider over its registered API URL
+and records the outcome. Candidates permitted by the source's download confidence
+proceed through the normal security and identity checks within the provider's
+attempt limit; other reviewable candidates go to `NeedsReview`.
 
 External sources have a download confidence level with optional ebook and audiobook
-overrides. Strict allows strong identifier, title/author or context-corroborated
+overrides. Suggest only permits discovery and review, but no unattended downloads,
+including multipart audiobook sets. A librarian may explicitly choose a reviewed copy.
+Strict allows strong identifier, title/author or context-corroborated
 author evidence. Standard also permits close calls: exact titles with both author
 components within one edit, or missing/partial authors with independent agreement.
 Liberal additionally permits a plausible title with incomplete author metadata.
@@ -1322,7 +1325,7 @@ are unchanged.
 
 When a scheduled external acquisition starts, its durable job records the median size of other pooled, requester-reviewable candidates in the same format, provided at least three peers have a positive known size. After staging, the exact job output links that snapshot to the asset, including across restarts. A download smaller than 30% of the median produces Weak `profile.compare.size_peer_outlier` evidence. This finding never holds a file or changes acquisition eligibility; two peers or unknown measurements produce no finding.
 
-When automatic acquisition is disabled or the remaining candidates need a
+When a source is set to Suggest only or the remaining candidates need a
 human review, Family Librarian does not ask a requester to guess between rows
 whose available evidence provides no meaningful distinction. The requester
 receives a concise explanation; the administrator receives the structured
@@ -1335,8 +1338,8 @@ the category name. When no candidate has identifier or strict title-and-author
 corroboration, it says that possible copies were found but their titles could
 not be confirmed as the requested work, and that a librarian must verify the
 source before acquisition. That is an identity review, not an edition
-preference. When work identity is confirmed but automatic acquisition is off,
-the explanation instead says that matching copies need librarian selection.
+preference. For a Suggest only source, the explanation names that policy and
+says that a librarian must verify and choose a copy before downloading.
 
 CWA receives the original approved source file and performs any library/device
 conversion later. FL does not yet receive CWA's converted EPUB as an artifact,
