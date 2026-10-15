@@ -48,6 +48,9 @@ public static class ExternalProviderOutputSelector
             if (selected.Length == 0 && possibleMedia.Length == 1 &&
                 !IsSidecarRole(possibleMedia[0].Role) && !IsRole(possibleMedia[0].Role, "audio-part"))
                 return possibleMedia;
+            if (selected.Length > 1 && selected.Length == possibleMedia.Length &&
+                PreferredFormatOfOneBook(selected, importPolicy) is { } preferred)
+                return [preferred];
             if (selected.Length != 1 || possibleMedia.Length != 1)
                 throw new InvalidExternalProviderOutputException("The provider returned an ambiguous ebook output set.");
             return selected;
@@ -68,6 +71,30 @@ public static class ExternalProviderOutputSelector
         if (audioParts.Length != possibleMedia.Length)
             throw new InvalidExternalProviderOutputException("The provider mixed audiobook tracks with other media files.");
         return OrderAudioParts(audioParts);
+    }
+
+    /// <summary>
+    /// One book released in several formats (any number of them: "Title.epub" and "Title.mobi", or five extensions of
+    /// the same name) is not ambiguous: it is one book, so the format earliest in the import policy's ebook list is taken
+    /// and the rest ignored. Null unless every file shares one name and each has a different extension, so two
+    /// differently named files, or two copies of the same format, stay ambiguous. The chosen file is still verified.
+    /// </summary>
+    private static ExternalProviderOutput? PreferredFormatOfOneBook(
+        IReadOnlyList<ExternalProviderOutput> outputs, ManualImportPolicy importPolicy)
+    {
+        var files = outputs.Select(output => (
+            Output: output,
+            Stem: Path.GetFileNameWithoutExtension(NormalizeFilename(output.Filename)),
+            Extension: Path.GetExtension(NormalizeFilename(output.Filename)).ToLowerInvariant())).ToArray();
+        if (string.IsNullOrWhiteSpace(files[0].Stem) ||
+            files.Any(file => !string.Equals(file.Stem, files[0].Stem, StringComparison.OrdinalIgnoreCase)) ||
+            files.Select(file => file.Extension).Distinct().Count() != files.Length)
+            return null;
+
+        var order = importPolicy.AllowedEbookExtensions.Select(extension => extension.ToLowerInvariant()).ToList();
+        return files
+            .OrderBy(file => order.IndexOf(file.Extension) is var rank and >= 0 ? rank : int.MaxValue)
+            .First().Output;
     }
 
     public static string NormalizeFilename(string? filename)
