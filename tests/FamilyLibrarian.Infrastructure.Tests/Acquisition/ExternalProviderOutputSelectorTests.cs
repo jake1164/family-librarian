@@ -166,14 +166,26 @@ public sealed class ExternalProviderOutputSelectorTests
         Assert.AreEqual("azw3", selected.Single().OutputId);
     }
 
+    // The second lab run: the same release with obfuscated file names, as Usenet releases often have.
     [TestMethod]
-    public void DifferentlyNamedFilesAreStillAmbiguous()
+    public void ObfuscatedNamesForOneBookInSeveralFormatsTakeTheEpub()
+    {
+        var selected = ExternalProviderOutputSelector.Select(
+            [
+                Output("0001", "7e318bc757af2d592b9b44ea9889c397.mobi", "ebook"),
+                Output("0002", "94ee0f5423d60eee6c878c3e6536b29b.epub", "ebook"),
+                Output("0003", "9e2f7e4375f894fb7ab5343f6aa0a099.azw3", "ebook")
+            ],
+            RequestMediaType.Ebook, ImportPolicy, OutputPolicy);
+
+        Assert.AreEqual("0002", selected.Single().OutputId);
+    }
+
+    [TestMethod]
+    public void TwoBooksInTheSameFormatAreStillAmbiguous()
     {
         Assert.ThrowsExactly<InvalidExternalProviderOutputException>(() => ExternalProviderOutputSelector.Select(
             [Output("one", "Threshing Day.epub", "ebook"), Output("two", "Fourth Wing.epub", "ebook")],
-            RequestMediaType.Ebook, ImportPolicy, OutputPolicy));
-        Assert.ThrowsExactly<InvalidExternalProviderOutputException>(() => ExternalProviderOutputSelector.Select(
-            [Output("one", "Threshing Day.epub", "ebook"), Output("two", "Threshing Day (1).mobi", "ebook")],
             RequestMediaType.Ebook, ImportPolicy, OutputPolicy));
     }
 

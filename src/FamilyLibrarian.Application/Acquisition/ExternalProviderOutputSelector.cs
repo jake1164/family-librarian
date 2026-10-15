@@ -74,20 +74,20 @@ public static class ExternalProviderOutputSelector
     }
 
     /// <summary>
-    /// One book released in several formats (any number of them: "Title.epub" and "Title.mobi", or five extensions of
-    /// the same name) is not ambiguous: it is one book, so the format earliest in the import policy's ebook list is taken
-    /// and the rest ignored. Null unless every file shares one name and each has a different extension, so two
-    /// differently named files, or two copies of the same format, stay ambiguous. The chosen file is still verified.
+    /// One release offering one book in several formats (any number of them) is not ambiguous: the format earliest in the
+    /// import policy's ebook list is taken and the rest ignored. The only test is one file per format. Names are not
+    /// compared: Usenet releases routinely obfuscate them (lab: "7e318bc7....mobi", "94ee0f54....epub",
+    /// "9e2f7e43....azw3" for one book), so a same-name rule refused exactly the common case. Two files of the same
+    /// format stay ambiguous, and the chosen file is still verified, which is what catches a release that bundles
+    /// different books.
     /// </summary>
     private static ExternalProviderOutput? PreferredFormatOfOneBook(
         IReadOnlyList<ExternalProviderOutput> outputs, ManualImportPolicy importPolicy)
     {
         var files = outputs.Select(output => (
             Output: output,
-            Stem: Path.GetFileNameWithoutExtension(NormalizeFilename(output.Filename)),
             Extension: Path.GetExtension(NormalizeFilename(output.Filename)).ToLowerInvariant())).ToArray();
-        if (string.IsNullOrWhiteSpace(files[0].Stem) ||
-            files.Any(file => !string.Equals(file.Stem, files[0].Stem, StringComparison.OrdinalIgnoreCase)) ||
+        if (files.Any(file => file.Extension.Length == 0) ||
             files.Select(file => file.Extension).Distinct().Count() != files.Length)
             return null;
 

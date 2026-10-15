@@ -291,6 +291,53 @@ public sealed class M4bAssetIdentityVerifierTests
         Assert.AreEqual(expectedMatch, result.IsMatch, album);
     }
 
+    // The lab: both parts of an Onyx Storm set were tagged "Onyx Storm (N of 2) [Dramatized Adaptation]" and held as
+    // "the wrong title". The part marker is packaging; the dramatization is a different production, held with that reason.
+    [TestMethod]
+    public async Task APartOfASetIsTheRightTitleAndADramatizationIsKeptInReserveWithItsOwnReason()
+    {
+        var verifier = CreateVerifier("Onyx Storm", "Rebecca Yarros");
+
+        var narrated = await verifier.VerifyAsync(
+            CreateSetPart(), BuildM4b(Tag("nam", "Onyx Storm (1 of 2)"), Tag("ART", "Rebecca Yarros")), CancellationToken.None);
+        Assert.IsTrue(narrated.IsMatch, narrated.Reason);
+
+        var dramatized = await verifier.VerifyAsync(
+            CreateSetPart(), BuildM4b(Tag("nam", "Onyx Storm (2 of 2) [Dramatized Adaptation]"), Tag("ART", "Rebecca Yarros")),
+            CancellationToken.None);
+        Assert.IsFalse(dramatized.IsMatch);
+        Assert.AreEqual("identity.hold.dramatized_adaptation", dramatized.HoldCode);
+        StringAssert.Contains(dramatized.Reason, "dramatized adaptation");
+        Assert.DoesNotContain("didn't match", dramatized.Reason!, "It is the right book; the reason must not say otherwise.");
+    }
+
+    [TestMethod]
+    public async Task ALoneFileSayingOneOfTwoIsStillAFragment()
+    {
+        var result = await VerifyAsync(
+            CreateVerifier("Onyx Storm", "Rebecca Yarros"),
+            BuildM4b(Tag("nam", "Onyx Storm (1 of 2)"), Tag("ART", "Rebecca Yarros")));
+
+        Assert.IsFalse(result.IsMatch, "Outside a two-part set, \"1 of 2\" is half a book.");
+    }
+
+    private static MediaAsset CreateSetPart() => new(
+        Guid.NewGuid(),
+        editionId: null,
+        RequestMediaType.Audiobook,
+        ".m4b",
+        "part.m4b",
+        "stored.m4b",
+        sizeBytes: 1,
+        new string('a', 64),
+        "audio/mp4",
+        Guid.NewGuid(),
+        sourceAcquisitionCandidateId: null,
+        DateTimeOffset.UtcNow,
+        bundleId: Guid.NewGuid(),
+        bundleSequence: 1,
+        bundleTrackCount: 2);
+
     private static MediaAsset CreateAsset(string format) => new(
         Guid.NewGuid(),
         editionId: null,

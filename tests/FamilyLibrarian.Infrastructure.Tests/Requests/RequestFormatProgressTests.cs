@@ -172,4 +172,32 @@ public sealed class RequestFormatProgressTests
         Assert.IsNotNull(result);
         Assert.AreEqual("AcquisitionInProgress", result.Code);
     }
+
+    // The lab: a German copy ruled out for its language read "needs librarian identification", which was not the task.
+    [TestMethod]
+    public void ARuledOutCopyIsNotPresentedAsNeedingIdentification()
+    {
+        var waiting = RequestFormatProgress.Describe(
+            MediaAssetStorageState.Unmatched, SecurityEvaluationStatus.Passed, null, null,
+            assetRuledOut: true, requestInReview: false);
+        Assert.IsNotNull(waiting);
+        Assert.AreEqual("AcquisitionRetrying", waiting.Code);
+        Assert.DoesNotContain("identification", waiting.Description, StringComparison.OrdinalIgnoreCase);
+
+        var reviewing = RequestFormatProgress.Describe(
+            MediaAssetStorageState.Unmatched, SecurityEvaluationStatus.Passed, null, null,
+            assetRuledOut: true, requestInReview: true);
+        Assert.IsNotNull(reviewing);
+        Assert.AreEqual("NoAcceptableCopy", reviewing.Code);
+        Assert.Contains("choosing a source", reviewing.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [TestMethod]
+    public void AHeldCopyNobodyRuledOutStillNeedsIdentification()
+    {
+        var result = RequestFormatProgress.Describe(
+            MediaAssetStorageState.Unmatched, SecurityEvaluationStatus.Passed, null, null, requestInReview: true);
+        Assert.IsNotNull(result);
+        Assert.AreEqual("IdentityReviewRequired", result.Code);
+    }
 }

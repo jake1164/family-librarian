@@ -316,7 +316,8 @@ public sealed class RequestRepository(
                 asset.AssociatedRequestFormatId,
                 asset.StorageState,
                 asset.CreatedAtUtc,
-                asset.BundleId))
+                asset.BundleId,
+                asset.RuledOutAtUtc != null))
             .ToArrayAsync(cancellationToken);
 
         var latestAssets = assets
@@ -440,7 +441,9 @@ public sealed class RequestRepository(
                                 asset.StorageState,
                                 securityStatus,
                                 libraryImport?.Status,
-                                delivery?.Status),
+                                delivery?.Status,
+                                assetRuledOut: asset.RuledOut,
+                                requestInReview: request.Status == RequestStatus.NeedsReview),
                             ExternalActionUri = externalActionUri
                         };
                     })
@@ -775,7 +778,8 @@ public sealed class RequestRepository(
         Guid RequestFormatId,
         MediaAssetStorageState StorageState,
         DateTimeOffset CreatedAtUtc,
-        Guid? BundleId);
+        Guid? BundleId,
+        bool RuledOut = false);
 
     private sealed record SecurityEvaluationProgressRow(
         Guid AssetId,

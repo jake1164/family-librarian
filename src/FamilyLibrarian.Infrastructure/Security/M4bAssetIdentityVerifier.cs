@@ -109,9 +109,11 @@ public sealed class M4bAssetIdentityVerifier(
         var editions = titles.Select(AudioEditionMarker.Strip).ToArray();
         // A trailing series designation ("Fourth Wing: Fourth Wing, Book 1") is packaging, not a different title, as
         // long as its number agrees with the catalog's series position; the remaining title must still be exact.
-        var titleMatches = titles.Any(title =>
+        // Part-of-set and dramatization markers are packaging, not title: see AudioPackagingMarkers.
+        var packaging = titles.Select(title => AudioPackagingMarkers.Read(title, asset.BundleTrackCount)).ToArray();
+        var titleMatches = packaging.Any(packaged =>
         {
-            var core = AudioEditionMarker.Strip(title).CoreTitle;
+            var core = AudioEditionMarker.Strip(packaged.CoreTitle).CoreTitle;
             var withoutSeries = AudioSeriesDesignation.StripConsistentWith(core, expected.Series ?? []);
             return expectedTitles.Any(expectedTitle =>
                 bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, core, titleAuthor) ||
@@ -151,6 +153,18 @@ public sealed class M4bAssetIdentityVerifier(
         var markerLanguageConflict = editions.Any(edition => edition.IsGerman) &&
             !LanguageAcceptance.IsAcceptedOrUnspecified("de", acceptedLanguage);
         languageAccepted &= !markerLanguageConflict;
+
+        if (titleMatches && authorMatches && languageAccepted && packaging.Any(packaged => packaged.IsDramatized))
+        {
+            // The right book, but a different production. Held in reserve, so the search looks for the narrated
+            // audiobook; if none is found the request reaches a person, who can release this one.
+            return AssetIdentityVerificationResult.Unmatched(
+                Id,
+                "This is a dramatized adaptation of the requested book (a full-cast production with several actors, music " +
+                "and sound effects), not the narrated audiobook. It is kept in reserve while a narrated copy is looked for; " +
+                "if none is found, a librarian can release this one.",
+                facts) with { HoldCode = EvidenceReasonCodes.IdentityHold.DramatizedAdaptation };
+        }
 
         if (titleMatches && authorMatches && languageAccepted)
         {

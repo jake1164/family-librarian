@@ -506,7 +506,7 @@ public sealed class AcquisitionJobPollingService(
             return;
         }
 
-        await EvaluateJobAssetsAsync(job, stageResult.MediaAssetIds, cancellationToken);
+        var judged = await EvaluateJobAssetsAsync(job, stageResult.MediaAssetIds, cancellationToken);
         if (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Failed)
             return;
 
@@ -518,10 +518,10 @@ public sealed class AcquisitionJobPollingService(
         // The download worked but the file did not: verification held it (the wrong book, the wrong language) or a
         // security/structure check rejected it. For the retry loop that is a failed copy exactly like a failed
         // download. Without this the format kept its "Submitted" attempt with no next check, so the request was
-        // neither retried nor sent to review. A part of a set is judged as a whole by the part-set path instead.
-        var unusable = job.PartSetId is null
-            ? await FindUnusableFileReasonAsync(stageResult.MediaAssetIds, cancellationToken)
-            : null;
+        // neither retried nor sent to review. A part of a set is judged once, with the whole set, by the part that
+        // completed it: before that `judged` is null. A held set used to be judged and then left there, so its request
+        // waited for ever on a "Submitted" row (lab: both parts of an Onyx Storm set were held and nothing moved on).
+        var unusable = judged is null ? null : await FindUnusableFileReasonAsync(judged, cancellationToken);
         if (unusable is null && job.PartSetId is null)
         {
             // The ledger's last word on this copy. Without it the "Submitted" row stayed the latest one and the
@@ -545,7 +545,7 @@ public sealed class AcquisitionJobPollingService(
             await attempts.SaveChangesAsync(cancellationToken);
             if (automatic.AdvancesToNextCandidate)
             {
-                await MarkRuledOutAsync(stageResult.MediaAssetIds, now, cancellationToken);
+                await MarkRuledOutAsync(judged!, now, cancellationToken);
                 fulfillmentSignal?.Request();
             }
         }
@@ -722,13 +722,17 @@ public sealed class AcquisitionJobPollingService(
     /// evaluated together, so a bad part can never leave a trusted orphan and
     /// the book publishes only when every part passes.
     /// </summary>
-    private async Task EvaluateJobAssetsAsync(
+    /// <returns>
+    /// The files that were judged and now have a verdict: this job's own files, or for a set, every part's files once
+    /// the last part has arrived. Null while a set is still waiting for parts, or when the job failed instead.
+    /// </returns>
+    private async Task<IReadOnlyList<Guid>?> EvaluateJobAssetsAsync(
         ProviderAcquisitionJob job, IReadOnlyList<Guid> assetIds, CancellationToken cancellationToken)
     {
         if (job.PartSetId is not { } setId)
         {
             await EvaluateAssetsAsync(assetIds, cancellationToken);
-            return;
+            return assetIds;
         }
 
         foreach (var assetId in assetIds)
@@ -740,7 +744,7 @@ public sealed class AcquisitionJobPollingService(
                     job, "SET_PART_FAILED", "The file failed its security checks.",
                     retryable: false, retryAfterSeconds: null, detailsJson: null,
                     wasWaitingForInteraction: false, cancellationToken);
-                return;
+                return null;
             }
         }
 
@@ -754,10 +758,12 @@ public sealed class AcquisitionJobPollingService(
         {
             // Other parts are still on their way; the last one to arrive
             // evaluates the whole set.
-            return;
+            return null;
         }
 
-        await securityPipeline.EvaluateBundleAsync(stagedByPart.SelectMany(ids => ids).ToArray(), cancellationToken);
+        var setAssets = stagedByPart.SelectMany(ids => ids).ToArray();
+        await securityPipeline.EvaluateBundleAsync(setAssets, cancellationToken);
+        return setAssets;
     }
 
     private async Task EvaluateAssetsAsync(IReadOnlyList<Guid> assetIds, CancellationToken cancellationToken)

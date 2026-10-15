@@ -113,6 +113,43 @@ public sealed class AudiobookPartSetCompleteSetEndpointTests
 
 }
 
+/// <summary>
+/// A complete set whose parts are the wrong book is a held copy like any other: it is ruled out and the next copy is
+/// tried. On the lab both parts of an Onyx Storm set were held and the request waited for ever on a "Submitted" row,
+/// because the whole-set check ran and nothing read its verdict.
+/// </summary>
+[TestClass]
+public sealed class AudiobookPartSetHeldSetEndpointTests
+{
+    [TestMethod]
+    public async Task AHeldSetIsRuledOutAndTheNextCopyIsTried()
+    {
+        await using var ownFixture = await WebTestFixture.CreateAsync();
+        var provider = new PartSetExternalProviderClient { TaggedTitle = "The Silmarillion" };
+        await using var scenario = await PartSetScenario.StartAsync(WebTestFixture.Require(ownFixture), provider);
+
+        await scenario.RecheckAsync();
+        await scenario.PollAsync();
+
+        var attempts = await scenario.AttemptsAsync();
+        var retrying = attempts.SingleOrDefault(attempt => attempt.Outcome == "Retrying");
+        Assert.IsNotNull(retrying, "The held set must reach the retry loop: " +
+            string.Join(" | ", attempts.Select(attempt => attempt.Outcome + ": " + attempt.Summary)));
+        StringAssert.Contains(retrying.Summary, "Attempt 1 of 3");
+
+        await using var scope = scenario.Factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var assets = await database.MediaAssets.Where(asset => asset.AssociatedRequestFormatId == scenario.FormatId).ToArrayAsync();
+        Assert.HasCount(2, assets);
+        Assert.IsTrue(assets.All(asset => asset.StorageState == MediaAssetStorageState.Unmatched), "Held, not deleted: kept in reserve.");
+        Assert.IsTrue(assets.All(asset => asset.RuledOutAtUtc != null), "Both parts are shown as ruled out.");
+        Assert.IsGreaterThanOrEqualTo(1, await database.DeclinedRequestCandidates.CountAsync(candidate => candidate.RequestId == scenario.RequestId),
+            "The same set must not be fetched again.");
+        var request = await database.BookRequests.SingleAsync(bookRequest => bookRequest.Id == scenario.RequestId);
+        Assert.AreEqual(RequestStatus.PendingAcquisition, request.Status, "One held set with attempts left is not a reason to stop.");
+    }
+}
+
 /// <summary>One part failing abandons the whole set: nothing is kept or published.</summary>
 [TestClass]
 public sealed class AudiobookPartSetFailedPartEndpointTests
@@ -335,6 +372,9 @@ file sealed class PartSetExternalProviderClient : IExternalProviderClient
 
     public HashSet<string> FailingRefs { get; } = [];
 
+    /// <summary>The title tagged inside every part. Another book's title makes the whole set a held copy.</summary>
+    public string TaggedTitle { get; init; } = "The Hobbit";
+
     public int Submissions { get; private set; }
 
     public Task<ExternalProviderManifest> GetManifestAsync(
@@ -408,7 +448,7 @@ file sealed class PartSetExternalProviderClient : IExternalProviderClient
         string baseUrl, string? apiKey, string jobId, string outputId,
         CancellationToken cancellationToken) =>
         Task.FromResult(new ExternalProviderArtifact(
-            new MemoryStream(M4bFixture.Build("The Hobbit", "J. R. R. Tolkien", seed: jobId[^1])),
+            new MemoryStream(M4bFixture.Build(TaggedTitle, "J. R. R. Tolkien", seed: jobId[^1])),
             $"{jobId}.m4b"));
 
     public Task CancelAcquireAsync(

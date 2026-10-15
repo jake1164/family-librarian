@@ -113,6 +113,9 @@ public static class EvidenceReasonCodes
         public const string LengthFarBelowExpected = "identity.hold.length_far_below_expected";
         public const string DurationFarBelowExpected = "identity.hold.duration_far_below_expected";
         public const string AbridgedMarker = "identity.hold.abridged_marker";
+
+        /// <summary>The file is a dramatized (full-cast) adaptation, not the narrated audiobook: kept in reserve.</summary>
+        public const string DramatizedAdaptation = "identity.hold.dramatized_adaptation";
         public const string TocEntriesMissing = "identity.hold.toc_entries_missing";
     }
 
