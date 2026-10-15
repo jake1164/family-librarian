@@ -1,4 +1,6 @@
 
+using FamilyLibrarian.Domain.Requests;
+
 namespace FamilyLibrarian.Domain.Providers;
 
 /// <summary>
@@ -41,6 +43,7 @@ public sealed class ExternalProvider
         RecheckSchedule = ProviderRecheckSchedule.Manual;
         AutoAcquireEnabled = false;
         AutomaticAttemptLimit = DefaultAutomaticAttemptLimit;
+        ConfidenceReviewedAtUtc = createdAtUtc;
         CreatedAtUtc = createdAtUtc;
         UpdatedAtUtc = createdAtUtc;
     }
@@ -67,15 +70,13 @@ public sealed class ExternalProvider
 
     /// <summary>
     /// A separate, explicit admin toggle authorizing unattended acquisition
-    /// of a high-confidence (<c>Identifier</c>-basis) candidate found on a
+    /// of a candidate permitted by the effective confidence level found on a
     /// scheduled recheck. Defaults to <c>false</c> for every newly registered
     /// provider, regardless of what its manifest claims to support or
     /// whether <see cref="RecheckSchedule"/> is set — never inferred from
-    /// either, and freely settable at any time
-    /// (family-librarian-provider-alpha5-plan.md §B). A
-    /// <c>TitleAuthor</c>-basis candidate is never eligible for automatic
-    /// acquisition regardless of this setting (§F2) — that gate lives in
-    /// <c>ExternalProviderRecheckService</c>, not here.
+    /// either, and freely settable at any time. Confidence classification and
+    /// the per-format gate live in <c>ExternalProviderRecheckService</c>;
+    /// every download still passes security and content validation.
     /// </summary>
     public bool AutoAcquireEnabled { get; private set; }
 
@@ -107,6 +108,34 @@ public sealed class ExternalProvider
     /// </para>
     /// </remarks>
     public int AutomaticAttemptLimit { get; private set; } = DefaultAutomaticAttemptLimit;
+
+    public ProviderConfidenceLevel ConfidenceLevel { get; private set; } = ProviderConfidenceLevel.Strict;
+
+    public ProviderConfidenceLevel? EbookConfidenceLevel { get; private set; }
+
+    public ProviderConfidenceLevel? AudiobookConfidenceLevel { get; private set; }
+
+    public DateTimeOffset? ConfidenceReviewedAtUtc { get; private set; }
+
+    public ProviderConfidenceLevel EffectiveConfidence(RequestMediaType mediaType) => mediaType switch
+    {
+        RequestMediaType.Ebook => EbookConfidenceLevel ?? ConfidenceLevel,
+        RequestMediaType.Audiobook => AudiobookConfidenceLevel ?? ConfidenceLevel,
+        _ => throw new ArgumentOutOfRangeException(nameof(mediaType))
+    };
+
+    public void SetConfidenceLevels(ProviderConfidenceLevel level, ProviderConfidenceLevel? ebook,
+        ProviderConfidenceLevel? audiobook, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        if (!Enum.IsDefined(level)) throw new ArgumentOutOfRangeException(nameof(level));
+        if (ebook is { } ebookLevel && !Enum.IsDefined(ebookLevel)) throw new ArgumentOutOfRangeException(nameof(ebook));
+        if (audiobook is { } audioLevel && !Enum.IsDefined(audioLevel)) throw new ArgumentOutOfRangeException(nameof(audiobook));
+        ConfidenceLevel = level;
+        EbookConfidenceLevel = ebook;
+        AudiobookConfidenceLevel = audiobook;
+        ConfidenceReviewedAtUtc = updatedAtUtc;
+        Touch(actorUserId, updatedAtUtc);
+    }
 
     public string? ProtectedApiKey { get; private set; }
 

@@ -98,7 +98,8 @@ public static class CandidateEvidenceFindings
     {
         AuthorAffinityKind.Exact or AuthorAffinityKind.Compatible or AuthorAffinityKind.LastExactFirstFuzzy
             or AuthorAffinityKind.FirstExactLastFuzzy => EvidencePolarity.Positive,
-        AuthorAffinityKind.Fuzzy or AuthorAffinityKind.FirstOnly or AuthorAffinityKind.LastOnly => EvidencePolarity.Weak,
+        AuthorAffinityKind.Fuzzy or AuthorAffinityKind.FirstOnly or AuthorAffinityKind.LastOnly
+            or AuthorAffinityKind.ContextCorroborated => EvidencePolarity.Weak,
         AuthorAffinityKind.Conflict => EvidencePolarity.Negative,
         _ => EvidencePolarity.Unknown
     };

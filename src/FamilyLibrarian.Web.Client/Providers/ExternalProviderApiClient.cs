@@ -54,6 +54,11 @@ public sealed class ExternalProviderApiClient(HttpClient httpClient, Antiforgery
             HttpMethod.Put, $"{ProvidersPath}/{id}/automatic-attempt-limit",
             new SetExternalProviderAutomaticAttemptLimitRequest(limit), cancellationToken);
 
+    public Task<ExternalProviderResult> SetProviderConfidenceLevelAsync(
+        Guid id, string level, string? ebook, string? audiobook, CancellationToken cancellationToken = default) =>
+        SendProviderAsync(HttpMethod.Put, $"{ProvidersPath}/{id}/confidence-level",
+            new SetExternalProviderConfidenceLevelRequest(level, ebook, audiobook), cancellationToken);
+
     public Task<ExternalProviderResult> SetProviderApiKeyAsync(
         Guid id, string apiKey, CancellationToken cancellationToken = default) =>
         SendProviderAsync(

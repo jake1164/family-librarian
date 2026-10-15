@@ -225,8 +225,10 @@ including on shared requests; source/security/publishing diagnostics remain admi
 Each admin request detail page includes an append-only provider-activity
 timeline, including no-match, found-candidate, blocked, failed, and acquired
 outcomes. External sources default to **Manual**; an admin can opt a source into
-daily or weekly discovery rechecks. Those rechecks only surface candidates for
-librarian review — they never download an external file automatically.
+daily or weekly discovery rechecks. Automatic downloads require a separate
+administrator opt-in and a candidate permitted by the source's download confidence
+level, with optional ebook and audiobook overrides. Every downloaded copy passes
+the normal security and content checks; other candidates go to review.
 
 In VS Code, the Run and Debug selector provides three Compose-backed container
 modes:

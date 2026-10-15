@@ -50,7 +50,8 @@ case, punctuation/whitespace boundaries, comma-order handling, and harmless
 Jr/Sr/II/III/IV suffix removal. Its ordered supporting weights are exact full
 name (100), compatible full name or first initial plus exact surname (90),
 fuzzy first plus exact surname (80), surname only (70), exact first plus fuzzy
-surname (60), first only (50), both fuzzy (40), unknown (0), conflict (-100).
+surname (60), context-corroborated structured spelling (55), first only (50),
+both fuzzy (40), unknown (0), conflict (-100).
 Typo evidence permits one insertion, deletion or substitution per component
 only when both tokens have at least five and at most 64 characters. There is no substring
 matching or arbitrary initial matching.
@@ -83,6 +84,12 @@ strong full/compatible/one-component-typo author support yields
 arbitrary residual descriptors are never compared as a whole author name.
 Explicit author conflicts prevent strict identity. Owned-library/destination
 matching keeps its separate policy and is unchanged by the release matcher.
+
+Context corroboration permits up to two edits per structured author name component,
+with the same first letter and component count, only with an exact title and
+independent catalog agreement: series name and position, an edition ISBN-13, or
+publication year and publisher. It records Weak author evidence; it does not
+relax explicit release-name author credits or other contradictions.
 
 Series positions conflict only when catalog and candidate contain comparable
 positions for the same series. Numeric positions compare invariantly (`03`
@@ -497,6 +504,23 @@ The bundled Project Gutenberg and LibriVox implementations have effective
 `ONCE` behavior. Registered external providers default to `MANUAL`; an administrator may explicitly select
 `DAILY` or `WEEKLY` for each enabled provider. The application owns that policy,
 not the provider manifest.
+
+Scheduled automatic downloads also require administrator opt-in and the source's
+effective download confidence. Strict permits strong identity; Standard adds
+corroborated close calls; Liberal also permits incomplete author metadata on a
+plausible title. Ebook and audiobook overrides optionally replace the source
+level. New sources default to Strict; migrated sources default to Standard with
+an administrator review notice until their levels are saved. The confidence
+setting is local administration policy and adds nothing to the provider protocol.
+
+When no candidate qualifies individually, same-work collapse can produce a
+pool-level CloseCall at Standard or Liberal. Every reviewable candidate must
+reduce to the requested title core, carry no conditions or other release/language
+concerns beyond unknown DRM, and have no author conflict; at least one needs
+strong or fuzzy author support. Ranking chooses one copy only after that whole-pool
+check. Presentation deduplication cannot hide a different work or derivative from
+the check. Acquisition repeats the confidence decision against fresh source
+evidence; content validation still uses the catalog identity.
 
 Each automatic lookup creates an append-only, administrator-only
 provider-attempt entry containing provider ID, request format, attempt time,

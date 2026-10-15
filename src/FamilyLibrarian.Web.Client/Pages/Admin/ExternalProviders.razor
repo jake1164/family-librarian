@@ -331,6 +331,7 @@
 
 <MudPaper Class="pa-4 mb-6" Elevation="1">
     <MudText Typo="Typo.h6" Class="mb-2">External sources</MudText>
+    <ProviderConfidenceReviewNotice Providers="providers" />
 
     <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-4">
         <MudTextField T="string" Label="Provider id" @bind-Value="newProviderId" Disabled="@providersBusy" />
@@ -410,14 +411,40 @@
                 <MudText Typo="Typo.body2" Class="mb-2">
                     Off by default for every provider. When off, a candidate this source finds — even one FL can
                     confirm by ISBN — is only ever recorded for librarian review, never downloaded automatically.
-                    When on, an ISBN-confirmed candidate is fetched and security-scanned without review; a
-                    title/author-only match still always requires review regardless of this setting.
+                    When on, the download confidence below determines which candidates can be fetched;
+                    every download still passes the security and content checks.
                 </MudText>
 
                 <MudNumericField T="int" Value="provider.AutomaticAttemptLimit" Disabled="@providersBusy"
                                  Min="1" Max="10" Step="1" Immediate="false"
                                  Label="Candidates to try before asking a librarian"
                                  ValueChanged="@(limit => SetProviderAutomaticAttemptLimitAsync(provider.Id, limit))" />
+                <MudSelect T="string" Label="Download confidence" @bind-Value="GetConfidenceDraft(provider).Level"
+                           Disabled="providersBusy" Class="mt-2 mb-2">
+                    @foreach (var level in ConfidenceLevels)
+                    {
+                        <MudSelectItem T="string" Value="@level">@level — @ConfidenceDescription(level)</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSelect T="string" Label="Ebook confidence override" @bind-Value="GetConfidenceDraft(provider).Ebook"
+                           Disabled="providersBusy" Class="mb-2">
+                    <MudSelectItem T="string" Value="@("Inherit")">Use source confidence</MudSelectItem>
+                    @foreach (var level in ConfidenceLevels)
+                    {
+                        <MudSelectItem T="string" Value="@level">@level — @ConfidenceDescription(level)</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSelect T="string" Label="Audiobook confidence override" @bind-Value="GetConfidenceDraft(provider).Audiobook"
+                           Disabled="providersBusy" Class="mb-2">
+                    <MudSelectItem T="string" Value="@("Inherit")">Use source confidence</MudSelectItem>
+                    @foreach (var level in ConfidenceLevels)
+                    {
+                        <MudSelectItem T="string" Value="@level">@level — @ConfidenceDescription(level)</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton OnClick="@(() => SaveConfidenceAsync(provider))" Disabled="providersBusy" Variant="Variant.Outlined">
+                    Save confidence
+                </MudButton>
                 <MudText Typo="Typo.body2" Class="mb-2">
                     When an automatically downloaded copy fails its post-download checks — malware, a malformed
                     file, or content that turns out not to be the requested book — FL rules that copy out and tries
@@ -577,6 +604,50 @@
     private string? newCatalogUrl;
 
     private IReadOnlyList<ExternalProviderResponse>? providers;
+    private static readonly string[] ConfidenceLevels = ["Strict", "Standard", "Liberal"];
+    private readonly Dictionary<Guid, ConfidenceDraft> confidenceDrafts = [];
+
+    private sealed class ConfidenceDraft(ExternalProviderResponse provider)
+    {
+        public string Level { get; set; } = provider.ConfidenceLevel;
+        public string Ebook { get; set; } = provider.EbookConfidenceLevel ?? "Inherit";
+        public string Audiobook { get; set; } = provider.AudiobookConfidenceLevel ?? "Inherit";
+    }
+
+    private ConfidenceDraft GetConfidenceDraft(ExternalProviderResponse provider)
+    {
+        if (!confidenceDrafts.TryGetValue(provider.Id, out var draft))
+            confidenceDrafts[provider.Id] = draft = new(provider);
+        return draft;
+    }
+
+    private static string ConfidenceDescription(string level) => level switch
+    {
+        "Strict" => "Download only copies with strong identity evidence.",
+        "Standard" => "Also download close matches supported by author or independent work evidence.",
+        "Liberal" => "Also download a single plausible copy with incomplete metadata, then validate it.",
+        _ => string.Empty
+    };
+
+    private async Task SaveConfidenceAsync(ExternalProviderResponse provider)
+    {
+        providersBusy = true;
+        try
+        {
+            var draft = GetConfidenceDraft(provider);
+            var result = await Api.SetProviderConfidenceLevelAsync(provider.Id, draft.Level,
+                draft.Ebook == "Inherit" ? null : draft.Ebook, draft.Audiobook == "Inherit" ? null : draft.Audiobook);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add(result.Error ?? "Confidence could not be saved.", Severity.Error);
+                return;
+            }
+            confidenceDrafts.Remove(provider.Id);
+            await LoadProvidersAsync();
+            Snackbar.Add("Download confidence saved.", Severity.Success);
+        }
+        finally { providersBusy = false; }
+    }
     private bool providersBusy;
     private string? newProviderId;
     private string? newProviderDisplayName;

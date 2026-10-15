@@ -236,6 +236,7 @@ public sealed class DirectAcquisitionService(
         FulfillmentOption? externalOption;
         try
         {
+            var foundVariant = searchVariant ?? SearchVariantPlanner.BaseVariant(identity).Ref;
             externalOptions = await externalCandidateChecker.FindForProviderAsync(
                 externalProvider, identity, format.MediaType, cancellationToken, exclusions, searchVariant);
             externalOption = FindOption(externalOptions, providerResultId);
@@ -246,8 +247,26 @@ public sealed class DirectAcquisitionService(
                     externalOptions = await externalCandidateChecker.FindForProviderAsync(
                         externalProvider, identity, format.MediaType, cancellationToken, exclusions, planned.Ref);
                     externalOption = FindOption(externalOptions, providerResultId);
-                    if (externalOption is not null) break;
+                    if (externalOption is not null)
+                    {
+                        foundVariant = planned.Ref;
+                        break;
+                    }
                 }
+            }
+
+            if (isAutomaticAcquisition && partSet is null && externalOption is not null &&
+                !CandidateConfidence.Allows(externalProvider.EffectiveConfidence(format.MediaType), CandidateConfidence.Classify(externalOption)))
+            {
+                // A pool-level decision may depend on other variants. Rebuild that evidence
+                // with the same deduplication, rather than treating one repeated query as the pool.
+                var pool = new ExternalCandidatePool(format.MediaType);
+                foreach (var planned in SearchVariantPlanner.Plan(identity, format.MediaType))
+                    pool.Merge(planned.Ref == foundVariant ? externalOptions :
+                        await externalCandidateChecker.SearchVariantAsync(
+                            externalProvider, identity, format.MediaType, planned, cancellationToken), planned.Ref);
+                externalOptions = ExternalCandidateAvailabilityChecker.SelectOneStrictCandidate(pool.Options, format.MediaType, exclusions);
+                externalOption = FindOption(externalOptions, providerResultId);
             }
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
@@ -283,8 +302,25 @@ public sealed class DirectAcquisitionService(
 
         // (A validated set member is exempt: the selector above already required
         // each part to carry strict or strong-author support.)
+        var needsIdentityConfirmation = externalOption.MatchBasis is not
+            (BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle);
+        if (isAutomaticAcquisition && partSet is null)
+        {
+            var level = externalProvider.EffectiveConfidence(format.MediaType);
+            var allowed = CandidateConfidence.Allows(level, CandidateConfidence.Classify(externalOption));
+            if (!allowed)
+            {
+                // Re-prove pool-level confidence from fresh source evidence. The caller's
+                // selected id alone cannot approve changed titles, authors or conditions.
+                var sameWork = SameWorkCandidateSelector.TrySelect(
+                    externalOptions.Where(option => !exclusions.Excludes(option)).ToArray(), identity, format.MediaType, level);
+                allowed = sameWork is not null && CandidateConfidence.Allows(level, sameWork.Tier) &&
+                    string.Equals(sameWork.Winner.ProviderResultId, providerResultId, StringComparison.Ordinal);
+            }
+            needsIdentityConfirmation = !externalProvider.AutoAcquireEnabled || !allowed;
+        }
         if (partSet is null &&
-            externalOption.MatchBasis is not (BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle) &&
+            needsIdentityConfirmation &&
             !confirmLowConfidenceMatch)
         {
             return ManualImportResult.LowConfidenceMatchConfirmationRequired();

@@ -29,7 +29,8 @@ internal static class VariantScenario
     public static async Task<VariantOutcome> RunAsync(
         WebTestFixture fixture, VariantSearchProviderClient client, string providerId, int passes = 1, string? directResultId = null,
         bool autoAcquire = true, Func<FamilyLibrarianAppFactory, BookRequestResponse, int, Task>? beforePass = null,
-        Func<FamilyLibrarianAppFactory, HttpClient, BookRequestResponse, Task>? afterwards = null)
+        Func<FamilyLibrarianAppFactory, HttpClient, BookRequestResponse, Task>? afterwards = null,
+        string? providerConfidence = null)
     {
         await using var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
@@ -65,6 +66,10 @@ internal static class VariantScenario
         (await admin.PutAsJsonAsync(
             $"/api/v1/admin/external-providers/{provider.Id}/auto-acquire",
             new SetExternalProviderAutoAcquireEnabledRequest(autoAcquire))).EnsureSuccessStatusCode();
+
+        if (providerConfidence is not null)
+            (await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{provider.Id}/confidence-level",
+                new SetExternalProviderConfidenceLevelRequest(providerConfidence, null, null))).EnsureSuccessStatusCode();
 
         var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
@@ -200,7 +205,8 @@ public sealed class ExternalProviderSameReleaseUnderManyReferencesEndpointTests
                 $"same-release-{request.Work.Title}-{string.Join(',', request.Edition?.Identifiers.Select(identifier => identifier.Value) ?? [])}-{(request.Work.Authors.Count > 0 ? request.Work.Authors[0].Name : null)}",
                 withAuthor: false)]);
 
-        var outcome = await VariantScenario.RunAsync(WebTestFixture.Require(_fixture), client, "variant-dedupe-source");
+        var outcome = await VariantScenario.RunAsync(WebTestFixture.Require(_fixture), client, "variant-dedupe-source",
+            providerConfidence: "Liberal");
 
         Assert.HasCount(1, client.SubmittedCandidates);
         Assert.AreEqual("Submitted", outcome.Attempts.Single().Outcome);

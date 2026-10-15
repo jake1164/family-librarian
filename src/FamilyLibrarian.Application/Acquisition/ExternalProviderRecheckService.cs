@@ -17,16 +17,10 @@ namespace FamilyLibrarian.Application.Acquisition;
 
 /// <summary>
 /// Rechecks administrator-approved external providers on their configured
-/// cadence. A single ISBN-corroborated ("Identifier"-basis) candidate is
-/// trusted and acquired automatically, exactly like the manual acquire flow
-/// already trusts one (docs/04-external-provider-http-protocol.md §7,
-/// <see cref="ExternalCandidateAvailabilityChecker"/>) -- but only for a
-/// provider with <see cref="ExternalProvider.AutoAcquireEnabled"/> separately
-/// turned on; the recheck schedule alone only controls how often this
-/// service looks, never whether it may fetch. Anything weaker -- title/author
-/// only, unconfirmed, language-excluded, or more than one equally plausible
-/// candidate -- is evidence for a librarian, never permission to fetch a
-/// third-party file without review, regardless of that toggle.
+/// cadence. Automatic downloads require the separate AutoAcquireEnabled toggle
+/// and confidence permitted by the provider's effective level. Identity,
+/// language, release and attempt-budget gates apply before submission; every
+/// downloaded file still passes security and content validation.
 /// </summary>
 public sealed class ExternalProviderRecheckService(
     IRequestRepository requests,
@@ -227,6 +221,8 @@ public sealed class ExternalProviderRecheckService(
                                 (AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format) &&
                                  IsImportableAudiobookFormat(option.Format))).ToArray()
                             : options;
+                        // Pool-level identity must see every reviewable record before presentation deduplication.
+                        var sameWorkPool = ReviewableForRequester(reviewableOptions, work.Language);
                         reviewableOptions = CollapseEquivalentReviewOptions(reviewableOptions);
                         if (reviewableOptions.Count == 0)
                         {
@@ -281,27 +277,24 @@ public sealed class ExternalProviderRecheckService(
                             break;
                         }
 
-                        // Identifier evidence is strongest, but identical normalized title and
-                        // observed-author records are also a deterministic single-work choice.
-                        // This does not apply to the broad TitleAuthor fallback, derivatives,
-                        // or a language conflict. The selected option is fetched exactly once;
-                        // failure reaches review rather than triggering a fallback download.
-                        var automaticMatches = reviewableOptions
-                            .Where(option =>
-                                (option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle) &&
-                                !option.RequiresLanguageConfirmation &&
-                                (!option.RequiresReleaseConfirmation || IsUnknownDrmOnlyConcern(option)))
-                            .ToArray();
+                        // The source's effective level gates confidence tiers. Within an allowed
+                        // tier the shared ranker orders copies; a failed copy advances through
+                        // the existing exclusions and attempt budget on the next recheck.
+                        var automaticMatches = CandidateConfidence.Rank(
+                            reviewableOptions.Where(option => !exclusions.Excludes(option) &&
+                                CandidateConfidence.Allows(provider.EffectiveConfidence(format.MediaType), CandidateConfidence.Classify(option))),
+                            format.MediaType).ToArray();
+
+                        if (automaticMatches.Length == 0 &&
+                            SameWorkCandidateSelector.TrySelect(sameWorkPool, identity, format.MediaType,
+                                provider.EffectiveConfidence(format.MediaType)) is { } sameWork &&
+                            CandidateConfidence.Allows(provider.EffectiveConfidence(format.MediaType), sameWork.Tier))
+                            automaticMatches = [sameWork.Winner];
 
                         // A narration-aware winner replaces raw format-rank
                         // collapsing here too -- same selector, same rules,
-                        // as the built-in Gutenberg path. Unlike that fully
-                        // trusted path, anything short of exactly one clean
-                        // winner still falls through to this method's existing
-                        // conservative review fallback below (reviewableOptions),
-                        // matching this service's doc comment: for an
-                        // admin-registered provider, weaker evidence is always
-                        // for a librarian, never silent automatic acquisition.
+                        // as the built-in Gutenberg path. Without exactly one
+                        // eligible winner, the pool goes to review below.
                         AudiobookCandidateSelectionResult? audiobookSelection = null;
                         if (format.MediaType == RequestMediaType.Audiobook)
                         {
@@ -309,6 +302,7 @@ public sealed class ExternalProviderRecheckService(
                             audiobookSelection = AudiobookCandidateSelector.Select(automaticMatches, preference);
                             automaticMatches = audiobookSelection.Winner is { } winner ? [winner] : [];
                         }
+                        else if (automaticMatches.Length > 1) automaticMatches = [automaticMatches[0]];
 
                         // The attempt budget is spent: stop downloading and let
                         // a librarian see every candidate that already failed,
@@ -534,8 +528,7 @@ public sealed class ExternalProviderRecheckService(
     {
         var plan = SearchVariantPlanner.Plan(identity, mediaType);
         var memory = (await attempts.ListVariantAttemptsAsync(requestFormatId, provider.ProviderId, cancellationToken)).ToList();
-        var pool = new List<FulfillmentOption>();
-        var found = new Dictionary<string, SearchVariantRef>(StringComparer.Ordinal);
+        var pool = new ExternalCandidatePool(mediaType);
         var clockStart = clock.UtcNow;
         TimeSpan? rateLimited = null;
         for (var index = 0; index < plan.Count; index++)
@@ -558,7 +551,7 @@ public sealed class ExternalProviderRecheckService(
             {
                 raw = await candidateChecker.SearchVariantAsync(provider, identity, mediaType, plan[index], searchCancellation.Token);
             }
-            catch (Exception exception) when (pool.Count > 0 && !cancellationToken.IsCancellationRequested &&
+            catch (Exception exception) when (pool.Options.Count > 0 && !cancellationToken.IsCancellationRequested &&
                                               (exception is HttpRequestException || exception is OperationCanceledException))
             {
                 rateLimited = exception is HttpRequestException http ? RateLimitWait(http) : null;
@@ -576,48 +569,17 @@ public sealed class ExternalProviderRecheckService(
                 remembered.RecordTry(clock.UtcNow, raw.Count);
             }
 
-            Merge(pool, found, raw, plan[index].Ref, mediaType);
-            if (pool.Any(option => IsStrong(option, exclusions))) break;
+            pool.Merge(raw, plan[index].Ref);
+            if (pool.Options.Any(option => IsStrong(option, exclusions))) break;
         }
 
         return new PooledSearch(
-            ExternalCandidateAvailabilityChecker.SelectOneStrictCandidate(pool, mediaType, exclusions), found, rateLimited, memory);
-    }
-
-    /// <summary>Same record id keeps the first; the same release under another id keeps the higher-ranked.</summary>
-    private static void Merge(
-        List<FulfillmentOption> pool, Dictionary<string, SearchVariantRef> found,
-        IReadOnlyList<FulfillmentOption> added, SearchVariantRef variant, RequestMediaType mediaType)
-    {
-        foreach (var option in added)
-        {
-            if (found.ContainsKey(option.ProviderResultId))
-            {
-                continue;
-            }
-
-            var fingerprint = ExternalReleaseFingerprint.Compute(option.ReleaseName, option.SizeBytes);
-            var twin = fingerprint is null ? null : pool.FirstOrDefault(existing =>
-                ExternalReleaseFingerprint.Compute(existing.ReleaseName, existing.SizeBytes) == fingerprint);
-            if (twin is null)
-            {
-                pool.Add(option);
-                found[option.ProviderResultId] = variant;
-            }
-            else if (ExternalCandidateRanker.Rank([twin, option], mediaType)[0] == option)
-            {
-                pool[pool.IndexOf(twin)] = option;
-                found.Remove(twin.ProviderResultId);
-                found[option.ProviderResultId] = variant;
-            }
-        }
+            ExternalCandidateAvailabilityChecker.SelectOneStrictCandidate(pool.Options, mediaType, exclusions), pool.Found, rateLimited, memory);
     }
 
     /// <summary>An identifier or strict title-and-author copy with nothing left for a person to confirm.</summary>
     private static bool IsStrong(FulfillmentOption option, ExternalCandidateExclusions exclusions) =>
-        option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor &&
-        !option.RequiresLanguageConfirmation &&
-        (!option.RequiresReleaseConfirmation || IsUnknownDrmOnlyConcern(option)) &&
+        CandidateConfidence.Classify(option) == CandidateConfidenceTier.Strong &&
         !exclusions.Excludes(option);
 
     /// <summary>How long to leave a provider alone after it asked to be slowed down; null when the failure is not a rate limit.</summary>

@@ -331,17 +331,18 @@ public sealed class ExternalCandidateAvailabilityChecker(
         RequestMediaType mediaType,
         Providers.ExternalCandidateExclusions? exclusions)
     {
-        var strictWinner = Providers.ExternalCandidateRanker.SelectBest(
+        var strictCandidates = Providers.CandidateConfidence.Rank(
             options.Where(option =>
                 (option.MatchBasis is Matching.BookMatchBasis.StrictTitleAuthor or Matching.BookMatchBasis.StrictTitle) &&
                 (!option.RequiresReleaseConfirmation || option.ReleaseConcern == Providers.ExternalReleasePolicy.UnknownDrmConfirmationReason) &&
                 !option.RequiresLanguageConfirmation &&
                 exclusions?.Excludes(option) != true),
             mediaType);
-        if (strictWinner is null)
+        if (strictCandidates.Count == 0)
         {
             return options;
         }
+        var strictWinner = strictCandidates[0];
 
         return options
             .Select(option => (option.MatchBasis is Matching.BookMatchBasis.StrictTitleAuthor or Matching.BookMatchBasis.StrictTitle) &&

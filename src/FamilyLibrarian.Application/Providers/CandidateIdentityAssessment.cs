@@ -83,6 +83,14 @@ public static class DeterministicCandidateIdentityResolver
             seriesEvidence.Add(new(state, candidateSeries.Name, expected?.Position, candidateSeries.Position,
                 comparable ? "Structured series positions compared within the same series." : "Series or position unknown; no contradiction."));
         }
+        if (affinity.Kind == AuthorAffinityKind.Conflict && structuredAuthors.Length > 0 &&
+            release.AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
+            structuredName.AuthorAffinity?.Kind != AuthorAffinityKind.Conflict &&
+            title.State == IdentityEvidenceState.Exact &&
+            CandidateConfidence.HasIndependentAgreement(requested, source.Edition, seriesEvidence) &&
+            AuthorSpelling.IsVariant(requested.Author, affinity.DetectedAuthor))
+            affinity = affinity with { Kind = AuthorAffinityKind.ContextCorroborated, Score = 55 };
+
         var language = source.Edition?.Language ?? release.AssertedLanguage;
         var languageState = string.IsNullOrWhiteSpace(language) ? IdentityEvidenceState.Unknown :
             LanguageAcceptance.IsAcceptedOrUnspecified(language, requested.Language) ? IdentityEvidenceState.Compatible : IdentityEvidenceState.Conflicting;

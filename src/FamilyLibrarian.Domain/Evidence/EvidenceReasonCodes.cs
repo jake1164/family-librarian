@@ -36,6 +36,7 @@ public static class EvidenceReasonCodes
         public const string LastExactFirstFuzzy = "candidate.author.last_exact_first_fuzzy";
         public const string Compatible = "candidate.author.compatible";
         public const string Exact = "candidate.author.exact";
+        public const string ContextCorroborated = "candidate.author.context_corroborated";
     }
 
     /// <summary>Language evidence. Unknown is not a contradiction.</summary>

@@ -1189,6 +1189,33 @@ and records the outcome. With automatic acquisition disabled, candidates go to
 `NeedsReview`; with it enabled, an eligible candidate proceeds through the normal
 security and identity checks within the provider's attempt limit.
 
+External sources have a download confidence level with optional ebook and audiobook
+overrides. Strict allows strong identifier, title/author or context-corroborated
+author evidence. Standard also permits close calls: exact titles with both author
+components within one edit, or missing/partial authors with independent agreement.
+Liberal additionally permits a plausible title with incomplete author metadata.
+Fuzzy titles, contradictions and unresolved language or release concerns remain
+ineligible at every level. Candidate pools are ordered by confidence tier, then
+the shared external-candidate ranker; the existing retry exclusions still apply.
+When no individual candidate is allowed, a pool of at least two copies can form
+a CloseCall if every reviewable copy has the same normalized work-title core,
+no conditions or release/language concerns beyond unknown DRM, no author conflict,
+and at least one has strong or fuzzy author support. Standard and Liberal may
+fetch its highest-ranked copy; Strict still reviews it. A different work or a
+derivative condition anywhere in that pool prevents collapse. A pool with an
+already allowed strong candidate keeps its ordinary selection. Acquisition
+re-proves confidence from fresh source results before submitting a job; pool
+confidence does not set the file's pre-confirmed-identity flag.
+New sources start at Strict. Existing sources migrate to Standard and show a
+Sources-page review notice until every enabled source's confidence has been saved.
+
+A structured author spelling difference of up to two edits per name component,
+with the same first letter and component count, can be context-corroborated only
+when the title is exact and series name/position, an edition ISBN-13, or publication
+year and publisher independently agree with the catalog. Explicit conflicting
+release-name credits remain contradictions. Content verification still compares
+the downloaded copy with the catalog identity.
+
 Preference reviews and reviews opened after that limit keep being searched.
 Their wait slows from daily to monthly with age, anchored on the publication
 date when it is later than the request date, otherwise on the request date;

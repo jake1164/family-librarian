@@ -141,6 +141,23 @@ public sealed class ExternalProviderAdminService(
         return ExternalProviderCommandResult.Success(ToStatus(provider));
     }
 
+    public async Task<ExternalProviderCommandResult> SetConfidenceLevelsAsync(
+        Guid id, ProviderConfidenceLevel level, ProviderConfidenceLevel? ebook,
+        ProviderConfidenceLevel? audiobook, CancellationToken cancellationToken)
+    {
+        if (!Enum.IsDefined(level) || ebook is { } ebookLevel && !Enum.IsDefined(ebookLevel) ||
+            audiobook is { } audioLevel && !Enum.IsDefined(audioLevel))
+            return ExternalProviderCommandResult.Invalid("Choose Strict, Standard, or Liberal for each confidence level.");
+
+        var provider = await store.FindAsync(id, cancellationToken);
+        if (provider is null) return ExternalProviderCommandResult.Invalid("That provider no longer exists.");
+        provider.SetConfidenceLevels(level, ebook, audiobook, currentUser.UserId, clock.UtcNow);
+        await store.SaveChangesAsync(cancellationToken);
+        await audit.WriteAsync(AuditActions.ExternalProviderConfidenceLevelsChanged, AuditSubjectTypes.ExternalProvider,
+            id.ToString(), new { provider.ProviderId, Level = level.ToString(), Ebook = ebook?.ToString(), Audiobook = audiobook?.ToString() }, cancellationToken);
+        return ExternalProviderCommandResult.Success(ToStatus(provider));
+    }
+
     public async Task<ExternalProviderCommandResult> SetDetailsAsync(
         Guid id, string displayName, string baseUrl, CancellationToken cancellationToken)
     {
@@ -369,7 +386,9 @@ public sealed class ExternalProviderAdminService(
         provider.LastTestedAtUtc,
         provider.LastTestSucceeded,
         provider.LastTestMessage,
-        provider.CachedHealthIssues);
+        provider.CachedHealthIssues,
+        provider.ConfidenceLevel.ToString(), provider.EbookConfidenceLevel?.ToString(),
+        provider.AudiobookConfidenceLevel?.ToString(), provider.ConfidenceReviewedAtUtc is not null);
 }
 
 public sealed record ExternalProviderStatus(
@@ -397,7 +416,11 @@ public sealed record ExternalProviderStatus(
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
     string? LastTestMessage,
-    IReadOnlyList<ProviderHealthIssue> CachedHealthIssues);
+    IReadOnlyList<ProviderHealthIssue> CachedHealthIssues,
+    string ConfidenceLevel,
+    string? EbookConfidenceLevel,
+    string? AudiobookConfidenceLevel,
+    bool ConfidenceReviewed);
 
 public sealed record ExternalProviderCommandResult(
     ExternalProviderCommandOutcome Outcome, ExternalProviderStatus? Status, string? Error)

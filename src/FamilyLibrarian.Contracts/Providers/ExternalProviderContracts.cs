@@ -25,7 +25,11 @@ public sealed record ExternalProviderResponse(
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
     string? LastTestMessage,
-    IReadOnlyList<ExternalProviderHealthIssueResponse> CachedHealthIssues);
+    IReadOnlyList<ExternalProviderHealthIssueResponse> CachedHealthIssues,
+    string ConfidenceLevel,
+    string? EbookConfidenceLevel,
+    string? AudiobookConfidenceLevel,
+    bool ConfidenceReviewed);
 
 /// <summary>
 /// A provider-reported reason behind a degraded/unavailable result. Untrusted,
@@ -59,6 +63,8 @@ public sealed record SetExternalProviderAutoAcquireEnabledRequest(bool Enabled);
 /// 1 for a source with a limited download allowance.
 /// </summary>
 public sealed record SetExternalProviderAutomaticAttemptLimitRequest(int Limit);
+
+public sealed record SetExternalProviderConfidenceLevelRequest(string Level, string? Ebook, string? Audiobook);
 
 public sealed record SetExternalProviderApiKeyRequest(string ApiKey);
 

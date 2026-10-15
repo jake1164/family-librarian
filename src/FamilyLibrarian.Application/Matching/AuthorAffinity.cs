@@ -1,6 +1,6 @@
 namespace FamilyLibrarian.Application.Matching;
 
-public enum AuthorAffinityKind { Conflict, Unknown, Fuzzy, FirstOnly, FirstExactLastFuzzy, LastOnly, LastExactFirstFuzzy, Compatible, Exact }
+public enum AuthorAffinityKind { Conflict, Unknown, Fuzzy, FirstOnly, FirstExactLastFuzzy, LastOnly, LastExactFirstFuzzy, Compatible, Exact, ContextCorroborated }
 
 /// <summary>Supporting identity evidence, never a provider popularity or acceptance score.</summary>
 public sealed record AuthorAffinityResult(

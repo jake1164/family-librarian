@@ -2950,6 +2950,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("api_key_set_at_utc");
 
+                    b.Property<string>("AudiobookConfidenceLevel")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("audiobook_confidence_level");
+
                     b.Property<bool>("AutoAcquireEnabled")
                         .HasColumnType("boolean")
                         .HasColumnName("auto_acquire_enabled");
@@ -3016,6 +3021,18 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("cached_search_operation_status");
 
+                    b.Property<string>("ConfidenceLevel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Standard")
+                        .HasColumnName("confidence_level");
+
+                    b.Property<DateTimeOffset?>("ConfidenceReviewedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("confidence_reviewed_at_utc");
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
@@ -3025,6 +3042,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)")
                         .HasColumnName("display_name");
+
+                    b.Property<string>("EbookConfidenceLevel")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("ebook_confidence_level");
 
                     b.Property<bool>("InstanceReplacedSincePreviousTest")
                         .HasColumnType("boolean")

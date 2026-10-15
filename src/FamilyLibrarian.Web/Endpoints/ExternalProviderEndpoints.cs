@@ -24,6 +24,7 @@ internal static class ExternalProviderEndpoints
         adminExternalProviders.MapPut("/{id:guid}/recheck-schedule", SetExternalProviderRecheckScheduleAsync);
         adminExternalProviders.MapPut("/{id:guid}/auto-acquire", SetExternalProviderAutoAcquireEnabledAsync);
         adminExternalProviders.MapPut("/{id:guid}/automatic-attempt-limit", SetExternalProviderAutomaticAttemptLimitAsync);
+        adminExternalProviders.MapPut("/{id:guid}/confidence-level", SetExternalProviderConfidenceLevelAsync);
         adminExternalProviders.MapPut("/{id:guid}/api-key", SetExternalProviderApiKeyAsync);
         adminExternalProviders.MapDelete("/{id:guid}/api-key", ClearExternalProviderApiKeyAsync);
         adminExternalProviders.MapPost("/{id:guid}/test", TestExternalProviderAsync);
@@ -74,6 +75,23 @@ internal static class ExternalProviderEndpoints
         Guid id, SetExternalProviderAutomaticAttemptLimitRequest request, ExternalProviderAdminService service,
         CancellationToken cancellationToken) =>
         ToExternalProviderResult(await service.SetAutomaticAttemptLimitAsync(id, request.Limit, cancellationToken));
+
+    private static async Task<IResult> SetExternalProviderConfidenceLevelAsync(
+        Guid id, SetExternalProviderConfidenceLevelRequest request, ExternalProviderAdminService service,
+        CancellationToken cancellationToken)
+    {
+        static bool TryLevel(string? value, out ProviderConfidenceLevel level) =>
+            Enum.TryParse(value, ignoreCase: true, out level) && Enum.IsDefined(level);
+        if (!TryLevel(request.Level, out var level) ||
+            request.Ebook is not null && !TryLevel(request.Ebook, out _) ||
+            request.Audiobook is not null && !TryLevel(request.Audiobook, out _))
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            { ["confidenceLevel"] = ["Choose Strict, Standard, or Liberal; use no override to inherit the source level."] });
+
+        var ebook = request.Ebook is null ? (ProviderConfidenceLevel?)null : Enum.Parse<ProviderConfidenceLevel>(request.Ebook, ignoreCase: true);
+        var audiobook = request.Audiobook is null ? (ProviderConfidenceLevel?)null : Enum.Parse<ProviderConfidenceLevel>(request.Audiobook, ignoreCase: true);
+        return ToExternalProviderResult(await service.SetConfidenceLevelsAsync(id, level, ebook, audiobook, cancellationToken));
+    }
 
     private static async Task<IResult> SetExternalProviderApiKeyAsync(
         Guid id, SetExternalProviderApiKeyRequest request, ExternalProviderAdminService service,
@@ -133,5 +151,6 @@ internal static class ExternalProviderEndpoints
         status.LastTestMessage,
         status.CachedHealthIssues
             .Select(issue => new ExternalProviderHealthIssueResponse(issue.Operation, issue.Code, issue.Message))
-            .ToList());
+            .ToList(),
+        status.ConfidenceLevel, status.EbookConfidenceLevel, status.AudiobookConfidenceLevel, status.ConfidenceReviewed);
 }
