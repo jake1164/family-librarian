@@ -410,7 +410,7 @@ public sealed class AutomaticRequestFulfillmentService(
             attempts.Add(new ProviderAttempt(
                 request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Submitted,
                 "A high-confidence copy acquisition was submitted and is being tracked to completion.",
-                clock.UtcNow, nextEligibleCheckAtUtc: null));
+                clock.UtcNow, nextEligibleCheckAtUtc: null, providerAcquisitionJobId: result.ProviderAcquisitionJobId));
             await attempts.SaveChangesAsync(cancellationToken);
             return true;
         }

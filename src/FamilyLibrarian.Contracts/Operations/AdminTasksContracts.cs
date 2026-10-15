@@ -39,4 +39,5 @@ public sealed record AdminProviderTaskResponse(
     string Outcome,
     string Summary,
     DateTimeOffset AttemptedAtUtc,
-    DateTimeOffset? NextEligibleCheckAtUtc);
+    DateTimeOffset? NextEligibleCheckAtUtc,
+    string? DisplayOutcome = null);

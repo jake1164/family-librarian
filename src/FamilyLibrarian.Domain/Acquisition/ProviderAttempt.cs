@@ -21,7 +21,8 @@ public sealed class ProviderAttempt
         ProviderAttemptOutcome outcome,
         string summary,
         DateTimeOffset attemptedAtUtc,
-        DateTimeOffset? nextEligibleCheckAtUtc)
+        DateTimeOffset? nextEligibleCheckAtUtc,
+        Guid? providerAcquisitionJobId = null)
     {
         if (string.IsNullOrWhiteSpace(providerId))
         {
@@ -40,6 +41,7 @@ public sealed class ProviderAttempt
         Summary = summary.Length <= 512 ? summary : summary[..512];
         AttemptedAtUtc = attemptedAtUtc;
         NextEligibleCheckAtUtc = nextEligibleCheckAtUtc;
+        ProviderAcquisitionJobId = providerAcquisitionJobId;
     }
 
     public Guid Id { get; private set; } = Guid.NewGuid();
@@ -60,6 +62,13 @@ public sealed class ProviderAttempt
     /// Null means this provider will not automatically recheck this format.
     /// </summary>
     public DateTimeOffset? NextEligibleCheckAtUtc { get; private set; }
+
+    /// <summary>
+    /// The provider download this row is about, when it is about one. It only lets the page work out, when it is shown,
+    /// whether a "submitted" row's download has since ended; the row itself is never updated. Null for lookups that
+    /// started no download, and for rows recorded before the link existed.
+    /// </summary>
+    public Guid? ProviderAcquisitionJobId { get; private set; }
 
     /// <summary>
     /// Categorizes an administrator-visible problem without changing the

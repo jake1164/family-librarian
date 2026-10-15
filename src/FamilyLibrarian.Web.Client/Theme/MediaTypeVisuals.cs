@@ -61,6 +61,8 @@ public static class MediaTypeVisuals
         "Submitted" or "Retrying" or "CandidatesFound" or "Resumed" => Color.Info,
         "Blocked" or "Paused" => Color.Warning,
         "Failed" => Color.Error,
+        // Display-only: a step that is over. Grey, because nothing about it needs attention now.
+        "Finished" or "MovedOn" => Color.Default,
         _ => Color.Default
     };
 
@@ -75,6 +77,8 @@ public static class MediaTypeVisuals
         "Blocked" => "Blocked",
         "Paused" => "Paused",
         "Resumed" => "Resumed",
+        "Finished" => "Finished",
+        "MovedOn" => "Moved on",
         _ => outcome
     };
 
@@ -94,6 +98,8 @@ public static class MediaTypeVisuals
         "Blocked" => "A setting stopped this lookup. Check the source's configuration.",
         "Paused" => "Acquisition is paused. Check the provider's reported reason.",
         "Resumed" => "The provider's pause has cleared.",
+        "Finished" => "This download has ended; the row after it says how.",
+        "MovedOn" => "The next copy was tried after this step; the rows after it say what happened.",
         _ => outcome
     };
 
@@ -110,6 +116,8 @@ public static class MediaTypeVisuals
         "Blocked" => Icons.Material.Filled.Block,
         "Paused" => Icons.Material.Filled.Pause,
         "Resumed" => Icons.Material.Filled.PlayArrow,
+        "Finished" => Icons.Material.Filled.History,
+        "MovedOn" => Icons.Material.Filled.Redo,
         "CandidatesFound" => Icons.Material.Filled.Search,
         "NoMatch" => Icons.Material.Filled.SearchOff,
         _ => Icons.Material.Filled.Info

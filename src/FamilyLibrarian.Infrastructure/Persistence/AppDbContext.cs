@@ -1142,6 +1142,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(attempt => attempt.Summary).HasColumnName("summary").HasMaxLength(512).IsRequired();
             entity.Property(attempt => attempt.AttemptedAtUtc).HasColumnName("attempted_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(attempt => attempt.NextEligibleCheckAtUtc).HasColumnName("next_eligible_check_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(attempt => attempt.ProviderAcquisitionJobId).HasColumnName("provider_acquisition_job_id");
+            entity.HasIndex(attempt => attempt.ProviderAcquisitionJobId);
 
             entity.HasIndex(attempt => new { attempt.RequestId, attempt.AttemptedAtUtc });
             entity.HasIndex(attempt => new { attempt.RequestFormatId, attempt.ProviderId, attempt.AttemptedAtUtc });

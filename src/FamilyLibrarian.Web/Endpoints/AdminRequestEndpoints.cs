@@ -392,14 +392,24 @@ internal static class AdminRequestEndpoints
         Guid requestId,
         IRequestRepository requests,
         IProviderAttemptRepository attempts,
+        IProviderAcquisitionJobStore providerJobs,
         CancellationToken cancellationToken)
     {
-        if (await requests.FindRequestForAdminAsync(requestId, cancellationToken) is null)
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null)
         {
             return Results.NotFound();
         }
 
-        return Results.Ok((await attempts.ListForRequestAsync(requestId, cancellationToken))
+        var ledger = await attempts.ListForRequestAsync(requestId, cancellationToken);
+        var displayOutcomes = ProviderAttemptDisplay.Derive(
+            ledger,
+            await providerJobs.ListAttemptJobFactsAsync(
+                [.. ledger.Where(attempt => attempt.ProviderAcquisitionJobId != null).Select(attempt => attempt.ProviderAcquisitionJobId!.Value)],
+                cancellationToken));
+        var mediaTypes = request.Formats.ToDictionary(format => format.Id, format => format.MediaType.ToString());
+
+        return Results.Ok(ledger
             .Select(attempt => new ProviderAttemptResponse(
                 attempt.Id,
                 attempt.RequestFormatId,
@@ -407,10 +417,11 @@ internal static class AdminRequestEndpoints
                 attempt.Outcome.ToString(),
                 attempt.Summary,
                 attempt.AttemptedAtUtc,
-                attempt.NextEligibleCheckAtUtc))
+                attempt.NextEligibleCheckAtUtc,
+                displayOutcomes[attempt.Id],
+                mediaTypes.GetValueOrDefault(attempt.RequestFormatId)))
             .ToArray());
     }
-
 
     /// <summary>AUTOFIND 2b: how each provider was searched for this request, one line per format and provider.</summary>
     private static async Task<IResult> ListSearchVariantsAsync(
@@ -726,7 +737,8 @@ internal static class AdminRequestEndpoints
             clock.UtcNow,
             nextEligibleCheckAtUtc: result.Outcome == ManualImportOutcome.TransferInterrupted
                 ? clock.UtcNow.AddMinutes(2)
-                : null));
+                : null,
+            providerAcquisitionJobId: result.ProviderAcquisitionJobId));
         await providerAttempts.SaveChangesAsync(cancellationToken);
 
         return ToManualImportResult(result);

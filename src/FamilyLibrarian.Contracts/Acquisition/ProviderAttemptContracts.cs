@@ -8,7 +8,9 @@ public sealed record ProviderAttemptResponse(
     string Outcome,
     string Summary,
     DateTimeOffset AttemptedAtUtc,
-    DateTimeOffset? NextEligibleCheckAtUtc);
+    DateTimeOffset? NextEligibleCheckAtUtc,
+    string? DisplayOutcome = null,
+    string? MediaType = null);
 
 /// <summary>
 /// Administrator summary of the search variants remembered for one requested format at one provider (AUTOFIND 2b): how many

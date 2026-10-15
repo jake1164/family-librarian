@@ -827,6 +827,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("outcome");
 
+                    b.Property<Guid?>("ProviderAcquisitionJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("provider_acquisition_job_id");
+
                     b.Property<string>("ProviderId")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -848,6 +852,8 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnName("summary");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ProviderAcquisitionJobId");
 
                     b.HasIndex("RequestId", "AttemptedAtUtc");
 

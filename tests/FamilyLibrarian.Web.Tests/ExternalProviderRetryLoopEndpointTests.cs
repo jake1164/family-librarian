@@ -713,6 +713,182 @@ public sealed class ExternalProviderFulfilledFormatCancellationEndpointTests
     }
 }
 
+/// <summary>
+/// A source that refuses or throttles a download is not a bad copy. On the lab an indexer's bot filter refused the
+/// provider's client and the only English copy of a book was discarded for good; the copy must be kept and the source
+/// asked again later. Own database: the recheck considers every provider against every pending request.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderSourceRefusalEndpointTests
+{
+    // A database per case: a second request for the same work joins the first, so cases would share state.
+
+    [TestMethod]
+    public async Task ARefusedDownloadKeepsTheCopyAndTheSourceIsAskedAgainLater()
+    {
+        var client = new RetryLoopExternalProviderClient { FailingJobErrorCode = "AUTH_FAILED" };
+        var before = DateTimeOffset.UtcNow;
+        await using var ownFixture = await WebTestFixture.CreateAsync();
+        var (factory, requestId, attempts) = await RunToFailureAsync(WebTestFixture.Require(ownFixture), client, "refusing-source");
+        await using var _ = factory;
+
+        Assert.IsFalse(
+            attempts.Any(attempt => attempt.Outcome == "Retrying"),
+            "A refused download is not a copy that was tried and ruled out.");
+        var failed = attempts.Single(attempt => attempt.Outcome == "Failed");
+        Assert.DoesNotContain("Nothing needs doing", failed.Summary);
+        Assert.Contains("source", failed.Summary);
+        Assert.IsNotNull(failed.NextEligibleCheckAtUtc);
+        var wait = failed.NextEligibleCheckAtUtc.Value - before;
+        Assert.IsTrue(wait > TimeSpan.FromHours(5.5) && wait < TimeSpan.FromHours(6.5), $"Expected about six hours, got {wait}.");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.AreEqual(
+                0, await database.DeclinedRequestCandidates.CountAsync(candidate => candidate.RequestId == requestId),
+                "The copy was fine; the source refused. It must not be ruled out.");
+            var persisted = await database.BookRequests.SingleAsync(entity => entity.Id == requestId);
+            Assert.AreEqual(RequestStatus.PendingAcquisition, persisted.Status);
+
+            // Time passes: the source is due again, and the same copy is the one tried.
+            await database.ProviderAttempts.Where(attempt => attempt.RequestId == requestId)
+                .ExecuteUpdateAsync(set => set.SetProperty(attempt => attempt.NextEligibleCheckAtUtc, DateTimeOffset.UtcNow.AddMinutes(-1)));
+        }
+
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        Assert.AreEqual(
+            2, client.SubmittedCandidates.Count(candidate => candidate == RetryLoopExternalProviderClient.FailingReference),
+            "After the wait, the same candidate must be submitted again.");
+    }
+
+    [TestMethod]
+    [DataRow(1800, 30)]
+    [DataRow(10, 5)]
+    [DataRow(null, 15)]
+    public async Task AThrottledDownloadKeepsTheCopyAndWaitsAsLongAsTheSourceAsked(int? retryAfterSeconds, int expectedMinutes)
+    {
+        var client = new RetryLoopExternalProviderClient { FailingJobErrorCode = "RATE_LIMITED", FailingJobRetryAfterSeconds = retryAfterSeconds };
+        var before = DateTimeOffset.UtcNow;
+        await using var ownFixture = await WebTestFixture.CreateAsync();
+        var (factory, requestId, attempts) = await RunToFailureAsync(WebTestFixture.Require(ownFixture), client, "throttling-source");
+        await using var _ = factory;
+
+        var paused = attempts.Single(attempt => attempt.Outcome == "Paused");
+        Assert.IsNotNull(paused.NextEligibleCheckAtUtc);
+        var wait = paused.NextEligibleCheckAtUtc.Value - before;
+        Assert.IsTrue(
+            wait > TimeSpan.FromMinutes(expectedMinutes - 1) && wait < TimeSpan.FromMinutes(expectedMinutes + 2),
+            $"Expected about {expectedMinutes} minutes, got {wait}.");
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(0, await database.DeclinedRequestCandidates.CountAsync(candidate => candidate.RequestId == requestId));
+    }
+
+    private static async Task<(FamilyLibrarianAppFactory Factory, Guid RequestId, ProviderAttemptResponse[] Attempts)> RunToFailureAsync(
+        WebTestFixture fixture, IExternalProviderClient client, string providerId)
+    {
+        var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(client);
+            });
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await RetryLoopSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await RetryLoopSupport.RegisterProviderAsync(admin, providerId: providerId);
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        await RetryLoopSupport.RunPollingAsync(factory);
+
+        var attempts = await admin.GetFromJsonAsync<ProviderAttemptResponse[]>(
+            $"/api/v1/admin/requests/{request.Id}/provider-attempts");
+        Assert.IsNotNull(attempts);
+        return (factory, request.Id, attempts);
+    }
+}
+
+/// <summary>
+/// The activity list shows what is true now. On the lab, finished downloads still read "In progress" and a step the
+/// loop had moved past still read "Trying next copy", because the append-only ledger was drawn row by row.
+/// Own database: a second request for the same work would join the first.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderActivityDisplayEndpointTests
+{
+    [TestMethod]
+    public async Task FinishedAndMovedOnStepsAreShownAsSuchWhileTheStoredLedgerIsUntouched()
+    {
+        await using var ownFixture = await WebTestFixture.CreateAsync();
+        var fixture = WebTestFixture.Require(ownFixture);
+        var client = new RetryLoopExternalProviderClient();
+        await using var factory = new FamilyLibrarianAppFactory(
+            fixture.ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(client);
+            });
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await RetryLoopSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await RetryLoopSupport.RegisterProviderAsync(admin, providerId: "activity-display-source");
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+
+        // The lab shape: the first copy fails and the loop moves on; the second copy arrives.
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        await RetryLoopSupport.RunPollingAsync(factory);
+        await RetryLoopSupport.RunRecheckAsync(factory);
+        await RetryLoopSupport.RunPollingAsync(factory);
+
+        var attempts = await admin.GetFromJsonAsync<ProviderAttemptResponse[]>(
+            $"/api/v1/admin/requests/{request.Id}/provider-attempts");
+        Assert.IsNotNull(attempts);
+
+        var firstSubmitted = attempts.Single(attempt => attempt.Outcome == "Submitted" && attempt.Summary.Contains("(retail)", StringComparison.Ordinal));
+        var secondSubmitted = attempts.Single(attempt => attempt.Outcome == "Submitted" && attempt.Summary.Contains("Attempt 2 of 3", StringComparison.Ordinal));
+        var retrying = attempts.Single(attempt => attempt.Outcome == "Retrying");
+        var acquired = attempts.Single(attempt => attempt.Outcome == "Acquired");
+
+        Assert.AreEqual("Finished", firstSubmitted.DisplayOutcome, "Its download failed long ago.");
+        Assert.AreEqual("Finished", secondSubmitted.DisplayOutcome, "Its download completed.");
+        Assert.AreEqual("MovedOn", retrying.DisplayOutcome, "The next copy was tried.");
+        Assert.AreEqual("Acquired", acquired.DisplayOutcome, "Everything else is shown as stored.");
+        Assert.IsTrue(attempts.All(attempt => attempt.MediaType == "Ebook"), "Each row names its format.");
+
+        // Nothing stored was rewritten, and the rows are linked to their downloads.
+        await using var scope = factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var stored = await database.ProviderAttempts.Where(attempt => attempt.RequestId == request.Id).ToListAsync();
+        Assert.HasCount(attempts.Length, stored);
+        foreach (var row in attempts)
+        {
+            Assert.AreEqual(stored.Single(attempt => attempt.Id == row.Id).Outcome.ToString(), row.Outcome);
+        }
+
+        Assert.IsTrue(
+            stored.Where(attempt => attempt.Outcome == ProviderAttemptOutcome.Submitted).All(attempt => attempt.ProviderAcquisitionJobId != null),
+            "A row about a download must say which one.");
+    }
+}
+
 file static class RetryLoopSupport
 {
     public static async Task SignInAsync(HttpClient client, string email, string password)
@@ -792,6 +968,11 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
 
     /// <summary>When set, the failing candidate's status poll breaks the protocol instead of reporting a state.</summary>
     public bool FailingJobBreaksProtocol { get; init; }
+
+    /// <summary>The protocol error code the failing candidate's job reports.</summary>
+    public string FailingJobErrorCode { get; init; } = "TRANSFER_FAILED";
+
+    public int? FailingJobRetryAfterSeconds { get; init; }
 
     public bool FailingSubmissionIsTerminal { get; init; }
 
@@ -915,7 +1096,8 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
             ? new ExternalProviderJobStatus(
                 jobId, ProviderAcquisitionJobLifecycleState.Failed, Phase: null, Interaction: null, Progress: null,
                 Error: new ProviderJobError(
-                    "TRANSFER_FAILED", "The source could not deliver this copy.", Retryable: false, null, null),
+                    FailingJobErrorCode, "The source could not deliver this copy.", Retryable: false,
+                    FailingJobRetryAfterSeconds, null),
                 PollAfterSeconds: null)
             : new ExternalProviderJobStatus(
                 jobId, ProviderAcquisitionJobLifecycleState.Completed, Phase: null, Interaction: null, Progress: null,

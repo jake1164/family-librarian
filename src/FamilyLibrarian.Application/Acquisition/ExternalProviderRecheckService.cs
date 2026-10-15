@@ -258,7 +258,7 @@ public sealed class ExternalProviderRecheckService(
                                 AddAttempt(request, format, provider, ProviderAttemptOutcome.Submitted,
                                     $"Fetching a complete {completeSet.Total}-part audiobook set. Each part is scanned and " +
                                     "checked on its own, and the book is published only once every part passes.",
-                                    nextEligibleCheckAtUtc: null);
+                                    nextEligibleCheckAtUtc: null, providerAcquisitionJobId: started.FirstJobId);
                             }
                             else
                             {
@@ -400,7 +400,8 @@ public sealed class ExternalProviderRecheckService(
                                             automaticMatches[0].ReleaseName, automaticMatches[0].Title,
                                             automaticMatches[0].Format, automaticMatches[0].SizeBytes),
                                         failuresSoFar + 1, provider.AutomaticAttemptLimit),
-                                    nextEligibleCheckAtUtc: null);
+                                    nextEligibleCheckAtUtc: null,
+                                    providerAcquisitionJobId: acquireResult.ProviderAcquisitionJobId);
                                 break;
                             }
 
@@ -712,9 +713,11 @@ public sealed class ExternalProviderRecheckService(
         ExternalProvider provider,
         ProviderAttemptOutcome outcome,
         string summary,
-        DateTimeOffset? nextEligibleCheckAtUtc) =>
+        DateTimeOffset? nextEligibleCheckAtUtc,
+        Guid? providerAcquisitionJobId = null) =>
         attempts.Add(new ProviderAttempt(
-            request.Id, format.Id, provider.ProviderId, outcome, summary, clock.UtcNow, nextEligibleCheckAtUtc));
+            request.Id, format.Id, provider.ProviderId, outcome, summary, clock.UtcNow, nextEligibleCheckAtUtc,
+            providerAcquisitionJobId));
 
     private async Task MarkForReviewAsync(
         BookRequest request, string workTitle, string reason, CancellationToken cancellationToken)
@@ -910,7 +913,8 @@ public sealed class ExternalProviderRecheckService(
         if (result.Outcome == ManualImportOutcome.AcquisitionInProgress)
         {
             AddAttempt(request, format, provider, ProviderAttemptOutcome.Submitted,
-                "Found a stronger new copy after the attempt limit; trying it once.", nextEligibleCheckAtUtc: null);
+                "Found a stronger new copy after the attempt limit; trying it once.", nextEligibleCheckAtUtc: null,
+                providerAcquisitionJobId: result.ProviderAcquisitionJobId);
             return;
         }
 

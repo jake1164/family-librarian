@@ -28,6 +28,7 @@ internal static class AdminTasksEndpoints
     private static async Task<IResult> GetTasksAsync(
         BookRequestService requests,
         IProviderAttemptRepository providerAttempts,
+        IProviderAcquisitionJobStore providerJobs,
         MediaAssetQueueService mediaAssets,
         PublishingQueueService publishing,
         SystemReadinessService readiness,
@@ -38,6 +39,12 @@ internal static class AdminTasksEndpoints
         // sequential because EF Core forbids parallel operations on one context.
         var requestList = await requests.ListForAdminAsync(status: null, cancellationToken);
         var attemptList = await providerAttempts.ListRecentAsync(RecentActivityLimit, cancellationToken);
+        // The newest N rows are enough to tell what is current: any row newer than a listed one is listed too.
+        var displayOutcomes = ProviderAttemptDisplay.Derive(
+            attemptList,
+            await providerJobs.ListAttemptJobFactsAsync(
+                [.. attemptList.Where(attempt => attempt.ProviderAcquisitionJobId != null).Select(attempt => attempt.ProviderAcquisitionJobId!.Value)],
+                cancellationToken));
         var securityList = await mediaAssets.ListRecentAsync(RecentActivityLimit, cancellationToken);
         // The dashboard's activity feed only ever shows the latest N rows, but the
         // "needs attention" count must reflect every pending asset, not just the
@@ -93,7 +100,8 @@ internal static class AdminTasksEndpoints
                 attempt.Outcome.ToString(),
                 attempt.Summary,
                 attempt.AttemptedAtUtc,
-                attempt.NextEligibleCheckAtUtc);
+                attempt.NextEligibleCheckAtUtc,
+                displayOutcomes[attempt.Id]);
         }).ToArray();
 
         var securityResponses = securityList

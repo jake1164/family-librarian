@@ -57,6 +57,32 @@ public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProvid
             .OrderBy(job => job.PartNumber)
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<AttemptJobFacts>> ListAttemptJobFactsAsync(
+        IReadOnlyCollection<Guid> jobIds, CancellationToken cancellationToken)
+    {
+        if (jobIds.Count == 0)
+        {
+            return [];
+        }
+
+        var linked = await database.ProviderAcquisitionJobs
+            .AsNoTracking()
+            .Where(job => jobIds.Contains(job.Id))
+            .Select(job => new AttemptJobFacts(job.Id, job.LifecycleState, job.PartSetId))
+            .ToListAsync(cancellationToken);
+        var setIds = linked.Where(fact => fact.PartSetId != null).Select(fact => fact.PartSetId!.Value).Distinct().ToArray();
+        if (setIds.Length > 0)
+        {
+            linked.AddRange(await database.ProviderAcquisitionJobs
+                .AsNoTracking()
+                .Where(job => job.PartSetId != null && setIds.Contains(job.PartSetId.Value) && !jobIds.Contains(job.Id))
+                .Select(job => new AttemptJobFacts(job.Id, job.LifecycleState, job.PartSetId))
+                .ToListAsync(cancellationToken));
+        }
+
+        return linked;
+    }
+
     public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListActiveForFormatAsync(
         Guid requestFormatId, CancellationToken cancellationToken) =>
         await database.ProviderAcquisitionJobs

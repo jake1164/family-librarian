@@ -18,9 +18,9 @@ public interface IAudiobookPartSetMemberAcquirer
         CancellationToken cancellationToken);
 }
 
-public sealed record AudiobookPartSetStartResult(bool Started, Guid? SetId, string? Error)
+public sealed record AudiobookPartSetStartResult(bool Started, Guid? SetId, string? Error, Guid? FirstJobId = null)
 {
-    public static AudiobookPartSetStartResult Success(Guid setId) => new(true, setId, null);
+    public static AudiobookPartSetStartResult Success(Guid setId, Guid? firstJobId = null) => new(true, setId, null, firstJobId);
 
     public static AudiobookPartSetStartResult Failure(string error) => new(false, null, error);
 }
@@ -45,6 +45,7 @@ public sealed class AudiobookPartSetAcquisitionService(
         ArgumentNullException.ThrowIfNull(selection);
 
         var setId = Guid.NewGuid();
+        Guid? firstJobId = null;
         try
         {
             foreach (var part in selection.Parts)
@@ -61,6 +62,8 @@ public sealed class AudiobookPartSetAcquisitionService(
                     await AbandonAsync(setId, reason);
                     return AudiobookPartSetStartResult.Failure(reason);
                 }
+
+                firstJobId ??= result.ProviderAcquisitionJobId;
             }
         }
         catch
@@ -72,7 +75,7 @@ public sealed class AudiobookPartSetAcquisitionService(
             throw;
         }
 
-        return AudiobookPartSetStartResult.Success(setId);
+        return AudiobookPartSetStartResult.Success(setId, firstJobId);
     }
 
     private async Task AbandonAsync(Guid setId, string reason)

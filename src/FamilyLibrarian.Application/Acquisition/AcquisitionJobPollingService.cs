@@ -257,7 +257,7 @@ public sealed class AcquisitionJobPollingService(
             isPaused ? (string.IsNullOrWhiteSpace(status.Progress?.Message)
                     ? "The provider paused acquisition; check the provider." : status.Progress.Message)
                 : "The provider's acquisition pause has cleared.",
-            clock.UtcNow, nextEligibleCheckAtUtc: null));
+            clock.UtcNow, nextEligibleCheckAtUtc: null, providerAcquisitionJobId: job.Id));
     }
 
     private async Task CompleteAsync(
@@ -529,7 +529,7 @@ public sealed class AcquisitionJobPollingService(
             attempts.Add(new ProviderAttempt(
                 job.RequestId, job.RequestFormatId, job.ProviderId, ProviderAttemptOutcome.Acquired,
                 "Downloaded. The copy was received and passed on for checking and publishing.", clock.UtcNow,
-                nextEligibleCheckAtUtc: null));
+                nextEligibleCheckAtUtc: null, providerAcquisitionJobId: job.Id));
             await attempts.SaveChangesAsync(cancellationToken);
         }
 
@@ -541,7 +541,7 @@ public sealed class AcquisitionJobPollingService(
                 job.RequestId, job.RequestFormatId, job.ProviderId,
                 automatic.AdvancesToNextCandidate ? ProviderAttemptOutcome.Retrying : ProviderAttemptOutcome.Failed,
                 DescribeAutomaticFailure(unusable, automatic), now,
-                nextEligibleCheckAtUtc: automatic.AdvancesToNextCandidate ? now : null));
+                nextEligibleCheckAtUtc: automatic.AdvancesToNextCandidate ? now : null, providerAcquisitionJobId: job.Id));
             await attempts.SaveChangesAsync(cancellationToken);
             if (automatic.AdvancesToNextCandidate)
             {
@@ -588,6 +588,38 @@ public sealed class AcquisitionJobPollingService(
         {
             // Best effort: the failure itself is still recorded.
         }
+    }
+
+    private async Task RecordSourceFailureAsync(
+        ProviderAcquisitionJob job, ProviderFailureKind kind, string? errorMessage, int? retryAfterSeconds,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reason = string.IsNullOrWhiteSpace(errorMessage) ? "no reason was given" : errorMessage.Trim();
+        ProviderAttemptOutcome outcome;
+        DateTimeOffset nextCheck;
+        string summary;
+        if (kind == ProviderFailureKind.Throttled)
+        {
+            var wait = ProviderFailureClassifier.ThrottleDelay(retryAfterSeconds);
+            outcome = ProviderAttemptOutcome.Paused;
+            nextCheck = now + wait;
+            summary = $"The source asked Family Librarian to slow down ({reason}). The copy is kept; it will be tried again in " +
+                $"about {Math.Max(1, (int)Math.Round(wait.TotalMinutes))} minutes.";
+        }
+        else
+        {
+            outcome = ProviderAttemptOutcome.Failed;
+            nextCheck = now + ProviderFailureClassifier.SourceProblemRecheckDelay;
+            summary = $"The source could not download this copy: {reason}. This is a source setting or access problem, not a bad " +
+                "copy, so the copy is kept and will be tried again after the source is fixed (checked again in about " +
+                $"{(int)ProviderFailureClassifier.SourceProblemRecheckDelay.TotalHours} hours).";
+        }
+
+        attempts.Add(new ProviderAttempt(
+            job.RequestId, job.RequestFormatId, job.ProviderId, outcome, summary, now, nextEligibleCheckAtUtc: nextCheck,
+            providerAcquisitionJobId: job.Id));
+        await jobs.SaveChangesAsync(cancellationToken);
+        await attempts.SaveChangesAsync(cancellationToken);
     }
 
     /// <summary>How long a provider job may stay queued, or keep running, before it is treated as failed.</summary>
@@ -776,9 +808,19 @@ public sealed class AcquisitionJobPollingService(
                 job.RequestId, job.RequestFormatId, job.ProviderId, ProviderAttemptOutcome.Failed,
                 $"Part {job.PartNumber} of {job.PartTotal} of an audiobook set failed: " +
                 $"{errorMessage ?? "The acquisition failed."} The whole set was abandoned and the request needs a librarian.",
-                now, nextEligibleCheckAtUtc: null));
+                now, nextEligibleCheckAtUtc: null, providerAcquisitionJobId: job.Id));
             await jobs.SaveChangesAsync(cancellationToken);
             await attempts.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        // The source refusing or throttling the download says nothing against the copy, so it is neither ruled out
+        // nor counted against the attempt budget (lab: an indexer's bot filter refused the provider's client and the only
+        // English copy was discarded for good). The provider is simply asked again later.
+        var failureKind = job.IsAutomaticAcquisition ? ProviderFailureClassifier.Classify(errorCode) : ProviderFailureKind.CopyProblem;
+        if (failureKind != ProviderFailureKind.CopyProblem)
+        {
+            await RecordSourceFailureAsync(job, failureKind, errorMessage, retryAfterSeconds, now, cancellationToken);
             return;
         }
 
@@ -818,7 +860,8 @@ public sealed class AcquisitionJobPollingService(
             // is a different record, not a repeat of what just failed.
             nextEligibleCheckAtUtc: (candidateChanged && !alreadyRetriedStaleCandidate) || advancedToNextCandidate
                 ? now
-                : null));
+                : null,
+            providerAcquisitionJobId: job.Id));
         await jobs.SaveChangesAsync(cancellationToken);
         await attempts.SaveChangesAsync(cancellationToken);
 

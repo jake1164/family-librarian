@@ -80,6 +80,15 @@ mapping on `MediaTypeVisuals` (`AttemptOutcomeColor`, `AttemptOutcomeLabel`,
 | `NoMatch` | grey, "Nothing found" | The source had nothing; it is asked again later. |
 | `Blocked` | amber | A setting stopped the lookup; check the source's configuration. |
 | `Failed` | red | A real failure that needs a librarian. |
+| `Paused` | amber | The source slowed or paused downloads; it is asked again after the wait it named. |
+| `Finished` | grey | *Display only.* A "submitted" row whose download has ended; the row after it says how. |
+| `MovedOn` | grey | *Display only.* A "trying next copy" row that a later step has replaced. |
+
+The ledger is append-only, so a `Submitted` or `Retrying` row is never updated when its download ends or the next
+copy is tried. The server works out what each row means *now* when the list is loaded (`ProviderAttemptDisplay`, using
+the job the row is linked to, or a later row for the same source when the row predates the link) and sends it as
+`DisplayOutcome`; pages draw `DisplayOutcome ?? Outcome`. `Finished` and `MovedOn` exist only there: they are never
+stored and never count as an issue. The request page groups rows by format, with one "now / next" line each.
 
 The rule worth protecting is that **red means a person must act**. The retry
 loop deliberately moves on from a bad copy by itself, so that step is
