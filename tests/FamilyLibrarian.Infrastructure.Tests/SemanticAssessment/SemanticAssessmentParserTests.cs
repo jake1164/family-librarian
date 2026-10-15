@@ -71,6 +71,48 @@ public sealed class SemanticAssessmentParserTests
         AssertRejected(Json("uncertain", "[{\"kind\":\"supports_same_work\",\"evidence_ids\":[\"ev-title\"],\"note\":\"x\"}]", "artifact-assessment/1"), schema: SemanticSchema.Artifact);
     }
 
+    // The lab: 23 of 30 artifact assessments were rejected, almost all "an inconsistent verdict needs a contradicting claim":
+    // the model said inconsistent but filed the reason under a suggests_* kind. The prompt now teaches the shape with two
+    // worked replies; these tests keep those replies valid, so the prompt cannot drift into teaching a rejected answer.
+    [TestMethod]
+    public void TheRepliesThePromptTeachesAreAcceptedByTheParser()
+    {
+        IReadOnlyList<EvidenceFinding> evidence =
+        [
+            new("idv.ev-title", "artifact.identity.title_matches", EvidencePolarity.Positive, "Title matches."),
+            new("idv.ev-author", "artifact.identity.author_matches", EvidencePolarity.Positive, "Author matches."),
+            new("idv.ev-language", "artifact.language.inferred_conflicts", EvidencePolarity.Negative, "Text reads as another language.")
+        ];
+
+        var inconsistent = SemanticAssessmentParser.Parse(ArtifactSemanticEvidence.ExampleInconsistentReply, SemanticSchema.Artifact, evidence);
+        Assert.IsTrue(inconsistent.IsValid, inconsistent.Detail);
+        Assert.AreEqual(SemanticVerdict.Inconsistent, inconsistent.Value!.Verdict);
+
+        var consistent = SemanticAssessmentParser.Parse(ArtifactSemanticEvidence.ExampleConsistentReply, SemanticSchema.Artifact, evidence);
+        Assert.IsTrue(consistent.IsValid, consistent.Detail);
+        Assert.AreEqual(SemanticVerdict.Consistent, consistent.Value!.Verdict);
+    }
+
+    [TestMethod]
+    public void ThePromptStatesWhichClaimsDecideTheVerdictAndIncludesBothExamples()
+    {
+        var prompt = ArtifactSemanticEvidence.SystemPrompt;
+        StringAssert.Contains(prompt, "ONLY supports_declared_identity and contradicts_declared_identity count");
+        StringAssert.Contains(prompt, "FIRST claim is contradicts_declared_identity");
+        StringAssert.Contains(prompt, "If no item is negative you cannot say inconsistent");
+        StringAssert.Contains(prompt, ArtifactSemanticEvidence.ExampleInconsistentReply);
+        StringAssert.Contains(prompt, ArtifactSemanticEvidence.ExampleConsistentReply);
+    }
+
+    // The rejection the lab saw is still a rejection: a note about the wrong language is not a contradiction of the identity.
+    [TestMethod]
+    public void InconsistentWithOnlyASuggestsClaimIsStillRejected()
+    {
+        AssertRejected(
+            Json("inconsistent", "[{\"kind\":\"suggests_wrong_language\",\"evidence_ids\":[\"ev-series-1\"],\"note\":\"Another language.\"}]", "artifact-assessment/1"),
+            schema: SemanticSchema.Artifact);
+    }
+
     [TestMethod]
     public void NonJsonAndWrapperedReplyIsInvalidJsonNotASchemaProblem()
     {

@@ -95,7 +95,27 @@ public static class ArtifactSemanticEvidence
         "must cite at least one id. supports_declared_identity must cite a positive or weak item; contradicts_declared_identity must " +
         "cite a negative item. verdict consistent needs a supports_declared_identity claim and no contradicts_declared_identity claim; " +
         "verdict inconsistent needs a contradicts_declared_identity claim. If the evidence does not settle it, use verdict uncertain. " +
-        "Notes are plain text under 200 characters with no links or markup.";
+        "Notes are plain text under 200 characters with no links or markup.\n" +
+        "How the verdict is decided: ONLY supports_declared_identity and contradicts_declared_identity count. The suggests_* kinds and " +
+        "needs_review are extra notes; they never make a verdict inconsistent on their own, and a reply that says inconsistent without a " +
+        "contradicts_declared_identity claim is thrown away. So: if any EVIDENCE item is negative (a recorded check found the wrong title, " +
+        "author, language or series), your verdict is inconsistent and your FIRST claim is contradicts_declared_identity citing that " +
+        "negative item; you may add a suggests_* claim after it. If no item is negative you cannot say inconsistent: use consistent when a " +
+        "positive or weak item supports the identity, otherwise uncertain. The ids in these examples are illustrations; cite only ids " +
+        "that appear in the EVIDENCE you are given.\n" +
+        "Example, a language check failed: " + ExampleInconsistentReply + "\n" +
+        "Example, nothing is wrong: " + ExampleConsistentReply;
+
+    /// <summary>A reply the parser accepts, for a file whose language check failed. Taught in the prompt, and tested against the parser.</summary>
+    public const string ExampleInconsistentReply =
+        "{\"schema\":\"artifact-assessment/1\",\"verdict\":\"inconsistent\",\"claims\":[" +
+        "{\"kind\":\"contradicts_declared_identity\",\"evidence_ids\":[\"idv.ev-language\"],\"note\":\"The text is in another language than requested.\"}," +
+        "{\"kind\":\"suggests_wrong_language\",\"evidence_ids\":[\"idv.ev-language\"],\"note\":\"Probably a translated edition.\"}]}";
+
+    /// <summary>A reply the parser accepts, for a file where every check agrees. Taught in the prompt, and tested against the parser.</summary>
+    public const string ExampleConsistentReply =
+        "{\"schema\":\"artifact-assessment/1\",\"verdict\":\"consistent\",\"claims\":[" +
+        "{\"kind\":\"supports_declared_identity\",\"evidence_ids\":[\"idv.ev-title\",\"idv.ev-author\"],\"note\":\"Title and author match the request.\"}]}";
 
     private static string ShortKind(string recordKind) => recordKind switch
     {
