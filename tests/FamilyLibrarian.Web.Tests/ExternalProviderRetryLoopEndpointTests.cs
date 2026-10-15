@@ -889,6 +889,82 @@ public sealed class ExternalProviderActivityDisplayEndpointTests
     }
 }
 
+/// <summary>
+/// An administrator can ask every provider to let go of every download, so a reset leaves no downloaded, never-approved
+/// files behind at the providers. Running downloads are cancelled; every job's staged files are deleted through the
+/// provider's own protocol. Own database: a second request for the same work would join the first.
+/// </summary>
+[TestClass]
+public sealed class ExternalProviderReleaseDownloadsEndpointTests
+{
+    [TestMethod]
+    public async Task ReleasingDownloadsCancelsRunningOnesAndTellsTheProviderToDeleteEveryJobsFiles()
+    {
+        await using var ownFixture = await WebTestFixture.CreateAsync();
+        var client = new RetryLoopExternalProviderClient { FailingJobNeverFinishes = true };
+        await using var factory = new FamilyLibrarianAppFactory(
+            WebTestFixture.Require(ownFixture).ConnectionString,
+            services =>
+            {
+                services.RemoveAll<IExternalProviderClient>();
+                services.AddSingleton<IExternalProviderClient>(client);
+            });
+        using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        await RetryLoopSupport.SignInAsync(admin, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        await RetryLoopSupport.RegisterProviderAsync(admin, providerId: "release-source");
+
+        var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
+        var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
+        Assert.IsNotNull(work);
+        var created = await admin.PostAsJsonAsync(
+            "/api/v1/requests/", new CreateBookRequestRequest(work.Id, ["Ebook"], null, false, false));
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+        await RetryLoopSupport.RunRecheckAsync(factory);
+
+        // A download is running at the provider and never finishes.
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var job = await database.ProviderAcquisitionJobs.SingleAsync(entity => entity.RequestId == request.Id);
+            Assert.IsNotNull(job.ProviderJobId);
+            Assert.AreNotEqual(ProviderAcquisitionJobLifecycleState.Cancelled, job.LifecycleState);
+        }
+
+        var response = await admin.PostAsync("/api/v1/admin/external-providers/release-downloads", content: null);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<ProviderJobReleaseResponse>();
+        Assert.IsNotNull(result);
+        Assert.AreEqual(new ProviderJobReleaseResponse(1, 0, 0), result);
+
+        await using var verification = factory.Services.CreateAsyncScope();
+        var db = verification.ServiceProvider.GetRequiredService<AppDbContext>();
+        var released = await db.ProviderAcquisitionJobs.SingleAsync(entity => entity.RequestId == request.Id);
+        Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Cancelled, released.LifecycleState);
+        Assert.AreEqual(ProviderJobReleaseService.ErrorCode, released.ErrorCode);
+        CollectionAssert.Contains(client.CancelledJobs, released.ProviderJobId);
+        CollectionAssert.Contains(client.DeletedJobs, released.ProviderJobId, "The provider must be told to delete the job's files.");
+
+        // Safe to repeat: the job is now finished here, so a second run only asks the provider to delete again.
+        var again = await (await admin.PostAsync("/api/v1/admin/external-providers/release-downloads", content: null))
+            .Content.ReadFromJsonAsync<ProviderJobReleaseResponse>();
+        Assert.AreEqual(new ProviderJobReleaseResponse(0, 1, 0), again);
+    }
+
+    [TestMethod]
+    public async Task ReleasingDownloadsRequiresAnAdministrator()
+    {
+        await using var ownFixture = await WebTestFixture.CreateAsync();
+        await using var factory = new FamilyLibrarianAppFactory(WebTestFixture.Require(ownFixture).ConnectionString);
+        using var anonymous = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var response = await anonymous.PostAsync("/api/v1/admin/external-providers/release-downloads", content: null);
+
+        Assert.IsFalse(response.IsSuccessStatusCode, "Releasing every download is an administrator action.");
+    }
+}
+
 file static class RetryLoopSupport
 {
     public static async Task SignInAsync(HttpClient client, string email, string password)

@@ -369,6 +369,7 @@ public static class DependencyInjection
         services.AddScoped<AcquisitionJobPollingService>();
         services.AddScoped<ProviderInteractionClaimService>();
         services.AddScoped<FulfilledFormatDownloadCancellation>();
+        services.AddScoped<ProviderJobReleaseService>();
         services.AddScoped<ProviderInteractionService>();
         services.AddScoped<ProviderInteractionLinkService>();
         services.AddScoped<ProviderInteractionAlertService>();

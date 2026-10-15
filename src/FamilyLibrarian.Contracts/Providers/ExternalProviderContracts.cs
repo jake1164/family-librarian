@@ -44,6 +44,9 @@ public sealed record SetExternalProviderDetailsRequest(string DisplayName, strin
 
 public sealed record SetExternalProviderEnabledRequest(bool Enabled);
 
+/// <summary>What releasing every outstanding provider download did. See the admin route that returns it.</summary>
+public sealed record ProviderJobReleaseResponse(int Cancelled, int Released, int Failed);
+
 /// <summary>One of <c>Manual</c>, <c>Daily</c>, or <c>Weekly</c>.</summary>
 public sealed record SetExternalProviderRecheckScheduleRequest(string RecheckSchedule);
 

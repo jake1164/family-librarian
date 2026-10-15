@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Contracts.Providers;
 using FamilyLibrarian.Domain.Providers;
@@ -19,6 +20,7 @@ internal static class ExternalProviderEndpoints
 
         adminExternalProviders.MapGet("/", ListExternalProvidersAsync);
         adminExternalProviders.MapPost("/", CreateExternalProviderAsync);
+        adminExternalProviders.MapPost("/release-downloads", ReleaseOutstandingDownloadsAsync);
         adminExternalProviders.MapPut("/{id:guid}/details", SetExternalProviderDetailsAsync);
         adminExternalProviders.MapPut("/{id:guid}/enabled", SetExternalProviderEnabledAsync);
         adminExternalProviders.MapPut("/{id:guid}/recheck-schedule", SetExternalProviderRecheckScheduleAsync);
@@ -63,6 +65,18 @@ internal static class ExternalProviderEndpoints
         }
 
         return ToExternalProviderResult(await service.SetRecheckScheduleAsync(id, schedule, cancellationToken));
+    }
+
+    /// <summary>
+    /// Asks every provider to let go of every download Family Librarian knows about: running downloads are cancelled and
+    /// every job's staged files are deleted through the provider's own protocol. For resetting an installation without
+    /// leaving downloaded, never-approved files at the providers; safe to repeat.
+    /// </summary>
+    private static async Task<IResult> ReleaseOutstandingDownloadsAsync(
+        ProviderJobReleaseService release, CancellationToken cancellationToken)
+    {
+        var result = await release.ReleaseAllAsync(cancellationToken);
+        return Results.Ok(new ProviderJobReleaseResponse(result.Cancelled, result.Released, result.Failed));
     }
 
     private static async Task<IResult> SetExternalProviderAutomaticAttemptLimitAsync(

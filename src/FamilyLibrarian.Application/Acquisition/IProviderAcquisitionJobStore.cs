@@ -51,6 +51,10 @@ public interface IProviderAcquisitionJobStore
     Task<IReadOnlyList<ProviderAcquisitionJob>> ListActiveForFormatAsync(Guid requestFormatId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>([]);
 
+    /// <summary>Jobs that have a provider-side job id, in any state: what an administrator reset must ask providers to release.</summary>
+    Task<IReadOnlyList<ProviderAcquisitionJob>> ListWithProviderJobAsync(int maximumCount, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>([]);
+
     /// <summary>
     /// The lifecycle state of each of these jobs, plus every other member of any audiobook set they belong to. Read-only,
     /// for working out whether a ledger row's download is still running.

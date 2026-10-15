@@ -57,6 +57,14 @@ public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProvid
             .OrderBy(job => job.PartNumber)
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListWithProviderJobAsync(
+        int maximumCount, CancellationToken cancellationToken) =>
+        await database.ProviderAcquisitionJobs
+            .Where(job => job.ProviderJobId != null)
+            .OrderByDescending(job => job.CreatedAtUtc)
+            .Take(maximumCount)
+            .ToArrayAsync(cancellationToken);
+
     public async Task<IReadOnlyList<AttemptJobFacts>> ListAttemptJobFactsAsync(
         IReadOnlyCollection<Guid> jobIds, CancellationToken cancellationToken)
     {

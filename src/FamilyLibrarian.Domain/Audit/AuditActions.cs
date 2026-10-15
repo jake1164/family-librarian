@@ -52,6 +52,7 @@ public static class AuditActions
     public const string AssetPublishFailed = "asset.publish_failed";
     public const string AssetPublishSkippedDuplicate = "asset.publish_skipped_duplicate";
     public const string ProviderJobCancelledFormatFulfilled = "provider_job.cancelled_format_fulfilled";
+    public const string ProviderJobsReleasedByAdmin = "provider_jobs.released_by_admin";
     public const string AssetMatchAmbiguous = "asset.match_ambiguous";
     public const string AssetArchiveCleanupFailed = "asset.archive_cleanup_failed";
 
