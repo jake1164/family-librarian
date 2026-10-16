@@ -213,6 +213,74 @@ public sealed class AdminTasksEndpointTests
         }
     }
 
+    [TestMethod]
+    public async Task SourceStatisticsUseReceivedJobsRatherThanLedgerRowsOrFileCounts()
+    {
+        var fixture = WebTestFixture.Require(_fixture);
+        using var admin = await fixture.CreateAdminClientAsync();
+        admin.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName,
+            await WebTestFixture.GetAntiforgeryTokenAsync(admin));
+        var workId = await ResolveWorkAsync(admin, "the-hobbit");
+        var created = await admin.PostAsJsonAsync("/api/v1/requests/",
+            new CreateBookRequestRequest(workId, ["Ebook"], null, false, false));
+        created.EnsureSuccessStatusCode();
+        var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
+        Assert.IsNotNull(request);
+        var now = DateTimeOffset.UtcNow;
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var source = new ExternalProvider("statistics-source", "Statistics source", "https://source.example", now);
+            source.SetEnabled(true, null, now);
+            database.ExternalProviders.Add(source);
+            database.ExternalProviders.Add(new ExternalProvider("other-statistics", "Other statistics", "https://other.example", now));
+            database.ExternalProviders.Add(new ExternalProvider("zero-statistics", "No statistics", "https://unused.example", now));
+            var old = new AcquisitionJob(request.Id, FamilyLibrarian.Domain.Requests.RequestMediaType.Ebook,
+                "STATISTICS-SOURCE", now.AddDays(-30));
+            old.TransitionTo(AcquisitionJobStatus.CandidateAcquired, now.AddDays(-30));
+            database.AcquisitionJobs.Add(old);
+            var multiFile = new AcquisitionJob(request.Id, FamilyLibrarian.Domain.Requests.RequestMediaType.Ebook,
+                source.ProviderId, now);
+            multiFile.AddCandidate(source.ProviderId, "one", null, null, "epub", 10, null, null, null, null, now);
+            multiFile.AddCandidate(source.ProviderId, "two", null, null, "epub", 20, null, null, null, null, now);
+            multiFile.TransitionTo(AcquisitionJobStatus.CandidateAcquired, now);
+            database.AcquisitionJobs.Add(multiFile);
+            var failed = new AcquisitionJob(request.Id, FamilyLibrarian.Domain.Requests.RequestMediaType.Ebook,
+                source.ProviderId, now);
+            failed.TransitionTo(AcquisitionJobStatus.Failed, now, "Did not receive files.");
+            database.AcquisitionJobs.Add(failed);
+            var other = new AcquisitionJob(request.Id, FamilyLibrarian.Domain.Requests.RequestMediaType.Ebook,
+                "other-statistics", now);
+            other.TransitionTo(AcquisitionJobStatus.CandidateAcquired, now);
+            database.AcquisitionJobs.Add(other);
+            for (var i = 0; i < 55; i++)
+                database.ProviderAttempts.Add(new ProviderAttempt(request.Id, request.Formats[0].FormatId,
+                    source.ProviderId, ProviderAttemptOutcome.Acquired, "Repeated ledger outcomes are not download jobs.",
+                    now.AddDays(-1).AddSeconds(i), null));
+            database.ProviderAttempts.Add(new ProviderAttempt(request.Id, request.Formats[0].FormatId,
+                source.ProviderId, ProviderAttemptOutcome.Submitted, "Latest recorded action.", now, null));
+            await database.SaveChangesAsync();
+        }
+        var searches = fixture.Services.GetRequiredService<SourceSearchTracker>();
+        searches.Begin("statistics-source").Dispose();
+        searches.Begin("STATISTICS-SOURCE").Dispose();
+        searches.Begin("other-statistics").Dispose();
+        var result = await admin.GetFromJsonAsync<AdminSourcesResponse>("/api/v1/admin/tasks/sources");
+        Assert.IsNotNull(result);
+        Assert.AreEqual(searches.CountsSinceUtc, result.SearchCountsSinceUtc);
+        var statistics = result.Sources.Single(source => source.ProviderId == "statistics-source");
+        Assert.AreEqual(2L, statistics.DownloadsReceived);
+        Assert.AreEqual(2L, statistics.SearchesStarted);
+        Assert.AreEqual(0, statistics.Activities.Count);
+        Assert.AreEqual("Submitted", statistics.LastOutcome);
+        Assert.IsTrue(statistics.LastAttemptAtUtc >= now.AddSeconds(-1));
+        var otherStatistics = result.Sources.Single(source => source.ProviderId == "other-statistics");
+        Assert.AreEqual(1L, otherStatistics.DownloadsReceived);
+        Assert.AreEqual(1L, otherStatistics.SearchesStarted);
+        Assert.IsNull(otherStatistics.LastOutcome);
+        Assert.AreEqual(0L, result.Sources.Single(source => source.ProviderId == "zero-statistics").DownloadsReceived);
+    }
+
     private static async Task<Guid> ResolveWorkAsync(HttpClient client, string externalId)
     {
         var response = await client.PostAsync(

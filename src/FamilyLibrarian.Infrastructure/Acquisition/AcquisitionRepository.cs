@@ -7,6 +7,13 @@ namespace FamilyLibrarian.Infrastructure.Acquisition;
 
 public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionRepository
 {
+    public async Task<IReadOnlyList<SourceDownloadStatistics>> ListSourceDownloadStatisticsAsync(CancellationToken cancellationToken) =>
+        await database.AcquisitionJobs.AsNoTracking()
+            .Where(job => job.Status == AcquisitionJobStatus.CandidateAcquired)
+            .GroupBy(job => job.ProviderId)
+            .Select(group => new SourceDownloadStatistics(group.Key, group.LongCount()))
+            .ToArrayAsync(cancellationToken);
+
     public Task<bool> ExistsAssetWithChecksumForFormatAsync(
         Guid requestFormatId,
         string sha256,

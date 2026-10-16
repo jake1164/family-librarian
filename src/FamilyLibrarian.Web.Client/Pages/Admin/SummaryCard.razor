@@ -12,6 +12,10 @@
             <div>
                 <MudText Typo="Typo.caption">@Label</MudText>
                 <MudText Typo="Typo.h4" Color="@Color">@Value</MudText>
+                @if (!string.IsNullOrWhiteSpace(Description))
+                {
+                    <MudText Typo="Typo.caption">@Description</MudText>
+                }
             </div>
         </MudStack>
     </MudPaper>
@@ -24,6 +28,10 @@ else
             <div>
                 <MudText Typo="Typo.caption">@Label</MudText>
                 <MudText Typo="Typo.h4" Color="@Color">@Value</MudText>
+                @if (!string.IsNullOrWhiteSpace(Description))
+                {
+                    <MudText Typo="Typo.caption">@Description</MudText>
+                }
             </div>
         </MudStack>
     </MudPaper>
@@ -38,6 +46,9 @@ else
 
     [Parameter]
     public int Value { get; set; }
+
+    [Parameter]
+    public string? Description { get; set; }
 
     [Parameter]
     public Color Color { get; set; } = Color.Default;

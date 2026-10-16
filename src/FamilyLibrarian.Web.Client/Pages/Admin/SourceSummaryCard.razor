@@ -1,0 +1,39 @@
+@using FamilyLibrarian.Contracts.Operations
+
+@if (Failed)
+{
+    <MudPaper Outlined="true" Class="pa-3 h-100">
+        <MudText Typo="Typo.caption">Source status</MudText>
+        <MudText Typo="Typo.body2">Status unavailable. Use Refresh to try again.</MudText>
+    </MudPaper>
+}
+else if (Snapshot is null)
+{
+    <MudPaper Outlined="true" Class="pa-3 h-100">
+        <MudText Typo="Typo.caption">Source status</MudText>
+        <MudProgressCircular Indeterminate="true" Size="Size.Small" aria-label="Loading source status" />
+    </MudPaper>
+}
+else
+{
+    <SummaryCard Icon="@Icons.Material.Filled.Storage" Label="Source status"
+                 Value="@Snapshot.Sources.Count" Description="@Description"
+                 Color="@MediaTypeVisuals.SourceStateColor(State)" TargetElementId="tasks-sources-now" />
+}
+
+@code {
+    [Parameter] public AdminSourcesResponse? Snapshot { get; set; }
+    [Parameter] public bool Failed { get; set; }
+
+    private int ActiveCount => Snapshot?.Sources.Count(source => source.Activities.Count > 0) ?? 0;
+    private int IdleCount => Snapshot?.Sources.Count(source => source.Activities.Count == 0 &&
+        source.Availability is "Ready" or "Unchecked") ?? 0;
+    private int AttentionCount => Snapshot?.Sources.Count(source =>
+        source.Availability is "Unavailable" or "NeedsSetup" or "Limited" ||
+        source.Activities.Any(activity => activity.Stage == "WaitingForAction")) ?? 0;
+    private int DisabledCount => Snapshot?.Sources.Count(source => source.Availability == "Disabled") ?? 0;
+    private string Description => $"{ActiveCount} active · {IdleCount} idle · {AttentionCount} need attention"
+        + (DisabledCount > 0 ? $" · {DisabledCount} disabled" : string.Empty);
+    private string State => Snapshot?.Sources.Any(source => source.Availability == "Unavailable") == true
+        ? "Unavailable" : AttentionCount > 0 ? "WaitingForAction" : ActiveCount > 0 ? "Working" : "Idle";
+}

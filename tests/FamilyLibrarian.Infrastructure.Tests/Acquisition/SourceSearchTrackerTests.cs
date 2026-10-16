@@ -23,6 +23,9 @@ public sealed class SourceSearchTrackerTests
         other.Dispose();
         Assert.AreEqual(0, tracker.Snapshot().Count);
         Assert.AreEqual(6, changes);
+        Assert.AreEqual(2L, tracker.StartedCount("EXAMPLE-SOURCE"));
+        Assert.AreEqual(1L, tracker.StartedCount("other-source"));
+        Assert.AreEqual(0L, new SourceSearchTracker().StartedCount("example-source"));
     }
 
     [TestMethod]
@@ -41,5 +44,6 @@ public sealed class SourceSearchTrackerTests
             throw new HttpRequestException("Search failed.");
         });
         Assert.AreEqual(0, tracker.Snapshot().Count);
+        Assert.AreEqual(2L, tracker.StartedCount("example-source"));
     }
 }

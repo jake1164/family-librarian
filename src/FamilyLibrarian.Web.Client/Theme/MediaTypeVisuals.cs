@@ -15,6 +15,20 @@ namespace FamilyLibrarian.Web.Client.Theme;
 /// </summary>
 public static class MediaTypeVisuals
 {
+    public static string SourceLastActionLabel(string outcome) => outcome switch
+    {
+        "Submitted" => "Download requested",
+        "Acquired" => "Copy received",
+        "CandidatesFound" => "Candidates found",
+        "NoMatch" => "Nothing found",
+        "Blocked" => "Lookup blocked",
+        "Failed" => "Attempt failed",
+        "Retrying" => "Another copy requested",
+        "Paused" => "Downloads paused",
+        "Resumed" => "Downloads resumed",
+        _ => "Activity recorded"
+    };
+
     public static Color SourceStateColor(string state) => state switch
     {
         "Searching" or "Checking" or "Downloading" or "Processing" or "Working" or "Queued" or "Waiting" => Color.Info,

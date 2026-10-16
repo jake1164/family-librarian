@@ -74,6 +74,18 @@ These are current host activity and durable job states, never inferred from an
 old `Submitted` ledger row. Last recorded request activity is a ledger timestamp,
 not evidence of a current search or a connection check.
 
+The compact **Source status** dashboard card jumps to the panel below Requests.
+Both render the same source snapshot. Its number is configured sources, with
+active/idle/attention counts beneath; disabled sources are counted separately.
+Attention takes color precedence over active work using the same centralized
+source-state mapping. A failed refresh shows status unavailable, never a false
+zero or stale idle state. Download statistics count received acquisition jobs
+over retained history once each, not files, ledger rows or books available in
+the library. Search statistics count calls started since the displayed app-start
+time, including failed/cancelled calls. Last request action uses historical
+wording such as Download requested rather than an In progress chip inferred
+from an old Submitted outcome.
+
 The provider-activity ledger (a request's admin detail page and the Tasks
 dashboard) records one row per automatic lookup. Its outcomes are their own
 vocabulary — they are not a request or format status — so they have their own

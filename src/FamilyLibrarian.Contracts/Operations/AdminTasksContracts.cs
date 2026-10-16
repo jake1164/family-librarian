@@ -4,13 +4,15 @@ using FamilyLibrarian.Contracts.Requests;
 
 namespace FamilyLibrarian.Contracts.Operations;
 
-public sealed record AdminSourcesResponse(DateTimeOffset GeneratedAtUtc, IReadOnlyList<AdminSourceStatusResponse> Sources);
+public sealed record AdminSourcesResponse(DateTimeOffset GeneratedAtUtc, IReadOnlyList<AdminSourceStatusResponse> Sources,
+    DateTimeOffset? SearchCountsSinceUtc = null);
 
 /// <summary>Administrator-only source activity. Availability is separate from current work.</summary>
 public sealed record AdminSourceStatusResponse(
     string ProviderId, string DisplayName, string Availability, string Detail,
     IReadOnlyList<AdminSourceActivityResponse> Activities,
-    DateTimeOffset? LastAttemptAtUtc, string? RecheckSchedule);
+    DateTimeOffset? LastAttemptAtUtc, string? RecheckSchedule,
+    string? LastOutcome = null, long DownloadsReceived = 0, long SearchesStarted = 0);
 
 public sealed record AdminSourceActivityResponse(string Stage, int Count);
 

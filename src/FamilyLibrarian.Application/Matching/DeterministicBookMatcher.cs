@@ -242,14 +242,15 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         var previousWasWhitespace = true;
         foreach (var character in normalized)
         {
-            if (char.IsLetterOrDigit(character))
+            if (IsApostrophe(character))
+            {
+                // "Traitor’s" and release-style "Traitors" are the same word; an apostrophe joins, it never splits.
+                // Checked first because U+02BC is a letter to char.IsLetterOrDigit.
+            }
+            else if (char.IsLetterOrDigit(character))
             {
                 builder.Append(character);
                 previousWasWhitespace = false;
-            }
-            else if (IsApostrophe(character))
-            {
-                // "Traitor’s" and release-style "Traitors" are the same word; an apostrophe joins, it never splits.
             }
             else if (!previousWasWhitespace)
             {

@@ -53,15 +53,30 @@ public sealed class LiveUpdatesBrowserTests
         await LoginAsync(page, client.BaseAddress!, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
         await page.GotoAsync(new Uri(client.BaseAddress!, "/admin/tasks").ToString());
         var panel = page.Locator("#tasks-sources-now");
+        var summary = page.GetByRole(AriaRole.Button, new() { Name = "Jump to Source status", Exact = true });
+        await Assertions.Expect(summary).ToBeVisibleAsync();
+        await Assertions.Expect(summary).ToContainTextAsync("0 active");
+        Assert.IsTrue(await page.EvaluateAsync<bool>("Boolean(document.querySelector('#tasks-requests').compareDocumentPosition(document.querySelector('#tasks-sources-now')) & Node.DOCUMENT_POSITION_FOLLOWING)"));
+        await summary.ClickAsync();
+        await Assertions.Expect(panel).ToBeInViewportAsync();
+        await summary.FocusAsync();
+        await summary.PressAsync("Enter");
+        await Assertions.Expect(panel).ToBeInViewportAsync();
         var row = panel.Locator(".mud-list-item").Filter(new() { HasText = "Live activity source" });
         await Assertions.Expect(row.GetByText("Idle", new() { Exact = true })).ToBeVisibleAsync();
         await Assertions.Expect(row.GetByText("No request activity recorded yet", new() { Exact = false })).ToBeVisibleAsync();
+        await Assertions.Expect(row.GetByText("Downloads received: 0", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(row.GetByText("Searches since app start: 0", new() { Exact = true })).ToBeVisibleAsync();
         var searches = factory.Services.GetRequiredService<SourceSearchTracker>();
         using (searches.Begin("live-activity"))
         {
             await Assertions.Expect(row.GetByText("Searching · 1", new() { Exact = true })).ToBeVisibleAsync();
+            await Assertions.Expect(summary).ToContainTextAsync("1 active");
             using (searches.Begin("live-activity"))
+            {
                 await Assertions.Expect(row.GetByText("Searching · 2", new() { Exact = true })).ToBeVisibleAsync();
+                await Assertions.Expect(row.GetByText("Searches since app start: 2", new() { Exact = true })).ToBeVisibleAsync();
+            }
             await Assertions.Expect(row.GetByText("Searching · 1", new() { Exact = true })).ToBeVisibleAsync();
             using (factory.Services.GetRequiredService<ActiveAcquisitionTracker>()
                 .Begin(Guid.NewGuid(), Guid.NewGuid(), "live-activity", "Downloading"))
@@ -76,6 +91,8 @@ public sealed class LiveUpdatesBrowserTests
         await Assertions.Expect(row.GetByText("Idle", new() { Exact = true })).ToBeVisibleAsync();
         await Assertions.Expect(row.GetByText("Downloading · 1", new() { Exact = true })).ToHaveCountAsync(0);
         await Assertions.Expect(row.GetByText("Searching · 1", new() { Exact = true })).ToHaveCountAsync(0);
+        await Assertions.Expect(row.GetByText("Searches since app start: 2", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(summary).ToContainTextAsync("0 active");
     }
 
     [TestMethod]

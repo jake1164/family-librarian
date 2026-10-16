@@ -53,9 +53,10 @@
                 <SummaryCard Icon="@Icons.Material.Filled.Publish" Label="Publishing attention"
                              Value="@snapshot.Summary.PublishingAttention" Color="Color.Warning" TargetElementId="tasks-publishing" />
             </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <SourceSummaryCard Snapshot="@sourcesSnapshot" Failed="@sourcesFailed" />
+            </MudItem>
         </MudGrid>
-
-        <SourcesNow />
 
         <MudPaper Outlined="true" Class="pa-4" id="tasks-requests">
             <MudText Typo="Typo.h5">Requests</MudText>
@@ -99,6 +100,8 @@
                 </MudList>
             }
         </MudPaper>
+
+        <SourcesNow Snapshot="@sourcesSnapshot" Failed="@sourcesFailed" />
 
         <MudPaper Outlined="true" Class="pa-4" id="tasks-source">
             <MudText Typo="Typo.h5">Source and download activity</MudText>
@@ -255,6 +258,8 @@
             ?? Enumerable.Empty<AdminProviderInteractionAttentionResponse>();
 
     private AdminTasksResponse? snapshot;
+    private AdminSourcesResponse? sourcesSnapshot;
+    private bool sourcesFailed;
     private AdminRequestAttentionResponse? attention;
     private string? errorMessage;
 
@@ -273,6 +278,15 @@
             if (snapshot is null)
             {
                 errorMessage = "The task dashboard did not return a response. Please try again.";
+            }
+            try
+            {
+                sourcesSnapshot = await TasksApi.GetSourcesAsync();
+                sourcesFailed = sourcesSnapshot is null;
+            }
+            catch (HttpRequestException)
+            {
+                sourcesFailed = true;
             }
             try
             {

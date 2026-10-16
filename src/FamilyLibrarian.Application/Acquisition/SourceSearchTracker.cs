@@ -6,14 +6,20 @@ namespace FamilyLibrarian.Application.Acquisition;
 public sealed class SourceSearchTracker
 {
     private readonly ConcurrentDictionary<Guid, string> searches = new();
+    private readonly ConcurrentDictionary<string, long> startedCounts = new(StringComparer.OrdinalIgnoreCase);
+    public DateTimeOffset CountsSinceUtc { get; } = DateTimeOffset.UtcNow;
     public event Action? Changed;
 
     public IReadOnlyList<string> Snapshot() => searches.Values.ToArray();
+
+    /// <summary>Actual calls started in this host lifetime, including cancelled or failed calls.</summary>
+    public long StartedCount(string providerId) => startedCounts.GetValueOrDefault(providerId);
 
     public IDisposable Begin(string providerId)
     {
         var id = Guid.NewGuid();
         searches[id] = providerId;
+        startedCounts.AddOrUpdate(providerId, 1, static (_, count) => count + 1);
         Changed?.Invoke();
         return new Lease(this, id);
     }

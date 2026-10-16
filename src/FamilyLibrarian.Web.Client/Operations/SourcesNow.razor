@@ -1,6 +1,4 @@
-@inherits LiveComponentBase
 @using FamilyLibrarian.Contracts.Operations
-@inject AdminTasksApiClient TasksApi
 
 <MudPaper Outlined="true" Class="pa-4" id="tasks-sources-now">
     <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
@@ -8,22 +6,22 @@
         <MudLink Href="settings/sources" Underline="Underline.Always">Manage sources</MudLink>
     </MudStack>
     <MudText Typo="Typo.body2" Class="mb-3">Current searches and acquisition jobs for every configured source.</MudText>
-    @if (failed)
+    @if (Failed)
     {
         <MudAlert Severity="Severity.Warning" Dense="true">Source activity could not be refreshed. Use Refresh to try again.</MudAlert>
     }
-    else if (snapshot is null)
+    else if (Snapshot is null)
     {
         <MudProgressCircular Indeterminate="true" aria-label="Loading source activity" Size="Size.Small" />
     }
-    else if (snapshot.Sources.Count == 0)
+    else if (Snapshot.Sources.Count == 0)
     {
         <MudText>No acquisition sources are configured.</MudText>
     }
     else
     {
         <MudList T="string" Dense="true" aria-label="Configured acquisition sources">
-            @foreach (var source in snapshot.Sources)
+            @foreach (var source in Snapshot.Sources)
             {
                 <MudListItem T="string" @key="source.ProviderId">
                     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
@@ -42,37 +40,29 @@
                         }
                     </MudStack>
                     <MudText Typo="Typo.body2">@source.Detail</MudText>
+                    <MudStack Row="true" Spacing="3" Wrap="Wrap.Wrap">
+                        <MudText Typo="Typo.body2">Downloads received: @source.DownloadsReceived</MudText>
+                        <MudText Typo="Typo.body2">Searches since app start: @source.SearchesStarted</MudText>
+                    </MudStack>
                     <MudText Typo="Typo.caption">
-                        @(source.LastAttemptAtUtc is { } last ? $"Last recorded request activity: {last.ToLocalTime():g}" : "No request activity recorded yet")
+                        @(source.LastAttemptAtUtc is { } last && source.LastOutcome is { } outcome
+                            ? $"Last request action: {MediaTypeVisuals.SourceLastActionLabel(outcome)} · {last.ToLocalTime():g}"
+                            : "No request activity recorded yet")
                         @(source.RecheckSchedule is { } schedule ? $" · Rechecks: {schedule}" : string.Empty)
                     </MudText>
                 </MudListItem>
             }
         </MudList>
-        <MudText Typo="Typo.caption">Updated @snapshot.GeneratedAtUtc.ToLocalTime().ToString("g"). Idle means no active work; it is not a connection test.</MudText>
+        <MudText Typo="Typo.caption">Downloads cover retained history and count each received acquisition once, including multi-file downloads. Received files may still be undergoing checks.</MudText>
+        @if (Snapshot.SearchCountsSinceUtc is { } since)
+        {
+            <MudText Typo="Typo.caption">Searches count calls started since @since.ToLocalTime().ToString("g"), including failed or cancelled searches. Counts reset on app restart.</MudText>
+        }
+        <MudText Typo="Typo.caption">Updated @Snapshot.GeneratedAtUtc.ToLocalTime().ToString("g"). Idle means no active work; it is not a connection test.</MudText>
     }
 </MudPaper>
 
 @code {
-    private AdminSourcesResponse? snapshot;
-    private bool failed;
-
-    protected override async Task OnInitializedAsync()
-    {
-        Observe(LiveUpdateTopics.Sources, LoadAsync);
-        await RefreshLiveAsync();
-    }
-
-    private async Task LoadAsync()
-    {
-        try
-        {
-            snapshot = await TasksApi.GetSourcesAsync();
-            failed = snapshot is null;
-        }
-        catch (HttpRequestException)
-        {
-            failed = true;
-        }
-    }
+    [Parameter] public AdminSourcesResponse? Snapshot { get; set; }
+    [Parameter] public bool Failed { get; set; }
 }

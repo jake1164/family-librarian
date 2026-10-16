@@ -80,6 +80,7 @@ internal sealed class LiveChanges
                     changes.RequestIds.Add(attempt.RequestId);
                     break;
                 case AcquisitionJob job:
+                    changes.AdminTopics |= LiveUpdateTopics.Sources;
                     changes.RequestIds.Add(job.RequestId);
                     break;
                 case ProviderAcquisitionJob job:

@@ -32,6 +32,7 @@ internal static class AdminTasksEndpoints
     private static async Task<IResult> GetSourcesAsync(
         ProviderAdminService builtIns, ExternalProviderAdminService external,
         IProviderAttemptRepository attempts, IProviderAcquisitionJobStore jobs,
+        IAcquisitionRepository acquired,
         SourceSearchTracker searches, ActiveAcquisitionTracker acquisitions,
         IClock clock, CancellationToken cancellationToken)
     {
@@ -39,6 +40,7 @@ internal static class AdminTasksEndpoints
         var installed = await builtIns.GetStatusesAsync(cancellationToken);
         var configured = await external.ListAsync(cancellationToken);
         var latest = await attempts.ListLatestByProviderAsync(cancellationToken);
+        var downloadStatistics = await acquired.ListSourceDownloadStatisticsAsync(cancellationToken);
         var remote = await jobs.ListSourceActivityAsync(cancellationToken);
         var local = acquisitions.Snapshot();
         var searching = searches.Snapshot();
@@ -63,7 +65,7 @@ internal static class AdminTasksEndpoints
         }
 
         return Results.Ok(new AdminSourcesResponse(clock.UtcNow,
-            sources.OrderBy(source => source.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray()));
+            sources.OrderBy(source => source.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray(), searches.CountsSinceUtc));
 
         AdminSourceStatusResponse Project(string id, string name, string availability, string? schedule)
         {
@@ -99,8 +101,11 @@ internal static class AdminTasksEndpoints
                 "Unchecked" => "No connection check has been recorded yet.",
                 _ => stages.Length == 0 ? "No active searches or acquisition jobs." : "Current searches and acquisition jobs."
             };
+            var lastAttempt = latest.FirstOrDefault(attempt => Matches(attempt.ProviderId));
             return new(id, name, availability, detail, stages,
-                latest.FirstOrDefault(attempt => Matches(attempt.ProviderId))?.AttemptedAtUtc, schedule);
+                lastAttempt?.AttemptedAtUtc, schedule, lastAttempt?.Outcome.ToString(),
+                downloadStatistics.Where(statistic => Matches(statistic.ProviderId)).Sum(statistic => statistic.DownloadsReceived),
+                searches.StartedCount(id));
         }
     }
 
