@@ -233,6 +233,8 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         return trimmed;
     }
 
+    private static bool IsApostrophe(char character) => character is '\'' or '’' or '‘' or 'ʼ';
+
     internal static string NormalizeWords(string value)
     {
         var normalized = value.Normalize(NormalizationForm.FormKC);
@@ -244,6 +246,10 @@ public sealed class DeterministicBookMatcher : IBookMatcher
             {
                 builder.Append(character);
                 previousWasWhitespace = false;
+            }
+            else if (IsApostrophe(character))
+            {
+                // "Traitor’s" and release-style "Traitors" are the same word; an apostrophe joins, it never splits.
             }
             else if (!previousWasWhitespace)
             {
