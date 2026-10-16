@@ -109,6 +109,80 @@ public sealed class DemoBookMetadataProvider : IBookMetadataProvider
             null,
             null,
             [new BookEditionCandidate("Jack Ryan Omnibus", "9780425147528", "Ebook", null)],
+            []),
+        // Invented works for the lab's Phase 5 requester-question cases. Each pairs with a fixture candidate in
+        // samples/FamilyLibrarian.SampleProvider (QuestionFixtures); the ISBNs are made-up but check-digit valid.
+        new(
+            "demo",
+            "Family Librarian sample catalog",
+            "ember-road",
+            "Ember Road",
+            ["Mara Quillon"],
+            "Fixture: book 1 of an invented series.",
+            null,
+            new DateOnly(2001, 3, 1),
+            [new BookEditionCandidate("Ember Road", "9791000000015", "Ebook", new DateOnly(2001, 3, 1))],
+            [new BookSeriesCandidate("The Lantern Cycle", "1", true)]),
+        new(
+            "demo",
+            "Family Librarian sample catalog",
+            "cinder-gate",
+            "Cinder Gate",
+            ["Mara Quillon"],
+            "Fixture: book 2 of an invented series.",
+            null,
+            new DateOnly(2003, 3, 1),
+            [new BookEditionCandidate("Cinder Gate", "9791000000022", "Ebook", new DateOnly(2003, 3, 1))],
+            [new BookSeriesCandidate("The Lantern Cycle", "2", true)]),
+        new(
+            "demo",
+            "Family Librarian sample catalog",
+            "ashen-crown",
+            "Ashen Crown",
+            ["Mara Quillon"],
+            "Fixture: book 3 of an invented series.",
+            null,
+            new DateOnly(2005, 3, 1),
+            [new BookEditionCandidate("Ashen Crown", "9791000000039", "Ebook", new DateOnly(2005, 3, 1))],
+            [new BookSeriesCandidate("The Lantern Cycle", "3", true)]),
+        new(
+            "demo",
+            "Family Librarian sample catalog",
+            "windfall-hollow",
+            "Windfall Hollow",
+            ["Tessa Brandt"],
+            "Fixture: a standalone invented audiobook.",
+            null,
+            new DateOnly(2010, 6, 1),
+            [
+                new BookEditionCandidate("Windfall Hollow", "9791000000046", "Ebook", new DateOnly(2010, 6, 1)),
+                new BookEditionCandidate("Windfall Hollow", "9791000000053", "Audiobook", new DateOnly(2012, 6, 1))
+            ],
+            []),
+        new(
+            "demo",
+            "Family Librarian sample catalog",
+            "hollowmere",
+            "Hollowmere",
+            ["Odile Marchetti"],
+            "Fixture: a standalone invented book.",
+            null,
+            new DateOnly(2015, 9, 1),
+            [new BookEditionCandidate("Hollowmere", "9791000000060", "Ebook", new DateOnly(2015, 9, 1))],
+            []),
+        new(
+            "demo",
+            "Family Librarian sample catalog",
+            "saltmarsh-light",
+            "Saltmarsh Light",
+            ["Ivo Sandoval"],
+            "Fixture: a standalone invented audiobook.",
+            null,
+            new DateOnly(2018, 4, 1),
+            [
+                new BookEditionCandidate("Saltmarsh Light", "9791000000077", "Ebook", new DateOnly(2018, 4, 1)),
+                new BookEditionCandidate("Saltmarsh Light", "9791000000084", "Audiobook", new DateOnly(2019, 4, 1))
+            ],
             [])
     ];
 
