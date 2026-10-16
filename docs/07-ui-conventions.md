@@ -75,10 +75,12 @@ old `Submitted` ledger row. Last recorded request activity is a ledger timestamp
 not evidence of a current search or a connection check.
 
 The compact **Source status** dashboard card jumps to the panel below Requests.
-The six summary cards use equal-width columns and equal-height rows across the
-grid, sized by the tallest content. Keep descriptions free to wrap and retain
-three, two, then one column as the viewport narrows; do not clip text to force
-a fixed card height.
+The six summaries form a compact strip: six across on wide screens, three on
+medium screens and two on phones. Use small icons and inline labels/counts,
+with the source breakdown beneath. Preserve readable wrapping and click/keyboard
+section jumps. Use the shared MudBlazor grid and compact card sizing; do not
+expand every card or row to fill the page's width or height. Browser checks must
+verify column counts and total strip height, not just equal card dimensions.
 Both render the same source snapshot. Its number is configured sources, with
 active/idle/attention counts beneath; disabled sources are counted separately.
 Attention takes color precedence over active work using the same centralized

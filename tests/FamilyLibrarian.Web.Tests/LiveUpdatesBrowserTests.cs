@@ -56,10 +56,22 @@ public sealed class LiveUpdatesBrowserTests
         var summary = page.GetByRole(AriaRole.Button, new() { Name = "Jump to Source status", Exact = true });
         await Assertions.Expect(summary).ToBeVisibleAsync();
         await Assertions.Expect(summary).ToContainTextAsync("0 active");
-        Assert.IsTrue(await page.Locator(".tasks-summary-grid > .mud-paper").EvaluateAllAsync<bool>(
-            "cards => cards.length === 6 && cards.every(card => Math.abs(card.getBoundingClientRect().height - cards[0].getBoundingClientRect().height) < 1 && Math.abs(card.getBoundingClientRect().width - cards[0].getBoundingClientRect().width) < 1)"),
-            "All six desktop summary cards should have equal dimensions.");
+        await AssertCompactSummaryAsync(page, columns: 6, maximumHeight: 112);
+        await page.SetViewportSizeAsync(900, 900);
+        await AssertCompactSummaryAsync(page, columns: 3, maximumHeight: 216);
+        await page.SetViewportSizeAsync(1280, 900);
         Assert.IsTrue(await page.EvaluateAsync<bool>("Boolean(document.querySelector('#tasks-requests').compareDocumentPosition(document.querySelector('#tasks-sources-now')) & Node.DOCUMENT_POSITION_FOLLOWING)"));
+        (string Label, string Target)[] jumps =
+        [
+            ("Active requests", "tasks-requests"), ("Needs review", "tasks-requests"),
+            ("In security pipeline", "tasks-security"), ("Source attention", "tasks-source"),
+            ("Publishing attention", "tasks-publishing"), ("Source status", "tasks-sources-now")
+        ];
+        foreach (var (label, target) in jumps)
+        {
+            await page.GetByRole(AriaRole.Button, new() { Name = $"Jump to {label}", Exact = true }).ClickAsync();
+            await Assertions.Expect(page.Locator($"#{target}")).ToBeInViewportAsync();
+        }
         await summary.ClickAsync();
         await Assertions.Expect(panel).ToBeInViewportAsync();
         await summary.FocusAsync();
@@ -87,9 +99,7 @@ public sealed class LiveUpdatesBrowserTests
                 await Assertions.Expect(row.GetByText("Downloading · 1", new() { Exact = true })).ToBeVisibleAsync();
                 await Assertions.Expect(row.GetByText("Searching · 1", new() { Exact = true })).ToBeVisibleAsync();
                 await page.SetViewportSizeAsync(390, 844);
-                Assert.IsTrue(await page.Locator(".tasks-summary-grid > .mud-paper").EvaluateAllAsync<bool>(
-                    "cards => cards.length === 6 && cards.every(card => Math.abs(card.getBoundingClientRect().height - cards[0].getBoundingClientRect().height) < 1 && Math.abs(card.getBoundingClientRect().width - cards[0].getBoundingClientRect().width) < 1 && card.scrollHeight <= card.clientHeight + 1 && card.scrollWidth <= card.clientWidth + 1)"),
-                    "Mobile summary cards should have equal dimensions without clipped content.");
+                await AssertCompactSummaryAsync(page, columns: 2, maximumHeight: 336);
                 await Assertions.Expect(row).ToBeVisibleAsync();
                 Assert.IsTrue(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= window.innerWidth"));
             }
@@ -99,6 +109,17 @@ public sealed class LiveUpdatesBrowserTests
         await Assertions.Expect(row.GetByText("Searching · 1", new() { Exact = true })).ToHaveCountAsync(0);
         await Assertions.Expect(row.GetByText("Searches since app start: 2", new() { Exact = true })).ToBeVisibleAsync();
         await Assertions.Expect(summary).ToContainTextAsync("0 active");
+    }
+
+    private static async Task AssertCompactSummaryAsync(IPage page, int columns, int maximumHeight)
+    {
+        Assert.IsTrue(await page.Locator(".tasks-summary-strip .task-summary-metric").EvaluateAllAsync<bool>(
+            $$"""
+            cards => cards.length === 6 &&
+                cards.filter(card => Math.abs(card.getBoundingClientRect().top - cards[0].getBoundingClientRect().top) < 1).length === {{columns}} &&
+                cards.every(card => card.scrollHeight <= card.clientHeight + 1 && card.scrollWidth <= card.clientWidth + 1) &&
+                cards[0].closest('.tasks-summary-strip').getBoundingClientRect().height <= {{maximumHeight}}
+            """), $"Summary strip should have {columns} columns, fit within {maximumHeight}px, and show all content.");
     }
 
     [TestMethod]

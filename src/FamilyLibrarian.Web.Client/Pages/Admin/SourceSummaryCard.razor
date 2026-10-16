@@ -2,14 +2,14 @@
 
 @if (Failed)
 {
-    <MudPaper Outlined="true" Class="pa-3 h-100">
+    <MudPaper Outlined="true" Class="pa-2 task-summary-metric" Style="width:100%;min-height:4.5rem;">
         <MudText Typo="Typo.caption">Source status</MudText>
         <MudText Typo="Typo.body2">Status unavailable. Use Refresh to try again.</MudText>
     </MudPaper>
 }
 else if (Snapshot is null)
 {
-    <MudPaper Outlined="true" Class="pa-3 h-100">
+    <MudPaper Outlined="true" Class="pa-2 task-summary-metric" Style="width:100%;min-height:4.5rem;">
         <MudText Typo="Typo.caption">Source status</MudText>
         <MudProgressCircular Indeterminate="true" Size="Size.Small" aria-label="Loading source status" />
     </MudPaper>

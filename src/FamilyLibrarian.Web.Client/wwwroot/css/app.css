@@ -6,29 +6,6 @@ html, body {
     --family-librarian-status-footer-height: 48px;
 }
 
-.tasks-summary-grid {
-    display: grid;
-    gap: 16px;
-    grid-auto-rows: 1fr;
-    grid-template-columns: minmax(0, 1fr);
-}
-
-.tasks-summary-grid > .mud-paper {
-    min-width: 0;
-}
-
-@media (min-width: 600px) {
-    .tasks-summary-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
-@media (min-width: 960px) {
-    .tasks-summary-grid {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-}
-
 /* The status app bar is fixed at the bottom of the viewport. Reserve its full
    height plus a comfortable action gap so the final control on any page can be
    scrolled completely into view, including on devices with a home indicator. */

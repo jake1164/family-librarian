@@ -32,19 +32,31 @@
     }
     else
     {
-        <div class="tasks-summary-grid">
-            <SummaryCard Icon="@Icons.Material.Filled.PendingActions" Label="Active requests"
+        <MudGrid Spacing="2" Class="tasks-summary-strip" aria-label="Task section summaries">
+            <MudItem xs="6" sm="4" lg="2" Class="d-flex">
+                <SummaryCard Icon="@Icons.Material.Filled.PendingActions" Label="Active requests"
                          Value="@snapshot.Summary.ActiveRequests" Color="Color.Primary" TargetElementId="tasks-requests" />
-            <SummaryCard Icon="@Icons.Material.Filled.Visibility" Label="Needs review"
+            </MudItem>
+            <MudItem xs="6" sm="4" lg="2" Class="d-flex">
+                <SummaryCard Icon="@Icons.Material.Filled.Visibility" Label="Needs review"
                          Value="@snapshot.Summary.NeedsReview" Color="Color.Warning" TargetElementId="tasks-requests" />
-            <SummaryCard Icon="@Icons.Material.Filled.Shield" Label="In security pipeline"
+            </MudItem>
+            <MudItem xs="6" sm="4" lg="2" Class="d-flex">
+                <SummaryCard Icon="@Icons.Material.Filled.Shield" Label="In security pipeline"
                          Value="@snapshot.Summary.SecurityAttention" Color="Color.Warning" TargetElementId="tasks-security" />
-            <SummaryCard Icon="@Icons.Material.Filled.CloudDownload" Label="Source attention"
+            </MudItem>
+            <MudItem xs="6" sm="4" lg="2" Class="d-flex">
+                <SummaryCard Icon="@Icons.Material.Filled.CloudDownload" Label="Source attention"
                          Value="@snapshot.Summary.SourceAttention" Color="Color.Error" TargetElementId="tasks-source" />
-            <SummaryCard Icon="@Icons.Material.Filled.Publish" Label="Publishing attention"
+            </MudItem>
+            <MudItem xs="6" sm="4" lg="2" Class="d-flex">
+                <SummaryCard Icon="@Icons.Material.Filled.Publish" Label="Publishing attention"
                          Value="@snapshot.Summary.PublishingAttention" Color="Color.Warning" TargetElementId="tasks-publishing" />
-            <SourceSummaryCard Snapshot="@sourcesSnapshot" Failed="@sourcesFailed" />
-        </div>
+            </MudItem>
+            <MudItem xs="6" sm="4" lg="2" Class="d-flex">
+                <SourceSummaryCard Snapshot="@sourcesSnapshot" Failed="@sourcesFailed" />
+            </MudItem>
+        </MudGrid>
 
         <MudPaper Outlined="true" Class="pa-4" id="tasks-requests">
             <MudText Typo="Typo.h5">Requests</MudText>

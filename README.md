@@ -188,8 +188,9 @@ Administrators also get:
 - **Queue**, to review family requests and act on them (add a note, mark
   needs-review/unavailable, or cancel). A persistent in-app admin alert and the
   Queue navigation label show any requests that need review;
-- **Tasks**, with a compact **Source status** card that jumps to **Sources now**
-  below Requests. The panel shows every configured acquisition source, live work,
+- **Tasks**, with a compact summary strip whose metrics jump to their sections,
+  including **Source status**, which jumps to **Sources now** below Requests.
+  The panel shows every configured acquisition source, live work,
   disabled or unavailable sources, and the last request action. Downloads received
   count retained acquisition records once per acquisition, including multi-file
   downloads; received files may still be undergoing checks. Actual search starts
