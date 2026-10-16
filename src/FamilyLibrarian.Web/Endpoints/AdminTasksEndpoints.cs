@@ -2,7 +2,10 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Contracts.Operations;
+using FamilyLibrarian.Domain.Providers;
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Web.Readiness;
 
 namespace FamilyLibrarian.Web.Endpoints;
@@ -23,6 +26,82 @@ internal static class AdminTasksEndpoints
             .AddEndpointFilter<AntiforgeryEndpointFilter>();
 
         tasks.MapGet("/", GetTasksAsync);
+        tasks.MapGet("/sources", GetSourcesAsync);
+    }
+
+    private static async Task<IResult> GetSourcesAsync(
+        ProviderAdminService builtIns, ExternalProviderAdminService external,
+        IProviderAttemptRepository attempts, IProviderAcquisitionJobStore jobs,
+        SourceSearchTracker searches, ActiveAcquisitionTracker acquisitions,
+        IClock clock, CancellationToken cancellationToken)
+    {
+        // All reads share a scoped context; no network probe or search is started by this endpoint.
+        var installed = await builtIns.GetStatusesAsync(cancellationToken);
+        var configured = await external.ListAsync(cancellationToken);
+        var latest = await attempts.ListLatestByProviderAsync(cancellationToken);
+        var remote = await jobs.ListSourceActivityAsync(cancellationToken);
+        var local = acquisitions.Snapshot();
+        var searching = searches.Snapshot();
+        var sources = new List<AdminSourceStatusResponse>();
+
+        foreach (var source in installed.Where(source => source.Capabilities.Contains(ProviderCapability.DirectAcquisition)))
+        {
+            var state = !source.IsEnabled ? "Disabled" : source.IsMisconfigured ? "NeedsSetup"
+                : source.LastTestSucceeded == false ? "Unavailable" : "Ready";
+            sources.Add(Project(source.ProviderId, source.DisplayName, state, null));
+        }
+        foreach (var source in configured)
+        {
+            var limited = source.CachedHealthStatus is not (null or "Healthy") ||
+                source.CachedSearchOperationStatus is not (null or "Available") ||
+                source.CachedAcquireOperationStatus is not (null or "Available");
+            var state = !source.IsEnabled ? "Disabled"
+                : source.CachedHealthStatus == "Unhealthy" ? "Unavailable"
+                : limited ? "Limited" : source.LastTestSucceeded == false ? "Unavailable"
+                : source.LastTestedAtUtc is null ? "Unchecked" : "Ready";
+            sources.Add(Project(source.ProviderId, source.DisplayName, state, source.RecheckSchedule));
+        }
+
+        return Results.Ok(new AdminSourcesResponse(clock.UtcNow,
+            sources.OrderBy(source => source.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray()));
+
+        AdminSourceStatusResponse Project(string id, string name, string availability, string? schedule)
+        {
+            bool Matches(string other) => string.Equals(id, other, StringComparison.OrdinalIgnoreCase);
+            var direct = local.Where(activity => Matches(activity.ProviderId)).ToArray();
+            var stages = searching.Where(Matches).Select(_ => "Searching")
+                .Concat(direct.Select(activity => activity.Stage switch
+                {
+                    "Downloading" => "Downloading",
+                    "Processing files" => "Processing",
+                    _ => "Checking"
+                }))
+                // A local transfer may be collecting a remote job's output: count it once.
+                .Concat(remote.Where(job => Matches(job.ProviderId) &&
+                    !direct.Any(activity => activity.RequestFormatId == job.RequestFormatId))
+                    .Select(job => job.State switch
+                    {
+                        ProviderAcquisitionJobLifecycleState.Queued => "Queued",
+                        ProviderAcquisitionJobLifecycleState.Waiting => job.NeedsInteraction ? "WaitingForAction" : "Waiting",
+                        _ => string.Equals(job.Phase, "downloading", StringComparison.OrdinalIgnoreCase)
+                            ? "Downloading" : "Working"
+                    }))
+                .GroupBy(stage => stage)
+                .Select(group => new AdminSourceActivityResponse(group.Key, group.Count()))
+                .OrderBy(activity => activity.Stage, StringComparer.Ordinal)
+                .ToArray();
+            var detail = availability switch
+            {
+                "Disabled" => "Disabled for new work. Existing jobs may still finish.",
+                "NeedsSetup" => "Configuration is incomplete. Review Sources.",
+                "Unavailable" => "The last connection or health check failed. Review Sources.",
+                "Limited" => "The last health check reported limited operations. Review Sources.",
+                "Unchecked" => "No connection check has been recorded yet.",
+                _ => stages.Length == 0 ? "No active searches or acquisition jobs." : "Current searches and acquisition jobs."
+            };
+            return new(id, name, availability, detail, stages,
+                latest.FirstOrDefault(attempt => Matches(attempt.ProviderId))?.AttemptedAtUtc, schedule);
+        }
     }
 
     private static async Task<IResult> GetTasksAsync(

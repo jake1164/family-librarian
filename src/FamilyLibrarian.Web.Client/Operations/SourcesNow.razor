@@ -1,0 +1,78 @@
+@inherits LiveComponentBase
+@using FamilyLibrarian.Contracts.Operations
+@inject AdminTasksApiClient TasksApi
+
+<MudPaper Outlined="true" Class="pa-4" id="tasks-sources-now">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+        <MudText Typo="Typo.h5">Sources now</MudText>
+        <MudLink Href="settings/sources" Underline="Underline.Always">Manage sources</MudLink>
+    </MudStack>
+    <MudText Typo="Typo.body2" Class="mb-3">Current searches and acquisition jobs for every configured source.</MudText>
+    @if (failed)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true">Source activity could not be refreshed. Use Refresh to try again.</MudAlert>
+    }
+    else if (snapshot is null)
+    {
+        <MudProgressCircular Indeterminate="true" aria-label="Loading source activity" Size="Size.Small" />
+    }
+    else if (snapshot.Sources.Count == 0)
+    {
+        <MudText>No acquisition sources are configured.</MudText>
+    }
+    else
+    {
+        <MudList T="string" Dense="true" aria-label="Configured acquisition sources">
+            @foreach (var source in snapshot.Sources)
+            {
+                <MudListItem T="string" @key="source.ProviderId">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                        <MudText Typo="Typo.subtitle2">@source.DisplayName</MudText>
+                        @if (source.Availability != "Ready")
+                        {
+                            <SourceStatusChip State="@source.Availability" />
+                        }
+                        @if (source.Activities.Count == 0 && source.Availability is "Ready" or "Unchecked")
+                        {
+                            <SourceStatusChip State="Idle" />
+                        }
+                        @foreach (var activity in source.Activities)
+                        {
+                            <SourceStatusChip State="@activity.Stage" Count="@activity.Count" />
+                        }
+                    </MudStack>
+                    <MudText Typo="Typo.body2">@source.Detail</MudText>
+                    <MudText Typo="Typo.caption">
+                        @(source.LastAttemptAtUtc is { } last ? $"Last recorded request activity: {last.ToLocalTime():g}" : "No request activity recorded yet")
+                        @(source.RecheckSchedule is { } schedule ? $" · Rechecks: {schedule}" : string.Empty)
+                    </MudText>
+                </MudListItem>
+            }
+        </MudList>
+        <MudText Typo="Typo.caption">Updated @snapshot.GeneratedAtUtc.ToLocalTime().ToString("g"). Idle means no active work; it is not a connection test.</MudText>
+    }
+</MudPaper>
+
+@code {
+    private AdminSourcesResponse? snapshot;
+    private bool failed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Observe(LiveUpdateTopics.Sources, LoadAsync);
+        await RefreshLiveAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            snapshot = await TasksApi.GetSourcesAsync();
+            failed = snapshot is null;
+        }
+        catch (HttpRequestException)
+        {
+            failed = true;
+        }
+    }
+}

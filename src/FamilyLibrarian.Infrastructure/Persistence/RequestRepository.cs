@@ -537,7 +537,8 @@ public sealed class RequestRepository(
                 // request that is not pending, or one a librarian started by
                 // hand, genuinely needs attention and keeps the red chip.
                 providerJobAdvancingToNextCandidate:
-                    providerJob.IsAutomaticAcquisition && requestStatus == RequestStatus.PendingAcquisition),
+                    providerJob.IsAutomaticAcquisition && requestStatus == RequestStatus.PendingAcquisition,
+                requestInReview: requestStatus == RequestStatus.NeedsReview),
             // Provider interaction control is an administrator-only,
             // server-brokered workflow. Never turn a provider URL into a
             // requester-visible link while its job is active.

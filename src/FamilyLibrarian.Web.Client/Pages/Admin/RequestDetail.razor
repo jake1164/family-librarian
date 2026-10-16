@@ -461,9 +461,8 @@
     private IEnumerable<AdminActiveAcquisitionResponse> ActiveForRequest =>
         ActiveAcquisitions.Where(activity => activity.RequestId == RequestId);
 
-    private string? RequestLabel => request?.Request.Status == "PendingAcquisition"
-        ? ActiveForRequest.Any() ? "Working" : "Awaiting next check"
-        : null;
+    private string? RequestLabel =>
+        request is null ? null : RequestProgressLabels.For(request.Request, ActiveForRequest.Any());
 
     private bool HasReviewCandidates(Guid formatId) =>
         request?.Request.Status == "NeedsReview" &&

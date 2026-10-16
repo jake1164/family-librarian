@@ -103,5 +103,14 @@ public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProvid
 
     public void Add(ProviderAcquisitionJob job) => database.ProviderAcquisitionJobs.Add(job);
 
+    public async Task<IReadOnlyList<SourceJobActivity>> ListSourceActivityAsync(CancellationToken cancellationToken) =>
+        await database.ProviderAcquisitionJobs.AsNoTracking()
+            .Where(job => job.LifecycleState == ProviderAcquisitionJobLifecycleState.Queued ||
+                job.LifecycleState == ProviderAcquisitionJobLifecycleState.Running ||
+                job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting)
+            .Select(job => new SourceJobActivity(job.ProviderId, job.RequestFormatId,
+                job.LifecycleState, job.Phase, job.InteractionType != null))
+            .ToArrayAsync(cancellationToken);
+
     public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);
 }

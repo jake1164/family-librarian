@@ -64,6 +64,16 @@ switch. Media-type icon still comes from the shared `MediaTypeVisuals.Icon`.
 
 ## Provider activity outcomes
 
+The Tasks dashboard's **Sources now** panel uses `Operations/SourceStatusChip`,
+backed by `MediaTypeVisuals.SourceStateColor`/`SourceStateLabel`. Idle and disabled
+are neutral; searching/checking/downloading/processing/queued/working/waiting are
+blue; action needed, incomplete setup and limited operations are amber;
+unavailable is red. Availability and current work are shown separately: disabling
+a source does not hide an existing job. Concurrent stages retain their own counts.
+These are current host activity and durable job states, never inferred from an
+old `Submitted` ledger row. Last recorded request activity is a ledger timestamp,
+not evidence of a current search or a connection check.
+
 The provider-activity ledger (a request's admin detail page and the Tasks
 dashboard) records one row per automatic lookup. Its outcomes are their own
 vocabulary — they are not a request or format status — so they have their own

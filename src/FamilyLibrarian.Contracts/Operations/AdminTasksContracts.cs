@@ -4,6 +4,16 @@ using FamilyLibrarian.Contracts.Requests;
 
 namespace FamilyLibrarian.Contracts.Operations;
 
+public sealed record AdminSourcesResponse(DateTimeOffset GeneratedAtUtc, IReadOnlyList<AdminSourceStatusResponse> Sources);
+
+/// <summary>Administrator-only source activity. Availability is separate from current work.</summary>
+public sealed record AdminSourceStatusResponse(
+    string ProviderId, string DisplayName, string Availability, string Detail,
+    IReadOnlyList<AdminSourceActivityResponse> Activities,
+    DateTimeOffset? LastAttemptAtUtc, string? RecheckSchedule);
+
+public sealed record AdminSourceActivityResponse(string Stage, int Count);
+
 /// <summary>
 /// Administrator-only operational snapshot. This is a read model over the
 /// request, source, security, and publishing ledgers; it does not create a

@@ -200,4 +200,28 @@ public sealed class RequestFormatProgressTests
         Assert.IsNotNull(result);
         Assert.AreEqual("IdentityReviewRequired", result.Code);
     }
+
+    // The lab: an ebook whose first copy was refused showed a red "acquisition failed" while the request was already
+    // waiting for a librarian to choose a source.
+    [TestMethod]
+    public void AFailedJobOnARequestAlreadyInReviewReadsAsWaitingForTheLibrarianNotAsANewFailure()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null, securityStatus: null, libraryImportStatus: null, deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Failed, requestInReview: true);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("NoAcceptableCopy", result.Code);
+    }
+
+    [TestMethod]
+    public void AFailedJobOnARequestNotInReviewStillNeedsAttention()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null, securityStatus: null, libraryImportStatus: null, deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Failed, requestInReview: false);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AcquisitionFailed", result.Code);
+    }
 }

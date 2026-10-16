@@ -47,6 +47,10 @@ public interface IProviderAcquisitionJobStore
 
     void Add(ProviderAcquisitionJob job);
 
+    /// <summary>Credential-free facts for every nonterminal external job, including jobs recovered after restart.</summary>
+    Task<IReadOnlyList<SourceJobActivity>> ListSourceActivityAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<SourceJobActivity>>([]);
+
     /// <summary>Jobs for this format that have not finished: queued, running or waiting on a person.</summary>
     Task<IReadOnlyList<ProviderAcquisitionJob>> ListActiveForFormatAsync(Guid requestFormatId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ProviderAcquisitionJob>>([]);
@@ -65,3 +69,6 @@ public interface IProviderAcquisitionJobStore
 
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }
+
+public sealed record SourceJobActivity(string ProviderId, Guid RequestFormatId,
+    ProviderAcquisitionJobLifecycleState State, string? Phase, bool NeedsInteraction);

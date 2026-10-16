@@ -188,6 +188,10 @@ Administrators also get:
 - **Queue**, to review family requests and act on them (add a note, mark
   needs-review/unavailable, or cancel). A persistent in-app admin alert and the
   Queue navigation label show any requests that need review;
+- **Tasks**, with a **Sources now** panel above Requests showing every configured
+  acquisition source, live search/job counts, disabled or unavailable sources,
+  and the last recorded request activity. Idle means no active work, not a
+  successful connection test. Source activity updates are administrator-only;
 - **Metadata providers**, for enabling book-information providers and storing a
   Google Books key;
 - **Sources**, for reviewing the built-in Project Gutenberg and LibriVox sources and configuring

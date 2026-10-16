@@ -21,7 +21,8 @@ public sealed class ExternalCandidateAvailabilityChecker(
     Providers.IExternalProviderClient externalProviderClient,
     Providers.ExternalProviderMatchVerifier matchVerifier,
     ICredentialProtector protector,
-    ExternalSearchCoalescer? coalescer = null)
+    ExternalSearchCoalescer? coalescer = null,
+    Acquisition.SourceSearchTracker? searchTracker = null)
 {
     /// <summary>
     /// A provider whose search call fails is silently skipped — same
@@ -150,6 +151,7 @@ public sealed class ExternalCandidateAvailabilityChecker(
         Domain.Providers.ExternalProvider provider, BookIdentity identity, RequestMediaType mediaType,
         Acquisition.SearchVariant variant, CancellationToken cancellationToken)
     {
+        using var activity = searchTracker?.Begin(provider.ProviderId);
         var apiKey = provider.HasApiKey
             ? protector.Unprotect(
                 Providers.ExternalProviderSecretPurposes.ApiKey, provider.ProtectedApiKey!, provider.ApiKeyFormatVersion)

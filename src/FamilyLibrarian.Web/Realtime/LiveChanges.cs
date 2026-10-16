@@ -76,12 +76,14 @@ internal sealed class LiveChanges
                     changes.RequestIds.Add(history.RequestId);
                     break;
                 case ProviderAttempt attempt:
+                    changes.AdminTopics |= LiveUpdateTopics.Sources;
                     changes.RequestIds.Add(attempt.RequestId);
                     break;
                 case AcquisitionJob job:
                     changes.RequestIds.Add(job.RequestId);
                     break;
                 case ProviderAcquisitionJob job:
+                    changes.AdminTopics |= LiveUpdateTopics.Sources;
                     changes.RequestIds.Add(job.RequestId);
                     break;
                 case AcquisitionCandidate candidate:

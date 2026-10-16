@@ -6,6 +6,7 @@ namespace FamilyLibrarian.Application.Acquisition;
 public sealed class ActiveAcquisitionTracker
 {
     private readonly ConcurrentDictionary<Guid, Activity> activities = new();
+    public event Action? Changed;
 
     public IReadOnlyList<Activity> Snapshot() => activities.Values.OrderBy(activity => activity.StartedAtUtc).ToArray();
 
@@ -14,6 +15,7 @@ public sealed class ActiveAcquisitionTracker
         var activity = new Activity(requestId, requestFormatId, providerId, stage, workTitle,
             DateTimeOffset.UtcNow, null, 0, null, 0, Guid.NewGuid());
         activities[requestFormatId] = activity;
+        Changed?.Invoke();
         return new Lease(this, activity);
     }
 
@@ -29,8 +31,9 @@ public sealed class ActiveAcquisitionTracker
             if (tracker.activities.TryGetValue(activity.RequestFormatId, out var current) && current.LeaseId == activity.LeaseId)
             {
                 var transferStarted = stage == "Downloading" ? DateTimeOffset.UtcNow : current.TransferStartedAtUtc;
-                tracker.activities.TryUpdate(activity.RequestFormatId,
-                    current with { Stage = stage, TransferStartedAtUtc = transferStarted }, current);
+                if (tracker.activities.TryUpdate(activity.RequestFormatId,
+                    current with { Stage = stage, TransferStartedAtUtc = transferStarted }, current))
+                    tracker.Changed?.Invoke();
             }
         }
 
@@ -50,7 +53,8 @@ public sealed class ActiveAcquisitionTracker
                         ? Math.Max(0, bytesReceived)
                         : current.TransferStartBytesReceived
                 };
-                tracker.activities.TryUpdate(activity.RequestFormatId, updated, current);
+                if (tracker.activities.TryUpdate(activity.RequestFormatId, updated, current) && current.Stage != stage)
+                    tracker.Changed?.Invoke();
             }
         }
 
@@ -58,8 +62,9 @@ public sealed class ActiveAcquisitionTracker
         {
             if (tracker.activities.TryGetValue(activity.RequestFormatId, out var current) && current.LeaseId == activity.LeaseId)
             {
-                ((ICollection<KeyValuePair<Guid, Activity>>)tracker.activities)
-                    .Remove(new KeyValuePair<Guid, Activity>(activity.RequestFormatId, current));
+                if (((ICollection<KeyValuePair<Guid, Activity>>)tracker.activities)
+                    .Remove(new KeyValuePair<Guid, Activity>(activity.RequestFormatId, current)))
+                    tracker.Changed?.Invoke();
             }
         }
     }

@@ -43,7 +43,7 @@ public static class RequestFormatProgress
     {
         if (assetState is null && providerJobState is not null)
         {
-            return DescribeProviderJob(providerJobState.Value, providerJobPhase, providerJobAdvancingToNextCandidate);
+            return DescribeProviderJob(providerJobState.Value, providerJobPhase, providerJobAdvancingToNextCandidate, requestInReview);
         }
 
         // A held copy the search has already ruled out needs no identification: either the search is still looking,
@@ -97,7 +97,7 @@ public static class RequestFormatProgress
     /// ordinary in-progress work.
     /// </summary>
     private static RequestFormatProgressView DescribeProviderJob(
-        ProviderAcquisitionJobLifecycleState state, string? phase, bool advancingToNextCandidate) => state switch
+        ProviderAcquisitionJobLifecycleState state, string? phase, bool advancingToNextCandidate, bool requestInReview) => state switch
     {
         ProviderAcquisitionJobLifecycleState.Running or ProviderAcquisitionJobLifecycleState.Queued
             when ProviderJobPause.IsPaused(phase) => Stage(
@@ -109,6 +109,11 @@ public static class RequestFormatProgress
         // the next attempt -- an alarm about a step that was working as
         // designed. Generic on purpose: this view is also read by requesters.
         ProviderAcquisitionJobLifecycleState.Failed when advancingToNextCandidate => Retrying,
+        // The request has already been handed to a librarian to choose a source, so a red "failed, needs attention" on
+        // the copy that led there tells them nothing new (lab: an ebook whose first copy was refused showed it while the
+        // request already waited for a choice).
+        ProviderAcquisitionJobLifecycleState.Failed when requestInReview => Stage(
+            "NoAcceptableCopy", "No acceptable copy has been found yet; a librarian is choosing a source."),
         ProviderAcquisitionJobLifecycleState.Waiting => Stage(
             "AwaitingProviderAction",
             "A librarian is working with the provider to continue this request."),

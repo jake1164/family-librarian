@@ -15,6 +15,23 @@ namespace FamilyLibrarian.Web.Client.Theme;
 /// </summary>
 public static class MediaTypeVisuals
 {
+    public static Color SourceStateColor(string state) => state switch
+    {
+        "Searching" or "Checking" or "Downloading" or "Processing" or "Working" or "Queued" or "Waiting" => Color.Info,
+        "WaitingForAction" or "NeedsSetup" or "Limited" => Color.Warning,
+        "Unavailable" => Color.Error,
+        _ => Color.Default
+    };
+
+    public static string SourceStateLabel(string state) => state switch
+    {
+        "WaitingForAction" => "Action needed",
+        "NeedsSetup" => "Needs setup",
+        "Limited" => "Limited operations",
+        "Unchecked" => "Not checked",
+        _ => state
+    };
+
     public static string KindleLabel(string status, string? confirmationStatus = null) => status switch
     {
         "Submitted" => confirmationStatus switch

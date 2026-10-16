@@ -24,7 +24,8 @@ public sealed class GutenbergProvider(
     IGutenbergFileResolver fileResolver,
     HttpClient httpClient,
     ManualImportPolicy importPolicy,
-    IBookMatcher bookMatcher) : IAutomaticDirectAcquisitionProvider
+    IBookMatcher bookMatcher,
+    SourceSearchTracker? searchTracker = null) : IAutomaticDirectAcquisitionProvider
 {
     // Real, deterministically-ranked audiobook formats Project Gutenberg's
     // audio mirrors actually serve (see BuildAudiobookOptions). Anything else
@@ -106,6 +107,7 @@ public sealed class GutenbergProvider(
         // reported "no high-confidence copy" for books it holds outright. The
         // work-identifying core is searched instead; acceptance below is
         // unchanged and still requires a title and author match.
+        using var activity = searchTracker?.Begin(Id);
         var candidates = await catalog.SearchAsync(new GutenbergCatalogSearchQuery(
             WorkTitleCore.Reduce(identity.Title, identity.Author),
             mediaType,
