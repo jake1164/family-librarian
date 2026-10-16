@@ -56,6 +56,9 @@ public sealed class LiveUpdatesBrowserTests
         var summary = page.GetByRole(AriaRole.Button, new() { Name = "Jump to Source status", Exact = true });
         await Assertions.Expect(summary).ToBeVisibleAsync();
         await Assertions.Expect(summary).ToContainTextAsync("0 active");
+        Assert.IsTrue(await page.Locator(".tasks-summary-grid > .mud-paper").EvaluateAllAsync<bool>(
+            "cards => cards.length === 6 && cards.every(card => Math.abs(card.getBoundingClientRect().height - cards[0].getBoundingClientRect().height) < 1 && Math.abs(card.getBoundingClientRect().width - cards[0].getBoundingClientRect().width) < 1)"),
+            "All six desktop summary cards should have equal dimensions.");
         Assert.IsTrue(await page.EvaluateAsync<bool>("Boolean(document.querySelector('#tasks-requests').compareDocumentPosition(document.querySelector('#tasks-sources-now')) & Node.DOCUMENT_POSITION_FOLLOWING)"));
         await summary.ClickAsync();
         await Assertions.Expect(panel).ToBeInViewportAsync();
@@ -84,6 +87,9 @@ public sealed class LiveUpdatesBrowserTests
                 await Assertions.Expect(row.GetByText("Downloading · 1", new() { Exact = true })).ToBeVisibleAsync();
                 await Assertions.Expect(row.GetByText("Searching · 1", new() { Exact = true })).ToBeVisibleAsync();
                 await page.SetViewportSizeAsync(390, 844);
+                Assert.IsTrue(await page.Locator(".tasks-summary-grid > .mud-paper").EvaluateAllAsync<bool>(
+                    "cards => cards.length === 6 && cards.every(card => Math.abs(card.getBoundingClientRect().height - cards[0].getBoundingClientRect().height) < 1 && Math.abs(card.getBoundingClientRect().width - cards[0].getBoundingClientRect().width) < 1 && card.scrollHeight <= card.clientHeight + 1 && card.scrollWidth <= card.clientWidth + 1)"),
+                    "Mobile summary cards should have equal dimensions without clipped content.");
                 await Assertions.Expect(row).ToBeVisibleAsync();
                 Assert.IsTrue(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= window.innerWidth"));
             }
