@@ -152,6 +152,9 @@ public sealed class AssetIdentityVerificationService(
                 .Select(f => new IdentityFact(f.FindingId, f.Dimension, f.Code, f.Polarity, f.Value)));
         }
         facts.AddRange(ArtifactProfileComparer.Compare(facts, expected));
+        if (expected.AcceptedVariantKind == FamilyLibrarian.Domain.Requests.AcquisitionQuestionKind.AbridgedOnly)
+            facts = facts.Select(f => f.Code == EvidenceReasonCodes.ProfileComparison.AbridgedMarker && f.Polarity == EvidencePolarity.Condition
+                ? f with { Polarity = EvidencePolarity.Weak } : f).ToList();
         return result with { Facts = facts };
     }
 

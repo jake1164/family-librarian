@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Delivery;
@@ -12,7 +13,8 @@ namespace FamilyLibrarian.Infrastructure.Persistence;
 public sealed class RequestRepository(
     AppDbContext database,
     ICwaSettingsStore cwaSettingsStore,
-    IAudiobookshelfSettingsStore audiobookshelfSettingsStore) : IRequestRepository, IBookRequestFulfillmentStore
+    IAudiobookshelfSettingsStore audiobookshelfSettingsStore,
+    AcquisitionPreferenceService? preferences = null) : IRequestRepository, IBookRequestFulfillmentStore
 {
     public Task<bool> WorkExistsAsync(Guid workId, CancellationToken cancellationToken) =>
         database.Works.AnyAsync(work => work.Id == workId && !work.IsRetired, cancellationToken);
@@ -58,7 +60,7 @@ public sealed class RequestRepository(
     {
         var requests = await ProjectViews(database.BookRequests.Where(request => request.Participants.Any(participant => participant.UserId == userId)), userId)
             .ToArrayAsync(cancellationToken);
-        return await AddRequesterProgressAsync(requests, cancellationToken);
+        return await AddRequesterProgressAsync(requests, userId, cancellationToken);
     }
 
     public async Task<BookRequestView?> FindViewAsync(
@@ -74,7 +76,7 @@ public sealed class RequestRepository(
             return null;
         }
 
-        return (await AddRequesterProgressAsync([request], cancellationToken)).Single();
+        return (await AddRequesterProgressAsync([request], userId, cancellationToken)).Single();
     }
 
     public async Task<IReadOnlyList<AdminBookRequestView>> ListForAdminAsync(
@@ -260,15 +262,18 @@ public sealed class RequestRepository(
     /// Adds the state a requester can safely see for each format without loading
     /// asset metadata, scanner results, or destination failure details.
     /// </summary>
-    private async Task<IReadOnlyList<BookRequestView>> AddRequesterProgressAsync(
+    private Task<IReadOnlyList<BookRequestView>> AddRequesterProgressAsync(
         IReadOnlyList<BookRequestView> requests,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) => AddRequesterProgressAsync(requests, null, cancellationToken);
+
+    private async Task<IReadOnlyList<BookRequestView>> AddRequesterProgressAsync(
+        IReadOnlyList<BookRequestView> requests, Guid? viewerId, CancellationToken cancellationToken)
     {
         // Independent of the format-progress lookups below (a Kindle delivery
         // attempt can exist -- and this needs to keep showing it -- even once
         // its request has no outstanding formats left).
         var kindleDeliveries = await LoadKindleDeliveriesAsync(requests, cancellationToken);
-        var needsReview = await LoadNeedsReviewAsync(requests, cancellationToken);
+        var needsReview = await LoadNeedsReviewAsync(requests, viewerId, cancellationToken);
         requests = ApplyNeedsReview(requests, needsReview);
 
         var formatIds = requests
@@ -328,7 +333,7 @@ public sealed class RequestRepository(
         var assetIds = latestAssets.Values.Select(asset => asset.AssetId).ToArray();
         if (assetIds.Length == 0)
         {
-            return ApplyKindleDeliveries(ApplyProviderJobProgress(requests, latestProviderJobs), kindleDeliveries);
+            return ApplyKindleDeliveries(ApplyNeedsReview(ApplyProviderJobProgress(requests, latestProviderJobs), needsReview), kindleDeliveries);
         }
 
         var evaluations = await database.SecurityEvaluations
@@ -451,7 +456,7 @@ public sealed class RequestRepository(
             })
             .ToArray();
 
-        return ApplyKindleDeliveries(enriched, kindleDeliveries);
+        return ApplyKindleDeliveries(ApplyNeedsReview(enriched, needsReview), kindleDeliveries);
     }
 
     /// <summary>
@@ -556,7 +561,7 @@ public sealed class RequestRepository(
     /// admin-only and unchanged, with nothing new for the owner to see.
     /// </summary>
     private async Task<IReadOnlyDictionary<Guid, RequestNeedsReviewView>> LoadNeedsReviewAsync(
-        IReadOnlyList<BookRequestView> requests, CancellationToken cancellationToken)
+        IReadOnlyList<BookRequestView> requests, Guid? viewerId, CancellationToken cancellationToken)
     {
         var needsReviewIds = requests
             .Where(request => request.Status == RequestStatus.NeedsReview)
@@ -576,7 +581,7 @@ public sealed class RequestRepository(
                 request.StatusHistory
                     .OrderByDescending(history => history.OccurredAtUtc)
                     .Select(history => history.Reason)
-                    .FirstOrDefault()))
+                    .FirstOrDefault(), request.QuestionKind, request.QuestionFormatId, request.QuestionAskedAtUtc))
             .ToArrayAsync(cancellationToken);
         var preferenceAmbiguityIds = preferenceReviews.Select(review => review.RequestId).ToArray();
         if (preferenceAmbiguityIds.Length == 0)
@@ -600,12 +605,31 @@ public sealed class RequestRepository(
                         candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language, candidate.Details))
                     .ToArray());
 
-        return preferenceAmbiguityIds.ToDictionary(
+        var reviews = preferenceAmbiguityIds.ToDictionary(
             requestId => requestId,
             requestId => new RequestNeedsReviewView(
                 RequestReviewCategory.PreferenceAmbiguity,
                 candidatesByRequest.TryGetValue(requestId, out var list) ? list : [],
-                preferenceReviews.Single(review => review.RequestId == requestId).Reason));
+                preferenceReviews.Single(review => review.RequestId == requestId).Reason,
+                preferenceReviews.Single(review => review.RequestId == requestId).QuestionKind,
+                preferenceReviews.Single(review => review.RequestId == requestId).QuestionFormatId,
+                preferenceReviews.Single(review => review.RequestId == requestId).QuestionAskedAtUtc));
+        if (viewerId is { } viewer && preferences is not null)
+        {
+            var participants = await database.BookRequests.AsNoTracking().Where(r => preferenceAmbiguityIds.Contains(r.Id))
+                .Select(r => new { r.Id, Users = r.Participants.Where(p => p.WithdrawnAtUtc == null).Select(p => p.UserId).ToArray() })
+                .ToDictionaryAsync(r => r.Id, r => r.Users, cancellationToken);
+            foreach (var (id, review) in reviews.ToArray())
+            {
+                // The question may be answered between the two projection queries.
+                if (review.QuestionKind is not { } kind || review.Candidates.Count != 1) continue;
+                var language = review.Candidates.Single().Language;
+                var missing = await preferences.MissingAsync(participants[id], kind, language, cancellationToken);
+                reviews[id] = review with { CanAnswer = missing.Contains(viewer), WaitingForRequesterCount = missing.Count,
+                    CanSavePreference = missing.Contains(viewer) && AcquisitionPreferenceService.Key(kind, language) is not null };
+            }
+        }
+        return reviews;
     }
 
     private static IReadOnlyList<BookRequestView> ApplyNeedsReview(
@@ -614,7 +638,9 @@ public sealed class RequestRepository(
             ? requests
             : requests
                 .Select(request => reviews.TryGetValue(request.Id, out var review)
-                    ? request with { NeedsReview = review }
+                    ? request with { NeedsReview = review,
+                        Formats = request.Formats.Select(f => review.QuestionFormatId == f.Id
+                            ? f with { Progress = RequestFormatProgress.QuestionOpen } : f).ToArray() }
                     : request)
                 .ToArray();
 
@@ -797,5 +823,5 @@ public sealed class RequestRepository(
     private sealed record RequestReviewCandidateRow(
         Guid RequestId, Guid CandidateId, string Title, string? Author, string? Language, string? Details);
 
-    private sealed record PreferenceReviewRow(Guid RequestId, string? Reason);
+    private sealed record PreferenceReviewRow(Guid RequestId, string? Reason, AcquisitionQuestionKind? QuestionKind, Guid? QuestionFormatId, DateTimeOffset? QuestionAskedAtUtc);
 }

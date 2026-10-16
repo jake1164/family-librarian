@@ -17,9 +17,9 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 namespace FamilyLibrarian.Web.Tests;
 
 // AUTOFIND Phase 1. A scheduled recheck stores candidates for the requester to choose between only when
-// they could be this book. Results that contradict the requested work, and editions only in another
-// language, are recorded as "no acceptable copy": the request stays in the automatic queue, no review
-// is stored and nobody is notified. Each scenario is its own class with its own database for the same
+// they could be this book. Results that contradict the requested work remain "no acceptable copy".
+// Phase 5 asks about an otherwise matching edition in another language without downloading it.
+// Each scenario is its own class with its own database for the same
 // reason as ExternalProviderAutomaticAcquisitionEndpointTests (the recheck considers every provider).
 
 internal sealed record NoAcceptableCopyOutcome(
@@ -166,17 +166,17 @@ public sealed class ExternalProviderForeignLanguageOnlyEndpointTests
     }
 
     [TestMethod]
-    public async Task AnEditionOnlyInAnotherLanguageIsRecordedAsNoMatchWithTheLanguageNamed()
+    public async Task AnEditionOnlyInAnotherLanguageBecomesAProductQuestionWithoutDownloading()
     {
         var outcome = await NoAcceptableCopyScenario.RunAsync(
             WebTestFixture.Require(_fixture),
             [NoAcceptableCopyScenario.Result("foreign-1", "The Hobbit", "J. R. R. Tolkien", language: "fr")]);
 
-        Assert.AreEqual("NoMatch", outcome.Attempt.Outcome);
-        Assert.AreEqual("Found only editions in other languages (French).", outcome.Attempt.Summary);
+        Assert.AreEqual("CandidatesFound", outcome.Attempt.Outcome);
+        Assert.AreEqual("A product choice is available; still checking other sources.", outcome.Attempt.Summary);
         Assert.IsNotNull(outcome.Attempt.NextEligibleCheckAtUtc);
-        Assert.AreEqual(RequestStatus.PendingAcquisition, outcome.Status);
-        Assert.AreEqual(0, outcome.StoredReviewCandidates);
+        Assert.AreEqual(RequestStatus.NeedsReview, outcome.Status);
+        Assert.AreEqual(1, outcome.StoredReviewCandidates);
         Assert.AreEqual(0, outcome.ReviewNotifications);
         Assert.HasCount(1, outcome.Diagnostics);
     }

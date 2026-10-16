@@ -79,7 +79,12 @@ public sealed record KindleDeliveryResponse(
 public sealed record NeedsReviewResponse(
     string Category,
     IReadOnlyList<RequestReviewCandidateResponse> Candidates,
-    string? Reason = null);
+    string? Reason = null,
+    string? QuestionKind = null,
+    Guid? QuestionFormatId = null,
+    bool CanAnswer = true,
+    int WaitingForRequesterCount = 0,
+    bool CanSavePreference = false);
 
 /// <summary>
 /// A requester-safe candidate label. Details contains neutral edition/release
@@ -98,7 +103,7 @@ public sealed record RequestReviewCandidateResponse(
 /// against two participants on a shared request resolving the same review
 /// at once.
 /// </param>
-public sealed record ResolveNeedsReviewRequest(Guid? CandidateId, uint? ExpectedVersion = null);
+public sealed record ResolveNeedsReviewRequest(Guid? CandidateId, uint? ExpectedVersion = null, bool AlwaysAccept = false);
 
 public sealed record BookRequestFormatResponse(
     Guid FormatId,

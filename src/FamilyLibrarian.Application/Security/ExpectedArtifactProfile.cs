@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Security;
 
@@ -10,7 +11,8 @@ public sealed record ExpectedArtifactProfile(
     string Title, IReadOnlyList<string> AlternateTitles, string? PrimaryAuthor,
     IReadOnlyList<BookSeries> Series, IReadOnlyList<string> Isbn13s, string? AcceptedLanguage,
     int? CatalogPageCount, int? CatalogAudioSeconds, bool AcceptedAsCollectionContaining,
-    long? PeerMedianSizeBytes = null, int? PeerCount = null, long? AssetSizeBytes = null);
+    long? PeerMedianSizeBytes = null, int? PeerCount = null, long? AssetSizeBytes = null,
+    AcquisitionQuestionKind? AcceptedVariantKind = null);
 
 public interface IExpectedArtifactProfileSource
 {
@@ -31,9 +33,11 @@ public sealed class ExpectedArtifactProfileSource(
         var work = await works.FindAsync(asset.WorkId, cancellationToken);
         if (work is null) return null;
         var request = await requests.FindByFormatIdAsync(asset.AssociatedRequestFormatId, cancellationToken);
-        var language = request?.Formats.SingleOrDefault(f => f.Id == asset.AssociatedRequestFormatId)?.AcceptedLanguage;
+        var format = request?.Formats.SingleOrDefault(f => f.Id == asset.AssociatedRequestFormatId);
         var peer = peers is null ? null : await peers.FindAsync(asset, cancellationToken);
         return new(work.Title, work.AlternateTitles ?? [], work.PrimaryAuthor, work.Series ?? [], work.Isbn13s,
-            language, work.CatalogPageCount, work.CatalogAudioSeconds, false, peer?.MedianSizeBytes, peer?.Count, asset.SizeBytes);
+            format?.AcceptedLanguage, work.CatalogPageCount, work.CatalogAudioSeconds,
+            format?.AcceptedVariantKind == AcquisitionQuestionKind.CollectionContaining, peer?.MedianSizeBytes, peer?.Count, asset.SizeBytes,
+            format?.AcceptedVariantKind);
     }
 }

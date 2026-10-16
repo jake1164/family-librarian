@@ -281,8 +281,8 @@ public sealed class ExternalProviderVariantResultsVerifiedAgainstTheWorkEndpoint
 
         Assert.IsEmpty(client.SubmittedCandidates);
         var attempt = outcome.Attempts.Single();
-        Assert.AreEqual("NoMatch", attempt.Outcome);
-        Assert.AreEqual("Found only editions in other languages (French).", attempt.Summary);
+        Assert.AreEqual("CandidatesFound", attempt.Outcome);
+        Assert.AreEqual("A product choice is available; still checking other sources.", attempt.Summary);
     }
 }
 

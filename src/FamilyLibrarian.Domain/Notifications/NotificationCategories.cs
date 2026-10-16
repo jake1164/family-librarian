@@ -2,6 +2,7 @@ namespace FamilyLibrarian.Domain.Notifications;
 
 public static class NotificationCategories
 {
+    public const string AcquisitionQuestion = "request.acquisition_question";
     public const string RequestNeedsReview = "request.needs_review";
     public const string RequestStatusChanged = "request.status_changed";
 

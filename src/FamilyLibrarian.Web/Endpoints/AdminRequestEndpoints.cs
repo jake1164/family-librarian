@@ -286,6 +286,8 @@ internal static class AdminRequestEndpoints
         BookRequestService requests,
         CancellationToken cancellationToken)
     {
+        if (request.AlwaysAccept)
+            return Results.BadRequest(new { message = "Save personal preferences from your own request's question card." });
         var outcome = request.CandidateId is { } candidateId
             ? await fulfillment.AdminResolvePreferenceAmbiguityAsync(requestId, candidateId, request.ExpectedVersion, cancellationToken)
             : await fulfillment.AdminDismissPreferenceAmbiguityAsync(requestId, request.ExpectedVersion, cancellationToken);

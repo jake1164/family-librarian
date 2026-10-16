@@ -51,6 +51,11 @@ public sealed class MatrixOutboundCommunicationProvider(
         return await matrixClient.SendMessageAsync(settings, accessToken, roomId, BuildBody(communication), cancellationToken);
     }
 
-    private static string BuildBody(OutboundCommunication communication) =>
-        communication.Link is null ? communication.Body : $"{communication.Body}{Environment.NewLine}{Environment.NewLine}{communication.Link}";
+    private static string BuildBody(OutboundCommunication communication)
+    {
+        var body = communication.CommunicationType == OutboundCommunicationTypes.AcquisitionQuestionAsked
+            ? communication.Body + "\n\nReply TAKE or KEEP LOOKING, or reply to this message with 1 (take) or 2 (keep looking)."
+            : communication.Body;
+        return communication.Link is null ? body : $"{body}{Environment.NewLine}{Environment.NewLine}{communication.Link}";
+    }
 }

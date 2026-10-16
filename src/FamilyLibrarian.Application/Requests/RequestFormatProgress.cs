@@ -20,6 +20,7 @@ public sealed record RequestFormatProgressView(string Code, string Description);
 /// </summary>
 public static class RequestFormatProgress
 {
+    public static readonly RequestFormatProgressView QuestionOpen = new("AcquisitionQuestionOpen", "A question about this copy is waiting for an answer.");
     /// <param name="providerJobState">
     /// The active <see cref="ProviderAcquisitionJob"/>'s lifecycle
     /// state, when one exists for this format and <paramref name="assetState"/>

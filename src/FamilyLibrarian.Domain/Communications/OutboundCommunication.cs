@@ -75,6 +75,11 @@ public sealed class OutboundCommunication
     /// </summary>
     public DateTimeOffset? ProcessedAtUtc { get; private set; }
 
+    public string? MatrixEventId { get; private set; }
+
+    public void RecordMatrixEventId(string? eventId) =>
+        MatrixEventId = !string.IsNullOrWhiteSpace(eventId) && eventId.Length <= 255 ? eventId : null;
+
     public IReadOnlyCollection<OutboundCommunicationDelivery> Deliveries => _deliveries;
 
     public void RecordDelivery(string providerId, bool succeeded, string? error, DateTimeOffset attemptedAtUtc)

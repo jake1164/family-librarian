@@ -51,6 +51,16 @@ public sealed class RequestFormat
     /// </summary>
     public string? AcceptedLanguage { get; private set; }
 
+    public AcquisitionQuestionKind? AcceptedVariantKind { get; private set; }
+    public string? AcceptedVariantDetail { get; private set; }
+
+    internal void AcceptVariant(AcquisitionQuestionKind kind, string detail)
+    {
+        if (!Enum.IsDefined(kind)) throw new ArgumentOutOfRangeException(nameof(kind));
+        AcceptedVariantKind = kind;
+        AcceptedVariantDetail = detail[..Math.Min(detail.Length, 256)];
+    }
+
     internal void SetStatus(RequestFormatStatus status, DateTimeOffset atUtc)
     {
         if (Status == status)

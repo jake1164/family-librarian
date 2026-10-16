@@ -82,16 +82,20 @@ public sealed class RequestsApiClient(HttpClient httpClient, AntiforgeryTokenPro
     /// <paramref name="candidateId"/> to accept it ("get it anyway"), or omit
     /// it to decline every candidate ("keep looking").
     /// </summary>
-    public async Task<ChangeStatusOutcome> ResolveNeedsReviewAsync(
+    public Task<ChangeStatusOutcome> ResolveNeedsReviewAsync(
         Guid requestId,
         Guid? candidateId,
         uint? expectedVersion = null,
         CancellationToken cancellationToken = default)
+        => ResolveNeedsReviewWithPreferenceAsync(requestId, candidateId, expectedVersion, false, cancellationToken);
+
+    public async Task<ChangeStatusOutcome> ResolveNeedsReviewWithPreferenceAsync(
+        Guid requestId, Guid? candidateId, uint? expectedVersion, bool alwaysAccept, CancellationToken cancellationToken = default)
     {
         using var response = await SendAsync(
             HttpMethod.Post,
             $"api/v1/requests/{requestId}/needs-review/resolve",
-            new ResolveNeedsReviewRequest(candidateId, expectedVersion),
+            new ResolveNeedsReviewRequest(candidateId, expectedVersion, alwaysAccept),
             cancellationToken);
 
         return response.IsSuccessStatusCode

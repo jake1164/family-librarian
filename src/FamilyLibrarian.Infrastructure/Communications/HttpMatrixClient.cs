@@ -91,9 +91,19 @@ public sealed class HttpMatrixClient(IHttpClientFactory httpClientFactory) : IMa
             var transactionId = Guid.NewGuid().ToString("N");
             var requestUri = $"_matrix/client/v3/rooms/{Uri.EscapeDataString(roomId)}/send/m.room.message/{transactionId}";
             using var response = await client.PutAsJsonAsync(requestUri, payload, cancellationToken);
-            return response.IsSuccessStatusCode
-                ? SendResult.Success()
-                : SendResult.Failure(await DescribeErrorAsync(response, cancellationToken));
+            if (!response.IsSuccessStatusCode)
+                return SendResult.Failure(await DescribeErrorAsync(response, cancellationToken));
+            // The event id is optional metadata: a delivered message stays successful when the response has no readable id.
+            try
+            {
+                if (JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken)) is JsonObject body &&
+                    body["event_id"] is JsonValue value && value.TryGetValue<string>(out var eventId))
+                    return SendResult.Success(eventId);
+            }
+            catch (Exception exception) when (exception is System.Text.Json.JsonException or HttpRequestException or OperationCanceledException)
+            {
+            }
+            return SendResult.Success();
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {

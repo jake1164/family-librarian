@@ -144,8 +144,10 @@ internal static class RequestEndpoints
         ICurrentUser currentUser,
         CancellationToken cancellationToken)
     {
+        if (request.AlwaysAccept && request.CandidateId is null)
+            return Results.BadRequest(new { message = "Choose Take it to save this preference." });
         var outcome = request.CandidateId is { } candidateId
-            ? await fulfillment.ResolvePreferenceAmbiguityAsync(requestId, candidateId, request.ExpectedVersion, cancellationToken)
+            ? await fulfillment.ResolveWithPreferenceAsync(requestId, candidateId, request.ExpectedVersion, request.AlwaysAccept, cancellationToken)
             : await fulfillment.DismissPreferenceAmbiguityAsync(requestId, request.ExpectedVersion, cancellationToken);
 
         if (outcome == PreferenceAmbiguityResolutionOutcome.Unauthenticated || currentUser.UserId is not { } userId)
@@ -158,6 +160,10 @@ internal static class RequestEndpoints
             return Results.NotFound();
         }
 
+        if (outcome == PreferenceAmbiguityResolutionOutcome.NotAsked)
+            return Results.Conflict(new { message = "Your saved preference already accepts this choice. Another requester is being asked." });
+        if (outcome == PreferenceAmbiguityResolutionOutcome.InvalidPreference)
+            return Results.BadRequest(new { message = "This choice cannot be saved as a preference." });
         if (outcome == PreferenceAmbiguityResolutionOutcome.Conflict)
         {
             return Results.Conflict(new { message = "Someone else updated this request. Reload it before making another change." });
@@ -246,7 +252,8 @@ internal static class RequestEndpoints
                     .Select(candidate => new RequestReviewCandidateResponse(
                         candidate.CandidateId, candidate.Title, candidate.Author, candidate.Language, candidate.Details))
                     .ToArray(),
-                needsReview.Reason)
+                needsReview.Reason, needsReview.QuestionKind?.ToString(), needsReview.QuestionFormatId,
+                needsReview.CanAnswer, needsReview.WaitingForRequesterCount, needsReview.CanSavePreference)
             : null);
 
     // Plain language for a family, not the enum name. The status itself travels

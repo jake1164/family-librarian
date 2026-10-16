@@ -26,7 +26,8 @@ public sealed class MatrixInboundRouter(
     IAuditWriter audit,
     ProviderInteractionLinkService? providerInteractions = null,
     IConversationTurnExecutor? conversation = null,
-    ConversationOptions? conversationOptions = null)
+    ConversationOptions? conversationOptions = null,
+    IAcquisitionQuestionMatrixAnswers? acquisitionQuestions = null)
 {
     private static readonly string[] AffirmativeReplies = ["yes", "yep", "y"];
     private static readonly string[] NegativeReplies = ["no", "nope", "n"];
@@ -87,9 +88,16 @@ public sealed class MatrixInboundRouter(
             return;
         }
 
+        if (!IsYesNo(body) && acquisitionQuestions is not null &&
+            await acquisitionQuestions.AnswerAsync(message, body, cancellationToken) is { } questionReply)
+        {
+            await ReplyAsync(settings, accessToken, destination.RoomId!, questionReply, cancellationToken);
+            return;
+        }
+
         // Existing commands keep priority: yes/no still answer the delivery confirmation exactly as before. Only text that
         // is not one of them can start or continue a conversation, and only when the feature is switched on.
-        if (conversationOn && !IsYesNo(body))
+        if (conversationOn && !IsYesNo(body) && !AcquisitionQuestionAnswerGrammar.IsKeyword(body))
         {
             await HandleConversationAsync(destination, message, body, settings, accessToken, cancellationToken);
             return;

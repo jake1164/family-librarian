@@ -45,6 +45,8 @@ public static class LanguageAcceptance
         return separator is 2 or 3 && Aliases.ContainsKey(value[..separator]);
     }
 
+    public static string? PreferenceCode(string? language) => IsRecognized(language) ? Normalize(language!) : null;
+
     /// <summary>
     /// True when <paramref name="word"/> is a recognized English *name* of a
     /// language ("Spanish", "German"), resolving it to its two-letter code.

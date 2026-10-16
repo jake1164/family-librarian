@@ -62,6 +62,7 @@
     private bool isLoading = true;
     private string? errorMessage;
     private Guid busyRequestId;
+    private readonly Dictionary<Guid, bool> alwaysAcceptCandidates = [];
     private Guid busyKindleAttemptId;
 
 
@@ -93,18 +94,40 @@
                         @if (review.Candidates.Count == 1 && !IsLegacyCollapsedReview(review))
                         {
                             var candidate = review.Candidates[0];
-                            <MudAlert Severity="Severity.Info" Dense="true">
+                            <MudAlert Severity="@(review.QuestionKind is null ? Severity.Info : Severity.Warning)" Dense="true">
+                                @if (review.QuestionKind is not null) { <strong>Question waiting for an answer. </strong> }
                                 @ReviewReason(review)
                             </MudAlert>
-                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="2">
                                 <MudText Typo="Typo.body2">@CandidateLabel(candidate)</MudText>
-                                <MudButton Variant="Variant.Text"
-                                           Size="Size.Small"
-                                           Color="Color.Success"
-                                           Disabled="@(busyRequestId == request.Id)"
-                                           OnClick="() => ResolveNeedsReviewAsync(request, candidate.CandidateId)">
-                                    Get this copy
-                                </MudButton>
+                                @if (!review.CanAnswer)
+                                {
+                                    <MudText Typo="Typo.body2">@(review.WaitingForRequesterCount > 0
+                                        ? $"Waiting for {review.WaitingForRequesterCount} other requester(s)."
+                                        : "Your saved preference accepts this choice.")</MudText>
+                                }
+                                else
+                                {
+                                    @if (review.CanSavePreference)
+                                    {
+                                        <MudCheckBox T="bool" Value="@alwaysAcceptCandidates.GetValueOrDefault(candidate.CandidateId)"
+                                                     ValueChanged="value => alwaysAcceptCandidates[candidate.CandidateId] = value"
+                                                     Disabled="@(busyRequestId == request.Id)"
+                                                     Label="@(review.QuestionKind == "CollectionContaining" ? "Always accept collections containing my book" : "Always accept this language")" />
+                                    }
+                                    <MudButton Variant="Variant.Text"
+                                               Size="Size.Small"
+                                               Color="Color.Success"
+                                               Disabled="@(busyRequestId == request.Id)"
+                                               OnClick="() => ResolveNeedsReviewAsync(request, candidate.CandidateId)">
+                                        @(review.QuestionKind is null ? "Get this copy" : "Take it")
+                                    </MudButton>
+                                    @if (review.QuestionKind is not null)
+                                    {
+                                        <MudButton Variant="Variant.Text" Size="Size.Small" Disabled="@(busyRequestId == request.Id)"
+                                                   OnClick="() => ResolveNeedsReviewAsync(request, null)">Keep looking</MudButton>
+                                    }
+                                }
                             </MudStack>
                         }
                         else
@@ -265,7 +288,8 @@
 
         try
         {
-            var outcome = await Requests.ResolveNeedsReviewAsync(request.Id, candidateId, expectedVersion: request.Version);
+            var outcome = await Requests.ResolveNeedsReviewWithPreferenceAsync(request.Id, candidateId, request.Version,
+                candidateId is { } choice && request.NeedsReview?.CanSavePreference == true && alwaysAcceptCandidates.GetValueOrDefault(choice));
             if (outcome.Succeeded)
             {
                 await LoadAsync();

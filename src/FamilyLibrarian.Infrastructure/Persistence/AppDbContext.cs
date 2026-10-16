@@ -56,6 +56,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<BookRequest> BookRequests => Set<BookRequest>();
 
     public DbSet<RequestFormat> RequestFormats => Set<RequestFormat>();
+    public DbSet<RequesterAcquisitionPreference> RequesterAcquisitionPreferences => Set<RequesterAcquisitionPreference>();
 
     public DbSet<RequestStatusHistory> RequestStatusHistory => Set<RequestStatusHistory>();
 
@@ -279,6 +280,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(communication => communication.Link).HasColumnName("link").HasMaxLength(2_048);
             entity.Property(communication => communication.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(communication => communication.ProcessedAtUtc).HasColumnName("processed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(communication => communication.MatrixEventId).HasColumnName("matrix_event_id").HasMaxLength(255);
 
             // The dispatcher's poll loop scans for unprocessed rows in queue order.
             entity.HasIndex(communication => new { communication.ProcessedAtUtc, communication.CreatedAtUtc });
@@ -658,6 +660,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(request => request.VersionKind).HasColumnName("version_kind").HasMaxLength(32);
             entity.Property(request => request.VersionDetails).HasColumnName("version_details").HasMaxLength(BookRequest.MaxNoteLength);
             entity.Property(request => request.ReviewCategory).HasColumnName("review_category").HasConversion<string>().HasMaxLength(32);
+            entity.Property(request => request.QuestionKind).HasColumnName("question_kind").HasConversion<string>().HasMaxLength(32);
+            entity.Property(request => request.QuestionFormatId).HasColumnName("question_format_id");
+            entity.Property(request => request.QuestionAskedAtUtc).HasColumnName("question_asked_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(request => request.QuestionRemindedAtUtc).HasColumnName("question_reminded_at_utc").HasColumnType("timestamp with time zone");
             entity.Ignore(request => request.ActiveRequesterIds);
             entity.Ignore(request => request.SatisfiedRequesterIds);
             entity.Property(request => request.RequestedAtUtc).HasColumnName("requested_at_utc").HasColumnType("timestamp with time zone");
@@ -728,6 +734,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        builder.Entity<RequesterAcquisitionPreference>(entity =>
+        {
+            entity.ToTable("requester_acquisition_preferences", "requests");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(p => p.UserId).HasColumnName("user_id");
+            entity.Property(p => p.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(32);
+            entity.Property(p => p.Value).HasColumnName("value").HasMaxLength(16);
+            entity.Property(p => p.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.HasIndex(p => new { p.UserId, p.Kind, p.Value }).IsUnique();
+        });
+
         builder.Entity<RequestFormat>(entity =>
         {
             entity.ToTable("request_formats", "requests");
@@ -737,6 +755,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(format => format.MediaType).HasColumnName("media_type").HasConversion<string>().HasMaxLength(32);
             entity.Property(format => format.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
             entity.Property(format => format.AcceptedLanguage).HasColumnName("accepted_language").HasMaxLength(32);
+            entity.Property(format => format.AcceptedVariantKind).HasColumnName("accepted_variant_kind").HasConversion<string>().HasMaxLength(32);
+            entity.Property(format => format.AcceptedVariantDetail).HasColumnName("accepted_variant_detail").HasMaxLength(256);
             ConfigureTimestamps(entity);
 
             // One row per media type per request: the database, not the command

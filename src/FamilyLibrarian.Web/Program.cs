@@ -313,6 +313,7 @@ app.MapSecurityQueueEndpoints();
 app.MapLiveUpdatesEndpoints();
 app.MapInvitationEndpoints();
 app.MapAccountEndpoints();
+app.MapAcquisitionPreferenceEndpoints();
 app.MapMetadataIntegrationEndpoints();
 app.MapCwaSettingsEndpoints();
 app.MapAudiobookshelfSettingsEndpoints();

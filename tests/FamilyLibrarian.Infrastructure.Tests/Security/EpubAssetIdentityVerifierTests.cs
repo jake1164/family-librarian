@@ -13,6 +13,34 @@ namespace FamilyLibrarian.Infrastructure.Tests.Security;
 public sealed class EpubAssetIdentityVerifierTests
 {
     [TestMethod]
+    [DataRow("Iron Flame", true)]
+    [DataRow("A different book", false)]
+    public async Task AnAcceptedCollectionMustContainTheRequestedWorkInItsStructure(string heading, bool matches)
+    {
+        var request = new BookRequest(Guid.NewGuid(), Guid.NewGuid(), [RequestMediaType.Ebook], null, DateTimeOffset.UtcNow);
+        var format = request.Formats.Single();
+        var ask = typeof(BookRequest).GetMethod("AskQuestion");
+        Assert.IsNotNull(ask);
+        RequestReviewCandidateInput[] candidates = [new(format.Id, "example-source", "collection", "Series collection", "Rebecca Yarros", "en", null, null, null, false)];
+        ask.Invoke(request, [Enum.Parse(ask.GetParameters()[0].ParameterType, "CollectionContaining"), format.Id, "Take it?", candidates, DateTimeOffset.UtcNow]);
+        request.AcceptReviewCandidate(request.ReviewCandidates.Single().Id, request.UserId, DateTimeOffset.UtcNow);
+        using var epub = BuildEpub("Series collection", "Rebecca Yarros", "en");
+        using (var zip = new ZipArchive(epub, ZipArchiveMode.Update, leaveOpen: true))
+        {
+            zip.GetEntry("OPS/content.opf")!.Delete();
+            WriteEntry(zip, "OPS/content.opf", """
+                <package><metadata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Series collection</dc:title><dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">Rebecca Yarros</dc:creator></metadata><manifest><item id="body" href="body.xhtml" media-type="application/xhtml+xml" /></manifest><spine><itemref idref="body" /></spine></package>
+                """);
+            WriteEntry(zip, "OPS/body.xhtml", $"<html><body><h1>{heading}</h1><p>Example text.</p></body></html>");
+        }
+        epub.Position = 0;
+        var result = await CreateVerifier("Iron Flame", "Rebecca Yarros", new FakeRequestFulfillmentStore(format.Id, request))
+            .VerifyAsync(CreateAsset(format.Id), epub, CancellationToken.None);
+        Assert.AreEqual(matches, result.IsMatch);
+        if (!matches) Assert.AreEqual("identity.hold.collection_missing_requested_work", result.HoldCode);
+    }
+
+    [TestMethod]
     public async Task MatchingPackageMetadataIsAccepted()
     {
         var verifier = CreateVerifier("Restore Me", "Tahereh Mafi");

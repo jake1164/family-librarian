@@ -3,6 +3,7 @@ using System.Text;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
@@ -13,6 +14,31 @@ namespace FamilyLibrarian.Infrastructure.Tests.Security;
 [TestClass]
 public sealed class M4bAssetIdentityVerifierTests
 {
+    [TestMethod]
+    [DataRow("Rebecca Yarros", true)]
+    [DataRow("Someone Else", false)]
+    public async Task AcceptingDramatizationSuppressesOnlyThatHold(string embeddedAuthor, bool matches)
+    {
+        var request = new FamilyLibrarian.Domain.Requests.BookRequest(Guid.NewGuid(), Guid.NewGuid(), [RequestMediaType.Audiobook], null, DateTimeOffset.UtcNow);
+        var format = request.Formats.Single();
+        var ask = request.GetType().GetMethod("AskQuestion");
+        Assert.IsNotNull(ask);
+        FamilyLibrarian.Domain.Requests.RequestReviewCandidateInput[] candidates = [new(format.Id, "reserved-asset", "asset", "Onyx Storm", "Rebecca Yarros", "en", null, null, null, false)];
+        ask.Invoke(request, [Enum.Parse(ask.GetParameters()[0].ParameterType, "DramatizedOnly"), format.Id, "Take it?", candidates, DateTimeOffset.UtcNow]);
+        request.AcceptReviewCandidate(request.ReviewCandidates.Single().Id, request.UserId, DateTimeOffset.UtcNow);
+        var asset = new MediaAsset(request.WorkId, null, RequestMediaType.Audiobook, ".m4b", "book.m4b", "stored.m4b", 1,
+            new string('a', 64), "audio/mp4", format.Id, null, DateTimeOffset.UtcNow);
+        var verifier = new M4bAssetIdentityVerifier(new StubWorkLookup("Onyx Storm", "Rebecca Yarros"), new DeterministicBookMatcher(), new VariantRequestStore(request));
+        using var content = BuildM4b(Tag("nam", "Onyx Storm [Dramatized Adaptation]"), Tag("ART", embeddedAuthor));
+        var result = await verifier.VerifyAsync(asset, content, CancellationToken.None);
+        Assert.AreEqual(matches, result.IsMatch);
+    }
+
+    private sealed class VariantRequestStore(FamilyLibrarian.Domain.Requests.BookRequest request) : IBookRequestFulfillmentStore
+    {
+        public Task<FamilyLibrarian.Domain.Requests.BookRequest?> FindByFormatIdAsync(Guid formatId, CancellationToken cancellationToken) => Task.FromResult<FamilyLibrarian.Domain.Requests.BookRequest?>(request);
+    }
+
     private const string Copyright = "©";
 
     [TestMethod]

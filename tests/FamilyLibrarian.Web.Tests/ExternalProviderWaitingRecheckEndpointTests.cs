@@ -177,7 +177,7 @@ internal sealed class WaitingHarness : IAsyncDisposable
 
     public WebTestFixture Fixture { get; }
 
-    public static async Task<WaitingHarness> CreateAsync(WebTestFixture fixture, int attemptLimit = 3)
+    public static async Task<WaitingHarness> CreateAsync(WebTestFixture fixture, int attemptLimit = 3, Action<IServiceCollection>? configure = null)
     {
         var client = new WaitingRecheckClient();
         var factory = new FamilyLibrarianAppFactory(
@@ -186,6 +186,7 @@ internal sealed class WaitingHarness : IAsyncDisposable
             {
                 services.RemoveAll<IExternalProviderClient>();
                 services.AddSingleton<IExternalProviderClient>(client);
+                configure?.Invoke(services);
             });
         var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         var login = await admin.PostAsJsonAsync(

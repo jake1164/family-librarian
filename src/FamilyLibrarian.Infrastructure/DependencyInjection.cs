@@ -239,6 +239,9 @@ public static class DependencyInjection
         // IOutboundCommunicationProvider registration, not a redesign here.
         services.AddScoped<OutboundCommunicationRepository>();
         services.AddScoped<IOutboundCommunicationStore>(provider => provider.GetRequiredService<OutboundCommunicationRepository>());
+        services.AddScoped<IAcquisitionQuestionCommunicationLookup>(provider => provider.GetRequiredService<OutboundCommunicationRepository>());
+        services.AddScoped<AcquisitionQuestionMatrixAnswerService>();
+        services.AddScoped<IAcquisitionQuestionMatrixAnswers, ScopedAcquisitionQuestionMatrixAnswers>();
         services.AddScoped<OutboundCommunicationService>();
         services.AddScoped<OutboundCommunicationDispatcher>();
         services.AddScoped<IUserEmailLookup, UserEmailLookup>();
@@ -365,6 +368,10 @@ public static class DependencyInjection
         services.AddScoped<DirectAcquisitionSecurityService>();
         services.AddScoped<AutomaticRequestFulfillmentService>();
         services.AddScoped<ExternalProviderRecheckService>();
+        services.AddScoped<AcquisitionQuestionService>();
+        services.AddScoped<IAcquisitionPreferenceStore, AcquisitionPreferenceRepository>();
+        services.AddScoped<AcquisitionPreferenceService>();
+        services.AddScoped<ISavedAcquisitionQuestionAcceptor, ScopedSavedAcquisitionQuestionAcceptor>();
         services.AddScoped<ExternalProviderHealthPollService>();
         services.AddScoped<AcquisitionJobPollingService>();
         services.AddScoped<ProviderInteractionClaimService>();

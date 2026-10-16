@@ -121,6 +121,50 @@ public sealed class BookRequest
     /// <summary>Populated only for <see cref="RequestReviewCategory.PreferenceAmbiguity"/>.</summary>
     public IReadOnlyCollection<RequestReviewCandidate> ReviewCandidates => _reviewCandidates;
 
+    public AcquisitionQuestionKind? QuestionKind { get; private set; }
+    public Guid? QuestionFormatId { get; private set; }
+    public DateTimeOffset? QuestionAskedAtUtc { get; private set; }
+    public DateTimeOffset? QuestionRemindedAtUtc { get; private set; }
+
+    public void AskQuestion(AcquisitionQuestionKind kind, Guid formatId, string reason,
+        IReadOnlyList<RequestReviewCandidateInput> candidates, DateTimeOffset atUtc)
+    {
+        if (!Enum.IsDefined(kind)) throw new ArgumentOutOfRangeException(nameof(kind));
+        if (QuestionKind is not null || RequiresManualFulfillment ||
+            !_formats.Any(f => f.Id == formatId && f.Status == RequestFormatStatus.Requested) ||
+            candidates.Count != 1 || candidates[0].RequestFormatId != formatId)
+            throw new InvalidOperationException("A question must offer one copy of an outstanding format.");
+        if (Status == RequestStatus.PendingAcquisition)
+            MarkNeedsReview(RequestReviewCategory.PreferenceAmbiguity, reason, atUtc, candidates);
+        else if (Status == RequestStatus.NeedsReview && _reviewCandidates.Count == 0 &&
+                 ReviewCategory is null or RequestReviewCategory.SecurityOrIdentityFailure)
+        {
+            ReviewCategory = RequestReviewCategory.PreferenceAmbiguity;
+            RefreshPreferenceReview(reason, atUtc, candidates);
+        }
+        else throw new InvalidOperationException("Another review already needs an answer.");
+        QuestionKind = kind;
+        QuestionFormatId = formatId;
+        QuestionAskedAtUtc = atUtc;
+        QuestionRemindedAtUtc = null;
+    }
+
+    public bool MarkQuestionReminded(DateTimeOffset atUtc)
+    {
+        if (QuestionKind is null || QuestionAskedAtUtc is null || QuestionRemindedAtUtc is not null ||
+            atUtc - QuestionAskedAtUtc.Value < TimeSpan.FromDays(7)) return false;
+        QuestionRemindedAtUtc = atUtc;
+        return true;
+    }
+
+    private void ClearQuestion()
+    {
+        QuestionKind = null;
+        QuestionFormatId = null;
+        QuestionAskedAtUtc = null;
+        QuestionRemindedAtUtc = null;
+    }
+
     /// <summary>Provider results previously declined via "keep looking" -- see <see cref="DeclinedRequestCandidate"/>.</summary>
     public IReadOnlyCollection<DeclinedRequestCandidate> DeclinedCandidates => _declinedCandidates;
 
@@ -307,7 +351,7 @@ public sealed class BookRequest
     /// acquisition of that specific provider result; this method only clears
     /// review state and reopens the request for automatic processing.
     /// </summary>
-    public RequestReviewCandidate AcceptReviewCandidate(Guid candidateId, Guid? actorUserId, DateTimeOffset atUtc)
+    public RequestReviewCandidate AcceptReviewCandidate(Guid candidateId, Guid? actorUserId, DateTimeOffset atUtc, string? acceptanceReason = null)
     {
         if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
         {
@@ -318,11 +362,16 @@ public sealed class BookRequest
             ?? throw new ArgumentException("That candidate does not belong to this request's review.", nameof(candidateId));
 
         var format = _formats.Single(candidateFormat => candidateFormat.Id == candidate.RequestFormatId);
+        if (QuestionKind is { } kind)
+        {
+            if (QuestionFormatId != format.Id) throw new InvalidOperationException("That copy is not the asked variant.");
+            format.AcceptVariant(kind, candidate.Title);
+        }
         format.AcceptLanguage(candidate.Language);
 
         ReviewCategory = null;
         _reviewCandidates.Clear();
-        TransitionTo(RequestStatus.PendingAcquisition, actorUserId, "The requester accepted a lower-confidence match.", atUtc);
+        TransitionTo(RequestStatus.PendingAcquisition, actorUserId, acceptanceReason ?? "The requester accepted a lower-confidence match.", atUtc);
         return candidate;
     }
 
@@ -512,6 +561,7 @@ public sealed class BookRequest
         // longer applies.
         if (from == RequestStatus.NeedsReview && to != RequestStatus.NeedsReview)
         {
+            ClearQuestion();
             ReviewCategory = null;
             _reviewCandidates.Clear();
         }

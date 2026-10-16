@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Acquisition;
@@ -53,7 +54,7 @@ public static class AudiobookPartSetSelector
     /// <summary>Bounds the number of unattended downloads one request can start.</summary>
     public const int MaxParts = 8;
 
-    public static AudiobookPartSetSelection? TrySelect(IEnumerable<FulfillmentOption> options)
+    public static AudiobookPartSetSelection? TrySelect(IEnumerable<FulfillmentOption> options, ProviderConfidenceLevel? level = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -82,7 +83,25 @@ public static class AudiobookPartSetSelector
 
         // Two different complete sets (for example two totals) is a genuine
         // choice between editions, not something to resolve unattended.
-        return complete.Count == 1 ? complete[0] : null;
+        if (complete.Count != 1) return null;
+        var selection = complete[0];
+        return level is null || selection.Parts.All(part =>
+            CandidateConfidence.Allows(level.Value, ClassifyCompleteSetMember(part))) ? selection : null;
+    }
+
+    private static CandidateConfidenceTier ClassifyCompleteSetMember(FulfillmentOption part)
+    {
+        // Completeness has resolved only the fragment concern. The single-file classifier and every other gate remain unchanged.
+        var confidence = part with { RequiresReleaseConfirmation = false };
+        if (part.AuthorAffinity?.Kind is AuthorAffinityKind.FirstExactLastFuzzy or AuthorAffinityKind.LastExactFirstFuzzy &&
+            part.MatchBasis != BookMatchBasis.Identifier &&
+            !(part.IdentityAssessment is { } assessment && CandidateConfidence.HasIndependentAgreement(assessment)))
+            confidence = confidence with
+            {
+                MatchBasis = BookMatchBasis.StrictTitle,
+                AuthorAffinity = part.AuthorAffinity with { Kind = AuthorAffinityKind.Fuzzy }
+            };
+        return CandidateConfidence.Classify(confidence);
     }
 
     private static bool IsStrictBasis(BookMatchBasis? basis) =>

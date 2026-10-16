@@ -35,7 +35,9 @@ public sealed class ExternalProviderRecheckService(
     IAutomaticFulfillmentSignal? fulfillmentSignal = null,
     AudiobookPartSetAcquisitionService? partSets = null,
     SemanticAssessment.ICandidateSemanticShadow? semanticShadow = null,
-    ManualImportPolicy? importPolicy = null)
+    ManualImportPolicy? importPolicy = null,
+    AcquisitionQuestionService? questions = null,
+    ISavedAcquisitionQuestionAcceptor? savedQuestions = null)
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
@@ -64,9 +66,15 @@ public sealed class ExternalProviderRecheckService(
         var checks = 0;
         foreach (var request in pending)
         {
+            if (request.QuestionKind is not null && savedQuestions is not null &&
+                await savedQuestions.TryAcceptAsync(request.Id, cancellationToken)) continue;
             var work = await workLookup.FindAsync(request.WorkId, cancellationToken);
+            if (questions is not null && work is not null) await questions.RemindAsync(request, work.Title, cancellationToken);
             foreach (var format in request.Formats.Where(format => format.Status == RequestFormatStatus.Requested))
             {
+                var offers = new List<AcquisitionQuestionOffer>();
+                var searchedProviders = 0;
+                var advanced = false;
                 // One download per format at a time: a second source starting the same book while the first is still
                 // downloading only spends a (possibly metered) download on a duplicate.
                 if (await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken) ||
@@ -87,7 +95,8 @@ public sealed class ExternalProviderRecheckService(
                     // request left waiting for a better copy. Any other NeedsReview request belongs to a librarian.
                     if (request.Status == RequestStatus.NeedsReview &&
                         request.ReviewCategory != RequestReviewCategory.PreferenceAmbiguity &&
-                        request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) < provider.AutomaticAttemptLimit)
+                        request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) < provider.AutomaticAttemptLimit &&
+                        (questions is null || work is null || await questions.FindReserveAsync(request, format, work.Title, cancellationToken) is null))
                     {
                         continue;
                     }
@@ -169,6 +178,10 @@ public sealed class ExternalProviderRecheckService(
                             provider, identity, format.MediaType, exclusions, searchCancellation, format.Id, retryPass, cycleStart,
                             cancellationToken);
                         var options = search.Options;
+                        if (search.RateLimitedFor is null && search.Complete) searchedProviders++;
+                        var userExclusions = ExternalCandidateExclusions.From(request.DeclinedCandidates
+                            .Where(c => c.Reason == DeclinedCandidateReason.RequesterDeclined), provider.ProviderId, format.Id);
+                        var questionOptions = options.Where(o => !userExclusions.Excludes(o)).ToArray();
                         if (search.RateLimitedFor is { } rateLimitedFor)
                         {
                             nextCheck = clock.UtcNow + rateLimitedFor;
@@ -181,6 +194,21 @@ public sealed class ExternalProviderRecheckService(
                         // tried again just because the same posting turns up
                         // under another reference.
                         options = options.Where(option => !exclusions.Excludes(option)).ToArray();
+
+                        // Previously language-held copies remain excluded from automatic acquisition. Only a language question may re-admit them.
+                        if (options.Count == 0 && questions is not null && AcquisitionQuestionPolicy.Select(identity, questionOptions,
+                                format.MediaType, provider.EffectiveConfidence(format.MediaType)) is { Kind: AcquisitionQuestionKind.OtherLanguageOnly } foreign)
+                        {
+                            offers.Add(foreign with { SearchVariant = search.VariantOf(foreign.Candidate).ToStored() });
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound, "A language choice is available; still checking for a copy in the requested language.", waitingNext);
+                            continue;
+                        }
+
+                        if (options.Count == 0 && questions is not null && await questions.FindReserveAsync(request, format, work.Title, cancellationToken) is not null)
+                        {
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.NoMatch, "No narrated copy was found; a dramatized copy is kept in reserve.", waitingNext);
+                            continue;
+                        }
 
                         // Everything this source offers has now been tried and
                         // failed. That is emphatically not "nothing found": it
@@ -250,7 +278,8 @@ public sealed class ExternalProviderRecheckService(
                             provider.EffectiveConfidence(format.MediaType) != ProviderConfidenceLevel.SuggestOnly &&
                             partSets is not null &&
                             AudiobookPartSetSelector.TrySelect(
-                                [.. reviewableOptions.Where(option => search.VariantOf(option).IsBase)]) is { } completeSet)
+                                [.. reviewableOptions.Where(option => search.VariantOf(option).IsBase)],
+                                provider.EffectiveConfidence(format.MediaType)) is { } completeSet)
                         {
                             var started = await partSets.StartAsync(
                                 request.Id, format.Id, provider.ProviderId, completeSet, cancellationToken);
@@ -275,6 +304,7 @@ public sealed class ExternalProviderRecheckService(
                                     waitingNext);
                             }
 
+                            advanced = true;
                             break;
                         }
 
@@ -313,6 +343,7 @@ public sealed class ExternalProviderRecheckService(
                         if (automaticMatches.Length == 1 &&
                             failuresSoFar >= provider.AutomaticAttemptLimit)
                         {
+                            advanced = true;
                             // One extra attempt for a candidate that is new, strong and within the cap (OQ-5, OQ-14): it
                             // downloads with the review still open. Anything else only waits.
                             if (request.Status == RequestStatus.NeedsReview &&
@@ -341,10 +372,12 @@ public sealed class ExternalProviderRecheckService(
 
                         if (automaticMatches.Length == 1)
                         {
+                            advanced = true;
                             // A copy that needs no answer makes a pending question moot: withdraw it, tell the requesters, and
                             // carry on into the download. The status changes before any attempt row is written, so the next
                             // pass is not due at once.
-                            if (request is { Status: RequestStatus.NeedsReview, ReviewCategory: RequestReviewCategory.PreferenceAmbiguity })
+                            if (request is { Status: RequestStatus.NeedsReview, ReviewCategory: RequestReviewCategory.PreferenceAmbiguity } &&
+                                (request.QuestionKind is null || request.QuestionFormatId == format.Id))
                             {
                                 request.WithdrawPreferenceReviewForAutomaticCandidate("Found a copy that needs no answer.", clock.UtcNow);
                                 foreach (var requesterId in request.ActiveRequesterIds)
@@ -419,6 +452,14 @@ public sealed class ExternalProviderRecheckService(
                             break;
                         }
 
+                        if (questions is not null && AcquisitionQuestionPolicy.Select(identity, reviewableOptions,
+                                format.MediaType, provider.EffectiveConfidence(format.MediaType)) is { } offer)
+                        {
+                            offers.Add(offer with { SearchVariant = search.VariantOf(offer.Candidate).ToStored() });
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound, "A product choice is available; still checking other sources.", waitingNext);
+                            continue;
+                        }
+
                         if (reviewCandidates.Length == 0)
                         {
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.NoMatch,
@@ -427,6 +468,7 @@ public sealed class ExternalProviderRecheckService(
                         }
 
                         search.MarkSelected(reviewCandidates[0], clock.UtcNow);
+                        advanced = true;
                         var recorded = await MarkForCandidateReviewAsync(
                             request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates, search,
                             provider.EffectiveConfidence(format.MediaType) == ProviderConfidenceLevel.SuggestOnly
@@ -490,6 +532,19 @@ public sealed class ExternalProviderRecheckService(
                         searchCancellation?.Dispose();
                     }
                 }
+
+                if (!advanced && searchedProviders == scheduledProviders.Length && questions is not null && work is not null)
+                {
+                    var rankedOffers = CandidateConfidence.Rank(offers.Select(o => o.Candidate), format.MediaType);
+                    var best = rankedOffers.Count == 0 ? null : rankedOffers[0];
+                    var offer = best is null ? await questions.FindReserveAsync(request, format, work.Title, cancellationToken)
+                        : offers.First(o => ReferenceEquals(o.Candidate, best));
+                    if (offer is not null && await questions.AskAsync(request, format, work.Title, offer, cancellationToken))
+                    {
+                        if (savedQuestions is not null && await savedQuestions.TryAcceptAsync(request.Id, cancellationToken)) break;
+                        await questions.NotifyAsync(request, work.Title, cancellationToken);
+                    }
+                }
             }
 
             await attempts.SaveChangesAsync(cancellationToken);
@@ -506,7 +561,8 @@ public sealed class ExternalProviderRecheckService(
         IReadOnlyList<FulfillmentOption> Options,
         IReadOnlyDictionary<string, SearchVariantRef> Found,
         TimeSpan? RateLimitedFor,
-        IReadOnlyList<SearchVariantAttempt> Memory)
+        IReadOnlyList<SearchVariantAttempt> Memory,
+        bool Complete = true)
     {
         /// <summary>Remembers that this candidate (downloaded, or first in review) came from the variant that found it.</summary>
         public void MarkSelected(FulfillmentOption option, DateTimeOffset at)
@@ -535,10 +591,11 @@ public sealed class ExternalProviderRecheckService(
         var pool = new ExternalCandidatePool(mediaType);
         var clockStart = clock.UtcNow;
         TimeSpan? rateLimited = null;
+        var complete = true;
         for (var index = 0; index < plan.Count; index++)
         {
             // A time guard for one provider pass, not a search budget: variants not reached run on the next recheck.
-            if (index > 0 && clock.UtcNow - clockStart > PassTimeCap) break;
+            if (index > 0 && clock.UtcNow - clockStart > PassTimeCap) { complete = false; break; }
 
             // A retry pass rebuilds the pool only to get fresh acquire tokens: the base search and the variants that
             // returned something this cycle. A scheduled recheck runs the whole list again.
@@ -546,6 +603,7 @@ public sealed class ExternalProviderRecheckService(
             var remembered = memory.FirstOrDefault(row => row.VariantKind == kind && row.VariantKey == plan[index].Key);
             if (retryPass && index > 0 && !(remembered is { LastResultCount: > 0 } && remembered.LastTriedAtUtc >= cycleStartUtc))
             {
+                complete = false;
                 continue;
             }
 
@@ -559,6 +617,7 @@ public sealed class ExternalProviderRecheckService(
                                               (exception is HttpRequestException || exception is OperationCanceledException))
             {
                 rateLimited = exception is HttpRequestException http ? RateLimitWait(http) : null;
+                complete = false;
                 break;
             }
 
@@ -578,7 +637,7 @@ public sealed class ExternalProviderRecheckService(
         }
 
         return new PooledSearch(
-            ExternalCandidateAvailabilityChecker.SelectOneStrictCandidate(pool.Options, mediaType, exclusions), pool.Found, rateLimited, memory);
+            ExternalCandidateAvailabilityChecker.SelectOneStrictCandidate(pool.Options, mediaType, exclusions), pool.Found, rateLimited, memory, complete);
     }
 
     /// <summary>An identifier or strict title-and-author copy with nothing left for a person to confirm.</summary>
@@ -614,7 +673,7 @@ public sealed class ExternalProviderRecheckService(
         // A cancellation followed by "Ask again" begins a new request cycle.
         // Preserve previous attempts for the audit trail, but do not make their
         // next-check timestamp block the new request.
-        latest is null || latest.AttemptedAtUtc < request.StatusChangedAtUtc ||
+        latest is null || request.QuestionKind is null && latest.AttemptedAtUtc < request.StatusChangedAtUtc ||
         latest.NextEligibleCheckAtUtc is { } next && next <= now;
 
     /// <summary>
@@ -799,6 +858,8 @@ public sealed class ExternalProviderRecheckService(
         {
             return false;
         }
+
+        if (request.QuestionKind is not null) return false;
 
         // The stored review may collapse records that are identical to the
         // requester, so do not report the raw provider result count as though

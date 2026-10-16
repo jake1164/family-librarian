@@ -116,6 +116,7 @@ public static class EvidenceReasonCodes
 
         /// <summary>The file is a dramatized (full-cast) adaptation, not the narrated audiobook: kept in reserve.</summary>
         public const string DramatizedAdaptation = "identity.hold.dramatized_adaptation";
+        public const string CollectionMissingRequestedWork = "identity.hold.collection_missing_requested_work";
         public const string TocEntriesMissing = "identity.hold.toc_entries_missing";
     }
 
@@ -169,6 +170,7 @@ public static class EvidenceReasonCodes
         public const string AuthorDiffers = "artifact.identity_author.differs";
         public const string AuthorAbsent = "artifact.identity_author.absent";
         public const string AuthorSpellingVariant = "artifact.identity.author_spelling_variant";
+        public const string ContainsRequestedWork = "artifact.identity.contains_requested_work";
 
         /// <summary>The file carries no readable title or author tags at all (3a). Unknown, never a contradiction.</summary>
         public const string TagsAbsent = "artifact.identity.tags_absent";

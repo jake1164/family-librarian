@@ -6,6 +6,8 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Security;
 
@@ -93,6 +95,19 @@ public sealed class EpubAssetIdentityVerifier(
             // Package facts stay separate from identity; a spelling-only author exception needs their independent
             // corroboration, and expected-profile comparisons are applied by the identity service before holds.
             facts.AddRange(EpubProfileInspector.Inspect(archive, rootfilePath));
+            var request = await requestFulfillment.FindByFormatIdAsync(asset.AssociatedRequestFormatId, cancellationToken);
+            var format = request?.Formats.SingleOrDefault(f => f.Id == asset.AssociatedRequestFormatId);
+            if (format?.AcceptedVariantKind == AcquisitionQuestionKind.CollectionContaining && !titleMatches)
+            {
+                var contains = facts.Any(f => f.Code is EvidenceReasonCodes.ArtifactProfile.TocEntry or EvidenceReasonCodes.ArtifactProfile.Heading &&
+                    f.Value is not null && bookMatcher.TitleMatches(expected.Title, f.Value));
+                if (!contains)
+                    return AssetIdentityVerificationResult.Unmatched(Id, "The accepted collection does not identify the requested work in its contents or headings.", facts)
+                        with { HoldCode = EvidenceReasonCodes.IdentityHold.CollectionMissingRequestedWork };
+                titleMatches = true;
+                facts[facts.FindIndex(f => f.FindingId == "ev-title")] = new("ev-title", EvidenceDimension.IdentityCorroboration,
+                    EvidenceReasonCodes.ArtifactIdentityCorroboration.ContainsRequestedWork, EvidencePolarity.Positive);
+            }
             var exactTitle = titles.Any(title => expectedTitles.Any(wanted =>
                 bookMatcher.StrictTitleAuthorMatches(wanted, expected.PrimaryAuthor, title, expected.PrimaryAuthor)));
             if (!authorMatches && exactTitle &&
@@ -113,7 +128,7 @@ public sealed class EpubAssetIdentityVerifier(
 
             // Consent is specific to the selected language, including English.
             // Missing metadata remains eligible; an explicit mismatch does not.
-            var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
+            var acceptedLanguage = format?.AcceptedLanguage;
             var languageAccepted = languages.Count == 0 ||
                 languages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage));
             facts.Add(IdentityFacts.Language(languages, languageAccepted));
@@ -199,16 +214,6 @@ public sealed class EpubAssetIdentityVerifier(
                 .Select(element => element.Value.Trim())
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .ToArray());
-    }
-
-    /// <summary>
-    /// The language the requester already explicitly accepted for this
-    /// specific format, if any.
-    /// </summary>
-    private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
-    {
-        var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
-        return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
     }
 
     private static async Task<XDocument> ReadXmlAsync(

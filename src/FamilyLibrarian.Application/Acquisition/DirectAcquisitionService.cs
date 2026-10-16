@@ -286,6 +286,16 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.Invalid("That option is no longer available.");
         }
 
+        if (confirmLowConfidenceMatch && format.AcceptedVariantKind is { } acceptedKind)
+        {
+            var freshTitle = string.IsNullOrWhiteSpace(externalOption.Title) ? work?.Title ?? string.Empty : externalOption.Title;
+            if (AcquisitionQuestionPolicy.KindOf(identity, externalOption, externalProvider.EffectiveConfidence(format.MediaType)) != acceptedKind ||
+                acceptedKind == AcquisitionQuestionKind.OtherLanguageOnly &&
+                    (string.IsNullOrWhiteSpace(externalOption.Language) || !LanguageAcceptance.IsAcceptedOrUnspecified(externalOption.Language, format.AcceptedLanguage)) ||
+                !string.Equals(format.AcceptedVariantDetail, freshTitle[..Math.Min(freshTitle.Length, 256)], StringComparison.Ordinal))
+                return ManualImportResult.Invalid("That copy no longer matches the variant you accepted. It needs a new review.");
+        }
+
         // A part of an automatic set is only ever fetched as one member of a
         // complete set that is re-derived here from the provider's own fresh
         // answer. The caller's member list is a claim, not an authorization:
@@ -294,7 +304,7 @@ public sealed class DirectAcquisitionService(
         if (partSet is not null)
         {
             var selection = format.MediaType == RequestMediaType.Audiobook
-                ? AudiobookPartSetSelector.TrySelect(externalOptions)
+                ? AudiobookPartSetSelector.TrySelect(externalOptions, externalProvider.EffectiveConfidence(format.MediaType))
                 : null;
             if (selection is null ||
                 selection.Total != partSet.Total ||

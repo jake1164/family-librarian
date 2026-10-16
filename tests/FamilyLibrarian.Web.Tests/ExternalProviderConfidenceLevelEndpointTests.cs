@@ -201,7 +201,8 @@ internal static class ConfidenceScenario
     internal static async Task<IReadOnlyList<string>> RunAsync(IReadOnlyList<ExternalProviderCandidate> candidates, string title, string position,
         string level, string mediaType = "Ebook", string? audioOverride = null,
         Func<AppDbContext, Task>? inspect = null,
-        Func<int, ExternalProviderSearchRequest, IReadOnlyList<ExternalProviderCandidate>>? searchScript = null)
+        Func<int, ExternalProviderSearchRequest, IReadOnlyList<ExternalProviderCandidate>>? searchScript = null,
+        Func<IServiceProvider, HttpClient, Task>? exercise = null)
     {
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
         var client = new ConfidenceSearchClient(candidates, searchScript);
@@ -229,6 +230,7 @@ internal static class ConfidenceScenario
         }
         await using (var scope = factory.Services.CreateAsyncScope())
             await scope.ServiceProvider.GetRequiredService<ExternalProviderRecheckService>().ProcessDueAsync(CancellationToken.None);
+        if (exercise is not null) await exercise(factory.Services, admin);
         if (inspect is not null)
         {
             await using var inspection = factory.Services.CreateAsyncScope();

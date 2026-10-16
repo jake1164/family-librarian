@@ -47,6 +47,7 @@ builder.Services.AddScoped<CatalogSearchState>();
 builder.Services.AddScoped<MetadataIntegrationsApiClient>();
 builder.Services.AddScoped<GutenbergCatalogApiClient>();
 builder.Services.AddScoped<RequestsApiClient>();
+builder.Services.AddScoped<AcquisitionPreferenceApiClient>();
 builder.Services.AddScoped<AdminRequestsApiClient>();
 builder.Services.AddScoped<ProviderInteractionsApiClient>();
 builder.Services.AddScoped<InteractionLinkApiClient>();

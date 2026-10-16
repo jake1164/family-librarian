@@ -127,7 +127,9 @@ public sealed class M4bAssetIdentityVerifier(
         // the language accepted for this request. A missing, undetermined, unrecognized or unreadable
         // value is unknown and is never treated as either a match or a mismatch.
         var declaredLanguages = await ReadDeclaredLanguagesSafelyAsync(content, cancellationToken);
-        var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
+        var request = requestFulfillment is null ? null : await requestFulfillment.FindByFormatIdAsync(asset.AssociatedRequestFormatId, cancellationToken);
+        var format = request?.Formats.SingleOrDefault(f => f.Id == asset.AssociatedRequestFormatId);
+        var acceptedLanguage = format?.AcceptedLanguage;
         var languageAccepted = declaredLanguages is not { Count: > 0 } ||
             declaredLanguages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage));
 
@@ -154,7 +156,8 @@ public sealed class M4bAssetIdentityVerifier(
             !LanguageAcceptance.IsAcceptedOrUnspecified("de", acceptedLanguage);
         languageAccepted &= !markerLanguageConflict;
 
-        if (titleMatches && authorMatches && languageAccepted && packaging.Any(packaged => packaged.IsDramatized))
+        if (titleMatches && authorMatches && languageAccepted && packaging.Any(packaged => packaged.IsDramatized) &&
+            format?.AcceptedVariantKind != FamilyLibrarian.Domain.Requests.AcquisitionQuestionKind.DramatizedOnly)
         {
             // The right book, but a different production. Held in reserve, so the search looks for the narrated
             // audiobook; if none is found the request reaches a person, who can release this one.
@@ -183,13 +186,6 @@ public sealed class M4bAssetIdentityVerifier(
         }
 
         return AssetIdentityVerificationResult.Unmatched(Id, reason, facts);
-    }
-
-    private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
-    {
-        if (requestFulfillment is null) return null;
-        var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
-        return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
     }
 
     /// <summary>

@@ -1200,6 +1200,12 @@ Liberal additionally permits a plausible title with incomplete author metadata.
 Fuzzy titles, contradictions and unresolved language or release concerns remain
 ineligible at every level. Candidate pools are ordered by confidence tier, then
 the shared external-candidate ranker; the existing retry exclusions still apply.
+Complete multipart audiobooks also require every part to meet the format's
+effective source confidence, both at selection and before submission. Only the
+fragment concern resolved by that complete, compatible set is removed for this
+comparison. Within a set, a misspelled author without independent corroboration
+is a close call: Strict leaves it in ordinary review, while Standard may fetch
+it. Other concerns and whole-set security and identity checks still apply.
 When no individual candidate is allowed, a pool of at least two copies can form
 a CloseCall if every reviewable copy has the same normalized work-title core,
 no conditions or release/language concerns beyond unknown DRM, no author conflict,
@@ -1242,6 +1248,42 @@ detail views.
 acquisition cycle. Previous provider attempts remain visible in the audit
 timeline, but they cannot suppress new automatic or scheduled checks for the
 reopened request.
+
+**Product-choice questions:** after the search finds no copy allowed by the
+source's confidence level, a known collection containing the requested work,
+an abridged version, an edition available only in another language, or an
+incomplete part set can become a structured preference question. A dramatized
+audiobook already held in reserve is offered only after looking for a narrated
+copy. Active requesters see **Take it** and **Keep looking**; the first answer
+applies to the shared request, and administrators may answer too. Searching
+continues while the question is open, with one reminder after seven days. A
+new eligible standalone copy withdraws the question with a notice.
+
+Consent is recorded on the requested format and applies to the offered variant.
+An accepted collection must identify the requested work in its EPUB contents or
+headings when its package title differs. Abridgement and dramatization consent
+suppresses only the corresponding identity concern. All other identity checks,
+malware scanning, structural validation and approval rules still apply. Accepting
+a held dramatization rechecks the existing bytes through the security pipeline.
+An open question has amber progress and a card that says an answer is waiting.
+Linked Matrix users may answer with the whole-message keywords **take**, **take
+it**, **keep**, or **keep looking**. Numeric answers **1** and **2** require a
+reply relation to the event recorded for that recipient's question; missing or
+different event IDs never count as numeric consent. Kindle yes/no confirmations
+retain priority, and unbound numbers retain their conversation meaning.
+
+Requesters may save **Always accept collections containing my book** or an
+offered language when taking that choice. Saved choices are personal and can be
+removed under **Settings → Saved acquisition choices**. A shared request skips
+the question only when every active requester has the matching preference; the
+history says “Accepted by your saved preferences.” Otherwise only requesters
+without it receive the question and may answer. Holders see a read-only card
+waiting for the other requester(s); their answer attempts receive `NotAsked`
+(HTTP 409). Removing a preference makes its holder eligible to answer an open
+question again. Administrators may answer through the administrator request
+actions. Abridged, incomplete-part and dramatized choices always require an
+answer and have no “always” option. Saved consent uses the same acquisition and
+validation path as **Take it**.
 
 **Requester progress:** My Requests and the selected Work page supplement the
 stable request status with one safe, per-format workflow message whenever a file has entered the pipeline:

@@ -7,6 +7,9 @@ public interface ISecurityEvaluationRepository
 {
     Task<MediaAsset?> FindAssetAsync(Guid assetId, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<MediaAsset>> ListReservedDramatizationsAsync(Guid formatId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MediaAsset>>([]);
+
     /// <summary>Every sibling track sharing one multi-file acquisition's <see cref="MediaAsset.BundleId"/>.</summary>
     Task<IReadOnlyList<MediaAsset>> FindAssetsByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken);
 

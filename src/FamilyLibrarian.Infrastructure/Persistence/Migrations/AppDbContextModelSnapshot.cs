@@ -1666,6 +1666,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(2048)")
                         .HasColumnName("link");
 
+                    b.Property<string>("MatrixEventId")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("matrix_event_id");
+
                     b.Property<DateTimeOffset?>("ProcessedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("processed_at_utc");
@@ -3644,6 +3649,23 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
 
+                    b.Property<DateTimeOffset?>("QuestionAskedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("question_asked_at_utc");
+
+                    b.Property<Guid?>("QuestionFormatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("question_format_id");
+
+                    b.Property<string>("QuestionKind")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("question_kind");
+
+                    b.Property<DateTimeOffset?>("QuestionRemindedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("question_reminded_at_utc");
+
                     b.Property<DateTimeOffset>("RequestedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("requested_at_utc");
@@ -3778,6 +3800,16 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("accepted_language");
+
+                    b.Property<string>("AcceptedVariantDetail")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("accepted_variant_detail");
+
+                    b.Property<string>("AcceptedVariantKind")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("accepted_variant_kind");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
@@ -3990,6 +4022,39 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasIndex("RequestId", "OccurredAtUtc");
 
                     b.ToTable("request_status_history", "requests");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequesterAcquisitionPreference", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Value")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("value");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Kind", "Value")
+                        .IsUnique();
+
+                    b.ToTable("requester_acquisition_preferences", "requests");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Security.Approval", b =>

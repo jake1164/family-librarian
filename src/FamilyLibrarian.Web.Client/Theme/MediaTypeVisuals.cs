@@ -157,7 +157,7 @@ public static class MediaTypeVisuals
         "SecurityCheckFailed" or "PublishingNeedsAttention" or "AcquisitionFailed" => Color.Error,
         // Moving on to the next copy is the system working, not a failure.
         "AcquisitionRetrying" => Color.Info,
-        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" or "AwaitingProviderAction" or "AcquisitionPaused" or "NoAcceptableCopy" => Color.Warning,
+        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" or "AwaitingProviderAction" or "AcquisitionPaused" or "NoAcceptableCopy" or "AcquisitionQuestionOpen" => Color.Warning,
         "Available" => Color.Success,
         _ => Color.Info
     };

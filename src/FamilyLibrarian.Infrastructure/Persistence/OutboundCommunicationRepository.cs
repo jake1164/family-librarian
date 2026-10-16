@@ -4,8 +4,17 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FamilyLibrarian.Infrastructure.Persistence;
 
-public sealed class OutboundCommunicationRepository(AppDbContext database) : IOutboundCommunicationStore
+public sealed class OutboundCommunicationRepository(AppDbContext database) : IOutboundCommunicationStore, IAcquisitionQuestionCommunicationLookup
 {
+    public Task<OutboundCommunication?> FindQuestionAsync(Guid userId, string? eventId, CancellationToken cancellationToken)
+    {
+        var query = database.OutboundCommunications.AsNoTracking().Where(c => c.RecipientUserId == userId &&
+            c.CommunicationType == OutboundCommunicationTypes.AcquisitionQuestionAsked && c.RelatedEntityType == "BookRequest");
+        query = eventId is not null ? query.Where(c => c.MatrixEventId == eventId) : query.Where(c =>
+            database.BookRequests.Any(r => r.Id == c.RelatedEntityId && r.QuestionKind != null && c.CreatedAtUtc >= r.QuestionAskedAtUtc));
+        return query.OrderByDescending(c => c.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
+    }
+
     public Task EnqueueAsync(OutboundCommunication communication, CancellationToken cancellationToken)
     {
         database.OutboundCommunications.Add(communication);

@@ -14,6 +14,10 @@ public sealed class NotificationService(
     ICurrentUser currentUser,
     IClock clock)
 {
+    public Task RecordAcquisitionQuestionAsync(Guid userId, Guid requestId, string workTitle, string question, CancellationToken cancellationToken) =>
+        UpsertAsync(NotificationAudience.SingleUser, userId, NotificationCategories.AcquisitionQuestion, NotificationSeverity.Warning,
+            $"A choice about \"{workTitle}\"", question, NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+
     public Task RecordRequestNeedsReviewAsync(
         Guid requestId, string workTitle, string? reason, CancellationToken cancellationToken) =>
         UpsertAsync(

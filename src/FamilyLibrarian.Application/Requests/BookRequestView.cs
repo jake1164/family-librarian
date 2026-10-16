@@ -44,7 +44,13 @@ public sealed record BookRequestView(
 public sealed record RequestNeedsReviewView(
     RequestReviewCategory Category,
     IReadOnlyList<RequestReviewCandidateView> Candidates,
-    string? Reason = null);
+    string? Reason = null,
+    AcquisitionQuestionKind? QuestionKind = null,
+    Guid? QuestionFormatId = null,
+    DateTimeOffset? QuestionAskedAtUtc = null,
+    bool CanAnswer = true,
+    int WaitingForRequesterCount = 0,
+    bool CanSavePreference = false);
 
 public sealed record RequestReviewCandidateView(
     Guid CandidateId, string Title, string? Author, string? Language, string? Details);

@@ -12,6 +12,30 @@ namespace FamilyLibrarian.Infrastructure.Tests.Security;
 public sealed class AssetIdentityVerificationServiceTests
 {
     [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task AbridgedConsentSuppressesOnlyTheAbridgedMarker(bool anotherHold)
+    {
+        var asset = CreateProcessingAsset(".m4b", true);
+        var expected = ArtifactProfileComparerTests.Expected();
+        var property = typeof(ExpectedArtifactProfile).GetProperty("AcceptedVariantKind");
+        Assert.IsNotNull(property);
+        property.SetValue(expected, Enum.Parse(Nullable.GetUnderlyingType(property.PropertyType)!, "AbridgedOnly"));
+        var facts = new List<IdentityFact>
+        {
+            new("abridged", FamilyLibrarian.Domain.Evidence.EvidenceDimension.Profile, "profile.compare.abridged_marker", FamilyLibrarian.Domain.Evidence.EvidencePolarity.Condition)
+        };
+        if (anotherHold) facts.Add(new("series", FamilyLibrarian.Domain.Evidence.EvidenceDimension.Profile,
+            "profile.compare.series_position_differs", FamilyLibrarian.Domain.Evidence.EvidencePolarity.Negative));
+        var service = new AssetIdentityVerificationService(new AssetRepository(asset), new RecordingStagingStore(),
+            [new FixedVerifier(AssetIdentityVerificationResult.Match("test", facts))], new RecordingAuditWriter(), new FixedClock(),
+            expectedProfiles: new ProfileSource { Profile = expected });
+        var result = await service.VerifyAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(!anotherHold, result.IsMatch);
+        if (anotherHold) Assert.AreEqual("identity.hold.series_position_differs", result.HoldCode);
+    }
+
+    [TestMethod]
     [DataRow(320, false)]
     [DataRow(null, true)]
     public async Task ARealThreeChapterEpubIsComparedWithCatalogLengthBeforeTheHoldPolicy(int? pages, bool match)
