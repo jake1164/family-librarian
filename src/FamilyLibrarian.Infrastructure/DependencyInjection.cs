@@ -536,6 +536,7 @@ public static class DependencyInjection
             .ValidateOnStart();
 
         services.AddTransient<GoogleBooksApiKeyHandler>();
+        services.AddTransient<GoogleBooksTransientRetryHandler>();
         // AddLogger<T> resolves T from DI, so it must be registered.
         services.AddSingleton<QueryRedactingHttpClientLogger>();
         services.AddHttpClient<GoogleBooksBookMetadataProvider>((serviceProvider, client) =>
@@ -552,6 +553,8 @@ public static class DependencyInjection
                     new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
             })
             .AddHttpMessageHandler<GoogleBooksApiKeyHandler>()
+            // After the key handler, so a retried copy carries the key. See GoogleBooksTransientRetryHandler.
+            .AddHttpMessageHandler<GoogleBooksTransientRetryHandler>()
             // By this point the request URI carries ?key=<api key>. The stock
             // loggers already redact query values, but this client is the one
             // holding a secret, so the guarantee is made explicit rather than
