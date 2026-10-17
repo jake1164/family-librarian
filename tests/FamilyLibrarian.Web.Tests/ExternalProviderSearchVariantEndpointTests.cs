@@ -30,7 +30,7 @@ internal static class VariantScenario
         WebTestFixture fixture, VariantSearchProviderClient client, string providerId, int passes = 1, string? directResultId = null,
         Func<FamilyLibrarianAppFactory, BookRequestResponse, int, Task>? beforePass = null,
         Func<FamilyLibrarianAppFactory, HttpClient, BookRequestResponse, Task>? afterwards = null,
-        string? providerConfidence = null)
+        string? providerConfidence = null, Action<IServiceCollection>? configureServices = null)
     {
         await using var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
@@ -38,6 +38,7 @@ internal static class VariantScenario
             {
                 services.RemoveAll<IExternalProviderClient>();
                 services.AddSingleton<IExternalProviderClient>(client);
+                configureServices?.Invoke(services);
             });
 
         using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });

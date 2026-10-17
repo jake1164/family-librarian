@@ -1116,6 +1116,17 @@ Structured metadata should remain authoritative for:
 
 Local AI should be callable through a replaceable API layer such as an OpenAI-compatible endpoint.
 
+The optional `SearchGuidance` role is off by default. After scheduled external
+sources exhaust deterministic searches without an eligible download or product
+question, it may propose up to five bounded bibliographic searches. Proposed
+title, author and series strings are search hints; every result is evaluated
+against the requested catalog work and the source's effective confidence level.
+Evidence IDs and acquisition targets must come from supplied data. Guidance
+never authorizes a download or changes security, containment or content checks.
+Disabled or failed guidance preserves deterministic operation. Candidate and
+artifact semantic assessments remain advisory shadows; search guidance does
+not enable AI candidate triage or artifact release decisions.
+
 ---
 
 ## 17. Competitive / Reference Projects

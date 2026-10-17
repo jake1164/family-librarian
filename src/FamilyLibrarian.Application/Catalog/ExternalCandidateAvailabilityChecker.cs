@@ -134,7 +134,9 @@ public sealed class ExternalCandidateAvailabilityChecker(
         // candidate, re-run to re-derive it; one the current catalog data no longer plans yields nothing.
         var search = variant is null || variant.IsBase
             ? Acquisition.SearchVariantPlanner.BaseVariant(identity)
-            : Acquisition.SearchVariantPlanner.Plan(identity, mediaType).FirstOrDefault(candidate => candidate.Ref == variant);
+            : variant.Kind == Acquisition.SearchVariantKind.AiSuggestion
+                ? Acquisition.SearchGuidanceVariants.Restore(identity, variant)
+                : Acquisition.SearchVariantPlanner.Plan(identity, mediaType).FirstOrDefault(candidate => candidate.Ref == variant);
         return search is null
             ? []
             : SelectOneStrictCandidate(

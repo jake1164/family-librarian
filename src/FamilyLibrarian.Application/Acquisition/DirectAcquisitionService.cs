@@ -268,6 +268,7 @@ public sealed class DirectAcquisitionService(
                 // A pool-level decision may depend on other variants. Rebuild that evidence
                 // with the same deduplication, rather than treating one repeated query as the pool.
                 var pool = new ExternalCandidatePool(format.MediaType);
+                if (foundVariant.Kind == SearchVariantKind.AiSuggestion) pool.Merge(externalOptions, foundVariant);
                 foreach (var planned in SearchVariantPlanner.Plan(identity, format.MediaType))
                     pool.Merge(planned.Ref == foundVariant ? externalOptions :
                         await externalCandidateChecker.SearchVariantAsync(

@@ -22,7 +22,7 @@ namespace FamilyLibrarian.Application.Acquisition;
 /// language, release and attempt-budget gates apply before submission; every
 /// downloaded file still passes security and content validation.
 /// </summary>
-public sealed class ExternalProviderRecheckService(
+public sealed partial class ExternalProviderRecheckService(
     IRequestRepository requests,
     IProviderAttemptRepository attempts,
     IExternalProviderStore providers,
@@ -37,7 +37,8 @@ public sealed class ExternalProviderRecheckService(
     SemanticAssessment.ICandidateSemanticShadow? semanticShadow = null,
     ManualImportPolicy? importPolicy = null,
     AcquisitionQuestionService? questions = null,
-    ISavedAcquisitionQuestionAcceptor? savedQuestions = null)
+    ISavedAcquisitionQuestionAcceptor? savedQuestions = null,
+    SemanticAssessment.SearchGuidanceService? searchGuidance = null)
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
@@ -83,6 +84,7 @@ public sealed class ExternalProviderRecheckService(
                     continue;
                 }
 
+                var prepared = await PrepareSearchGuidanceAsync(request, format, work, scheduledProviders, cancellationToken);
                 foreach (var provider in scheduledProviders)
                 {
                     var latest = await attempts.FindLatestForFormatAsync(format.Id, provider.ProviderId, cancellationToken);
@@ -174,7 +176,14 @@ public sealed class ExternalProviderRecheckService(
                                 .DefaultIfEmpty(DateTimeOffset.MinValue).First();
                         }
 
-                        var search = await SearchPooledAsync(
+                        PooledSearch search;
+                        if (prepared.TryGetValue(provider.ProviderId, out var cached))
+                        {
+                            if (cached.TimedOut) searchCancellation.Cancel();
+                            cached.Error?.Throw();
+                            search = cached.Search!;
+                        }
+                        else search = await SearchPooledAsync(
                             provider, identity, format.MediaType, exclusions, searchCancellation, format.Id, retryPass, cycleStart,
                             cancellationToken);
                         var options = search.Options;
@@ -586,8 +595,17 @@ public sealed class ExternalProviderRecheckService(
         CancellationTokenSource searchCancellation, Guid requestFormatId, bool retryPass, DateTimeOffset cycleStartUtc,
         CancellationToken cancellationToken)
     {
-        var plan = SearchVariantPlanner.Plan(identity, mediaType);
         var memory = (await attempts.ListVariantAttemptsAsync(requestFormatId, provider.ProviderId, cancellationToken)).ToList();
+        var plan = SearchVariantPlanner.Plan(identity, mediaType).ToList();
+        if (retryPass)
+        {
+            foreach (var row in memory.Where(row => row.VariantKind == nameof(SearchVariantKind.AiSuggestion) &&
+                         row.LastResultCount > 0 && row.LastTriedAtUtc >= cycleStartUtc))
+            {
+                if (SearchGuidanceVariants.Restore(identity, new(SearchVariantKind.AiSuggestion, row.VariantKey)) is { } variant)
+                    plan.Add(variant);
+            }
+        }
         var pool = new ExternalCandidatePool(mediaType);
         var clockStart = clock.UtcNow;
         TimeSpan? rateLimited = null;

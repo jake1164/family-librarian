@@ -111,8 +111,10 @@ labels do not imply an edition change by themselves.
 Optional future semantic resolvers can consume this assessment after
 `DeterministicCandidateIdentityResolver.Assess` and before an ambiguous result
 is mapped to human review. They must preserve deterministic facts and cannot
-approve acquisition. No semantic resolver, AI setting or model dependency ships
-with this phase; deterministic operation is a complete supported mode.
+approve acquisition. The deterministic identity layer does not depend on a
+model; deterministic operation is a complete supported mode. Optional search
+guidance changes bounded search inputs only and does not act as a semantic
+identity resolver or enable AI candidate triage.
 
 Numbered audiobook fragments (`Part 2`, `1.of.2`, `2 of 2`) are completeness
 evidence distinct from work identity and from tracks inside one complete
@@ -523,6 +525,16 @@ strong or fuzzy author support. Ranking chooses one copy only after that whole-p
 check. Presentation deduplication cannot hide a different work or derivative from
 the check. Acquisition repeats the confidence decision against fresh source
 evidence; content validation still uses the catalog identity.
+
+Optional search guidance uses the existing structured search request and adds
+no provider capability or protocol field. Each `AiSuggestion` changes only the
+specified title or author dimension; a series-name proposal uses the existing
+series-position search shape. Its server-stored key identifies the reason and
+normalized value so acquisition can repeat the search against fresh source
+results. Provider IDs, candidate references, acquire tokens and download URLs
+are never model-selected targets. Only independently verified source results
+can enter the existing acquisition or requester-consent paths. See the
+[domain workflow](02-domain-workflows.md) for guidance eligibility and limits.
 
 Each automatic lookup creates an append-only, administrator-only
 provider-attempt entry containing provider ID, request format, attempt time,

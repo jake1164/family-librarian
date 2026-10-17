@@ -5,7 +5,8 @@ namespace FamilyLibrarian.Domain.Evidence;
 public enum SemanticSubjectKind
 {
     Candidate = 1,
-    Artifact = 2
+    Artifact = 2,
+    SearchGuidance = 3
 }
 
 /// <summary>
@@ -16,7 +17,8 @@ public enum SemanticSubjectKind
 /// <remarks>
 /// A finding records what the model said and how the call ended, including failures (a model that returns bad JSON is
 /// useful to know about). It never records a prompt, a reply verbatim, an excerpt or a key: only the validated verdict and
-/// claims, which cite evidence ids and carry short plain notes. Nothing reads a finding to make a decision.
+/// claims, which cite evidence ids and carry short plain notes. Shadow findings remain advisory. Search-guidance findings
+/// may be reused for bounded searches only; they never authorize acquisition or change verification.
 /// </remarks>
 public sealed class SemanticFinding
 {

@@ -1235,6 +1235,35 @@ recheck and at most the provider's attempt limit in total. Failed copies and
 reposts remain excluded. Requests requiring manual fulfillment are excluded,
 and batches consider the least recently searched requests first.
 
+**Optional AI search guidance:** the `SearchGuidance` role is off by default.
+It is considered only after deterministic variants finish for every scheduled
+external source for the requested format, with no candidate eligible for
+download and no product-choice question available. At most one guidance call
+is made per requested format and recheck cycle. With the role disabled, no
+guidance model-policy call is made.
+
+Guidance receives sanitized requested-work metadata, at most 15 pooled result
+summaries with fixed discard-reason codes, and previously tried variant keys.
+It may suggest an original-language title, alternate published title, series
+name, collection title or author form. At most five suggestions are accepted;
+values must be new and pass the bibliographic character, length and no-link
+rules. A new name is a search proposal only. Evidence IDs must have been
+supplied, and a collection suggestion must cite a result. Series searches use
+an existing, unambiguous catalog position. Suggestions run across scheduled
+sources, and results are pooled and verified against the requested work.
+Collection results still require deterministic containment proof before the
+existing requester question can be offered. Source confidence, attempt limits,
+consent, security and content checks continue to govern every download.
+
+Guidance uses the background model budget, a 400-token output cap and a linked
+60-second timeout, subject to installation limits. Refused, timed-out, failed,
+empty, invalid or inapplicable replies leave the deterministic result intact;
+caller cancellation still propagates. Call outcomes and validated proposals
+are persisted as semantic findings, and identical reusable findings are reused
+for seven days. A `give_up` reply ends extra searches for that cycle across
+sources; the base search remains eligible next cycle. Existing candidate and
+artifact semantic assessments remain advisory shadows.
+
 Project Gutenberg discovery reads the locally imported daily RDF catalogue, so it
 continues to work when external catalogue APIs are blocked. LibriVox discovery
 uses the upstream title-only search (not combined title-and-author filtering),

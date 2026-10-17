@@ -19,7 +19,10 @@ public enum ModelRole
     ArtifactValidationAssessment = 4,
 
     /// <summary>Identify a book from a cover image. Requires a vision-capable model.</summary>
-    VisionCoverIdentification = 5
+    VisionCoverIdentification = 5,
+
+    /// <summary>Propose bounded bibliographic searches; never authorize acquisition or change identity verification.</summary>
+    SearchGuidance = 6
 }
 
 /// <summary>Where a role's model runs. The choice is explicit and there is no automatic fallback from one to the other.</summary>
