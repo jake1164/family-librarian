@@ -43,6 +43,90 @@ public sealed class CwaPublishingServiceTests
         Assert.AreEqual(available, request.Status == RequestStatus.Available);
     }
 
+    private const string CollectionTitle = "The Lantern Cycle Books 1-3";
+
+    /// <summary>A request whose requester answered "Take it" to a question about <paramref name="kind"/>.</summary>
+    private static Guid AcceptVariant(TestContext context, AcquisitionQuestionKind kind, string offeredTitle, out BookRequest request)
+    {
+        request = new BookRequest(Guid.NewGuid(), Guid.NewGuid(), [RequestMediaType.Ebook], null, Now);
+        var formatId = request.Formats.Single().Id;
+        request.AskQuestion(kind, formatId, "Only a variant was found.",
+            [new RequestReviewCandidateInput(formatId, "sample-provider", "ref-1", offeredTitle, "J. R. R. Tolkien", "en", null, null, null, false)], Now);
+        request.AcceptReviewCandidate(request.ReviewCandidates.Single().Id, request.UserId, Now);
+        context.RequestFulfillment.Requests[formatId] = request;
+        return formatId;
+    }
+
+    // Live lab (Q-14): an accepted collection landed in CWA as "The Lantern Cycle Books 1-3" but the import stayed
+    // AwaitingVerification for ever, because verification looked CWA up by the requested book's title ("The Hobbit" here).
+    [TestMethod]
+    public async Task AnAcceptedCollectionIsFoundInCwaByItsOwnTitleNotTheRequestedBooksTitle()
+    {
+        var context = context_Configured();
+        context.WorkLookup.Isbn13s = ["9780000000001"];
+        context.CatalogClient.CatalogTitle = CollectionTitle;
+        context.CatalogClient.NextBookId = "42";
+        var formatId = AcceptVariant(context, AcquisitionQuestionKind.CollectionContaining, CollectionTitle, out var request);
+
+        await context.Service.PublishAsync(context.CreateAsset(formatId, request.WorkId), CancellationToken.None);
+
+        Assert.AreEqual(CollectionTitle, context.CatalogClient.LastTitle);
+        Assert.AreEqual("J. R. R. Tolkien", context.CatalogClient.LastAuthor, "The author still has to agree.");
+        Assert.IsEmpty(context.CatalogClient.LastIsbn13Candidates!, "The requested book's ISBN does not identify the collection.");
+        Assert.AreEqual(RequestStatus.Available, request.Status);
+    }
+
+    [TestMethod]
+    public async Task AnAcceptedCollectionIsAlsoFoundByItsOwnTitleOnARecheck()
+    {
+        var context = context_Configured();
+        context.CatalogClient.CatalogTitle = CollectionTitle;
+        context.CatalogClient.NextBookId = null;
+        var formatId = AcceptVariant(context, AcquisitionQuestionKind.CollectionContaining, CollectionTitle, out var request);
+        var asset = context.CreateAsset(formatId, request.WorkId);
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+        var import = await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(LibraryImportStatus.AwaitingVerification, import!.Status);
+
+        context.CatalogClient.NextBookId = "7";
+        await context.Service.RecheckAsync(import.Id, CancellationToken.None);
+
+        Assert.AreEqual(CollectionTitle, context.CatalogClient.LastTitle);
+        Assert.AreEqual(LibraryImportStatus.Available, (await context.Repository.FindAsync(import.Id, CancellationToken.None))!.Status);
+        Assert.AreEqual(RequestStatus.Available, request.Status);
+    }
+
+    [TestMethod]
+    public async Task ARequestThatDidNotAcceptACollectionStillLooksUpTheRequestedTitle()
+    {
+        var context = context_Configured();
+        context.CatalogClient.CatalogTitle = CollectionTitle;
+        context.CatalogClient.NextBookId = "42";
+        var request = new BookRequest(Guid.NewGuid(), Guid.NewGuid(), [RequestMediaType.Ebook], null, Now);
+        var formatId = request.Formats.Single().Id;
+        context.RequestFulfillment.Requests[formatId] = request;
+
+        await context.Service.PublishAsync(context.CreateAsset(formatId, request.WorkId), CancellationToken.None);
+
+        Assert.AreEqual("The Hobbit", context.CatalogClient.LastTitle);
+        Assert.AreEqual(RequestStatus.PendingAcquisition, request.Status, "Nothing in CWA carries the requested title.");
+    }
+
+    [TestMethod]
+    [DataRow(AcquisitionQuestionKind.AbridgedOnly)]
+    [DataRow(AcquisitionQuestionKind.PartsOnly)]
+    public async Task OnlyAnAcceptedCollectionChangesWhatIsLookedUp(AcquisitionQuestionKind kind)
+    {
+        var context = context_Configured();
+        context.CatalogClient.NextBookId = "42";
+        var formatId = AcceptVariant(context, kind, "The Hobbit", out var request);
+
+        await context.Service.PublishAsync(context.CreateAsset(formatId, request.WorkId), CancellationToken.None);
+
+        Assert.AreEqual("The Hobbit", context.CatalogClient.LastTitle);
+        Assert.AreEqual(RequestStatus.Available, request.Status);
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 8, 15, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
@@ -606,12 +690,29 @@ public sealed class CwaPublishingServiceTests
 
         public string? LastAcceptedLanguage { get; private set; }
 
+        public string? LastTitle { get; private set; }
+
+        public string? LastAuthor { get; private set; }
+
+        /// <summary>
+        /// When set, CWA holds the book under exactly this title (a collection is filed under its own title, not the
+        /// requested book's), so a lookup by any other title finds nothing.
+        /// </summary>
+        public string? CatalogTitle { get; set; }
+
         public Task<BookMatchResult> FindBookIdAsync(
             string title, string? author, IReadOnlyCollection<string> isbn13Candidates, CancellationToken cancellationToken,
             string? acceptedLanguage = null)
         {
+            LastTitle = title;
+            LastAuthor = author;
             LastIsbn13Candidates = isbn13Candidates;
             LastAcceptedLanguage = acceptedLanguage;
+            if (CatalogTitle is not null && !string.Equals(title, CatalogTitle, StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(BookMatchResult.NoMatchResult);
+            }
+
             if (Transport is { WriteCount: 0 } && !AlreadyInLibrary)
             {
                 return Task.FromResult(BookMatchResult.NoMatchResult);
@@ -624,7 +725,7 @@ public sealed class CwaPublishingServiceTests
 
             return Task.FromResult(NextBookId is null
                 ? BookMatchResult.NoMatchResult
-                : new DeterministicBookMatcher().ResolveUnique([new CandidateBook(NextBookId, title, author, NextLanguage)], acceptedLanguage));
+                : new DeterministicBookMatcher().ResolveUnique([new CandidateBook(NextBookId, CatalogTitle ?? title, author, NextLanguage)], acceptedLanguage));
         }
     }
 

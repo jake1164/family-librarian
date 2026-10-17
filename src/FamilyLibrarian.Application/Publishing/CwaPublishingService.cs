@@ -95,7 +95,8 @@ public sealed class CwaPublishingService(
         {
             var work = await workLookup.FindAsync(asset.WorkId, cancellationToken);
             var title = work?.Title ?? "Unknown title";
-            await TryVerifyAsync(import, asset, title, work?.PrimaryAuthor, work?.Isbn13s ?? [], cancellationToken);
+            var lookup = await ResolveCatalogLookupAsync(asset, work, cancellationToken);
+            await TryVerifyAsync(import, asset, title, lookup, cancellationToken);
 
             if (import.Status == LibraryImportStatus.AwaitingVerification)
             {
@@ -135,14 +136,14 @@ public sealed class CwaPublishingService(
     {
         var work = await workLookup.FindAsync(asset.WorkId, cancellationToken);
         var title = work?.Title ?? "Unknown title";
-        var author = work?.PrimaryAuthor;
-        var isbn13Candidates = work?.Isbn13s ?? [];
+        // What to look for in CWA. Usually the requested book; the book itself for everything shown to people.
+        var lookup = await ResolveCatalogLookupAsync(asset, work, cancellationToken);
 
         // Duplicate guard: a book CWA already holds (an earlier copy for this request, or one added by hand) is not
         // sent again. The existing entry stands in for this copy exactly as a verified import would: the format
         // becomes available against it and this file's local bytes are removed. Two copies of one ebook from two
         // sources reached the lab library before this.
-        if (await FindExistingBookIdAsync(asset, title, author, isbn13Candidates, cancellationToken) is { } existingBookId)
+        if (await FindExistingBookIdAsync(asset, lookup, cancellationToken) is { } existingBookId)
         {
             await audit.WriteAsync(
                 AuditActions.AssetPublishSkippedDuplicate,
@@ -175,7 +176,7 @@ public sealed class CwaPublishingService(
 
             // One best-effort immediate check; CWA's ingest is asynchronous, so
             // "not found yet" is expected and left for a later manual recheck.
-            await TryVerifyAsync(import, asset, title, author, isbn13Candidates, cancellationToken);
+            await TryVerifyAsync(import, asset, title, lookup, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -196,14 +197,13 @@ public sealed class CwaPublishingService(
     /// lookup never blocks publishing: at worst a duplicate is sent, which is what happened before this check.
     /// </summary>
     private async Task<string?> FindExistingBookIdAsync(
-        MediaAsset asset, string title, string? author, IReadOnlyList<string> isbn13Candidates,
-        CancellationToken cancellationToken)
+        MediaAsset asset, CatalogLookup lookup, CancellationToken cancellationToken)
     {
         try
         {
             var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
             var result = await catalogClient.FindBookIdAsync(
-                title, author, isbn13Candidates, cancellationToken, acceptedLanguage);
+                lookup.Title, lookup.Author, lookup.Isbn13s, cancellationToken, acceptedLanguage);
             return result.Decision == BookMatchDecision.Match ? result.MatchedId : null;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -231,15 +231,14 @@ public sealed class CwaPublishingService(
         LibraryImport import,
         MediaAsset asset,
         string title,
-        string? author,
-        IReadOnlyList<string> isbn13Candidates,
+        CatalogLookup lookup,
         CancellationToken cancellationToken)
     {
         try
         {
             var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
             var result = await catalogClient.FindBookIdAsync(
-                title, author, isbn13Candidates, cancellationToken, acceptedLanguage);
+                lookup.Title, lookup.Author, lookup.Isbn13s, cancellationToken, acceptedLanguage);
             if (result.Decision == BookMatchDecision.Match)
             {
                 await CompleteAsAvailableAsync(import, asset, result.MatchedId!, title, cancellationToken);
@@ -332,6 +331,27 @@ public sealed class CwaPublishingService(
     {
         var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
         return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
+    }
+
+    /// <summary>The title, author and ISBNs used to find a delivered book in CWA's catalog.</summary>
+    private sealed record CatalogLookup(string Title, string? Author, IReadOnlyList<string> Isbn13s);
+
+    /// <summary>
+    /// What identifies this delivery in CWA. Normally the requested work. When the requester accepted a collection that
+    /// contains the work ("Take it"), CWA files the book under the collection's own title and it carries none of the work's
+    /// ISBNs, so looking for the work finds nothing and the delivery would wait for verification for ever. The format
+    /// records the accepted collection's title as its accepted variant; look for that, still requiring the author to
+    /// agree. Any other accepted variant (abridged, other language, parts) is the work itself and is looked up as before.
+    /// </summary>
+    private async Task<CatalogLookup> ResolveCatalogLookupAsync(
+        MediaAsset asset, WorkSummary? work, CancellationToken cancellationToken)
+    {
+        var lookup = new CatalogLookup(work?.Title ?? "Unknown title", work?.PrimaryAuthor, work?.Isbn13s ?? []);
+        var request = await requestFulfillment.FindByFormatIdAsync(asset.AssociatedRequestFormatId, cancellationToken);
+        var format = request?.Formats.SingleOrDefault(candidate => candidate.Id == asset.AssociatedRequestFormatId);
+        return format is { AcceptedVariantKind: AcquisitionQuestionKind.CollectionContaining, AcceptedVariantDetail: { Length: > 0 } collectionTitle }
+            ? lookup with { Title = collectionTitle, Isbn13s = [] }
+            : lookup;
     }
 
     private async Task MarkRequestFormatAvailableAsync(
