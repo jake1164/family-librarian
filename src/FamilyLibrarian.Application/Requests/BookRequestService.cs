@@ -207,7 +207,7 @@ public sealed class BookRequestService(
         var initial = await repository.FindViewAsync(requestId, userId, cancellationToken);
         if (initial is null) return BookRequestCommandResult.NotFound();
 
-        return await repository.InCreateRequestScopeAsync(userId, initial.WorkId, async token =>
+        var result = await repository.InCreateRequestScopeAsync(userId, initial.WorkId, async token =>
         {
             var request = await repository.FindOwnedRequestAsync(requestId, userId, token);
             if (request is null) return BookRequestCommandResult.NotFound();
@@ -251,6 +251,14 @@ public sealed class BookRequestService(
             var view = await repository.FindViewAsync(requestId, userId, token);
             return BookRequestCommandResult.Success(view!);
         }, cancellationToken);
+
+        // Committed: a request asked for again is searched now, not at the next sweep.
+        if (to == RequestStatus.PendingAcquisition && result.Outcome == BookRequestCommandOutcome.Success)
+        {
+            fulfillmentSignal?.Request();
+        }
+
+        return result;
     }
 
     /// <summary>Lists requests for the administrative queue.</summary>
@@ -288,7 +296,7 @@ public sealed class BookRequestService(
 
         var initial = await repository.FindAdminViewAsync(requestId, cancellationToken);
         if (initial is null) return BookRequestCommandResult.NotFound();
-        return await repository.InCreateRequestScopeAsync(userId, initial.Request.WorkId, async token =>
+        var result = await repository.InCreateRequestScopeAsync(userId, initial.Request.WorkId, async token =>
         {
             var request = await repository.FindRequestForAdminAsync(requestId, token);
             if (request is null)
@@ -350,6 +358,13 @@ public sealed class BookRequestService(
 
             return BookRequestCommandResult.Success(view!.Request);
         }, cancellationToken);
+
+        if (to == RequestStatus.PendingAcquisition && result.Outcome == BookRequestCommandOutcome.Success)
+        {
+            fulfillmentSignal?.Request();
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -407,6 +422,11 @@ public sealed class BookRequestService(
         }
 
         await repository.SaveChangesAsync(cancellationToken);
+        if (candidates.Count > 0)
+        {
+            fulfillmentSignal?.Request();
+        }
+
         return BulkRecheckResult.Success(candidates.Count);
     }
 
