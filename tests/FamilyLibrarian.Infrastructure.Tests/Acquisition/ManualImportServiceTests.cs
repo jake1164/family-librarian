@@ -56,6 +56,24 @@ public sealed class ManualImportServiceTests
     }
 
     [TestMethod]
+    public async Task TheSameFileArrivingTwiceAtOnceIsStagedOnce()
+    {
+        // The hosted worker and an administrator's direct acquisition can fetch the same book at the same moment.
+        // The duplicate check only sees saved assets, so without serializing per format both pass it.
+        var context = new TestContext();
+        context.StagingStore.WriteDelay = TimeSpan.FromMilliseconds(150);
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+
+        var results = await Task.WhenAll(
+            context.Service.ImportAsync(request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None),
+            context.Service.ImportAsync(request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None));
+
+        Assert.HasCount(1, context.Repository.Assets);
+        Assert.AreEqual(1, results.Count(result => result.Outcome == ManualImportOutcome.Success));
+        Assert.AreEqual(1, results.Count(result => result.Outcome == ManualImportOutcome.DuplicateDetected));
+    }
+
+    [TestMethod]
     public async Task ACleanImportStagesAJobAndAsset()
     {
         var context = new TestContext();
@@ -306,12 +324,26 @@ public sealed class ManualImportServiceTests
 
         public void AddAsset(MediaAsset asset) => Assets.Add(asset);
 
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task SaveChangesAsync(CancellationToken cancellationToken)
+        {
+            // What a database would now answer to the duplicate-content lookup.
+            lock (ExistingChecksums)
+            {
+                foreach (var asset in Assets)
+                {
+                    ExistingChecksums.Add((asset.AssociatedRequestFormatId, asset.Sha256));
+                }
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeStagingStore : IAssetStagingStore
     {
-        public int WriteCount { get; private set; }
+        private int _writeCount;
+
+        public int WriteCount => _writeCount;
 
         public int DeleteCount { get; private set; }
 
@@ -319,15 +351,22 @@ public sealed class ManualImportServiceTests
 
         public string NextDetectedMimeType { get; set; } = "application/epub+zip";
 
-        public Task<StagedFile> WriteToQuarantineAsync(
+        public TimeSpan WriteDelay { get; set; }
+
+        public async Task<StagedFile> WriteToQuarantineAsync(
             Stream content, string originalFilename, long maxSizeBytes, CancellationToken cancellationToken)
         {
-            WriteCount++;
-            return Task.FromResult(new StagedFile(
+            Interlocked.Increment(ref _writeCount);
+            if (WriteDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(WriteDelay, cancellationToken);
+            }
+
+            return new StagedFile(
                 $"{Guid.NewGuid():N}{Path.GetExtension(originalFilename)}",
                 SizeBytes: 1024,
                 NextSha256,
-                NextDetectedMimeType));
+                NextDetectedMimeType);
         }
 
         public Task<Stream> OpenAsync(

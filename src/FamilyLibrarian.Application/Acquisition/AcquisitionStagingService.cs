@@ -34,6 +34,12 @@ public sealed class AcquisitionStagingService(
     IAuditWriter audit,
     IClock clock)
 {
+    // The same copy can arrive twice at once -- the hosted worker and an administrator's direct acquisition both
+    // fetching one book. The duplicate-content check below only sees assets already saved, so without this the two
+    // passes both succeed and the format gets two copies (and, for an audiobook, two bundles published). Staging is
+    // serialized per format so the second pass runs after the first has saved and is refused as a duplicate.
+    private static readonly KeyedAsyncLock FormatStagingLock = new();
+
     public async Task<ManualImportResult> StageAsync(
         BookRequest request,
         RequestFormat format,
@@ -63,6 +69,8 @@ public sealed class AcquisitionStagingService(
                 cancellationToken);
             return ManualImportResult.WaitingForSecurityScanner();
         }
+
+        using var formatLock = await FormatStagingLock.AcquireAsync(format.Id, cancellationToken);
 
         var (staged, error) = await WriteAndValidateContentAsync(
             format, content, originalFilename, extension, cancellationToken);
@@ -182,6 +190,8 @@ public sealed class AcquisitionStagingService(
                 cancellationToken);
             return ManualImportResult.WaitingForSecurityScanner();
         }
+
+        using var formatLock = await FormatStagingLock.AcquireAsync(format.Id, cancellationToken);
 
         var quarantined = new List<StagedFile>();
         var staged = new List<StagedFile>();

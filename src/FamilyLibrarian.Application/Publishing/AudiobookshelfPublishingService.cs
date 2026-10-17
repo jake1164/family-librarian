@@ -36,6 +36,8 @@ public sealed class AudiobookshelfPublishingService(
     NotificationService notifications,
     Acquisition.FulfilledFormatDownloadCancellation? remainingDownloads = null)
 {
+    private static readonly Acquisition.KeyedAsyncLock BundlePublishLock = new();
+
     public async Task PublishAsync(MediaAsset asset, CancellationToken cancellationToken)
     {
         var settings = await settingsStore.FindAsync(cancellationToken);
@@ -244,7 +246,7 @@ public sealed class AudiobookshelfPublishingService(
         // be published (see ApprovalService). Audiobookshelf only lists an uploaded item after a scan, so the
         // "already there?" lookup cannot tell the second request that the first has uploaded. Serialize per bundle and
         // let the persisted delivery decide: once it is Verifying or Delivered the upload has already been sent.
-        using var bundleLock = await BundlePublishLocks.AcquireAsync(bundleId, cancellationToken);
+        using var bundleLock = await BundlePublishLock.AcquireAsync(bundleId, cancellationToken);
 
         var delivery = await repository.FindByBundleIdAsync(bundleId, cancellationToken);
         if (delivery is { Status: AudiobookshelfDeliveryStatus.Verifying or AudiobookshelfDeliveryStatus.Delivered })
