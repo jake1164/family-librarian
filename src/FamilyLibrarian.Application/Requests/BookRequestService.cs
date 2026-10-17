@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Delivery;
@@ -27,7 +28,8 @@ public sealed class BookRequestService(
     OutboundCommunicationService outboundCommunications,
     IFormatReadinessService readiness,
     IWorkFulfillmentOptionsService fulfillmentOptions,
-    IDeliveryTargetRepository deliveryTargets)
+    IDeliveryTargetRepository deliveryTargets,
+    IAutomaticFulfillmentSignal? fulfillmentSignal = null)
 {
     /// <summary>
     /// The status changes a requester may make. Moving a request to
@@ -118,7 +120,7 @@ public sealed class BookRequestService(
             return CreateBookRequestResult.Invalid("To request another copy, specify a language, edition, narration, accessibility need, or replacement reason for librarian review.");
         }
 
-        return await repository.InCreateRequestScopeAsync(
+        var result = await repository.InCreateRequestScopeAsync(
             userId,
             workId,
             async token =>
@@ -174,6 +176,15 @@ public sealed class BookRequestService(
                 return CreateBookRequestResult.Created(created!);
             },
             cancellationToken);
+
+        // The scope has committed, so the worker will find the request. Without this a new request waited for the
+        // next two-minute sweep before anything was searched. Only a latency hint: the sweep remains the guarantee.
+        if (result.Outcome == CreateBookRequestOutcome.Created)
+        {
+            fulfillmentSignal?.Request();
+        }
+
+        return result;
     }
 
     public async Task<IReadOnlyList<BookRequestView>> ListMineAsync(
