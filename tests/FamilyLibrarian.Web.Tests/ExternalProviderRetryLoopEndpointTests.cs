@@ -84,9 +84,7 @@ public sealed class ExternalProviderRetryLoopEndpointTests
 
         // Its job fails after submit.
         var wakeUp = factory.Services.GetRequiredService<FamilyLibrarian.Web.Acquisition.AutomaticFulfillmentSignal>();
-        Assert.IsFalse(
-            await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None),
-            "Nothing has failed yet, so nothing should have asked for a pass.");
+        await RetryLoopSupport.DrainWakeUpAsync(wakeUp);
         await RetryLoopSupport.RunPollingAsync(factory);
 
         // The failure must wake the fulfillment worker, or the next candidate
@@ -327,7 +325,7 @@ public sealed class ExternalProviderCancelledJobEndpointTests
         }
 
         var wakeUp = factory.Services.GetRequiredService<FamilyLibrarian.Web.Acquisition.AutomaticFulfillmentSignal>();
-        Assert.IsFalse(await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None));
+        await RetryLoopSupport.DrainWakeUpAsync(wakeUp);
         await RetryLoopSupport.RunPollingAsync(factory);
 
         Assert.IsTrue(
@@ -424,7 +422,7 @@ public sealed class ExternalProviderIdentityHoldRetryEndpointTests
         Assert.AreEqual(RetryLoopExternalProviderClient.FailingReference, client.LastSubmittedCandidate);
 
         var wakeUp = factory.Services.GetRequiredService<FamilyLibrarian.Web.Acquisition.AutomaticFulfillmentSignal>();
-        Assert.IsFalse(await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None));
+        await RetryLoopSupport.DrainWakeUpAsync(wakeUp);
         await RetryLoopSupport.RunPollingAsync(factory);
         Assert.IsTrue(
             await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None),
@@ -1009,6 +1007,17 @@ file static class RetryLoopSupport
         await using var scope = factory.Services.CreateAsyncScope();
         var rechecks = scope.ServiceProvider.GetRequiredService<ExternalProviderRecheckService>();
         await rechecks.ProcessDueAsync(CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Creating a request legitimately asks the fulfillment worker to run, so that wake-up is already pending when the
+    /// test reaches the failure it is about. Clear it so the assertion afterwards proves the failure raised its own.
+    /// </summary>
+    public static async Task DrainWakeUpAsync(FamilyLibrarian.Web.Acquisition.AutomaticFulfillmentSignal wakeUp)
+    {
+        while (await wakeUp.WaitAsync(TimeSpan.Zero, CancellationToken.None))
+        {
+        }
     }
 
     public static async Task RunPollingAsync(FamilyLibrarianAppFactory factory)
