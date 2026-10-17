@@ -239,7 +239,19 @@ public sealed class AudiobookshelfPublishingService(
         }
 
         var bundleId = tracks[0].BundleId!.Value;
+
+        // The last two tracks of a set can be approved at the same moment, and each then asks for the whole bundle to
+        // be published (see ApprovalService). Audiobookshelf only lists an uploaded item after a scan, so the
+        // "already there?" lookup cannot tell the second request that the first has uploaded. Serialize per bundle and
+        // let the persisted delivery decide: once it is Verifying or Delivered the upload has already been sent.
+        using var bundleLock = await BundlePublishLocks.AcquireAsync(bundleId, cancellationToken);
+
         var delivery = await repository.FindByBundleIdAsync(bundleId, cancellationToken);
+        if (delivery is { Status: AudiobookshelfDeliveryStatus.Verifying or AudiobookshelfDeliveryStatus.Delivered })
+        {
+            return;
+        }
+
         if (delivery is null)
         {
             delivery = AudiobookshelfDelivery.ForBundle(bundleId, clock.UtcNow);

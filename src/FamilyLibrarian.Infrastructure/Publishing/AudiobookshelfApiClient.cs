@@ -56,7 +56,7 @@ public sealed class AudiobookshelfApiClient(
 
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         return await matchService.MatchByTitleAuthorAsync(
-            title, author, ExtractCandidates(body), cancellationToken, acceptedLanguage);
+            title, author, ExtractCandidates(body, title), cancellationToken, acceptedLanguage);
     }
 
     public Task<AudiobookshelfUploadResult> UploadAsync(
@@ -149,7 +149,13 @@ public sealed class AudiobookshelfApiClient(
     /// match, so an ambiguous library (two items matching this title) is
     /// reported as such instead of the first one silently winning.
     /// </summary>
-    private static List<CandidateBook> ExtractCandidates(string listResponseJson)
+    /// <remarks>
+    /// Audiobookshelf prefers the audio file's own tags over the upload folder when naming an item, so an accepted
+    /// collection or other variant is listed under its tagged title even though it was uploaded as the requested
+    /// book. When the item's folder (the last segment of <c>relPath</c>, named from the title we uploaded under) is the
+    /// requested title, that title is used so we recognise our own upload.
+    /// </remarks>
+    private static List<CandidateBook> ExtractCandidates(string listResponseJson, string requestedTitle)
     {
         JsonNode? root;
         try
@@ -178,6 +184,11 @@ public sealed class AudiobookshelfApiClient(
                 continue;
             }
 
+            if (UploadFolderIsTheRequestedTitle(item?["relPath"]?.GetValue<string>(), requestedTitle))
+            {
+                itemTitle = requestedTitle;
+            }
+
             var itemAuthor = metadata?["authorName"]?.GetValue<string>();
             var itemLanguage = metadata?["language"]?.GetValue<string>();
             candidates.Add(new CandidateBook(id, itemTitle, itemAuthor, itemLanguage));
@@ -185,6 +196,21 @@ public sealed class AudiobookshelfApiClient(
 
         return candidates;
     }
+
+    private static bool UploadFolderIsTheRequestedTitle(string? relPath, string requestedTitle)
+    {
+        if (string.IsNullOrWhiteSpace(relPath))
+        {
+            return false;
+        }
+
+        var folder = relPath.Replace('\\', '/').TrimEnd('/').Split('/')[^1];
+        // Audiobookshelf strips characters a path cannot hold, so compare letters and digits only.
+        return FoldToLettersAndDigits(folder) is { Length: > 0 } folded && folded == FoldToLettersAndDigits(requestedTitle);
+    }
+
+    private static string FoldToLettersAndDigits(string value) =>
+        string.Concat(value.Where(char.IsLetterOrDigit)).ToLowerInvariant();
 
     private static string? ExtractItemId(string uploadResponseJson)
     {

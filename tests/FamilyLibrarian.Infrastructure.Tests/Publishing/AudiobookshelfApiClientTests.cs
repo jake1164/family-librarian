@@ -87,6 +87,35 @@ public sealed class AudiobookshelfApiClientTests
         Assert.AreEqual(BookMatchDecision.NoMatch, result.Decision);
     }
 
+    [TestMethod]
+    public async Task AnItemAudiobookshelfNamedFromTheFilesTagIsFoundByTheTitleItWasUploadedUnder()
+    {
+        // Audiobookshelf prefers the audio file's own tags over the upload's folder name, so a collection or other
+        // accepted variant is stored under its own tagged title. The folder is still the title Family Librarian
+        // uploaded it as, and is the only way to recognise our own upload.
+        var client = ClientReturningItems(
+            ItemWithFolder("The Lantern Cycle Books 1-3", "Mara Quillon", "li_1", "Mara Quillon/Cinder Gate"));
+
+        var result = await client.FindExistingItemIdAsync("Cinder Gate", "Mara Quillon", CancellationToken.None);
+
+        Assert.AreEqual(BookMatchDecision.Match, result.Decision);
+        Assert.AreEqual("li_1", result.MatchedId);
+    }
+
+    [TestMethod]
+    public async Task AFolderNameThatIsNotTheRequestedTitleDoesNotMakeAnItemMatch()
+    {
+        var client = ClientReturningItems(
+            ItemWithFolder("The Lantern Cycle Books 1-3", "Mara Quillon", "li_1", "Mara Quillon/Another Book"));
+
+        var result = await client.FindExistingItemIdAsync("Cinder Gate", "Mara Quillon", CancellationToken.None);
+
+        Assert.AreEqual(BookMatchDecision.NoMatch, result.Decision);
+    }
+
+    private static string ItemWithFolder(string title, string author, string id, string relPath) =>
+        $$"""{"id": "{{id}}", "relPath": "{{relPath}}", "media": {"metadata": {"title": "{{title}}", "authorName": "{{author}}" } } }""";
+
     private static string Item(string title, string? author, string id)
     {
         var authorField = author is null ? string.Empty : $", \"authorName\": \"{author}\"";
