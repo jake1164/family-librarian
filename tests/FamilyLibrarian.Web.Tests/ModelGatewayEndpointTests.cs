@@ -16,7 +16,7 @@ public sealed class ModelGatewayEndpointTests
     private static readonly string[] ExpectedRoles =
     [
         "IntentInterpretation", "ConversationResponse", "CandidateAmbiguityAssessment",
-        "ArtifactValidationAssessment", "VisionCoverIdentification", "SearchGuidance"
+        "ArtifactValidationAssessment", "VisionCoverIdentification", "SearchGuidance", "CandidateTriage"
     ];
     private static WebTestFixture? fixture;
 
@@ -95,7 +95,7 @@ public sealed class ModelGatewayEndpointTests
         Assert.IsFalse(initial!.IsEnabled);
         Assert.IsFalse(initial.AllowCloud);
         Assert.IsFalse(initial.HasApiKey);
-        Assert.AreEqual(6, initial.Roles.Count);
+        Assert.AreEqual(ExpectedRoles.Length, initial.Roles.Count);
         CollectionAssert.AreEquivalent(ExpectedRoles, initial.Roles.Select(role => role.Role).ToArray());
         Assert.IsTrue(initial.Roles.All(role => !role.IsEnabled));
 

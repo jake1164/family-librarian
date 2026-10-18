@@ -54,6 +54,18 @@ public static class SeriesPositionResolver
         var candidates = known
             .Where(book => Tokens(book.SeriesName) is { Count: > 0 } tokens && wanted.IsSubsetOf(tokens))
             .ToArray();
+        if (candidates.Length == 0)
+        {
+            // People name a series after its first book ("the Fourth Wing series") while the catalog calls it something else
+            // ("The Empyrean"): a book whose whole title is the wanted name leads to the series it belongs to.
+            var wantedTitle = CatalogText.NormalizeForMatch(wantedSeries);
+            var owners = known.Where(book => CatalogText.NormalizeForMatch(book.Title) == wantedTitle && Tokens(book.SeriesName).Count > 0)
+                .Select(book => book.SeriesName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            candidates = owners.Length == 0
+                ? []
+                : known.Where(book => owners.Contains(book.SeriesName, StringComparer.OrdinalIgnoreCase)).ToArray();
+        }
+
         var bySeries = candidates
             .GroupBy(book => string.Join(' ', Tokens(book.SeriesName).Order(StringComparer.Ordinal)))
             .ToArray();
@@ -82,7 +94,8 @@ public static class SeriesPositionResolver
 
         if (position is null)
         {
-            var listing = books.Where(book => book.Position is not null).OrderBy(book => book.Position).ThenBy(book => book.Title, StringComparer.Ordinal)
+            // Numbered books in order, then entries the catalog gives no number (companion novellas such as a "Threshing Day").
+            var listing = books.OrderBy(book => book.Position is null).ThenBy(book => book.Position).ThenBy(book => book.Title, StringComparer.Ordinal)
                 .Take(maxListed).ToArray();
             return listing.Length == 0
                 ? new SeriesLookupResult(SeriesLookupKind.PositionMissing, name, [], [], positions)
@@ -94,6 +107,82 @@ public static class SeriesPositionResolver
         return atPosition.Length == 0
             ? new SeriesLookupResult(SeriesLookupKind.PositionMissing, name, [], [], positions)
             : new SeriesLookupResult(SeriesLookupKind.Found, name, atPosition, [], positions);
+    }
+
+    /// <summary>
+    /// The book that follows the named one: the next higher position, so a half-step such as 3.5 is reached in between. The series
+    /// comes from <paramref name="wantedSeries"/>, or, when none was said, from the series the named title itself belongs to.
+    /// Never guesses: an unknown title, or one with no position, gives no answer.
+    /// </summary>
+    public static SeriesLookupResult ResolveAfter(IEnumerable<SeriesBook> known, string? wantedSeries, string afterTitle, int maxListed)
+    {
+        var books = known as IReadOnlyCollection<SeriesBook> ?? known.ToArray();
+        var anchorName = CatalogText.NormalizeForMatch(afterTitle);
+        if (anchorName.Length == 0)
+        {
+            return new SeriesLookupResult(SeriesLookupKind.NotFound, null, [], [], []);
+        }
+
+        var seriesName = wantedSeries;
+        if (string.IsNullOrWhiteSpace(seriesName))
+        {
+            var owners = books.Where(book => IsTitle(book.Title, anchorName) && !string.IsNullOrWhiteSpace(book.SeriesName))
+                .Select(book => book.SeriesName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (owners.Length == 0)
+            {
+                return new SeriesLookupResult(SeriesLookupKind.NotFound, null, [], [], []);
+            }
+
+            var distinctSeries = owners.GroupBy(name => string.Join(' ', Tokens(name).Order(StringComparer.Ordinal))).ToArray();
+            if (distinctSeries.Length > 1)
+            {
+                return new SeriesLookupResult(SeriesLookupKind.AmbiguousSeries, null, [], owners.Take(5).ToArray(), []);
+            }
+
+            seriesName = owners[0];
+        }
+
+        var listed = Resolve(books, seriesName, null, int.MaxValue);
+        if (listed.Kind is SeriesLookupKind.NotFound or SeriesLookupKind.AmbiguousSeries)
+        {
+            return listed;
+        }
+
+        var anchor = listed.Books.FirstOrDefault(book => IsTitle(book.Title, anchorName));
+        if (anchor is null)
+        {
+            return new SeriesLookupResult(SeriesLookupKind.NotFound, null, [], [], []);
+        }
+
+        var following = anchor.Position is { } at
+            ? listed.Books.Where(book => book.Position > at).ToArray()
+            : [];
+        if (following.Length == 0)
+        {
+            return new SeriesLookupResult(SeriesLookupKind.PositionMissing, listed.SeriesName, [], [], listed.KnownPositions);
+        }
+
+        var next = following.Min(book => book.Position);
+        return new SeriesLookupResult(
+            SeriesLookupKind.Found, listed.SeriesName, following.Where(book => book.Position == next).Take(maxListed).ToArray(), [], listed.KnownPositions);
+    }
+
+    /// <summary>True when the title is the named one, ignoring case, punctuation and a leading article, or one contains the other as whole words.</summary>
+    private static bool IsTitle(string title, string normalizedWanted)
+    {
+        var normalized = CatalogText.NormalizeForMatch(title);
+        if (normalized.Length == 0)
+        {
+            return false;
+        }
+
+        if (normalized == normalizedWanted)
+        {
+            return true;
+        }
+
+        var (shorter, longer) = normalized.Length <= normalizedWanted.Length ? (normalized, normalizedWanted) : (normalizedWanted, normalized);
+        return shorter.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 2 && $" {longer} ".Contains($" {shorter} ", StringComparison.Ordinal);
     }
 
     /// <summary>Stands for "the last/latest book" in a lookup.</summary>
@@ -129,17 +218,21 @@ public static class SeriesPositionResolver
 /// <summary>Gathers series facts from provider search results and from the series the household's catalog already records.</summary>
 public sealed class SeriesPositionService(ICatalogSearchService search, ICatalogRepository catalog)
 {
-    public async Task<SeriesLookupResult> FindAsync(string seriesName, decimal? position, int maxBooks, CancellationToken cancellationToken)
+    public async Task<SeriesLookupResult> FindAsync(
+        string seriesName, decimal? position, string? afterTitle, int maxBooks, CancellationToken cancellationToken)
     {
         var name = seriesName.Trim();
-        if (!CatalogSearchLimits.IsValidQueryText(name))
+        var title = afterTitle?.Trim();
+        if ((name.Length > 0 || title is not { Length: > 0 }) && !CatalogSearchLimits.IsValidQueryText(name))
         {
             return new SeriesLookupResult(SeriesLookupKind.NotFound, null, [], [], []);
         }
 
+        // A "next after" question searches the series name and the named title: the title is what tells us the series when none was said.
+        var queries = new[] { name, title ?? string.Empty }.Where(query => query.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var outcomes = await Task.WhenAll(queries.Select(query => search.SearchAsync(new BookSearchQuery(query), cancellationToken)));
         var known = new List<SeriesBook>();
-        var outcome = await search.SearchAsync(new BookSearchQuery(name), cancellationToken);
-        foreach (var candidate in outcome.Candidates)
+        foreach (var candidate in outcomes.SelectMany(outcome => outcome.Candidates))
         {
             foreach (var series in candidate.Series)
             {
@@ -149,8 +242,14 @@ public sealed class SeriesPositionService(ICatalogSearchService search, ICatalog
             }
         }
 
-        known.AddRange(await RecordedSeriesAsync(name, cancellationToken));
-        return SeriesPositionResolver.Resolve(known, name, position, maxBooks);
+        if (name.Length > 0)
+        {
+            known.AddRange(await RecordedSeriesAsync(name, cancellationToken));
+        }
+
+        return title is { Length: > 0 }
+            ? SeriesPositionResolver.ResolveAfter(known, name, title, maxBooks)
+            : SeriesPositionResolver.Resolve(known, name, position, maxBooks);
     }
 
     /// <summary>Series already recorded for works the household resolved, reached through the work's own catalog reference.</summary>

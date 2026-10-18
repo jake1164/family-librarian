@@ -22,7 +22,10 @@ public enum ModelRole
     VisionCoverIdentification = 5,
 
     /// <summary>Propose bounded bibliographic searches; never authorize acquisition or change identity verification.</summary>
-    SearchGuidance = 6
+    SearchGuidance = 6,
+
+    /// <summary>Grounded candidate triage; never bypasses security or artifact validation.</summary>
+    CandidateTriage = 7
 }
 
 /// <summary>Where a role's model runs. The choice is explicit and there is no automatic fallback from one to the other.</summary>

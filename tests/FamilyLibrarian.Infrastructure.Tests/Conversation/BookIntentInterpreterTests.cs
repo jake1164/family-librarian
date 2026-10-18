@@ -171,7 +171,7 @@ public sealed class BookIntentInterpreterTests
     [TestMethod]
     public async Task ASentenceWithWeakCatalogResultsIsInterpretedAndTheGuessReplacesThemWithOneLeadLine()
     {
-        const string Sentence = "what book is next after sum of all fears";
+        const string Sentence = "which novel is the one with the russian submarine captain";
         var interpreter = new FakeInterpreter(_ => new BookIntentInterpretation(BookIntent.FindBook, "The Sum of All Fears", "Tom Clancy"));
         var harness = Harness(interpreter);
         harness.Tools.Results[Sentence] = new ConversationSearchResult(
@@ -192,7 +192,7 @@ public sealed class BookIntentInterpreterTests
     [TestMethod]
     public async Task ASentenceWhoseGuessFindsNothingKeepsTheOriginalResults()
     {
-        const string Sentence = "what book is next after sum of all fears";
+        const string Sentence = "which novel is the one with the russian submarine captain";
         var interpreter = new FakeInterpreter(_ => new BookIntentInterpretation(BookIntent.FindBook, "A Book Nobody Wrote", null));
         var harness = Harness(interpreter);
         harness.Tools.Results[Sentence] = new ConversationSearchResult([FakeTools.Choice("x1", "Dimensions of Prayer", "Someone")], false, []);

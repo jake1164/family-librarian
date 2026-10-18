@@ -435,6 +435,8 @@
         "CandidateAmbiguityAssessment" => "Assess ambiguous candidates",
         "ArtifactValidationAssessment" => "Assess downloaded files",
         "VisionCoverIdentification" => "Identify books from cover images",
+        "SearchGuidance" => "Suggest additional searches",
+        "CandidateTriage" => "Review candidates before acquisition",
         _ => role
     };
 
@@ -445,6 +447,8 @@
         "CandidateAmbiguityAssessment" => "Adds a note to candidates the matcher could not tell apart. Shown to administrators only; it never changes the match.",
         "ArtifactValidationAssessment" => "Adds a note to a file's recorded evidence. Shown to administrators only; it never lifts a hold.",
         "VisionCoverIdentification" => "Needs a vision-capable model. A suggestion is only a lead: it must be confirmed against a metadata lookup.",
+        "SearchGuidance" => "Suggests bounded title, author or series searches when fixed searches find no acceptable copy. Every result is checked against the requested book.",
+        "CandidateTriage" => "May veto a candidate, break a tie, or recognize a corroborated author variant. Source confidence and file validation still apply. Off by default.",
         _ => string.Empty
     };
 }

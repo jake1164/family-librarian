@@ -240,4 +240,24 @@ public sealed class SeriesPositionTests
         StringAssert.Contains(listing.Reply.Text, "in order");
         Assert.AreEqual("The Lantern Road|Lanterns at Dusk|The Last Lantern", string.Join("|", listing.Reply.Choices.Select(choice => choice.Title)));
     }
+
+    [TestMethod]
+    public async Task TheBookAfterANamedBookIsOfferedAndTheLatestOneSaysSo()
+    {
+        var harness = new ConversationHarness();
+        harness.Tools.SeriesResults["Lantern Road"] = Found(Lanterns[2]);
+
+        var next = await harness.SayAsync("what is the next book in Lantern Road after Lanterns at Dusk");
+
+        Assert.AreEqual(ConversationReplyKind.Choices, next.Reply.Kind);
+        StringAssert.Contains(next.Reply.Text, "After Lanterns at Dusk, the next book in The Lantern Road is");
+        StringAssert.Contains(next.Reply.Text, "The Last Lantern");
+        CollectionAssert.Contains(harness.Tools.Calls, "series:Lantern Road|all|after:Lanterns at Dusk");
+
+        harness.Tools.SeriesResults["Lantern Road"] = new SeriesLookupResult(SeriesLookupKind.PositionMissing, "The Lantern Road", [], [], [1m, 2m, 3m, 4m]);
+        var last = await harness.SayAsync("what is the next book in Lantern Road after Road's End");
+
+        Assert.AreEqual(ConversationReplyKind.Text, last.Reply.Kind);
+        StringAssert.Contains(last.Reply.Text, "I don't know of a book after");
+    }
 }

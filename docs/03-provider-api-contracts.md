@@ -116,13 +116,20 @@ scan and artifact-identity checks remain deterministic. A language assertion
 is not discarded because it appears in brackets. Unclassified publisher/uploader
 labels do not imply an edition change by themselves.
 
-Optional future semantic resolvers can consume this assessment after
-`DeterministicCandidateIdentityResolver.Assess` and before an ambiguous result
-is mapped to human review. They must preserve deterministic facts and cannot
-approve acquisition. The deterministic identity layer does not depend on a
-model; deterministic operation is a complete supported mode. Optional search
-guidance changes bounded search inputs only and does not act as a semantic
-identity resolver or enable AI candidate triage.
+The deterministic identity layer does not depend on a model; deterministic
+operation is a complete supported mode. Existing candidate/artifact semantic
+assessments remain advisory shadows. Optional search guidance changes bounded
+search inputs only and does not enable candidate triage.
+
+The separate, off-by-default `CandidateTriage` role consumes these facts before
+automatic submission. It preserves the assessment and uses only server-supplied
+candidate/evidence IDs. Independent server rules allow a grounded veto, a true
+tie preference, or a corroborated author-only variant at Standard/Liberal
+confidence. Strict is unchanged. This requires no provider protocol extension:
+the selected candidate is retrieved and verified again through the existing
+query/reference flow, and altered source facts invalidate the decision.
+Triage cannot invent acquisition targets, preconfirm artifact identity or
+bypass any security, edition, completeness or delivery check.
 
 Numbered audiobook fragments (`Part 2`, `1.of.2`, `2 of 2`) are completeness
 evidence distinct from work identity and from tracks inside one complete

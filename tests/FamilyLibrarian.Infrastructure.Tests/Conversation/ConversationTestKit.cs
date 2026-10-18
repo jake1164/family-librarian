@@ -178,9 +178,9 @@ internal sealed class FakeTools : IConversationTools
         return Task.FromResult<ConversationLibraryResult?>(NextLibraryResult ?? new ConversationLibraryResult("Dune", "Frank Herbert", ["ebook"], false));
     }
 
-    public Task<SeriesLookupResult> FindSeriesBooksAsync(string seriesName, decimal? position, int maxBooks, CancellationToken cancellationToken)
+    public Task<SeriesLookupResult> FindSeriesBooksAsync(string seriesName, decimal? position, string? afterTitle, int maxBooks, CancellationToken cancellationToken)
     {
-        Calls.Add($"series:{seriesName}|{position?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "all"}");
+        Calls.Add($"series:{seriesName}|{position?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "all"}" + (afterTitle is null ? "" : $"|after:{afterTitle}"));
         return Task.FromResult(SeriesResults.GetValueOrDefault(seriesName) ?? new SeriesLookupResult(SeriesLookupKind.NotFound, null, [], [], []));
     }
 

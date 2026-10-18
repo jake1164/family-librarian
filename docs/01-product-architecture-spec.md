@@ -1127,6 +1127,14 @@ Disabled or failed guidance preserves deterministic operation. Candidate and
 artifact semantic assessments remain advisory shadows; search guidance does
 not enable AI candidate triage or artifact release decisions.
 
+The separate `CandidateTriage` role is also off by default. When enabled, it
+can veto an automatic candidate, choose between equally ranked eligible
+candidates, or resolve an author-only conflict with independent bibliographic
+corroboration. The server enforces each move against supplied candidates and
+evidence; Strict never gains an AI confidence upgrade. Every submission checks
+fresh source facts, and downloaded files still pass all security, identity and
+delivery checks. Candidate triage does not enable artifact release decisions.
+
 ---
 
 ## 17. Competitive / Reference Projects

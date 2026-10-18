@@ -287,6 +287,7 @@ public static class DependencyInjection
         services.AddScoped<ISemanticFindingStore, SemanticFindingStore>();
         services.AddScoped<CandidateSemanticAnalyzer>();
         services.AddScoped<SearchGuidanceService>();
+        services.AddScoped<CandidateTriageService>();
         services.AddSingleton<CandidateSemanticShadowBuffer>();
         services.AddSingleton<ICandidateSemanticShadow>(provider => provider.GetRequiredService<CandidateSemanticShadowBuffer>());
         services.AddScoped<ArtifactSemanticAnalyzer>();

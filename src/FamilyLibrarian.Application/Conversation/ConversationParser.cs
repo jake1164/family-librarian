@@ -29,7 +29,8 @@ public sealed record ParsedConversationMessage(
     IReadOnlyList<RequestMediaType>? Formats = null,
     bool RequestIntent = false,
     string? SeriesName = null,
-    decimal? SeriesPosition = null);
+    decimal? SeriesPosition = null,
+    string? SeriesAfterTitle = null);
 
 /// <summary>
 /// Rule-based reading of a message, with no model involved. Everything here is a fixed grammar: commands, numbered picks,
@@ -107,10 +108,10 @@ public static partial class ConversationParser
         }
 
         var (searchText, requestIntent, searchFormats) = ReadSearch(message);
-        if (searchText.Length >= 2 && SeriesParser.TryParse(searchText, out var seriesName, out var seriesPosition))
+        if (searchText.Length >= 2 && SeriesParser.TryParse(searchText, out var seriesName, out var seriesPosition, out var seriesAfterTitle))
         {
             return new(ConversationCommandKind.Series, Text: message, Formats: searchFormats, RequestIntent: requestIntent,
-                SeriesName: seriesName, SeriesPosition: seriesPosition);
+                SeriesName: seriesName, SeriesPosition: seriesPosition, SeriesAfterTitle: seriesAfterTitle);
         }
 
         if (searchText.Length < 2)

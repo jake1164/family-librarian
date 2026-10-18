@@ -7,7 +7,7 @@ namespace FamilyLibrarian.Infrastructure.Tests.Conversation;
 public sealed class ConversationProseTests
 {
     [TestMethod]
-    [DataRow("what book is next after sum of all fears?")]
+    [DataRow("which novel is the one with the russian submarine captain?")]
     [DataRow("what book is after sum of all fears by clancy")]
     [DataRow("no, talking tom clancy jack ryan series")]
     [DataRow("i want that sad book about a lighthouse")]

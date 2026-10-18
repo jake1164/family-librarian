@@ -38,7 +38,8 @@ public sealed partial class ExternalProviderRecheckService(
     ManualImportPolicy? importPolicy = null,
     AcquisitionQuestionService? questions = null,
     ISavedAcquisitionQuestionAcceptor? savedQuestions = null,
-    SemanticAssessment.SearchGuidanceService? searchGuidance = null)
+    SemanticAssessment.SearchGuidanceService? searchGuidance = null,
+    SemanticAssessment.CandidateTriageService? candidateTriage = null)
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
@@ -276,6 +277,36 @@ public sealed partial class ExternalProviderRecheckService(
                         // Automatic acquisition below still sees every option; this narrows review only.
                         var reviewCandidates = ReviewableForRequester(reviewableOptions, work.Language);
 
+                        // The source's effective level gates confidence tiers. Within an allowed
+                        // tier the shared ranker orders copies; a failed copy advances through
+                        // the existing exclusions and attempt budget on the next recheck.
+                        var automaticMatches = CandidateConfidence.Rank(
+                            reviewableOptions.Where(option => !exclusions.Excludes(option) &&
+                                CandidateConfidence.Allows(provider.EffectiveConfidence(format.MediaType), CandidateConfidence.Classify(option))),
+                            format.MediaType).ToArray();
+
+                        if (automaticMatches.Length == 0 &&
+                            SameWorkCandidateSelector.TrySelect(sameWorkPool, identity, format.MediaType,
+                                provider.EffectiveConfidence(format.MediaType)) is { } sameWork &&
+                            CandidateConfidence.Allows(provider.EffectiveConfidence(format.MediaType), sameWork.Tier))
+                            automaticMatches = [sameWork.Winner];
+
+                        var completeSet = format.MediaType == RequestMediaType.Audiobook &&
+                            provider.EffectiveConfidence(format.MediaType) != ProviderConfidenceLevel.SuggestOnly && partSets is not null
+                            ? AudiobookPartSetSelector.TrySelect(
+                                [.. reviewableOptions.Where(option => search.VariantOf(option).IsBase)], provider.EffectiveConfidence(format.MediaType))
+                            : null;
+                        var triage = await ApplyCandidateTriageAsync(request, format, provider, identity, reviewableOptions,
+                            automaticMatches, completeSet, cancellationToken);
+                        automaticMatches = triage.Matches;
+                        completeSet = triage.Parts;
+                        if (triage.VetoedId is { } vetoed)
+                        {
+                            reviewCandidates = reviewCandidates.Where(c => c.ProviderResultId != vetoed).ToArray();
+                            reviewableOptions = reviewableOptions.Where(c => c.ProviderResultId != vetoed).ToArray();
+                            options = options.Where(c => c.ProviderResultId != vetoed).ToArray();
+                            questionOptions = questionOptions.Where(c => c.ProviderResultId != vetoed).ToArray();
+                        }
                         // A provider that lists one audiobook as separately
                         // numbered fragments ("1 of 2", "2 of 2") has no single
                         // record that is the whole book. When every part of one
@@ -283,14 +314,9 @@ public sealed partial class ExternalProviderRecheckService(
                         // fetch them all; anything weaker keeps the ordinary
                         // review path below. The set is re-derived server-side
                         // for each part, and publishes only if every part passes.
-                        if (format.MediaType == RequestMediaType.Audiobook &&
-                            provider.EffectiveConfidence(format.MediaType) != ProviderConfidenceLevel.SuggestOnly &&
-                            partSets is not null &&
-                            AudiobookPartSetSelector.TrySelect(
-                                [.. reviewableOptions.Where(option => search.VariantOf(option).IsBase)],
-                                provider.EffectiveConfidence(format.MediaType)) is { } completeSet)
+                        if (completeSet is not null)
                         {
-                            var started = await partSets.StartAsync(
+                            var started = await partSets!.StartAsync(
                                 request.Id, format.Id, provider.ProviderId, completeSet, cancellationToken);
                             if (started.Started)
                             {
@@ -316,20 +342,6 @@ public sealed partial class ExternalProviderRecheckService(
                             advanced = true;
                             break;
                         }
-
-                        // The source's effective level gates confidence tiers. Within an allowed
-                        // tier the shared ranker orders copies; a failed copy advances through
-                        // the existing exclusions and attempt budget on the next recheck.
-                        var automaticMatches = CandidateConfidence.Rank(
-                            reviewableOptions.Where(option => !exclusions.Excludes(option) &&
-                                CandidateConfidence.Allows(provider.EffectiveConfidence(format.MediaType), CandidateConfidence.Classify(option))),
-                            format.MediaType).ToArray();
-
-                        if (automaticMatches.Length == 0 &&
-                            SameWorkCandidateSelector.TrySelect(sameWorkPool, identity, format.MediaType,
-                                provider.EffectiveConfidence(format.MediaType)) is { } sameWork &&
-                            CandidateConfidence.Allows(provider.EffectiveConfidence(format.MediaType), sameWork.Tier))
-                            automaticMatches = [sameWork.Winner];
 
                         // A narration-aware winner replaces raw format-rank
                         // collapsing here too -- same selector, same rules,
@@ -362,7 +374,7 @@ public sealed partial class ExternalProviderRecheckService(
                             {
                                 await TryExtraAttemptAsync(
                                     request, format, provider, work.Title, automaticMatches[0], search, waitingNext,
-                                    PeerSizeEvidence.From(automaticMatches[0], ReviewableForRequester(options, work.Language)), cancellationToken);
+                                    PeerSizeEvidence.From(automaticMatches[0], ReviewableForRequester(options, work.Language)), cancellationToken, triage.Authorization);
                                 break;
                             }
 
@@ -408,7 +420,7 @@ public sealed partial class ExternalProviderRecheckService(
                                 isAutomaticAcquisition: true,
                                 // Re-derive the option by the very search that found it.
                                 searchVariant: search.VariantOf(automaticMatches[0]),
-                                peerSizeEvidence: PeerSizeEvidence.From(automaticMatches[0], ReviewableForRequester(options, work.Language)));
+                                peerSizeEvidence: PeerSizeEvidence.From(automaticMatches[0], ReviewableForRequester(options, work.Language)), triageAuthorization: triage.Authorization);
 
                             // A clean download of the wrong book is the exact
                             // case the retry loop exists for, so it is routed
@@ -472,7 +484,9 @@ public sealed partial class ExternalProviderRecheckService(
                         if (reviewCandidates.Length == 0)
                         {
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.NoMatch,
-                                DescribeNoAcceptableCopy(options, work.Language), waitingNext);
+                                triage.VetoedId is not null && options.Count == 0
+                                    ? "Automated candidate review deferred this copy for this pass; still looking for another acceptable copy."
+                                    : DescribeNoAcceptableCopy(options, work.Language), waitingNext);
                             continue;
                         }
 
@@ -982,13 +996,14 @@ public sealed partial class ExternalProviderRecheckService(
     /// </summary>
     private async Task TryExtraAttemptAsync(
         BookRequest request, RequestFormat format, ExternalProvider provider, string workTitle, FulfillmentOption option,
-        PooledSearch search, DateTimeOffset nextCheck, PeerSizeEvidence? peers, CancellationToken cancellationToken)
+        PooledSearch search, DateTimeOffset nextCheck, PeerSizeEvidence? peers, CancellationToken cancellationToken,
+        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null)
     {
         search.MarkSelected(option, clock.UtcNow);
         var (result, identityFailure) = await security.AcquireEvaluateAndVerifyAsync(
             request.Id, format.Id, provider.ProviderId, option.ProviderResultId, cancellationToken,
             allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(option), isAutomaticAcquisition: true,
-            searchVariant: search.VariantOf(option), peerSizeEvidence: peers);
+            searchVariant: search.VariantOf(option), peerSizeEvidence: peers, triageAuthorization: triageAuthorization);
 
         if (result.Outcome == ManualImportOutcome.Success && identityFailure is null)
         {

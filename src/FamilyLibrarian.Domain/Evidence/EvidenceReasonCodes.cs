@@ -13,6 +13,14 @@ namespace FamilyLibrarian.Domain.Evidence;
 /// </remarks>
 public static class EvidenceReasonCodes
 {
+    /// <summary>Independent catalog/source agreement available to grounded candidate triage.</summary>
+    public static class CandidateCorroboration
+    {
+        public const string Identifier = "candidate.identifier.exact";
+        public const string Year = "candidate.year.exact";
+        public const string Publisher = "candidate.imprint.exact";
+    }
+
     /// <summary>Requested-title evidence. Mirrors the candidate evidence states.</summary>
     public static class CandidateTitle
     {
@@ -73,6 +81,7 @@ public static class EvidenceReasonCodes
     /// <summary>A structural property that needs a person's judgment rather than contradicting the request.</summary>
     public static class CandidateCondition
     {
+        public const string DrmUnconfirmed = "candidate.condition.drm_unconfirmed";
         public const string Collection = "candidate.condition.collection";
         public const string Sample = "candidate.condition.sample";
         public const string Abridged = "candidate.condition.abridged";

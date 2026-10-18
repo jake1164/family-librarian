@@ -32,7 +32,8 @@ public interface IConversationTools
     Task<Guid?> ResolveWorkAsync(ConversationChoiceRef choice, CancellationToken cancellationToken);
 
     /// <summary>Which book sits at a position in a series (null lists the series in order), from series facts already in the catalog.</summary>
-    Task<SeriesLookupResult> FindSeriesBooksAsync(string seriesName, decimal? position, int maxBooks, CancellationToken cancellationToken);
+    Task<SeriesLookupResult> FindSeriesBooksAsync(
+        string seriesName, decimal? position, string? afterTitle, int maxBooks, CancellationToken cancellationToken);
 
     Task<CreateBookRequestResult> CreateBookRequestAsync(
         Guid workId, IReadOnlyList<RequestMediaType> formats, CancellationToken cancellationToken);
@@ -162,11 +163,11 @@ public sealed partial class ConversationBookTools(
     }
 
     public async Task<SeriesLookupResult> FindSeriesBooksAsync(
-        string seriesName, decimal? position, int maxBooks, CancellationToken cancellationToken)
+        string seriesName, decimal? position, string? afterTitle, int maxBooks, CancellationToken cancellationToken)
     {
         RequireUser();
         var started = Stopwatch.GetTimestamp();
-        var result = await WithinBudgetAsync(token => series.FindAsync(seriesName, position, maxBooks, token), timeBudgets.Search, cancellationToken);
+        var result = await WithinBudgetAsync(token => series.FindAsync(seriesName, position, afterTitle, maxBooks, token), timeBudgets.Search, cancellationToken);
         diagnostics?.StepCompleted(ConversationSteps.SeriesLookup, Stopwatch.GetElapsedTime(started), result is null ? "timed-out" : result.Kind.ToString());
 
         // Out of time reads as "not a series we know", which falls back to an ordinary (also time-boxed) search.

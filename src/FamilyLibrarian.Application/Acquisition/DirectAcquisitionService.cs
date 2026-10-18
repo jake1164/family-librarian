@@ -82,7 +82,8 @@ public sealed class DirectAcquisitionService(
         bool isAutomaticAcquisition = false,
         AudiobookPartSetMember? partSet = null,
         SearchVariantRef? searchVariant = null,
-        PeerSizeEvidence? peerSizeEvidence = null)
+        PeerSizeEvidence? peerSizeEvidence = null,
+        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
@@ -235,6 +236,8 @@ public sealed class DirectAcquisitionService(
         // refusing a fetch the retry loop had already decided on.
         var exclusions = Providers.ExternalCandidateExclusions.From(
             request.DeclinedCandidates, providerId, format.Id, exceptResultId: providerResultId);
+        if (isAutomaticAcquisition && triageAuthorization is not null)
+            exclusions = triageAuthorization.ApplyExclusions(requestId, requestFormatId, providerId, providerResultId, exclusions);
 
         // With the variant that found the candidate, re-run exactly that search. Without one (a review pick stored
         // before the key existed) run the base search and then walk the planned variants in order until the candidate
@@ -322,10 +325,15 @@ public sealed class DirectAcquisitionService(
         // each part to carry strict or strong-author support.)
         var needsIdentityConfirmation = externalOption.MatchBasis is not
             (BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle);
+        if (triageAuthorization is not null && (!isAutomaticAcquisition ||
+            !triageAuthorization.IsCurrentFor(requestId, requestFormatId, externalOption, externalProvider.EffectiveConfidence(format.MediaType))))
+            return ManualImportResult.LowConfidenceMatchConfirmationRequired();
         if (isAutomaticAcquisition && partSet is null)
         {
             var level = externalProvider.EffectiveConfidence(format.MediaType);
             var allowed = CandidateConfidence.Allows(level, CandidateConfidence.Classify(externalOption));
+            allowed |= triageAuthorization?.AllowsAuthorVariant(requestId, requestFormatId, externalOption, level) == true &&
+                SemanticAssessment.CandidateTriageRules.CanAuthorVariantLead(externalOption, externalOptions, level);
             if (!allowed)
             {
                 // Re-prove pool-level confidence from fresh source evidence. The caller's
@@ -393,11 +401,11 @@ public sealed class DirectAcquisitionService(
             acquireRequestId,
             isAutomaticAcquisition,
             Providers.ExternalReleaseFingerprint.Compute(externalOption.ReleaseName, externalOption.SizeBytes),
-            // The automatic path never reaches here without one of these two
-            // bases (see the gate above autoEligible in
-            // AutomaticRequestFulfillmentService); a manual acquisition with
-            // neither needed confirmLowConfidenceMatch to pass the check
-            // above, i.e. a librarian overriding an unconfirmed match.
+            // Only these deterministic bases preconfirm source identity.
+            // A governed AI author variant can reach this point without one,
+            // so its downloaded author's identity must still be verified.
+            // A manual acquisition without one needed a librarian's explicit
+            // low-confidence confirmation above.
             // A part of a set is matched on its release name alone, so its
             // identity is never treated as already confirmed: the downloaded
             // file's own tags have to say it is the requested book.

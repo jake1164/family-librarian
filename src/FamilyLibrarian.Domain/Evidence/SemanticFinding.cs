@@ -6,19 +6,21 @@ public enum SemanticSubjectKind
 {
     Candidate = 1,
     Artifact = 2,
-    SearchGuidance = 3
+    SearchGuidance = 3,
+    CandidateTriage = 4
 }
 
 /// <summary>
-/// A model's advisory opinion about one set of evidence, stored <em>beside</em> the deterministic result and never inside
-/// it (alpha.6 M4-3). It is keyed by a digest of the exact evidence it was shown, so it can be reused for identical
+/// A model's opinion about one set of evidence, stored <em>beside</em> the deterministic result and never inside
+/// it. It is keyed by a digest of the exact evidence it was shown, so it can be reused for identical
 /// evidence and is recognisably stale when the evidence changes.
 /// </summary>
 /// <remarks>
 /// A finding records what the model said and how the call ended, including failures (a model that returns bad JSON is
 /// useful to know about). It never records a prompt, a reply verbatim, an excerpt or a key: only the validated verdict and
 /// claims, which cite evidence ids and carry short plain notes. Shadow findings remain advisory. Search-guidance findings
-/// may be reused for bounded searches only; they never authorize acquisition or change verification.
+/// may be reused for bounded searches only. Candidate-triage findings require independent move checks and fresh
+/// source verification before acquisition; they never preconfirm artifact identity or change security checks.
 /// </remarks>
 public sealed class SemanticFinding
 {

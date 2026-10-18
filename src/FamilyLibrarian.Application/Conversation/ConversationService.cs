@@ -271,7 +271,7 @@ public sealed class ConversationService(
 
     private async Task<TurnPlan> SeriesPlanAsync(ParsedConversationMessage parsed, ConversationState state, CancellationToken cancellationToken)
     {
-        var lookup = await tools.FindSeriesBooksAsync(parsed.SeriesName!, parsed.SeriesPosition, options.MaxChoices, cancellationToken);
+        var lookup = await tools.FindSeriesBooksAsync(parsed.SeriesName!, parsed.SeriesPosition, parsed.SeriesAfterTitle, options.MaxChoices, cancellationToken);
         switch (lookup.Kind)
         {
             case SeriesLookupKind.NotFound:
@@ -284,6 +284,12 @@ public sealed class ConversationService(
                     "Say which one, for example “book 1 of " + lookup.AmbiguousSeriesNames[0] + "”."), state);
 
             case SeriesLookupKind.PositionMissing:
+                if (parsed.SeriesAfterTitle is not null)
+                {
+                    return Keep(ConversationReply.Of(ConversationReplyKind.Text,
+                        $"I don't know of a book after “{parsed.SeriesAfterTitle}” in {lookup.SeriesName}. It may be the latest, or the catalog may not list a newer one yet."), state);
+                }
+
                 var known = lookup.KnownPositions.Count == 0
                     ? "I don't have any numbered books for it"
                     : $"I know of {string.Join(", ", lookup.KnownPositions.Select(FormatPosition))}";
@@ -297,7 +303,7 @@ public sealed class ConversationService(
                 book.ProviderId, book.ExternalId, ConversationState.Clip(book.Title), ConversationState.Clip(book.Authors),
                 ConversationState.Clip(book.Position is null ? book.SeriesName : $"{book.SeriesName} #{FormatPosition(book.Position.Value)}")))
             .ToList();
-        var label = parsed.SeriesPosition is null ? $"{lookup.SeriesName} in order" : $"{lookup.SeriesName} #{FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)}";
+        var label = parsed.SeriesAfterTitle is not null ? $"{lookup.SeriesName} after {parsed.SeriesAfterTitle}" : parsed.SeriesPosition is null ? $"{lookup.SeriesName} in order" : $"{lookup.SeriesName} #{FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)}";
         var next = new ConversationState
         {
             Phase = ConversationPhase.ChoosingBook,
@@ -306,13 +312,17 @@ public sealed class ConversationService(
             FormatHint = parsed.Formats?.ToList() ?? [],
             RequestIntent = parsed.RequestIntent
         };
-        if (choices.Count == 1 && parsed.SeriesPosition is not null && parsed.RequestIntent)
+        if (choices.Count == 1 && (parsed.SeriesPosition is not null || parsed.SeriesAfterTitle is not null) && parsed.RequestIntent)
         {
             return await PickPlanAsync(next, 1, parsed.Formats, cancellationToken);
         }
 
         var shown = choices.Select((choice, index) => new ConversationChoice(index + 1, choice.Title, choice.Authors, choice.Detail)).ToArray();
-        var lines = new StringBuilder(parsed.SeriesPosition is null
+        var lines = new StringBuilder(parsed.SeriesAfterTitle is not null
+            ? shown.Length == 1
+                ? $"After {parsed.SeriesAfterTitle}, the next book in {lookup.SeriesName} is:"
+                : $"After {parsed.SeriesAfterTitle}, more than one book is listed next in {lookup.SeriesName}:"
+            : parsed.SeriesPosition is null
             ? $"{lookup.SeriesName}, in order:"
             : shown.Length == 1
                 ? $"In {lookup.SeriesName}, book {FormatPositionOrLast(parsed.SeriesPosition.Value, lookup)} is:"

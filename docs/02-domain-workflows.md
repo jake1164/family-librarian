@@ -1270,6 +1270,37 @@ for seven days. A `give_up` reply ends extra searches for that cycle across
 sources; the base search remains eligible next cycle. Existing candidate and
 artifact semantic assessments remain advisory shadows.
 
+**Optional AI candidate triage:** the separately enabled `CandidateTriage` role
+compares up to eight candidates before an external source's automatic
+submission, including complete audiobook sets. At most one model call occurs
+per requested format and source pass. The server supplies bounded, sanitized
+bibliographic fields and candidate-specific evidence IDs. Opaque source
+references, URLs and credentials are excluded. Provider text is untrusted data.
+
+The closed `candidate-triage/1` response allows `keep`, `uncertain`, `veto`,
+`prefer` and `author_variant`. Keep and uncertain preserve the original choice.
+A veto must name the current choice and cite its negative or conditional
+evidence; it excludes that copy for this pass at every confidence level. Vetoing
+a companion part defers that set. Preference must cite positive evidence for a
+supplied member of the genuinely tied best candidates. An author variant must
+have strong title support, only an author conflict, and independent matching
+series and position, ISBN, or both year and publisher. It cannot override
+language, title, series, edition, narration or completeness conflicts.
+Preference and author variants require Standard or Liberal confidence; Strict
+and SuggestOnly gain no upgrade. An author variant ranks as a close call and
+cannot displace a strong copy or a better deterministic close call. This ordering
+is checked again against fresh source results before submission.
+
+Triage uses the background budget, a 300-token output cap and linked 20-second
+deadline, subject to shorter installation limits. Refusal, invalid schema or
+IDs, timeout, transport or persistence failure preserve deterministic behavior;
+caller cancellation propagates. Validated decisions and outcomes are stored
+beside the original assessment and reusable for seven days only with identical
+evidence, with all move rules rechecked. Acquisition retrieves the candidate
+again and refuses a changed or stale triage decision. An AI author variant
+never preconfirms the downloaded file's identity. Attempt limits, product
+consent, DRM, scanning, artifact identity and destination checks remain in force.
+
 Project Gutenberg discovery reads the locally imported daily RDF catalogue, so it
 continues to work when external catalogue APIs are blocked. LibriVox discovery
 uses the upstream title-only search (not combined title-and-author filtering),

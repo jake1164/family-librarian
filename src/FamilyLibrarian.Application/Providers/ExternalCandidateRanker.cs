@@ -27,6 +27,13 @@ namespace FamilyLibrarian.Application.Providers;
 /// </remarks>
 public static class ExternalCandidateRanker
 {
+    /// <summary>Whether only the final stable source-record id separates two candidates.</summary>
+    public static bool AreTied(Catalog.FulfillmentOption left, Catalog.FulfillmentOption right, RequestMediaType mediaType) =>
+        CandidateConfidence.Classify(left) == CandidateConfidence.Classify(right) && IdentityRank(left) == IdentityRank(right) &&
+        left.HasPlausibleTitle == right.HasPlausibleTitle && (left.AuthorAffinity?.Score ?? 0) == (right.AuthorAffinity?.Score ?? 0) &&
+        ReleaseConcernRank(left) == ReleaseConcernRank(right) && FormatRank(left, mediaType) == FormatRank(right, mediaType) &&
+        NarrationRank(left) == NarrationRank(right) && QualityRank(left) == QualityRank(right);
+
     /// <summary>
     /// Orders <paramref name="candidates"/> best-first. Ties are impossible:
     /// the final dimension is the distinct <see cref="Catalog.FulfillmentOption.ProviderResultId"/>.

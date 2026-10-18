@@ -105,15 +105,17 @@ public sealed class SearchGuidanceServiceTests
     }
 
     [TestMethod]
-    public async Task UnconfiguredRoleIsOffAndOnlyPhaseSixRolesWereAppended()
+    public async Task UnconfiguredGuidanceRemainsOffAsCandidateTriageIsAdded()
     {
         var settings = new ModelGatewaySettings(Now);
         settings.Configure("http://model.test", false, null, Now);
         settings.SetEnabled(true, null, Now);
         var resolver = new ModelRoleResolver(new FakeGatewayStore { Settings = settings }, new PassThroughProtector());
         Assert.IsFalse((await resolver.ResolveAsync(ModelRole.SearchGuidance, CancellationToken.None)).IsAvailable);
-        Assert.HasCount(6, Enum.GetValues<ModelRole>());
-        Assert.HasCount(3, Enum.GetValues<FamilyLibrarian.Domain.Evidence.SemanticSubjectKind>());
+        Assert.HasCount(7, Enum.GetValues<ModelRole>());
+        Assert.HasCount(4, Enum.GetValues<FamilyLibrarian.Domain.Evidence.SemanticSubjectKind>());
+        Assert.IsFalse((await resolver.ResolveAsync(ModelRole.CandidateTriage, CancellationToken.None)).IsAvailable);
+        Assert.IsFalse(Enum.IsDefined((ModelRole)8), "Phase 8 is separate from this implementation slice.");
     }
 
     private sealed class Resolver : IModelRoleResolver
