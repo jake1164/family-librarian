@@ -300,32 +300,11 @@
                     {
                         <MudPaper Outlined="true" Class="pa-3">
                             <MudStack Spacing="1">
-                                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
-                                    <MudText Typo="Typo.subtitle1">@AdminCandidateLabel(candidate)</MudText>
-                                    @if (candidate.TitleIsRequestFallback)
-                                    {
-                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
-                                            @(string.IsNullOrWhiteSpace(candidate.ReleaseName)
-                                                ? "Source named no title — showing the requested one"
-                                                : "Source supplied a release name; no separate work title")
-                                        </MudChip>
-                                    }
-                                    else if (!CandidateMatchesRequest(candidate))
-                                    {
-                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
-                                            Does not match "@request.Request.WorkTitle"
-                                        </MudChip>
-                                    }
-                                </MudStack>
+                                <AdminReviewCandidateIdentity Candidate="@candidate"
+                                                              IsProductQuestion="@(request.Request.NeedsReview?.QuestionKind is not null)" />
                                 @if (!string.IsNullOrWhiteSpace(candidate.Details))
                                 {
                                     <MudText Typo="Typo.body2">@candidate.Details</MudText>
-                                }
-                                @if (!string.IsNullOrWhiteSpace(candidate.ReleaseName))
-                                {
-                                    <MudText Typo="Typo.caption" Style="font-family: var(--mud-typography-monospace-family, monospace); word-break: break-all;">
-                                        Release: @candidate.ReleaseName
-                                    </MudText>
                                 }
                                 <AdminCandidateOrigin ProviderName="@AdminProviderName(candidate)"
                                                       ProviderResultId="@candidate.ProviderResultId"
@@ -922,16 +901,6 @@
             isBusy = false;
         }
     }
-
-    private static string AdminCandidateLabel(AdminRequestReviewCandidateResponse candidate) =>
-        (candidate.Author is { } author
-            ? string.IsNullOrWhiteSpace(candidate.Language)
-                ? $"{candidate.Title} by {author}"
-                : $"{candidate.Title} by {author} ({candidate.Language})"
-            : string.IsNullOrWhiteSpace(candidate.Language)
-                ? candidate.Title
-                : $"{candidate.Title} ({candidate.Language})") +
-        (string.IsNullOrWhiteSpace(candidate.Details) ? string.Empty : $" — {candidate.Details}");
 
     private static string AdminProviderName(AdminRequestReviewCandidateResponse candidate) =>
         candidate.ProviderId.Equals("gutendex", StringComparison.OrdinalIgnoreCase)

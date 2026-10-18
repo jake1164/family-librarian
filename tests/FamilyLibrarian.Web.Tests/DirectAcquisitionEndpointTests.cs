@@ -429,6 +429,87 @@ public sealed class DirectAcquisitionEndpointTests
     }
 
     [TestMethod]
+    public async Task LegacyCatalogFallbackAuthorsAreNotProjectedAsSourceClaims()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: false));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester, fixture);
+        const string release = "A Different Work - Another Author";
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var request = await database.BookRequests.Include(item => item.Formats).SingleAsync(item => item.Id == requestId);
+            request.MarkNeedsReview(RequestReviewCategory.PreferenceAmbiguity, "Verify source identity.", DateTimeOffset.UtcNow,
+                [new RequestReviewCandidateInput(formatId, "example-source", "legacy-result", "The Hobbit", "J. R. R. Tolkien", "en",
+                    null, null, release, true)]);
+            await database.SaveChangesAsync();
+        }
+        using var admin = await CreateTokenClientAsync(factory, isAdmin: true);
+        var view = await admin.GetFromJsonAsync<AdminBookRequestResponse>($"/api/v1/admin/requests/{requestId}");
+        Assert.IsNotNull(view);
+        Assert.IsNull(view.ReviewCandidates!.Single().Author);
+        Assert.AreEqual(release, view.ReviewCandidates!.Single().ReleaseName);
+        Assert.IsFalse(view.ReviewCandidates!.Single().NamesRequestedWork);
+        var acceptance = await requester.PostAsJsonAsync($"/api/v1/requests/{requestId}/needs-review/resolve",
+            new ResolveNeedsReviewRequest(view.ReviewCandidates!.Single().CandidateId));
+        Assert.AreEqual(HttpStatusCode.Conflict, acceptance.StatusCode,
+            "Release-only identity review must not be accepted through a requester edition-choice route.");
+        StringAssert.Contains(await acceptance.Content.ReadAsStringAsync(), "librarian");
+        var familyView = await requester.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(familyView);
+        var review = familyView.Active.Single(r => r.Id == requestId).NeedsReview!;
+        Assert.IsEmpty(review.Candidates);
+        Assert.IsFalse(review.CanAnswer);
+        Assert.IsFalse(System.Text.Json.JsonSerializer.Serialize(familyView).Contains(release, StringComparison.Ordinal),
+            "Raw source release names must remain administrator-only.");
+        await using var verification = factory.Services.CreateAsyncScope();
+        var verifiedDatabase = verification.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(RequestStatus.NeedsReview, (await verifiedDatabase.BookRequests.SingleAsync(r => r.Id == requestId)).Status);
+        Assert.AreEqual(1, await verifiedDatabase.RequestReviewCandidates.CountAsync(c => c.RequestId == requestId));
+        Assert.AreEqual(0, await verifiedDatabase.ProviderAcquisitionJobs.CountAsync(j => j.RequestId == requestId));
+        Assert.AreEqual(0, await verifiedDatabase.MediaAssets.CountAsync(a => a.AssociatedRequestFormatId == formatId));
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task ReleaseOnlyRecordsKeepTheLibrarianAndExplicitProductQuestionAcceptancePaths(bool productQuestion)
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var factory = CreateFactory(fixture, new FakeProvider(matches: true));
+        using var requester = await CreateTokenClientAsync(factory, isAdmin: false);
+        var (requestId, formatId) = await CreateEbookRequestAsync(requester, fixture);
+        Guid candidateId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var request = await database.BookRequests.Include(r => r.Formats).SingleAsync(r => r.Id == requestId);
+            RequestReviewCandidateInput[] candidates = [new(formatId, "gutendex", "1234", "The Hobbit", null, "en",
+                null, null, "The Hobbit - source release", true)];
+            if (productQuestion)
+                request.AskQuestion(AcquisitionQuestionKind.OtherLanguageOnly, formatId, "An independently verified product choice.", candidates, DateTimeOffset.UtcNow);
+            else
+                request.MarkNeedsReview(RequestReviewCategory.PreferenceAmbiguity, "Librarian source verification.", DateTimeOffset.UtcNow, candidates);
+            candidateId = request.ReviewCandidates.Single().Id;
+            await database.SaveChangesAsync();
+        }
+        using var admin = await CreateTokenClientAsync(factory, isAdmin: true);
+        var family = await requester.GetFromJsonAsync<BookRequestListResponse>("/api/v1/me/requests");
+        Assert.IsNotNull(family);
+        var review = family.Active.Single(r => r.Id == requestId).NeedsReview!;
+        Assert.AreEqual(productQuestion, review.CanAnswer);
+        Assert.AreEqual(productQuestion ? 1 : 0, review.Candidates.Count);
+        var client = productQuestion ? requester : admin;
+        var route = productQuestion ? $"/api/v1/requests/{requestId}/needs-review/resolve" : $"/api/v1/admin/requests/{requestId}/needs-review/resolve";
+        (await client.PostAsJsonAsync(route, new ResolveNeedsReviewRequest(candidateId))).EnsureSuccessStatusCode();
+        await using var verification = factory.Services.CreateAsyncScope();
+        var verifiedDatabase = verification.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(0, await verifiedDatabase.RequestReviewCandidates.CountAsync(c => c.RequestId == requestId));
+        Assert.AreEqual(1, await verifiedDatabase.MediaAssets.CountAsync(a => a.AssociatedRequestFormatId == formatId));
+    }
+
+    [TestMethod]
     public async Task ALanguageExcludedResultRoutesToThePreferenceAmbiguityFlowNotifyingTheRequesterAndAdmin()
     {
         var fixture = WebTestFixture.Require(_fixture);
@@ -890,7 +971,7 @@ public sealed class DirectAcquisitionEndpointTests
         return client;
     }
 
-    private static async Task<(Guid RequestId, Guid FormatId)> CreateEbookRequestAsync(HttpClient client)
+    private static async Task<(Guid RequestId, Guid FormatId)> CreateEbookRequestAsync(HttpClient client, WebTestFixture? fixture = null)
     {
         var resolve = await client.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
         resolve.EnsureSuccessStatusCode();
@@ -899,7 +980,7 @@ public sealed class DirectAcquisitionEndpointTests
 
         var created = await client.PostAsJsonAsync(
             "/api/v1/requests/",
-            new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
+            new CreateBookRequestRequest(await (fixture ?? WebTestFixture.Require(_fixture)).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);

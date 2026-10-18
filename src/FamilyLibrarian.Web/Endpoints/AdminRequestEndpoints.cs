@@ -817,7 +817,9 @@ internal static class AdminRequestEndpoints
             candidate.ProviderId,
             candidate.ProviderResultId,
             candidate.Title,
-            candidate.Author,
+            // Legacy fallback rows may have inherited the catalog author. They contain
+            // no provenance that can establish this as a structured source claim.
+            candidate.TitleIsRequestFallback ? null : candidate.Author,
             candidate.Language,
             candidate.Details,
             ResolveInspectionUri(candidate),

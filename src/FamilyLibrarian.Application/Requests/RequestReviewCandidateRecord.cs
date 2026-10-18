@@ -37,13 +37,13 @@ public static class RequestReviewCandidateRecord
     }
 
     /// <summary>
-    /// Supplies the catalog title/author for a candidate whose source named
-    /// none. Every other candidate is returned untouched.
+    /// Supplies catalog title context when the source named none. An absent
+    /// source author stays absent; the requested author is not source evidence.
     /// </summary>
     public static RequestReviewCandidateInput WithCatalogFallback(
         RequestReviewCandidateInput candidate, string workTitle, string? workAuthor) =>
         candidate.TitleIsRequestFallback
-            ? candidate with { Title = workTitle, Author = candidate.Author ?? workAuthor }
+            ? candidate with { Title = workTitle }
             : candidate;
 
     private static string? Trimmed(string? value) =>

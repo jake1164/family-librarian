@@ -13,6 +13,11 @@ namespace FamilyLibrarian.Web.Tests;
 public sealed class ModelGatewayEndpointTests
 {
     private const string BasePath = "/api/v1/admin/model-gateway";
+    private static readonly string[] ExpectedRoles =
+    [
+        "IntentInterpretation", "ConversationResponse", "CandidateAmbiguityAssessment",
+        "ArtifactValidationAssessment", "VisionCoverIdentification", "SearchGuidance"
+    ];
     private static WebTestFixture? fixture;
 
     [ClassInitialize]
@@ -90,7 +95,8 @@ public sealed class ModelGatewayEndpointTests
         Assert.IsFalse(initial!.IsEnabled);
         Assert.IsFalse(initial.AllowCloud);
         Assert.IsFalse(initial.HasApiKey);
-        Assert.AreEqual(5, initial.Roles.Count);
+        Assert.AreEqual(6, initial.Roles.Count);
+        CollectionAssert.AreEquivalent(ExpectedRoles, initial.Roles.Select(role => role.Role).ToArray());
         Assert.IsTrue(initial.Roles.All(role => !role.IsEnabled));
 
         using var stored = await admin.PutAsJsonAsync($"{BasePath}/api-key", new SetModelGatewayApiKeyRequest("sk-super-secret-value"));

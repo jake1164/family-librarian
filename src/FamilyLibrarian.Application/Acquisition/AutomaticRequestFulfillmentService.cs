@@ -38,7 +38,8 @@ public enum PreferenceAmbiguityResolutionOutcome
     Unauthenticated,
     Conflict,
     NotAsked,
-    InvalidPreference
+    InvalidPreference,
+    LibrarianReviewRequired
 }
 
 /// <summary>What happened to the retry budget when an automatic provider job failed.</summary>
@@ -475,6 +476,11 @@ public sealed class AutomaticRequestFulfillmentService(
         {
             var request = await requests.FindOwnedRequestAsync(requestId, userId, token);
             if (request is null || !IsActiveParticipant(request, userId)) return PreferenceAmbiguityResolutionOutcome.NotFound;
+            // A catalog fallback labels context, not an edition whose identity a requester can confirm.
+            // Explicit product questions have their own independently proven identity/consent path.
+            if (request.QuestionKind is null && request.ReviewCandidates.Any(c =>
+                    c.Id == candidateId && c.TitleIsRequestFallback && c.ReleaseName is not null))
+                return PreferenceAmbiguityResolutionOutcome.LibrarianReviewRequired;
             if (preferences is not null && !await preferences.WasAskedAsync(request, userId, token))
                 return PreferenceAmbiguityResolutionOutcome.NotAsked;
             return await AcceptCandidateAsync(request, candidateId, expectedVersion, userId, alwaysAccept, null, token);

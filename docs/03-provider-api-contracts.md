@@ -45,6 +45,14 @@ remaining release-name evidence after its existing title, series, narration,
 language and packaging checks. It does not guess that text before a dash is an
 author.
 
+Review labels retain source claims separately from catalog context. A source
+that supplies only a release name does not acquire the requested author as
+its own metadata. Its raw release leads the administrator review, while
+unconfirmed release-only fallback identity choices require a librarian; they
+cannot be accepted through the requester edition-choice endpoint. Explicit product
+questions continue through their independently verified consent path. Media
+fact deduplication must preserve differences in title, author and release name.
+
 Local author affinity uses the existing Unicode KC word normalizer, invariant
 case, punctuation/whitespace boundaries, comma-order handling, and harmless
 Jr/Sr/II/III/IV suffix removal. Its ordered supporting weights are exact full

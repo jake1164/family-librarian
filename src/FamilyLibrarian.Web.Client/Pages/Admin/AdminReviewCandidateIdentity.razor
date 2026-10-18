@@ -1,0 +1,37 @@
+@* Raw releases are administrator-only, untrusted text. Never render them as markup. *@
+<MudText Typo="Typo.subtitle1" Style="overflow-wrap: anywhere;">@SourceLabel</MudText>
+@if (!string.IsNullOrWhiteSpace(Candidate.Language))
+{
+    <MudText Typo="Typo.caption">Source language: @Candidate.Language</MudText>
+}
+@if (Candidate.TitleIsRequestFallback)
+{
+    <MudText Typo="Typo.body2">
+        @if (IsProductQuestion)
+        {
+            <span>The source supplied no separate work title. This product question uses separately verified work identity.</span>
+        }
+        else
+        {
+            <span>The source supplied no separate work title. Author and work identity still need verification;
+                the requested title and author are not source evidence.</span>
+        }
+    </MudText>
+}
+else if (!Candidate.NamesRequestedWork)
+{
+    <MudText Typo="Typo.body2">This source title does not identify the requested work.</MudText>
+}
+@if (!Candidate.TitleIsRequestFallback && !string.IsNullOrWhiteSpace(Candidate.ReleaseName))
+{
+    <MudText Typo="Typo.caption" Style="overflow-wrap: anywhere;">Release: @Candidate.ReleaseName</MudText>
+}
+
+@code {
+    [Parameter, EditorRequired] public AdminRequestReviewCandidateResponse Candidate { get; set; } = default!;
+    [Parameter] public bool IsProductQuestion { get; set; }
+
+    private string SourceLabel => Candidate.TitleIsRequestFallback
+        ? string.IsNullOrWhiteSpace(Candidate.ReleaseName) ? "Unnamed source record" : Candidate.ReleaseName
+        : string.IsNullOrWhiteSpace(Candidate.Author) ? Candidate.Title : $"{Candidate.Title} by {Candidate.Author}";
+}

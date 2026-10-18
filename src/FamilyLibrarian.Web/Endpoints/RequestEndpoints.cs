@@ -162,6 +162,8 @@ internal static class RequestEndpoints
 
         if (outcome == PreferenceAmbiguityResolutionOutcome.NotAsked)
             return Results.Conflict(new { message = "Your saved preference already accepts this choice. Another requester is being asked." });
+        if (outcome == PreferenceAmbiguityResolutionOutcome.LibrarianReviewRequired)
+            return Results.Conflict(new { message = "A librarian must verify this source's work identity before acquisition." });
         if (outcome == PreferenceAmbiguityResolutionOutcome.InvalidPreference)
             return Results.BadRequest(new { message = "This choice cannot be saved as a preference." });
         if (outcome == PreferenceAmbiguityResolutionOutcome.Conflict)

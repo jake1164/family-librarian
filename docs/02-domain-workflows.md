@@ -1235,6 +1235,12 @@ recheck and at most the provider's attempt limit in total. Failed copies and
 reposts remain excluded. Requests requiring manual fulfillment are excluded,
 and batches consider the least recently searched requests first.
 
+Search proposals do not resolve a source's identity review. Ordinary saved
+release-only candidates whose labels fall back to catalog context require
+librarian verification; they are omitted from requester choices and the requester
+acceptance endpoint refuses those selections. Explicit product questions
+retain their separately verified identity and existing consent flow.
+
 **Optional AI search guidance:** the `SearchGuidance` role is off by default.
 It is considered only after deterministic variants finish for every scheduled
 external source for the requested format, with no candidate eligible for

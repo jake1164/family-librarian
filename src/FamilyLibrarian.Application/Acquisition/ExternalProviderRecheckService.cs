@@ -705,6 +705,9 @@ public sealed partial class ExternalProviderRecheckService(
         options
             .GroupBy(option => new ReviewCandidatePresentationKey(
                 NormalizeReviewFact(option.ProviderId),
+                NormalizeReviewFact(option.Title),
+                NormalizeReviewFact(option.Author),
+                NormalizeReviewFact(option.ReleaseName),
                 option.MediaType,
                 NormalizeReviewFact(option.Format),
                 NormalizeReviewFact(option.Language),
@@ -749,6 +752,9 @@ public sealed partial class ExternalProviderRecheckService(
 
     private sealed record ReviewCandidatePresentationKey(
         string? ProviderId,
+        string? Title,
+        string? Author,
+        string? ReleaseName,
         RequestMediaType MediaType,
         string? Format,
         string? Language,
@@ -1039,13 +1045,14 @@ public sealed partial class ExternalProviderRecheckService(
 
     private static string DescribeCandidateReviewReason(IReadOnlyList<FulfillmentOption> options)
     {
-        var hasConfirmedWorkIdentity = options.Any(option =>
-            option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle);
+        var hasConfirmedWorkIdentity = options.All(option =>
+            option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor ||
+            option.MatchBasis == BookMatchBasis.StrictTitle && option.AuthorAffinity?.HasStrongSupport == true);
 
         if (!hasConfirmedWorkIdentity)
         {
             if (options.Any(option => option.HasPlausibleTitle))
-                return "The release names include the requested title, but other identity or release details need a librarian review before acquisition.";
+                return "The source titles or release names include the requested title, but author, work identity or release details still need librarian verification before acquisition.";
             return "Possible copies were found, but their titles could not be confirmed as the requested work. A librarian must verify the source before acquisition.";
         }
 

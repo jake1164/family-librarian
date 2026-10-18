@@ -210,6 +210,19 @@ administrator panel. Do not collapse source records before persistence: the
 administrator must see every record, its human-facing source and record
 identifier, and the neutral media facts needed to compare it.
 
+For a release-only source, lead the administrator candidate card with the raw
+release name, or "Unnamed source record" when none was supplied. Never lead
+with the catalog fallback title/author as though they were source claims.
+Keep media details and language separate, and state that author/work identity
+still need verification even when a title phrase appears in the release.
+Fallback rows saved by older versions may contain an inherited catalog author;
+omit that author from review projections because its source provenance is unknown.
+Ordinary release-only fallback identity reviews show no requester acquisition
+choices; only a librarian can resolve them. Independently verified product questions retain
+their existing requester consent flow. Distinct source titles, authors and raw
+release names must survive media-fact deduplication. Source text uses normal
+Razor encoding and wraps on narrow screens.
+
 Administrator request-review provenance may include the optional provider-authored
 `sourceSummary` beside the source name and record identifier. It is bounded plain
 text, rendered with normal Razor HTML encoding; it is never a decision signal or

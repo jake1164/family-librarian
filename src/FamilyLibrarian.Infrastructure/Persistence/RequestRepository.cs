@@ -595,8 +595,13 @@ public sealed class RequestRepository(
             .Where(candidate => preferenceAmbiguityIds.Contains(candidate.RequestId))
             .OrderBy(candidate => candidate.DisplayOrder)
             .Select(candidate => new RequestReviewCandidateRow(
-                candidate.RequestId, candidate.Id, candidate.Title, candidate.Author, candidate.Language, candidate.Details))
+                candidate.RequestId, candidate.Id, candidate.Title,
+                candidate.TitleIsRequestFallback ? null : candidate.Author, candidate.Language, candidate.Details,
+                candidate.TitleIsRequestFallback && candidate.ReleaseName != null))
             .ToArrayAsync(cancellationToken);
+        var librarianReviewIds = candidates.Where(candidate => candidate.ReleaseOnlyIdentity &&
+                preferenceReviews.Single(review => review.RequestId == candidate.RequestId).QuestionKind is null)
+            .Select(candidate => candidate.RequestId).ToHashSet();
         var candidatesByRequest = candidates
             .GroupBy(candidate => candidate.RequestId)
             .ToDictionary(
@@ -610,11 +615,12 @@ public sealed class RequestRepository(
             requestId => requestId,
             requestId => new RequestNeedsReviewView(
                 RequestReviewCategory.PreferenceAmbiguity,
-                candidatesByRequest.TryGetValue(requestId, out var list) ? list : [],
+                !librarianReviewIds.Contains(requestId) && candidatesByRequest.TryGetValue(requestId, out var list) ? list : [],
                 preferenceReviews.Single(review => review.RequestId == requestId).Reason,
                 preferenceReviews.Single(review => review.RequestId == requestId).QuestionKind,
                 preferenceReviews.Single(review => review.RequestId == requestId).QuestionFormatId,
-                preferenceReviews.Single(review => review.RequestId == requestId).QuestionAskedAtUtc));
+                preferenceReviews.Single(review => review.RequestId == requestId).QuestionAskedAtUtc,
+                CanAnswer: !librarianReviewIds.Contains(requestId)));
         if (viewerId is { } viewer && preferences is not null)
         {
             var participants = await database.BookRequests.AsNoTracking().Where(r => preferenceAmbiguityIds.Contains(r.Id))
@@ -822,7 +828,7 @@ public sealed class RequestRepository(
         string? FailureReason, int AttemptNumber, DeliveryConfirmationStatus ConfirmationStatus);
 
     private sealed record RequestReviewCandidateRow(
-        Guid RequestId, Guid CandidateId, string Title, string? Author, string? Language, string? Details);
+        Guid RequestId, Guid CandidateId, string Title, string? Author, string? Language, string? Details, bool ReleaseOnlyIdentity);
 
     private sealed record PreferenceReviewRow(Guid RequestId, string? Reason, AcquisitionQuestionKind? QuestionKind, Guid? QuestionFormatId, DateTimeOffset? QuestionAskedAtUtc);
 }
