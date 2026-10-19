@@ -40,6 +40,8 @@ public sealed class DirectAcquisitionService(
     IClock clock,
     ActiveAcquisitionTracker activityTracker) : IAudiobookPartSetMemberAcquirer
 {
+    private static readonly KeyedAsyncLock ExternalSubmissionLock = new();
+
     public Task<ManualImportResult> AcquireMemberAsync(
         Guid requestId,
         Guid requestFormatId,
@@ -381,6 +383,32 @@ public sealed class DirectAcquisitionService(
                 "Re-test the provider in Admin → External Providers, or wait for its next scheduled recheck.");
         }
 
+        // Automatic fulfillment and an administrator can both pass the source
+        // checks before either has saved a job. Reserve this format across
+        // request scopes before creating a new idempotency key or submitting.
+        using var reservation = await ExternalSubmissionLock.AcquireAsync(format.Id, cancellationToken);
+        var activeJobs = await providerAcquisitionJobs.ListActiveForFormatAsync(format.Id, cancellationToken);
+        var fingerprint = ExternalReleaseFingerprint.Compute(externalOption.ReleaseName, externalOption.SizeBytes);
+        var existingJob = activeJobs.FirstOrDefault(active =>
+            active.ExternalProviderId == externalProvider.Id &&
+            active.CandidateReference == externalOption.ProviderResultId &&
+            active.CandidateRevision == externalOption.CandidateRevision &&
+            active.CandidateFingerprint == fingerprint &&
+            active.PartSetId == partSet?.SetId && active.PartNumber == partSet?.Number);
+        if (existingJob is not null)
+            return ManualImportResult.AcquisitionInProgress(existingJob.Id);
+
+        if (partSet is null && await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken))
+            return ManualImportResult.Invalid("A copy for that format has already been received and is being checked or is available.");
+
+        // Different numbered members of this same validated set may run
+        // together. A competing copy or another set must wait for current work.
+        // A job waiting on a person must still allow another source to help.
+        if (activeJobs.Any(active => active.LifecycleState != ProviderAcquisitionJobLifecycleState.Waiting &&
+                (partSet is null || active.PartSetId != partSet.SetId ||
+                 active.ExternalProviderId != externalProvider.Id || active.PartNumber == partSet.Number)))
+            return ManualImportResult.Invalid("An acquisition is already in progress for that format. Wait for it to finish or cancel it before choosing another copy.");
+
         var idempotencyKey = Guid.NewGuid().ToString("N");
         var acquireRequestId = Guid.NewGuid();
         var acquireRequest = new ExternalAcquireRequest(
@@ -400,7 +428,7 @@ public sealed class DirectAcquisitionService(
             now,
             acquireRequestId,
             isAutomaticAcquisition,
-            Providers.ExternalReleaseFingerprint.Compute(externalOption.ReleaseName, externalOption.SizeBytes),
+            fingerprint,
             // Only these deterministic bases preconfirm source identity.
             // A governed AI author variant can reach this point without one,
             // so its downloaded author's identity must still be verified.

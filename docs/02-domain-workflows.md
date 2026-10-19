@@ -705,6 +705,14 @@ safely either way. Remaining gaps: no per-edition ISBN selection (any ISBN
 known for the Work is tried), and a CWA entry missing an `<author>` element
 is not treated as a mismatch.
 
+Automatic fulfillment and an administrator's explicit external acquisition
+share active provider work for a requested format. After fresh source checks,
+submitting the same unchanged candidate returns the existing job; a competing
+copy must wait for completion or cancellation. Distinct numbered parts of the
+same validated audiobook set may proceed together; a job waiting on human
+interaction still permits a different copy to progress. Duplicate submissions must
+not be resolved by weakening the destination's catalog ambiguity checks.
+
 **Existing-artifact suitability is not yet modeled.** A `LibraryImport`
 reaching `Available`, or a `FulfillmentOption` with `OptionKind.Owned`, is
 currently treated as unconditionally usable. Nothing checks that the resolved
