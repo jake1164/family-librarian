@@ -7,7 +7,8 @@ public enum SemanticSubjectKind
     Candidate = 1,
     Artifact = 2,
     SearchGuidance = 3,
-    CandidateTriage = 4
+    CandidateTriage = 4,
+    ArtifactDecision = 5
 }
 
 /// <summary>
@@ -21,6 +22,7 @@ public enum SemanticSubjectKind
 /// claims, which cite evidence ids and carry short plain notes. Shadow findings remain advisory. Search-guidance findings
 /// may be reused for bounded searches only. Candidate-triage findings require independent move checks and fresh
 /// source verification before acquisition; they never preconfirm artifact identity or change security checks.
+/// Artifact decisions can add a grounded hold before approval, and cannot release or approve a file.
 /// </remarks>
 public sealed class SemanticFinding
 {

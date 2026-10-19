@@ -131,6 +131,13 @@ query/reference flow, and altered source facts invalidate the decision.
 Triage cannot invent acquisition targets, preconfirm artifact identity or
 bypass any security, edition, completeness or delivery check.
 
+The optional `ArtifactValidationDecision` role is a host-side pre-approval
+review of in-memory verifier and profile-comparison evidence. It needs no
+provider protocol change and cannot accept a collection or release a file.
+Only a grounded concern can add `identity.hold.model_concern`; model errors
+leave the deterministic verdict unchanged. Automatic declines caused by this
+hold begin with `[model]` and consume the existing source attempt budget.
+
 Numbered audiobook fragments (`Part 2`, `1.of.2`, `2 of 2`) are completeness
 evidence distinct from work identity and from tracks inside one complete
 release. A one-file report does not make a numbered fragment the complete

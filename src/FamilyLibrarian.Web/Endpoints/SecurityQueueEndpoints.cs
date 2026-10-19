@@ -60,11 +60,23 @@ internal static class SecurityQueueEndpoints
         return Results.Ok(new MediaAssetAdminListResponse(entries.Select(entry => ToMediaAssetAdminResponse(entry, findings)).ToArray()));
     }
 
-    /// <summary>Advisory model notes for the listed files. Display only: nothing here influences the entries.</summary>
-    private static Task<IReadOnlyDictionary<string, SemanticFinding>> LoadFindingsAsync(
-        ISemanticFindingStore store, IReadOnlyList<MediaAssetQueueEntry> entries, CancellationToken cancellationToken) =>
-        store.FindLatestForSubjectsAsync(
-            SemanticSubjectKind.Artifact, [.. entries.Select(entry => entry.Asset.AssetId.ToString("N"))], cancellationToken);
+    /// <summary>Show the decision review for model-held files, retaining shadow notes for other files.</summary>
+    private static async Task<IReadOnlyDictionary<string, SemanticFinding>> LoadFindingsAsync(
+        ISemanticFindingStore store, IReadOnlyList<MediaAssetQueueEntry> entries, CancellationToken cancellationToken)
+    {
+        var subjects = entries.Select(entry => entry.Asset.AssetId.ToString("N")).ToArray();
+        var shadow = await store.FindLatestForSubjectsAsync(SemanticSubjectKind.Artifact, subjects, cancellationToken);
+        var decisions = await store.FindLatestForSubjectsAsync(SemanticSubjectKind.ArtifactDecision, subjects, cancellationToken);
+        var findings = shadow.ToDictionary(pair => pair.Key, pair => pair.Value);
+        foreach (var entry in entries)
+        {
+            var id = entry.Asset.AssetId.ToString("N");
+            if (decisions.TryGetValue(id, out var decision) &&
+                (entry.Asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.ModelConcern || !findings.ContainsKey(id)))
+                findings[id] = decision;
+        }
+        return findings;
+    }
 
     internal static MediaAssetAdminResponse ToMediaAssetAdminResponse(MediaAssetQueueEntry entry) =>
         ToMediaAssetAdminResponse(entry, null);
@@ -106,7 +118,7 @@ internal static class SecurityQueueEndpoints
                 finding.Outcome.ToString(), finding.Verdict,
                 [.. CandidateSemanticAnalyzer.DeserializeClaims(finding.ClaimsJson)
                     .Select(claim => new AdminArtifactSemanticClaimResponse(claim.Kind, claim.Stance, claim.EvidenceIds, claim.Note))],
-                finding.FailureDetail, finding.Model, finding.IsCloud, finding.CreatedAtUtc)
+                finding.FailureDetail, finding.Model, finding.IsCloud, finding.CreatedAtUtc, finding.Kind == SemanticSubjectKind.ArtifactDecision)
             : null,
         entry.Asset.BundleId,
         entry.Asset.BundleTrackCount,

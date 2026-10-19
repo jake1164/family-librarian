@@ -1135,6 +1135,15 @@ evidence; Strict never gains an AI confidence upgrade. Every submission checks
 fresh source facts, and downloaded files still pass all security, identity and
 delivery checks. Candidate triage does not enable artifact release decisions.
 
+The separate `ArtifactValidationDecision` role is off by default. For otherwise
+matching provider EPUB/KEPUB/M4B/MP3/OGG files, it may add a grounded identity
+hold before approval and publishing. A hold requires a cited contradiction or
+a concern grounded in Negative, Weak or Condition evidence; Positive-only
+citations and uncertainty cannot hold. It cannot release, approve, or accept
+collection contents. Model failures preserve the deterministic outcome. File
+metadata is bounded untrusted input, and cloud sharing requires explicit opt-in.
+Existing artifact assessment shadows remain advisory.
+
 ---
 
 ## 17. Competitive / Reference Projects

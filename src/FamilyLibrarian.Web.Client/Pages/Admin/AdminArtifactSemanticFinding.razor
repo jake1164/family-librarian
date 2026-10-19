@@ -1,13 +1,19 @@
 @using FamilyLibrarian.Contracts.Acquisition
 
-@* Per docs/07-ui-conventions.md: no status chips and no colour semantics. This note is advisory text only. *@
+@* Per docs/07-ui-conventions.md: model reviews are plain text without status chips. *@
 @if (Finding is { } finding)
 {
     <details class="mt-1" style="overflow-wrap: anywhere;">
-        <summary>AI second opinion (advisory only)</summary>
+        <summary>@(finding.IsDecision ? "AI validation review" : "AI second opinion (advisory only)")</summary>
         <p class="mb-1"><small>
-            A model's note about this file's recorded evidence. It never holds, releases, approves or rejects anything, and a
-            security or identity hold stays exactly as the fixed rules left it.
+            @if (finding.IsDecision)
+            {
+                <span>This review may add a hold before approval. It cannot release or approve a file. A librarian can review the cited facts and override the identity hold.</span>
+            }
+            else
+            {
+                <span>A model's note about this file's recorded evidence. It never holds, releases, approves or rejects anything, and a security or identity hold stays exactly as the fixed rules left it.</span>
+            }
         </small></p>
         @if (finding.Verdict is null)
         {
@@ -33,6 +39,8 @@
     {
         "Consistent" => "the recorded evidence looks consistent with what the file was staged as",
         "Inconsistent" => "the recorded evidence looks inconsistent with what the file was staged as",
+        "hold" => "raised a concern requiring librarian review",
+        "no_objection" => "raised no additional concern",
         _ => "uncertain"
     };
 

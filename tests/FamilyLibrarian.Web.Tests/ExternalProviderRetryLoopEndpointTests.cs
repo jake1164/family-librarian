@@ -1,12 +1,15 @@
 using System.Net.Http.Json;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Application.ModelGateway;
+using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Providers;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -392,16 +395,26 @@ public sealed class ExternalProviderIdentityHoldRetryEndpointTests
     }
 
     [TestMethod]
-    public async Task ACompletedJobWhoseFileIsHeldForIdentityAdvancesToTheNextCandidate()
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task ACompletedJobWhoseFileIsHeldForIdentityAdvancesToTheNextCandidate(bool modelConcern)
     {
-        var fixture = WebTestFixture.Require(_fixture);
-        var client = new RetryLoopExternalProviderClient { FailingJobDeliversWrongBook = true };
+        await using var modelFixture = modelConcern ? await WebTestFixture.CreateAsync() : null;
+        var fixture = WebTestFixture.Require(modelConcern ? modelFixture : _fixture);
+        var client = new RetryLoopExternalProviderClient { FailingJobDeliversWrongBook = !modelConcern, FailingJobDeliversSample = modelConcern };
+        var model = new ArtifactHoldModel();
         await using var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
             services =>
             {
                 services.RemoveAll<IExternalProviderClient>();
                 services.AddSingleton<IExternalProviderClient>(client);
+                if (modelConcern)
+                {
+                    services.RemoveAll<IModelRoleResolver>(); services.AddSingleton<IModelRoleResolver>(model);
+                    services.RemoveAll<IModelExecutionPolicy>(); services.AddSingleton<IModelExecutionPolicy>(model);
+                    services.RemoveAll<IExpectedArtifactProfileSource>(); services.AddSingleton<IExpectedArtifactProfileSource>(model);
+                }
             });
 
         using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -434,11 +447,27 @@ public sealed class ExternalProviderIdentityHoldRetryEndpointTests
             var held = await database.MediaAssets.SingleAsync(asset => asset.WorkId == work.Id);
             Assert.AreEqual(MediaAssetStorageState.Unmatched, held.StorageState, "The wrong book is held, not trusted.");
             Assert.IsNotNull(held.RuledOutAtUtc, "The queue must show the held copy as settled, not as a review to do.");
+            if (modelConcern)
+            {
+                Assert.AreEqual("identity.hold.model_concern", held.IdentityHoldCode);
+                Assert.AreEqual(1, model.Calls);
+                Assert.AreEqual(0, await database.LibraryImports.CountAsync(i => i.AssetId == held.Id), "A model-held copy must never publish.");
+                var approval = await scope.ServiceProvider.GetRequiredService<ApprovalService>()
+                    .ApproveByPolicyAsync(held.Id, "clean-security-evaluation-v1", CancellationToken.None);
+                Assert.AreNotEqual(ApprovalOutcome.Success, approval.Outcome);
+                Assert.AreEqual(MediaAssetStorageState.Unmatched, held.StorageState);
+            }
 
             var declined = await database.DeclinedRequestCandidates
                 .Where(candidate => candidate.RequestId == request.Id)
                 .ToListAsync();
             Assert.HasCount(1, declined, "The held copy must be ruled out so it is not fetched again.");
+            if (modelConcern)
+            {
+                StringAssert.StartsWith(declined[0].FailureReason!, "[model]");
+                var modelRequest = await database.BookRequests.SingleAsync(r => r.Id == request.Id);
+                Assert.AreEqual(1, modelRequest.CountAutomaticCandidateFailures(declined[0].RequestFormatId, "identity-hold-external"));
+            }
             Assert.AreEqual(RetryLoopExternalProviderClient.FailingReference, declined[0].ProviderResultId);
 
             var retrying = await database.ProviderAttempts.SingleAsync(attempt =>
@@ -448,6 +477,16 @@ public sealed class ExternalProviderIdentityHoldRetryEndpointTests
 
             var persisted = await database.BookRequests.SingleAsync(entity => entity.Id == request.Id);
             Assert.AreEqual(RequestStatus.PendingAcquisition, persisted.Status);
+        }
+
+        if (modelConcern)
+        {
+            var queue = await admin.GetFromJsonAsync<MediaAssetAdminListResponse>("/api/v1/admin/media-assets/recent");
+            var view = queue!.Assets.Single(a => a.WorkId == work.Id);
+            Assert.IsTrue(view.SemanticFinding!.IsDecision);
+            Assert.AreEqual("hold", view.SemanticFinding.Verdict);
+            Assert.Contains("idv.ev-compare-length", view.SemanticFinding.Claims.Single().EvidenceIds);
+            Assert.IsTrue(view.Evidence!.Items.Any(e => e.FindingId == "ev-compare-length" && e.Polarity == "Weak"));
         }
 
         await RetryLoopSupport.RunRecheckAsync(factory);
@@ -1033,6 +1072,26 @@ file static class RetryLoopSupport
 /// shape, with no <c>work</c> object at all. The retail-tagged one outranks the
 /// other and always fails its job; the untagged one succeeds.
 /// </summary>
+file sealed class ArtifactHoldModel : IModelRoleResolver, IModelExecutionPolicy, IExpectedArtifactProfileSource
+{
+    public int Calls { get; private set; }
+    public Task<ExpectedArtifactProfile?> FindAsync(MediaAsset asset, CancellationToken cancellationToken) =>
+        Task.FromResult<ExpectedArtifactProfile?>(new("The Hobbit", [], "J. R. R. Tolkien", [], [], "en", 20, null, false));
+    public Task<ModelRoleResolution> ResolveAsync(ModelRole role, CancellationToken cancellationToken) => Task.FromResult(
+        role == ModelRole.ArtifactValidationDecision
+            ? new ModelRoleResolution(role, ModelUnavailableReason.None, new Uri("http://model.test"), null, "artifact-test", false, ModelExecutionLimits.Default)
+            : ModelRoleResolution.Unavailable(role, ModelUnavailableReason.RoleDisabled));
+    public Task<ModelExecution<T>> ExecuteAsync<T>(ModelExecutionRequest request, Func<string, ModelParseResult<T>> parse, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Assert.AreEqual(ModelRole.ArtifactValidationDecision, request.Role);
+        StringAssert.Contains(request.Messages[1].Content, "idv.ev-compare-length | Weak");
+        var parsed = parse("{\"schema\":\"artifact-decision/1\",\"verdict\":\"hold\",\"claims\":[{\"kind\":\"suggests_incomplete\"," +
+            "\"evidence_ids\":[\"idv.ev-compare-length\"],\"note\":\"This may be a short sample.\"}]}");
+        return Task.FromResult(new ModelExecution<T>(parsed.Failure, parsed.Value, parsed.Detail, null, 1, "artifact-test", false));
+    }
+}
+
 file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
 {
     public const string FailingReference = "c_retail_fails";
@@ -1066,6 +1125,8 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
 
     /// <summary>When set, the failing candidate's job completes but its file is a different book.</summary>
     public bool FailingJobDeliversWrongBook { get; init; }
+
+    public bool FailingJobDeliversSample { get; init; }
 
     public bool LoseFirstSubmissionResponse { get; init; }
 
@@ -1153,7 +1214,7 @@ file sealed class RetryLoopExternalProviderClient : IExternalProviderClient
         string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken)
     {
         StatusPollCount++;
-        var isFailing = _jobCandidates.GetValueOrDefault(jobId) == FailingReference && !FailingJobDeliversWrongBook;
+        var isFailing = _jobCandidates.GetValueOrDefault(jobId) == FailingReference && !FailingJobDeliversWrongBook && !FailingJobDeliversSample;
         if (_jobCandidates.GetValueOrDefault(jobId) == FailingReference && FailingJobNeverFinishes)
         {
             return Task.FromResult(new ExternalProviderJobStatus(

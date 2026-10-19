@@ -31,6 +31,13 @@ namespace FamilyLibrarian.Application.Security;
 /// </remarks>
 public static class ArtifactHoldPolicy
 {
+    /// <summary>Keep model-caused automatic retries distinguishable without changing their normal attempt accounting.</summary>
+    public static string AcquisitionFailureReason(MediaAsset asset, string fallback)
+    {
+        var reason = asset.IdentityMismatchReason ?? fallback;
+        return asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.ModelConcern ? "[model] " + reason : reason;
+    }
+
     public static AssetIdentityVerificationResult Apply(MediaAsset asset, AssetIdentityVerificationResult result)
     {
         ArgumentNullException.ThrowIfNull(asset);

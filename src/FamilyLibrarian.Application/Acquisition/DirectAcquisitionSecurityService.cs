@@ -105,8 +105,8 @@ public sealed class DirectAcquisitionSecurityService(
             // reported as a wrong book.
             if (asset.StorageState == MediaAssetStorageState.Unmatched)
             {
-                return (result, asset.IdentityMismatchReason ??
-                    "The acquired file could not be verified as the requested book.");
+                return (result, ArtifactHoldPolicy.AcquisitionFailureReason(asset,
+                    "The acquired file could not be verified as the requested book."));
             }
         }
 

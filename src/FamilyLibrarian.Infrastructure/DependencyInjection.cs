@@ -291,6 +291,7 @@ public static class DependencyInjection
         services.AddSingleton<CandidateSemanticShadowBuffer>();
         services.AddSingleton<ICandidateSemanticShadow>(provider => provider.GetRequiredService<CandidateSemanticShadowBuffer>());
         services.AddScoped<ArtifactSemanticAnalyzer>();
+        services.AddScoped<ArtifactDecisionService>();
         services.AddSingleton<ArtifactSemanticShadowBuffer>();
         services.AddSingleton<IArtifactSemanticShadow>(provider => provider.GetRequiredService<ArtifactSemanticShadowBuffer>());
 

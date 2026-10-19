@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.SemanticAssessment;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Evidence;
@@ -26,10 +27,9 @@ public sealed class AssetIdentityVerificationService(
     IClock clock,
     IArtifactEvidenceRecorder? evidence = null,
     IExpectedArtifactProfileSource? expectedProfiles = null,
-    IArtifactEvidenceStore? profileEvidence = null) : IAssetIdentityVerificationService
+    IArtifactEvidenceStore? profileEvidence = null,
+    ArtifactDecisionService? modelDecisions = null) : IAssetIdentityVerificationService
 {
-    private readonly IExpectedArtifactProfileSource? _expectedProfiles = expectedProfiles;
-
     public async Task<AssetIdentityVerificationResult> VerifyAsync(
         Guid assetId,
         CancellationToken cancellationToken)
@@ -45,7 +45,13 @@ public sealed class AssetIdentityVerificationService(
         var result = verifier is null
             ? NoVerifierOutcome.For(asset)
             : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Processing, cancellationToken);
-        result = ArtifactHoldPolicy.Apply(asset, await CompareProfileAsync(asset, result, cancellationToken));
+        var expected = expectedProfiles is null ? null : await expectedProfiles.FindAsync(asset, cancellationToken);
+        result = ArtifactHoldPolicy.Apply(asset, await CompareProfileAsync(asset, result, expected, cancellationToken));
+
+        if (result.IsMatch && modelDecisions is not null &&
+            await modelDecisions.GetHoldAsync(asset, result, expected, cancellationToken) is { } hold)
+            result = result with { IsMatch = false, HoldCode = EvidenceReasonCodes.IdentityHold.ModelConcern,
+                Reason = $"An automated reviewer raised a concern: {hold.Note}" };
 
         if (!result.IsMatch)
         {
@@ -84,11 +90,17 @@ public sealed class AssetIdentityVerificationService(
             throw new InvalidOperationException("Only an unmatched asset can have its identity verification retried.");
         }
 
+        // A recheck cannot release a model concern: only the administrator override may do that.
+        if (asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.ModelConcern)
+            return AssetIdentityVerificationResult.Unmatched("model-concern", asset.IdentityMismatchReason)
+                with { HoldCode = EvidenceReasonCodes.IdentityHold.ModelConcern };
+
         var verifier = verifiers.FirstOrDefault(verifier => verifier.Supports(asset));
         var result = verifier is null
             ? NoVerifierOutcome.For(asset)
             : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Unmatched, cancellationToken);
-        result = ArtifactHoldPolicy.Apply(asset, await CompareProfileAsync(asset, result, cancellationToken));
+        var expected = expectedProfiles is null ? null : await expectedProfiles.FindAsync(asset, cancellationToken);
+        result = ArtifactHoldPolicy.Apply(asset, await CompareProfileAsync(asset, result, expected, cancellationToken));
 
         if (result.IsMatch)
         {
@@ -139,10 +151,9 @@ public sealed class AssetIdentityVerificationService(
     }
 
     private async Task<AssetIdentityVerificationResult> CompareProfileAsync(
-        MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken)
+        MediaAsset asset, AssetIdentityVerificationResult result, ExpectedArtifactProfile? expected, CancellationToken cancellationToken)
     {
-        if (_expectedProfiles is null || await _expectedProfiles.FindAsync(asset, cancellationToken) is not { } expected)
-            return result;
+        if (expected is null) return result;
         var facts = result.Facts.ToList();
         if (profileEvidence is not null)
         {

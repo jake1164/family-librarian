@@ -656,7 +656,7 @@ public sealed class AcquisitionJobPollingService(
             switch (asset?.StorageState)
             {
                 case MediaAssetStorageState.Unmatched:
-                    return asset.IdentityMismatchReason ?? "The fetched copy did not match the requested book.";
+                    return ArtifactHoldPolicy.AcquisitionFailureReason(asset, "The fetched copy did not match the requested book.");
                 case MediaAssetStorageState.Rejected or MediaAssetStorageState.Destroyed:
                     return asset.ScanFailureReason ?? "The fetched copy failed a security or structure check.";
             }

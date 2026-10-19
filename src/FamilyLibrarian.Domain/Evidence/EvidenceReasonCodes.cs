@@ -102,6 +102,7 @@ public static class EvidenceReasonCodes
     /// </summary>
     public static class IdentityHold
     {
+        public const string ModelConcern = "identity.hold.model_concern";
         public const string ContentContradicted = "identity.hold.content_contradicted";
         public const string ContentInconclusive = "identity.hold.content_inconclusive";
         public const string LanguageConflict = "identity.hold.language_conflict";

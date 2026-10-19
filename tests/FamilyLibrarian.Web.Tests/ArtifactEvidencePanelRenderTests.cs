@@ -14,6 +14,25 @@ namespace FamilyLibrarian.Web.Tests;
 [TestClass]
 public sealed class ArtifactEvidencePanelRenderTests
 {
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task ModelDecisionAndShadowNotesHaveDistinctMeaningAndEncodeTheirCitations(bool decision)
+    {
+        var finding = new AdminArtifactSemanticFindingResponse("Succeeded", decision ? "hold" : "Inconsistent",
+            [new("suggests_incomplete", "Concern", ["idv.ev-compare-length"], "Short <script>book</script>.")],
+            null, "test-model", false, DateTimeOffset.UtcNow, decision);
+        await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, NullLoggerFactory.Instance);
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+            (await renderer.RenderComponentAsync<AdminArtifactSemanticFinding>(ParameterView.FromDictionary(
+                new Dictionary<string, object?> { ["Finding"] = finding }))).ToHtmlString());
+        StringAssert.Contains(html, decision ? "AI validation review" : "advisory only");
+        StringAssert.Contains(html, decision ? "cannot release or approve" : "never holds, releases, approves or rejects");
+        StringAssert.Contains(html, "idv.ev-compare-length"); StringAssert.Contains(html, "&lt;script&gt;");
+        Assert.IsFalse(html.Contains("<script>", StringComparison.Ordinal));
+    }
+
     private static readonly DateTimeOffset At = new(2026, 10, 11, 0, 0, 0, TimeSpan.Zero);
 
     private static ArtifactEvidenceItemResponse Item(

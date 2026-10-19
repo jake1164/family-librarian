@@ -1439,7 +1439,28 @@ inferred heading language are evidence only. These identity holds occur before
 approval and publishing and remain reviewable; the security and structure gates
 are unchanged.
 
-When a scheduled external acquisition starts, its durable job records the median size of other pooled, requester-reviewable candidates in the same format, provided at least three peers have a positive known size. After staging, the exact job output links that snapshot to the asset, including across restarts. A download smaller than 30% of the median produces Weak `profile.compare.size_peer_outlier` evidence. This finding never holds a file or changes acquisition eligibility; two peers or unknown measurements produce no finding.
+An optional `ArtifactValidationDecision` role (off by default) can add
+`identity.hold.model_concern` synchronously after those deterministic checks and
+before approval. Only ExternalProvider or BuiltInProvider EPUB, KEPUB, M4B, MP3
+and OGG matches are eligible. Its `artifact-decision/1` reply must cite a Negative
+fact for an identity contradiction, or Negative, Weak or Condition evidence for
+an incompleteness, language or edition concern. Positive-only citations,
+uncertainty, release and collection-acceptance replies cannot add a hold.
+Unaccepted collections and other deterministic holds never reach this model.
+The held file stays Unmatched, with the model note and citations available to
+administrators. Identity retry preserves a model hold; the existing administrator
+identity override remains the release path. Automatic model holds use the normal
+candidate exclusion and attempt limit, with `[model]` at the start of the stored
+decline reason. Budget: BackgroundValidation, 400 output tokens, timeout capped
+at the smaller of the installation setting and 45 seconds. Any model error or
+timeout preserves the deterministic result; a disabled role makes no model call.
+Validated decisions and failures are recorded, and identical reusable findings
+are reused for seven days. File-derived values are stripped of control/invisible
+formatting and markup delimiters, bounded, and framed as untrusted data. Cloud
+roles receive those values only with the separate excerpt-sharing opt-in. No
+book excerpts or automatic hold releases are implemented.
+
+When a scheduled external acquisition starts, its durable job records the median size of other pooled, requester-reviewable candidates in the same format, provided at least three peers have a positive known size. After staging, the exact job output links that snapshot to the asset, including across restarts. A download smaller than 30% of the median produces Weak `profile.compare.size_peer_outlier` evidence. This finding never deterministically holds a file or changes acquisition eligibility; the optional artifact decision reviewer may cite it for a concern. Two peers or unknown measurements produce no finding.
 
 When a source is set to Suggest only or the remaining candidates need a
 human review, Family Librarian does not ask a requester to guess between rows

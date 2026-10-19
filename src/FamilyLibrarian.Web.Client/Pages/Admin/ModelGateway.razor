@@ -437,6 +437,7 @@
         "VisionCoverIdentification" => "Identify books from cover images",
         "SearchGuidance" => "Suggest additional searches",
         "CandidateTriage" => "Review candidates before acquisition",
+        "ArtifactValidationDecision" => "Review files before approval",
         _ => role
     };
 
@@ -449,6 +450,7 @@
         "VisionCoverIdentification" => "Needs a vision-capable model. A suggestion is only a lead: it must be confirmed against a metadata lookup.",
         "SearchGuidance" => "Suggests bounded title, author or series searches when fixed searches find no acceptable copy. Every result is checked against the requested book.",
         "CandidateTriage" => "May veto a candidate, break a tie, or recognize a corroborated author variant. Source confidence and file validation still apply. Off by default.",
+        "ArtifactValidationDecision" => "May hold an otherwise matching provider file on grounded concerns. Cannot release or approve files. Off by default.",
         _ => string.Empty
     };
 }

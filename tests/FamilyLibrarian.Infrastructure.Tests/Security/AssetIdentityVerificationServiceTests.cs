@@ -5,6 +5,8 @@ using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
+using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Infrastructure.Tests.SemanticAssessment;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Security;
 
@@ -446,6 +448,97 @@ public sealed class AssetIdentityVerificationServiceTests
         public Task<ExpectedArtifactProfile?> FindAsync(MediaAsset asset, CancellationToken cancellationToken) =>
             Task.FromResult<ExpectedArtifactProfile?>(new("Book", [], null, [], [], "en", null, null, false,
                 4_000_000, 3, asset.SizeBytes));
+    }
+
+    [TestMethod]
+    [DataRow("sample")]
+    [DataRow("translation")]
+    public async Task ModelConcernHoldsBeforeStorageTransitionAndRecordsComparedFacts(string fixture)
+    {
+        var asset = CreateProcessingAsset(".epub", true, AssetOrigin.ExternalProvider);
+        var kit = new ArtifactDecisionKit();
+        IdentityFact[] profile = fixture == "sample"
+            ? [new("ev-words", EvidenceDimension.Profile, EvidenceReasonCodes.ArtifactProfile.TextWordCount, EvidencePolarity.Unknown, "words=12000")]
+            : Enumerable.Range(1, 5).Select(i => new IdentityFact("heading-" + i, EvidenceDimension.Profile,
+                EvidenceReasonCodes.ArtifactProfile.Heading, EvidencePolarity.Unknown, "Kapitel ungekürzt " + i)).ToArray();
+        var id = fixture == "sample" ? "idv.ev-compare-length" : "idv.ev-compare-heading-language";
+        kit.Response = ArtifactDecisionKit.Reply(kind: fixture == "sample" ? "suggests_incomplete" : "suggests_wrong_language", id: id);
+        var recorder = new CapturingIdentityRecorder(); var staging = new RecordingStagingStore();
+        var service = new AssetIdentityVerificationService(new AssetRepository(asset), staging,
+            [new FixedVerifier(AssetIdentityVerificationResult.Match("test", profile))], new RecordingAuditWriter(), new FixedClock(),
+            recorder, new ModelExpectedSource(), modelDecisions: kit.Service);
+
+        var result = await service.VerifyAsync(asset.Id, CancellationToken.None);
+
+        Assert.IsFalse(result.IsMatch); Assert.AreEqual("identity.hold.model_concern", asset.IdentityHoldCode);
+        StringAssert.StartsWith(asset.IdentityMismatchReason!, "An automated reviewer raised a concern:");
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState);
+        Assert.AreEqual((MediaAssetStorageState.Processing, MediaAssetStorageState.Unmatched), staging.Move);
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, recorder.StorageStateWhenCalled);
+        Assert.IsTrue(recorder.LastResult!.Facts.Any(f => f.FindingId == id[4..] && f.Polarity == EvidencePolarity.Weak));
+        Assert.AreEqual(1, kit.Calls);
+    }
+
+    [TestMethod]
+    [DataRow("series")]
+    [DataRow("omnibus")]
+    [DataRow("abridged")]
+    public async Task ModelCannotApproveDeterministicHoldsAndIsNeverCalled(string fixture)
+    {
+        var asset = CreateProcessingAsset(".epub", true, AssetOrigin.ExternalProvider);
+        var kit = new ArtifactDecisionKit { Outcome = "release" };
+        var fact = fixture switch
+        {
+            "series" => new IdentityFact("ev-series", EvidenceDimension.Profile, EvidenceReasonCodes.ProfileComparison.SeriesPositionDiffers, EvidencePolarity.Negative),
+            "abridged" => new IdentityFact("ev-abridged", EvidenceDimension.Profile, EvidenceReasonCodes.ProfileComparison.AbridgedMarker, EvidencePolarity.Condition),
+            _ => new IdentityFact("ev-collection", EvidenceDimension.IdentityCorroboration, "identity.collection", EvidencePolarity.Negative)
+        };
+        var verified = fixture == "omnibus" ? AssetIdentityVerificationResult.Unmatched("test", "Unaccepted collection.", [fact])
+            : AssetIdentityVerificationResult.Match("test", [fact]);
+        var result = await new AssetIdentityVerificationService(new AssetRepository(asset), new RecordingStagingStore(),
+            [new FixedVerifier(verified)], new RecordingAuditWriter(), new FixedClock(), modelDecisions: kit.Service)
+            .VerifyAsync(asset.Id, CancellationToken.None);
+        Assert.IsFalse(result.IsMatch); Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState); Assert.AreEqual(0, kit.Calls);
+    }
+
+    [TestMethod]
+    [DataRow("positive")]
+    [DataRow("timeout")]
+    [DataRow("error")]
+    [DataRow("off")]
+    [DataRow("uncertain")]
+    [DataRow("release")]
+    public async Task InvalidOrUnavailableModelPreservesTheExactDeterministicMatch(string outcome)
+    {
+        var asset = CreateProcessingAsset(".epub", true, AssetOrigin.ExternalProvider);
+        var kit = new ArtifactDecisionKit { Outcome = outcome, Enabled = outcome != "off" };
+        var verified = ArtifactDecisionKit.Match();
+        var staging = new RecordingStagingStore();
+        var result = await new AssetIdentityVerificationService(new AssetRepository(asset), staging,
+            [new FixedVerifier(verified)], new RecordingAuditWriter(), new FixedClock(), modelDecisions: kit.Service)
+            .VerifyAsync(asset.Id, CancellationToken.None);
+        Assert.AreEqual(verified, result); Assert.AreEqual(MediaAssetStorageState.Processing, asset.StorageState);
+        Assert.IsNull(asset.IdentityHoldCode); Assert.IsNull(staging.Move); Assert.AreEqual(outcome == "off" ? 0 : 1, kit.Calls);
+    }
+
+    [TestMethod]
+    public async Task RetryingAModelHoldCannotReleaseItEvenWithTheRoleOff()
+    {
+        var asset = CreateProcessingAsset(".epub", true, AssetOrigin.ExternalProvider);
+        asset.TransitionStorageState(MediaAssetStorageState.Unmatched, DateTimeOffset.UtcNow);
+        asset.SetIdentityHoldCode("identity.hold.model_concern"); asset.SetIdentityMismatchReason("An automated reviewer raised a concern: incomplete.");
+        var kit = new ArtifactDecisionKit { Enabled = false }; var staging = new RecordingStagingStore();
+        var result = await new AssetIdentityVerificationService(new AssetRepository(asset), staging,
+            [new MatchingVerifier()], new RecordingAuditWriter(), new FixedClock(), modelDecisions: kit.Service)
+            .RetryUnmatchedAsync(asset.Id, CancellationToken.None);
+        Assert.IsFalse(result.IsMatch); Assert.AreEqual("identity.hold.model_concern", result.HoldCode);
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, asset.StorageState); Assert.IsNull(staging.Move); Assert.AreEqual(0, kit.Calls);
+    }
+
+    private sealed class ModelExpectedSource : IExpectedArtifactProfileSource
+    {
+        public Task<ExpectedArtifactProfile?> FindAsync(MediaAsset asset, CancellationToken cancellationToken) =>
+            Task.FromResult<ExpectedArtifactProfile?>(ArtifactDecisionKit.Expected);
     }
 
     private sealed class FixedVerifier(AssetIdentityVerificationResult result) : IAssetIdentityVerifier

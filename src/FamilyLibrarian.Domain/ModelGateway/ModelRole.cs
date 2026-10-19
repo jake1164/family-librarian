@@ -25,7 +25,10 @@ public enum ModelRole
     SearchGuidance = 6,
 
     /// <summary>Grounded candidate triage; never bypasses security or artifact validation.</summary>
-    CandidateTriage = 7
+    CandidateTriage = 7,
+
+    /// <summary>May add a grounded artifact hold before approval; never release or accept a file.</summary>
+    ArtifactValidationDecision = 8
 }
 
 /// <summary>Where a role's model runs. The choice is explicit and there is no automatic fallback from one to the other.</summary>

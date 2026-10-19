@@ -29,7 +29,7 @@ public sealed record MediaAssetAdminResponse(
 public sealed record AdminArtifactSemanticClaimResponse(string Kind, string Stance, IReadOnlyList<string> EvidenceIds, string Note);
 
 /// <summary>
-/// A model's advisory note about a file's recorded evidence. It never holds, releases, approves or rejects anything.
+/// An administrator-only model review. Decision reviews can add a hold; shadow reviews remain advisory.
 /// <paramref name="Verdict"/> and the claims are present only when the model gave a valid answer.
 /// </summary>
 public sealed record AdminArtifactSemanticFindingResponse(
@@ -39,7 +39,8 @@ public sealed record AdminArtifactSemanticFindingResponse(
     string? FailureDetail,
     string Model,
     bool IsCloud,
-    DateTimeOffset CreatedAtUtc);
+    DateTimeOffset CreatedAtUtc,
+    bool IsDecision = false);
 
 /// <summary>One persisted artifact-evidence finding. <c>(RecordId, FindingId)</c> cites it.</summary>
 public sealed record ArtifactEvidenceItemResponse(

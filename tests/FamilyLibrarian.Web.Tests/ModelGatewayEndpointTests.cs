@@ -16,7 +16,7 @@ public sealed class ModelGatewayEndpointTests
     private static readonly string[] ExpectedRoles =
     [
         "IntentInterpretation", "ConversationResponse", "CandidateAmbiguityAssessment",
-        "ArtifactValidationAssessment", "VisionCoverIdentification", "SearchGuidance", "CandidateTriage"
+        "ArtifactValidationAssessment", "VisionCoverIdentification", "SearchGuidance", "CandidateTriage", "ArtifactValidationDecision"
     ];
     private static WebTestFixture? fixture;
 
