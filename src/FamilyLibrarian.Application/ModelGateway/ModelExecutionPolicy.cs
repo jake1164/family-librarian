@@ -18,10 +18,11 @@ public sealed record ModelExecutionRequest(
     IReadOnlyList<ModelChatMessage> Messages,
     bool JsonObjectOutput = false,
     int? MaxOutputTokens = null,
-    bool IncludesFileDerivedDetail = false);
+    bool IncludesFileDerivedDetail = false,
+    Guid? MediaAssetId = null);
 
 /// <summary>The result of interpreting model text. A failure names which kind, so it can be recorded and shown honestly.</summary>
-public sealed record ModelParseResult<T>(T? Value, ModelCallOutcome Failure, string? Detail)
+public sealed record ModelParseResult<T>(T? Value, ModelCallOutcome Failure, string? Detail, ModelFailureReason? FailureReason = null)
 {
     public bool IsValid => Failure == ModelCallOutcome.Succeeded;
 }
@@ -32,7 +33,8 @@ public static class ModelParse
 
     public static ModelParseResult<T> NotJson<T>(string detail) => new(default, ModelCallOutcome.InvalidJson, detail);
 
-    public static ModelParseResult<T> SchemaRejected<T>(string detail) => new(default, ModelCallOutcome.SchemaRejected, detail);
+    public static ModelParseResult<T> SchemaRejected<T>(string detail, ModelFailureReason reason = ModelFailureReason.InvalidStructure) =>
+        new(default, ModelCallOutcome.SchemaRejected, detail, reason);
 }
 
 /// <param name="Usage">What the provider reported, or null when it reported nothing. Null is not zero.</param>
@@ -43,7 +45,9 @@ public sealed record ModelExecution<T>(
     ModelUsage? Usage,
     long LatencyMilliseconds,
     string? Model,
-    bool IsCloud)
+    bool IsCloud,
+    ModelFailureReason? FailureReason = null,
+    Guid? UsageRecordId = null)
 {
     public bool Succeeded => Outcome == ModelCallOutcome.Succeeded;
 
@@ -68,10 +72,25 @@ public sealed record ModelUsageTotals(
     int UserRequests, long UserTokens, int InstallationRequests, long InstallationTokens, int CloudRequests, long CloudTokens);
 
 public sealed record ModelUsageSummaryRow(
-    ModelRole Role, ModelBudgetClass Budget, ModelCallOutcome Outcome, bool IsCloud, int Calls, long ReportedTokens, int CallsWithoutUsage);
+    ModelRole Role, ModelBudgetClass Budget, ModelCallOutcome Outcome, bool IsCloud, int Calls, long ReportedTokens, int CallsWithoutUsage,
+    string Model = "", ModelFailureReason? FailureReason = null, int? WorkflowEffects = null);
+
+public sealed record ModelRecommendationSummaryRow(ModelRole Role, string Model, bool IsCloud, string Verdict, int Findings);
 
 /// <summary>Per-role/outcome counts for the last day. Reported tokens exclude calls where the provider gave no usage.</summary>
-public sealed record ModelUsageSummary(DateTimeOffset Since, IReadOnlyList<ModelUsageSummaryRow> Rows);
+public sealed record ModelUsageSummary(DateTimeOffset Since, IReadOnlyList<ModelUsageSummaryRow> Rows,
+    IReadOnlyList<ModelRecommendationSummaryRow>? Recommendations = null);
+
+public sealed record ModelCallFailure(
+    Guid Id, ModelRole Role, string Model, bool IsCloud, ModelCallOutcome Outcome,
+    ModelFailureReason? FailureReason, DateTimeOffset OccurredAtUtc, long? LatencyMilliseconds,
+    Guid? MediaAssetId = null, ModelCallArtifact? Artifact = null);
+
+public sealed record ModelCallArtifact(Guid AssetId, Guid WorkId, string Format, Guid? BundleId, int? TrackNumber, int? TrackCount);
+
+public sealed record ModelCallFailures(IReadOnlyList<ModelCallFailure> Rows, bool HasMore);
+
+public sealed record ModelCallDiagnosticFilter(IReadOnlyList<ModelCallOutcome> Outcomes, bool ExcludeOutcomes, bool Cancelled);
 
 public interface IModelUsageLedger
 {
@@ -81,9 +100,15 @@ public interface IModelUsageLedger
     /// <summary>Persists a reservation before the provider is called, so a crash cannot make usage vanish.</summary>
     Task AddAsync(ModelUsageRecord record, CancellationToken cancellationToken);
 
-    Task CompleteAsync(Guid recordId, ModelCallOutcome outcome, long latencyMilliseconds, ModelUsage? usage, CancellationToken cancellationToken);
+    Task CompleteAsync(Guid recordId, ModelCallOutcome outcome, long latencyMilliseconds, ModelUsage? usage, CancellationToken cancellationToken,
+        ModelFailureReason? failureReason = null);
 
     Task<ModelUsageSummary> SummarizeAsync(DateTimeOffset since, CancellationToken cancellationToken);
+
+    Task ObserveWorkflowAsync(Guid recordId, ModelWorkflowEffect effects, CancellationToken cancellationToken);
+
+    Task<ModelCallFailures> ListFailuresAsync(DateTimeOffset since, DateTimeOffset until, ModelRole? role, int page, CancellationToken cancellationToken,
+        ModelCallDiagnosticFilter? filter = null);
 }
 
 /// <summary>Process-wide state that must outlive a request: the reservation lock and the in-flight counters.</summary>
@@ -299,7 +324,8 @@ public sealed class ModelExecutionPolicy(
         var estimate = (int)Math.Min(
             int.MaxValue,
             ((long)inputCharacters + CharactersPerTokenEstimate - 1) / CharactersPerTokenEstimate + maxOutputTokens + (long)images.Length * ImageTokenReservation);
-        var reservation = new ModelUsageRecord(request.Role, request.Budget, request.UserId, resolution.Model!, resolution.IsCloud, estimate, clock.UtcNow);
+        var reservation = new ModelUsageRecord(request.Role, request.Budget, request.UserId, resolution.Model!, resolution.IsCloud, estimate, clock.UtcNow,
+            request.MediaAssetId);
         try
         {
             if (await TryReserveAsync(request, resolution, limits, reservation, estimate, cancellationToken) is { } refusal)
@@ -326,7 +352,7 @@ public sealed class ModelExecutionPolicy(
         }
         catch (OperationCanceledException)
         {
-            await CompleteQuietlyAsync(reservation.Id, ModelCallOutcome.TransportFailure, 0, null);
+            await CompleteQuietlyAsync(reservation.Id, ModelCallOutcome.TransportFailure, 0, null, ModelFailureReason.Cancelled);
             breaker.RecordNeutral(breakerKey);
             throw;
         }
@@ -336,8 +362,8 @@ public sealed class ModelExecutionPolicy(
         }
 
         var execution = Interpret(response, resolution, parse, maxOutputTokens, breaker, breakerKey, clock.UtcNow);
-        await CompleteQuietlyAsync(reservation.Id, execution.Outcome, response.LatencyMilliseconds, response.Usage);
-        return execution;
+        await CompleteQuietlyAsync(reservation.Id, execution.Outcome, response.LatencyMilliseconds, response.Usage, execution.FailureReason);
+        return execution with { UsageRecordId = reservation.Id };
     }
 
     private static ModelExecution<T> Refused<T>(ModelCallOutcome outcome, string detail) =>
@@ -384,8 +410,8 @@ public sealed class ModelExecutionPolicy(
         ModelResponse response, ModelRoleResolution resolution, Func<string, ModelParseResult<T>> parse, int maxOutputTokens,
         ModelCircuitBreaker breaker, string breakerKey, DateTimeOffset now)
     {
-        ModelExecution<T> Result(ModelCallOutcome outcome, T? value = default, string? detail = null) =>
-            new(outcome, value, detail, response.Usage, response.LatencyMilliseconds, resolution.Model, resolution.IsCloud);
+        ModelExecution<T> Result(ModelCallOutcome outcome, T? value = default, string? detail = null, ModelFailureReason? reason = null) =>
+            new(outcome, value, detail, response.Usage, response.LatencyMilliseconds, resolution.Model, resolution.IsCloud, reason);
 
         if (!response.Succeeded)
         {
@@ -405,7 +431,16 @@ public sealed class ModelExecutionPolicy(
                 breaker.RecordFailure(breakerKey, now);
             }
 
-            return Result(outcome, detail: response.FailureDetail);
+            return Result(outcome, detail: response.FailureDetail, reason: response.Failure switch
+            {
+                ModelFailureKind.Unreachable => ModelFailureReason.ProviderUnreachable,
+                ModelFailureKind.Unauthorized => ModelFailureReason.CredentialsRejected,
+                ModelFailureKind.RateLimited => ModelFailureReason.ProviderRateLimited,
+                ModelFailureKind.BadRequest => ModelFailureReason.ProviderBadRequest,
+                ModelFailureKind.ServerError => ModelFailureReason.ProviderError,
+                ModelFailureKind.InvalidResponse => ModelFailureReason.InvalidProviderResponse,
+                _ => null
+            });
         }
 
         breaker.RecordSuccess(breakerKey);
@@ -434,17 +469,17 @@ public sealed class ModelExecutionPolicy(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return Result(ModelCallOutcome.SchemaRejected, detail: "The reply could not be interpreted.");
+            return Result(ModelCallOutcome.SchemaRejected, detail: "The reply could not be interpreted.", reason: ModelFailureReason.ParserError);
         }
 
-        return parsed.IsValid ? Result(ModelCallOutcome.Succeeded, parsed.Value) : Result(parsed.Failure, detail: parsed.Detail);
+        return parsed.IsValid ? Result(ModelCallOutcome.Succeeded, parsed.Value) : Result(parsed.Failure, detail: parsed.Detail, reason: parsed.FailureReason);
     }
 
-    private async Task CompleteQuietlyAsync(Guid recordId, ModelCallOutcome outcome, long latency, ModelUsage? usage)
+    private async Task CompleteQuietlyAsync(Guid recordId, ModelCallOutcome outcome, long latency, ModelUsage? usage, ModelFailureReason? reason)
     {
         try
         {
-            await ledger.CompleteAsync(recordId, outcome, latency, usage, CancellationToken.None);
+            await ledger.CompleteAsync(recordId, outcome, latency, usage, CancellationToken.None, reason);
         }
         catch (Exception)
         {

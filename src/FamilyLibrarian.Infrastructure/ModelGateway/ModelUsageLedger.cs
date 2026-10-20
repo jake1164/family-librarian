@@ -40,7 +40,8 @@ public sealed class ModelUsageLedger(IServiceScopeFactory scopes, TimeProvider t
     }
 
     public async Task CompleteAsync(
-        Guid recordId, ModelCallOutcome outcome, long latencyMilliseconds, ModelUsage? usage, CancellationToken cancellationToken)
+        Guid recordId, ModelCallOutcome outcome, long latencyMilliseconds, ModelUsage? usage, CancellationToken cancellationToken,
+        ModelFailureReason? failureReason = null)
     {
         await using var scope = scopes.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -50,7 +51,7 @@ public sealed class ModelUsageLedger(IServiceScopeFactory scopes, TimeProvider t
             return;
         }
 
-        record.Complete(outcome, latencyMilliseconds, usage?.PromptTokens, usage?.CompletionTokens, usage?.TotalTokens);
+        record.Complete(outcome, latencyMilliseconds, usage?.PromptTokens, usage?.CompletionTokens, usage?.TotalTokens, failureReason);
         await database.SaveChangesAsync(cancellationToken);
     }
 
@@ -60,22 +61,77 @@ public sealed class ModelUsageLedger(IServiceScopeFactory scopes, TimeProvider t
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var rows = await database.ModelUsageRecords.AsNoTracking()
             .Where(record => record.OccurredAtUtc >= since)
-            .GroupBy(record => new { record.Role, record.BudgetClass, record.Outcome, record.IsCloud })
+            .GroupBy(record => new { record.Role, record.BudgetClass, record.Outcome, record.IsCloud, record.Model, record.FailureReason, record.WorkflowEffects })
             .Select(group => new
             {
                 group.Key.Role,
                 group.Key.BudgetClass,
                 group.Key.Outcome,
                 group.Key.IsCloud,
+                group.Key.Model,
+                group.Key.FailureReason,
+                group.Key.WorkflowEffects,
                 Calls = group.Count(),
                 Tokens = group.Sum(record => (long)(record.ReportedTotalTokens ?? 0)),
                 Unreported = group.Count(record => record.ReportedTotalTokens == null)
             })
             .ToListAsync(cancellationToken);
+        var recommendations = await database.SemanticFindings.AsNoTracking()
+            .Where(finding => finding.CreatedAtUtc >= since && finding.Outcome == ModelCallOutcome.Succeeded)
+            .GroupBy(finding => new { finding.Role, finding.Model, finding.IsCloud, finding.Verdict })
+            .Select(group => new { group.Key.Role, group.Key.Model, group.Key.IsCloud, group.Key.Verdict, Findings = group.Count() })
+            .ToListAsync(cancellationToken);
         return new ModelUsageSummary(
             since,
             [.. rows.OrderBy(row => row.Role).ThenBy(row => row.Outcome)
-                .Select(row => new ModelUsageSummaryRow(row.Role, row.BudgetClass, row.Outcome, row.IsCloud, row.Calls, row.Tokens, row.Unreported))]);
+                .Select(row => new ModelUsageSummaryRow(row.Role, row.BudgetClass, row.Outcome, row.IsCloud, row.Calls, row.Tokens, row.Unreported,
+                    row.Model, row.FailureReason, row.WorkflowEffects))],
+            [.. recommendations.Select(row => new ModelRecommendationSummaryRow(row.Role, row.Model, row.IsCloud, row.Verdict ?? "Other", row.Findings))]);
+    }
+
+    public async Task ObserveWorkflowAsync(Guid recordId, ModelWorkflowEffect effects, CancellationToken cancellationToken)
+    {
+        if (effects == ModelWorkflowEffect.None || (effects & ~ModelWorkflowEffect.All) != 0)
+            throw new ArgumentOutOfRangeException(nameof(effects));
+        await using var scope = scopes.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await database.ModelUsageRecords.Where(record => record.Id == recordId && record.Outcome == ModelCallOutcome.Succeeded)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(record => record.WorkflowEffects,
+                record => (record.WorkflowEffects ?? 0) | (int)effects), cancellationToken);
+    }
+
+    public async Task<ModelCallFailures> ListFailuresAsync(
+        DateTimeOffset since, DateTimeOffset until, ModelRole? role, int page, CancellationToken cancellationToken,
+        ModelCallDiagnosticFilter? filter = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(page, 2000);
+        const int pageSize = 50;
+        await using var scope = scopes.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var query = database.ModelUsageRecords.AsNoTracking().Where(record => record.OccurredAtUtc >= since && record.OccurredAtUtc <= until &&
+            record.Outcome != ModelCallOutcome.Succeeded && record.Outcome != ModelCallOutcome.Pending);
+        if (role is { } selected) query = query.Where(record => record.Role == selected);
+        if (filter is not null)
+        {
+            var outcomes = filter.Outcomes.ToArray();
+            query = filter.ExcludeOutcomes ? query.Where(record => !outcomes.Contains(record.Outcome))
+                : query.Where(record => outcomes.Contains(record.Outcome));
+            query = filter.Cancelled ? query.Where(record => record.FailureReason == ModelFailureReason.Cancelled)
+                : query.Where(record => record.FailureReason != ModelFailureReason.Cancelled);
+        }
+        var rows = await query.OrderByDescending(record => record.OccurredAtUtc).ThenByDescending(record => record.Id)
+            .Skip((page - 1) * pageSize).Take(pageSize + 1)
+            .Select(record => new ModelCallFailure(record.Id, record.Role, record.Model, record.IsCloud, record.Outcome,
+                record.FailureReason, record.OccurredAtUtc, record.LatencyMilliseconds, record.MediaAssetId, null)).ToListAsync(cancellationToken);
+        var pageRows = rows.Take(pageSize).ToArray();
+        var assetIds = pageRows.Where(row => row.MediaAssetId is not null).Select(row => row.MediaAssetId!.Value).Distinct().ToArray();
+        var artifacts = assetIds.Length == 0 ? [] : await database.MediaAssets.AsNoTracking().Where(asset => assetIds.Contains(asset.Id))
+            .Select(asset => new ModelCallArtifact(asset.Id, asset.WorkId, asset.Format, asset.BundleId, asset.BundleSequence, asset.BundleTrackCount))
+            .ToListAsync(cancellationToken);
+        var byId = artifacts.ToDictionary(artifact => artifact.AssetId);
+        return new ModelCallFailures([.. pageRows.Select(row => row with
+            { Artifact = row.MediaAssetId is { } id ? byId.GetValueOrDefault(id) : null })], rows.Count > pageSize && page < 2000);
     }
 
     private async Task PruneOccasionallyAsync(AppDbContext database, CancellationToken cancellationToken)

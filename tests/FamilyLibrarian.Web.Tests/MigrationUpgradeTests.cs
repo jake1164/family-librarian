@@ -22,6 +22,94 @@ namespace FamilyLibrarian.Web.Tests;
 public sealed class MigrationUpgradeTests
 {
     [TestMethod]
+    public async Task WorkflowObservationUpgradeLeavesHistoricalImpactUnknownAndPreservesUsageAndFindings()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddModelWorkflowObservations", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        var record = new FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord(
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.SearchGuidance, FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.BackgroundValidation,
+            null, "example", false, 100, DateTimeOffset.UtcNow);
+        record.Complete(FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.Succeeded, 100, null, null, null);
+        record.ObserveWorkflow(FamilyLibrarian.Domain.ModelGateway.ModelWorkflowEffect.ExtraSearchCompleted);
+        var finding = new SemanticFinding(SemanticSubjectKind.SearchGuidance, "sample", null, null, "search-guidance/1", "digest", "NoAllowedCandidate",
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.SearchGuidance, "example", false, FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.Succeeded,
+            "Search", "[]", null, DateTimeOffset.UtcNow, record.Id);
+        database.ModelUsageRecords.Add(record); database.SemanticFindings.Add(finding);
+        await database.SaveChangesAsync();
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync(); database.ChangeTracker.Clear();
+        var older = await database.ModelUsageRecords.SingleAsync(row => row.Id == record.Id);
+        Assert.IsNull(older.WorkflowEffects);
+        Assert.AreEqual(100, older.ChargedTokens);
+        var olderFinding = await database.SemanticFindings.SingleAsync(row => row.Id == finding.Id);
+        Assert.IsNull(olderFinding.ModelUsageRecordId);
+        Assert.AreEqual("Search", olderFinding.Verdict);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task ModelCallArtifactReferenceUpgradeLeavesHistoryUnlinkedAndPreservesReasonsAndBudgets()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddModelCallArtifactReference", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        var record = new FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord(
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.ArtifactValidationDecision,
+            FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.BackgroundValidation, null, "example-model", false, 100, DateTimeOffset.UtcNow, Guid.NewGuid());
+        record.Complete(FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.SchemaRejected, 123, null, null, null,
+            FamilyLibrarian.Domain.ModelGateway.ModelFailureReason.UngroundedConcern);
+        database.ModelUsageRecords.Add(record);
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+        Assert.AreEqual(record.MediaAssetId, (await database.ModelUsageRecords.SingleAsync(row => row.Id == record.Id)).MediaAssetId);
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var older = await database.ModelUsageRecords.SingleAsync(row => row.Id == record.Id);
+        Assert.IsNull(older.MediaAssetId);
+        Assert.AreEqual(100, older.ChargedTokens);
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelFailureReason.UngroundedConcern, older.FailureReason);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task ModelFailureDiagnosticsUpgradePreservesUsageAndLeavesOlderReasonsUnknown()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddModelFailureDiagnostics", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        var record = new FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord(
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.SearchGuidance,
+            FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.BackgroundValidation, null, "example-model", false, 100, DateTimeOffset.UtcNow);
+        record.Complete(FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.SchemaRejected, 123, null, null, null);
+        database.ModelUsageRecords.Add(record);
+        await database.SaveChangesAsync();
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var older = await database.ModelUsageRecords.SingleAsync(row => row.Id == record.Id);
+        Assert.IsNull(older.FailureReason);
+        Assert.AreEqual(100, older.ChargedTokens);
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.SchemaRejected, older.Outcome);
+        older.Complete(older.Outcome, 123, null, null, null, FamilyLibrarian.Domain.ModelGateway.ModelFailureReason.RepeatedSearch);
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelFailureReason.RepeatedSearch,
+            (await database.ModelUsageRecords.SingleAsync(row => row.Id == record.Id)).FailureReason);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task ModelHoldReleaseUpgradeDefaultsExistingSettingsOffAndDownUpPreservesOtherSettings()
     {
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());

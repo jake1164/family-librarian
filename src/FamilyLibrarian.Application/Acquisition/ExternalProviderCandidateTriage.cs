@@ -33,7 +33,11 @@ public sealed partial class ExternalProviderRecheckService
         var context = new CandidateTriageContext(identity, ordered, pick, tied, provider.EffectiveConfidence(format.MediaType));
         var result = await candidateTriage.GetAsync(request.Id, format.Id, provider.ProviderId, context, cancellationToken);
         if (result is null) return new(automatic, parts);
-        if (result.Move != "veto") return new([result.Candidate], null, result.Authorization);
+        if (result.Move != "veto")
+        {
+            await candidateTriage.ObserveSelectionAsync(result, cancellationToken);
+            return new([result.Candidate], null, result.Authorization);
+        }
 
         var remaining = independent.Where(o => o.ProviderResultId != result.Candidate.ProviderResultId).ToArray();
         var matches = CandidateConfidence.Rank(remaining.Where(o =>
@@ -45,6 +49,7 @@ public sealed partial class ExternalProviderRecheckService
         if (format.MediaType == RequestMediaType.Audiobook)
             next = AudiobookCandidateSelector.Select(matches, await GetNarrationPreferenceAsync(request.UserId, cancellationToken)).Winner;
         // Vetoing a member defers that companion set; a standalone fallback still gets all normal checks.
+        await candidateTriage.ObserveSelectionAsync(result, cancellationToken);
         return new(matches, null, next is null ? null : new CandidateTriageAuthorization(request.Id, format.Id, next,
             "veto", [result.Candidate.ProviderResultId]), result.Candidate.ProviderResultId);
     }

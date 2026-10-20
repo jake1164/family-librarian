@@ -278,7 +278,7 @@ public sealed record CoverIdentificationResult(CoverIdentificationStatus Status,
 /// treated as private as any file-derived detail: it can only go to a cloud model with the separate cloud-excerpt opt-in.
 /// Receiving pictures from a transport is deliberately not wired here.
 /// </summary>
-public sealed class CoverIdentificationService(IModelExecutionPolicy policy, IConversationTools tools)
+public sealed class CoverIdentificationService(IModelExecutionPolicy policy, IConversationTools tools, IModelWorkflowObserver? workflow = null)
 {
     private const int MaxChoices = 5;
     private const int MaxOutputTokens = 120;
@@ -313,12 +313,14 @@ public sealed class CoverIdentificationService(IModelExecutionPolicy policy, ICo
 
         if (execution.Value is not { } hint)
         {
+            if (workflow is not null) await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.Abstained, cancellationToken);
             return new(CoverIdentificationStatus.NotIdentified, [], "I couldn't read a title on that cover.");
         }
 
         // Verification: only what the real catalog returns for the model's reading is ever surfaced.
         var query = hint.Author is { } author ? $"{hint.Title} {author}" : hint.Title;
         var found = await tools.SearchBooksAsync(query, MaxChoices, cancellationToken);
+        if (workflow is not null) await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.CoverSearchCompleted, cancellationToken);
         return found.Choices.Count == 0
             ? new(CoverIdentificationStatus.NotIdentified, [], "Nothing in the catalog matched that cover.")
             : new(CoverIdentificationStatus.Identified, found.Choices);

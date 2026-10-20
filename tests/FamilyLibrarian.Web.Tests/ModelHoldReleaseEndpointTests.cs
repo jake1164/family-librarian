@@ -118,6 +118,9 @@ public sealed class ModelHoldReleaseEndpointTests
         var audits = await database.AuditEvents.Where(a => a.SubjectId == asset.Id.ToString() && a.Action == AuditActions.AssetIdentityReleasedByModel).ToListAsync();
         Assert.AreEqual(released ? 1 : 0, audits.Count);
         Assert.AreEqual(released, await database.ArtifactEvidenceItems.AnyAsync(e => e.MediaAssetId == asset.Id && e.Source == "model"));
+        var releaseEffects = await database.ModelUsageRecords.Where(row => row.WorkflowEffects != null &&
+            (row.WorkflowEffects.Value & (int)FamilyLibrarian.Domain.ModelGateway.ModelWorkflowEffect.FileReleaseApplied) != 0).CountAsync();
+        Assert.AreEqual(released ? 1 : 0, releaseEffects, "A proposal or rolled-back/audit-failed release must not claim applied impact.");
         if (released)
         {
             Assert.IsNull(audits.Single().ActorUserId);

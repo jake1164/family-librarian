@@ -152,9 +152,54 @@ public sealed record ModelExecutionLimits(
 public sealed record ModelBudget(int UserDailyRequests, int UserDailyTokens, int InstallationDailyRequests, int InstallationDailyTokens);
 
 /// <summary>
-/// One model call, recorded before it is made (as <see cref="ModelCallOutcome.Pending"/>) and completed after. Holds counts
-/// and metadata only: never a prompt, a reply, an excerpt or a key.
+/// Fixed diagnostic categories, safe to retain without model or provider text.
 /// </summary>
+public enum ModelFailureReason
+{
+    InvalidStructure = 1,
+    NoCitedEvidence,
+    NoSupportingEvidence,
+    NoContradictingEvidence,
+    UnknownEvidence,
+    DuplicateEvidence,
+    UnknownClaim,
+    UngroundedVerdict,
+    RepeatedSearch,
+    InvalidSearch,
+    DisallowedAction,
+    ExcerptCopied,
+    MissingDerivedFact,
+    ParserError,
+    Cancelled,
+    ProviderUnreachable,
+    CredentialsRejected,
+    ProviderRateLimited,
+    ProviderBadRequest,
+    ProviderError,
+    InvalidProviderResponse,
+    UngroundedConcern
+}
+
+[Flags]
+public enum ModelWorkflowEffect
+{
+    None = 0,
+    NoChange = 1,
+    Abstained = 2,
+    AdvisorySaved = 4,
+    IntentUsed = 8,
+    CoverSearchCompleted = 16,
+    ExtraSearchCompleted = 32,
+    ExtraSearchReturnedResults = 64,
+    CandidateVetoUsed = 128,
+    CandidateSelectionUsed = 256,
+    FileHoldApplied = 512,
+    FileReleaseApplied = 1024,
+    All = NoChange | Abstained | AdvisorySaved | IntentUsed | CoverSearchCompleted | ExtraSearchCompleted |
+        ExtraSearchReturnedResults | CandidateVetoUsed | CandidateSelectionUsed | FileHoldApplied | FileReleaseApplied
+}
+
+/// <summary>One reserved/completed model call. Metadata only: never a prompt, reply, excerpt or key.</summary>
 public sealed class ModelUsageRecord
 {
     private ModelUsageRecord()
@@ -162,7 +207,8 @@ public sealed class ModelUsageRecord
     }
 
     public ModelUsageRecord(
-        ModelRole role, ModelBudgetClass budgetClass, Guid? userId, string model, bool isCloud, int reservedTokens, DateTimeOffset occurredAtUtc)
+        ModelRole role, ModelBudgetClass budgetClass, Guid? userId, string model, bool isCloud, int reservedTokens, DateTimeOffset occurredAtUtc,
+        Guid? mediaAssetId = null)
     {
         Id = Guid.NewGuid();
         Role = role;
@@ -174,6 +220,7 @@ public sealed class ModelUsageRecord
         UsageEstimated = true;
         OccurredAtUtc = occurredAtUtc;
         Outcome = ModelCallOutcome.Pending;
+        MediaAssetId = mediaAssetId;
     }
 
     public Guid Id { get; private set; }
@@ -189,6 +236,22 @@ public sealed class ModelUsageRecord
     public bool IsCloud { get; private set; }
 
     public ModelCallOutcome Outcome { get; private set; }
+
+    /// <summary>A fixed diagnostic code only. Arbitrary provider/parser text must never enter this ledger.</summary>
+    public ModelFailureReason? FailureReason { get; private set; }
+
+    /// <summary>Trusted file reference for diagnosis, never a filename or content. Null for non-file calls and older rows.</summary>
+    public Guid? MediaAssetId { get; private set; }
+
+    /// <summary>Monotonic effect flags observed by trusted consumers, not model claims. Null means not observed.</summary>
+    public int? WorkflowEffects { get; private set; }
+
+    public void ObserveWorkflow(ModelWorkflowEffect effects)
+    {
+        if (effects == ModelWorkflowEffect.None || (effects & ~ModelWorkflowEffect.All) != 0)
+            throw new ArgumentOutOfRangeException(nameof(effects));
+        if (Outcome == ModelCallOutcome.Succeeded) WorkflowEffects = (WorkflowEffects ?? 0) | (int)effects;
+    }
 
     public DateTimeOffset OccurredAtUtc { get; private set; }
 
@@ -207,9 +270,11 @@ public sealed class ModelUsageRecord
     public bool UsageEstimated { get; private set; }
 
     public void Complete(
-        ModelCallOutcome outcome, long latencyMilliseconds, int? promptTokens, int? completionTokens, int? totalTokens)
+        ModelCallOutcome outcome, long latencyMilliseconds, int? promptTokens, int? completionTokens, int? totalTokens,
+        ModelFailureReason? failureReason = null)
     {
         Outcome = outcome;
+        FailureReason = outcome is ModelCallOutcome.Succeeded or ModelCallOutcome.Pending ? null : failureReason;
         LatencyMilliseconds = latencyMilliseconds;
         ReportedPromptTokens = promptTokens;
         ReportedCompletionTokens = completionTokens;

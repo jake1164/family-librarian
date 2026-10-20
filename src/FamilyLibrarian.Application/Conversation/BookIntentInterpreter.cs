@@ -20,7 +20,10 @@ public enum BookIntent
 /// whose real results the person then chooses from; they are never shown as fact and never identify a book on their own.
 /// There is deliberately no format and no request flag: only the person's own words can choose those.
 /// </summary>
-public sealed record BookIntentInterpretation(BookIntent Intent, string? Title, string? Author);
+public sealed record BookIntentInterpretation(BookIntent Intent, string? Title, string? Author)
+{
+    internal Guid? UsageRecordId { get; init; }
+}
 
 /// <summary>Reads a message the fixed grammar could not make sense of. Optional; the conversation works the same without it.</summary>
 public interface IBookIntentInterpreter
@@ -182,6 +185,6 @@ public sealed class ModelBookIntentInterpreter(IModelExecutionPolicy policy) : I
                 [new ModelChatMessage("system", SystemPrompt), new ModelChatMessage("user", userContent)],
                 JsonObjectOutput: true, MaxOutputTokens: MaxOutputTokens),
             BookIntentParser.Parse, cancellationToken);
-        return execution.Succeeded ? execution.Value : null;
+        return execution.Succeeded && execution.Value is { } interpretation ? interpretation with { UsageRecordId = execution.UsageRecordId } : null;
     }
 }

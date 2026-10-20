@@ -2,13 +2,14 @@ using System.Text.Json;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.ModelGateway;
+using FamilyLibrarian.Domain.ModelGateway;
 using static FamilyLibrarian.Application.SemanticAssessment.SemanticJson;
 
 namespace FamilyLibrarian.Application.SemanticAssessment;
 
 public sealed record SearchGuidanceSuggestion(string Reason, string Value, IReadOnlyList<string> EvidenceIds, string Note);
 
-public sealed record SearchGuidance(bool GiveUp, IReadOnlyList<SearchGuidanceSuggestion> Suggestions);
+public sealed record SearchGuidance(bool GiveUp, IReadOnlyList<SearchGuidanceSuggestion> Suggestions, Guid? UsageRecordId = null);
 
 public static partial class SemanticAssessmentParser
 {
@@ -51,9 +52,9 @@ public static partial class SemanticAssessmentParser
                 if (!IsString(item.GetProperty("reason"), out var reason) || !GuidanceReasons.Contains(reason, StringComparer.Ordinal))
                     return RejectGuidance("unknown search reason");
                 if (!IsString(item.GetProperty("value"), out var value) || !IsSearchValue(value))
-                    return RejectGuidance("value must be 1-120 plain bibliographic characters without links");
+                    return RejectGuidance("value must be 1-120 plain bibliographic characters without links", ModelFailureReason.InvalidSearch);
                 var normalized = SearchVariantPlanner.Normalize(value);
-                if (IsNotNew(normalized, requested, alreadyTried) || !seen.Add(normalized)) return RejectGuidance("suggestion is not new");
+                if (IsNotNew(normalized, requested, alreadyTried) || !seen.Add(normalized)) return RejectGuidance("suggestion is not new", ModelFailureReason.RepeatedSearch);
                 var ids = item.GetProperty("evidence_ids");
                 if (ids.ValueKind != JsonValueKind.Array || ids.GetArrayLength() > MaxEvidenceIdsPerClaim)
                     return RejectGuidance("evidence_ids must contain at most 6 supplied ids");
@@ -61,9 +62,9 @@ public static partial class SemanticAssessmentParser
                 foreach (var id in ids.EnumerateArray())
                 {
                     if (!IsString(id, out var text) || !suppliedIds.Contains(text, StringComparer.Ordinal) ||
-                        !IsGuidanceEvidenceId(text) || !cited.Add(text)) return RejectGuidance("unknown or duplicate evidence id");
+                        !IsGuidanceEvidenceId(text) || !cited.Add(text)) return RejectGuidance("unknown or duplicate evidence id", ModelFailureReason.UnknownEvidence);
                 }
-                if (reason == "contained_in" && !cited.Any(IsResultId)) return RejectGuidance("contained_in must cite a supplied result");
+                if (reason == "contained_in" && !cited.Any(IsResultId)) return RejectGuidance("contained_in must cite a supplied result", ModelFailureReason.NoCitedEvidence);
                 if (!IsPlainNote(item.GetProperty("note"), out var note, out var error)) return RejectGuidance(error!);
                 suggestions.Add(new(reason, value.Trim(), cited.ToArray(), note));
             }
@@ -83,5 +84,6 @@ public static partial class SemanticAssessmentParser
 
     private static bool IsResultId(string id) => id.Length > 1 && id[0] == 'r' && id[1..].All(char.IsAsciiDigit);
     private static bool IsGuidanceEvidenceId(string id) => IsResultId(id) || id.StartsWith("req-", StringComparison.Ordinal);
-    private static ModelParseResult<SearchGuidance> RejectGuidance(string detail) => ModelParse.SchemaRejected<SearchGuidance>(detail);
+    private static ModelParseResult<SearchGuidance> RejectGuidance(string detail, ModelFailureReason reason = ModelFailureReason.InvalidStructure) =>
+        ModelParse.SchemaRejected<SearchGuidance>(detail, reason);
 }

@@ -9,12 +9,32 @@ using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Infrastructure.Tests.ModelGateway;
 
 namespace FamilyLibrarian.Infrastructure.Tests.SemanticAssessment;
 
 [TestClass]
 public sealed class CandidateTriageServiceTests
 {
+    [TestMethod]
+    public async Task AnAllowedProposalIsNotAUsedSelectionUntilTheConsumerReportsUse()
+    {
+        var id = Guid.NewGuid();
+        var observer = new RecordingWorkflowObserver();
+        var store = new FakeFindingStore();
+        var service = new CandidateTriageService(new Resolver(), new Policy(Reply()) { UsageRecordId = id }, store, new Clock(Now), observer);
+        var request = Guid.NewGuid(); var format = Guid.NewGuid();
+        var proposal = await service.GetAsync(request, format, "example-source", Context(Option()), CancellationToken.None);
+        Assert.IsNotNull(proposal);
+        Assert.HasCount(0, observer.Observations);
+        var reused = await service.GetAsync(request, format, "example-source", Context(Option()), CancellationToken.None);
+        Assert.IsNotNull(reused);
+        Assert.AreEqual(id, reused.UsageRecordId);
+        Assert.AreEqual(id, store.Findings.Single().ModelUsageRecordId);
+        await service.ObserveSelectionAsync(reused, CancellationToken.None);
+        Assert.AreEqual(ModelWorkflowEffect.CandidateSelectionUsed, observer.Observations.Single().Effects);
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 10, 18, 14, 0, 0, TimeSpan.Zero);
     private static readonly BookIdentity Requested = new("Cinder Gate", "Mara Quillon", ["9791000000022"],
         Series: [new("The Lantern Cycle", "2")], Language: "en", PublicationYear: 2003, Publisher: "Lantern Press");
@@ -192,6 +212,7 @@ public sealed class CandidateTriageServiceTests
     }
     private sealed class Policy(string reply) : IModelExecutionPolicy
     {
+        public Guid? UsageRecordId { get; init; }
         public int Calls { get; private set; }
         public Action<CancellationToken>? BeforeParse { get; init; }
         public Task<ModelExecution<T>> ExecuteAsync<T>(ModelExecutionRequest request, Func<string, ModelParseResult<T>> parse, CancellationToken cancellationToken)
@@ -199,7 +220,7 @@ public sealed class CandidateTriageServiceTests
             Calls++; BeforeParse?.Invoke(cancellationToken);
             Assert.AreEqual(ModelRole.CandidateTriage, request.Role); Assert.AreEqual(300, request.MaxOutputTokens);
             var result = parse(reply);
-            return Task.FromResult(new ModelExecution<T>(result.Failure, result.Value, result.Detail, null, 1, "test", false));
+            return Task.FromResult(new ModelExecution<T>(result.Failure, result.Value, result.Detail, null, 1, "test", false, UsageRecordId: UsageRecordId));
         }
     }
 }

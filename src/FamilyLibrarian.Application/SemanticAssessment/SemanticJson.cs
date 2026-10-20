@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FamilyLibrarian.Application.ModelGateway;
+using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Application.SemanticAssessment;
 
@@ -47,7 +48,8 @@ internal static class SemanticJson
                expected.All(name => names.Contains(name, StringComparer.Ordinal));
     }
 
-    internal static ModelParseResult<SemanticAssessment> Reject(string reason) => ModelParse.SchemaRejected<SemanticAssessment>(reason);
+    internal static ModelParseResult<SemanticAssessment> Reject(string reason, ModelFailureReason code = ModelFailureReason.InvalidStructure) =>
+        ModelParse.SchemaRejected<SemanticAssessment>(reason, code);
 
     internal static string Clip(string? value) => value is null ? "?" : value.Length <= 40 ? value : value[..40] + "…";
 }

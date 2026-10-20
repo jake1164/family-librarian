@@ -1,0 +1,18 @@
+@using FamilyLibrarian.Contracts.ModelGateway
+@using FamilyLibrarian.Web.Client.ModelGateway
+
+@if (Count > 0 && ModelCallCategories.IsDiagnosticCategory(Category))
+{
+    <MudLink Href="@($"admin/ai-failures?role={Uri.EscapeDataString(Role)}&category={Category}")"
+             aria-label="@($"{Count} {ModelCallCategories.Label(Category).ToLowerInvariant()} for {ModelRoleLabels.Title(Role)}")">@Count</MudLink>
+}
+else
+{
+    <text>@Count</text>
+}
+
+@code {
+    [Parameter] public int Count { get; set; }
+    [Parameter, EditorRequired] public string Role { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Category { get; set; } = string.Empty;
+}

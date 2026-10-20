@@ -279,6 +279,7 @@ public static class DependencyInjection
         services.AddScoped<IModelTestTargetSource>(provider => provider.GetRequiredService<ModelConnectionService>());
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, TimeProvider.System);
         services.AddSingleton<IModelUsageLedger, ModelUsageLedger>();
+        services.AddScoped<IModelWorkflowObserver, ModelWorkflowObserver>();
         services.AddSingleton<ModelExecutionGate>();
         services.AddSingleton<ModelCircuitBreaker>();
         services.AddScoped<IModelExecutionPolicy, ModelExecutionPolicy>();

@@ -4,13 +4,14 @@ using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.ModelGateway;
 using static FamilyLibrarian.Application.SemanticAssessment.SemanticJson;
 
 namespace FamilyLibrarian.Application.SemanticAssessment;
 
 public sealed record ArtifactDecision(string Verdict, IReadOnlyList<SemanticClaim> Claims);
 /// <summary>The only action a validation model can propose. Approval and release are deliberately unrepresentable here.</summary>
-public sealed record ArtifactModelHold(string Note);
+public sealed record ArtifactModelHold(string Note, Guid? UsageRecordId = null);
 
 public static partial class SemanticAssessmentParser
 {
@@ -21,20 +22,20 @@ public static partial class SemanticAssessmentParser
     {
         var parsed = ParseArtifactDecisionCore(content, evidence, false);
         return parsed.IsValid && excerpts is { Count: > 0 } && parsed.Value!.Claims.Any(c => ArtifactExcerptEvidence.CopiesExcerpt(c.Note, excerpts))
-            ? ModelParse.SchemaRejected<ArtifactDecision>("Note reproduces book text.") : parsed;
+            ? ModelParse.SchemaRejected<ArtifactDecision>("Note reproduces book text.", ModelFailureReason.ExcerptCopied) : parsed;
     }
 
     public static ModelParseResult<ArtifactDecision> ParseArtifactRelease(string? content, MediaAsset asset,
         IReadOnlyList<IdentityFact> facts, ArtifactDecisionInput input)
     {
         if (!ModelReleasePolicy.IsEligible(asset, facts))
-            return ModelParse.SchemaRejected<ArtifactDecision>("Hold is not eligible for model release.");
+            return ModelParse.SchemaRejected<ArtifactDecision>("Hold is not eligible for model release.", ModelFailureReason.DisallowedAction);
         var parsed = ParseArtifactDecisionCore(content, input.Findings, true);
         if (!parsed.IsValid || parsed.Value!.Verdict == "uncertain") return parsed;
         var decision = parsed.Value;
         var collection = asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.CollectionMissingRequestedWork;
         if (decision.Verdict != (collection ? "contains_requested" : "release"))
-            return ModelParse.SchemaRejected<ArtifactDecision>("Wrong release verdict for this hold.");
+            return ModelParse.SchemaRejected<ArtifactDecision>("Wrong release verdict for this hold.", ModelFailureReason.DisallowedAction);
         var grounded = decision.Claims.Where(c => c.Kind == "supports_declared_identity").Any(claim =>
         {
             var cited = input.Findings.Where(f => claim.EvidenceIds.Contains(f.Id, StringComparer.Ordinal))
@@ -44,7 +45,7 @@ public static partial class SemanticAssessmentParser
                 return ModelReleasePolicy.HasAuthorAgreements(cited);
             return cited.Any(ModelReleasePolicy.IsPositiveIdentityFact);
         });
-        return grounded ? parsed : ModelParse.SchemaRejected<ArtifactDecision>("Release lacks the required cited identity evidence.");
+        return grounded ? parsed : ModelParse.SchemaRejected<ArtifactDecision>("Release lacks the required cited identity evidence.", ModelFailureReason.NoSupportingEvidence);
     }
 
     private static ModelParseResult<ArtifactDecision> ParseArtifactDecisionCore(string? content,
@@ -66,7 +67,7 @@ public static partial class SemanticAssessmentParser
             // The decision schema adds concern grounding without changing the advisory parser's behavior.
             var parsed = Parse(JsonSerializer.Serialize(new { schema = SemanticSchema.Artifact.Id, verdict = "uncertain",
                 claims = root.GetProperty("claims") }), release ? SemanticSchema.ArtifactRelease : SemanticSchema.Artifact, evidence);
-            if (!parsed.IsValid) return new(null, parsed.Failure, parsed.Detail);
+            if (!parsed.IsValid) return new(null, parsed.Failure, parsed.Detail, parsed.FailureReason);
             var claims = release ? parsed.Value!.Claims.Select(c => c.Kind == "supports_declared_identity"
                 ? c with { Stance = ClaimStance.Supports } : c).ToArray() : parsed.Value!.Claims;
             foreach (var claim in claims)
@@ -81,16 +82,16 @@ public static partial class SemanticAssessmentParser
                         _ => []
                     };
                     if (required.Length > 0 && !claim.EvidenceIds.Any(required.Contains))
-                        return ModelParse.SchemaRejected<ArtifactDecision>("Excerpt citation requires its derived fact.");
+                        return ModelParse.SchemaRejected<ArtifactDecision>("Excerpt citation requires its derived fact.", ModelFailureReason.MissingDerivedFact);
                 }
                 if (claim.Note.Any(c => char.GetUnicodeCategory(c) == UnicodeCategory.Format))
                     return ModelParse.SchemaRejected<ArtifactDecision>("note contains invisible formatting");
                 if (claim.Stance == ClaimStance.Concern && !claim.EvidenceIds.Any(id => evidence.Any(f => f.Id == id &&
                     f.Polarity is EvidencePolarity.Negative or EvidencePolarity.Weak or EvidencePolarity.Condition)))
-                    return ModelParse.SchemaRejected<ArtifactDecision>("concern cites no negative, weak or condition evidence");
+                    return ModelParse.SchemaRejected<ArtifactDecision>("concern cites no negative, weak or condition evidence", ModelFailureReason.UngroundedConcern);
             }
             if (verdict == "hold" && !claims.Any(c => c.Stance is ClaimStance.Contradicts or ClaimStance.Concern))
-                return ModelParse.SchemaRejected<ArtifactDecision>("hold needs a grounded negative claim");
+                return ModelParse.SchemaRejected<ArtifactDecision>("hold needs a grounded negative claim", ModelFailureReason.UngroundedVerdict);
             return ModelParse.Ok(new ArtifactDecision(verdict, claims));
         }
         catch (JsonException)

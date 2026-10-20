@@ -1,0 +1,109 @@
+@page "/admin/ai-failures"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.ModelGateway
+@using FamilyLibrarian.Web.Client.ModelGateway
+@inject ModelGatewayApiClient ModelsApi
+@inject NavigationManager Navigation
+
+<PageTitle>AI response diagnostics · Family Librarian</PageTitle>
+<MudStack Spacing="3">
+    <MudText Typo="Typo.h3">AI response diagnostics</MudText>
+    <MudText>Provider errors and rejected replies are separate categories. Provider errors include timeouts and connection problems.
+        Rejected replies were received but did not pass response validation. Cancelled calls are listed separately.
+        A valid recommendation to hold or reject a book is an accepted reply and does not appear here.</MudText>
+    <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+        <MudLink Href="admin/tasks#tasks-ai-usage">Back to AI activity</MudLink>
+        <MudLink Href="admin/model-gateway">AI settings</MudLink>
+        <MudSpacer />
+        <MudButton OnClick="RefreshAsync" Disabled="loading">Refresh diagnostics</MudButton>
+    </MudStack>
+    <MudGrid>
+        <MudItem xs="12" md="4">
+            <MudSelect T="string" Label="AI feature" Value="@(Role ?? string.Empty)" ValueChanged="ChangeRole" Disabled="loading">
+                <MudSelectItem Value="@(string.Empty)">All features</MudSelectItem>
+                @foreach (var role in Roles)
+                {
+                    <MudSelectItem Value="@role">@ModelRoleLabels.Title(role)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudSelect T="string" Label="Diagnostic category" Value="@(Category ?? string.Empty)" ValueChanged="ChangeCategory" Disabled="loading">
+                <MudSelectItem Value="@(string.Empty)">All diagnostic categories</MudSelectItem>
+                <MudSelectItem Value="@ModelCallCategories.ProviderError">Provider errors</MudSelectItem>
+                <MudSelectItem Value="@ModelCallCategories.RejectedReply">Rejected replies</MudSelectItem>
+                <MudSelectItem Value="@ModelCallCategories.Cancelled">Cancelled</MudSelectItem>
+                <MudSelectItem Value="@ModelCallCategories.Unknown">Unclassified</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudSelect T="int" Label="History" Value="days" ValueChanged="ChangeDaysAsync" Disabled="loading">
+                <MudSelectItem Value="1">Last 24 hours</MudSelectItem>
+                <MudSelectItem Value="7">Last 7 days</MudSelectItem>
+                <MudSelectItem Value="30">Last 30 days</MudSelectItem>
+                <MudSelectItem Value="90">Last 90 days</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+    </MudGrid>
+    <MudText Typo="Typo.body2">History survives restarts and is retained for up to 90 days. Older calls may have only a broad outcome.
+        Prompts, replies and book text are not stored in this log. Each row is one call, not one book.
+        Files may be individual audiobook tracks; book and bundle references identify related calls when recorded.</MudText>
+    @if (error is not null)
+    {
+        <MudAlert Severity="Severity.Warning">@error</MudAlert>
+    }
+    @if (loading)
+    {
+        <MudProgressLinear Indeterminate="true" aria-label="Loading AI diagnostics" />
+    }
+    else if (result is not null)
+    {
+        <MudText Typo="Typo.body2">@result.SinceUtc.ToLocalTime().ToString("g") – @result.UntilUtc.ToLocalTime().ToString("g") · newest calls first</MudText>
+        <AiFailureTable Rows="result.Rows" />
+        <MudStack Row="true" AlignItems="AlignItems.Center">
+            <MudButton OnClick="PreviousAsync" Disabled="@(result.Page <= 1)">Previous</MudButton>
+            <MudText>Page @result.Page</MudText>
+            <MudButton OnClick="NextAsync" Disabled="@(!result.HasMore)">Next</MudButton>
+        </MudStack>
+    }
+</MudStack>
+
+@code {
+    [SupplyParameterFromQuery] public string? Role { get; set; }
+    [SupplyParameterFromQuery] public string? Category { get; set; }
+    private static readonly string[] Roles = ["IntentInterpretation", "ConversationResponse", "CandidateAmbiguityAssessment",
+        "ArtifactValidationAssessment", "VisionCoverIdentification", "SearchGuidance", "CandidateTriage", "ArtifactValidationDecision"];
+    private ModelCallFailuresResponse? result;
+    private bool loading;
+    private string? error;
+    private int days = 1;
+    private int loadVersion;
+
+    protected override Task OnParametersSetAsync() => RefreshAsync();
+    private void ChangeRole(string role) => NavigateFilters(role, Category);
+    private void ChangeCategory(string category) => NavigateFilters(Role, category);
+    private void NavigateFilters(string? role, string? category) => Navigation.NavigateTo(
+        $"admin/ai-failures?role={Uri.EscapeDataString(role ?? string.Empty)}&category={Uri.EscapeDataString(category ?? string.Empty)}");
+    private async Task ChangeDaysAsync(int value) { days = value; await RefreshAsync(); }
+    private Task RefreshAsync() => LoadAsync(1, null);
+    private Task PreviousAsync() => LoadAsync(result!.Page - 1, result.UntilUtc);
+    private Task NextAsync() => LoadAsync(result!.Page + 1, result.UntilUtc);
+
+    private async Task LoadAsync(int page, DateTimeOffset? until)
+    {
+        var version = ++loadVersion;
+        loading = true;
+        error = null;
+        result = null;
+        try
+        {
+            var loaded = await ModelsApi.GetFailuresAsync(Role, page, days, until, category: Category);
+            if (version == loadVersion) result = loaded;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            if (version == loadVersion) error = "AI diagnostics could not be loaded. Check the feature filter and refresh to try again.";
+        }
+        finally { if (version == loadVersion) loading = false; }
+    }
+}

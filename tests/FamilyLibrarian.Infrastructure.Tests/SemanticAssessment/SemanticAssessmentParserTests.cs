@@ -11,6 +11,20 @@ namespace FamilyLibrarian.Infrastructure.Tests.SemanticAssessment;
 [TestClass]
 public sealed class SemanticAssessmentParserTests
 {
+    [TestMethod]
+    public void GroundingDiagnosticSurvivesTheArtifactDecisionParserWrapper()
+    {
+        const string content = """
+            {"schema":"artifact-decision/1","verdict":"no_objection","claims":[
+              {"kind":"supports_declared_identity","evidence_ids":["unknown-language"],"note":"Looks right."}]}
+            """;
+        var result = SemanticAssessmentParser.ParseArtifactDecision(content,
+            [new("unknown-language", "artifact.language.unknown", EvidencePolarity.Unknown, "Not known.")]);
+        Assert.AreEqual(ModelCallOutcome.SchemaRejected, result.Failure);
+        Assert.AreEqual(ModelFailureReason.NoSupportingEvidence, result.FailureReason);
+        StringAssert.Contains(ModelFailureDiagnostics.Explain(result.Failure, result.FailureReason), "did not support");
+    }
+
     private static readonly IReadOnlyList<EvidenceFinding> Evidence =
     [
         new("ev-title", "candidate.title.exact", EvidencePolarity.Positive, "Title matches."),

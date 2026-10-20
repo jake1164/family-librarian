@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.SemanticAssessment;
+using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Infrastructure.Tests.SemanticAssessment;
 
@@ -69,6 +70,10 @@ public sealed class SearchGuidanceParserTests
     {
         Assert.IsFalse(IsValid(Reply(), ["THE LONG JOURNEY"]));
         Assert.IsFalse(IsValid(Reply(), ["alternate_published_title:THE LONG JOURNEY"]));
+        foreach (var tried in new[] { "THE LONG JOURNEY", "alternate_published_title:THE LONG JOURNEY" })
+            Assert.AreEqual(ModelFailureReason.RepeatedSearch,
+                SemanticAssessmentParser.ParseSearchGuidance(Reply(), Requested, SuppliedIds, [tried]).FailureReason,
+                "The observed lab rejection must produce a safe specific diagnostic code.");
     }
 
     [TestMethod]

@@ -146,7 +146,8 @@ public sealed class ArtifactSemanticAnalyzer(
     ISecurityEvaluationRepository assets,
     IArtifactEvidenceStore evidenceStore,
     IWorkLookup works,
-    IClock clock)
+    IClock clock,
+    IModelWorkflowObserver? workflow = null)
 {
     private const int MaxOutputTokens = 400;
 
@@ -188,7 +189,7 @@ public sealed class ArtifactSemanticAnalyzer(
                 new ModelExecutionRequest(
                     ModelRole.ArtifactValidationAssessment, ModelBudgetClass.BackgroundValidation, null,
                     [new ModelChatMessage("system", ArtifactSemanticEvidence.SystemPrompt), new ModelChatMessage("user", rendered)],
-                    JsonObjectOutput: true, MaxOutputTokens: MaxOutputTokens, IncludesFileDerivedDetail: includeDetails),
+                    JsonObjectOutput: true, MaxOutputTokens: MaxOutputTokens, IncludesFileDerivedDetail: includeDetails, MediaAssetId: assetId),
                 content => SemanticAssessmentParser.Parse(content, SemanticSchema.Artifact, findings),
                 cancellationToken);
             if (execution.WasRefused)
@@ -204,8 +205,10 @@ public sealed class ArtifactSemanticAnalyzer(
                     execution.Succeeded ? execution.Value!.Verdict.ToString() : null,
                     execution.Succeeded ? CandidateSemanticAnalyzer.SerializeClaims(execution.Value!) : null,
                     execution.Succeeded ? null : execution.Detail,
-                    clock.UtcNow),
+                    clock.UtcNow, execution.UsageRecordId),
                 cancellationToken);
+            if (execution.Succeeded && workflow is not null)
+                await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.AdvisorySaved, cancellationToken);
             return new(SemanticAnalysisResult.Recorded, null, execution.Outcome);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

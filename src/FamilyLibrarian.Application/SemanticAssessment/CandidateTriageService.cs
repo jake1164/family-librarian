@@ -8,11 +8,16 @@ using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Application.SemanticAssessment;
 
-public sealed record CandidateTriageResult(string Move, FulfillmentOption Candidate, CandidateTriageAuthorization? Authorization);
+public sealed record CandidateTriageResult(string Move, FulfillmentOption Candidate, CandidateTriageAuthorization? Authorization, Guid? UsageRecordId = null);
 
 /// <summary>One governed comparison per provider pass; persisted decisions are re-grounded before reuse.</summary>
-public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock)
+public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
+    IModelWorkflowObserver? workflow = null)
 {
+    public Task ObserveSelectionAsync(CandidateTriageResult result, CancellationToken cancellationToken) =>
+        workflow?.ObserveAsync(result.UsageRecordId, result.Move == "veto" ? ModelWorkflowEffect.CandidateVetoUsed :
+            ModelWorkflowEffect.CandidateSelectionUsed, cancellationToken) ?? Task.CompletedTask;
+
     public async Task<CandidateTriageResult?> GetAsync(Guid requestId, Guid formatId, string providerId,
         CandidateTriageContext context, CancellationToken cancellationToken)
     {
@@ -26,12 +31,16 @@ public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecu
             {
                 var parsed = SemanticAssessmentParser.ParseCandidateTriage(text, input.Findings);
                 return parsed.IsValid && !CandidateTriageRules.Allows(parsed.Value!, context, input)
-                    ? ModelParse.SchemaRejected<CandidateTriage>("move not allowed by current candidate rules") : parsed;
+                    ? ModelParse.SchemaRejected<CandidateTriage>("move not allowed by current candidate rules", ModelFailureReason.DisallowedAction) : parsed;
             }
             CandidateTriage? decision;
+            Guid? usageRecordId;
             if (await store.FindLatestAsync(SemanticSubjectKind.CandidateTriage, input.Digest, cancellationToken) is { IsReusable: true } cached &&
                 clock.UtcNow - cached.CreatedAtUtc < CandidateSemanticAnalyzer.ReuseWindow)
+            {
                 decision = cached.IsUsable ? Parse(cached.ClaimsJson).Value : null;
+                usageRecordId = cached.ModelUsageRecordId;
+            }
             else
             {
                 ModelExecution<CandidateTriage> execution;
@@ -54,6 +63,7 @@ public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecu
                 }
                 cancellationToken.ThrowIfCancellationRequested();
                 decision = execution.Succeeded ? execution.Value : null;
+                usageRecordId = execution.UsageRecordId;
                 var claims = decision is null ? null : JsonSerializer.Serialize(new
                     { schema = SemanticAssessmentParser.CandidateTriageSchema, move = decision.Move, candidate = decision.Candidate,
                       evidence_ids = decision.EvidenceIds, note = decision.Note });
@@ -61,13 +71,15 @@ public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecu
                     formatId.ToString("N") + ":" + providerId, requestId, providerId, SemanticAssessmentParser.CandidateTriageSchema,
                     input.Digest, context.Pick is null ? "NoAutomaticPick" : "AutomaticPick", ModelRole.CandidateTriage,
                     execution.Model ?? "unknown", execution.IsCloud, execution.Outcome, decision?.Move, claims,
-                    execution.Succeeded ? null : execution.Detail, clock.UtcNow), cancellationToken);
+                    execution.Succeeded ? null : execution.Detail, clock.UtcNow, execution.UsageRecordId), cancellationToken);
             }
+            if (decision?.Move is "keep" or "uncertain" && workflow is not null)
+                await workflow.ObserveAsync(usageRecordId, decision.Move == "uncertain" ? ModelWorkflowEffect.Abstained : ModelWorkflowEffect.NoChange, cancellationToken);
             if (decision?.Candidate is not { } id || !input.Candidates.TryGetValue(id, out var option) ||
                 !CandidateTriageRules.Allows(decision, context, input)) return null;
             return new(decision.Move, option, decision.Move is "author_variant" or "prefer"
                 ? new CandidateTriageAuthorization(requestId, formatId, option, decision.Move,
-                    decision.Move == "prefer" ? context.TiedResultIds.Where(id => id != option.ProviderResultId).ToArray() : []) : null);
+                    decision.Move == "prefer" ? context.TiedResultIds.Where(id => id != option.ProviderResultId).ToArray() : []) : null, usageRecordId);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {

@@ -50,7 +50,8 @@ public sealed class SemanticFinding
         string? verdict,
         string? claimsJson,
         string? failureDetail,
-        DateTimeOffset createdAtUtc)
+        DateTimeOffset createdAtUtc,
+        Guid? modelUsageRecordId = null)
     {
         if (!Enum.IsDefined(kind)) throw new ArgumentOutOfRangeException(nameof(kind));
         ArgumentException.ThrowIfNullOrWhiteSpace(subjectReference);
@@ -79,9 +80,12 @@ public sealed class SemanticFinding
         ClaimsJson = claimsJson is { Length: > MaxClaimsJsonLength } ? throw new ArgumentException("Claims are too large to store.") : claimsJson;
         FailureDetail = Clip(failureDetail, MaxDetailLength);
         CreatedAtUtc = createdAtUtc;
+        ModelUsageRecordId = modelUsageRecordId;
     }
 
     public Guid Id { get; private set; }
+
+    public Guid? ModelUsageRecordId { get; private set; }
 
     public SemanticSubjectKind Kind { get; private set; }
 

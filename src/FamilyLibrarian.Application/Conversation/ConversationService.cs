@@ -5,6 +5,8 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Application.ModelGateway;
+using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Application.Conversation;
 
@@ -31,7 +33,7 @@ public sealed class ConversationService(
     ConversationOptions options,
     IClock clock,
     IBookIntentInterpreter? interpreter = null,
-    IConversationDiagnostics? diagnostics = null) : IConversationService
+    IConversationDiagnostics? diagnostics = null, IModelWorkflowObserver? workflow = null) : IConversationService
 {
     private const int MaxScopeKeyLength = 200;
     private const int MaxEventIdLength = 255;
@@ -431,6 +433,7 @@ public sealed class ConversationService(
         switch (interpretation?.Intent)
         {
             case BookIntent.OutOfDomain:
+                if (workflow is not null) await workflow.ObserveAsync(interpretation.UsageRecordId, ModelWorkflowEffect.IntentUsed, cancellationToken);
                 return new TurnPlan(
                     ConversationReply.Of(ConversationReplyKind.OutOfDomain,
                         "I can only help with books: finding them, checking the library, and your book requests. " +
@@ -438,21 +441,27 @@ public sealed class ConversationService(
                     ConversationState.Empty(), null);
 
             case BookIntent.CheckStatus:
-                return new TurnPlan(await StatusReplyAsync(cancellationToken), ConversationState.Empty(), null);
+                var status = await StatusReplyAsync(cancellationToken);
+                if (workflow is not null) await workflow.ObserveAsync(interpretation.UsageRecordId, ModelWorkflowEffect.IntentUsed, cancellationToken);
+                return new TurnPlan(status, ConversationState.Empty(), null);
 
             case BookIntent.FindBook when interpretation.Title is { } title:
                 var reworded = interpretation.Author is { } author ? $"{title} {author}" : title;
                 if (string.Equals(reworded, text, StringComparison.OrdinalIgnoreCase))
                 {
+                    if (workflow is not null) await workflow.ObserveAsync(interpretation.UsageRecordId, ModelWorkflowEffect.NoChange, cancellationToken);
                     return null;
                 }
 
                 var plan = await SearchPlanAsync(
                     reworded, reworded, formats, requestIntent: false, state, cancellationToken,
                     lead: $"I wasn't sure what you meant, so I took a guess at “{reworded}”. I found these:");
+                if (workflow is not null) await workflow.ObserveAsync(interpretation.UsageRecordId,
+                    plan.Reply.Kind == ConversationReplyKind.Choices ? ModelWorkflowEffect.IntentUsed : ModelWorkflowEffect.NoChange, cancellationToken);
                 return plan.Reply.Kind == ConversationReplyKind.Choices ? plan : null;
 
             default:
+                if (workflow is not null) await workflow.ObserveAsync(interpretation?.UsageRecordId, ModelWorkflowEffect.Abstained, cancellationToken);
                 return null;
         }
     }

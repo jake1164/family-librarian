@@ -7,6 +7,8 @@ using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
 using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Infrastructure.Tests.SemanticAssessment;
+using FamilyLibrarian.Infrastructure.Tests.ModelGateway;
+using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Security;
 
@@ -456,7 +458,9 @@ public sealed class AssetIdentityVerificationServiceTests
     public async Task ModelConcernHoldsBeforeStorageTransitionAndRecordsComparedFacts(string fixture)
     {
         var asset = CreateProcessingAsset(".epub", true, AssetOrigin.ExternalProvider);
-        var kit = new ArtifactDecisionKit();
+        var usageId = Guid.NewGuid();
+        var kit = new ArtifactDecisionKit { UsageRecordId = usageId };
+        var workflow = new RecordingWorkflowObserver();
         IdentityFact[] profile = fixture == "sample"
             ? [new("ev-words", EvidenceDimension.Profile, EvidenceReasonCodes.ArtifactProfile.TextWordCount, EvidencePolarity.Unknown, "words=12000")]
             : Enumerable.Range(1, 5).Select(i => new IdentityFact("heading-" + i, EvidenceDimension.Profile,
@@ -466,7 +470,7 @@ public sealed class AssetIdentityVerificationServiceTests
         var recorder = new CapturingIdentityRecorder(); var staging = new RecordingStagingStore();
         var service = new AssetIdentityVerificationService(new AssetRepository(asset), staging,
             [new FixedVerifier(AssetIdentityVerificationResult.Match("test", profile))], new RecordingAuditWriter(), new FixedClock(),
-            recorder, new ModelExpectedSource(), modelDecisions: kit.Service);
+            recorder, new ModelExpectedSource(), modelDecisions: kit.Service, workflow: workflow);
 
         var result = await service.VerifyAsync(asset.Id, CancellationToken.None);
 
@@ -477,6 +481,7 @@ public sealed class AssetIdentityVerificationServiceTests
         Assert.AreEqual(MediaAssetStorageState.Unmatched, recorder.StorageStateWhenCalled);
         Assert.IsTrue(recorder.LastResult!.Facts.Any(f => f.FindingId == id[4..] && f.Polarity == EvidencePolarity.Weak));
         Assert.AreEqual(1, kit.Calls);
+        Assert.AreEqual((usageId, ModelWorkflowEffect.FileHoldApplied), workflow.Observations.Single());
     }
 
     [TestMethod]

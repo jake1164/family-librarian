@@ -34,13 +34,14 @@ public sealed class ApprovalService(
     IModelGatewaySettingsStore? modelSettings = null,
     IArtifactEvidenceStore? modelEvidence = null,
     ISemanticFindingStore? modelFindings = null,
-    IExpectedArtifactProfileSource? expectedProfiles = null) : IPolicyAssetApprovalService
+    IExpectedArtifactProfileSource? expectedProfiles = null, IModelWorkflowObserver? workflow = null) : IPolicyAssetApprovalService
 {
     public async Task<ApprovalResult> ReleaseHoldByModelAsync(Guid assetId, Guid findingId, CancellationToken cancellationToken)
     {
         if (modelSettings is null || modelEvidence is null || modelFindings is null || expectedProfiles is null)
             return ApprovalResult.IdentityUnmatched();
         MediaAsset? releasingAsset = null;
+        Guid? releaseUsageId = null;
         ApprovalResult result;
         try
         {
@@ -73,6 +74,7 @@ public sealed class ApprovalService(
                 var evaluation = await repository.FindLatestEvaluationAsync(assetId, cancellationToken);
                 if (evaluation?.Status != SecurityEvaluationStatus.Passed) return ApprovalResult.IdentityUnmatched();
                 releasingAsset = asset;
+                releaseUsageId = finding.ModelUsageRecordId;
                 return await ApproveCoreAsync(assetId, ApprovalActorType.Policy, null, "model-hold-release-v1",
                     "A grounded model review released the eligible identity hold.", cancellationToken, identityOverrideConfirmed: true, modelRelease: finding);
             }, cancellationToken);
@@ -86,6 +88,8 @@ public sealed class ApprovalService(
             cancellationToken.ThrowIfCancellationRequested();
             return ApprovalResult.IdentityUnmatched();
         }
+        if (result.Outcome == ApprovalOutcome.Success && workflow is not null)
+            await workflow.ObserveAsync(releaseUsageId, ModelWorkflowEffect.FileReleaseApplied, cancellationToken);
         if (result.Outcome == ApprovalOutcome.Success && await repository.FindAssetAsync(assetId, cancellationToken) is { } approved)
             await PublishApprovedAsync(approved, cancellationToken);
         return result;

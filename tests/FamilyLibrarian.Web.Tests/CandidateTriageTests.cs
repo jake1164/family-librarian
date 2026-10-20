@@ -28,15 +28,22 @@ public sealed class CandidateTriageTests
     [DataRow("Liberal")]
     public async Task GroundedVetoSkipsOnlyTheCurrentPickAndFreshSubmissionUsesTheNextCandidate(string level)
     {
-        var model = new Policy(Reply("veto", "c1", "c1.ev-condition-drm"));
+        var usageId = Guid.NewGuid();
+        var workflow = new WorkflowProbe();
+        var model = new Policy(Reply("veto", "c1", "c1.ev-condition-drm")) { UsageRecordId = usageId };
         var a = Copy("a"); var b = Copy("b");
         a = a with { Release = a.Release! with { DrmStatus = ExternalProviderDrmStatus.Unknown } };
         b = b with { Release = b.Release! with { DrmStatus = ExternalProviderDrmStatus.Unknown } };
         var client = new VariantSearchProviderClient(_ => [a, b]);
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
-        await VariantScenario.RunAsync(fixture, client, "triage-source", providerConfidence: level, configureServices: s => Configure(s, model));
+        await VariantScenario.RunAsync(fixture, client, "triage-source", providerConfidence: level, configureServices: s =>
+        {
+            Configure(s, model);
+            s.RemoveAll<IModelWorkflowObserver>(); s.AddSingleton<IModelWorkflowObserver>(workflow);
+        });
         Assert.AreEqual(1, model.Calls);
         Assert.AreEqual("b", client.SubmittedCandidates.Single());
+        Assert.AreEqual((usageId, ModelWorkflowEffect.CandidateVetoUsed), workflow.Events.Single());
     }
 
     [TestMethod]
@@ -175,6 +182,7 @@ public sealed class CandidateTriageTests
 
     private sealed class Policy(string text) : IModelExecutionPolicy
     {
+        public Guid? UsageRecordId { get; init; }
         public int Calls { get; private set; }
         public string? Failure { get; init; }
         public Task<ModelExecution<T>> ExecuteAsync<T>(ModelExecutionRequest request, Func<string, ModelParseResult<T>> parse, CancellationToken cancellationToken)
@@ -187,7 +195,7 @@ public sealed class CandidateTriageTests
             if (Failure == "transport") throw new HttpRequestException("Model failed.");
             if (Failure == "refused") return Task.FromResult(new ModelExecution<T>(ModelCallOutcome.RoleUnavailable, default, "Refused", null, 0, "test", false));
             var result = parse(text);
-            return Task.FromResult(new ModelExecution<T>(result.Failure, result.Value, result.Detail, null, 1, "test", false));
+            return Task.FromResult(new ModelExecution<T>(result.Failure, result.Value, result.Detail, null, 1, "test", false, UsageRecordId: UsageRecordId));
         }
     }
 }

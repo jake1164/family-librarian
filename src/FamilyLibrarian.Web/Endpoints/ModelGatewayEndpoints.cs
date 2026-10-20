@@ -21,6 +21,7 @@ internal static class ModelGatewayEndpoints
         group.MapGet("/", GetAsync);
         group.MapPost("/connection/resolve", ResolveConnectionAsync);
         group.MapGet("/usage", UsageAsync);
+        group.MapGet("/failures", FailuresAsync);
         group.MapGet("/models", ListModelsAsync);
         group.MapPut("/", SaveAsync);
         group.MapPut("/enabled", SetEnabledAsync);
@@ -89,8 +90,70 @@ internal static class ModelGatewayEndpoints
         return Results.Ok(new ModelUsageResponse(
             summary.Since,
             [.. summary.Rows.Select(row => new ModelUsageRowResponse(
-                row.Role.ToString(), row.Budget.ToString(), row.Outcome.ToString(), row.IsCloud, row.Calls, row.ReportedTokens, row.CallsWithoutUsage))]));
+                row.Role.ToString(), row.Budget.ToString(), row.Outcome.ToString(), row.IsCloud, row.Calls, row.ReportedTokens, row.CallsWithoutUsage,
+                row.Model, row.FailureReason?.ToString(), row.WorkflowEffects is not { } effects ? null :
+                    [.. Enum.GetValues<ModelWorkflowEffect>().Where(effect => effect != ModelWorkflowEffect.None && effect != ModelWorkflowEffect.All &&
+                        (effects & (int)effect) != 0).Select(effect => effect.ToString())]))],
+            [.. (summary.Recommendations ?? []).Select(row => new ModelRecommendationRowResponse(
+                row.Role.ToString(), row.Model, row.IsCloud, SafeVerdict(row.Role, row.Verdict), row.Findings))]));
     }
+
+    private static string SafeVerdict(ModelRole role, string verdict) => (role, verdict) switch
+    {
+        (ModelRole.CandidateAmbiguityAssessment or ModelRole.ArtifactValidationAssessment, "Consistent" or "consistent") => "Consistent",
+        (ModelRole.CandidateAmbiguityAssessment or ModelRole.ArtifactValidationAssessment, "Inconsistent" or "inconsistent") => "Inconsistent",
+        (_, "Uncertain" or "uncertain") => "Uncertain",
+        (ModelRole.SearchGuidance, "Search" or "GiveUp") => verdict,
+        (ModelRole.CandidateTriage, "keep" or "veto" or "prefer" or "author_variant") => verdict,
+        (ModelRole.ArtifactValidationDecision, "hold" or "no_objection" or "release" or "contains_requested") => verdict,
+        _ => "Other"
+    };
+
+    private static async Task<IResult> FailuresAsync(
+        string? role, string? category, int? page, int? days, DateTimeOffset? until,
+        ModelGatewaySettingsService settings, IModelUsageLedger ledger, IClock clock, CancellationToken cancellationToken)
+    {
+        if ((await settings.GetAsync(cancellationToken)).Forbidden)
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        ModelRole? selected = null;
+        ModelCallDiagnosticFilter? filter = null;
+        if (!string.IsNullOrEmpty(category))
+        {
+            if (!ModelCallCategories.IsDiagnosticCategory(category))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["category"] = ["Choose RejectedReply, ProviderError, Cancelled or Unknown."] });
+            var exclude = category is ModelCallCategories.Unknown or ModelCallCategories.Cancelled;
+            var outcomes = category == ModelCallCategories.Cancelled ? [] : Enum.GetValues<ModelCallOutcome>()
+                .Where(outcome => exclude ? ModelCallCategories.Classify(outcome.ToString(), null) != ModelCallCategories.Unknown
+                    : ModelCallCategories.Classify(outcome.ToString(), null) == category).ToArray();
+            filter = new ModelCallDiagnosticFilter(outcomes, exclude, category == ModelCallCategories.Cancelled);
+        }
+        if (!string.IsNullOrEmpty(role))
+        {
+            if (!Enum.TryParse<ModelRole>(role, ignoreCase: false, out var parsed) || !Enum.IsDefined(parsed) || parsed.ToString() != role)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["role"] = ["Choose a known AI feature."] });
+            selected = parsed;
+        }
+        var number = page ?? 1;
+        var period = days ?? 1;
+        var end = (until ?? clock.UtcNow).ToUniversalTime();
+        if (number is < 1 or > 2000 || period is < 1 or > 90 || end > clock.UtcNow.AddMinutes(1) || end < clock.UtcNow.AddDays(-90))
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["range"] = ["Choose page 1–2000 and 1–90 days within retained history."] });
+        var since = end.AddDays(-period);
+        if (since < clock.UtcNow.AddDays(-90)) since = clock.UtcNow.AddDays(-90);
+        var result = await ledger.ListFailuresAsync(since, end, selected, number, cancellationToken, filter);
+        return Results.Ok(new ModelCallFailuresResponse(since, end, number, result.HasMore,
+            [.. result.Rows.Select(row => new ModelCallFailureResponse(row.Id, row.Role.ToString(), row.Model, row.IsCloud,
+                row.Outcome.ToString(), row.FailureReason?.ToString(), ModelFailureDiagnostics.Explain(row.Outcome, row.FailureReason),
+                row.OccurredAtUtc, row.LatencyMilliseconds, row.MediaAssetId,
+                row.Artifact is not { } artifact ? null : new ModelCallArtifactResponse(artifact.AssetId, artifact.WorkId,
+                    SafeFormat(artifact.Format), artifact.BundleId, artifact.TrackNumber, artifact.TrackCount)))]));
+    }
+
+    private static string SafeFormat(string format) => format.TrimStart('.').ToUpperInvariant() switch
+    {
+        "EPUB" => "EPUB", "KEPUB" => "KEPUB", "PDF" => "PDF", "MP3" => "MP3", "M4B" => "M4B", "OGG" => "OGG",
+        "M4A" => "M4A", "FLAC" => "FLAC", "OPUS" => "OPUS", "AZW3" => "AZW3", "MOBI" => "MOBI", _ => "Other"
+    };
 
     private static async Task<IResult> ListModelsAsync(ModelCatalogService catalog, CancellationToken cancellationToken)
     {

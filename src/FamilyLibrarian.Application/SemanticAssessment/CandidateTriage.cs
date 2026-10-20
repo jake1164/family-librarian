@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.ModelGateway;
 using static FamilyLibrarian.Application.SemanticAssessment.SemanticJson;
 
 namespace FamilyLibrarian.Application.SemanticAssessment;
@@ -41,14 +42,14 @@ public static partial class SemanticAssessmentParser
             var cited = new List<EvidenceFinding>();
             foreach (var id in evidence.EnumerateArray())
             {
-                if (!IsString(id, out var key) || cited.Any(f => f.Id == key)) return RejectTriage("invalid or duplicate evidence id");
+                if (!IsString(id, out var key) || cited.Any(f => f.Id == key)) return RejectTriage("invalid or duplicate evidence id", ModelFailureReason.UnknownEvidence);
                 var finding = (candidate is null ? supplied.Values.SelectMany(v => v) : supplied[candidate]).FirstOrDefault(f => f.Id == key);
-                if (finding is null) return RejectTriage("evidence must belong to the supplied candidate");
+                if (finding is null) return RejectTriage("evidence must belong to the supplied candidate", ModelFailureReason.UnknownEvidence);
                 cited.Add(finding);
             }
             if (!IsPlainNote(root.GetProperty("note"), out var note, out var error)) return RejectTriage(error!);
             var result = new CandidateTriage(move, candidate, cited.Select(f => f.Id).ToArray(), note);
-            return IsGroundedTriage(result, cited) ? ModelParse.Ok(result) : RejectTriage("move lacks supporting evidence");
+            return IsGroundedTriage(result, cited) ? ModelParse.Ok(result) : RejectTriage("move lacks supporting evidence", ModelFailureReason.NoSupportingEvidence);
         }
     }
 
@@ -64,5 +65,6 @@ public static partial class SemanticAssessmentParser
         _ => false
     };
 
-    private static ModelParseResult<CandidateTriage> RejectTriage(string detail) => ModelParse.SchemaRejected<CandidateTriage>(detail);
+    private static ModelParseResult<CandidateTriage> RejectTriage(string detail, ModelFailureReason reason = ModelFailureReason.InvalidStructure) =>
+        ModelParse.SchemaRejected<CandidateTriage>(detail, reason);
 }

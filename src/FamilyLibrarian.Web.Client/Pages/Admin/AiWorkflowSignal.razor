@@ -1,0 +1,22 @@
+@using FamilyLibrarian.Web.Client.ModelGateway
+
+@if (Metrics.Usable == 0)
+{
+    <MudText Typo="Typo.body2">No usable responses</MudText>
+}
+else
+{
+    <MudText Typo="Typo.body2">Observed: @Metrics.Observed/@Metrics.Usable usable calls</MudText>
+    @if (Metrics.Observed > 0)
+    {
+        <MudText Typo="Typo.body2">Calls used for workflow actions: @Metrics.ActionCalls</MudText>
+        @if (Metrics.AdvisoryCalls > 0) { <MudText Typo="Typo.body2">Advisory findings saved: @Metrics.AdvisoryCalls</MudText> }
+        @if (Metrics.NoChangeCalls > 0) { <MudText Typo="Typo.body2">No change or abstained: @Metrics.NoChangeCalls</MudText> }
+        @foreach (var effect in Metrics.Effects) { <MudText Typo="Typo.caption">@effect.Label: @effect.Calls</MudText> }
+    }
+    @if (Metrics.NotObserved > 0) { <MudText Typo="Typo.caption">Not observed: @Metrics.NotObserved</MudText> }
+}
+
+@code {
+    [Parameter, EditorRequired] public AiWorkflowMetrics Metrics { get; set; } = AiWorkflowMetrics.From([]);
+}

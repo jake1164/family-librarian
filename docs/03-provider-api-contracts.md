@@ -161,6 +161,41 @@ boolean. Changes use the existing `ModelGatewaySettingsChanged` audit with the
 new permission value. Members cannot read or change this administrator surface.
 Providers cannot enable release or submit a finding for approval.
 
+`GET /api/v1/admin/model-gateway/failures` is administrator-only and never calls a
+model. Optional `role` selects a known role name, `days` is 1–90 (default 1), and
+`page` is 1–2000 (default 1). Optional `category` selects `RejectedReply`, `ProviderError`,
+`Cancelled` or `Unknown`; unsupported values are rejected. The category filter is applied
+before pagination and combines with the feature/time filters. Rejected replies cover response
+validation (including schema/evidence and repeated searches); provider errors cover transport,
+timeouts and unavailable/unsupported models. A cancellation reason takes precedence over its
+broad outcome, so cancellation never inflates either category. Unrecognized outcomes remain
+unclassified. Omitting category returns all diagnostic categories as individual rows, without
+a combined failure statistic. Responses contain at most 50 diagnostic calls, newest
+first with a unique ID tie-breaker, plus `hasMore` and UTC window bounds. Pass the
+returned `untilUtc` as `until` when paging to exclude newly started calls. Accepted
+and pending calls are excluded. Each row exposes only call ID, feature, configured
+model, local/cloud placement, broad outcome, optional fixed reason code, safe
+explanation, time and latency. File calls are optionally associated with
+`mediaAssetId`; when the file still exists, `artifact`
+contains only its file/work IDs, allowlisted format, bundle ID and track number/count.
+No original or stored filename is included. Historical rows without a diagnostic code remain
+explicitly unknown at that level; separate assessment findings are not guessed
+to be the same call. No user identifiers, credentials, prompts, replies or book
+excerpts are returned. Retention is up to 90 days; the endpoint is read-only and
+does not retry or change a book decision.
+
+The administrator-only `GET /api/v1/admin/model-gateway/usage` preserves per-feature
+counts while distinguishing the actual `model`, local/cloud placement, safe `reasonCode`
+and optional `workflowEffects` on grouped call rows. Null effects mean untracked; fixed
+effect names describe application observations, never model claims. Atomic monotonic
+updates on successful invocations make reuse/retries idempotent without double-counting
+a call. Semantic findings carry an optional exact invocation ID for later consumer use;
+no timestamp-based correlation or foreign-key deletion coupling is introduced.
+`recommendations` separately aggregates allowlisted validated verdicts by role/model/placement.
+These are saved recommendations, not applied actions or measured accuracy. Responses do not
+include prompts, reply bodies, claims/notes, credentials or user IDs. Historical calls are
+not backfilled with inferred effects. No endpoint accepts arbitrary browser-authored impact.
+
 With both role and permission enabled, a separate artifact-decision/1 release
 call may propose `release` with a grounded `supports_declared_identity` claim,
 or `contains_requested` citing tier-B contents for an already accepted collection.

@@ -58,9 +58,22 @@ public sealed record SaveModelGatewaySettingsRequest(
 
 /// <param name="ReportedTokens">Tokens the provider reported; calls it reported nothing for are counted in <paramref name="CallsWithoutUsage"/>, not as zero.</param>
 public sealed record ModelUsageRowResponse(
-    string Role, string Budget, string Outcome, bool IsCloud, int Calls, long ReportedTokens, int CallsWithoutUsage);
+    string Role, string Budget, string Outcome, bool IsCloud, int Calls, long ReportedTokens, int CallsWithoutUsage,
+    string Model = "", string? ReasonCode = null, IReadOnlyList<string>? WorkflowEffects = null);
 
-public sealed record ModelUsageResponse(DateTimeOffset SinceUtc, IReadOnlyList<ModelUsageRowResponse> Rows);
+public sealed record ModelRecommendationRowResponse(string Role, string Model, bool IsCloud, string Verdict, int Findings);
+
+public sealed record ModelUsageResponse(DateTimeOffset SinceUtc, IReadOnlyList<ModelUsageRowResponse> Rows,
+    IReadOnlyList<ModelRecommendationRowResponse>? Recommendations = null);
+
+public sealed record ModelCallFailureResponse(
+    Guid Id, string Role, string Model, bool IsCloud, string Outcome, string? ReasonCode, string Reason,
+    DateTimeOffset OccurredAtUtc, long? LatencyMilliseconds, Guid? MediaAssetId = null, ModelCallArtifactResponse? Artifact = null);
+
+public sealed record ModelCallArtifactResponse(Guid AssetId, Guid WorkId, string Format, Guid? BundleId, int? TrackNumber, int? TrackCount);
+
+public sealed record ModelCallFailuresResponse(
+    DateTimeOffset SinceUtc, DateTimeOffset UntilUtc, int Page, bool HasMore, IReadOnlyList<ModelCallFailureResponse> Rows);
 
 public sealed record SetModelGatewayEnabledRequest(bool Enabled);
 

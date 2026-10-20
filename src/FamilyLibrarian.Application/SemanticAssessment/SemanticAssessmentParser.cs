@@ -2,6 +2,7 @@ using static FamilyLibrarian.Application.SemanticAssessment.SemanticJson;
 using System.Text.Json;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Application.SemanticAssessment;
 
@@ -89,7 +90,7 @@ public static partial class SemanticAssessmentParser
 
             if (!IsString(item.GetProperty("kind"), out var kind) || !schema.TryGetStance(kind, out var stance))
             {
-                return Reject($"unknown claim kind '{Clip(kind)}'");
+                return Reject($"unknown claim kind '{Clip(kind)}'", ModelFailureReason.UnknownClaim);
             }
 
             var ids = item.GetProperty("evidence_ids");
@@ -104,12 +105,12 @@ public static partial class SemanticAssessmentParser
             {
                 if (!IsString(idElement, out var id) || !byId.TryGetValue(id, out var finding))
                 {
-                    return Reject($"a claim cites an evidence id that was not supplied ('{Clip(idElement.ValueKind == JsonValueKind.String ? idElement.GetString() : null)}')");
+                    return Reject($"a claim cites an evidence id that was not supplied ('{Clip(idElement.ValueKind == JsonValueKind.String ? idElement.GetString() : null)}')", ModelFailureReason.UnknownEvidence);
                 }
 
                 if (!seen.Add(id))
                 {
-                    return Reject($"a claim cites evidence id '{id}' more than once");
+                    return Reject($"a claim cites evidence id '{id}' more than once", ModelFailureReason.DuplicateEvidence);
                 }
 
                 cited.Add(finding);
@@ -117,7 +118,7 @@ public static partial class SemanticAssessmentParser
 
             if (GroundingError(kind, stance, cited) is { } grounding)
             {
-                return Reject(grounding);
+                return Reject(grounding.Detail, grounding.Reason);
             }
 
             if (!IsPlainNote(item.GetProperty("note"), out var note, out var noteError))
@@ -138,31 +139,31 @@ public static partial class SemanticAssessmentParser
         var contradicts = claims.Any(claim => claim.Stance == ClaimStance.Contradicts);
         if (verdict == SemanticVerdict.Consistent && (!supports || contradicts))
         {
-            return Reject("a consistent verdict needs a supporting claim and no contradicting claim");
+            return Reject("a consistent verdict needs a supporting claim and no contradicting claim", ModelFailureReason.UngroundedVerdict);
         }
 
         if (verdict == SemanticVerdict.Inconsistent && !contradicts)
         {
-            return Reject("an inconsistent verdict needs a contradicting claim");
+            return Reject("an inconsistent verdict needs a contradicting claim", ModelFailureReason.UngroundedVerdict);
         }
 
         return ModelParse.Ok(new SemanticAssessment(schema.Id, verdict, claims));
     }
 
     /// <summary>A claim may only lean on evidence that could actually back it. Null when it can.</summary>
-    private static string? GroundingError(string kind, ClaimStance stance, List<EvidenceFinding> cited)
+    private static (string Detail, ModelFailureReason Reason)? GroundingError(string kind, ClaimStance stance, List<EvidenceFinding> cited)
     {
         if (cited.Count == 0)
         {
-            return kind == SemanticSchema.InsufficientInformation ? null : $"claim '{kind}' cites no evidence";
+            return kind == SemanticSchema.InsufficientInformation ? null : ($"claim '{kind}' cites no evidence", ModelFailureReason.NoCitedEvidence);
         }
 
         return stance switch
         {
             ClaimStance.Supports when !cited.Any(finding => finding.Polarity is EvidencePolarity.Positive or EvidencePolarity.Weak)
-                => $"claim '{kind}' cites no supporting evidence",
+                => ($"claim '{kind}' cites no supporting evidence", ModelFailureReason.NoSupportingEvidence),
             ClaimStance.Contradicts when !cited.Any(finding => finding.Polarity == EvidencePolarity.Negative)
-                => $"claim '{kind}' cites no contradicting evidence",
+                => ($"claim '{kind}' cites no contradicting evidence", ModelFailureReason.NoContradictingEvidence),
             _ => null
         };
     }

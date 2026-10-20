@@ -106,6 +106,7 @@ public sealed partial class ExternalProviderRecheckService
                     complete = false;
                     break;
                 }
+                await searchGuidance.ObserveSearchAsync(guidance, added.Count > 0, cancellationToken);
                 var remembered = memory.FirstOrDefault(a => a.VariantKind == nameof(SearchVariantKind.AiSuggestion) && a.VariantKey == variant.Key);
                 if (remembered is null)
                 {

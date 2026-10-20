@@ -1,0 +1,44 @@
+@using FamilyLibrarian.Contracts.ModelGateway
+@using FamilyLibrarian.Web.Client.ModelGateway
+
+<MudTable Items="Rows" RowsPerPage="50" Dense="true" Hover="true" TableAttributes="TableAttributes">
+    <HeaderContent>
+        <MudTh>Time</MudTh><MudTh>Feature</MudTh><MudTh>File / book</MudTh><MudTh>Model</MudTh><MudTh>Category</MudTh><MudTh>Outcome</MudTh><MudTh>Details</MudTh><MudTh>Duration</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Time">@context.OccurredAtUtc.ToLocalTime().ToString("G")</MudTd>
+        <MudTd DataLabel="Feature">@ModelRoleLabels.Title(context.Role)</MudTd>
+        <MudTd DataLabel="File / book">
+            @if (context.Artifact is { } artifact)
+            {
+                <MudLink Href="@($"works/{artifact.WorkId}")">Book · @artifact.Format</MudLink>
+                @if (artifact.TrackNumber is { } number)
+                {
+                    <MudText Typo="Typo.body2">Track @number@(artifact.TrackCount is { } total ? $" of {total}" : string.Empty)</MudText>
+                }
+                <details><summary>File references</summary><p>File: @artifact.AssetId</p>
+                    @if (artifact.BundleId is { } bundle) { <p>Bundle: @bundle</p> }
+                </details>
+            }
+            else if (context.MediaAssetId is { } id)
+            {
+                <MudText Typo="Typo.body2">File: @id</MudText>
+            }
+            else
+            {
+                <text>Not recorded</text>
+            }
+        </MudTd>
+        <MudTd DataLabel="Model">@context.Model (@(context.IsCloud ? "Cloud" : "Local"))</MudTd>
+        <MudTd DataLabel="Category">@ModelCallCategories.Label(ModelCallCategories.Classify(context.Outcome, context.ReasonCode))</MudTd>
+        <MudTd DataLabel="Outcome">@context.Outcome</MudTd>
+        <MudTd DataLabel="Details">@context.Reason</MudTd>
+        <MudTd DataLabel="Duration">@(context.LatencyMilliseconds is { } ms ? $"{ms:N0} ms" : "Unknown")</MudTd>
+    </RowTemplate>
+    <NoRecordsContent><MudText>No diagnostic calls match the selected filters.</MudText></NoRecordsContent>
+</MudTable>
+
+@code {
+    private static readonly Dictionary<string, object?> TableAttributes = new() { ["aria-label"] = "AI call diagnostics" };
+    [Parameter, EditorRequired] public IReadOnlyList<ModelCallFailureResponse> Rows { get; set; } = [];
+}

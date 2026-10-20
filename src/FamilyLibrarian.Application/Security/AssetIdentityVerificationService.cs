@@ -5,6 +5,8 @@ using FamilyLibrarian.Application.SemanticAssessment;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Application.ModelGateway;
+using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Application.Security;
 
@@ -28,7 +30,7 @@ public sealed class AssetIdentityVerificationService(
     IArtifactEvidenceRecorder? evidence = null,
     IExpectedArtifactProfileSource? expectedProfiles = null,
     IArtifactEvidenceStore? profileEvidence = null,
-    ArtifactDecisionService? modelDecisions = null) : IAssetIdentityVerificationService
+    ArtifactDecisionService? modelDecisions = null, IModelWorkflowObserver? workflow = null) : IAssetIdentityVerificationService
 {
     public async Task<AssetIdentityVerificationResult> VerifyAsync(
         Guid assetId,
@@ -48,10 +50,14 @@ public sealed class AssetIdentityVerificationService(
         var expected = expectedProfiles is null ? null : await expectedProfiles.FindAsync(asset, cancellationToken);
         result = ArtifactHoldPolicy.Apply(asset, await CompareProfileAsync(asset, result, expected, cancellationToken));
 
+        Guid? modelHoldUsageId = null;
         if (result.IsMatch && modelDecisions is not null &&
             await modelDecisions.GetHoldAsync(asset, result, expected, cancellationToken) is { } hold)
+        {
+            modelHoldUsageId = hold.UsageRecordId;
             result = result with { IsMatch = false, HoldCode = EvidenceReasonCodes.IdentityHold.ModelConcern,
                 Reason = $"An automated reviewer raised a concern: {hold.Note}" };
+        }
 
         if (!result.IsMatch)
         {
@@ -74,6 +80,8 @@ public sealed class AssetIdentityVerificationService(
             cancellationToken);
 
         // Evidence only: recorded after the verdict above is saved and audited.
+        if (modelHoldUsageId is not null && workflow is not null)
+            await workflow.ObserveAsync(modelHoldUsageId, ModelWorkflowEffect.FileHoldApplied, cancellationToken);
         if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, ForRecording(result), cancellationToken);
 
         if (!result.IsMatch && modelDecisions is not null)

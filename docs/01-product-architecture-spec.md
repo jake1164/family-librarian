@@ -1128,10 +1128,48 @@ their saved fields; failed saves and unrelated credential actions leave other ed
 Instant-save controls do not create an unsaved draft by themselves.
 
 Administrators can view AI activity below source status on Tasks: per-role model calls,
-successes, failures and pending calls over the last 24 hours, alongside current enablement.
+accepted replies, rejected replies, provider errors and pending calls over the last 24 hours, alongside current enablement.
+Cancelled and unclassified calls have separate counts when present; there is no combined failure count.
+Accepted replies passed response validation, including valid hold, negative or uncertain assessments.
+Rejected replies include invalid JSON, unsupported evidence and repeated searches; provider errors
+include connection/credential errors, timeouts and unavailable models. These categories describe
+execution and response validation, independently of the book assessment and workflow impact.
 These use the durable gateway usage ledger, survive restarts, include historical calls to
 roles now off, and exclude cached decisions and attempts blocked before a provider call.
 Successful calls alone do not establish that a model changed an acquisition or file decision.
+Quality signals separate recorded provider replies from accepted replies: provider reliability is
+responses received / (responses received + provider errors), while reply acceptance rate is
+validated responses / responses received. Pending and explicitly cancelled calls are excluded;
+no responses means no quality data. Provider errors and response-rejection reasons accompany
+the rates independently; their counts are never collapsed into one failure statistic.
+An expandable breakdown groups by the actual model alias, role and local/cloud placement,
+with persisted validated recommendation counts. Accepted JSON/evidence is an operational proxy,
+not proof of model intelligence or accuracy; prompts, limits and evidence affect it too, and
+track-level/repeated calls are not independent evaluations.
+
+Workflow impact is recorded by consumers using exact invocation references, including cached
+findings. It distinguishes advisory findings saved, no-change/abstaining answers, intent used
+for response planning, cover catalog searches, completed extra searches (and whether they returned
+results), candidate veto/selection use, and applied file holds/releases. A proposal alone is not
+an applied effect. Holds are observed after saving/auditing; releases after the guarded transaction
+commits. Repeated observations accumulate idempotently per call; counts mean calls used at least
+once, not action totals. Effects on calls started in the selected window can include later reuse.
+Legacy or missing observations remain untracked, not zero impact. Tracking is best effort and
+cannot change a workflow outcome. Applied use does not establish correctness, successful delivery
+or net benefit. No extra model calls or automatic model changes are triggered by these metrics.
+A rejected-reply, provider-error, cancelled or unclassified count links to administrator-only
+AI response diagnostics, filtered to that feature and category before pagination. The page
+can change either filter independently and shows individual calls, time, configured model/placement,
+category, outcome, safe reason and duration, with paginated 24-hour/7-day/30-day/90-day history.
+New file calls also carry a trusted file reference; diagnostics can show the book link,
+format, bundle reference and track number/count without exposing filenames. Individual
+audiobook tracks are separate calls, so call counts do not equal book counts. Missing
+historical references remain explicitly unknown; calls are not guessed from timestamps.
+Usage history is retained for up to 90 days. Fixed reason codes distinguish provider problems,
+invalid responses and evidence-validation failures without storing arbitrary provider errors,
+prompts, replies or book excerpts. Older calls retain their recorded broad outcome; missing
+detailed reasons are shown explicitly. These are call outcomes, not book outcomes: a valid
+recommendation to hold a book is still an accepted reply. The page does not retry calls.
 
 The optional `SearchGuidance` role is off by default. After scheduled external
 sources exhaust deterministic searches without an eligible download or product

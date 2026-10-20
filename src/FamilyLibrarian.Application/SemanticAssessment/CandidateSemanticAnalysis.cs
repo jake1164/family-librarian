@@ -144,7 +144,8 @@ public sealed record SemanticAnalysisReport(SemanticAnalysisResult Result, Excep
 /// nothing that any matching, approval or acquisition code can use, never throws for a model or storage problem, and is
 /// skipped entirely when the role is off.
 /// </summary>
-public sealed class CandidateSemanticAnalyzer(IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock)
+public sealed class CandidateSemanticAnalyzer(IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
+    IModelWorkflowObserver? workflow = null)
 {
     public static readonly TimeSpan ReuseWindow = TimeSpan.FromDays(7);
     private const int MaxOutputTokens = 400;
@@ -188,8 +189,10 @@ public sealed class CandidateSemanticAnalyzer(IModelExecutionPolicy policy, ISem
                 execution.Succeeded ? execution.Value!.Verdict.ToString() : null,
                 execution.Succeeded ? SerializeClaims(execution.Value!) : null,
                 execution.Succeeded ? null : execution.Detail,
-                clock.UtcNow);
+                clock.UtcNow, execution.UsageRecordId);
             await store.AddAsync(finding, cancellationToken);
+            if (execution.Succeeded && workflow is not null)
+                await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.AdvisorySaved, cancellationToken);
             return new(SemanticAnalysisResult.Recorded, null, execution.Outcome);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

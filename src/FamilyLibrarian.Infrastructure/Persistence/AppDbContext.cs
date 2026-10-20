@@ -453,6 +453,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(record => record.Model).HasColumnName("model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
             entity.Property(record => record.IsCloud).HasColumnName("is_cloud");
             entity.Property(record => record.Outcome).HasColumnName("outcome").HasConversion<string>().HasMaxLength(32);
+            entity.Property(record => record.FailureReason).HasColumnName("failure_reason").HasConversion<string>().HasMaxLength(32);
+            entity.Property(record => record.MediaAssetId).HasColumnName("media_asset_id");
+            entity.Property(record => record.WorkflowEffects).HasColumnName("workflow_effects");
             entity.Property(record => record.OccurredAtUtc).HasColumnName("occurred_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(record => record.LatencyMilliseconds).HasColumnName("latency_ms");
             entity.Property(record => record.ReportedPromptTokens).HasColumnName("reported_prompt_tokens");
@@ -469,6 +472,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.ToTable("semantic_findings", "evidence");
             entity.HasKey(finding => finding.Id);
             entity.Property(finding => finding.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(finding => finding.ModelUsageRecordId).HasColumnName("model_usage_record_id");
             entity.Property(finding => finding.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(16);
             entity.Property(finding => finding.SubjectReference).HasColumnName("subject_reference").HasMaxLength(SemanticFinding.MaxReferenceLength);
             entity.Property(finding => finding.RequestId).HasColumnName("request_id");

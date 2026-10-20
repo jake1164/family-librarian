@@ -10,8 +10,13 @@ using FamilyLibrarian.Domain.ModelGateway;
 namespace FamilyLibrarian.Application.SemanticAssessment;
 
 /// <summary>Governed, persisted search proposals. Every failure leaves deterministic search and acquisition unchanged.</summary>
-public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock)
+public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
+    IModelWorkflowObserver? workflow = null)
 {
+    public Task ObserveSearchAsync(SearchGuidance guidance, bool returnedResults, CancellationToken cancellationToken) =>
+        workflow?.ObserveAsync(guidance.UsageRecordId, ModelWorkflowEffect.ExtraSearchCompleted |
+            (returnedResults ? ModelWorkflowEffect.ExtraSearchReturnedResults : ModelWorkflowEffect.None), cancellationToken) ?? Task.CompletedTask;
+
     public async Task<bool> IsEnabledAsync(CancellationToken cancellationToken)
     {
         try { return (await roles.ResolveAsync(ModelRole.SearchGuidance, cancellationToken)).IsAvailable; }
@@ -33,11 +38,12 @@ public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecut
             {
                 var parsed = SemanticAssessmentParser.ParseSearchGuidance(content, requested, input.EvidenceIds, triedKeys);
                 return parsed.IsValid && SearchGuidanceVariants.Build(requested, parsed.Value!) is null
-                    ? ModelParse.SchemaRejected<SearchGuidance>("search proposal cannot be applied to the catalog fields") : parsed;
+                    ? ModelParse.SchemaRejected<SearchGuidance>("search proposal cannot be applied to the catalog fields", ModelFailureReason.InvalidSearch) : parsed;
             }
             if (await store.FindLatestAsync(SemanticSubjectKind.SearchGuidance, input.Digest, cancellationToken) is { IsReusable: true } existing &&
                 clock.UtcNow - existing.CreatedAtUtc < CandidateSemanticAnalyzer.ReuseWindow)
-                return existing.IsUsable ? Parse(existing.ClaimsJson).Value : null;
+                return existing.IsUsable && Parse(existing.ClaimsJson).Value is { } reused
+                    ? reused with { UsageRecordId = existing.ModelUsageRecordId } : null;
 
             ModelExecution<SearchGuidance> execution;
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -58,6 +64,8 @@ public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecut
                 execution = new(ModelCallOutcome.TransportFailure, null, "Search guidance failed.", null, 0, null, false);
             }
             cancellationToken.ThrowIfCancellationRequested();
+            if (execution.Succeeded && execution.Value is { } accepted)
+                execution = execution with { Value = accepted with { UsageRecordId = execution.UsageRecordId } };
             var claims = execution.Succeeded && execution.Value is not null ? Serialize(execution.Value) : null;
             if (claims?.Length > SemanticFinding.MaxClaimsJsonLength)
             {
@@ -68,7 +76,9 @@ public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecut
                 SemanticAssessmentParser.SearchGuidanceSchema, input.Digest, "NoAllowedCandidate", ModelRole.SearchGuidance,
                 execution.Model ?? "unknown", execution.IsCloud, execution.Outcome,
                 execution.Succeeded ? execution.Value!.GiveUp ? "GiveUp" : "Search" : null, claims,
-                execution.Succeeded ? null : execution.Detail, clock.UtcNow), cancellationToken);
+                execution.Succeeded ? null : execution.Detail, clock.UtcNow, execution.UsageRecordId), cancellationToken);
+            if (execution.Succeeded && execution.Value?.GiveUp == true && workflow is not null)
+                await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.NoChange, cancellationToken);
             return execution.Succeeded ? execution.Value : null;
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)

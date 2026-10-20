@@ -22,6 +22,14 @@ public sealed class ModelGatewayApiClient(HttpClient httpClient, AntiforgeryToke
         await httpClient.GetFromJsonAsync<ModelListResponse>($"{BasePath}/models", cancellationToken)
         ?? new ModelListResponse([], "The host returned no model list.");
 
+    public async Task<ModelCallFailuresResponse> GetFailuresAsync(string? role, int page, int days, DateTimeOffset? until,
+        string? category = null, CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<ModelCallFailuresResponse>(
+            $"{BasePath}/failures?page={page}&days={days}&role={Uri.EscapeDataString(role ?? string.Empty)}" +
+            $"&category={Uri.EscapeDataString(category ?? string.Empty)}" +
+            (until is { } end ? $"&until={Uri.EscapeDataString(end.ToString("O"))}" : string.Empty), cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no AI call diagnostics.");
+
     public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SaveAsync(SaveModelGatewaySettingsRequest request, CancellationToken cancellationToken = default) =>
         SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/", request, cancellationToken);
 

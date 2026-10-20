@@ -33,14 +33,20 @@ public sealed class SearchGuidanceTests
     public async Task EachReasonReachesTheProviderWithOnlyItsSpecifiedSearchDimensionChanged(string reason, string value)
     {
         var seen = new List<ExternalProviderSearchRequest>();
-        var model = new GuidancePolicy(Reply(reason, value, reason == "contained_in" ? "r1" : "req-title"));
+        var usageId = Guid.NewGuid();
+        var workflow = new WorkflowProbe();
+        var model = new GuidancePolicy(Reply(reason, value, reason == "contained_in" ? "r1" : "req-title")) { UsageRecordId = usageId };
         var client = new VariantSearchProviderClient(query =>
         {
             seen.Add(query);
             return [VariantSearchProviderClient.Unrelated("unrelated")];
         });
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
-        await VariantScenario.RunAsync(fixture, client, "example-source", configureServices: services => Configure(services, model));
+        await VariantScenario.RunAsync(fixture, client, "example-source", configureServices: services =>
+        {
+            Configure(services, model);
+            services.RemoveAll<IModelWorkflowObserver>(); services.AddSingleton<IModelWorkflowObserver>(workflow);
+        });
         Assert.AreEqual(1, model.Calls);
         var changed = seen.Where(q => q.Work.Title == (reason == "series_naming" ? value + " 0" : value) ||
             reason == "author_variant" && q.Work.Authors.Any(a => a.Name == value)).ToArray();
@@ -58,6 +64,8 @@ public sealed class SearchGuidanceTests
         if (reason == "author_variant") Assert.AreEqual(original.Work.Title, changed[0].Work.Title);
         else CollectionAssert.AreEqual(original.Work.Authors.ToArray(), changed[0].Work.Authors.ToArray());
         Assert.IsEmpty(client.SubmittedCandidates, "A model proposal never supplies identity proof.");
+        Assert.AreEqual(usageId, workflow.Events.Single().Id);
+        Assert.AreEqual(ModelWorkflowEffect.ExtraSearchCompleted | ModelWorkflowEffect.ExtraSearchReturnedResults, workflow.Events.Single().Effects);
     }
 
     [TestMethod]
@@ -310,6 +318,7 @@ public sealed class SearchGuidanceTests
 
     private sealed class GuidancePolicy(string text) : IModelExecutionPolicy
     {
+        public Guid? UsageRecordId { get; init; }
         public int Calls { get; private set; }
         public string? Failure { get; init; }
         public Action? BeforeCall { get; set; }
@@ -328,7 +337,7 @@ public sealed class SearchGuidanceTests
             if (Failure == "transport") throw new HttpRequestException("Provider failed.");
             if (Failure == "refused") return Task.FromResult(new ModelExecution<T>(ModelCallOutcome.RoleUnavailable, default, "Refused", null, 0, "fake", false));
             var parsed = parse(ReplyFromInput?.Invoke(request) ?? text);
-            return Task.FromResult(new ModelExecution<T>(parsed.Failure, parsed.Value, parsed.Detail, null, 1, "fake", false));
+            return Task.FromResult(new ModelExecution<T>(parsed.Failure, parsed.Value, parsed.Detail, null, 1, "fake", false, UsageRecordId: UsageRecordId));
         }
     }
 }

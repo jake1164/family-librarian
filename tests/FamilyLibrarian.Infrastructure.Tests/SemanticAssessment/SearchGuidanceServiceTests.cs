@@ -10,6 +10,31 @@ namespace FamilyLibrarian.Infrastructure.Tests.SemanticAssessment;
 [TestClass]
 public sealed class SearchGuidanceServiceTests
 {
+    [TestMethod]
+    public async Task AProposalIsNotAnAppliedSearchAndCachedUseRetainsTheExactCallReference()
+    {
+        var id = Guid.NewGuid();
+        var observer = new RecordingWorkflowObserver();
+        var store = new FakeFindingStore();
+        var clock = new MutableClock(Now);
+        var policy = new Policy(Good) { UsageRecordId = id };
+        var service = new SearchGuidanceService(new Resolver(), policy, store, clock, observer);
+        var request = Guid.NewGuid(); var format = Guid.NewGuid();
+        var proposal = await service.GetAsync(request, format, Requested, [], [], Now, CancellationToken.None);
+        Assert.IsNotNull(proposal);
+        Assert.AreEqual(id, proposal.UsageRecordId);
+        Assert.AreEqual(id, store.Findings.Single().ModelUsageRecordId);
+        Assert.HasCount(0, observer.Observations);
+        clock.UtcNow = Now.AddDays(1);
+        var reused = await service.GetAsync(request, format, Requested, [], [], clock.UtcNow, CancellationToken.None);
+        Assert.IsNotNull(reused);
+        Assert.AreEqual(id, reused.UsageRecordId);
+        await service.ObserveSearchAsync(reused, true, CancellationToken.None);
+        Assert.AreEqual(id, observer.Observations.Single().Id);
+        Assert.AreEqual(ModelWorkflowEffect.ExtraSearchCompleted | ModelWorkflowEffect.ExtraSearchReturnedResults, observer.Observations.Single().Effects);
+        Assert.AreEqual(1, policy.Calls);
+    }
+
     private const string Good = "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"A New Journey\",\"evidence_ids\":[\"req-title\"],\"note\":\"Try a new title.\"}]}";
     private static readonly DateTimeOffset Now = new(2026, 10, 16, 12, 0, 0, TimeSpan.Zero);
     private static readonly BookIdentity Requested = new("The Lantern Road", "Mara Quill", []);
@@ -126,6 +151,7 @@ public sealed class SearchGuidanceServiceTests
 
     private sealed class Policy(string reply) : IModelExecutionPolicy
     {
+        public Guid? UsageRecordId { get; init; }
         public int Calls { get; private set; }
         public bool Refuse { get; init; }
         public Action<CancellationToken>? BeforeParse { get; init; }
@@ -135,7 +161,7 @@ public sealed class SearchGuidanceServiceTests
             BeforeParse?.Invoke(cancellationToken);
             if (Refuse) return Task.FromResult(new ModelExecution<T>(ModelCallOutcome.BudgetExhausted, default, "Budget", null, 0, "fake", false));
             var result = parse(reply);
-            return Task.FromResult(new ModelExecution<T>(result.Failure, result.Value, result.Detail, null, 0, "fake", false));
+            return Task.FromResult(new ModelExecution<T>(result.Failure, result.Value, result.Detail, null, 0, "fake", false, UsageRecordId: UsageRecordId));
         }
     }
 }

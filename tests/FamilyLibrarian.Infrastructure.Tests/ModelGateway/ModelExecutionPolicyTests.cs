@@ -30,14 +30,25 @@ internal sealed class FakeLedger : IModelUsageLedger
         return Task.CompletedTask;
     }
 
-    public Task CompleteAsync(Guid recordId, ModelCallOutcome outcome, long latencyMilliseconds, ModelUsage? usage, CancellationToken cancellationToken)
+    public Task CompleteAsync(Guid recordId, ModelCallOutcome outcome, long latencyMilliseconds, ModelUsage? usage, CancellationToken cancellationToken,
+        ModelFailureReason? failureReason = null)
     {
-        Records.Single(record => record.Id == recordId).Complete(outcome, latencyMilliseconds, usage?.PromptTokens, usage?.CompletionTokens, usage?.TotalTokens);
+        Records.Single(record => record.Id == recordId).Complete(outcome, latencyMilliseconds, usage?.PromptTokens, usage?.CompletionTokens, usage?.TotalTokens, failureReason);
         return Task.CompletedTask;
     }
 
     public Task<ModelUsageSummary> SummarizeAsync(DateTimeOffset since, CancellationToken cancellationToken) =>
         Task.FromResult(new ModelUsageSummary(since, []));
+
+    public Task ObserveWorkflowAsync(Guid recordId, ModelWorkflowEffect effects, CancellationToken cancellationToken)
+    {
+        Records.Single(record => record.Id == recordId).ObserveWorkflow(effects);
+        return Task.CompletedTask;
+    }
+
+    public Task<ModelCallFailures> ListFailuresAsync(DateTimeOffset since, DateTimeOffset until, ModelRole? role, int page, CancellationToken cancellationToken,
+        ModelCallDiagnosticFilter? filter = null) =>
+        Task.FromResult(new ModelCallFailures([], false));
 }
 
 internal sealed class MutableClock(DateTimeOffset now) : FamilyLibrarian.Application.Abstractions.IClock
@@ -105,6 +116,64 @@ public sealed class ModelExecutionPolicyTests
 
     private static Task<ModelExecution<string>> RunAsync(Rig rig, ModelExecutionRequest request) =>
         rig.Policy.ExecuteAsync(request, AcceptAll, CancellationToken.None);
+
+    [TestMethod]
+    [DataRow(ModelFailureKind.Unauthorized, ModelFailureReason.CredentialsRejected)]
+    [DataRow(ModelFailureKind.RateLimited, ModelFailureReason.ProviderRateLimited)]
+    [DataRow(ModelFailureKind.BadRequest, ModelFailureReason.ProviderBadRequest)]
+    [DataRow(ModelFailureKind.ServerError, ModelFailureReason.ProviderError)]
+    [DataRow(ModelFailureKind.InvalidResponse, ModelFailureReason.InvalidProviderResponse)]
+    [DataRow(ModelFailureKind.Unreachable, ModelFailureReason.ProviderUnreachable)]
+    public async Task ProviderDiagnosticsRetainOnlyFixedCodesAndNeverProviderText(ModelFailureKind failure, ModelFailureReason expected)
+    {
+        const string secret = "private-provider-text-and-key";
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Fail(failure, secret)));
+        await RunAsync(rig, Chat());
+        var record = rig.Ledger.Records.Single();
+        Assert.AreEqual(expected, record.FailureReason);
+        Assert.IsFalse(System.Text.Json.JsonSerializer.Serialize(record).Contains(secret, StringComparison.Ordinal));
+        Assert.IsFalse(ModelFailureDiagnostics.Explain(record.Outcome, record.FailureReason).Contains(secret, StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public async Task ParserDiagnosticsRetainCodesWithoutRawDetailsAndValidHoldRemainsSucceeded()
+    {
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Ok("private book excerpt")));
+        var assetId = Guid.NewGuid();
+        await rig.Policy.ExecuteAsync(Chat() with { MediaAssetId = assetId }, _ => ModelParse.SchemaRejected<string>("private book excerpt",
+            ModelFailureReason.NoSupportingEvidence), CancellationToken.None);
+        var rejected = rig.Ledger.Records.Single();
+        Assert.AreEqual(ModelFailureReason.NoSupportingEvidence, rejected.FailureReason);
+        Assert.AreEqual(assetId, rejected.MediaAssetId);
+        Assert.IsNull(rejected.WorkflowEffects);
+        Assert.IsFalse(System.Text.Json.JsonSerializer.Serialize(rejected).Contains("private book excerpt", StringComparison.Ordinal));
+        var accepted = await rig.Policy.ExecuteAsync(Chat(), _ => ModelParse.Ok("hold"), CancellationToken.None);
+        Assert.IsTrue(accepted.Succeeded);
+        Assert.AreEqual(rig.Ledger.Records.Last().Id, accepted.UsageRecordId);
+        Assert.IsNull(rig.Ledger.Records.Last().FailureReason);
+        Assert.AreEqual(2, rig.Model.Calls.Count, "Diagnostics do not introduce retries.");
+    }
+
+    [TestMethod]
+    [DataRow(FamilyLibrarian.Domain.Evidence.EvidencePolarity.Positive)]
+    [DataRow(FamilyLibrarian.Domain.Evidence.EvidencePolarity.Unknown)]
+    public async Task ObservedLabConcernFailureIsDiagnosableWithoutStoringTheReply(FamilyLibrarian.Domain.Evidence.EvidencePolarity polarity)
+    {
+        const string reply = """
+            {"schema":"artifact-decision/1","verdict":"hold","claims":[
+            {"kind":"suggests_incomplete","evidence_ids":["idv.ev-title"],"note":"Private model note."}]}
+            """;
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Ok(reply)), Configured(role: ModelRole.ArtifactValidationDecision));
+        await rig.Policy.ExecuteAsync(Background() with { Role = ModelRole.ArtifactValidationDecision },
+            text => FamilyLibrarian.Application.SemanticAssessment.SemanticAssessmentParser.ParseArtifactDecision(text,
+                [new("idv.ev-title", "identity.title_agrees", polarity, "Private file detail.")]), CancellationToken.None);
+        var record = rig.Ledger.Records.Single();
+        Assert.AreEqual(ModelFailureReason.UngroundedConcern, record.FailureReason);
+        StringAssert.Contains(ModelFailureDiagnostics.Explain(record.Outcome, record.FailureReason), "Negative, Weak or Condition");
+        var stored = System.Text.Json.JsonSerializer.Serialize(record);
+        Assert.IsFalse(stored.Contains("Private", StringComparison.Ordinal));
+        Assert.AreEqual(1, rig.Model.Calls.Count);
+    }
 
     [TestMethod]
     public async Task ASuccessfulCallIsRecordedWithTheProvidersOwnUsage()

@@ -15,6 +15,28 @@ namespace FamilyLibrarian.Infrastructure.Tests.SemanticAssessment;
 public sealed class ArtifactDecisionTests
 {
     [TestMethod]
+    public async Task AHoldProposalCarriesItsCallReferenceWithoutClaimingTheHoldWasApplied()
+    {
+        var id = Guid.NewGuid();
+        var kit = new ArtifactDecisionKit { UsageRecordId = id };
+        var observer = new FamilyLibrarian.Infrastructure.Tests.ModelGateway.RecordingWorkflowObserver();
+        var service = new ArtifactDecisionService(kit, kit, kit.Store, kit, workflow: observer);
+        var hold = await service.GetHoldAsync(ArtifactDecisionKit.Asset(), ArtifactDecisionKit.Match(), ArtifactDecisionKit.Expected, CancellationToken.None);
+        Assert.AreEqual(id, hold!.UsageRecordId);
+        Assert.AreEqual(id, kit.Store.Findings.Single().ModelUsageRecordId);
+        Assert.HasCount(0, observer.Observations);
+    }
+
+    [TestMethod]
+    public async Task TrustedArtifactReferenceIsPassedToTheGatewayForDiagnosis()
+    {
+        var kit = new ArtifactDecisionKit();
+        var asset = ArtifactDecisionKit.Asset(format: ".mp3");
+        await kit.Service.GetHoldAsync(asset, ArtifactDecisionKit.Match(), ArtifactDecisionKit.Expected, CancellationToken.None);
+        Assert.AreEqual(asset.Id, kit.LastRequest!.MediaAssetId);
+    }
+
+    [TestMethod]
     [DataRow("contradicts_declared_identity", EvidencePolarity.Negative, true)]
     [DataRow("contradicts_declared_identity", EvidencePolarity.Weak, false)]
     [DataRow("contradicts_declared_identity", EvidencePolarity.Positive, false)]
@@ -271,6 +293,7 @@ public sealed class ArtifactDecisionTests
 
 internal sealed class ArtifactDecisionKit : IModelRoleResolver, IModelExecutionPolicy, IClock
 {
+    public Guid? UsageRecordId { get; init; }
     public DateTimeOffset Now { get; set; } = new(2026, 10, 19, 14, 0, 0, TimeSpan.Zero);
     public DateTimeOffset UtcNow => Now;
     public bool Enabled { get; set; } = true;
@@ -323,6 +346,6 @@ internal sealed class ArtifactDecisionKit : IModelRoleResolver, IModelExecutionP
         Store.FailAdds = Outcome == "store";
         var parsed = parse(Response ?? (Outcome switch { "empty" => "", "invalid" => "oops", "positive" => Reply(id: "idv.ev-title"),
             "uncertain" or "no_objection" or "release" or "contains_requested" => Reply(Outcome), _ => Reply() }));
-        return new ModelExecution<T>(parsed.Failure, parsed.Value, parsed.Detail, null, 1, "test", Cloud);
+        return new ModelExecution<T>(parsed.Failure, parsed.Value, parsed.Detail, null, 1, "test", Cloud, UsageRecordId: UsageRecordId);
     }
 }

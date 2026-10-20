@@ -2328,6 +2328,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(128)")
                         .HasColumnName("model");
 
+                    b.Property<Guid?>("ModelUsageRecordId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("model_usage_record_id");
+
                     b.Property<string>("Outcome")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -2669,6 +2673,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("charged_tokens");
 
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("failure_reason");
+
                     b.Property<bool>("IsCloud")
                         .HasColumnType("boolean")
                         .HasColumnName("is_cloud");
@@ -2676,6 +2685,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<long?>("LatencyMilliseconds")
                         .HasColumnType("bigint")
                         .HasColumnName("latency_ms");
+
+                    b.Property<Guid?>("MediaAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("media_asset_id");
 
                     b.Property<string>("Model")
                         .IsRequired()
@@ -2718,6 +2731,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("UserId")
                         .HasColumnType("uuid")
                         .HasColumnName("user_id");
+
+                    b.Property<int?>("WorkflowEffects")
+                        .HasColumnType("integer")
+                        .HasColumnName("workflow_effects");
 
                     b.HasKey("Id");
 

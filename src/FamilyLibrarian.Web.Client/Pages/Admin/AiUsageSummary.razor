@@ -6,6 +6,7 @@
         <MudText Typo="Typo.h5">AI activity · last 24 hours</MudText>
         <MudSpacer />
         <MudButton OnClick="Refresh" Disabled="Loading" Variant="Variant.Text">Refresh AI activity</MudButton>
+        <MudLink Href="admin/ai-failures">AI diagnostics</MudLink>
         <MudLink Href="admin/model-gateway">AI settings</MudLink>
     </MudStack>
     @if (Failed)
@@ -22,29 +23,60 @@
             @(Settings.IsEnabled ? "AI models are on." : "AI models are off.")
             Actual model calls since @Usage.SinceUtc.ToLocalTime().ToString("g").
             Counts survive restarts and include earlier calls to features now off. Reused decisions and requests blocked
-            before a model call are not counted. A successful call does not mean it changed a decision.
+            before a model call are not counted. Accepted replies passed response validation; a valid hold, rejection of a book,
+            or uncertain assessment still belongs here. Rejected replies were received but failed response validation, such as
+            unsupported evidence or a repeated search. Provider errors include timeouts, connection errors and unavailable models.
+            These categories describe the call and reply; they do not mean a book failed.
         </MudText>
-        <MudTable Items="Settings.Roles" Dense="true" Hover="true" aria-label="AI calls by feature">
+        <MudText Typo="Typo.body2" Class="mb-2">
+            Provider replies measures responses received versus provider errors. Accepted replies measures how many received responses
+            passed validation, including evidence checks where required. Pending and cancelled calls are excluded from both rates.
+            A high rate does not prove accuracy or usefulness: prompts, settings and available evidence also affect results.
+            Calls to tracks or repeated inputs are not independent quality tests.
+        </MudText>
+        <MudTable Items="Settings.Roles" Dense="true" Hover="true" TableAttributes="TableAttributes">
             <HeaderContent>
-                <MudTh>Feature</MudTh><MudTh>Currently</MudTh><MudTh>Calls</MudTh><MudTh>Succeeded</MudTh><MudTh>Failed</MudTh><MudTh>Pending</MudTh>
+                <MudTh>Feature</MudTh><MudTh>Currently</MudTh><MudTh>Calls</MudTh><MudTh>Accepted replies</MudTh><MudTh>Rejected replies</MudTh><MudTh>Provider errors</MudTh>
+                @if (ShowCancelled) { <MudTh>Cancelled</MudTh> }
+                @if (ShowUnclassified) { <MudTh>Unclassified</MudTh> }
+                <MudTh>Pending</MudTh><MudTh>Quality signals</MudTh><MudTh>Workflow impact</MudTh>
             </HeaderContent>
             <RowTemplate>
-                @{ var rows = Usage.Rows.Where(row => row.Role == context.Role).ToArray(); }
+                @{ var rows = Usage.Rows.Where(row => row.Role == context.Role).ToArray(); var metrics = AiQualityMetrics.From(rows); }
                 <MudTd DataLabel="Feature">@ModelRoleLabels.Title(context.Role)</MudTd>
                 <MudTd DataLabel="Currently">@(Settings.IsEnabled && context.IsEnabled ? "Enabled" : "Off")</MudTd>
                 <MudTd DataLabel="Calls">@rows.Sum(row => row.Calls)</MudTd>
-                <MudTd DataLabel="Succeeded">@rows.Where(row => row.Outcome == "Succeeded").Sum(row => row.Calls)</MudTd>
-                <MudTd DataLabel="Failed">@rows.Where(row => row.Outcome is not ("Succeeded" or "Pending")).Sum(row => row.Calls)</MudTd>
-                <MudTd DataLabel="Pending">@rows.Where(row => row.Outcome == "Pending").Sum(row => row.Calls)</MudTd>
+                <MudTd DataLabel="Accepted replies">@metrics.Usable</MudTd>
+                <MudTd DataLabel="Rejected replies"><AiOutcomeCount Count="metrics.UnusableReplies" Role="@context.Role" Category="@ModelCallCategories.RejectedReply" /></MudTd>
+                <MudTd DataLabel="Provider errors"><AiOutcomeCount Count="metrics.ProviderErrors" Role="@context.Role" Category="@ModelCallCategories.ProviderError" /></MudTd>
+                @if (ShowCancelled) { <MudTd DataLabel="Cancelled"><AiOutcomeCount Count="metrics.Cancelled" Role="@context.Role" Category="@ModelCallCategories.Cancelled" /></MudTd> }
+                @if (ShowUnclassified) { <MudTd DataLabel="Unclassified"><AiOutcomeCount Count="metrics.Unclassified" Role="@context.Role" Category="@ModelCallCategories.Unknown" /></MudTd> }
+                <MudTd DataLabel="Pending">@metrics.Pending</MudTd>
+                <MudTd DataLabel="Quality signals"><AiQualitySignal Metrics="metrics" /></MudTd>
+                <MudTd DataLabel="Workflow impact"><AiWorkflowSignal Metrics="@AiWorkflowMetrics.From(rows)" /></MudTd>
             </RowTemplate>
         </MudTable>
+        <details class="mt-3">
+            <summary>Quality by model and recorded recommendations</summary>
+            <MudText Typo="Typo.body2" Class="my-2">
+                Models are the aliases actually used, including earlier settings. Recommendation counts come from saved validated assessments;
+                they are separate from call counts and do not establish that a recommendation was applied or helped.
+                Uncertainty, no objection and keeping the current choice can be appropriate answers. Workflow effects are observed application use,
+                not proof of accuracy or net benefit. Counts are calls used at least once, not numbers of actions; one call can have several effects,
+                including later reuse. Historical calls without observations are untracked.
+            </MudText>
+            <AiModelQualityTable Usage="Usage" />
+        </details>
     }
 </MudPaper>
 
 @code {
+    private static readonly Dictionary<string, object?> TableAttributes = new() { ["aria-label"] = "AI calls by feature" };
     [Parameter] public ModelGatewaySettingsResponse? Settings { get; set; }
     [Parameter] public ModelUsageResponse? Usage { get; set; }
     [Parameter] public bool Failed { get; set; }
     [Parameter] public bool Loading { get; set; }
     [Parameter] public EventCallback Refresh { get; set; }
+    private bool ShowCancelled => Usage?.Rows.Any(row => ModelCallCategories.Classify(row.Outcome, row.ReasonCode) == ModelCallCategories.Cancelled) == true;
+    private bool ShowUnclassified => Usage?.Rows.Any(row => ModelCallCategories.Classify(row.Outcome, row.ReasonCode) == ModelCallCategories.Unknown) == true;
 }
