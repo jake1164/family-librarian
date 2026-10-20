@@ -2477,6 +2477,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("allow_cloud_excerpts");
 
+                    b.Property<bool>("AllowModelHoldRelease")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("allow_model_hold_release");
+
                     b.Property<int>("ApiKeyFormatVersion")
                         .HasColumnType("integer")
                         .HasColumnName("api_key_format_version");

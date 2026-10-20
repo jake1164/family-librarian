@@ -157,6 +157,8 @@ public static class EvidenceReasonCodes
 
         /// <summary>The (bounded) reason the administrator gave for an override.</summary>
         public const string AdminOverrideReason = "artifact.identity_attestation.admin_override_reason";
+        public const string CollectionConsentRecorded = "artifact.identity.collection_consent_recorded";
+        public const string ModelRelease = "artifact.identity_attestation.model_release";
     }
 
     /// <summary>What the file's own content says about its identity, independent of any attestation.</summary>

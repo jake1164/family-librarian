@@ -15,7 +15,8 @@ public sealed record ModelGatewaySettingsResponse(
     IReadOnlyList<ModelRoleDto> Roles,
     ModelLimitsDto Limits,
     bool AllowCloudExcerpts = false,
-    ModelConnectionNoticeDto? ConnectionNotice = null);
+    ModelConnectionNoticeDto? ConnectionNotice = null,
+    bool AllowModelHoldRelease = false);
 
 /// <summary>
 /// Shown only when the older model-test connection and the shared one disagree. Contains no key; both are kept until an
@@ -52,7 +53,8 @@ public sealed record ModelLimitsDto(
 /// </param>
 public sealed record SaveModelGatewaySettingsRequest(
     string? EndpointUrl, bool AllowCloud, IReadOnlyList<ModelRoleDto> Roles, ModelLimitsDto? Limits = null,
-    bool? AllowCloudExcerpts = null);
+    bool? AllowCloudExcerpts = null,
+    bool? AllowModelHoldRelease = null);
 
 /// <param name="ReportedTokens">Tokens the provider reported; calls it reported nothing for are counted in <paramref name="CallsWithoutUsage"/>, not as zero.</param>
 public sealed record ModelUsageRowResponse(

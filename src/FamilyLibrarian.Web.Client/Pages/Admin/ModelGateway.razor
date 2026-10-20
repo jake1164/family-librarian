@@ -134,6 +134,16 @@
                                 count as "cloud" is your decision per role: a name is never taken as proof that a model is local.
                             </MudText>
 
+                            <MudDivider />
+                            <MudText Typo="Typo.h6">Identity hold release</MudText>
+                            <MudSwitch T="bool" @bind-Value="form.AllowModelHoldRelease" Color="Color.Warning"
+                                       Label="Allow AI validation to release narrowly eligible identity holds" />
+                            <MudText Typo="Typo.caption">
+                                Off by default. Also requires the Artifact validation decision role. Only inconclusive holds,
+                                corroborated author differences and contents of an already accepted collection can qualify.
+                                Other contradictions and AI concern holds always require a librarian.
+                            </MudText>
+
                             @SaveBar(false)
                         </MudStack>
                     </MudPaper>

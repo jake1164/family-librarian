@@ -35,7 +35,8 @@ public sealed record ModelGatewaySettingsView(
     bool AllowCloud,
     IReadOnlyList<ModelRoleView> Roles,
     ModelExecutionLimits Limits,
-    bool AllowCloudExcerpts = false);
+    bool AllowCloudExcerpts = false,
+    bool AllowModelHoldRelease = false);
 
 public sealed record ModelRoleCommand(
     ModelRole Role, bool IsEnabled, ModelPlacement Placement, string? LocalModel, string? CloudModel,
@@ -45,7 +46,8 @@ public sealed record ModelRoleCommand(
 /// <param name="AllowCloudExcerpts">Whether details read from files may go to a cloud role, or null to leave it as it is.</param>
 public sealed record SaveModelGatewaySettings(
     string? EndpointUrl, bool AllowCloud, IReadOnlyList<ModelRoleCommand> Roles, ModelExecutionLimits? Limits = null,
-    bool? AllowCloudExcerpts = null);
+    bool? AllowCloudExcerpts = null,
+    bool? AllowModelHoldRelease = null);
 
 public sealed record ModelGatewaySettingsResult(bool Succeeded, bool Forbidden, string? Error, ModelGatewaySettingsView? Settings)
 {
@@ -105,6 +107,9 @@ public sealed class ModelGatewaySettingsService(
             settings.SetAllowCloudExcerpts(excerpts, currentUser.UserId, clock.UtcNow);
         }
 
+        if (command.AllowModelHoldRelease is { } release)
+            settings.SetAllowModelHoldRelease(release, currentUser.UserId, clock.UtcNow);
+
         if (command.Limits is not null)
         {
             settings.ConfigureLimits(command.Limits, currentUser.UserId, clock.UtcNow);
@@ -123,6 +128,7 @@ public sealed class ModelGatewaySettingsService(
             {
                 settings.AllowCloud,
                 settings.AllowCloudExcerpts,
+                settings.AllowModelHoldRelease,
                 settings.Limits,
                 Roles = settings.Roles.Select(role => new { Role = role.Role.ToString(), role.IsEnabled, Placement = role.Placement.ToString(), Reasoning = role.Reasoning.ToString() })
             },
@@ -199,7 +205,8 @@ public sealed class ModelGatewaySettingsService(
                 : new ModelRoleView(role, setting.IsEnabled, setting.Placement, setting.LocalModel, setting.CloudModel, setting.Reasoning);
         })],
         settings?.Limits ?? ModelExecutionLimits.Default,
-        settings?.AllowCloudExcerpts ?? false);
+        settings?.AllowCloudExcerpts ?? false,
+        settings?.AllowModelHoldRelease ?? false);
 
     private bool IsAdministrator() => currentUser.UserId is not null && administrator.IsAdministrator;
 

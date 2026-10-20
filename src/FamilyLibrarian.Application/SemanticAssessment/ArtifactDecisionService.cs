@@ -9,11 +9,65 @@ using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Application.SemanticAssessment;
 
-/// <summary>A governed pre-approval review that returns only an additional hold, never an approval or release.</summary>
+/// <summary>Governed synchronous hold review and separately permitted release proposals. Only ApprovalService can approve.</summary>
 public sealed class ArtifactDecisionService(
     IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
-    IArtifactEvidenceStore? recordedEvidence = null)
+    IArtifactEvidenceStore? recordedEvidence = null, IModelGatewaySettingsStore? settings = null)
 {
+    public async Task<Guid?> GetReleaseAsync(MediaAsset asset, AssetIdentityVerificationResult result,
+        ExpectedArtifactProfile? expected, CancellationToken cancellationToken)
+    {
+        // Permission and deterministic eligibility precede even role resolution, and hence every model call.
+        if (settings is null || recordedEvidence is null || result.IsMatch ||
+            !ModelReleasePolicy.IsEligible(asset, result.Facts)) return null;
+        try
+        {
+            if ((await settings.FindAsync(cancellationToken))?.AllowModelHoldRelease != true) return null;
+            var resolution = await roles.ResolveAsync(ModelRole.ArtifactValidationDecision, cancellationToken);
+            if (!resolution.IsAvailable) return null;
+            var rows = await ArtifactReleaseEvidence.ReadAsync(recordedEvidence, asset, cancellationToken);
+            var facts = ArtifactReleaseEvidence.Facts(rows);
+            if (!ModelReleasePolicy.IsEligible(asset, facts) || result.Facts.Any(f => !facts.Contains(f))) return null;
+            var details = !resolution.IsCloud || resolution.AllowCloudExcerpts;
+            if (asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.CollectionMissingRequestedWork &&
+                (!details || expected?.AcceptedAsCollectionContaining != true)) return null;
+            var input = ArtifactReleaseEvidence.Render(asset, rows, expected, details);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limit.CancelAfter(TimeSpan.FromSeconds(Math.Min(resolution.Limits.TimeoutSeconds, 45)));
+            ModelExecution<ArtifactDecision> execution;
+            try
+            {
+                execution = await policy.ExecuteAsync(new ModelExecutionRequest(ModelRole.ArtifactValidationDecision,
+                    ModelBudgetClass.BackgroundValidation, null,
+                    [new ModelChatMessage("system", ArtifactReleaseEvidence.SystemPrompt), new ModelChatMessage("user", input.Text)],
+                    JsonObjectOutput: true, MaxOutputTokens: 400, IncludesFileDerivedDetail: input.IncludesDetails),
+                    text => SemanticAssessmentParser.ParseArtifactRelease(text, asset, facts, input), limit.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                execution = new(ModelCallOutcome.Timeout, null, "Artifact release review timed out.", null, 0, resolution.Model, resolution.IsCloud);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                execution = new(ModelCallOutcome.TransportFailure, null, "Artifact release review failed.", null, 0, resolution.Model, resolution.IsCloud);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            var decision = execution.Succeeded ? execution.Value : null;
+            var finding = new SemanticFinding(SemanticSubjectKind.ArtifactDecision, asset.Id.ToString("N"), null, null,
+                SemanticAssessmentParser.ArtifactDecisionSchema, input.Digest, asset.IdentityHoldCode!, ModelRole.ArtifactValidationDecision,
+                execution.Model ?? resolution.Model ?? "unknown", execution.IsCloud, execution.Outcome, decision?.Verdict,
+                decision is null ? null : CandidateSemanticAnalyzer.SerializeClaims(new(SemanticAssessmentParser.ArtifactDecisionSchema,
+                    SemanticVerdict.Uncertain, decision.Claims)), execution.Succeeded ? null : execution.Detail, clock.UtcNow);
+            await store.AddAsync(finding, cancellationToken);
+            var freshRows = await ArtifactReleaseEvidence.ReadAsync(recordedEvidence, asset, cancellationToken);
+            if ((await settings.FindAsync(cancellationToken))?.AllowModelHoldRelease != true ||
+                !ModelReleasePolicy.IsEligible(asset, ArtifactReleaseEvidence.Facts(freshRows)) ||
+                ArtifactReleaseEvidence.Render(asset, freshRows, expected, details).Digest != input.Digest) return null;
+            return decision?.Verdict is "release" or "contains_requested" ? finding.Id : null;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested) { return null; }
+    }
+
     public async Task<ArtifactModelHold?> GetHoldAsync(MediaAsset asset, AssetIdentityVerificationResult result,
         ExpectedArtifactProfile? expected, CancellationToken cancellationToken)
     {

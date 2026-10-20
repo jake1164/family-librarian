@@ -10,7 +10,7 @@ namespace FamilyLibrarian.Application.Security;
 
 /// <summary>
 /// Holds a clean, valid file unless its embedded identity matches the requested
-/// Work. A held asset cannot reach policy approval or a publishing destination.
+/// Work. A held asset requires a separately guarded model release or administrator override before approval and publishing.
 /// </summary>
 public interface IAssetIdentityVerificationService
 {
@@ -75,6 +75,9 @@ public sealed class AssetIdentityVerificationService(
 
         // Evidence only: recorded after the verdict above is saved and audited.
         if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, ForRecording(result), cancellationToken);
+
+        if (!result.IsMatch && modelDecisions is not null)
+            result = result with { ModelReleaseFindingId = await modelDecisions.GetReleaseAsync(asset, result, expected, cancellationToken) };
 
         return result;
     }

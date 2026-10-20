@@ -26,4 +26,8 @@ public interface ISecurityEvaluationRepository
     void AddEvaluation(SecurityEvaluation evaluation);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>Serializes a model release with asset changes, reloads the target, and commits its audit/evidence atomically.</summary>
+    Task<ApprovalResult> ExecuteModelReleaseAsync(Guid assetId, Func<Task<ApprovalResult>> action, CancellationToken cancellationToken)
+        => Task.FromResult(ApprovalResult.Invalid("Model release requires transactional persistence."));
 }

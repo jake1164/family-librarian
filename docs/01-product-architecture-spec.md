@@ -1139,8 +1139,18 @@ The separate `ArtifactValidationDecision` role is off by default. For otherwise
 matching provider EPUB/KEPUB/M4B/MP3/OGG files, it may add a grounded identity
 hold before approval and publishing. A hold requires a cited contradiction or
 a concern grounded in Negative, Weak or Condition evidence; Positive-only
-citations and uncertainty cannot hold. It cannot release, approve, or accept
-collection contents. Model failures preserve the deterministic outcome. File
+citations and uncertainty cannot hold. Its hold-call contract cannot release or
+accept collection contents. A separate default-off administrator setting,
+`AllowModelHoldRelease`, permits a release call only for deterministic eligible
+holds: attested-only external or inconclusive with no Negative observations;
+an author-only difference with Positive title, language and independent series
+or identifier agreement; or contents confirmation for an already accepted
+collection. Other Negative facts and model-concern holds cannot be released.
+Tier-B TOC/heading facts suffice for the collection exception; tier C is deferred.
+Eligibility is rechecked after the call and on persisted evidence by
+`ApprovalService`, the sole path to Trusted. Its model policy is
+`model-hold-release-v1`, with a system audit action and source=model release
+evidence. Model failures preserve the deterministic outcome. File
 metadata is bounded untrusted input, and cloud sharing requires explicit opt-in.
 Existing artifact assessment shadows remain advisory.
 

@@ -8,7 +8,7 @@
         <p class="mb-1"><small>
             @if (finding.IsDecision)
             {
-                <span>This review may add a hold before approval. It cannot release or approve a file. A librarian can review the cited facts and override the identity hold.</span>
+                <span>A hold call cannot release or approve a file. A separate release call needs the administrator's release permission and grounded evidence for a narrowly eligible hold. Other identity holds require a librarian override.</span>
             }
             else
             {
@@ -41,6 +41,8 @@
         "Inconsistent" => "the recorded evidence looks inconsistent with what the file was staged as",
         "hold" => "raised a concern requiring librarian review",
         "no_objection" => "raised no additional concern",
+        "release" => "proposed an identity hold release; see the model release evidence for the applied decision",
+        "contains_requested" => "identified the requested work in an accepted collection; see the model release evidence for the applied decision",
         _ => "uncertain"
     };
 

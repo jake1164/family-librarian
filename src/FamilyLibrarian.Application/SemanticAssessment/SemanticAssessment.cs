@@ -77,6 +77,14 @@ public sealed class SemanticSchema
         ["insufficient_information"] = ClaimStance.Neutral
     });
 
+    // Release grounding is checked against the actual dimensions and eligibility in ParseArtifactRelease.
+    // This private contract permits Unknown tier-B contents only for the accepted-collection exception.
+    internal static SemanticSchema ArtifactRelease { get; } = new("artifact-assessment/1", new(StringComparer.Ordinal)
+    {
+        ["supports_declared_identity"] = ClaimStance.Neutral,
+        ["insufficient_information"] = ClaimStance.Neutral
+    });
+
     /// <summary>The only claim kind allowed to cite no evidence: saying "I cannot tell" needs nothing to back it.</summary>
     public const string InsufficientInformation = "insufficient_information";
 }

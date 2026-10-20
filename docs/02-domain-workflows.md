@@ -1458,7 +1458,39 @@ Validated decisions and failures are recorded, and identical reusable findings
 are reused for seven days. File-derived values are stripped of control/invisible
 formatting and markup delimiters, bounded, and framed as untrusted data. Cloud
 roles receive those values only with the separate excerpt-sharing opt-in. No
-book excerpts or automatic hold releases are implemented.
+book excerpts are implemented.
+
+`AllowModelHoldRelease` is a separate administrator-only audited permission,
+default false. With it and the decision role enabled, identity verification may
+request a release for attested-only external or content-inconclusive holds with
+no Negative facts. Positive technical facts alone cannot prove identity. A
+`release` reply must cite Positive identity evidence. The author-only exception
+requires the sole detailed Negative to be author difference, plus Positive title,
+language and series-position or identifier agreement, cited together by a
+`supports_declared_identity` claim. The recorder's derived contradiction summary
+is expanded into its underlying detailed observations; an independent Negative
+summary without those details still blocks. Independent completeness conditions
+that would hold also block release.
+
+An already accepted collection held because its TOC/heading check found no
+requested-work match can receive `contains_requested` citing a real tier-B TOC
+or heading fact. Only its expected title difference is allowed; author, language
+and every other Negative still block. This confirms contents, never requester
+consent. Cloud contents review needs the existing file-detail sharing opt-in.
+Tier C remains deferred. Hold calls still reject release/contains_requested.
+
+The synchronous decision proposes a persisted finding; it does not itself trust
+bytes. After a fresh check following the call, `ReleaseHoldByModelAsync` checks
+the persisted asset, current permission/role, current facts, bytes/profile digest,
+finding/citations and passed security evaluation again under a transaction.
+It moves Unmatched through Processing to Trusted with policy
+`model-hold-release-v1`. `AssetIdentityReleasedByModel`
+(`asset.identity_released_by_model`) records actor null, model and finding id;
+identity-override evidence records source `model`. Audit/evidence and approval
+commit together before publishing. A failed persistence step restores the held
+file location. No release fans out to bundle siblings: each needs its own
+eligible hold and grounded finding. Model-concern holds remain administrator-only.
+The admin view labels applied model releases and shows the review's cited facts.
 
 When a scheduled external acquisition starts, its durable job records the median size of other pooled, requester-reviewable candidates in the same format, provided at least three peers have a positive known size. After staging, the exact job output links that snapshot to the asset, including across restarts. A download smaller than 30% of the median produces Weak `profile.compare.size_peer_outlier` evidence. This finding never deterministically holds a file or changes acquisition eligibility; the optional artifact decision reviewer may cite it for a concern. Two peers or unknown measurements produce no finding.
 

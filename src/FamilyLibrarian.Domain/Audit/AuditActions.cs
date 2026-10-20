@@ -43,6 +43,7 @@ public static class AuditActions
     public const string AssetIdentityVerified = "asset.identity_verified";
     public const string AssetIdentityUnmatched = "asset.identity_unmatched";
     public const string AssetIdentityOverridden = "asset.identity_overridden";
+    public const string AssetIdentityReleasedByModel = "asset.identity_released_by_model";
     public const string AssetApproved = "asset.approved";
     public const string AssetRejected = "asset.rejected";
     public const string AssetDestroyed = "asset.destroyed";

@@ -5,6 +5,10 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Security;
+using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.ModelGateway;
+using FamilyLibrarian.Application.ModelGateway;
+using FamilyLibrarian.Application.SemanticAssessment;
 
 namespace FamilyLibrarian.Application.Security;
 
@@ -26,8 +30,67 @@ public sealed class ApprovalService(
     IAuditWriter audit,
     ICurrentUser currentUser,
     IClock clock,
-    IArtifactEvidenceRecorder? evidence = null) : IPolicyAssetApprovalService
+    IArtifactEvidenceRecorder? evidence = null,
+    IModelGatewaySettingsStore? modelSettings = null,
+    IArtifactEvidenceStore? modelEvidence = null,
+    ISemanticFindingStore? modelFindings = null,
+    IExpectedArtifactProfileSource? expectedProfiles = null) : IPolicyAssetApprovalService
 {
+    public async Task<ApprovalResult> ReleaseHoldByModelAsync(Guid assetId, Guid findingId, CancellationToken cancellationToken)
+    {
+        if (modelSettings is null || modelEvidence is null || modelFindings is null || expectedProfiles is null)
+            return ApprovalResult.IdentityUnmatched();
+        MediaAsset? releasingAsset = null;
+        ApprovalResult result;
+        try
+        {
+            result = await repository.ExecuteModelReleaseAsync(assetId, async () =>
+            {
+                var asset = await repository.FindAssetAsync(assetId, cancellationToken);
+                if (asset is null) return ApprovalResult.NotFound();
+                var settings = await modelSettings.FindAsync(cancellationToken);
+                var role = settings?.FindRole(ModelRole.ArtifactValidationDecision);
+                if (settings is not { IsEnabled: true, AllowModelHoldRelease: true } || role is not { IsEnabled: true })
+                    return ApprovalResult.IdentityUnmatched();
+                var rows = await ArtifactReleaseEvidence.ReadAsync(modelEvidence, asset, cancellationToken);
+                var facts = ArtifactReleaseEvidence.Facts(rows);
+                if (!ModelReleasePolicy.IsEligible(asset, facts)) return ApprovalResult.IdentityUnmatched();
+                var subject = asset.Id.ToString("N");
+                var findings = await modelFindings.FindLatestForSubjectsAsync(SemanticSubjectKind.ArtifactDecision, [subject], cancellationToken);
+                if (!findings.TryGetValue(subject, out var finding) || finding.Id != findingId || !finding.IsUsable ||
+                    finding.Role != ModelRole.ArtifactValidationDecision || finding.SchemaId != SemanticAssessmentParser.ArtifactDecisionSchema ||
+                    finding.IsCloud != (role.Placement == ModelPlacement.Cloud) || finding.Model != role.ActiveModel ||
+                    finding.IsCloud && !settings.AllowCloud ||
+                    clock.UtcNow - finding.CreatedAtUtc > CandidateSemanticAnalyzer.ReuseWindow) return ApprovalResult.IdentityUnmatched();
+                var expected = await expectedProfiles.FindAsync(asset, cancellationToken);
+                if (asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.CollectionMissingRequestedWork &&
+                    (expected?.AcceptedAsCollectionContaining != true || finding.IsCloud && !settings.AllowCloudExcerpts))
+                    return ApprovalResult.IdentityUnmatched();
+                var input = ArtifactReleaseEvidence.Render(asset, rows, expected, !finding.IsCloud || settings.AllowCloudExcerpts);
+                if (finding.EvidenceDigest != input.Digest ||
+                    SemanticAssessmentParser.ParseArtifactRelease(ArtifactReleaseEvidence.Reply(finding), asset, facts, input).Value?.Verdict is not ("release" or "contains_requested"))
+                    return ApprovalResult.IdentityUnmatched();
+                var evaluation = await repository.FindLatestEvaluationAsync(assetId, cancellationToken);
+                if (evaluation?.Status != SecurityEvaluationStatus.Passed) return ApprovalResult.IdentityUnmatched();
+                releasingAsset = asset;
+                return await ApproveCoreAsync(assetId, ApprovalActorType.Policy, null, "model-hold-release-v1",
+                    "A grounded model review released the eligible identity hold.", cancellationToken, identityOverrideConfirmed: true, modelRelease: finding);
+            }, cancellationToken);
+        }
+        catch
+        {
+            // Database rollback cannot move bytes. Restore their held location if persistence or audit failed.
+            if (releasingAsset?.StorageState is MediaAssetStorageState.Processing or MediaAssetStorageState.Trusted)
+                await stagingStore.MoveAsync(releasingAsset.StorageState, MediaAssetStorageState.Unmatched,
+                    releasingAsset.StoredFilename, CancellationToken.None);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ApprovalResult.IdentityUnmatched();
+        }
+        if (result.Outcome == ApprovalOutcome.Success && await repository.FindAssetAsync(assetId, cancellationToken) is { } approved)
+            await PublishApprovedAsync(approved, cancellationToken);
+        return result;
+    }
+
     public async Task<ApprovalResult> ApproveAsync(Guid assetId, string? reason, CancellationToken cancellationToken)
         => await ApproveCoreAsync(
             assetId,
@@ -120,7 +183,8 @@ public sealed class ApprovalService(
         string? policyName,
         string? reason,
         CancellationToken cancellationToken,
-        bool identityOverrideConfirmed = false)
+        bool identityOverrideConfirmed = false,
+        SemanticFinding? modelRelease = null)
     {
         var asset = await repository.FindAssetAsync(assetId, cancellationToken);
         if (asset is null)
@@ -170,6 +234,8 @@ public sealed class ApprovalService(
             var identityResult = await identity.VerifyAsync(assetId, cancellationToken);
             if (!identityResult.IsMatch)
             {
+                if (identityResult.ModelReleaseFindingId is { } findingId)
+                    return await ReleaseHoldByModelAsync(assetId, findingId, cancellationToken);
                 return ApprovalResult.IdentityUnmatched();
             }
         }
@@ -189,7 +255,18 @@ public sealed class ApprovalService(
 
         await repository.SaveChangesAsync(cancellationToken);
 
-        if (identityOverrideConfirmed)
+        if (modelRelease is not null)
+        {
+            await audit.WriteSystemAsync(AuditActions.AssetIdentityReleasedByModel, AuditSubjectTypes.MediaAsset, assetId.ToString(),
+                new { AssetId = assetId, ActorUserId = (Guid?)null, Model = modelRelease.Model, FindingId = modelRelease.Id,
+                    HoldCode = overriddenHoldCode, PolicyName = policyName }, cancellationToken);
+            modelEvidence!.Add([new ArtifactEvidence(asset.Id, asset.Sha256, ArtifactEvidenceRecordKinds.IdentityOverride,
+                Guid.NewGuid(), "ev-model-release", EvidenceDimension.IdentityAttestation,
+                EvidenceReasonCodes.ArtifactIdentityAttestation.ModelRelease, EvidencePolarity.Weak, "model",
+                $"finding={modelRelease.Id};hold={overriddenHoldCode}", modelRelease.Model, now)]);
+            if (!await modelEvidence.TrySaveAsync(cancellationToken)) throw new InvalidOperationException("Model release evidence could not be saved.");
+        }
+        else if (identityOverrideConfirmed)
         {
             await audit.WriteAsync(
                 AuditActions.AssetIdentityOverridden,
@@ -206,12 +283,23 @@ public sealed class ApprovalService(
             }
         }
 
-        await audit.WriteAsync(
+        if (modelRelease is null) await audit.WriteAsync(
             AuditActions.AssetApproved,
             AuditSubjectTypes.MediaAsset,
             assetId.ToString(),
             new { AssetId = assetId, ActorType = actorType, PolicyName = policyName, Reason = reason },
             cancellationToken);
+
+        if (modelRelease is not null)
+            await audit.WriteSystemAsync(AuditActions.AssetApproved, AuditSubjectTypes.MediaAsset, assetId.ToString(),
+                new { AssetId = assetId, ActorType = actorType, PolicyName = policyName, Reason = reason }, cancellationToken);
+
+        if (modelRelease is null) await PublishApprovedAsync(asset, cancellationToken);
+        return ApprovalResult.Success();
+    }
+
+    private async Task PublishApprovedAsync(MediaAsset asset, CancellationToken cancellationToken)
+    {
 
         // Best-effort: a publish failure must never undo or fail an approval
         // decision that has already been made and committed above. See
@@ -241,7 +329,6 @@ public sealed class ApprovalService(
             }
         }
 
-        return ApprovalResult.Success();
     }
 
     public async Task<ApprovalResult> RejectAsync(Guid assetId, string? reason, CancellationToken cancellationToken)

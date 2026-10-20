@@ -22,7 +22,8 @@ public enum SemanticSubjectKind
 /// claims, which cite evidence ids and carry short plain notes. Shadow findings remain advisory. Search-guidance findings
 /// may be reused for bounded searches only. Candidate-triage findings require independent move checks and fresh
 /// source verification before acquisition; they never preconfirm artifact identity or change security checks.
-/// Artifact decisions can add a grounded hold before approval, and cannot release or approve a file.
+/// Artifact hold decisions can add a grounded hold. Separate release calls require deterministic eligibility and
+/// persisted approval-service checks under an administrator's default-off release permission.
 /// </remarks>
 public sealed class SemanticFinding
 {

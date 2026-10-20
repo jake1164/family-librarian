@@ -16,6 +16,13 @@ public sealed class AuditWriter(
         WriteIndented = false
     };
 
+    public async Task WriteSystemAsync(string action, string subjectType, string? subjectId, object? detail, CancellationToken cancellationToken)
+    {
+        database.AuditEvents.Add(new AuditEvent(action, subjectType, subjectId, null, null,
+            detail is null ? null : JsonSerializer.Serialize(detail, SerializerOptions), clock.UtcNow));
+        await database.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task WriteAsync(
         string action,
         string subjectType,

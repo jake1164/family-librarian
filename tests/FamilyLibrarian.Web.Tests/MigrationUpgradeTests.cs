@@ -22,6 +22,34 @@ namespace FamilyLibrarian.Web.Tests;
 public sealed class MigrationUpgradeTests
 {
     [TestMethod]
+    public async Task ModelHoldReleaseUpgradeDefaultsExistingSettingsOffAndDownUpPreservesOtherSettings()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddModelHoldReleaseSwitch", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        var original = new FamilyLibrarian.Domain.ModelGateway.ModelGatewaySettings(DateTimeOffset.UtcNow);
+        original.Configure("http://example.test", false, null, DateTimeOffset.UtcNow);
+        database.ModelGatewaySettingsRows.Add(original);
+        await database.SaveChangesAsync();
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var settings = await database.ModelGatewaySettingsRows.SingleAsync();
+        Assert.IsFalse(settings.AllowModelHoldRelease);
+        settings.SetAllowModelHoldRelease(true, null, DateTimeOffset.UtcNow);
+        await database.SaveChangesAsync();
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        settings = await database.ModelGatewaySettingsRows.SingleAsync();
+        Assert.IsFalse(settings.AllowModelHoldRelease);
+        Assert.AreEqual("http://example.test", settings.EndpointUrl);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+    [TestMethod]
     public async Task CatalogLengthUpgradeLeavesHistoricalLengthsUnknownAndRoundTripsNewMeasurements()
     {
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());

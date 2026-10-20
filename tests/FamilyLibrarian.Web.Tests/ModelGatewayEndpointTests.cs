@@ -45,6 +45,26 @@ public sealed class ModelGatewayEndpointTests
     private static FamilyLibrarianAppFactory Factory() => new(WebTestFixture.Require(fixture).ConnectionString);
 
     [TestMethod]
+    public async Task ModelHoldReleaseIsDefaultOffAdminOnlyAntiforgeryProtectedAndAudited()
+    {
+        await using var factory = Factory();
+        using var admin = await SignedInAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        using var member = await SignedInAsync(factory, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
+        using var noToken = await SignedInAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword, token: false);
+        Assert.IsFalse((await admin.GetFromJsonAsync<ModelGatewaySettingsResponse>($"{BasePath}/"))!.AllowModelHoldRelease);
+        var command = new SaveModelGatewaySettingsRequest(null, false, [], AllowModelHoldRelease: true);
+        Assert.AreEqual(HttpStatusCode.Forbidden, (await member.PutAsJsonAsync($"{BasePath}/", command)).StatusCode);
+        Assert.AreEqual(HttpStatusCode.BadRequest, (await noToken.PutAsJsonAsync($"{BasePath}/", command)).StatusCode);
+        var response = await admin.PutAsJsonAsync($"{BasePath}/", command);
+        Assert.IsTrue((await response.Content.ReadFromJsonAsync<ModelGatewaySettingsResponse>())!.AllowModelHoldRelease);
+        using var scope = factory.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<FamilyLibrarian.Infrastructure.Persistence.AppDbContext>();
+        Assert.IsTrue(database.AuditEvents.Where(a => a.Action == "model_gateway.settings_changed").AsEnumerable()
+            .Any(a => a.Detail != null && System.Text.Json.JsonDocument.Parse(a.Detail).RootElement.TryGetProperty("AllowModelHoldRelease", out var allow) && allow.GetBoolean()));
+        await admin.PutAsJsonAsync($"{BasePath}/", command with { AllowModelHoldRelease = false });
+    }
+
+    [TestMethod]
     public async Task AnonymousIsChallengedAndAMemberIsForbiddenOnEveryRoute()
     {
         await using var factory = Factory();

@@ -15,6 +15,35 @@ namespace FamilyLibrarian.Web.Tests;
 public sealed class ArtifactEvidencePanelRenderTests
 {
     [TestMethod]
+    public async Task AnAppliedModelReleaseIsLabeledSeparatelyFromAnAdministratorOverride()
+    {
+        var html = await RenderAsync(Evidence(Item("identity-override", "ev-model-release", "IdentityAttestation",
+            "artifact.identity_attestation.model_release", "Weak", "finding=123;hold=identity.hold.content_contradicted")));
+        StringAssert.Contains(html, "Released by AI validation.");
+        StringAssert.Contains(html, "finding=123");
+        Assert.IsFalse(html.Contains("Administrator override.", StringComparison.Ordinal));
+        Assert.IsFalse(html.Contains("mud-chip", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [DataRow("release", "proposed an identity hold release")]
+    [DataRow("contains_requested", "identified the requested work in an accepted collection")]
+    public async Task ReleaseProposalsShowTheirCitationsWithoutClaimingTheyWereApplied(string verdict, string label)
+    {
+        var finding = new AdminArtifactSemanticFindingResponse("Succeeded", verdict,
+            [new("supports_declared_identity", "Supports", ["idv.ev-title"], "Cited <script>facts</script>.")], null,
+            "test-model", false, DateTimeOffset.UtcNow, true);
+        await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, NullLoggerFactory.Instance);
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+            (await renderer.RenderComponentAsync<AdminArtifactSemanticFinding>(ParameterView.FromDictionary(
+                new Dictionary<string, object?> { ["Finding"] = finding }))).ToHtmlString());
+        StringAssert.Contains(html, label);
+        StringAssert.Contains(html, "idv.ev-title");
+        StringAssert.Contains(html, "&lt;script&gt;");
+        Assert.IsFalse(html.Contains("Released by AI validation.", StringComparison.Ordinal));
+    }
+    [TestMethod]
     [DataRow(false)]
     [DataRow(true)]
     public async Task ModelDecisionAndShadowNotesHaveDistinctMeaningAndEncodeTheirCitations(bool decision)

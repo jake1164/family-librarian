@@ -7,8 +7,8 @@ namespace FamilyLibrarian.Domain.ModelGateway;
 /// The API key is stored protected and is write-only outside this aggregate.
 /// </summary>
 /// <remarks>
-/// The gateway only supplies advisory output. Nothing it configures can make Family Librarian accept a match, approve a
-/// request, relax a security hold, acquire or publish anything.
+/// Advisory roles never decide outcomes. Separate decision roles require deterministic application checks; model hold
+/// release additionally requires its explicit permission and ApprovalService's persisted security and evidence checks.
 /// </remarks>
 public sealed class ModelGatewaySettings
 {
@@ -49,6 +49,9 @@ public sealed class ModelGatewaySettings
     /// validator messages) may be sent to a cloud-placed role. Off by default and meaningless unless <see cref="AllowCloud"/> is on.
     /// </summary>
     public bool AllowCloudExcerpts { get; private set; }
+
+    /// <summary>Separate administrator opt-in for narrowly eligible model releases. Off by default.</summary>
+    public bool AllowModelHoldRelease { get; private set; }
 
     /// <summary>Timeouts, size caps, concurrency and daily budgets. Defaults are modest; cloud allowances default to zero.</summary>
     public int TimeoutSeconds { get; private set; } = ModelExecutionLimits.Default.TimeoutSeconds;
@@ -114,6 +117,12 @@ public sealed class ModelGatewaySettings
     {
         // Sharing file-derived detail with a cloud model can only be on while cloud use itself is allowed.
         AllowCloudExcerpts = allow && AllowCloud;
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void SetAllowModelHoldRelease(bool allow, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        AllowModelHoldRelease = allow;
         Touch(actorUserId, updatedAtUtc);
     }
 

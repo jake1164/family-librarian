@@ -17,6 +17,7 @@ public sealed class ModelGatewayForm
     public bool AllowCloud { get; set; }
 
     public bool AllowCloudExcerpts { get; set; }
+    public bool AllowModelHoldRelease { get; set; }
 
     public List<RoleEdit> Roles { get; private set; } = [];
 
@@ -32,6 +33,7 @@ public sealed class ModelGatewayForm
         Endpoint = value.EndpointUrl ?? string.Empty;
         AllowCloud = value.AllowCloud;
         AllowCloudExcerpts = value.AllowCloudExcerpts;
+        AllowModelHoldRelease = value.AllowModelHoldRelease;
         Limits = new LimitsEdit
         {
             TimeoutSeconds = value.Limits.TimeoutSeconds, MaxInputCharacters = value.Limits.MaxInputCharacters,
@@ -69,7 +71,7 @@ public sealed class ModelGatewayForm
         new ModelLimitsDto(
             Limits.TimeoutSeconds, Limits.MaxInputCharacters, Limits.MaxOutputTokens, Limits.MaxConcurrentCalls,
             Limits.Interactive.ToDto(), Limits.Background.ToDto(), Limits.CloudDailyRequests, Limits.CloudDailyTokens),
-        AllowCloud && AllowCloudExcerpts);
+        AllowCloud && AllowCloudExcerpts, AllowModelHoldRelease);
 
     private string Snapshot() => JsonSerializer.Serialize(ToRequest());
 

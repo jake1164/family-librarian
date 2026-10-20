@@ -97,8 +97,15 @@ public sealed class EpubAssetIdentityVerifier(
             facts.AddRange(EpubProfileInspector.Inspect(archive, rootfilePath));
             var request = await requestFulfillment.FindByFormatIdAsync(asset.AssociatedRequestFormatId, cancellationToken);
             var format = request?.Formats.SingleOrDefault(f => f.Id == asset.AssociatedRequestFormatId);
+            // Observe language even when identity differs: an author exception must never conceal a language conflict.
+            var acceptedLanguage = format?.AcceptedLanguage;
+            var languageAccepted = languages.Count == 0 ||
+                languages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage));
+            facts.Add(IdentityFacts.Language(languages, languageAccepted));
             if (format?.AcceptedVariantKind == AcquisitionQuestionKind.CollectionContaining && !titleMatches)
             {
+                facts.Add(new("ev-accepted-collection", EvidenceDimension.IdentityAttestation,
+                    EvidenceReasonCodes.ArtifactIdentityAttestation.CollectionConsentRecorded, EvidencePolarity.Condition));
                 var contains = facts.Any(f => f.Code is EvidenceReasonCodes.ArtifactProfile.TocEntry or EvidenceReasonCodes.ArtifactProfile.Heading &&
                     f.Value is not null && bookMatcher.TitleMatches(expected.Title, f.Value));
                 if (!contains)
@@ -128,10 +135,6 @@ public sealed class EpubAssetIdentityVerifier(
 
             // Consent is specific to the selected language, including English.
             // Missing metadata remains eligible; an explicit mismatch does not.
-            var acceptedLanguage = format?.AcceptedLanguage;
-            var languageAccepted = languages.Count == 0 ||
-                languages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage));
-            facts.Add(IdentityFacts.Language(languages, languageAccepted));
             if (!languageAccepted)
             {
                 return AssetIdentityVerificationResult.Unmatched(

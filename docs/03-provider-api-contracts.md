@@ -133,10 +133,29 @@ bypass any security, edition, completeness or delivery check.
 
 The optional `ArtifactValidationDecision` role is a host-side pre-approval
 review of in-memory verifier and profile-comparison evidence. It needs no
-provider protocol change and cannot accept a collection or release a file.
+provider protocol change. Its hold-call contract cannot accept a collection or
+release a file.
 Only a grounded concern can add `identity.hold.model_concern`; model errors
 leave the deterministic verdict unchanged. Automatic declines caused by this
 hold begin with `[model]` and consume the existing source attempt budget.
+
+The separate administrator setting `AllowModelHoldRelease` defaults to false.
+The existing authenticated/antiforgery-protected
+`PUT /api/v1/admin/model-gateway/` accepts nullable `allowModelHoldRelease`
+(omission preserves its value), and GET/settings responses expose the saved
+boolean. Changes use the existing `ModelGatewaySettingsChanged` audit with the
+new permission value. Members cannot read or change this administrator surface.
+Providers cannot enable release or submit a finding for approval.
+
+With both role and permission enabled, a separate artifact-decision/1 release
+call may propose `release` with a grounded `supports_declared_identity` claim,
+or `contains_requested` citing tier-B contents for an already accepted collection.
+The host checks deterministic eligibility before/after the model and again in
+ApprovalService. Arbitrary Negative observations, model-concern holds, forged
+citations and model failures never release a file. Applied releases use
+`model-hold-release-v1`, audit `asset.identity_released_by_model` with no user
+actor, model/finding ids, and evidence source `model`. These are internal host
+decisions; no external-provider protocol or acquisition trust changes.
 
 Numbered audiobook fragments (`Part 2`, `1.of.2`, `2 of 2`) are completeness
 evidence distinct from work identity and from tracks inside one complete

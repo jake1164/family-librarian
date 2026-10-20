@@ -8,6 +8,10 @@
 else
 {
     <div class="mt-2">
+        @if (ValueOf("artifact.identity_attestation.model_release") is { } modelRelease)
+        {
+            <p class="mb-1"><strong>Released by AI validation.</strong> A model released an eligible identity hold under the administrator's release permission. @modelRelease. The review lists the cited facts; earlier findings describe the released hold.</p>
+        }
         @if (OverrideReason() is { } overrideNote)
         {
             <p class="mb-1"><strong>Administrator override.</strong> @overrideNote</p>

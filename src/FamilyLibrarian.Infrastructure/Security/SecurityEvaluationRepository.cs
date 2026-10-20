@@ -9,6 +9,27 @@ namespace FamilyLibrarian.Infrastructure.Security;
 
 public sealed class SecurityEvaluationRepository(AppDbContext database) : ISecurityEvaluationRepository
 {
+    public async Task<ApprovalResult> ExecuteModelReleaseAsync(Guid assetId, Func<Task<ApprovalResult>> action, CancellationToken cancellationToken)
+    {
+        await using var transaction = await database.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+        // A parameterized row lock plus reload prevents the scoped identity map from hiding a concurrent hold change.
+        await database.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM acquisition.media_assets WHERE id = {assetId} FOR UPDATE", cancellationToken);
+        var tracked = database.ChangeTracker.Entries<MediaAsset>().FirstOrDefault(e => e.Entity.Id == assetId);
+        if (tracked is not null) await tracked.ReloadAsync(cancellationToken);
+        try
+        {
+            var result = await action();
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            database.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
     public Task<MediaAsset?> FindAssetAsync(Guid assetId, CancellationToken cancellationToken) =>
         database.MediaAssets.FirstOrDefaultAsync(asset => asset.Id == assetId, cancellationToken);
 

@@ -73,7 +73,7 @@ internal static class ModelGatewayEndpoints
         }
 
         var limits = request.Limits is null ? null : ToLimits(request.Limits);
-        return ToResult(await service.SaveAsync(new SaveModelGatewaySettings(request.EndpointUrl, request.AllowCloud, roles, limits, request.AllowCloudExcerpts), cancellationToken));
+        return ToResult(await service.SaveAsync(new SaveModelGatewaySettings(request.EndpointUrl, request.AllowCloud, roles, limits, request.AllowCloudExcerpts, request.AllowModelHoldRelease), cancellationToken));
     }
 
     private static async Task<IResult> UsageAsync(
@@ -129,7 +129,8 @@ internal static class ModelGatewayEndpoints
             [.. settings.Roles.Select(role => new ModelRoleDto(role.Role.ToString(), role.IsEnabled, role.Placement.ToString(), role.LocalModel, role.CloudModel, role.Reasoning.ToString()))],
             ToDto(settings.Limits), settings.AllowCloudExcerpts,
             notice is null ? null : new ModelConnectionNoticeDto(
-                notice.HasConflict, notice.SharedEndpointUrl, notice.SharedHasApiKey, notice.LegacyTestEndpointUrl, notice.LegacyTestHasApiKey, notice.Explanation)));
+                notice.HasConflict, notice.SharedEndpointUrl, notice.SharedHasApiKey, notice.LegacyTestEndpointUrl, notice.LegacyTestHasApiKey, notice.Explanation),
+            settings.AllowModelHoldRelease));
     }
 
     private static ModelLimitsDto ToDto(ModelExecutionLimits limits) => new(

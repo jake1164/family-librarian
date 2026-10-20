@@ -60,7 +60,7 @@ internal static class SecurityQueueEndpoints
         return Results.Ok(new MediaAssetAdminListResponse(entries.Select(entry => ToMediaAssetAdminResponse(entry, findings)).ToArray()));
     }
 
-    /// <summary>Show the decision review for model-held files, retaining shadow notes for other files.</summary>
+    /// <summary>Show actionable hold/release decisions and their citations ahead of advisory shadow notes.</summary>
     private static async Task<IReadOnlyDictionary<string, SemanticFinding>> LoadFindingsAsync(
         ISemanticFindingStore store, IReadOnlyList<MediaAssetQueueEntry> entries, CancellationToken cancellationToken)
     {
@@ -72,7 +72,8 @@ internal static class SecurityQueueEndpoints
         {
             var id = entry.Asset.AssetId.ToString("N");
             if (decisions.TryGetValue(id, out var decision) &&
-                (entry.Asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.ModelConcern || !findings.ContainsKey(id)))
+                (entry.Asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.ModelConcern ||
+                 decision.Verdict is "release" or "contains_requested" || !findings.ContainsKey(id)))
                 findings[id] = decision;
         }
         return findings;

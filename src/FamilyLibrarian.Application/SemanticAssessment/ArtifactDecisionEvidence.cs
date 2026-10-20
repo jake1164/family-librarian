@@ -25,7 +25,7 @@ public static class ArtifactDecisionEvidence
         "Positive or Unknown evidence alone cannot justify hold. uncertain never holds. If no grounded concern exists use no_objection or uncertain.";
 
     public static ArtifactDecisionInput Render(MediaAsset asset, IReadOnlyList<IdentityFact> facts, ExpectedArtifactProfile? expected,
-        IReadOnlyList<ArtifactEvidence> recorded, bool includeDetails)
+        IReadOnlyList<ArtifactEvidence> recorded, bool includeDetails, string purpose = "hold")
     {
         var builder = new StringBuilder("UNTRUSTED DATA\nDECLARED\n");
         void Line(string label, string? value) => builder.Append(label).Append(": ").Append(Clean(value)).Append('\n');
@@ -53,7 +53,7 @@ public static class ArtifactDecisionEvidence
             Add("idv", fact.FindingId, fact.Dimension, fact.Code, fact.Polarity, fact.Value);
 
         // Bind reuse to the full facts even when rendering has clipped or withheld values.
-        var raw = JsonSerializer.Serialize(new { schema = SemanticAssessmentParser.ArtifactDecisionSchema, asset.Id, asset.Sha256,
+        var raw = JsonSerializer.Serialize(new { schema = SemanticAssessmentParser.ArtifactDecisionSchema, purpose, asset.Id, asset.Sha256,
             asset.Origin, asset.Format, expected, facts, recorded = recorded.Select(r => new { r.FindingId, r.Dimension, r.Code, r.Polarity, r.Value }), includeDetails });
         var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
         return new(builder.ToString(), digest, findings, includeDetails);

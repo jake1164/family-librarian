@@ -42,6 +42,9 @@ public sealed record AssetIdentityVerificationResult(
     /// <summary>The stable <c>identity.hold.*</c> code when <see cref="ArtifactHoldPolicy"/> turned a match into a hold; otherwise null.</summary>
     public string? HoldCode { get; init; }
 
+    /// <summary>A grounded proposal only. ApprovalService must recheck the persisted hold and permission before acting.</summary>
+    public Guid? ModelReleaseFindingId { get; init; }
+
     /// <summary>What the verifier observed while deciding. Empty when it reported none.</summary>
     public IReadOnlyList<IdentityFact> Facts { get; init; } = Facts ?? [];
 
