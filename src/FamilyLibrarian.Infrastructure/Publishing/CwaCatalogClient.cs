@@ -36,6 +36,7 @@ public sealed partial class CwaCatalogClient(
         string title, string format, long sizeBytes, string sha256, CancellationToken cancellationToken,
         string? acceptedLanguage = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var normalizedFormat = format.TrimStart('.').ToLowerInvariant();
         if (sizeBytes <= 0 || sha256.Length != 64 || !sha256.All(char.IsAsciiHexDigit) ||
             normalizedFormat.Length == 0 || !normalizedFormat.All(char.IsAsciiLetterOrDigit))
@@ -103,6 +104,7 @@ public sealed partial class CwaCatalogClient(
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested &&
             exception is HttpRequestException or IOException or OperationCanceledException)
         {
+            LogImportedFileUnavailable(title, exception.GetType().Name);
             return BookMatchResult.NoMatchResult;
         }
     }
@@ -115,7 +117,7 @@ public sealed partial class CwaCatalogClient(
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, ImportedFileUri(settings, bookId, format));
-        ApplyBasicAuth(request, settings.OpdsUsername, ResolveOpdsPassword(settings));
+        ApplyRequestHeaders(request, settings.OpdsUsername, ResolveOpdsPassword(settings));
         var client = httpClientFactory.CreateClient();
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         // An unreadable candidate cannot be ruled out of a uniqueness decision. Retry the entire lookup later.
@@ -248,6 +250,10 @@ public sealed partial class CwaCatalogClient(
         Message = "cwa.catalog.lookup.imported_file: title='{Title}' decision={Decision} bookId={BookId}")]
     private partial void LogImportedFileDecision(string title, BookMatchDecision decision, string? bookId);
 
+    [LoggerMessage(EventId = 1107, Level = LogLevel.Warning,
+        Message = "cwa.catalog.lookup.imported_file_unavailable: title='{Title}' failure={Failure}")]
+    private partial void LogImportedFileUnavailable(string title, string failure);
+
     /// <summary>
     /// CWA currently applies a literal substring search to its title index.
     /// A request such as <c>Moby Dick</c> therefore cannot find CWA's
@@ -303,7 +309,7 @@ public sealed partial class CwaCatalogClient(
         client.Timeout = TimeSpan.FromSeconds(15);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
-        ApplyBasicAuth(request, settings.OpdsUsername, ResolveOpdsPassword(settings));
+        ApplyRequestHeaders(request, settings.OpdsUsername, ResolveOpdsPassword(settings));
 
         using var response = await client.SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode
@@ -317,8 +323,9 @@ public sealed partial class CwaCatalogClient(
                 PublishingSecretPurposes.CwaOpdsPassword, settings.ProtectedOpdsPassword!, settings.OpdsPasswordFormatVersion)
             : null;
 
-    private static void ApplyBasicAuth(HttpRequestMessage request, string? username, string? password)
+    private static void ApplyRequestHeaders(HttpRequestMessage request, string? username, string? password)
     {
+        request.Headers.UserAgent.Add(new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
         if (string.IsNullOrWhiteSpace(username))
         {
             return;

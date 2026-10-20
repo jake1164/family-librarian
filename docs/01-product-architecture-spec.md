@@ -667,10 +667,16 @@ invalidates that pass. An ingest-only CWA deployment is therefore rejected as a
 misconfiguration rather than silently reporting every ownership/verification
 lookup as not found.
 
-**Known gap:** there is currently no way to retrieve an existing artifact's
-bytes back out of CWA. `ICwaCatalogClient.FindBookIdAsync` resolves only a
-book ID (used for ownership display and post-ingest verification); nothing in
-the CWA integration can fetch the underlying EPUB. This blocks every flow that
+After handoff, a Trusted artifact whose canonical catalog lookup misses may be
+confirmed by downloading its offered format over OPDS and comparing its byte count
+and SHA-256. This supports approved byline variants without weakening ownership
+matching. The bounded verification stream is discarded and is not exposed as an
+artifact-retrieval or model-input API.
+
+**Known gap:** there is currently no general API to retrieve an existing artifact's
+bytes back out of CWA. `ICwaCatalogClient.FindBookIdAsync` resolves only a book ID
+for ownership display; the exact-file verification fallback does not return content
+to callers. This blocks every flow that
 needs to act on an already-owned book — direct-device transfer, browser
 download, or Send-to-Kindle from an existing copy — for both local and remote
 CWA. Local CWA read access to the Calibre library's files could serve as an

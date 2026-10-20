@@ -705,6 +705,14 @@ safely either way. Remaining gaps: no per-edition ISBN selection (any ISBN
 known for the Work is tried), and a CWA entry missing an `<author>` element
 is not treated as a mismatch.
 
+After a handoff, a canonical lookup miss can also be resolved by the exact approved
+file: title searches and the recent-books feed discover candidates, then the offered
+format must have the same byte count and SHA-256 as the Trusted asset. This permits
+an approved author variant or missing byline to reach Available without changing
+ownership matching or repeating identity approval. Language eligibility still applies;
+multiple byte-identical book IDs remain ambiguous. Unreadable or changed files stay
+AwaitingVerification. CWA must preserve the approved bytes for this fallback.
+
 Automatic fulfillment and an administrator's explicit external acquisition
 share active provider work for a requested format. After fresh source checks,
 submitting the same unchanged candidate returns the existing job; a competing

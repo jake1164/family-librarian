@@ -463,6 +463,26 @@ and no per-edition ISBN is threaded through — any ISBN known for the Work is
 tried, not specifically the edition being published. Both are accepted,
 documented gaps rather than oversights.
 
+**Approved-file destination confirmation.** An approved artifact can have a byline
+that differs from the canonical author, or no creator. After handoff, and only for
+a Trusted asset whose ordinary lookup returned NoMatch, `FindImportedFileAsync`
+discovers title-compatible, language-eligible entries through title queries and the
+recent-books feed. It downloads an explicitly offered format through the configured
+OPDS endpoint and requires the approved asset's exact byte count and SHA-256. One
+matching book ID confirms the import; multiple matching IDs remain ambiguous.
+Ownership and pre-handoff duplicate checks retain their existing matching rules.
+This adds no model call or identity decision and never releases a held asset.
+
+The fallback checks at most eight distinct candidate IDs, with a 45-second deadline
+covering discovery and streaming. Candidate overflow, HTTP/read failure, changed bytes,
+or an unavailable format leave the import unconfirmed for a later recheck. Reads stop
+after at most one byte beyond the approved size; content is neither persisted nor
+sent to a model. Acquisition URLs must equal the expected same-origin OPDS download
+route. Requests include a neutral User-Agent for CWA download compatibility; HTTP/read
+failures produce a diagnostic log without file content or credentials. This fallback
+depends on CWA preserving original bytes, including on download; metadata embedding,
+fixing or conversion can make it fail safely.
+
 `ILibraryDestination` publishes an already approved staged artifact and verifies
 the result. The destination becomes the permanent store for the media; Family
 Librarian retains only provenance and transient staging bytes. It is deliberately

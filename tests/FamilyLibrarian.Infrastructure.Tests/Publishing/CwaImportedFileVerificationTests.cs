@@ -18,6 +18,19 @@ public sealed class CwaImportedFileVerificationTests
     private static string Digest => Convert.ToHexString(SHA256.HashData(ApprovedBytes));
 
     [TestMethod]
+    public async Task ADownloadSendsAUserAgentForCwaVersionsWhoseKoboCheckRequiresOne()
+    {
+        var context = new Context();
+        context.Handler.Feed = Feed(Entry("42", "Unknown"));
+        context.Handler.Files["42"] = ApprovedBytes;
+        context.Handler.RequireUserAgent = true;
+
+        Assert.AreEqual("42", (await context.FindAsync()).MatchedId,
+            "CWA raises HTTP 500 when its download route checks for Kobo in a missing User-Agent.");
+        Assert.AreEqual("FamilyLibrarian/0.1", context.Handler.DownloadUserAgent);
+    }
+
+    [TestMethod]
     [DataRow("Mara Quillington")]
     [DataRow("Unknown")]
     public async Task ExactBytesConfirmTheApprovedFileDespiteDifferentOrAbsentByline(string byline)
@@ -209,6 +222,8 @@ public sealed class CwaImportedFileVerificationTests
         public Dictionary<string, byte[]> Files { get; } = [];
         public List<Uri> Requests { get; } = [];
         public bool Unavailable { get; set; }
+        public bool RequireUserAgent { get; set; }
+        public string? DownloadUserAgent { get; private set; }
         public string? UnavailableId { get; set; }
         public bool RecentOnly { get; set; }
         public byte[]? StreamBytes { get; set; }
@@ -224,6 +239,11 @@ public sealed class CwaImportedFileVerificationTests
             if (uri.AbsolutePath.Contains("/opds/download/", StringComparison.Ordinal))
             {
                 Downloads++;
+                DownloadUserAgent = request.Headers.UserAgent.ToString();
+                if (RequireUserAgent && string.IsNullOrEmpty(DownloadUserAgent))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+                }
                 var id = uri.Segments[^2].Trim('/');
                 return Task.FromResult(new HttpResponseMessage(Unavailable || UnavailableId == id ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK)
                 {
