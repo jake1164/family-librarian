@@ -9,6 +9,7 @@
    requires the Admin policy and an anti-forgery token. *@
 
 <PageTitle>Family accounts · Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@((resettingAccountId is not null && (!string.IsNullOrEmpty(resetPassword) || !string.IsNullOrEmpty(resetConfirmPassword))) || (kindleEditingAccountId is { } accountId && (kindleAddress ?? string.Empty) != (accounts.FirstOrDefault(account => account.Id == accountId)?.Kindle?.Address ?? string.Empty)))" />
 
 <MudStack Spacing="4">
     <div>
@@ -27,7 +28,7 @@
         <MudStack Spacing="3">
             <MudText Typo="Typo.h6">Invite someone</MudText>
             <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-                <MudTextField @bind-Value="inviteEmail"
+                <MudTextField Immediate="true" @bind-Value="inviteEmail"
                               Label="Email address"
                               Variant="Variant.Outlined"
                               Class="flex-grow-1"
@@ -51,7 +52,7 @@
                         expires @newInvitation.ExpiresAtUtc.ToLocalTime().ToString("f").
                         <strong>This is the only time it can be shown.</strong>
                     </MudText>
-                    <MudTextField Value="@newInvitation.RedeemUrl"
+                    <MudTextField Immediate="true" Value="@newInvitation.RedeemUrl"
                                   ReadOnly="true"
                                   Variant="Variant.Outlined"
                                   Class="mt-2"
@@ -114,7 +115,7 @@
 
                         @if (kindleEditingAccountId == account.Id)
                         {
-                            <MudTextField @bind-Value="kindleAddress"
+                            <MudTextField Immediate="true" @bind-Value="kindleAddress"
                                           Label="Kindle email address"
                                           Variant="Variant.Outlined"
                                           Disabled="@isBusy" />
@@ -127,12 +128,12 @@
                         @if (resettingAccountId == account.Id)
                         {
                             <MudDivider Class="my-2" />
-                            <MudTextField @bind-Value="resetPassword"
+                            <MudTextField Immediate="true" @bind-Value="resetPassword"
                                           Label="New password"
                                           Variant="Variant.Outlined"
                                           InputType="InputType.Password"
                                           Disabled="@isBusy" />
-                            <MudTextField @bind-Value="resetConfirmPassword"
+                            <MudTextField Immediate="true" @bind-Value="resetConfirmPassword"
                                           Label="Confirm new password"
                                           Variant="Variant.Outlined"
                                           InputType="InputType.Password"

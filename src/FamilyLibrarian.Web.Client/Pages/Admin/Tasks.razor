@@ -9,6 +9,8 @@
 @using FamilyLibrarian.Web.Client.Operations
 @inject AdminTasksApiClient TasksApi
 @inject AdminRequestsApiClient RequestsApi
+@inject FamilyLibrarian.Web.Client.ModelGateway.ModelGatewayApiClient ModelsApi
+@using FamilyLibrarian.Contracts.ModelGateway
 
 <PageTitle>Tasks · Family Librarian</PageTitle>
 
@@ -102,6 +104,7 @@
         </MudPaper>
 
         <SourcesNow Snapshot="@sourcesSnapshot" Failed="@sourcesFailed" />
+        <AiUsageSummary Settings="aiSettings" Usage="aiUsage" Failed="aiUsageFailed" Loading="aiUsageLoading" Refresh="LoadAiUsageAsync" />
 
         <MudPaper Outlined="true" Class="pa-4" id="tasks-source">
             <MudText Typo="Typo.h5">Source and download activity</MudText>
@@ -258,6 +261,9 @@
             ?? Enumerable.Empty<AdminProviderInteractionAttentionResponse>();
 
     private AdminTasksResponse? snapshot;
+    private ModelGatewaySettingsResponse? aiSettings;
+    private ModelUsageResponse? aiUsage;
+    private bool aiUsageFailed, aiUsageLoading;
     private AdminSourcesResponse? sourcesSnapshot;
     private bool sourcesFailed;
     private AdminRequestAttentionResponse? attention;
@@ -275,6 +281,7 @@
         try
         {
             snapshot = await TasksApi.GetAsync();
+            await LoadAiUsageAsync();
             if (snapshot is null)
             {
                 errorMessage = "The task dashboard did not return a response. Please try again.";
@@ -304,6 +311,25 @@
     }
 
 
+
+    private async Task LoadAiUsageAsync()
+    {
+        aiUsageLoading = true;
+        try
+        {
+            aiSettings = await ModelsApi.GetAsync();
+            aiUsage = await ModelsApi.GetUsageAsync();
+            aiUsageFailed = false;
+        }
+        catch (HttpRequestException)
+        {
+            aiUsageFailed = true;
+        }
+        finally
+        {
+            aiUsageLoading = false;
+        }
+    }
 
     private static Color PublishingColor(string status) => status switch
     {

@@ -1122,6 +1122,17 @@ Structured metadata should remain authoritative for:
 
 Local AI should be callable through a replaceable API layer such as an OpenAI-compatible endpoint.
 
+Settings forms with explicit Save actions warn before internal navigation, browser back,
+reload or leaving the application while edits remain unsaved. Successful saves accept only
+their saved fields; failed saves and unrelated credential actions leave other edits protected.
+Instant-save controls do not create an unsaved draft by themselves.
+
+Administrators can view AI activity below source status on Tasks: per-role model calls,
+successes, failures and pending calls over the last 24 hours, alongside current enablement.
+These use the durable gateway usage ledger, survive restarts, include historical calls to
+roles now off, and exclude cached decisions and attempts blocked before a provider call.
+Successful calls alone do not establish that a model changed an acquisition or file decision.
+
 The optional `SearchGuidance` role is off by default. After scheduled external
 sources exhaust deterministic searches without an eligible download or product
 question, it may propose up to five bounded bibliographic searches. Proposed

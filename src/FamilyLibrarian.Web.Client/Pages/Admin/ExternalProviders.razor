@@ -13,6 +13,7 @@
 @inject ISnackbar Snackbar
 
 <PageTitle>Sources | Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@(HasUnsavedChanges)" />
 
 <MudText Typo="Typo.h4" GutterBottom="true">Sources</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
@@ -241,7 +242,7 @@
     </MudText>
 
     <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-3">
-        <MudTextField T="string" Label="Catalog URL" @bind-Value="newCatalogUrl" Disabled="@catalogsBusy" Class="flex-grow-1" />
+        <MudTextField Immediate="true" T="string" Label="Catalog URL" @bind-Value="newCatalogUrl" Disabled="@catalogsBusy" Class="flex-grow-1" />
         <MudButton Variant="Variant.Filled" Disabled="@(catalogsBusy || string.IsNullOrWhiteSpace(newCatalogUrl))" OnClick="AddCatalogAsync">
             Add
         </MudButton>
@@ -334,9 +335,9 @@
     <ProviderConfidenceReviewNotice Providers="providers" />
 
     <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-4">
-        <MudTextField T="string" Label="Provider id" @bind-Value="newProviderId" Disabled="@providersBusy" />
-        <MudTextField T="string" Label="Display name" @bind-Value="newProviderDisplayName" Disabled="@providersBusy" />
-        <MudTextField T="string" Label="Base URL" @bind-Value="newProviderBaseUrl" Disabled="@providersBusy" Class="flex-grow-1" />
+        <MudTextField Immediate="true" T="string" Label="Provider id" @bind-Value="newProviderId" Disabled="@providersBusy" />
+        <MudTextField Immediate="true" T="string" Label="Display name" @bind-Value="newProviderDisplayName" Disabled="@providersBusy" />
+        <MudTextField Immediate="true" T="string" Label="Base URL" @bind-Value="newProviderBaseUrl" Disabled="@providersBusy" Class="flex-grow-1" />
         <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(providersBusy || !CanRegister)" OnClick="RegisterProviderAsync">
             Register
         </MudButton>
@@ -448,7 +449,7 @@
                 </MudText>
 
                 <MudStack Row="true" Spacing="2" Class="mt-2">
-                    <MudTextField T="string" Label="Base URL" Value="@provider.BaseUrl" Disabled="@providersBusy" Class="flex-grow-1"
+                    <MudTextField Immediate="true" T="string" Label="Base URL" Value="@baseUrlDrafts.GetValueOrDefault(provider.Id, provider.BaseUrl)" Disabled="@providersBusy" Class="flex-grow-1"
                                   ValueChanged="@(value => baseUrlDrafts[provider.Id] = value)" />
                     <MudButton Variant="Variant.Outlined" Disabled="@providersBusy"
                                OnClick="@(() => SaveDetailsAsync(provider))">
@@ -464,7 +465,7 @@
                         : "No key is stored yet.")
                 </MudText>
                 <MudStack Row="true" Spacing="2">
-                    <MudTextField T="string" Value="@GetApiKeyDraft(provider.Id)"
+                    <MudTextField Immediate="true" T="string" Value="@GetApiKeyDraft(provider.Id)"
                                   ValueChanged="@(value => apiKeyDrafts[provider.Id] = value)" Label="Replace API key"
                                   InputType="InputType.Password" Disabled="@providersBusy" Class="flex-grow-1" />
                     <MudButton Variant="Variant.Filled" Disabled="@(providersBusy || string.IsNullOrWhiteSpace(GetApiKeyDraft(provider.Id)))"
@@ -587,6 +588,14 @@
 </MudPaper>
 
 @code {
+    private bool HasUnsavedChanges => apiKeyDrafts.Values.Any(value => !string.IsNullOrEmpty(value)) ||
+        !string.IsNullOrEmpty(newCatalogUrl) || !string.IsNullOrEmpty(newProviderId) ||
+        !string.IsNullOrEmpty(newProviderDisplayName) || !string.IsNullOrEmpty(newProviderBaseUrl) ||
+        providers?.Any(provider =>
+            (baseUrlDrafts.TryGetValue(provider.Id, out var url) && url != provider.BaseUrl) ||
+            (confidenceDrafts.TryGetValue(provider.Id, out var confidence) &&
+                (confidence.Level != provider.ConfidenceLevel || confidence.Ebook != (provider.EbookConfidenceLevel ?? "Inherit") ||
+                    confidence.Audiobook != (provider.AudiobookConfidenceLevel ?? "Inherit")))) == true;
 
     private IReadOnlyList<ProviderCatalogResponse>? catalogs;
     private bool catalogsBusy;
@@ -1176,6 +1185,7 @@
                 return;
             }
 
+            baseUrlDrafts.Remove(provider.Id);
             Snackbar.Add("Saved.", Severity.Success);
             await LoadProvidersAsync();
         }

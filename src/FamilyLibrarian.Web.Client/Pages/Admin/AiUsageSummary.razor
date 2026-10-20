@@ -1,0 +1,50 @@
+@using FamilyLibrarian.Contracts.ModelGateway
+@using FamilyLibrarian.Web.Client.ModelGateway
+
+<MudPaper Outlined="true" Class="pa-4" id="tasks-ai-usage">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+        <MudText Typo="Typo.h5">AI activity · last 24 hours</MudText>
+        <MudSpacer />
+        <MudButton OnClick="Refresh" Disabled="Loading" Variant="Variant.Text">Refresh AI activity</MudButton>
+        <MudLink Href="admin/model-gateway">AI settings</MudLink>
+    </MudStack>
+    @if (Failed)
+    {
+        <MudAlert Severity="Severity.Warning">AI activity could not be loaded. Refresh to try again.</MudAlert>
+    }
+    else if (Settings is null || Usage is null)
+    {
+        <MudText>Loading AI activity…</MudText>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Class="mb-2">
+            @(Settings.IsEnabled ? "AI models are on." : "AI models are off.")
+            Actual model calls since @Usage.SinceUtc.ToLocalTime().ToString("g").
+            Counts survive restarts and include earlier calls to features now off. Reused decisions and requests blocked
+            before a model call are not counted. A successful call does not mean it changed a decision.
+        </MudText>
+        <MudTable Items="Settings.Roles" Dense="true" Hover="true" aria-label="AI calls by feature">
+            <HeaderContent>
+                <MudTh>Feature</MudTh><MudTh>Currently</MudTh><MudTh>Calls</MudTh><MudTh>Succeeded</MudTh><MudTh>Failed</MudTh><MudTh>Pending</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                @{ var rows = Usage.Rows.Where(row => row.Role == context.Role).ToArray(); }
+                <MudTd DataLabel="Feature">@ModelRoleLabels.Title(context.Role)</MudTd>
+                <MudTd DataLabel="Currently">@(Settings.IsEnabled && context.IsEnabled ? "Enabled" : "Off")</MudTd>
+                <MudTd DataLabel="Calls">@rows.Sum(row => row.Calls)</MudTd>
+                <MudTd DataLabel="Succeeded">@rows.Where(row => row.Outcome == "Succeeded").Sum(row => row.Calls)</MudTd>
+                <MudTd DataLabel="Failed">@rows.Where(row => row.Outcome is not ("Succeeded" or "Pending")).Sum(row => row.Calls)</MudTd>
+                <MudTd DataLabel="Pending">@rows.Where(row => row.Outcome == "Pending").Sum(row => row.Calls)</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudPaper>
+
+@code {
+    [Parameter] public ModelGatewaySettingsResponse? Settings { get; set; }
+    [Parameter] public ModelUsageResponse? Usage { get; set; }
+    [Parameter] public bool Failed { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public EventCallback Refresh { get; set; }
+}

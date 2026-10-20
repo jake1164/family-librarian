@@ -9,6 +9,7 @@
 @inject ISnackbar Snackbar
 
 <PageTitle>Publishing settings | Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@(HasUnsavedChanges)" />
 
 <MudText Typo="Typo.h4" GutterBottom="true">Publishing settings</MudText>
 <MudText Typo="Typo.body1" Class="mb-4">
@@ -88,7 +89,7 @@ else
             {
                 <MudStack Spacing="3" Class="mt-3">
                     <MudTextField Immediate="true" T="string" Label="SFTP host" @bind-Value="cwaSftpHost" Disabled="@cwaBusy" />
-                    <MudNumericField T="int?" Label="SFTP port (default 22)" @bind-Value="cwaSftpPort" Disabled="@cwaBusy" />
+                    <MudNumericField Immediate="true" T="int?" Label="SFTP port (default 22)" @bind-Value="cwaSftpPort" Disabled="@cwaBusy" />
                     <MudTextField Immediate="true" T="string" Label="SFTP username" @bind-Value="cwaSftpUsername"
                                   name="cwa-sftp-username" autocomplete="off" Disabled="@cwaBusy" />
                     <MudTextField Immediate="true" T="string" Label="Remote ingest directory" @bind-Value="cwaSftpIngestPath"
@@ -363,6 +364,14 @@ else
 }
 
 @code {
+    private readonly SettingsSnapshot draft = new();
+    private object CwaFields => new { cwaTransportMode, cwaLocalIngestPath, cwaSftpHost, cwaSftpPort, cwaSftpUsername,
+        cwaSftpIngestPath, cwaSftpAuthenticationMode, cwaOpdsBaseUrl, cwaPublicUrl, cwaOpdsUsername, cwaEreaderServiceAccountUsername };
+    private object AbsFields => new { audiobookshelfBaseUrl, audiobookshelfPublicUrl, audiobookshelfLibraryId, audiobookshelfFolderId };
+    private bool HasUnsavedChanges => draft.HasChanges("cwa", CwaFields) || draft.HasChanges("abs", AbsFields) ||
+        new[] { cwaSftpPrivateKeyDraft, cwaSftpPassphraseDraft, cwaSftpPasswordDraft, cwaOpdsPasswordDraft,
+            cwaEreaderServiceAccountPasswordDraft, cwaApprovedSftpHostKeyFingerprint, audiobookshelfApiTokenDraft }
+        .Any(value => !string.IsNullOrEmpty(value));
     // Destinations ("cwa", "audiobookshelf") whose panels are showing even
     // though they're not Enabled — set when flipping the switch on an
     // unconfigured destination reveals its settings instead of calling the API
@@ -522,7 +531,7 @@ else
     }
 
     private async Task LoadCwaAsync(bool initializeFields = false) { try { cwa = await CwaApi.GetAsync(); if (initializeFields) ApplyCwaFields(cwa); cwaLoadFailed = false; } catch (HttpRequestException) { cwaLoadFailed = true; } }
-    private void ApplyCwaFields(CwaSettingsResponse? settings) { if (settings is null) return; cwaTransportMode = settings.TransportMode; cwaLocalIngestPath = settings.LocalIngestPath; cwaSftpHost = settings.SftpHost; cwaSftpPort = settings.SftpPort; cwaSftpUsername = settings.SftpUsername; cwaSftpIngestPath = settings.SftpIngestPath; cwaSftpAuthenticationMode = settings.SftpAuthenticationMode; if (!string.IsNullOrWhiteSpace(settings.SftpHostKeyFingerprint)) cwaPendingSftpHostKeyFingerprint = null; cwaOpdsBaseUrl = settings.OpdsBaseUrl; cwaPublicUrl = settings.PublicUrl; cwaOpdsUsername = settings.OpdsUsername; cwaEreaderServiceAccountUsername = settings.EreaderServiceAccountUsername; }
+    private void ApplyCwaFields(CwaSettingsResponse? settings) { if (settings is null) return; cwaTransportMode = settings.TransportMode; cwaLocalIngestPath = settings.LocalIngestPath; cwaSftpHost = settings.SftpHost; cwaSftpPort = settings.SftpPort; cwaSftpUsername = settings.SftpUsername; cwaSftpIngestPath = settings.SftpIngestPath; cwaSftpAuthenticationMode = settings.SftpAuthenticationMode; if (!string.IsNullOrWhiteSpace(settings.SftpHostKeyFingerprint)) cwaPendingSftpHostKeyFingerprint = null; cwaOpdsBaseUrl = settings.OpdsBaseUrl; cwaPublicUrl = settings.PublicUrl; cwaOpdsUsername = settings.OpdsUsername; cwaEreaderServiceAccountUsername = settings.EreaderServiceAccountUsername; draft.Accept("cwa", CwaFields); }
     private string CwaIngestTestButtonLabel => cwaTransportMode == "Sftp" ? "Test SFTP" : "Test local path";
     private async Task SetCwaEnabledAsync(bool enabled)
     {
@@ -818,7 +827,7 @@ else
 
     private async Task<bool> RunCwaAsync(Func<Task<CwaResult>> action) { cwaBusy = true; try { var result = await action(); if (!result.Succeeded) { Snackbar.Add(result.Error ?? "That change could not be saved.", Severity.Error); return false; } cwa = result.Settings; return true; } finally { cwaBusy = false; cwaSwitchGeneration++; } }
     private async Task LoadAudiobookshelfAsync(bool initializeFields = false) { try { audiobookshelf = await AudiobookshelfApi.GetAsync(); if (initializeFields) ApplyAudiobookshelfFields(audiobookshelf); audiobookshelfLoadFailed = false; } catch (HttpRequestException) { audiobookshelfLoadFailed = true; } }
-    private void ApplyAudiobookshelfFields(AudiobookshelfSettingsResponse? settings) { if (settings is null) return; audiobookshelfBaseUrl = settings.BaseUrl; audiobookshelfPublicUrl = settings.PublicUrl; audiobookshelfLibraryId = settings.LibraryId; audiobookshelfFolderId = settings.FolderId; }
+    private void ApplyAudiobookshelfFields(AudiobookshelfSettingsResponse? settings) { if (settings is null) return; audiobookshelfBaseUrl = settings.BaseUrl; audiobookshelfPublicUrl = settings.PublicUrl; audiobookshelfLibraryId = settings.LibraryId; audiobookshelfFolderId = settings.FolderId; draft.Accept("abs", AbsFields); }
     private Task SetAudiobookshelfEnabledAsync(bool enabled) =>
         RunAudiobookshelfAsync(() => AudiobookshelfApi.SetEnabledAsync(enabled));
     private async Task SaveAudiobookshelfSettingsAsync()

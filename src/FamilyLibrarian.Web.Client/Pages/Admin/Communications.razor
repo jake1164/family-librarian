@@ -8,6 +8,7 @@
 @inject ISnackbar Snackbar
 
 <PageTitle>Communications settings | Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@(draft.HasChanges("smtp", SmtpFields) || draft.HasChanges("matrix", MatrixFields) || !string.IsNullOrEmpty(passwordDraft) || !string.IsNullOrEmpty(accessTokenDraft))" />
 
 <MudText Typo="Typo.h4" GutterBottom="true">Communications settings</MudText>
 <MudText Typo="Typo.body1" Class="mb-4">
@@ -45,14 +46,14 @@ else
         </MudText>
 
         <MudStack Spacing="3">
-            <MudTextField T="string" Label="SMTP host" @bind-Value="host" Disabled="@busy"
+            <MudTextField Immediate="true" T="string" Label="SMTP host" @bind-Value="host" Disabled="@busy"
                           Placeholder="smtp.example.com" />
-            <MudNumericField T="int?" Label="Port" @bind-Value="port" Disabled="@busy" />
+            <MudNumericField Immediate="true" T="int?" Label="Port" @bind-Value="port" Disabled="@busy" />
             <MudSelect T="string" Label="TLS mode" @bind-Value="securityMode" Disabled="@busy">
                 <MudSelectItem Value="@("StartTls")">StartTLS</MudSelectItem>
                 <MudSelectItem Value="@("SslOnConnect")">SSL/TLS on connect</MudSelectItem>
             </MudSelect>
-            <MudTextField T="string" Label="SMTP username (optional for a trusted relay)" @bind-Value="username"
+            <MudTextField Immediate="true" T="string" Label="SMTP username (optional for a trusted relay)" @bind-Value="username"
                           autocomplete="off" Disabled="@busy" />
 
             <MudText Typo="Typo.subtitle2">SMTP password</MudText>
@@ -62,7 +63,7 @@ else
                     : "No password is stored. Leave both username and password blank only for a trusted relay.")
             </MudText>
             <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-                <MudTextField T="string" Label="Replace SMTP password" @bind-Value="passwordDraft"
+                <MudTextField Immediate="true" T="string" Label="Replace SMTP password" @bind-Value="passwordDraft"
                               InputType="InputType.Password" autocomplete="new-password" Disabled="@busy" Class="flex-grow-1" />
                 <MudButton Variant="Variant.Filled" Disabled="@(busy || string.IsNullOrWhiteSpace(passwordDraft))"
                            OnClick="SavePasswordAsync">Save password</MudButton>
@@ -73,9 +74,9 @@ else
                 }
             </MudStack>
 
-            <MudTextField T="string" Label="Sender email address" @bind-Value="fromAddress" Disabled="@busy"
+            <MudTextField Immediate="true" T="string" Label="Sender email address" @bind-Value="fromAddress" Disabled="@busy"
                           Placeholder="family-librarian@example.com" />
-            <MudTextField T="string" Label="Sender display name (optional)" @bind-Value="fromName" Disabled="@busy"
+            <MudTextField Immediate="true" T="string" Label="Sender display name (optional)" @bind-Value="fromName" Disabled="@busy"
                           Placeholder="Family Librarian" />
         </MudStack>
 
@@ -89,7 +90,7 @@ else
             This sends a real message using the values currently in the form above (a blank password field falls back to the stored password) and records only the outcome—not the recipient address.
         </MudText>
         <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-            <MudTextField T="string" Label="Test recipient" @bind-Value="testRecipient" Disabled="@busy" Class="flex-grow-1" />
+            <MudTextField Immediate="true" T="string" Label="Test recipient" @bind-Value="testRecipient" Disabled="@busy" Class="flex-grow-1" />
             <MudButton Variant="Variant.Outlined" Disabled="@(busy || string.IsNullOrWhiteSpace(testRecipient))"
                        OnClick="SendTestAsync">Send test</MudButton>
         </MudStack>
@@ -138,9 +139,9 @@ else
         </MudText>
 
         <MudStack Spacing="3">
-            <MudTextField T="string" Label="Homeserver URL" @bind-Value="homeserverUrl" Disabled="@matrixBusy"
+            <MudTextField Immediate="true" T="string" Label="Homeserver URL" @bind-Value="homeserverUrl" Disabled="@matrixBusy"
                           Placeholder="https://matrix.example.org" />
-            <MudTextField T="string" Label="Bot Matrix ID" @bind-Value="botUserId" Disabled="@matrixBusy"
+            <MudTextField Immediate="true" T="string" Label="Bot Matrix ID" @bind-Value="botUserId" Disabled="@matrixBusy"
                           Placeholder="@("@family-librarian:example.org")" />
 
             <MudText Typo="Typo.subtitle2">Bot access token</MudText>
@@ -150,7 +151,7 @@ else
                     : "No access token is stored.")
             </MudText>
             <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-                <MudTextField T="string" Label="Replace access token" @bind-Value="accessTokenDraft"
+                <MudTextField Immediate="true" T="string" Label="Replace access token" @bind-Value="accessTokenDraft"
                               InputType="InputType.Password" autocomplete="new-password" Disabled="@matrixBusy" Class="flex-grow-1" />
                 <MudButton Variant="Variant.Filled" Disabled="@(matrixBusy || string.IsNullOrWhiteSpace(accessTokenDraft))"
                            OnClick="SaveMatrixAccessTokenAsync">Save token</MudButton>
@@ -191,6 +192,9 @@ else
 }
 
 @code {
+    private readonly SettingsSnapshot draft = new();
+    private object SmtpFields => new { host, port, securityMode, username, fromAddress, fromName };
+    private object MatrixFields => new { homeserverUrl, botUserId };
     private SmtpSettingsResponse? smtp;
     private bool loadFailed, busy;
     private string securityMode = "StartTls";
@@ -335,6 +339,7 @@ else
         username = settings.Username;
         fromAddress = settings.FromAddress;
         fromName = settings.FromName;
+        draft.Accept("smtp", SmtpFields);
     }
 
     private async Task SaveMatrixSettingsAsync()
@@ -431,5 +436,6 @@ else
         if (settings is null) return;
         homeserverUrl = settings.HomeserverUrl;
         botUserId = settings.BotUserId;
+        draft.Accept("matrix", MatrixFields);
     }
 }

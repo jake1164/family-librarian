@@ -9,6 +9,7 @@
 @inject ISnackbar Snackbar
 
 <PageTitle>Metadata providers | Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@(HasUnsavedChanges)" />
 
 <MudText Typo="Typo.h4" GutterBottom="true">Metadata providers</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
@@ -192,6 +193,7 @@ else
 }
 
 @code {
+    private bool HasUnsavedChanges => credentialDrafts.Values.Any(value => !string.IsNullOrEmpty(value));
     private IReadOnlyList<ProviderStatusResponse>? providers;
     private readonly Dictionary<string, string?> credentialDrafts = new(StringComparer.OrdinalIgnoreCase);
     // Bumped after every enable/credential attempt (see RunAsync), win or lose, so

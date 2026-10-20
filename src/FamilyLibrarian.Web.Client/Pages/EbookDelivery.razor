@@ -5,6 +5,7 @@
 @inject ISnackbar Snackbar
 
 <PageTitle>Ebook delivery · Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@(draft.HasChanges("delivery", DeliveryFields))" />
 
 <MudText Typo="Typo.h4" GutterBottom="true">Ebook delivery</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
@@ -37,7 +38,7 @@ else
         }
 
         <MudStack Spacing="3">
-            <MudTextField T="string"
+            <MudTextField Immediate="true" T="string"
                           @bind-Value="address"
                           Label="Kindle email address"
                           Disabled="@busy"
@@ -79,6 +80,8 @@ else
 }
 
 @code {
+    private readonly SettingsSnapshot draft = new();
+    private object DeliveryFields => new { address, sendByDefault };
     private bool isLoading = true;
     private bool busy;
     private bool testBusy;
@@ -150,7 +153,7 @@ else
             var outcome = await DeliveryTargets.SetKindleEnabledAsync(enabled, expectedVersion);
             if (outcome.Succeeded && outcome.Target is { } target)
             {
-                ApplyTarget(target);
+                ApplyTarget(target, applyFields: false);
             }
             else
             {
@@ -196,12 +199,16 @@ else
         }
     }
 
-    private void ApplyTarget(FamilyLibrarian.Contracts.Delivery.DeliveryTargetResponse? target)
+    private void ApplyTarget(FamilyLibrarian.Contracts.Delivery.DeliveryTargetResponse? target, bool applyFields = true)
     {
         hasTarget = target is not null;
         isEnabled = target?.IsEnabled ?? false;
-        sendByDefault = target?.SendByDefault ?? sendByDefault;
-        address = target?.Address ?? address;
+        if (applyFields)
+        {
+            sendByDefault = target?.SendByDefault ?? sendByDefault;
+            address = target?.Address ?? address;
+            draft.Accept("delivery", DeliveryFields);
+        }
         version = target?.Version;
     }
 }

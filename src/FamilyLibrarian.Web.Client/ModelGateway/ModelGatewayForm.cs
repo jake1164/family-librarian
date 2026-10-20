@@ -66,7 +66,7 @@ public sealed class ModelGatewayForm
     }
 
     public SaveModelGatewaySettingsRequest ToRequest() => new(
-        Endpoint, AllowCloud,
+        Endpoint ?? string.Empty, AllowCloud,
         [.. Roles.Select(role => new ModelRoleDto(role.Role, role.IsEnabled, role.Placement, role.LocalModel, role.CloudModel, role.Reasoning))],
         new ModelLimitsDto(
             Limits.TimeoutSeconds, Limits.MaxInputCharacters, Limits.MaxOutputTokens, Limits.MaxConcurrentCalls,

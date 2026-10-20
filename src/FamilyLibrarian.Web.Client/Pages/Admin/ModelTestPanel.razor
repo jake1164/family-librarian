@@ -7,10 +7,11 @@
    never change a production role, switch, limit or permission: it only reads which model a role is set to use. *@
 
 <MudStack Spacing="4">
+    <SettingsDraftGuard IsDirty="@(draft.HasChanges("test", TestFields))" />
     <MudText Typo="Typo.body1">
         A manual check of what a model can do, using only made-up books. It runs only when you press a button, never retries,
         never falls back to another model, and its results change nothing: no matching, request, approval or publishing decision
-        uses them, and the prompts and replies are not stored. It uses the connection and key stored on the "Models &amp; roles" tab.
+        uses them, and the prompts and replies are not stored. It uses the connection and key stored on the "Connection" tab.
     </MudText>
 
     @if (!string.IsNullOrWhiteSpace(message))
@@ -20,7 +21,7 @@
 
     @if (!ConnectionReady)
     {
-        <MudAlert Severity="Severity.Info" Dense="true">Set the endpoint on the "Models &amp; roles" tab before running checks.</MudAlert>
+        <MudAlert Severity="Severity.Info" Dense="true">Set the endpoint on the "Connection" tab before running checks.</MudAlert>
     }
 
     @if (settings is null)
@@ -42,8 +43,8 @@
                 </MudText>
                 <ModelAliasPicker @bind-Value="cloudModel" Models="Models" Label="Cloud model (optional)" Disabled="@(!allowCloud)" />
                 <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                    <MudNumericField T="int" @bind-Value="timeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
-                    <MudNumericField T="int" @bind-Value="maxOutputTokens" Label="Maximum output tokens" Min="16" Max="4096" Variant="Variant.Outlined" />
+                    <MudNumericField Immediate="true" T="int" @bind-Value="timeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
+                    <MudNumericField Immediate="true" T="int" @bind-Value="maxOutputTokens" Label="Maximum output tokens" Min="16" Max="4096" Variant="Variant.Outlined" />
                     <MudSelect T="string" @bind-Value="reasoning" Label="Model reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;"
                                HelperText="Test-only; production roles have their own setting.">
                         <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
@@ -73,7 +74,7 @@
                     </MudSelect>
                     @if (target == "Alias")
                     {
-                        <ModelAliasPicker @bind-Value="alias" Models="Models" Label="Test-only model" />
+                        <ModelAliasPicker @bind-Value="alias" Models="Models" Label="Test-only model" WarnOnUnsavedText="false" />
                         <MudRadioGroup T="string" @bind-Value="aliasPlacement">
                             <MudRadio Value="@("Local")" Color="Color.Primary">Runs locally</MudRadio>
                             <MudRadio Value="@("Cloud")" Color="Color.Warning">Runs in the cloud</MudRadio>
@@ -100,8 +101,8 @@
                         <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
                         <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
                     </MudSelect>
-                    <MudNumericField T="int?" @bind-Value="runTimeout" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
-                    <MudNumericField T="int?" @bind-Value="runMaxTokens" Label="Maximum output tokens" Min="16" Max="4096" Variant="Variant.Outlined" />
+                    <MudNumericField Immediate="true" T="int?" @bind-Value="runTimeout" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
+                    <MudNumericField Immediate="true" T="int?" @bind-Value="runMaxTokens" Label="Maximum output tokens" Min="16" Max="4096" Variant="Variant.Outlined" />
                 </MudStack>
 
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(busy || !settings.IsEnabled || !ConnectionReady)" OnClick="RunAsync">
@@ -164,6 +165,8 @@
 </MudStack>
 
 @code {
+    private readonly SettingsSnapshot draft = new();
+    private object TestFields => new { primaryModel, comparisonModel, cloudModel, allowCloud, timeoutSeconds, maxOutputTokens, reasoning };
     /// <summary>The production roles as currently saved, used only to offer their configured model for testing (read only).</summary>
     [Parameter] public IReadOnlyList<ModelRoleDto> Roles { get; set; } = [];
 
@@ -223,13 +226,28 @@
         timeoutSeconds = value.TimeoutSeconds;
         maxOutputTokens = value.MaxOutputTokens;
         reasoning = value.Reasoning;
+        draft.Accept("test", TestFields);
     }
 
     private async Task SaveAsync() => await ApplyResultAsync(
         await Api.SaveAsync(new SaveModelTestSettingsRequest(primaryModel, comparisonModel, cloudModel, allowCloud, timeoutSeconds, maxOutputTokens, reasoning)),
         "Test settings saved.");
 
-    private async Task SetEnabledAsync(bool enabled) => await ApplyResultAsync(await Api.SetEnabledAsync(enabled), enabled ? "Model testing is on." : "Model testing is off.");
+    private async Task SetEnabledAsync(bool enabled)
+    {
+        var result = await Api.SetEnabledAsync(enabled);
+        if (result.Succeeded && result.Value is { } value)
+        {
+            settings = value;
+            message = enabled ? "Model testing is on." : "Model testing is off.";
+            messageIsError = false;
+        }
+        else
+        {
+            message = result.Error;
+            messageIsError = true;
+        }
+    }
 
     private async Task ApplyResultAsync(ModelTestCallResult<ModelTestSettingsResponse> result, string success)
     {

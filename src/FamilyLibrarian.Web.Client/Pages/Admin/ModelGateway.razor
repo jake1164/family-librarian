@@ -5,13 +5,15 @@
 @inject ModelGatewayApiClient Api
 
 <PageTitle>AI models · Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@(settings is not null && (form.HasUnsavedChanges || !string.IsNullOrEmpty(apiKey)))" />
 
 <MudStack Spacing="3">
     <div>
         <MudText Typo="Typo.h3">AI models</MudText>
         <MudText Typo="Typo.body1">
-            Family Librarian only asks a model for advice: it can never accept a match, approve a request, lift a security hold,
-            acquire or publish anything, and if a model is unavailable the deterministic behaviour carries on unchanged. Each role
+            Each AI role has limited authority enforced by the server. Some add advice; others can influence candidate selection
+            or add a grounded file hold. Releasing an eligible hold needs the separate permission below. Models cannot bypass
+            file safety checks, and if a model is unavailable the deterministic behaviour carries on unchanged. Each role
             runs on exactly the model you choose for it, and there is no automatic fall back from a local model to a cloud one.
         </MudText>
     </div>
@@ -82,14 +84,14 @@
                                 reached through the same endpoint (for example a LiteLLM alias for a hosted model); Family Librarian does not
                                 call hosted services directly.
                             </MudText>
-                            <MudTextField @bind-Value="form.Endpoint" Label="Endpoint URL" Variant="Variant.Outlined"
+                            <MudTextField Immediate="true" @bind-Value="form.Endpoint" Label="Endpoint URL" Variant="Variant.Outlined"
                                           HelperText="For example http://litellm:4000 or http://ollama:11434 (no credentials or query string)." />
 
                             <MudDivider />
                             <MudText Typo="Typo.h6">API key</MudText>
                             <MudText Typo="Typo.body2">@(settings.HasApiKey ? "A key is stored (it cannot be shown again)." : "No key is stored.")</MudText>
                             <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
-                                <MudTextField @bind-Value="apiKey" Label="New API key" InputType="InputType.Password" Variant="Variant.Outlined"
+                                <MudTextField Immediate="true" @bind-Value="apiKey" Label="New API key" InputType="InputType.Password" Variant="Variant.Outlined"
                                               Class="flex-grow-1" />
                                 <MudButton Variant="Variant.Outlined" Disabled="@(busy || string.IsNullOrWhiteSpace(apiKey))" OnClick="SetApiKeyAsync">Store key</MudButton>
                                 <MudButton Variant="Variant.Text" Color="Color.Error" Disabled="@(busy || !settings.HasApiKey)" OnClick="ClearApiKeyAsync">Remove key</MudButton>
@@ -207,27 +209,27 @@
                                 <MudAlert Severity="Severity.Info" Dense="true">@AiOffExplanation</MudAlert>
                             }
                             <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                <MudNumericField T="int" @bind-Value="form.Limits.TimeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" Disabled="@AiOff" />
-                                <MudNumericField T="int" @bind-Value="form.Limits.MaxInputCharacters" Label="Max input (characters)" Min="500" Max="60000" Variant="Variant.Outlined" Disabled="@AiOff" />
-                                <MudNumericField T="int" @bind-Value="form.Limits.MaxOutputTokens" Label="Max output (tokens)" Min="16" Max="2048" Variant="Variant.Outlined" Disabled="@AiOff" />
-                                <MudNumericField T="int" @bind-Value="form.Limits.MaxConcurrentCalls" Label="Calls at once" Min="1" Max="8" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.TimeoutSeconds" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.MaxInputCharacters" Label="Max input (characters)" Min="500" Max="60000" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.MaxOutputTokens" Label="Max output (tokens)" Min="16" Max="2048" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.MaxConcurrentCalls" Label="Calls at once" Min="1" Max="8" Variant="Variant.Outlined" Disabled="@AiOff" />
                             </MudStack>
                             <MudText Typo="Typo.subtitle2">Chat, per day</MudText>
                             <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                <MudNumericField T="int" @bind-Value="form.Limits.Interactive.UserDailyRequests" Label="Requests per person" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
-                                <MudNumericField T="int" @bind-Value="form.Limits.Interactive.UserDailyTokens" Label="Tokens per person" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
-                                <MudNumericField T="int" @bind-Value="form.Limits.Interactive.InstallationDailyRequests" Label="Requests, everyone" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
-                                <MudNumericField T="int" @bind-Value="form.Limits.Interactive.InstallationDailyTokens" Label="Tokens, everyone" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.Interactive.UserDailyRequests" Label="Requests per person" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.Interactive.UserDailyTokens" Label="Tokens per person" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.Interactive.InstallationDailyRequests" Label="Requests, everyone" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.Interactive.InstallationDailyTokens" Label="Tokens, everyone" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
                             </MudStack>
                             <MudText Typo="Typo.subtitle2">Background checking, per day</MudText>
                             <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                <MudNumericField T="int" @bind-Value="form.Limits.Background.InstallationDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
-                                <MudNumericField T="int" @bind-Value="form.Limits.Background.InstallationDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.Background.InstallationDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.Background.InstallationDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@AiOff" />
                             </MudStack>
                             <MudText Typo="Typo.subtitle2">Cloud allowance, per day (0 = none)</MudText>
                             <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
-                                <MudNumericField T="int" @bind-Value="form.Limits.CloudDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@(AiOff || !form.AllowCloud)" />
-                                <MudNumericField T="int" @bind-Value="form.Limits.CloudDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@(AiOff || !form.AllowCloud)" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.CloudDailyRequests" Label="Requests" Min="0" Variant="Variant.Outlined" Disabled="@(AiOff || !form.AllowCloud)" />
+                                <MudNumericField Immediate="true" T="int" @bind-Value="form.Limits.CloudDailyTokens" Label="Tokens" Min="0" Variant="Variant.Outlined" Disabled="@(AiOff || !form.AllowCloud)" />
                             </MudStack>
                             @SaveBar(AiOff)
                         </MudStack>
@@ -392,7 +394,7 @@
     private async Task SetApiKeyAsync()
     {
         await ApplyResultAsync(await Api.SetApiKeyAsync(apiKey), "API key stored.", keepUnsavedEdits: true);
-        apiKey = string.Empty;
+        if (!messageIsError) apiKey = string.Empty;
         await LoadModelsAsync();
     }
 
@@ -439,18 +441,7 @@
         }
     }
 
-    private static string Title(string role) => role switch
-    {
-        "IntentInterpretation" => "Understand book requests",
-        "ConversationResponse" => "Phrase conversational replies",
-        "CandidateAmbiguityAssessment" => "Assess ambiguous candidates",
-        "ArtifactValidationAssessment" => "Assess downloaded files",
-        "VisionCoverIdentification" => "Identify books from cover images",
-        "SearchGuidance" => "Suggest additional searches",
-        "CandidateTriage" => "Review candidates before acquisition",
-        "ArtifactValidationDecision" => "Review files before approval",
-        _ => role
-    };
+    private static string Title(string role) => ModelRoleLabels.Title(role);
 
     private static string Describe(string role) => role switch
     {
@@ -461,7 +452,7 @@
         "VisionCoverIdentification" => "Needs a vision-capable model. A suggestion is only a lead: it must be confirmed against a metadata lookup.",
         "SearchGuidance" => "Suggests bounded title, author or series searches when fixed searches find no acceptable copy. Every result is checked against the requested book.",
         "CandidateTriage" => "May veto a candidate, break a tie, or recognize a corroborated author variant. Source confidence and file validation still apply. Off by default.",
-        "ArtifactValidationDecision" => "May hold an otherwise matching provider file on grounded concerns. Cannot release or approve files. Off by default.",
+        "ArtifactValidationDecision" => "May hold an otherwise matching provider file on grounded concerns. Releasing an eligible hold needs the separate permission above. Off by default.",
         _ => string.Empty
     };
 }

@@ -7,6 +7,17 @@ namespace FamilyLibrarian.Web.Tests;
 public sealed class ModelGatewayFormTests
 {
     [TestMethod]
+    public void ClearingAnEndpointBackToItsOriginalEmptyValueIsClean()
+    {
+        var form = new ModelGatewayForm();
+        form.Load(Settings(isEnabled: false, endpoint: null));
+        form.Endpoint = "typed";
+        Assert.IsTrue(form.HasUnsavedChanges);
+        form.Endpoint = null!; // A cleared MudTextField can emit null.
+        Assert.IsFalse(form.HasUnsavedChanges);
+    }
+
+    [TestMethod]
     public void AFreshlyLoadedFormHasNoUnsavedChanges()
     {
         var form = new ModelGatewayForm();

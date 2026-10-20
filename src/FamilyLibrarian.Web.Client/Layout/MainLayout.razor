@@ -210,7 +210,7 @@
         <LiveConnectionStatus />
         <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
             <CascadingValue Value="@activeAcquisitions">
-                @Body
+                <UnsavedChangesGuard>@Body</UnsavedChangesGuard>
             </CascadingValue>
         </MudContainer>
     </MudMainContent>
