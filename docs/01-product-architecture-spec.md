@@ -1152,7 +1152,17 @@ holds: attested-only external or inconclusive with no Negative observations;
 an author-only difference with Positive title, language and independent series
 or identifier agreement; or contents confirmation for an already accepted
 collection. Other Negative facts and model-concern holds cannot be released.
-Tier-B TOC/heading facts suffice for the collection exception; tier C is deferred.
+Tier-B TOC/heading facts support the collection exception. Tier-C EPUB excerpts
+are available only to the hold review: bounded copyright, first-chapter and
+last-page text, framed as untrusted `BOOK_TEXT`. Audio has no excerpts. Excerpt
+IDs have Unknown polarity and need a corresponding deterministic fact to support
+a concern; they cannot ground a hold or release alone. Printed ISBN matches are
+Positive before the call. Excerpts never enter stored evidence, semantic claims,
+usage records, audit, logs, exceptions or API responses. Notes are at most 200
+characters; a note copying eight consecutive excerpt words is rejected. Administrators
+see cited excerpt IDs and safe notes only. Extraction is role-gated and shares the
+existing 45-second maximum review deadline. Cloud roles need `AllowCloudExcerpts`;
+without it they receive tier A/B with file values withheld and no text blocks.
 Eligibility is rechecked after the call and on persisted evidence by
 `ApprovalService`, the sole path to Trusted. Its model policy is
 `model-hold-release-v1`, with a system audit action and source=model release

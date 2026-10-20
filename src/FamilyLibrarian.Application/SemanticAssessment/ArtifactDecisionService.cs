@@ -12,7 +12,8 @@ namespace FamilyLibrarian.Application.SemanticAssessment;
 /// <summary>Governed synchronous hold review and separately permitted release proposals. Only ApprovalService can approve.</summary>
 public sealed class ArtifactDecisionService(
     IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
-    IArtifactEvidenceStore? recordedEvidence = null, IModelGatewaySettingsStore? settings = null)
+    IArtifactEvidenceStore? recordedEvidence = null, IModelGatewaySettingsStore? settings = null,
+    IArtifactExcerptExtractor? excerpts = null)
 {
     public async Task<Guid?> GetReleaseAsync(MediaAsset asset, AssetIdentityVerificationResult result,
         ExpectedArtifactProfile? expected, CancellationToken cancellationToken)
@@ -78,34 +79,42 @@ public sealed class ArtifactDecisionService(
         {
             var resolution = await roles.ResolveAsync(ModelRole.ArtifactValidationDecision, cancellationToken);
             if (!resolution.IsAvailable) return null;
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limit.CancelAfter(TimeSpan.FromSeconds(Math.Min(resolution.Limits.TimeoutSeconds, 45)));
             IReadOnlyList<ArtifactEvidence> prior = [];
             if (recordedEvidence is not null &&
-                (await recordedEvidence.ListLatestAsync([asset.Id], cancellationToken)).TryGetValue(asset.Id, out var rows))
+                (await recordedEvidence.ListLatestAsync([asset.Id], limit.Token)).TryGetValue(asset.Id, out var rows))
                 prior = rows.Where(r => r.Sha256 == asset.Sha256 && r.RecordKind is
                     ArtifactEvidenceRecordKinds.SecurityEvaluation or ArtifactEvidenceRecordKinds.TechnicalInspection).ToArray();
             if (prior.Any(r => r.Dimension is EvidenceDimension.Security or EvidenceDimension.Structure && r.Polarity == EvidencePolarity.Negative)) return null;
-            var input = ArtifactDecisionEvidence.Render(asset, result.Facts, expected, prior, !resolution.IsCloud || resolution.AllowCloudExcerpts);
+            var details = !resolution.IsCloud || resolution.AllowCloudExcerpts;
+            IReadOnlyList<ArtifactExcerpt> bookText = [];
+            if (excerpts is not null && details && asset.Format.TrimStart('.').ToUpperInvariant() is "EPUB" or "KEPUB")
+            {
+                try { bookText = await excerpts.ExtractAsync(asset, limit.Token); }
+                catch (Exception) when (!limit.IsCancellationRequested) { bookText = []; }
+            }
+            limit.Token.ThrowIfCancellationRequested();
+            var input = ArtifactDecisionEvidence.Render(asset, result.Facts, expected, prior, details, excerpts: bookText);
             ArtifactDecision? decision;
-            if (await store.FindLatestAsync(SemanticSubjectKind.ArtifactDecision, input.Digest, cancellationToken) is { IsReusable: true } cached &&
+            if (await store.FindLatestAsync(SemanticSubjectKind.ArtifactDecision, input.Digest, limit.Token) is { IsReusable: true } cached &&
                 clock.UtcNow - cached.CreatedAtUtc < CandidateSemanticAnalyzer.ReuseWindow)
             {
                 var claims = CandidateSemanticAnalyzer.DeserializeClaims(cached.ClaimsJson);
                 var reply = JsonSerializer.Serialize(new { schema = SemanticAssessmentParser.ArtifactDecisionSchema, verdict = cached.Verdict,
                     claims = claims.Select(c => new { kind = c.Kind, evidence_ids = c.EvidenceIds, note = c.Note }) });
-                decision = cached.IsUsable ? SemanticAssessmentParser.ParseArtifactDecision(reply, input.Findings).Value : null;
+                decision = cached.IsUsable ? SemanticAssessmentParser.ParseArtifactDecision(reply, input.Findings, bookText).Value : null;
             }
             else
             {
                 ModelExecution<ArtifactDecision> execution;
-                using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                limit.CancelAfter(TimeSpan.FromSeconds(Math.Min(resolution.Limits.TimeoutSeconds, 45)));
                 try
                 {
                     execution = await policy.ExecuteAsync(new ModelExecutionRequest(ModelRole.ArtifactValidationDecision,
                         ModelBudgetClass.BackgroundValidation, null,
-                        [new ModelChatMessage("system", ArtifactDecisionEvidence.SystemPrompt), new ModelChatMessage("user", input.Text)],
+                        [new ModelChatMessage("system", ArtifactDecisionEvidence.SystemPrompt + (bookText.Count > 0 ? ArtifactDecisionEvidence.ExcerptInstructions : "")), new ModelChatMessage("user", input.Text)],
                         JsonObjectOutput: true, MaxOutputTokens: 400, IncludesFileDerivedDetail: input.IncludesDetails),
-                        text => SemanticAssessmentParser.ParseArtifactDecision(text, input.Findings), limit.Token);
+                        text => SemanticAssessmentParser.ParseArtifactDecision(text, input.Findings, bookText), limit.Token);
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
@@ -121,9 +130,11 @@ public sealed class ArtifactDecisionService(
                     SemanticAssessmentParser.ArtifactDecisionSchema, input.Digest, "Match", ModelRole.ArtifactValidationDecision,
                     execution.Model ?? resolution.Model ?? "unknown", execution.IsCloud, execution.Outcome, decision?.Verdict,
                     decision is null ? null : CandidateSemanticAnalyzer.SerializeClaims(new(SemanticAssessmentParser.ArtifactDecisionSchema,
-                        SemanticVerdict.Uncertain, decision.Claims)), execution.Succeeded ? null : execution.Detail, clock.UtcNow), cancellationToken);
+                        SemanticVerdict.Uncertain, decision.Claims)), execution.Succeeded ? null : bookText.Count > 0
+                            ? "Artifact review did not return a usable decision." : execution.Detail, clock.UtcNow), cancellationToken);
             }
             cancellationToken.ThrowIfCancellationRequested();
+            if (limit.IsCancellationRequested) return null;
             return decision?.Verdict == "hold"
                 ? new ArtifactModelHold(decision.Claims.First(c => c.Stance is ClaimStance.Contradicts or ClaimStance.Concern).Note) : null;
         }

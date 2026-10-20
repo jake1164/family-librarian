@@ -127,10 +127,11 @@
                             <MudSwitch T="bool" @bind-Value="form.AllowCloud" Color="Color.Warning"
                                        Label="Allow roles to use cloud models (can send book data off this server and use paid or rate-limited services)" />
                             <MudSwitch T="bool" @bind-Value="form.AllowCloudExcerpts" Color="Color.Warning" Disabled="@(!form.AllowCloud)"
-                                       Label="Also allow details read from downloaded files (embedded titles, headings, language tags) to be sent to a cloud model" />
+                                       Label="Also allow details read from downloaded files (embedded titles, headings, language tags and bounded book excerpts) to be sent to a cloud model" />
                             <MudText Typo="Typo.caption">
                                 The second switch is separate and off by default. Without it, a cloud model reviewing a file sees only the names and
-                                outcomes of the checks, never anything read out of the file. Local models always see the recorded details. Which models
+                                outcomes of the checks, never anything read out of the file. Local validation models can receive file details and bounded
+                                book excerpts. Excerpt text is never stored. Which models
                                 count as "cloud" is your decision per role: a name is never taken as proof that a model is local.
                             </MudText>
 

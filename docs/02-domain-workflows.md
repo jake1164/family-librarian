@@ -1465,8 +1465,37 @@ timeout preserves the deterministic result; a disabled role makes no model call.
 Validated decisions and failures are recorded, and identical reusable findings
 are reused for seven days. File-derived values are stripped of control/invisible
 formatting and markup delimiters, bounded, and framed as untrusted data. Cloud
-roles receive those values only with the separate excerpt-sharing opt-in. No
-book excerpts are implemented.
+roles receive those values only with the separate excerpt-sharing opt-in.
+
+EPUB/KEPUB hold reviews can also receive three transient excerpts: the first
+copyright/imprint/impressum/colophon item among the first five or last three
+spine items; the first linear prose item after front matter with at least 200
+words (first 200 words); and the last linear item's last 150 words. Each is
+limited to 1,200 characters, text nodes only, with script/style text, controls,
+invisible formatting and angle brackets removed, whitespace collapsed, and
+`BOOK_TEXT` delimiter tokens neutralized. Archive reads retain the inspectors'
+entry/size/compression limits, a 64 MiB aggregate read bound, 8 MiB item bound,
+DTD prohibition, and cancellation. No files are written. Audio has no tier C.
+
+The Unknown `tc-copyright`, `tc-chapter1` and `tc-last` IDs are supporting
+citations only. Exact last-page sample phrases and a copyright-page `abridged`
+word produce separate Condition facts. A conservative English/German function-word
+cue can produce a Weak chapter-language mismatch; short, mixed and unsupported
+language prose stays Unknown. A checksum-valid printed ISBN that matches a
+catalog ISBN produces a Positive fact before rendering. All derived values are
+fixed observations, never copied text. No deterministic approval changes from
+an excerpt alone; only a grounded model concern adds the existing model hold.
+
+Excerpts are sent only in explicitly untrusted `BOOK_TEXT` blocks. They never
+enter ArtifactEvidence, SemanticFinding claims, ledger/audit, exceptions, logs or
+API responses. Only a digest, safe notes and citation IDs persist. Notes remain
+at most 200 characters; eight consecutive normalized excerpt words reject the
+whole response. Provider failure details are replaced with a fixed message when
+excerpts were sent. Cached replies are regrounded and privacy-checked again.
+Role off means no extraction or calls. Cloud without `AllowCloudExcerpts` means
+no extraction or text blocks. Extraction shares the existing min(timeout,45s)
+deadline: failure falls back to tier A/B when time remains; deadline expiry
+leaves deterministic approval unchanged. Administrators see excerpt IDs only.
 
 `AllowModelHoldRelease` is a separate administrator-only audited permission,
 default false. With it and the decision role enabled, identity verification may
@@ -1485,7 +1514,7 @@ requested-work match can receive `contains_requested` citing a real tier-B TOC
 or heading fact. Only its expected title difference is allowed; author, language
 and every other Negative still block. This confirms contents, never requester
 consent. Cloud contents review needs the existing file-detail sharing opt-in.
-Tier C remains deferred. Hold calls still reject release/contains_requested.
+Tier C is restricted to hold review. Hold calls still reject release/contains_requested.
 
 The synchronous decision proposes a persisted finding; it does not itself trust
 bytes. After a fresh check following the call, `ReleaseHoldByModelAsync` checks

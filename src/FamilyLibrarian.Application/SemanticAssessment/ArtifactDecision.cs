@@ -16,8 +16,13 @@ public static partial class SemanticAssessmentParser
 {
     public const string ArtifactDecisionSchema = "artifact-decision/1";
 
-    public static ModelParseResult<ArtifactDecision> ParseArtifactDecision(string? content, IReadOnlyList<EvidenceFinding> evidence)
-        => ParseArtifactDecisionCore(content, evidence, false);
+    public static ModelParseResult<ArtifactDecision> ParseArtifactDecision(string? content, IReadOnlyList<EvidenceFinding> evidence,
+        IReadOnlyList<ArtifactExcerpt>? excerpts = null)
+    {
+        var parsed = ParseArtifactDecisionCore(content, evidence, false);
+        return parsed.IsValid && excerpts is { Count: > 0 } && parsed.Value!.Claims.Any(c => ArtifactExcerptEvidence.CopiesExcerpt(c.Note, excerpts))
+            ? ModelParse.SchemaRejected<ArtifactDecision>("Note reproduces book text.") : parsed;
+    }
 
     public static ModelParseResult<ArtifactDecision> ParseArtifactRelease(string? content, MediaAsset asset,
         IReadOnlyList<IdentityFact> facts, ArtifactDecisionInput input)
@@ -66,6 +71,18 @@ public static partial class SemanticAssessmentParser
                 ? c with { Stance = ClaimStance.Supports } : c).ToArray() : parsed.Value!.Claims;
             foreach (var claim in claims)
             {
+                foreach (var id in claim.EvidenceIds)
+                {
+                    string[] required = id switch
+                    {
+                        "tc-copyright" => ["tc-abridged-marker", "tc-printed-isbn"],
+                        "tc-chapter1" => ["tc-prose-language"],
+                        "tc-last" => ["tc-sample-marker"],
+                        _ => []
+                    };
+                    if (required.Length > 0 && !claim.EvidenceIds.Any(required.Contains))
+                        return ModelParse.SchemaRejected<ArtifactDecision>("Excerpt citation requires its derived fact.");
+                }
                 if (claim.Note.Any(c => char.GetUnicodeCategory(c) == UnicodeCategory.Format))
                     return ModelParse.SchemaRejected<ArtifactDecision>("note contains invisible formatting");
                 if (claim.Stance == ClaimStance.Concern && !claim.EvidenceIds.Any(id => evidence.Any(f => f.Id == id &&

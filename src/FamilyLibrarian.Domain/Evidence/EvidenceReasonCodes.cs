@@ -292,6 +292,16 @@ public static class EvidenceReasonCodes
         public const string IdentifierAgrees = "profile.compare.identifier_agrees";
     }
 
+    /// <summary>Fixed observations derived from transient EPUB passages; values never contain book text.</summary>
+    public static class ArtifactExcerpt
+    {
+        public const string Text = "artifact.excerpt.text";
+        public const string SampleMarker = "artifact.excerpt.sample_marker";
+        public const string AbridgedMarker = "artifact.excerpt.abridged_marker";
+        public const string ProseLanguageDiffers = "artifact.excerpt.prose_language_differs";
+        public const string PrintedIsbnAgrees = "artifact.excerpt.printed_isbn_agrees";
+    }
+
     public static class ArtifactProfile
     {
         public const string PackagePublisher = "profile.package.imprint";

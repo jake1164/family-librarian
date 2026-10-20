@@ -139,6 +139,20 @@ Only a grounded concern can add `identity.hold.model_concern`; model errors
 leave the deterministic verdict unchanged. Automatic declines caused by this
 hold begin with `[model]` and consume the existing source attempt budget.
 
+EPUB/KEPUB hold review may include transient copyright/chapter/last-page
+`BOOK_TEXT` blocks, explicitly untrusted and bounded to 1,200 characters each.
+Unknown excerpt IDs can support only their corresponding deterministic fact;
+they cannot justify a hold or release alone. Sample and abridgement cues are
+Condition, conservative prose-language cues Weak, and printed/catalog ISBN
+agreement Positive. Excerpts never appear in payloads sent to acquisition providers, persisted
+artifact evidence, semantic claims, ledger, audit, exceptions, logs or API
+responses. Only cited IDs, safe model notes and an input digest persist. Notes
+that copy eight consecutive excerpt words are rejected. Extraction and model
+execution share the existing maximum 45-second deadline. Role off means no
+extraction; cloud without `AllowCloudExcerpts` receives no excerpts or file
+values. Audio has no excerpts. Provider errors cannot echo excerpt text into
+stored findings. No acquisition-provider protocol or trust change is needed.
+
 The separate administrator setting `AllowModelHoldRelease` defaults to false.
 The existing authenticated/antiforgery-protected
 `PUT /api/v1/admin/model-gateway/` accepts nullable `allowModelHoldRelease`

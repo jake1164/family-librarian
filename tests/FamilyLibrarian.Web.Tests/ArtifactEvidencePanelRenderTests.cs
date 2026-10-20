@@ -49,7 +49,7 @@ public sealed class ArtifactEvidencePanelRenderTests
     public async Task ModelDecisionAndShadowNotesHaveDistinctMeaningAndEncodeTheirCitations(bool decision)
     {
         var finding = new AdminArtifactSemanticFindingResponse("Succeeded", decision ? "hold" : "Inconsistent",
-            [new("suggests_incomplete", "Concern", ["idv.ev-compare-length"], "Short <script>book</script>.")],
+            [new("suggests_incomplete", "Concern", ["idv.ev-compare-length", "tc-sample-marker", "tc-last"], "Short <script>book</script>.")],
             null, "test-model", false, DateTimeOffset.UtcNow, decision);
         await using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
         await using var renderer = new HtmlRenderer(services, NullLoggerFactory.Instance);
@@ -59,6 +59,8 @@ public sealed class ArtifactEvidencePanelRenderTests
         StringAssert.Contains(html, decision ? "AI validation review" : "advisory only");
         StringAssert.Contains(html, decision ? "cannot release or approve" : "never holds, releases, approves or rejects");
         StringAssert.Contains(html, "idv.ev-compare-length"); StringAssert.Contains(html, "&lt;script&gt;");
+        StringAssert.Contains(html, "tc-last");
+        Assert.IsFalse(html.Contains("BOOK_TEXT", StringComparison.Ordinal));
         Assert.IsFalse(html.Contains("<script>", StringComparison.Ordinal));
     }
 

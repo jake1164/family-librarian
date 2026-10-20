@@ -37,7 +37,7 @@ public sealed class ModelReleaseTests
     [TestMethod]
     public void EvidenceCatalogChangesRequireReleaseClassificationReview()
     {
-        Assert.HasCount(146, EveryCode().ToArray(),
+        Assert.HasCount(151, EveryCode().ToArray(),
             "A reason code was added or removed. Review its polarity and release classification, then update this reviewed inventory count.");
     }
 
