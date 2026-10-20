@@ -1122,6 +1122,17 @@ Structured metadata should remain authoritative for:
 
 Local AI should be callable through a replaceable API layer such as an OpenAI-compatible endpoint.
 
+**Phase 8 implementation status (2026-10-20):** the scoped downloaded-file review,
+narrow hold-release permissions and bounded tier-C EPUB excerpt support are complete.
+Acceptance covers deterministic fallback, grounding, privacy and release safeguards, with
+the related lab regressions passing. It does not certify a configured model's accuracy or
+usefulness. A model can respond reliably while every reply is rejected by validation.
+Prompt/schema/evidence alignment, review frequency for audiobook tracks and shared-budget
+use remain explicit follow-up work. Tuning must preserve the existing safety gates and be
+assessed with representative inputs, independent call/result/impact metrics and affected
+regressions. Completion of this scope does not imply a completed release-hardening or
+comparative model evaluation program.
+
 Settings forms with explicit Save actions warn before internal navigation, browser back,
 reload or leaving the application while edits remain unsaved. Successful saves accept only
 their saved fields; failed saves and unrelated credential actions leave other edits protected.

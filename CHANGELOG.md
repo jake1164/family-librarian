@@ -4,6 +4,19 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ---
 
+## [Unreleased]
+
+### File review and AI activity
+
+- Complete the scoped Phase 8 file-review work, including bounded EPUB excerpts used only during analysis, grounded hold decisions and separately enabled narrow hold release. Excerpt text is not retained in findings, logs or API responses.
+- Add durable administrator AI activity and diagnostics with separate accepted replies, rejected replies, provider errors, cancellations, pending and unclassified calls; include actual-model breakdowns, safe rejection reasons, file/track references and tracked workflow use.
+- Warn before leaving settings forms with unsaved changes.
+
+The file-review safeguards and scoped acceptance are complete. Real-model effectiveness
+tuning remains deferred: passing response validation or applying a recommendation does
+not establish accuracy or benefit. Release hardening and broad comparative model evaluation
+remain separate work.
+
 ## [v1.0.0-alpha.5] — 2026-10-10
 
 External acquisition providers grow up: a documented provider protocol (v2) with durable jobs, multi-file audiobook downloads, human-check handoff to an administrator, and much more honest evidence when a book needs a librarian's decision.
