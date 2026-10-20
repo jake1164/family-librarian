@@ -24,6 +24,42 @@ namespace FamilyLibrarian.Infrastructure.Tests.Publishing;
 public sealed class CwaPublishingServiceTests
 {
     [TestMethod]
+    public async Task AnImportedApprovedCopyCanBeVerifiedByBytesAfterCanonicalAuthorLookupMisses()
+    {
+        var context = context_Configured();
+        context.CatalogClient.ImportedBookId = "42";
+        var request = new BookRequest(Guid.NewGuid(), Guid.NewGuid(), [RequestMediaType.Ebook], null, Now);
+        var formatId = request.Formats.Single().Id;
+        context.RequestFulfillment.Requests[formatId] = request;
+        var asset = context.CreateAsset(formatId, request.WorkId);
+
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+
+        Assert.AreEqual(1, context.Transport.WriteCount, "A title discovery cannot skip handoff as a duplicate.");
+        Assert.AreEqual((asset.Format, asset.SizeBytes, asset.Sha256), context.CatalogClient.LastImportedFile);
+        Assert.AreEqual(RequestStatus.Available, request.Status);
+        Assert.AreEqual(MediaAssetStorageState.Archived, asset.StorageState);
+        Assert.AreEqual("42", (await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None))!.ExternalBookId);
+    }
+
+    [TestMethod]
+    public async Task AnAwaitingCopyIsVerifiedByBytesOnBackgroundRecheckWithoutAnotherHandoff()
+    {
+        var context = context_Configured();
+        var asset = context.CreateAsset();
+        await context.Service.PublishAsync(asset, CancellationToken.None);
+        var import = (await context.Repository.FindByAssetIdAsync(asset.Id, CancellationToken.None))!;
+        Assert.AreEqual(LibraryImportStatus.AwaitingVerification, import.Status);
+        context.CatalogClient.ImportedBookId = "43";
+
+        await context.Service.RecheckAwaitingVerificationAsync(CancellationToken.None);
+
+        Assert.AreEqual(LibraryImportStatus.Available, import.Status);
+        Assert.AreEqual("43", import.ExternalBookId);
+        Assert.AreEqual(1, context.Transport.WriteCount);
+    }
+
+    [TestMethod]
     [DataRow("es", "spa", true)]
     [DataRow("es", "fra", false)]
     [DataRow("en", "spa", false)]
@@ -672,6 +708,20 @@ public sealed class CwaPublishingServiceTests
 
     private sealed class FakeCatalogClient : ICwaCatalogClient
     {
+        public string? ImportedBookId { get; set; }
+
+        public (string Format, long SizeBytes, string Sha256)? LastImportedFile { get; private set; }
+
+        public Task<BookMatchResult> FindImportedFileAsync(
+            string title, string format, long sizeBytes, string sha256, CancellationToken cancellationToken,
+            string? acceptedLanguage = null)
+        {
+            Assert.IsTrue(Transport!.WriteCount > 0, "Exact-file confirmation is only used after handoff.");
+            LastImportedFile = (format, sizeBytes, sha256);
+            return Task.FromResult(ImportedBookId is null ? BookMatchResult.NoMatchResult :
+                BookMatchResult.Match(new CandidateBook(ImportedBookId, title, "Different byline", acceptedLanguage)));
+        }
+
         /// <summary>
         /// Like a real CWA, the catalog only lists a book once a file has been imported, unless the test says the
         /// book was already in the library. Before the duplicate check the catalog was only asked after a write.

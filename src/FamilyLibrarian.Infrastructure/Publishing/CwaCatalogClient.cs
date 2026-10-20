@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -30,6 +31,116 @@ public sealed partial class CwaCatalogClient(
 {
     private static readonly Regex BookIdPattern = new(@"/opds/(?:book|download)/(\d+)", RegexOptions.Compiled);
     private static readonly Regex TitleSearchTokenPattern = new(@"[\p{L}\p{N}]+", RegexOptions.Compiled);
+
+    public async Task<BookMatchResult> FindImportedFileAsync(
+        string title, string format, long sizeBytes, string sha256, CancellationToken cancellationToken,
+        string? acceptedLanguage = null)
+    {
+        var normalizedFormat = format.TrimStart('.').ToLowerInvariant();
+        if (sizeBytes <= 0 || sha256.Length != 64 || !sha256.All(char.IsAsciiHexDigit) ||
+            normalizedFormat.Length == 0 || !normalizedFormat.All(char.IsAsciiLetterOrDigit))
+        {
+            return BookMatchResult.NoMatchResult;
+        }
+
+        var settings = await settingsStore.FindAsync(cancellationToken);
+        if (settings is null || string.IsNullOrWhiteSpace(settings.OpdsBaseUrl))
+        {
+            return BookMatchResult.NoMatchResult;
+        }
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(45));
+        try
+        {
+            // The title discovers candidates only. Author differences can be the very reason this approved file
+            // needed a release; neither a title nor a model verdict proves which destination entry holds its bytes.
+            var candidates = new Dictionary<string, CandidateBook>(StringComparer.Ordinal);
+            foreach (var query in TitleSearchQueries(title).Append(null))
+            {
+                var body = query is null
+                    ? await SendRecentBooksAsync(settings, deadline.Token)
+                    : await SendSearchAsync(query, settings, deadline.Token);
+                var document = body is null ? null : TryParseAtom(body);
+                if (document is null) continue;
+
+                foreach (var candidate in ExtractCandidates(body!))
+                {
+                    var match = await matchService.MatchByTitleAuthorAsync(
+                        title, null, [candidate], deadline.Token, acceptedLanguage);
+                    if (match.Decision != BookMatchDecision.Match) continue;
+
+                    var downloadUri = ImportedFileUri(settings, candidate.ExternalId, normalizedFormat);
+                    if (!document.Descendants(AtomNamespace + "link").Any(link =>
+                            link.Attribute("rel")?.Value == "http://opds-spec.org/acquisition" &&
+                            Uri.TryCreate(new Uri(settings.OpdsBaseUrl.TrimEnd('/') + "/"), link.Attribute("href")?.Value, out var offered) &&
+                            offered == downloadUri)) continue;
+
+                    candidates.TryAdd(candidate.ExternalId, candidate);
+                    // Do not truncate and accidentally call one copy unique when an unchecked entry may match too.
+                    if (candidates.Count > 8) return BookMatchResult.NoMatchResult;
+                }
+            }
+
+            var confirmed = new List<CandidateBook>();
+            foreach (var candidate in candidates.Values)
+            {
+                if (await HasApprovedBytesAsync(settings, candidate.ExternalId, normalizedFormat, sizeBytes, sha256, deadline.Token))
+                {
+                    confirmed.Add(candidate);
+                }
+            }
+
+            var result = confirmed.Count switch
+            {
+                0 => BookMatchResult.NoMatchResult,
+                1 => BookMatchResult.Match(confirmed[0]),
+                _ => BookMatchResult.Ambiguous(confirmed)
+            };
+            LogImportedFileDecision(title, result.Decision, result.MatchedId);
+            return result;
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested &&
+            exception is HttpRequestException or IOException or OperationCanceledException)
+        {
+            return BookMatchResult.NoMatchResult;
+        }
+    }
+
+    private static Uri ImportedFileUri(Domain.Publishing.CwaSettings settings, string bookId, string format) =>
+        new($"{settings.OpdsBaseUrl!.TrimEnd('/')}/opds/download/{bookId}/{format}/");
+
+    private async Task<bool> HasApprovedBytesAsync(
+        Domain.Publishing.CwaSettings settings, string bookId, string format, long expectedSize, string expectedHash,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, ImportedFileUri(settings, bookId, format));
+        ApplyBasicAuth(request, settings.OpdsUsername, ResolveOpdsPassword(settings));
+        var client = httpClientFactory.CreateClient();
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        // An unreadable candidate cannot be ruled out of a uniqueness decision. Retry the entire lookup later.
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength is { } size && size != expectedSize) return false;
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[81920];
+        long total = 0;
+        while (true)
+        {
+            // Check actual EOF, including when Content-Length is missing or false. Read at most one byte beyond the
+            // approved size, without buffering a book in memory or trusting a potentially unbounded response body.
+            var limit = (int)Math.Min(buffer.Length, expectedSize - total < buffer.Length ? expectedSize - total + 1 : buffer.Length);
+            var read = await stream.ReadAsync(buffer.AsMemory(0, limit), cancellationToken);
+            if (read == 0) break;
+            if (read > expectedSize - total) return false;
+            hash.AppendData(buffer, 0, read);
+            total += read;
+        }
+
+        return total == expectedSize && string.Equals(
+            Convert.ToHexString(hash.GetHashAndReset()), expectedHash, StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <remarks>
     /// Identifier-first: an ISBN candidate is tried as a search query before
@@ -132,6 +243,10 @@ public sealed partial class CwaCatalogClient(
     [LoggerMessage(EventId = 1105, Level = LogLevel.Information,
         Message = "cwa.catalog.lookup.final_decision: title='{Title}' author='{Author}' decision={Decision}")]
     private partial void LogFinalDecision(string title, string? author, BookMatchDecision decision);
+
+    [LoggerMessage(EventId = 1106, Level = LogLevel.Information,
+        Message = "cwa.catalog.lookup.imported_file: title='{Title}' decision={Decision} bookId={BookId}")]
+    private partial void LogImportedFileDecision(string title, BookMatchDecision decision, string? bookId);
 
     /// <summary>
     /// CWA currently applies a literal substring search to its title index.

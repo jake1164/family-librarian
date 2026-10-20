@@ -239,6 +239,11 @@ public sealed class CwaPublishingService(
             var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
             var result = await catalogClient.FindBookIdAsync(
                 lookup.Title, lookup.Author, lookup.Isbn13s, cancellationToken, acceptedLanguage);
+            if (result.Decision == BookMatchDecision.NoMatch && asset.StorageState == MediaAssetStorageState.Trusted)
+            {
+                result = await catalogClient.FindImportedFileAsync(
+                    lookup.Title, asset.Format, asset.SizeBytes, asset.Sha256, cancellationToken, acceptedLanguage);
+            }
             if (result.Decision == BookMatchDecision.Match)
             {
                 await CompleteAsAvailableAsync(import, asset, result.MatchedId!, title, cancellationToken);

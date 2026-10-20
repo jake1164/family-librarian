@@ -31,4 +31,12 @@ public interface ICwaCatalogClient
         IReadOnlyCollection<string> isbn13Candidates,
         CancellationToken cancellationToken,
         string? acceptedLanguage = null);
+
+    /// <summary>
+    /// Confirms a completed handoff by downloading a candidate's offered format and checking the approved file's
+    /// byte count and SHA-256. For destination verification only; never a title-only ownership or approval decision.
+    /// </summary>
+    Task<BookMatchResult> FindImportedFileAsync(
+        string title, string format, long sizeBytes, string sha256, CancellationToken cancellationToken,
+        string? acceptedLanguage = null) => Task.FromResult(BookMatchResult.NoMatchResult);
 }
