@@ -34,6 +34,12 @@ public sealed class ConversationBoundaryTests
     /// </summary>
     private static readonly HashSet<Type> MayUseTheModelExecutionPolicy = [typeof(ModelBookIntentInterpreter), typeof(CoverIdentificationService)];
 
+    /// <summary>
+    /// The only conversation types that may report what a model call led to, through the workflow observer. It records effect flags
+    /// against a usage record id for diagnostics: no text, no person data, and it cannot start a model call or change a request.
+    /// </summary>
+    private static readonly HashSet<Type> MayObserveModelWorkflow = [typeof(ConversationService), typeof(CoverIdentificationService)];
+
     private static IEnumerable<Type> ConversationTypes() =>
         typeof(IConversationService).Assembly.GetTypes()
             .Where(type => type.Namespace == "FamilyLibrarian.Application.Conversation" && !type.IsNested && !type.IsInterface);
@@ -49,6 +55,7 @@ public sealed class ConversationBoundaryTests
                 var allowed = parameterType.Namespace == "FamilyLibrarian.Application.Conversation" ||
                               AllowedExternalDependencies.Contains(parameterType) ||
                               (parameterType == typeof(IModelExecutionPolicy) && MayUseTheModelExecutionPolicy.Contains(type)) ||
+                              (parameterType == typeof(IModelWorkflowObserver) && MayObserveModelWorkflow.Contains(type)) ||
                               parameterType.Namespace?.StartsWith("System", StringComparison.Ordinal) == true;
                 Assert.IsTrue(allowed, $"{type.Name} must not depend on {parameterType.FullName}.");
             }
