@@ -282,6 +282,7 @@ public static class DependencyInjection
         services.AddScoped<IModelWorkflowObserver, ModelWorkflowObserver>();
         services.AddSingleton<ModelExecutionGate>();
         services.AddSingleton<ModelCircuitBreaker>();
+        services.AddSingleton<IRejectedModelReplySink, LoggingRejectedModelReplySink>();
         services.AddScoped<IModelExecutionPolicy, ModelExecutionPolicy>();
 
         // Shadow semantic analysis (alpha.6 M4-3): advisory findings stored beside, never inside, deterministic results.

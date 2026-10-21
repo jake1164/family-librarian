@@ -94,6 +94,19 @@ public sealed record ModelExecutionLimits(
         CloudDailyRequests: 0,
         CloudDailyTokens: 0);
 
+    /// <summary>
+    /// The most of the background installation allowance (requests and tokens) the per-file review roles may use in a day.
+    /// Those roles make one call per file or audiobook track, so without a cap a single long audiobook can spend the whole
+    /// allowance and starve candidate triage and search guidance, which decide what is downloaded.
+    /// </summary>
+    public const decimal FileReviewShare = 0.5m;
+
+    public static bool IsFileReviewRole(ModelRole role) => role is ModelRole.ArtifactValidationAssessment or ModelRole.ArtifactValidationDecision;
+
+    /// <summary>At least one unit when the allowance is above zero, so a tiny allowance still permits file review; zero stays a hard stop.</summary>
+    public static long FileReviewAllowance(long installationDailyLimit) =>
+        installationDailyLimit <= 0 ? 0 : Math.Max(1, (long)(installationDailyLimit * FileReviewShare));
+
     public ModelBudget BudgetFor(ModelBudgetClass budgetClass) =>
         budgetClass == ModelBudgetClass.InteractiveChat ? Interactive : Background;
 

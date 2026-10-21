@@ -1230,6 +1230,18 @@ evidence. Model failures preserve the deterministic outcome. File
 metadata is bounded untrusted input, and cloud sharing requires explicit opt-in.
 Existing artifact assessment shadows remain advisory.
 
+Per-file review roles (`ArtifactValidationAssessment` and
+`ArtifactValidationDecision`) make one call per file or audiobook track, so
+together they may use at most half of the background installation allowance
+(requests and tokens) each day; the remainder is kept for candidate triage,
+candidate assessment and search guidance. A refused review leaves the
+deterministic outcome unchanged. For diagnosis only,
+`ModelGateway:Debug:CaptureRejectedReplies` (off by default) writes each reply
+that Family Librarian's own validation rejected to the application log as one
+bounded line with the evidence ids, polarities and reason codes the model could
+cite. It never logs prompts or a reply to an exchange that carried book text,
+and it is intended to be removed once reply quality is resolved.
+
 ---
 
 ## 17. Competitive / Reference Projects

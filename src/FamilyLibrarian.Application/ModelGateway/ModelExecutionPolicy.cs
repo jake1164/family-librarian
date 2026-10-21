@@ -19,7 +19,8 @@ public sealed record ModelExecutionRequest(
     bool JsonObjectOutput = false,
     int? MaxOutputTokens = null,
     bool IncludesFileDerivedDetail = false,
-    Guid? MediaAssetId = null);
+    Guid? MediaAssetId = null,
+    string? DiagnosticContext = null);
 
 /// <summary>The result of interpreting model text. A failure names which kind, so it can be recorded and shown honestly.</summary>
 public sealed record ModelParseResult<T>(T? Value, ModelCallOutcome Failure, string? Detail, ModelFailureReason? FailureReason = null)
@@ -69,7 +70,8 @@ public interface IModelExecutionPolicy
 
 /// <summary>Counts for the current budget window.</summary>
 public sealed record ModelUsageTotals(
-    int UserRequests, long UserTokens, int InstallationRequests, long InstallationTokens, int CloudRequests, long CloudTokens);
+    int UserRequests, long UserTokens, int InstallationRequests, long InstallationTokens, int CloudRequests, long CloudTokens,
+    int FileReviewRequests = 0, long FileReviewTokens = 0);
 
 public sealed record ModelUsageSummaryRow(
     ModelRole Role, ModelBudgetClass Budget, ModelCallOutcome Outcome, bool IsCloud, int Calls, long ReportedTokens, int CallsWithoutUsage,
@@ -254,7 +256,8 @@ public sealed class ModelExecutionPolicy(
     IModelUsageLedger ledger,
     ModelExecutionGate gate,
     ModelCircuitBreaker breaker,
-    IClock clock) : IModelExecutionPolicy
+    IClock clock,
+    IRejectedModelReplySink? rejectedReplies = null) : IModelExecutionPolicy
 {
     /// <summary>Conservative: real text averages closer to four characters per token, so this over-reserves.</summary>
     private const int CharactersPerTokenEstimate = 3;
@@ -362,8 +365,52 @@ public sealed class ModelExecutionPolicy(
         }
 
         var execution = Interpret(response, resolution, parse, maxOutputTokens, breaker, breakerKey, clock.UtcNow);
+        CaptureRejectedReply(request, response, execution);
         await CompleteQuietlyAsync(reservation.Id, execution.Outcome, response.LatencyMilliseconds, response.Usage, execution.FailureReason);
         return execution with { UsageRecordId = reservation.Id };
+    }
+
+    /// <summary>
+    /// Opt-in, temporary diagnosis of replies that validation rejected. Never throws, never runs without an enabled sink, and never
+    /// runs for an exchange that carried book text, so the rule that excerpts are not persisted holds even while debugging.
+    /// </summary>
+    private void CaptureRejectedReply<T>(ModelExecutionRequest request, ModelResponse response, ModelExecution<T> execution)
+    {
+        if (rejectedReplies is not { IsEnabled: true } ||
+            execution.Outcome is not (ModelCallOutcome.SchemaRejected or ModelCallOutcome.InvalidJson) ||
+            string.IsNullOrWhiteSpace(response.Content) ||
+            request.Messages.Any(message => message.Content.Contains("END_BOOK_TEXT", StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        try
+        {
+            var reply = new System.Text.StringBuilder(Math.Min(response.Content.Length, RejectedModelReply.MaxReplyCharacters));
+            var lastWasSpace = false;
+            foreach (var character in response.Content)
+            {
+                if (reply.Length >= RejectedModelReply.MaxReplyCharacters) break;
+                if (char.IsControl(character) || char.IsWhiteSpace(character))
+                {
+                    if (!lastWasSpace && reply.Length > 0) reply.Append(' ');
+                    lastWasSpace = true;
+                    continue;
+                }
+
+                reply.Append(character);
+                lastWasSpace = false;
+            }
+
+            var context = request.DiagnosticContext is { Length: > RejectedModelReply.MaxContextCharacters } oversized
+                ? oversized[..RejectedModelReply.MaxContextCharacters] : request.DiagnosticContext;
+            rejectedReplies.Record(new RejectedModelReply(request.Role, execution.Outcome, execution.FailureReason, request.MediaAssetId,
+                reply.ToString().TrimEnd(), context));
+        }
+        catch (Exception)
+        {
+            // Diagnostics must never change the result of a model call.
+        }
     }
 
     private static ModelExecution<T> Refused<T>(ModelCallOutcome outcome, string detail) =>
@@ -390,6 +437,14 @@ public sealed class ModelExecutionPolicy(
             if (totals.InstallationRequests + 1 > budget.InstallationDailyRequests || totals.InstallationTokens + estimate > budget.InstallationDailyTokens)
             {
                 return (ModelCallOutcome.BudgetExhausted, "The installation's AI allowance for today has been used.");
+            }
+
+            if (request.Budget == ModelBudgetClass.BackgroundValidation && ModelExecutionLimits.IsFileReviewRole(request.Role) &&
+                (totals.FileReviewRequests + 1 > ModelExecutionLimits.FileReviewAllowance(budget.InstallationDailyRequests) ||
+                 totals.FileReviewTokens + estimate > ModelExecutionLimits.FileReviewAllowance(budget.InstallationDailyTokens)))
+            {
+                return (ModelCallOutcome.BudgetExhausted,
+                    "The file-review share of today's AI allowance has been used; the rest is kept for candidate and search decisions.");
             }
 
             if (resolution.IsCloud && (totals.CloudRequests + 1 > limits.CloudDailyRequests || totals.CloudTokens + estimate > limits.CloudDailyTokens))

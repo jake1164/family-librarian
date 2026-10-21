@@ -41,7 +41,8 @@ public sealed class ArtifactDecisionService(
                 execution = await policy.ExecuteAsync(new ModelExecutionRequest(ModelRole.ArtifactValidationDecision,
                     ModelBudgetClass.BackgroundValidation, null,
                     [new ModelChatMessage("system", ArtifactReleaseEvidence.SystemPrompt), new ModelChatMessage("user", input.Text)],
-                    JsonObjectOutput: true, MaxOutputTokens: 400, IncludesFileDerivedDetail: input.IncludesDetails, MediaAssetId: asset.Id),
+                    JsonObjectOutput: true, MaxOutputTokens: 400, IncludesFileDerivedDetail: input.IncludesDetails, MediaAssetId: asset.Id,
+                    DiagnosticContext: EvidenceContext(input.Findings)),
                     text => SemanticAssessmentParser.ParseArtifactRelease(text, asset, facts, input), limit.Token);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -117,7 +118,8 @@ public sealed class ArtifactDecisionService(
                     execution = await policy.ExecuteAsync(new ModelExecutionRequest(ModelRole.ArtifactValidationDecision,
                         ModelBudgetClass.BackgroundValidation, null,
                         [new ModelChatMessage("system", ArtifactDecisionEvidence.SystemPrompt + (bookText.Count > 0 ? ArtifactDecisionEvidence.ExcerptInstructions : "")), new ModelChatMessage("user", input.Text)],
-                        JsonObjectOutput: true, MaxOutputTokens: 400, IncludesFileDerivedDetail: input.IncludesDetails, MediaAssetId: asset.Id),
+                        JsonObjectOutput: true, MaxOutputTokens: 400, IncludesFileDerivedDetail: input.IncludesDetails, MediaAssetId: asset.Id,
+                    DiagnosticContext: EvidenceContext(input.Findings)),
                         text => SemanticAssessmentParser.ParseArtifactDecision(text, input.Findings, bookText), limit.Token);
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -151,6 +153,10 @@ public sealed class ArtifactDecisionService(
             return null;
         }
     }
+
+    /// <summary>Evidence ids with polarity and reason code only, never values, so a diagnostic shows what the model could cite.</summary>
+    private static string EvidenceContext(IReadOnlyList<EvidenceFinding> findings) =>
+        string.Join(';', findings.Select(f => $"{f.Id}|{f.Polarity}|{f.Code}"));
 
     private static bool HasHardNegative(IReadOnlyList<IdentityFact> facts) => facts.Any(f =>
         f.Dimension is EvidenceDimension.Security or EvidenceDimension.Structure && f.Polarity == EvidencePolarity.Negative);

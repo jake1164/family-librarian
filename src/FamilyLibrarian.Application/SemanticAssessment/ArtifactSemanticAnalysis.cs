@@ -189,7 +189,8 @@ public sealed class ArtifactSemanticAnalyzer(
                 new ModelExecutionRequest(
                     ModelRole.ArtifactValidationAssessment, ModelBudgetClass.BackgroundValidation, null,
                     [new ModelChatMessage("system", ArtifactSemanticEvidence.SystemPrompt), new ModelChatMessage("user", rendered)],
-                    JsonObjectOutput: true, MaxOutputTokens: MaxOutputTokens, IncludesFileDerivedDetail: includeDetails, MediaAssetId: assetId),
+                    JsonObjectOutput: true, MaxOutputTokens: MaxOutputTokens, IncludesFileDerivedDetail: includeDetails, MediaAssetId: assetId,
+                    DiagnosticContext: string.Join(';', findings.Select(f => $"{f.Id}|{f.Polarity}|{f.Code}"))),
                 content => SemanticAssessmentParser.Parse(content, SemanticSchema.Artifact, findings),
                 cancellationToken);
             if (execution.WasRefused)

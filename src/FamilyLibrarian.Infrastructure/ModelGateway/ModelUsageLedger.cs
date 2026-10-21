@@ -24,10 +24,12 @@ public sealed class ModelUsageLedger(IServiceScopeFactory scopes, TimeProvider t
         var installation = records.Where(record => record.BudgetClass == budget);
         var user = userId is { } id ? installation.Where(record => record.UserId == id) : installation.Where(record => false);
         var cloud = records.Where(record => record.IsCloud);
+        var fileReview = installation.Where(record => record.Role == ModelRole.ArtifactValidationAssessment || record.Role == ModelRole.ArtifactValidationDecision);
         return new ModelUsageTotals(
             await user.CountAsync(cancellationToken), await user.SumAsync(record => (long)record.ChargedTokens, cancellationToken),
             await installation.CountAsync(cancellationToken), await installation.SumAsync(record => (long)record.ChargedTokens, cancellationToken),
-            await cloud.CountAsync(cancellationToken), await cloud.SumAsync(record => (long)record.ChargedTokens, cancellationToken));
+            await cloud.CountAsync(cancellationToken), await cloud.SumAsync(record => (long)record.ChargedTokens, cancellationToken),
+            await fileReview.CountAsync(cancellationToken), await fileReview.SumAsync(record => (long)record.ChargedTokens, cancellationToken));
     }
 
     public async Task AddAsync(ModelUsageRecord record, CancellationToken cancellationToken)

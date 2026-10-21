@@ -18,9 +18,11 @@ internal sealed class FakeLedger : IModelUsageLedger
         var installation = all.Where(record => record.BudgetClass == budget).ToList();
         var user = installation.Where(record => userId is not null && record.UserId == userId).ToList();
         var cloud = all.Where(record => record.IsCloud).ToList();
+        var fileReview = installation.Where(record => ModelExecutionLimits.IsFileReviewRole(record.Role)).ToList();
         return Task.FromResult(new ModelUsageTotals(
             user.Count, user.Sum(record => (long)record.ChargedTokens), installation.Count, installation.Sum(record => (long)record.ChargedTokens),
-            cloud.Count, cloud.Sum(record => (long)record.ChargedTokens)));
+            cloud.Count, cloud.Sum(record => (long)record.ChargedTokens),
+            fileReview.Count, fileReview.Sum(record => (long)record.ChargedTokens)));
     }
 
     public Task AddAsync(ModelUsageRecord record, CancellationToken cancellationToken)
@@ -51,6 +53,23 @@ internal sealed class FakeLedger : IModelUsageLedger
         Task.FromResult(new ModelCallFailures([], false));
 }
 
+internal sealed class FakeReplySink : IRejectedModelReplySink
+{
+    public bool Enabled { get; set; } = true;
+
+    public bool Throws { get; set; }
+
+    public List<RejectedModelReply> Replies { get; } = [];
+
+    public bool IsEnabled => Enabled;
+
+    public void Record(RejectedModelReply reply)
+    {
+        if (Throws) throw new InvalidOperationException("log sink down");
+        Replies.Add(reply);
+    }
+}
+
 internal sealed class MutableClock(DateTimeOffset now) : FamilyLibrarian.Application.Abstractions.IClock
 {
     public DateTimeOffset UtcNow { get; set; } = now;
@@ -66,7 +85,7 @@ public sealed class ModelExecutionPolicyTests
 
     private sealed class Rig
     {
-        public Rig(ScriptedModel model, ModelGatewaySettings? settings = null, FakeLedger? ledger = null)
+        public Rig(ScriptedModel model, ModelGatewaySettings? settings = null, FakeLedger? ledger = null, IRejectedModelReplySink? sink = null)
         {
             Model = model;
             Settings = settings ?? Configured();
@@ -76,7 +95,7 @@ public sealed class ModelExecutionPolicyTests
             Breaker = new ModelCircuitBreaker();
             Policy = new ModelExecutionPolicy(
                 new ModelRoleResolver(new FakeGatewayStore { Settings = Settings }, new PassThroughProtector()),
-                model, Ledger, Gate, Breaker, Clock);
+                model, Ledger, Gate, Breaker, Clock, sink);
         }
 
         public ScriptedModel Model { get; }
@@ -173,6 +192,107 @@ public sealed class ModelExecutionPolicyTests
         var stored = System.Text.Json.JsonSerializer.Serialize(record);
         Assert.IsFalse(stored.Contains("Private", StringComparison.Ordinal));
         Assert.AreEqual(1, rig.Model.Calls.Count);
+    }
+
+    private static ModelExecutionLimits SmallBackground(int requests, int tokens = 400_000) =>
+        ModelExecutionLimits.Default with { Background = new ModelBudget(0, 0, requests, tokens) };
+
+    [TestMethod]
+    public async Task FileReviewRolesCannotSpendMoreThanTheirShareOfTheBackgroundRequestAllowance()
+    {
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Ok("{}", new ModelUsage(10, 10, 20))),
+            Configured(SmallBackground(requests: 10), role: ModelRole.CandidateTriage));
+        for (var i = 0; i < 5; i++) Assert.IsTrue((await RunAsync(rig, Background())).Succeeded, $"file review {i + 1} is inside the share");
+
+        var refused = await RunAsync(rig, Background());
+
+        Assert.AreEqual(ModelCallOutcome.BudgetExhausted, refused.Outcome);
+        StringAssert.Contains(refused.Detail, "file-review share");
+        Assert.AreEqual(5, rig.Model.Calls.Count, "A refused call never reaches the model.");
+        var triage = await RunAsync(rig, Background() with { Role = ModelRole.CandidateTriage });
+        Assert.IsTrue(triage.Succeeded, "The remaining allowance stays available to decision-bearing roles.");
+        Assert.AreEqual(6, rig.Ledger.Records.Count, "Refusals are not recorded as usage.");
+    }
+
+    [TestMethod]
+    public async Task FileReviewRolesCannotSpendMoreThanTheirShareOfTheBackgroundTokenAllowance()
+    {
+        // Each call is reserved and charged at a conservative estimate above 500 tokens when no usage is reported.
+        var rig = new Rig(new ScriptedModel((_, _) => new ModelResponse(true, ModelFailureKind.None, null, "{}", [], "stop", "m", null, 5)),
+            Configured(SmallBackground(requests: 100, tokens: 1_500), role: ModelRole.CandidateTriage));
+        Assert.IsTrue((await RunAsync(rig, Background())).Succeeded);
+
+        var refused = await RunAsync(rig, Background());
+
+        Assert.AreEqual(ModelCallOutcome.BudgetExhausted, refused.Outcome, "The second review fits the installation allowance but not the file-review share.");
+        StringAssert.Contains(refused.Detail, "file-review share");
+        Assert.IsTrue((await RunAsync(rig, Background() with { Role = ModelRole.CandidateTriage })).Succeeded);
+    }
+
+    [TestMethod]
+    public async Task TheFileReviewShareDoesNotLimitOtherRolesOrInteractiveChat()
+    {
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Ok("{}", new ModelUsage(10, 10, 20))), Configured(SmallBackground(requests: 4)));
+        for (var i = 0; i < 4; i++) Assert.IsTrue((await RunAsync(rig, Background() with { Role = ModelRole.CandidateAmbiguityAssessment })).Succeeded);
+        Assert.AreEqual(ModelCallOutcome.BudgetExhausted, (await RunAsync(rig, Background() with { Role = ModelRole.CandidateAmbiguityAssessment })).Outcome);
+        Assert.IsTrue((await RunAsync(rig, Chat())).Succeeded);
+    }
+
+    [TestMethod]
+    public async Task ARejectedReplyIsCapturedOnlyWhenEnabledWithBoundedSingleLineTextAndSafeContext()
+    {
+        var sink = new FakeReplySink();
+        var assetId = Guid.NewGuid();
+        var reply = "{\n\t\"verdict\":\"hold\"\u0007,\r\n\"note\":\"" + new string('x', 3_000) + "\"}";
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Ok(reply)), sink: sink);
+
+        await rig.Policy.ExecuteAsync(Background() with { MediaAssetId = assetId, DiagnosticContext = "idv.ev-title|Positive|identity.title_agrees" },
+            _ => ModelParse.SchemaRejected<string>("detail", ModelFailureReason.UngroundedConcern), CancellationToken.None);
+
+        var captured = sink.Replies.Single();
+        Assert.AreEqual(ModelRole.ArtifactValidationAssessment, captured.Role);
+        Assert.AreEqual(ModelCallOutcome.SchemaRejected, captured.Outcome);
+        Assert.AreEqual(ModelFailureReason.UngroundedConcern, captured.Reason);
+        Assert.AreEqual(assetId, captured.MediaAssetId);
+        Assert.AreEqual("idv.ev-title|Positive|identity.title_agrees", captured.Context);
+        Assert.IsTrue(captured.Reply.Length <= RejectedModelReply.MaxReplyCharacters, "The reply is truncated.");
+        Assert.IsFalse(captured.Reply.Any(char.IsControl), "Control characters cannot forge log lines.");
+        StringAssert.StartsWith(captured.Reply, "{ \"verdict\":\"hold\"");
+
+        sink.Replies.Clear();
+        sink.Enabled = false;
+        await rig.Policy.ExecuteAsync(Background(), _ => ModelParse.SchemaRejected<string>("detail"), CancellationToken.None);
+        Assert.AreEqual(0, sink.Replies.Count, "Capture is off unless explicitly enabled.");
+    }
+
+    [TestMethod]
+    public async Task OnlyRejectedRepliesAreCapturedAndABrokenSinkCannotChangeTheOutcome()
+    {
+        var sink = new FakeReplySink();
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Ok("not json")), sink: sink);
+
+        Assert.IsTrue((await RunAsync(rig, Background())).Succeeded);
+        Assert.AreEqual(0, sink.Replies.Count, "An accepted reply is never captured.");
+
+        await rig.Policy.ExecuteAsync(Background(), _ => ModelParse.NotJson<string>("bad"), CancellationToken.None);
+        Assert.AreEqual(ModelCallOutcome.InvalidJson, sink.Replies.Single().Outcome);
+
+        sink.Throws = true;
+        var result = await rig.Policy.ExecuteAsync(Background(), _ => ModelParse.SchemaRejected<string>("bad"), CancellationToken.None);
+        Assert.AreEqual(ModelCallOutcome.SchemaRejected, result.Outcome, "A failing log sink is invisible to the caller.");
+        Assert.AreEqual(ModelCallOutcome.SchemaRejected, rig.Ledger.Records.Last().Outcome);
+    }
+
+    [TestMethod]
+    public async Task ARejectedReplyToAPromptThatCarriedBookTextIsNeverCaptured()
+    {
+        var sink = new FakeReplySink();
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Ok("It repeats: the quick brown fox")), sink: sink);
+        var request = Background() with { Messages = [new ModelChatMessage("user", "EVIDENCE\nBOOK_TEXT (untrusted)\nthe quick brown fox\nEND_BOOK_TEXT\n")] };
+
+        await rig.Policy.ExecuteAsync(request, _ => ModelParse.SchemaRejected<string>("bad"), CancellationToken.None);
+
+        Assert.AreEqual(0, sink.Replies.Count, "Excerpt-bearing exchanges keep the never-persisted rule, even for debugging.");
     }
 
     [TestMethod]
