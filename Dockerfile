@@ -34,7 +34,13 @@ ENV ASPNETCORE_URLS=http://+:8080
 # encryption probe against Postgres fails and logs "Cannot load library
 # libgssapi_krb5.so.2" straight to stderr on every startup (Npgsql falls
 # back automatically either way, but the noise obscures real warnings).
+#
+# apt/libapt-pkg6.0t64 are upgraded explicitly because the base image can lag
+# behind Ubuntu security fixes (CVE-2026-109518, fixed in 2.8.4ubuntu0.1); the
+# CI Trivy scan gates on fixable HIGH/CRITICAL findings. --only-upgrade is a
+# no-op once the base image already ships the fixed version.
 RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade apt libapt-pkg6.0t64 \
     && apt-get install -y --no-install-recommends bzip2 libgssapi-krb5-2 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data/family-librarian \
