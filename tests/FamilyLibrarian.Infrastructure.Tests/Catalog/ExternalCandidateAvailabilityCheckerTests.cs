@@ -134,6 +134,39 @@ public sealed class ExternalCandidateAvailabilityCheckerTests
         CollectionAssert.AreEqual(OnyxReferences, set.MemberResultIds.ToArray());
     }
 
+    [TestMethod]
+    [DataRow(FamilyLibrarian.Domain.Providers.ProviderConfidenceLevel.Strict, false)]
+    [DataRow(FamilyLibrarian.Domain.Providers.ProviderConfidenceLevel.Standard, true)]
+    [DataRow(FamilyLibrarian.Domain.Providers.ProviderConfidenceLevel.Liberal, true)]
+    public async Task TheLiveOnyxStormSetIsHeldForReviewAtStrictAndFetchedAtStandardOrLiberal(
+        FamilyLibrarian.Domain.Providers.ProviderConfidenceLevel level, bool fetchedAutomatically)
+    {
+        // Lab finding 2026-11-06: the same release names were held as PreferenceAmbiguity with the provider at Strict. Neither part
+        // names the requested author correctly (part 1 misspells it, part 2 has none), so neither reaches the Strong tier that Strict
+        // requires, although the exact series position makes both a close call. This is the confidence policy working as designed.
+        var context = new TestContext();
+        var provider = NewProvider("example-source");
+        provider.SetEnabled(true, null, Now);
+        context.Store.Providers.Add(provider);
+        context.Client.Candidates =
+        [
+            new ExternalProviderCandidate("onyx-1", ExternalProviderWorkEvidence.Empty,
+                Release: new ExternalProviderReleaseEvidence(
+                    "The.Empyrean.[03].Onyx.Storm.1.of.2.by.Rebecca.Yaros.fantasy.romance.m4b",
+                    null, 550_100_000, false, 1, false, null, null, [], null)),
+            new ExternalProviderCandidate("onyx-2", ExternalProviderWorkEvidence.Empty,
+                Release: new ExternalProviderReleaseEvidence(
+                    "The.Empyrean.[03].Onyx.Storm.2.of.2",
+                    null, 584_700_000, false, 1, false, null, null, [], null))
+        ];
+
+        var options = await context.Checker.FindAsync(
+            new BookIdentity("Onyx Storm", "Rebecca Yarros", [], Series: [new BookSeries("Empyrean", "3")]),
+            RequestMediaType.Audiobook, CancellationToken.None);
+
+        Assert.AreEqual(fetchedAutomatically, AudiobookPartSetSelector.TrySelect(options, level) is not null);
+    }
+
     private static readonly string[] OnyxReferences = ["onyx-1", "onyx-2"];
 
     [TestMethod]
