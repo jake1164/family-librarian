@@ -13,6 +13,7 @@ namespace FamilyLibrarian.Application.SemanticAssessment;
 public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
     IModelWorkflowObserver? workflow = null)
 {
+    internal const int MaxOutputTokens = 400;
     public Task ObserveSearchAsync(SearchGuidance guidance, bool returnedResults, CancellationToken cancellationToken) =>
         workflow?.ObserveAsync(guidance.UsageRecordId, ModelWorkflowEffect.ExtraSearchCompleted |
             (returnedResults ? ModelWorkflowEffect.ExtraSearchReturnedResults : ModelWorkflowEffect.None), cancellationToken) ?? Task.CompletedTask;
@@ -53,7 +54,7 @@ public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecut
                 execution = await policy.ExecuteAsync(new ModelExecutionRequest(ModelRole.SearchGuidance,
                     ModelBudgetClass.BackgroundValidation, null,
                     [new ModelChatMessage("system", SearchGuidanceEvidence.SystemPrompt), new ModelChatMessage("user", input.Text)],
-                    JsonObjectOutput: true, MaxOutputTokens: 400), content => Parse(content), limit.Token);
+                    JsonObjectOutput: true, MaxOutputTokens: MaxOutputTokens), content => Parse(content), limit.Token);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {

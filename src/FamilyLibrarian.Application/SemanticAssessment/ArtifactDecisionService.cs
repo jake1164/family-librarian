@@ -15,6 +15,7 @@ public sealed class ArtifactDecisionService(
     IArtifactEvidenceStore? recordedEvidence = null, IModelGatewaySettingsStore? settings = null,
     IArtifactExcerptExtractor? excerpts = null, IModelWorkflowObserver? workflow = null)
 {
+    internal const int MaxOutputTokens = 400;
     public async Task<Guid?> GetReleaseAsync(MediaAsset asset, AssetIdentityVerificationResult result,
         ExpectedArtifactProfile? expected, CancellationToken cancellationToken)
     {
@@ -41,7 +42,7 @@ public sealed class ArtifactDecisionService(
                 execution = await policy.ExecuteAsync(new ModelExecutionRequest(ModelRole.ArtifactValidationDecision,
                     ModelBudgetClass.BackgroundValidation, null,
                     [new ModelChatMessage("system", ArtifactReleaseEvidence.SystemPrompt), new ModelChatMessage("user", input.Text)],
-                    JsonObjectOutput: true, MaxOutputTokens: 400, IncludesFileDerivedDetail: input.IncludesDetails, MediaAssetId: asset.Id,
+                    JsonObjectOutput: true, MaxOutputTokens: MaxOutputTokens, IncludesFileDerivedDetail: input.IncludesDetails, MediaAssetId: asset.Id,
                     DiagnosticContext: EvidenceContext(input.Findings)),
                     text => SemanticAssessmentParser.ParseArtifactRelease(text, asset, facts, input), limit.Token);
             }
@@ -120,7 +121,7 @@ public sealed class ArtifactDecisionService(
                     execution = await policy.ExecuteAsync(new ModelExecutionRequest(ModelRole.ArtifactValidationDecision,
                         ModelBudgetClass.BackgroundValidation, null,
                         [new ModelChatMessage("system", ArtifactDecisionEvidence.SystemPrompt + (bookText.Count > 0 ? ArtifactDecisionEvidence.ExcerptInstructions : "")), new ModelChatMessage("user", input.Text)],
-                        JsonObjectOutput: true, MaxOutputTokens: 400, IncludesFileDerivedDetail: input.IncludesDetails, MediaAssetId: asset.Id,
+                        JsonObjectOutput: true, MaxOutputTokens: MaxOutputTokens, IncludesFileDerivedDetail: input.IncludesDetails, MediaAssetId: asset.Id,
                     DiagnosticContext: EvidenceContext(input.Findings)),
                         text => SemanticAssessmentParser.ParseArtifactDecision(text, input.Findings, bookText), limit.Token);
                 }

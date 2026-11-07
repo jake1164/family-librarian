@@ -154,7 +154,7 @@ public sealed class ArtifactSemanticAnalyzer(
     IClock clock,
     IModelWorkflowObserver? workflow = null)
 {
-    private const int MaxOutputTokens = 400;
+    internal const int MaxOutputTokens = 400;
 
     /// <summary>
     /// A multi-track bundle is assessed a few times, not once per track: an audiobook can have 80 tracks, and in the lab 99 of 100

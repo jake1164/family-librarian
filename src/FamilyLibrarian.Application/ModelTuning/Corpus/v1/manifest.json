@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": "synthetic-2",
+  "labelVersion": "owner-reviewed-1",
+  "roles": [
+    {
+      "role": "ArtifactValidationAssessment",
+      "resource": "ArtifactValidationAssessment.json",
+      "caseCount": 40
+    },
+    {
+      "role": "ArtifactValidationDecision",
+      "resource": "ArtifactValidationDecision.json",
+      "caseCount": 60
+    },
+    {
+      "role": "CandidateAmbiguityAssessment",
+      "resource": "CandidateAmbiguityAssessment.json",
+      "caseCount": 40
+    },
+    {
+      "role": "CandidateTriage",
+      "resource": "CandidateTriage.json",
+      "caseCount": 60
+    },
+    {
+      "role": "SearchGuidance",
+      "resource": "SearchGuidance.json",
+      "caseCount": 40
+    },
+    {
+      "role": "IntentInterpretation",
+      "resource": "IntentInterpretation.json",
+      "caseCount": 40
+    }
+  ]
+}

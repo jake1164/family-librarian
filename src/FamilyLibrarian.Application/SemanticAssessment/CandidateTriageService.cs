@@ -14,6 +14,7 @@ public sealed record CandidateTriageResult(string Move, FulfillmentOption Candid
 public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
     IModelWorkflowObserver? workflow = null)
 {
+    internal const int MaxOutputTokens = 300;
     public Task ObserveSelectionAsync(CandidateTriageResult result, CancellationToken cancellationToken) =>
         workflow?.ObserveAsync(result.UsageRecordId, result.Move == "veto" ? ModelWorkflowEffect.CandidateVetoUsed :
             ModelWorkflowEffect.CandidateSelectionUsed, cancellationToken) ?? Task.CompletedTask;
@@ -51,7 +52,7 @@ public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecu
                     execution = await policy.ExecuteAsync(new ModelExecutionRequest(ModelRole.CandidateTriage,
                         ModelBudgetClass.BackgroundValidation, null,
                         [new ModelChatMessage("system", CandidateTriageEvidence.SystemPrompt), new ModelChatMessage("user", input.Text)],
-                        JsonObjectOutput: true, MaxOutputTokens: 300), Parse, limit.Token);
+                        JsonObjectOutput: true, MaxOutputTokens: MaxOutputTokens), Parse, limit.Token);
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {

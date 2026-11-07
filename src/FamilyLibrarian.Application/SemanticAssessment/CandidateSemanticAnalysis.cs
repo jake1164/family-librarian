@@ -153,7 +153,7 @@ public sealed class CandidateSemanticAnalyzer(IModelExecutionPolicy policy, ISem
     IModelWorkflowObserver? workflow = null)
 {
     public static readonly TimeSpan ReuseWindow = TimeSpan.FromDays(7);
-    private const int MaxOutputTokens = 400;
+    internal const int MaxOutputTokens = 400;
 
     public async Task<SemanticAnalysisReport> AnalyzeAsync(Guid? requestId, CandidateIdentityAssessment assessment, CancellationToken cancellationToken)
     {
