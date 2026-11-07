@@ -99,6 +99,8 @@ public sealed class ArtifactDecisionService(
             }
             limit.Token.ThrowIfCancellationRequested();
             var input = ArtifactDecisionEvidence.Render(asset, result.Facts, expected, prior, details, excerpts: bookText);
+            // Nothing here could ground a hold, so no model call can produce one: skip it rather than spend the allowance.
+            if (!ArtifactDecisionEvidence.CanSupportHold(input.Findings)) return null;
             ArtifactDecision? decision;
             Guid? usageRecordId;
             if (await store.FindLatestAsync(SemanticSubjectKind.ArtifactDecision, input.Digest, limit.Token) is { IsReusable: true } cached &&

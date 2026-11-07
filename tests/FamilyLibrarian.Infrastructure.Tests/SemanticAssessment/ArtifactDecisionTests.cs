@@ -164,6 +164,57 @@ public sealed class ArtifactDecisionTests
     }
 
     [TestMethod]
+    [DataRow(EvidencePolarity.Positive)]
+    [DataRow(EvidencePolarity.Unknown)]
+    public async Task EvidenceWithNothingToObjectToNeverCallsTheModel(EvidencePolarity polarity)
+    {
+        // Live lab finding: with only Positive/Unknown evidence every reply was an ungrounded hold, so the call can only waste budget.
+        var kit = new ArtifactDecisionKit();
+        var result = ArtifactDecisionKit.Match() with { Facts = [
+            new("ev-title", EvidenceDimension.IdentityCorroboration, "identity.title_agrees", EvidencePolarity.Positive),
+            new("ev-other", EvidenceDimension.Profile, "profile.audio.total_duration", polarity)] };
+        Assert.IsNull(await kit.Service.GetHoldAsync(ArtifactDecisionKit.Asset(), result, ArtifactDecisionKit.Expected, CancellationToken.None));
+        Assert.AreEqual(0, kit.Calls);
+        Assert.HasCount(0, kit.Store.Findings);
+    }
+
+    [TestMethod]
+    public async Task NoFactsAtAllNeverCallsTheModel()
+    {
+        var kit = new ArtifactDecisionKit();
+        var result = ArtifactDecisionKit.Match() with { Facts = [] };
+        Assert.IsNull(await kit.Service.GetHoldAsync(ArtifactDecisionKit.Asset(), result, ArtifactDecisionKit.Expected, CancellationToken.None));
+        Assert.AreEqual(0, kit.Calls);
+    }
+
+    [TestMethod]
+    [DataRow(EvidencePolarity.Weak)]
+    [DataRow(EvidencePolarity.Negative)]
+    [DataRow(EvidencePolarity.Condition)]
+    public async Task AnyEvidenceAConcernCouldCiteStillCallsTheModel(EvidencePolarity polarity)
+    {
+        var kit = new ArtifactDecisionKit();
+        var result = ArtifactDecisionKit.Match() with { Facts = [
+            new("ev-title", EvidenceDimension.IdentityCorroboration, "identity.title_agrees", EvidencePolarity.Positive),
+            new("ev-concern", EvidenceDimension.Profile, "profile.compare.length_below_expected", polarity, "words=12000")] };
+        await kit.Service.GetHoldAsync(ArtifactDecisionKit.Asset(), result, ArtifactDecisionKit.Expected, CancellationToken.None);
+        Assert.AreEqual(1, kit.Calls);
+    }
+
+    [TestMethod]
+    public async Task ARecordedConditionOrWeakFindingAloneStillCallsTheModel()
+    {
+        var kit = new ArtifactDecisionKit(); var asset = ArtifactDecisionKit.Asset();
+        var evidence = new ArtifactEvidence(asset.Id, asset.Sha256, ArtifactEvidenceRecordKinds.TechnicalInspection, Guid.NewGuid(), "ev-sample",
+            EvidenceDimension.Structure, "artifact.structure.sample_marker", EvidencePolarity.Condition, "test", null, null, kit.UtcNow);
+        var service = new ArtifactDecisionService(kit, kit, kit.Store, kit, new RecordedEvidence(evidence));
+        var result = ArtifactDecisionKit.Match() with { Facts = [
+            new("ev-title", EvidenceDimension.IdentityCorroboration, "identity.title_agrees", EvidencePolarity.Positive)] };
+        await service.GetHoldAsync(asset, result, ArtifactDecisionKit.Expected, CancellationToken.None);
+        Assert.AreEqual(1, kit.Calls);
+    }
+
+    [TestMethod]
     [DataRow(false, false)]
     [DataRow(true, false)]
     [DataRow(true, true)]
