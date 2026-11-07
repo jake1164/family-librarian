@@ -133,6 +133,17 @@ public sealed class ModelExecutionPolicyTests
 
     private static ModelParseResult<string> AcceptAll(string text) => ModelParse.Ok(text);
 
+    /// <summary>Waits for the scripted model to have been called, failing the test instead of hanging it.</summary>
+    private static async Task WaitForCallsAsync(Rig rig, int count)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (rig.Model.Calls.Count < count)
+        {
+            if (DateTime.UtcNow > deadline) Assert.Fail($"The model was called {rig.Model.Calls.Count} time(s); expected {count}.");
+            await Task.Delay(10);
+        }
+    }
+
     private static Task<ModelExecution<string>> RunAsync(Rig rig, ModelExecutionRequest request) =>
         rig.Policy.ExecuteAsync(request, AcceptAll, CancellationToken.None);
 
@@ -545,6 +556,96 @@ public sealed class ModelExecutionPolicyTests
         failing = false;
         Assert.IsTrue((await RunAsync(rig, Chat())).Succeeded, "After the pause one trial goes through and closes the circuit.");
         Assert.IsTrue((await RunAsync(rig, Chat())).Succeeded);
+    }
+
+    [TestMethod]
+    public void BulkAdvisoryCallsCannotTakeTheLastSlotButOthersCan()
+    {
+        // Lab finding: a decision call was turned away because bulk track assessments held both slots.
+        var gate = new ModelExecutionGate();
+        using var firstBulk = gate.TryEnter(null, limitPerUser: false, maxConcurrent: 2, bulk: true);
+        Assert.IsNotNull(firstBulk);
+        Assert.IsNull(gate.TryEnter(null, limitPerUser: false, maxConcurrent: 2, bulk: true), "A second bulk call would take the last slot.");
+        using var decision = gate.TryEnter(null, limitPerUser: false, maxConcurrent: 2, bulk: false);
+        Assert.IsNotNull(decision, "A decision-bearing call keeps the reserved slot.");
+        Assert.IsNull(gate.TryEnter(null, limitPerUser: false, maxConcurrent: 2, bulk: false), "The limit itself is unchanged.");
+    }
+
+    [TestMethod]
+    public void WithOnlyOneSlotBulkCallsAreNotStarved()
+    {
+        var gate = new ModelExecutionGate();
+        using var only = gate.TryEnter(null, limitPerUser: false, maxConcurrent: 1, bulk: true);
+        Assert.IsNotNull(only, "Reserving the only slot would stop bulk review entirely.");
+    }
+
+    [TestMethod]
+    public async Task ADecisionBearingRoleStillRunsWhileBulkReviewHoldsEverySlotItMayUse()
+    {
+        var release = new TaskCompletionSource();
+        var settings = Configured();
+        settings.ConfigureRole(ModelRole.CandidateTriage, true, ModelPlacement.Local, "local/alias", null, null, Now);
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Ok("{}", new ModelUsage(5, 5, 10))), settings);
+        rig.Model.BeforeAnswer = () => release.Task;
+
+        var bulk = RunAsync(rig, Background());
+        await WaitForCallsAsync(rig, 1);
+        var secondBulk = await RunAsync(rig, Background("Another track."));
+        var triage = RunAsync(rig, new ModelExecutionRequest(ModelRole.CandidateTriage, ModelBudgetClass.BackgroundValidation, null,
+            [new ModelChatMessage("user", "Compare.")], JsonObjectOutput: true));
+        try { await WaitForCallsAsync(rig, 2); } finally { release.SetResult(); }
+
+        Assert.AreEqual(ModelCallOutcome.ConcurrencyLimited, secondBulk.Outcome);
+        Assert.IsTrue((await bulk).Succeeded);
+        Assert.IsTrue((await triage).Succeeded);
+    }
+
+    [TestMethod]
+    public async Task RepeatedUnsupportedCapabilityPausesThatRoleAndSettingWithoutSpendingTheAllowance()
+    {
+        // Lab finding: gpt-oss refused reasoning "Disabled" every time; every refusal was a ledger row, so the file-review share was gone in minutes.
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Fail(ModelFailureKind.UnsupportedCapability, "no reasoning")));
+
+        for (var i = 0; i < ModelCircuitBreaker.CapabilityFailureThreshold; i++)
+        {
+            Assert.AreEqual(ModelCallOutcome.UnsupportedCapability, (await RunAsync(rig, Background())).Outcome);
+        }
+
+        var calls = rig.Model.Calls.Count; var rows = rig.Ledger.Records.Count;
+        var refused = await RunAsync(rig, Background());
+        Assert.AreEqual(ModelCallOutcome.CircuitOpen, refused.Outcome);
+        Assert.AreEqual(calls, rig.Model.Calls.Count, "A paused setting makes no provider call.");
+        Assert.AreEqual(rows, rig.Ledger.Records.Count, "A refusal writes no usage row, so it cannot use up the daily allowance.");
+    }
+
+    [TestMethod]
+    public async Task APausedCapabilityDoesNotStopOtherRolesOrACorrectedSetting()
+    {
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Fail(ModelFailureKind.UnsupportedCapability, "no reasoning")));
+        for (var i = 0; i < ModelCircuitBreaker.CapabilityFailureThreshold; i++) await RunAsync(rig, Background());
+        Assert.AreEqual(ModelCallOutcome.CircuitOpen, (await RunAsync(rig, Background())).Outcome);
+
+        var callsBefore = rig.Model.Calls.Count;
+        await RunAsync(rig, Chat(role: ModelRole.CandidateAmbiguityAssessment));
+        Assert.AreEqual(callsBefore + 1, rig.Model.Calls.Count, "Another role on the same model is still tried.");
+
+        rig.Settings.ConfigureRole(ModelRole.ArtifactValidationAssessment, true, ModelPlacement.Local, "local/alias", null, null, Now, ModelReasoningMode.Disabled);
+        await RunAsync(rig, Background());
+        Assert.AreEqual(callsBefore + 2, rig.Model.Calls.Count, "Changing the reasoning setting is a new configuration and is tried at once.");
+    }
+
+    [TestMethod]
+    public async Task APausedCapabilityIsTriedOnceAgainAfterTheWindowAndClosesWhenItWorks()
+    {
+        var failing = true;
+        var rig = new Rig(new ScriptedModel((_, _) => failing ? ScriptedModel.Fail(ModelFailureKind.UnsupportedCapability, "no reasoning") : ScriptedModel.Ok("{}", new ModelUsage(1, 1, 2))));
+        for (var i = 0; i < ModelCircuitBreaker.CapabilityFailureThreshold; i++) await RunAsync(rig, Background());
+        Assert.AreEqual(ModelCallOutcome.CircuitOpen, (await RunAsync(rig, Background())).Outcome);
+
+        rig.Clock.UtcNow = Now + ModelCircuitBreaker.CapabilityOpenFor + TimeSpan.FromSeconds(1);
+        failing = false;
+        Assert.IsTrue((await RunAsync(rig, Background())).Succeeded);
+        Assert.IsTrue((await RunAsync(rig, Background())).Succeeded);
     }
 
     [TestMethod]

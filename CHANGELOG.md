@@ -11,6 +11,9 @@ All notable changes to Family Librarian are documented here. Newest release at t
 - Complete the scoped Phase 8 file-review work, including bounded EPUB excerpts used only during analysis, grounded hold decisions and separately enabled narrow hold release. Excerpt text is not retained in findings, logs or API responses.
 - Add durable administrator AI activity and diagnostics with separate accepted replies, rejected replies, provider errors, cancellations, pending and unclassified calls; include actual-model breakdowns, safe rejection reasons, file/track references and tracked workflow use.
 - Warn before leaving settings forms with unsaved changes.
+- Spend less of the AI allowance on file review: audiobook tracks are assessed a few times per bundle instead of once per track, and a hold review is skipped when nothing could justify a hold.
+- Pause a model setting that the model keeps refusing, and keep one call slot free for decision-bearing roles.
+- Add an "Ask for low reasoning" option for models that cannot switch reasoning off; search guidance keeps new names from a reply that also repeats earlier searches.
 
 The file-review safeguards and scoped acceptance are complete. Real-model effectiveness
 tuning remains deferred: passing response validation or applying a recommendation does

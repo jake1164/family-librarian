@@ -107,6 +107,13 @@ public sealed record ModelExecutionLimits(
     public static long FileReviewAllowance(long installationDailyLimit) =>
         installationDailyLimit <= 0 ? 0 : Math.Max(1, (long)(installationDailyLimit * FileReviewShare));
 
+    /// <summary>
+    /// Advisory shadow roles that run in bulk and decide nothing. They may not take the last concurrent slot, so a decision-bearing
+    /// call (triage, hold review, search guidance) is never turned away behind a queue of per-track reviews.
+    /// </summary>
+    public static bool IsBulkAdvisoryRole(ModelRole role) =>
+        role is ModelRole.ArtifactValidationAssessment or ModelRole.CandidateAmbiguityAssessment;
+
     public ModelBudget BudgetFor(ModelBudgetClass budgetClass) =>
         budgetClass == ModelBudgetClass.InteractiveChat ? Interactive : Background;
 

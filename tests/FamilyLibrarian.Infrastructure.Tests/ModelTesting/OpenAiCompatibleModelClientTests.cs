@@ -253,6 +253,33 @@ public sealed class OpenAiCompatibleModelClientTests
     }
 
     [TestMethod]
+    public async Task LowSendsOnlyReasoningEffortLowForModelsThatCannotSwitchReasoningOff()
+    {
+        // Lab finding: gpt-oss refuses "none" and, left on its default, spends the whole small output cap on hidden reasoning.
+        var (client, handler) = Make(_ => Task.FromResult(Json(HttpStatusCode.OK, Success)));
+
+        await client.CompleteAsync(Connection(), Request() with { Reasoning = FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Low }, CancellationToken.None);
+
+        var body = JsonNode.Parse(BodyOf(handler.Seen.Single()))!.AsObject();
+        Assert.AreEqual("low", (string?)body["reasoning_effort"]);
+        Assert.IsFalse(body.ContainsKey("think"));
+        Assert.AreEqual(384, (int?)body["max_tokens"], "The output cap is untouched by the reasoning setting.");
+    }
+
+    [TestMethod]
+    public async Task ARefusedLowReasoningSettingIsAlsoAClassifiedConfigurationErrorAndIsNotRetried()
+    {
+        var (client, handler) = Make(_ => Task.FromResult(Json(HttpStatusCode.BadRequest,
+            "{\"error\":{\"message\":\"Invalid parameter: reasoning_effort is not accepted by model local/primary\"}}")));
+
+        var response = await client.CompleteAsync(
+            Connection(), Request() with { Reasoning = FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Low }, CancellationToken.None);
+
+        Assert.AreEqual(ModelFailureKind.UnsupportedCapability, response.Failure);
+        Assert.AreEqual(1, handler.Seen.Count);
+    }
+
+    [TestMethod]
     public async Task ARefusedReasoningSettingIsAClassifiedConfigurationErrorAndIsNotRetried()
     {
         var (client, handler) = Make(_ => Task.FromResult(Json(HttpStatusCode.BadRequest,

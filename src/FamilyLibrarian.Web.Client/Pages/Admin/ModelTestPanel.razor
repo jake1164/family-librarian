@@ -49,6 +49,7 @@
                                HelperText="Test-only; production roles have their own setting.">
                         <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
                         <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
+                        <MudSelectItem Value="@("Low")">Ask for low reasoning</MudSelectItem>
                     </MudSelect>
                 </MudStack>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save test settings</MudButton>
@@ -100,6 +101,7 @@
                     <MudSelect T="string" @bind-Value="runReasoning" Label="Reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;" Clearable="true">
                         <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
                         <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
+                        <MudSelectItem Value="@("Low")">Ask for low reasoning</MudSelectItem>
                     </MudSelect>
                     <MudNumericField Immediate="true" T="int?" @bind-Value="runTimeout" Label="Timeout (seconds)" Min="5" Max="120" Variant="Variant.Outlined" />
                     <MudNumericField Immediate="true" T="int?" @bind-Value="runMaxTokens" Label="Maximum output tokens" Min="16" Max="4096" Variant="Variant.Outlined" />
@@ -122,7 +124,7 @@
                     <MudText Typo="Typo.subtitle1">
                         @report.ConfiguredModel@(report.IsCloud ? " (cloud)" : "") ·
                         @report.TotalCalls call(s) · @(report.TotalTokens?.ToString() ?? "no") token usage reported · @report.TotalLatencyMilliseconds ms ·
-                        reasoning: @(report.Reasoning == "Disabled" ? "asked off" : "provider default") · output limit @report.MaxOutputTokens
+                        reasoning: @(report.Reasoning == "Disabled" ? "asked off" : report.Reasoning == "Low" ? "asked low" : "provider default") · output limit @report.MaxOutputTokens
                     </MudText>
                     <MudTable Items="report.Results" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm">
                         <HeaderContent>
@@ -370,14 +372,15 @@
             yield return tools switch { "Passed" => "Calls a declared tool (nothing is ever executed).", "NotSupported" => "No tool calling observed.", _ => "Tool calling could not be observed." };
         }
 
-        if (report.Reasoning == "Disabled")
+        if (report.Reasoning is "Disabled" or "Low")
         {
+            var requested = report.Reasoning == "Low" ? "low reasoning" : "no reasoning";
             var rejected = report.Results.Any(result => result.Status == "Error" && result.Detail.Contains("setting", StringComparison.OrdinalIgnoreCase));
             yield return rejected
-                ? "Rejected the 'no reasoning' request: leave reasoning on 'Provider default' for this model."
+                ? $"Rejected the '{requested}' request: try another reasoning setting for this model."
                 : report.Results.Any(result => result.Calls > 0 && result.Status != "Error")
-                    ? "Accepted the 'no reasoning' request."
-                    : "The 'no reasoning' request could not be observed.";
+                    ? $"Accepted the '{requested}' request."
+                    : $"The '{requested}' request could not be observed.";
         }
     }
 }

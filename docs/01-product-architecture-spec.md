@@ -1242,6 +1242,20 @@ bounded line with the evidence ids, polarities and reason codes the model could
 cite. It never logs prompts or a reply to an exchange that carried book text,
 and it is intended to be removed once reply quality is resolved.
 
+To keep that allowance for files that need it, the advisory assessment of a
+multi-track audiobook runs a few times per bundle (three, or six when a track
+has concern evidence) rather than once per track, and the hold review is not
+asked at all when none of its evidence could ground a hold. Advisory roles
+(file assessment, candidate assessment) leave one concurrent call slot free so a
+decision-bearing call is not turned away behind them. A model that refuses a
+role's setting three times in a row (for example the "no reasoning" request) is
+paused for that role and setting for fifteen minutes without using any of the
+allowance; changing the setting tries it again at once. Each role's reasoning
+setting is Provider default, Ask for no reasoning, or Ask for low reasoning
+(for models that cannot switch reasoning off). A search-guidance reply that
+mixes already-tried names with new ones keeps the new names; a reply with
+nothing new is still rejected.
+
 ---
 
 ## 17. Competitive / Reference Projects

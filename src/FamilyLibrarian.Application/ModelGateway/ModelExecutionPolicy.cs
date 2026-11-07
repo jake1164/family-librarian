@@ -124,11 +124,13 @@ public sealed class ModelExecutionGate
     public SemaphoreSlim Reservation { get; } = new(1, 1);
 
     /// <summary>A slot while a call is in flight, or null if the installation (or this person) is already at its limit.</summary>
-    public IDisposable? TryEnter(Guid? userId, bool limitPerUser, int maxConcurrent)
+    public IDisposable? TryEnter(Guid? userId, bool limitPerUser, int maxConcurrent, bool bulk = false)
     {
+        // Bulk advisory work leaves one slot free for decision-bearing calls, unless that would leave it no slot at all.
+        var limit = bulk && maxConcurrent > 1 ? maxConcurrent - 1 : maxConcurrent;
         lock (sync)
         {
-            if (active >= maxConcurrent || (limitPerUser && userId is { } id && perUser.GetValueOrDefault(id) >= 1))
+            if (active >= limit || (limitPerUser && userId is { } id && perUser.GetValueOrDefault(id) >= 1))
             {
                 return null;
             }
@@ -179,6 +181,13 @@ public sealed class ModelCircuitBreaker
     public const int FailureThreshold = 5;
     public static readonly TimeSpan OpenFor = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// A model that refuses a setting (for example "no reasoning") refuses it every time, so a configuration error is paused sooner
+    /// and for much longer than a flaky provider: three refusals, fifteen minutes, then one trial.
+    /// </summary>
+    public const int CapabilityFailureThreshold = 3;
+    public static readonly TimeSpan CapabilityOpenFor = TimeSpan.FromMinutes(15);
+
     private readonly object sync = new();
     private readonly Dictionary<string, State> states = [];
 
@@ -221,7 +230,7 @@ public sealed class ModelCircuitBreaker
         }
     }
 
-    public void RecordFailure(string key, DateTimeOffset now)
+    public void RecordFailure(string key, DateTimeOffset now, int threshold = FailureThreshold, TimeSpan? openFor = null)
     {
         lock (sync)
         {
@@ -231,9 +240,9 @@ public sealed class ModelCircuitBreaker
             }
 
             state.Failures++;
-            if (state.Failures >= FailureThreshold || state.TrialInFlight)
+            if (state.Failures >= threshold || state.TrialInFlight)
             {
-                state.OpenUntil = now + OpenFor;
+                state.OpenUntil = now + (openFor ?? OpenFor);
             }
 
             state.TrialInFlight = false;
@@ -312,14 +321,24 @@ public sealed class ModelExecutionPolicy(
 
         var maxOutputTokens = Math.Min(request.MaxOutputTokens ?? limits.MaxOutputTokens, limits.MaxOutputTokens);
         var breakerKey = $"{resolution.Endpoint}|{resolution.Model}";
+        // A model setting the provider refuses is scoped to the role and reasoning mode, so a fix applies immediately and one role's
+        // unsupported request never pauses the others.
+        var capabilityKey = $"{breakerKey}|{request.Role}|{resolution.Reasoning}";
+        if (!breaker.TryAllow(capabilityKey, clock.UtcNow))
+        {
+            return Refused<T>(ModelCallOutcome.CircuitOpen, "The model refused this role's settings repeatedly; calls are paused for a while. Check the model's reasoning setting.");
+        }
+
         if (!breaker.TryAllow(breakerKey, clock.UtcNow))
         {
+            breaker.RecordNeutral(capabilityKey);
             return Refused<T>(ModelCallOutcome.CircuitOpen, "The model has been failing; calls are paused briefly.");
         }
 
-        using var slot = gate.TryEnter(request.UserId, limitPerUser: interactive, limits.MaxConcurrentCalls);
+        using var slot = gate.TryEnter(request.UserId, limitPerUser: interactive, limits.MaxConcurrentCalls, bulk: !interactive && ModelExecutionLimits.IsBulkAdvisoryRole(request.Role));
         if (slot is null)
         {
+            breaker.RecordNeutral(capabilityKey);
             breaker.RecordNeutral(breakerKey);
             return Refused<T>(ModelCallOutcome.ConcurrencyLimited, "Too many model calls are already running.");
         }
@@ -333,6 +352,7 @@ public sealed class ModelExecutionPolicy(
         {
             if (await TryReserveAsync(request, resolution, limits, reservation, estimate, cancellationToken) is { } refusal)
             {
+                breaker.RecordNeutral(capabilityKey);
                 breaker.RecordNeutral(breakerKey);
                 return refusal.Outcome == ModelCallOutcome.BudgetExhausted
                     ? Refused<T>(refusal.Outcome, refusal.Detail)
@@ -342,6 +362,7 @@ public sealed class ModelExecutionPolicy(
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // Fail closed: if usage cannot be recorded, no call is made.
+            breaker.RecordNeutral(capabilityKey);
             breaker.RecordNeutral(breakerKey);
             return Refused<T>(ModelCallOutcome.PolicyUnavailable, "Model usage could not be recorded, so the call was not made.");
         }
@@ -356,6 +377,7 @@ public sealed class ModelExecutionPolicy(
         catch (OperationCanceledException)
         {
             await CompleteQuietlyAsync(reservation.Id, ModelCallOutcome.TransportFailure, 0, null, ModelFailureReason.Cancelled);
+            breaker.RecordNeutral(capabilityKey);
             breaker.RecordNeutral(breakerKey);
             throw;
         }
@@ -364,7 +386,7 @@ public sealed class ModelExecutionPolicy(
             response = ModelResponse.Failed(ModelFailureKind.Unreachable, "The model client failed unexpectedly.", 0);
         }
 
-        var execution = Interpret(response, resolution, parse, maxOutputTokens, breaker, breakerKey, clock.UtcNow);
+        var execution = Interpret(response, resolution, parse, maxOutputTokens, breaker, breakerKey, capabilityKey, clock.UtcNow);
         CaptureRejectedReply(request, response, execution);
         await CompleteQuietlyAsync(reservation.Id, execution.Outcome, response.LatencyMilliseconds, response.Usage, execution.FailureReason);
         return execution with { UsageRecordId = reservation.Id };
@@ -463,7 +485,7 @@ public sealed class ModelExecutionPolicy(
 
     private static ModelExecution<T> Interpret<T>(
         ModelResponse response, ModelRoleResolution resolution, Func<string, ModelParseResult<T>> parse, int maxOutputTokens,
-        ModelCircuitBreaker breaker, string breakerKey, DateTimeOffset now)
+        ModelCircuitBreaker breaker, string breakerKey, string capabilityKey, DateTimeOffset now)
     {
         ModelExecution<T> Result(ModelCallOutcome outcome, T? value = default, string? detail = null, ModelFailureReason? reason = null) =>
             new(outcome, value, detail, response.Usage, response.LatencyMilliseconds, resolution.Model, resolution.IsCloud, reason);
@@ -486,6 +508,15 @@ public sealed class ModelExecutionPolicy(
                 breaker.RecordFailure(breakerKey, now);
             }
 
+            if (response.Failure == ModelFailureKind.UnsupportedCapability)
+            {
+                breaker.RecordFailure(capabilityKey, now, ModelCircuitBreaker.CapabilityFailureThreshold, ModelCircuitBreaker.CapabilityOpenFor);
+            }
+            else
+            {
+                breaker.RecordNeutral(capabilityKey);
+            }
+
             return Result(outcome, detail: response.FailureDetail, reason: response.Failure switch
             {
                 ModelFailureKind.Unreachable => ModelFailureReason.ProviderUnreachable,
@@ -499,6 +530,7 @@ public sealed class ModelExecutionPolicy(
         }
 
         breaker.RecordSuccess(breakerKey);
+        breaker.RecordSuccess(capabilityKey);
 
         // The provider said it stopped at the output cap. Whatever text exists is cut off, so it is never parsed or accepted:
         // strict validation is not relaxed because a model ran out of tokens.

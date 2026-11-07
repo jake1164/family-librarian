@@ -76,6 +76,48 @@ public sealed class SearchGuidanceParserTests
                 "The observed lab rejection must produce a safe specific diagnostic code.");
     }
 
+    private static string Many(params (string Reason, string Value, string Id)[] items) =>
+        JsonSerializer.Serialize(new { schema = "search-guidance/1", give_up = false,
+            suggestions = items.Select(i => new { reason = i.Reason, value = i.Value, evidence_ids = new[] { i.Id }, note = "A search proposal." }) });
+
+    [TestMethod]
+    public void ARepeatedSuggestionIsDroppedAndTheNewOnesAreKept()
+    {
+        // Lab finding: the model mixed already-tried names with new ones and the whole reply was thrown away.
+        var reply = Many(("author_variant", "MARA QUILL", "req-author"), ("alternate_published_title", "The Long Journey", "req-title"),
+            ("series_naming", "THE LONG JOURNEY", "req-title"));
+        var parsed = SemanticAssessmentParser.ParseSearchGuidance(reply, Requested, SuppliedIds, []);
+        Assert.IsTrue(parsed.IsValid, parsed.Detail);
+        Assert.AreEqual("The Long Journey", parsed.Value!.Suggestions.Single().Value);
+    }
+
+    [TestMethod]
+    public void ASuggestionMatchingAnAlreadyTriedKeyIsDroppedWhileAnotherIsKept()
+    {
+        var reply = Many(("alternate_published_title", "The Long Journey", "req-title"), ("series_naming", "The Lantern Cycle", "req-title"));
+        var parsed = SemanticAssessmentParser.ParseSearchGuidance(reply, Requested, SuppliedIds, ["alternate_published_title:THE LONG JOURNEY"]);
+        Assert.IsTrue(parsed.IsValid, parsed.Detail);
+        Assert.AreEqual("The Lantern Cycle", parsed.Value!.Suggestions.Single().Value);
+    }
+
+    [TestMethod]
+    public void AReplyWhoseEverySuggestionRepeatsIsStillRejectedAsRepeatedSearch()
+    {
+        var reply = Many(("author_variant", "mara quill", "req-author"), ("alternate_published_title", "The Lantern Road", "req-title"));
+        var parsed = SemanticAssessmentParser.ParseSearchGuidance(reply, Requested, SuppliedIds, []);
+        Assert.IsFalse(parsed.IsValid);
+        Assert.AreEqual(ModelFailureReason.RepeatedSearch, parsed.FailureReason);
+    }
+
+    [TestMethod]
+    public void AnInvalidSuggestionStillRejectsTheWholeReplyEvenBesideANewOne()
+    {
+        var reply = Many(("alternate_published_title", "The Long Journey", "req-title"), ("alternate_published_title", "https://example.test", "req-title"));
+        Assert.IsFalse(SemanticAssessmentParser.ParseSearchGuidance(reply, Requested, SuppliedIds, []).IsValid);
+        var unknownEvidence = Many(("alternate_published_title", "The Long Journey", "req-title"), ("series_naming", "The Lantern Cycle", "r99"));
+        Assert.IsFalse(SemanticAssessmentParser.ParseSearchGuidance(unknownEvidence, Requested, SuppliedIds, []).IsValid);
+    }
+
     [TestMethod]
     public void BoundsValueAndEntireReply()
     {

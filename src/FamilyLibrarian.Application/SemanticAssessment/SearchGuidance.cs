@@ -45,6 +45,7 @@ public static partial class SemanticAssessmentParser
                 return RejectGuidance("suggestions must contain 1-5 items, or 0 with give_up");
             var suggestions = new List<SearchGuidanceSuggestion>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
+            var repeated = 0;
             foreach (var item in array.EnumerateArray())
             {
                 if (item.ValueKind != JsonValueKind.Object || !HasExactly(item, SuggestionProperties))
@@ -54,7 +55,14 @@ public static partial class SemanticAssessmentParser
                 if (!IsString(item.GetProperty("value"), out var value) || !IsSearchValue(value))
                     return RejectGuidance("value must be 1-120 plain bibliographic characters without links", ModelFailureReason.InvalidSearch);
                 var normalized = SearchVariantPlanner.Normalize(value);
-                if (IsNotNew(normalized, requested, alreadyTried) || !seen.Add(normalized)) return RejectGuidance("suggestion is not new", ModelFailureReason.RepeatedSearch);
+                // A name the search already used (or a duplicate inside this reply) adds nothing: drop it and keep the rest, rather than
+                // discarding a reply that also contains genuinely new names. Every other check still rejects the whole reply.
+                if (IsNotNew(normalized, requested, alreadyTried) || !seen.Add(normalized))
+                {
+                    repeated++;
+                    continue;
+                }
+
                 var ids = item.GetProperty("evidence_ids");
                 if (ids.ValueKind != JsonValueKind.Array || ids.GetArrayLength() > MaxEvidenceIdsPerClaim)
                     return RejectGuidance("evidence_ids must contain at most 6 supplied ids");
@@ -68,6 +76,8 @@ public static partial class SemanticAssessmentParser
                 if (!IsPlainNote(item.GetProperty("note"), out var note, out var error)) return RejectGuidance(error!);
                 suggestions.Add(new(reason, value.Trim(), cited.ToArray(), note));
             }
+            // Nothing new at all is the failure the lab saw: still rejected, so a reply of pure repeats is never counted as usable.
+            if (suggestions.Count == 0 && repeated > 0 && !giveUp) return RejectGuidance("suggestion is not new", ModelFailureReason.RepeatedSearch);
             return ModelParse.Ok(new SearchGuidance(giveUp, suggestions));
         }
     }

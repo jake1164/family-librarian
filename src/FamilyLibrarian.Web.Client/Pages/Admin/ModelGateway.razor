@@ -186,6 +186,7 @@
                                     <MudSelect T="string" @bind-Value="role.Reasoning" Label="Model reasoning" Variant="Variant.Outlined" Style="min-width: 14rem;" Disabled="@AiOff">
                                         <MudSelectItem Value="@("Inherit")">Provider default</MudSelectItem>
                                         <MudSelectItem Value="@("Disabled")">Ask for no reasoning</MudSelectItem>
+                        <MudSelectItem Value="@("Low")">Ask for low reasoning</MudSelectItem>
                                     </MudSelect>
                                 </MudStack>
                             </MudStack>

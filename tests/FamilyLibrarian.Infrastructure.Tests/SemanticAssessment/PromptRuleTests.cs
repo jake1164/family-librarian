@@ -24,6 +24,9 @@ public sealed class PromptRuleTests
         var prompt = CandidateTriageEvidence.SystemPrompt;
         StringAssert.Contains(prompt, "Never prefer CURRENT_PICK");
         StringAssert.Contains(prompt, "If CURRENT_PICK is tied or best, answer keep");
+        StringAssert.Contains(prompt, "veto and prefer apply only to a candidate named on the CURRENT_PICK line (veto) or the TIED line (prefer)");
+        StringAssert.Contains(prompt, "for any other candidate answer keep");
+        StringAssert.Contains(prompt, "keep and uncertain cite at most 6 evidence ids in total");
     }
 
     [TestMethod]

@@ -156,10 +156,11 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
             ["temperature"] = 0,
             ["stream"] = false
         };
-        if (request.Reasoning == ModelReasoningMode.Disabled)
+        if (request.Reasoning != ModelReasoningMode.Inherit)
         {
-            // The only reasoning parameter ever sent, and only on an explicit opt-in. Verified against LiteLLM with desktop/qwen3.5:9b.
-            body["reasoning_effort"] = "none";
+            // The only reasoning parameter ever sent, and only on an explicit opt-in. "none" is verified against LiteLLM with
+            // desktop/qwen3.5:9b; "low" is for models such as gpt-oss that refuse "none".
+            body["reasoning_effort"] = request.Reasoning == ModelReasoningMode.Low ? "low" : "none";
         }
 
         if (request.JsonObjectOutput)
@@ -269,9 +270,9 @@ public sealed class OpenAiCompatibleModelClient(IHttpClientFactory httpClientFac
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => ModelFailureKind.Unauthorized,
             HttpStatusCode.NotFound => ModelFailureKind.ModelUnavailable,
             HttpStatusCode.TooManyRequests => ModelFailureKind.RateLimited,
-            // We asked for no reasoning and the request was refused over it: a configuration problem for the administrator to fix,
+            // We asked for a reasoning setting and the request was refused over it: a configuration problem for the administrator to fix,
             // never a reason to quietly resend the request without the setting.
-            HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity when reasoning == ModelReasoningMode.Disabled && MentionsReasoning(message) => ModelFailureKind.UnsupportedCapability,
+            HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity when reasoning != ModelReasoningMode.Inherit && MentionsReasoning(message) => ModelFailureKind.UnsupportedCapability,
             _ when mentionsModel => ModelFailureKind.ModelUnavailable,
             HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity when MentionsUnsupportedCapability(message) => ModelFailureKind.UnsupportedCapability,
             _ when (int)status >= 500 => ModelFailureKind.ServerError,
