@@ -23,7 +23,8 @@ public static class SearchGuidanceEvidence
         "\"evidence_ids\":[\"req-title\"],\"note\":\"A short plain explanation.\"}]}. " +
         "Reasons: original_language_title, alternate_published_title, series_naming, contained_in, author_variant. " +
         "Supply 1-5 suggestions, or give_up true with zero suggestions. give_up ends extra searches this cycle only. " +
-        "Values must be new: not the requested title/author or an ALREADY_TRIED key. Values are 1-120 characters, " +
+        "Values must be new: not the requested title/author or an ALREADY_TRIED key. A different case, order or punctuation of a " +
+        "requested or ALREADY_TRIED name is not new; if no genuinely new name exists, set give_up true. Values are 1-120 characters, " +
         "letters/digits/space and '-:,.&!? only, no URLs. Cite at most 6 supplied r-number or req- ids; contained_in " +
         "must cite a result id. Notes must be 1-200 plain characters without markup or links. " +
         "New names are search proposals only; every result is independently verified against REQUESTED.";

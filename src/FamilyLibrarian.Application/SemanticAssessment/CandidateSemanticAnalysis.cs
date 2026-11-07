@@ -96,7 +96,9 @@ public static class CandidateSemanticEvidence
         "Rules: 1 to 5 claims. evidence_ids may only contain ids that appear in EVIDENCE. Every claim except insufficient_information " +
         "must cite at least one id. supports_same_work must cite a positive or weak item; contradicts_same_work must cite a negative " +
         "item. verdict consistent needs a supports_same_work claim and no contradicts_same_work claim; verdict inconsistent needs a " +
-        "contradicts_same_work claim. If the evidence does not settle it, use verdict uncertain. Notes are plain text under 200 " +
+        "contradicts_same_work claim. If the evidence does not settle it, use verdict uncertain. A missing, unknown or weak match is " +
+        "not a contradiction: when no item is negative, never use contradicts_same_work or the verdict inconsistent; use verdict " +
+        "uncertain with insufficient_information or needs_review. Notes are plain text under 200 " +
         "characters with no links or markup.";
 
     private static void Line(StringBuilder builder, string label, string? value)
@@ -128,6 +130,9 @@ public enum SemanticAnalysisResult
 
     /// <summary>The policy declined to call a model (role off, budget, circuit...). Not an attempt.</summary>
     Refused,
+
+    /// <summary>The file belongs to a multi-track bundle that has already had its share of assessments; nothing was sent.</summary>
+    BundleSampled,
 
     /// <summary>A model was asked and the outcome, good or bad, was stored.</summary>
     Recorded,

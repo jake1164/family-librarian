@@ -20,12 +20,13 @@ public sealed class ArtifactSemanticAnalyzerTests
     private static readonly DateTimeOffset Now = new(2026, 10, 12, 12, 0, 0, TimeSpan.Zero);
     private static readonly Guid WorkId = Guid.NewGuid();
 
-    private sealed class FakeAssets(MediaAsset? asset) : ISecurityEvaluationRepository
+    private sealed class FakeAssets(MediaAsset? asset, IReadOnlyList<MediaAsset>? all = null) : ISecurityEvaluationRepository
     {
         public Task<MediaAsset?> FindAssetAsync(Guid assetId, CancellationToken cancellationToken) =>
-            Task.FromResult(asset is not null && asset.Id == assetId ? asset : null);
+            Task.FromResult(all is not null ? all.FirstOrDefault(a => a.Id == assetId) : asset is not null && asset.Id == assetId ? asset : null);
 
-        public Task<IReadOnlyList<MediaAsset>> FindAssetsByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<IReadOnlyList<MediaAsset>> FindAssetsByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
+            all is null ? throw new NotSupportedException() : Task.FromResult<IReadOnlyList<MediaAsset>>(all.Where(a => a.BundleId == bundleId).ToArray());
 
         public Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -72,7 +73,8 @@ public sealed class ArtifactSemanticAnalyzerTests
     {
         public Rig(
             MediaAsset asset, IReadOnlyList<ArtifactEvidence> evidence, Func<ModelConnection, ModelRequest, ModelResponse> handler,
-            bool cloud = false, bool excerpts = false, bool cloudAllowance = true, bool roleEnabled = true)
+            bool cloud = false, bool excerpts = false, bool cloudAllowance = true, bool roleEnabled = true,
+            IReadOnlyList<MediaAsset>? assets = null)
         {
             Asset = asset;
             Model = new ScriptedModel(handler);
@@ -91,7 +93,7 @@ public sealed class ArtifactSemanticAnalyzerTests
             var resolver = new ModelRoleResolver(new FakeGatewayStore { Settings = settings }, new PassThroughProtector());
             Policy = new ModelExecutionPolicy(resolver, Model, Ledger, new ModelExecutionGate(), new ModelCircuitBreaker(), new MutableClock(Now));
             Analyzer = new ArtifactSemanticAnalyzer(
-                Policy, resolver, Store, new FakeAssets(asset), new FakeEvidence(evidence), new FakeWorks(), new MutableClock(Now));
+                Policy, resolver, Store, new FakeAssets(asset, assets), new FakeEvidence(evidence), new FakeWorks(), new MutableClock(Now));
         }
 
         public MediaAsset Asset { get; }
@@ -105,6 +107,64 @@ public sealed class ArtifactSemanticAnalyzerTests
         public ModelExecutionPolicy Policy { get; }
 
         public ArtifactSemanticAnalyzer Analyzer { get; }
+    }
+
+    private static MediaAsset Track(Guid bundleId, int sequence, int count) => new(
+        WorkId, null, RequestMediaType.Audiobook, "mp3", $"track{sequence}.mp3", $"stored-{bundleId:N}-{sequence}", 1000, $"sha{sequence}",
+        "audio/mpeg", Guid.NewGuid(), null, Now, bundleId, sequence, count);
+
+    private static IReadOnlyList<ArtifactEvidence> Unremarkable(MediaAsset asset) =>
+    [
+        Evidence(asset, "ev-title", EvidenceDimension.IdentityCorroboration, "artifact.identity.title_unknown", EvidencePolarity.Unknown, $"track {asset.BundleSequence ?? 0} {asset.Id:N}"),
+        Evidence(asset, "ev-scan", EvidenceDimension.Security, "artifact.security.clean", EvidencePolarity.Positive, null, ArtifactEvidenceRecordKinds.SecurityEvaluation)
+    ];
+
+    private static ArtifactEvidence[] WithConcern(MediaAsset asset) =>
+        Unremarkable(asset).Append(Evidence(asset, "ev-duration", EvidenceDimension.AudioTechnical, "artifact.audio.short", EvidencePolarity.Condition, $"{asset.Id:N}")).ToArray();
+
+    [TestMethod]
+    public async Task ABundleOfUnremarkableTracksIsAssessedOnlyAFewTimesNotOncePerTrack()
+    {
+        // Live lab finding: 88 MP3 tracks from two audiobooks used the whole file-review share; 99 of 100 verdicts said Consistent.
+        var bundle = Guid.NewGuid();
+        var tracks = Enumerable.Range(1, 30).Select(i => Track(bundle, i, 30)).ToArray();
+        var rig = new Rig(tracks[0], tracks.SelectMany(Unremarkable).ToArray(), (_, _) => ScriptedModel.Ok(Answer()), assets: tracks);
+
+        var results = new List<SemanticAnalysisResult>();
+        foreach (var track in tracks) results.Add((await rig.Analyzer.AnalyzeAsync(track.Id, CancellationToken.None)).Result);
+
+        Assert.AreEqual(ArtifactSemanticAnalyzer.MaxAssessmentsPerBundle, rig.Model.Calls.Count);
+        Assert.AreEqual(ArtifactSemanticAnalyzer.MaxAssessmentsPerBundle, results.Count(r => r == SemanticAnalysisResult.Recorded));
+        Assert.AreEqual(30 - ArtifactSemanticAnalyzer.MaxAssessmentsPerBundle, results.Count(r => r == SemanticAnalysisResult.BundleSampled));
+    }
+
+    [TestMethod]
+    public async Task TracksWithConcernEvidenceAreStillReviewedPastTheOrdinaryCapButNotWithoutBound()
+    {
+        var bundle = Guid.NewGuid();
+        var tracks = Enumerable.Range(1, 30).Select(i => Track(bundle, i, 30)).ToArray();
+        var evidence = tracks.SelectMany((t, i) => i < ArtifactSemanticAnalyzer.MaxAssessmentsPerBundle ? Unremarkable(t) : WithConcern(t)).ToArray();
+        var rig = new Rig(tracks[0], evidence, (_, _) => ScriptedModel.Ok(Answer()), assets: tracks);
+
+        foreach (var track in tracks) await rig.Analyzer.AnalyzeAsync(track.Id, CancellationToken.None);
+
+        Assert.AreEqual(ArtifactSemanticAnalyzer.MaxAssessmentsPerBundleWithConcerns, rig.Model.Calls.Count);
+        Assert.IsGreaterThan(ArtifactSemanticAnalyzer.MaxAssessmentsPerBundle, rig.Model.Calls.Count);
+    }
+
+    [TestMethod]
+    public async Task EachBundleHasItsOwnAllowanceAndSingleFilesAreNeverSampled()
+    {
+        var first = Guid.NewGuid(); var second = Guid.NewGuid();
+        var a = Enumerable.Range(1, 8).Select(i => Track(first, i, 8)).ToArray();
+        var b = Enumerable.Range(1, 8).Select(i => Track(second, i, 8)).ToArray();
+        var single = NewAsset();
+        MediaAsset[] all = [.. a, .. b, single];
+        var rig = new Rig(single, all.SelectMany(Unremarkable).ToArray(), (_, _) => ScriptedModel.Ok(Answer()), assets: all);
+
+        foreach (var asset in all) await rig.Analyzer.AnalyzeAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(ArtifactSemanticAnalyzer.MaxAssessmentsPerBundle * 2 + 1, rig.Model.Calls.Count);
     }
 
     private static string Answer(string kind = "needs_review", string evidenceId = "idv.ev-title", string verdict = "uncertain") =>

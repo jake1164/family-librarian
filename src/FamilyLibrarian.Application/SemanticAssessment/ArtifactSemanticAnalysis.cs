@@ -33,6 +33,11 @@ public static class ArtifactSemanticEvidence
         evidence.Any(item => UnsettledDimensions.Contains(item.Dimension) &&
             item.Polarity is EvidencePolarity.Condition or EvidencePolarity.Negative or EvidencePolarity.Unknown);
 
+    /// <summary>Whether any model-visible evidence is Negative, Weak or Condition. Profile findings are not shown to the reviewer.</summary>
+    public static bool HasConcern(IReadOnlyList<ArtifactEvidence> evidence) =>
+        evidence.Any(item => item.Dimension != EvidenceDimension.Profile &&
+            item.Polarity is EvidencePolarity.Negative or EvidencePolarity.Weak or EvidencePolarity.Condition);
+
     /// <summary>The findings as citable evidence. Ids are unique within the prompt and name the pass that recorded them.</summary>
     public static IReadOnlyList<EvidenceFinding> ToFindings(IReadOnlyList<ArtifactEvidence> evidence, bool includeDetails)
     {
@@ -151,6 +156,27 @@ public sealed class ArtifactSemanticAnalyzer(
 {
     private const int MaxOutputTokens = 400;
 
+    /// <summary>
+    /// A multi-track bundle is assessed a few times, not once per track: an audiobook can have 80 tracks, and in the lab 99 of 100
+    /// track verdicts said Consistent while using the whole file-review share. Tracks with something to look at may go further.
+    /// </summary>
+    public const int MaxAssessmentsPerBundle = 3;
+
+    public const int MaxAssessmentsPerBundleWithConcerns = 6;
+
+    /// <summary>Whether the sibling tracks have already used this bundle's allowance. Findings are counted, so a restart cannot reset it.</summary>
+    private async Task<bool> BundleAllowanceUsedAsync(
+        MediaAsset asset, Guid bundleId, IReadOnlyList<ArtifactEvidence> evidence, CancellationToken cancellationToken)
+    {
+        var siblings = (await assets.FindAssetsByBundleIdAsync(bundleId, cancellationToken))
+            .Where(sibling => sibling.Id != asset.Id).Select(sibling => sibling.Id.ToString("N")).ToArray();
+        var assessed = siblings.Length == 0
+            ? 0
+            : (await store.FindLatestForSubjectsAsync(SemanticSubjectKind.Artifact, siblings, cancellationToken)).Count;
+        var allowance = ArtifactSemanticEvidence.HasConcern(evidence) ? MaxAssessmentsPerBundleWithConcerns : MaxAssessmentsPerBundle;
+        return assessed >= allowance;
+    }
+
     public async Task<SemanticAnalysisReport> AnalyzeAsync(Guid assetId, CancellationToken cancellationToken)
     {
         try
@@ -165,6 +191,11 @@ public sealed class ArtifactSemanticAnalyzer(
             if (!latest.TryGetValue(assetId, out var evidence) || !ArtifactSemanticEvidence.IsEligible(evidence))
             {
                 return new(SemanticAnalysisResult.NotEligible);
+            }
+
+            if (asset.BundleId is { } bundleId && await BundleAllowanceUsedAsync(asset, bundleId, evidence, cancellationToken))
+            {
+                return new(SemanticAnalysisResult.BundleSampled);
             }
 
             // Decide what may be shown before building the prompt. The execution policy enforces the same rule again.

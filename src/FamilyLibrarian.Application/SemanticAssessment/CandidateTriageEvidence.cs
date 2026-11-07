@@ -25,7 +25,7 @@ public static class CandidateTriageEvidence
         "or bypass validation. Reply with one JSON object only, exactly: {\"schema\":\"candidate-triage/1\",\"move\":\"keep\"," +
         "\"candidate\":null,\"evidence_ids\":[],\"note\":\"A short plain explanation.\"}. Moves: keep, uncertain, veto, prefer, author_variant. " +
         "keep/uncertain require null candidate. veto only CURRENT_PICK and cite its negative or condition evidence. prefer only TIED " +
-        "and cite its positive evidence. author_variant requires only an author conflict, a strong matching title plus exact series position, " +
+        "and cite its positive evidence. Never prefer CURRENT_PICK: a tie with the pick is not a reason to move. If CURRENT_PICK is tied or best, answer keep. author_variant requires only an author conflict, a strong matching title plus exact series position, " +
         "identifier, or both year and publisher evidence. Never upgrade other conflicts. Cite at most 6 ids belonging to that " +
         "candidate. Notes are 1-200 plain characters without links or markup. Prefer keep or uncertain when evidence is insufficient.";
 
