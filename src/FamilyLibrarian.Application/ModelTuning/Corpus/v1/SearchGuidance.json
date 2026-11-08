@@ -1586,10 +1586,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "original_language_title: one explicit hint; visible bibliographic label provides The Amber Atrium.",
+    "rationale": "original_language_title: one explicit hint; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -1690,6 +1690,21 @@
               "value": "The Amber Atrium"
             }
           ]
+        },
+        {
+          "giveUp": false,
+          "allowedSuggestions": [
+            {
+              "reason": "alternate_published_title",
+              "value": "The Amber Atrium"
+            }
+          ],
+          "requiredSuggestions": [
+            {
+              "reason": "alternate_published_title",
+              "value": "The Amber Atrium"
+            }
+          ]
         }
       ],
       "requiredEvidenceAlternatives": [],
@@ -1698,7 +1713,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:e3e5f3d87b23dae527f42b963aab77b5027cb62bc516199f54bc0c6a2d0b211e",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
     ]
   },
   {
@@ -1708,10 +1724,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "original_language_title: irrelevant result before hint; visible bibliographic label provides The Amber Atrium.",
+    "rationale": "original_language_title: irrelevant result before hint; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -1865,6 +1881,21 @@
               "value": "The Amber Atrium"
             }
           ]
+        },
+        {
+          "giveUp": false,
+          "allowedSuggestions": [
+            {
+              "reason": "alternate_published_title",
+              "value": "The Amber Atrium"
+            }
+          ],
+          "requiredSuggestions": [
+            {
+              "reason": "alternate_published_title",
+              "value": "The Amber Atrium"
+            }
+          ]
         }
       ],
       "requiredEvidenceAlternatives": [],
@@ -1873,7 +1904,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:d7ec64ba17b72d509a62ee89ce542981347f8fa2aa9da818b0a9dbbdd44d6b90",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}"
     ]
   },
   {
@@ -1883,10 +1915,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "original_language_title: hint with unknown language; visible bibliographic label provides The Amber Atrium.",
+    "rationale": "original_language_title: hint with unknown language; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -1987,6 +2019,21 @@
               "value": "The Amber Atrium"
             }
           ]
+        },
+        {
+          "giveUp": false,
+          "allowedSuggestions": [
+            {
+              "reason": "alternate_published_title",
+              "value": "The Amber Atrium"
+            }
+          ],
+          "requiredSuggestions": [
+            {
+              "reason": "alternate_published_title",
+              "value": "The Amber Atrium"
+            }
+          ]
         }
       ],
       "requiredEvidenceAlternatives": [],
@@ -1995,7 +2042,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:e4e834fdee84f2a68271af256d63f3885b2acb53465cc9cd8e00be86c70d4443",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
     ]
   },
   {
@@ -2005,10 +2053,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "original_language_title: hint amid fifteen results; visible bibliographic label provides The Amber Atrium.",
+    "rationale": "original_language_title: hint amid fifteen results; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -2851,6 +2899,21 @@
               "value": "The Amber Atrium"
             }
           ]
+        },
+        {
+          "giveUp": false,
+          "allowedSuggestions": [
+            {
+              "reason": "alternate_published_title",
+              "value": "The Amber Atrium"
+            }
+          ],
+          "requiredSuggestions": [
+            {
+              "reason": "alternate_published_title",
+              "value": "The Amber Atrium"
+            }
+          ]
         }
       ],
       "requiredEvidenceAlternatives": [],
@@ -2859,7 +2922,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:42837348dd49f601ec0e853e3bcfa4985c40318568f92ddaa822317dd0c35c7e",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}"
     ]
   },
   {

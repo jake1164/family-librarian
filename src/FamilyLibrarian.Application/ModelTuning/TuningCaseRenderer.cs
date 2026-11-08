@@ -49,7 +49,7 @@ public static class TuningCaseRenderer
             ArtifactAssessmentInput assessment => Assessment(assessment, coverage),
             ArtifactHoldInput hold => Hold(hold, syntheticSupplement, coverage),
             CandidateAssessmentInput candidate => Candidate(candidate, coverage),
-            CandidateTriageCaseInput triage => Triage(triage),
+            CandidateTriageCaseInput triage => Triage(triage, coverage),
             SearchCaseInput search => Search(search),
             IntentCaseInput intent => Intent(intent),
             _ => throw new ArgumentException("Unknown role input.", nameof(roleInput))
@@ -107,14 +107,21 @@ public static class TuningCaseRenderer
             });
     }
 
-    private static RenderedTuningCase Triage(CandidateTriageCaseInput input)
+    internal static CandidateTriageContext BuildTriageContext(CandidateTriageCaseInput input)
     {
         var options = input.Candidates.Select(c => Option(input.Requested, c)).ToArray();
         if (options.Select(o => o.ProviderResultId).Distinct(StringComparer.Ordinal).Count() != options.Length ||
             input.PickKey is not null && !options.Any(o => o.ProviderResultId == input.PickKey) ||
             input.TiedKeys.Any(key => !options.Any(o => o.ProviderResultId == key))) throw new ArgumentException("Invalid candidate keys.", nameof(input));
-        var context = new CandidateTriageContext(input.Requested.Build(), options,
+        return new CandidateTriageContext(input.Requested.Build(), options,
             options.SingleOrDefault(o => o.ProviderResultId == input.PickKey), input.TiedKeys, input.Confidence);
+    }
+
+    private static RenderedTuningCase Triage(CandidateTriageCaseInput input, TuningCoverage coverage)
+    {
+        var context = BuildTriageContext(input);
+        RequireEligible(context.Pick is not null || context.TiedResultIds.Count >= 2 ||
+            context.Candidates.Any(CandidateTriageRules.IsAuthorOnlyConflict), coverage);
         var rendered = CandidateTriageEvidence.Render(context);
         return Prepared(CandidateTriageEvidence.SystemPrompt, rendered.Text, CandidateTriageService.MaxOutputTokens,
             rendered.Findings.Values.SelectMany(f => f).ToArray(), text =>

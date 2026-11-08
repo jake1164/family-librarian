@@ -3,12 +3,16 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FamilyLibrarian.Application.Conversation;
+using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Application.ModelTuning;
+using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Application.SemanticAssessment;
 using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Infrastructure.Tests.SemanticAssessment;
 
 namespace FamilyLibrarian.Infrastructure.Tests.ModelTuning;
 
@@ -18,12 +22,13 @@ public sealed class TuningCoreTests
     private static readonly BuiltInTuningCorpus Corpus = BuiltInTuningCorpus.LoadEmbedded();
     private static readonly TuningCalibrationKey Key = new("synthetic-1", "draft-1", 1, "test-only-frozen-identity");
     private static readonly TuningModelKey Model = new("connection-local", "example-model");
+    private static readonly HashSet<string> RetainPickControlIds = ["CT-63", "CT-65", "CT-68", "CT-74", "CT-75", "CT-78", "CT-81"];
     private static TuningCase Case(string id) => Corpus.Cases.Single(c => c.Case.Id == id).Case;
     private static TuningCompletion Completion(string? reply) => new(ModelCallOutcome.Succeeded, reply);
     private static TuningResultIdentity Identity(TuningCase item) => new(TuningCaseIdentity.From(item), "synthetic-1", "prompt", "parser", Model, null, ModelReasoningMode.Inherit, 0);
 
     [TestMethod]
-    public void EveryApprovedAnswerUsesTheRealRendererParserAndPolicyAndHasAnExactDriftFingerprint()
+    public void EveryReferenceAnswerUsesTheRealRendererParserAndPolicyAndHasAnExactDriftFingerprint()
     {
         Assert.HasCount(280, Corpus.Cases);
         foreach (var fixture in Corpus.Cases)
@@ -49,6 +54,9 @@ public sealed class TuningCoreTests
     public void CorpusKeepsReviewStateBalanceAndIndependentRoles()
     {
         Assert.HasCount(280, Corpus.Cases.Where(c => c.Case.Review.State == LabelReviewState.Approved).ToArray());
+        Assert.HasCount(7, Corpus.Cases.Where(c => RetainPickControlIds.Contains(c.Case.Id)).ToArray());
+        string[] retiredIds = ["CT-61", "CT-62", "CT-64", "CT-66", "CT-67", "CT-69", "CT-70", "CT-71", "CT-72", "CT-73", "CT-76", "CT-77", "CT-79", "CT-80"];
+        Assert.IsFalse(Corpus.Cases.Any(c => retiredIds.Contains(c.Case.Id, StringComparer.Ordinal)));
         foreach (var role in TuningRoles.Scored)
         {
             var cases = Corpus.Cases.Where(c => c.Case.Role == role).Select(c => c.Case).ToArray();
@@ -62,8 +70,148 @@ public sealed class TuningCoreTests
         }
         Assert.AreEqual(.275m, TuningScoring.AbstainBaseline(Corpus.Cases.Where(c => c.Case.Role == ModelRole.ArtifactValidationAssessment).Select(c => c.Case).ToArray()));
         Assert.AreEqual(.5m, TuningScoring.AbstainBaseline(Corpus.Cases.Where(c => c.Case.Role == ModelRole.ArtifactValidationDecision).Select(c => c.Case).ToArray()));
-        Assert.AreEqual(.55m, TuningScoring.AbstainBaseline(Corpus.Cases.Where(c => c.Case.Role == ModelRole.CandidateTriage).Select(c => c.Case).ToArray()));
+        Assert.AreEqual(.5m, TuningScoring.AbstainBaseline(Corpus.Cases.Where(c => c.Case.Role == ModelRole.CandidateTriage).Select(c => c.Case).ToArray()));
         Assert.AreEqual(.15m, TuningScoring.AbstainBaseline(Corpus.Cases.Where(c => c.Case.Role == ModelRole.IntentInterpretation).Select(c => c.Case).ToArray()));
+    }
+
+    [TestMethod]
+    [DataRow("SG-08")]
+    [DataRow("SG-09")]
+    [DataRow("SG-10")]
+    [DataRow("SG-11")]
+    public void OriginalTitleAlsoAcceptsTheEquivalentAlternateTitleReasonWithoutAcceptingAnInventedName(string id)
+    {
+        var item = Case(id);
+        var rendered = TuningCaseRenderer.Render(item);
+        foreach (var reason in new[] { "original_language_title", "alternate_published_title" })
+        {
+            var reply = TuningReplies.Render(item.Role,
+                new(GiveUp: false, AllowedSuggestions: [new(reason, "The Amber Atrium")]), rendered);
+            var score = TuningScoring.Score(item, rendered, Completion(reply));
+            Assert.IsTrue(score.IsValid);
+            Assert.AreEqual(TuningScore.Correct, score.Score);
+        }
+        var unsupported = TuningReplies.Render(item.Role,
+            new(GiveUp: false, AllowedSuggestions: [new("alternate_published_title", "An Unrelated Control Title")]), rendered);
+        var wrong = TuningScoring.Score(item, rendered, Completion(unsupported));
+        Assert.IsTrue(wrong.IsValid);
+        Assert.AreEqual(TuningScore.Incorrect, wrong.Score);
+    }
+
+    [TestMethod]
+    public void AProposedLabelCannotCertifyAdequacyEvenWhenOtherLabelsAreApprovedAndRepliesArePerfect()
+    {
+        const ModelRole role = ModelRole.CandidateTriage;
+        var fixtures = Corpus.Cases.Where(c => c.Case.Role == role).ToArray();
+        var cases = fixtures.Select(f => f.Case.Id == "CT-63"
+            ? f.Case with { Review = new(LabelReviewState.Proposed, 1) } : f.Case).ToArray();
+        var observations = fixtures.SelectMany(f => Enumerable.Range(0, 2).Select(repeat =>
+            new CaseObservation(TuningCaseIdentity.From(f.Case), repeat,
+                TuningScoring.Score(f.Case, TuningCaseRenderer.Render(f.Case), Completion(f.ReferenceReplies[0]))))).ToArray();
+        var score = TuningMetrics.Summarize(cases, observations, 2, Corpus.CalibrationKey(role));
+        Assert.AreEqual(1m, score.TaskScore);
+        Assert.IsFalse(score.LabelsApproved);
+        Assert.AreEqual(TuningAdequacy.Incomplete, TuningAdequacyRules.Assess(score, null));
+    }
+
+    [TestMethod]
+    public async Task EveryTriageCaseReachesTheProductionExecutionPolicyWithIdenticalMessages()
+    {
+        foreach (var fixture in Corpus.Cases.Where(c => c.Case.Role == ModelRole.CandidateTriage))
+        {
+            var input = (CandidateTriageCaseInput)fixture.Case.Input;
+            var context = TuningCaseRenderer.BuildTriageContext(input);
+            var rendered = TuningCaseRenderer.Render(fixture.Case);
+            foreach (var reply in fixture.ReferenceReplies)
+            {
+                var kit = new TriageExecution(reply);
+                var store = new FakeFindingStore();
+                var result = await new CandidateTriageService(kit, kit, store, kit).GetAsync(Guid.NewGuid(), Guid.NewGuid(),
+                    "example-source", context, CancellationToken.None);
+                Assert.AreEqual(1, kit.Resolutions, fixture.Case.Id);
+                Assert.AreEqual(1, kit.Calls, fixture.Case.Id);
+                Assert.AreEqual(ModelCallOutcome.Succeeded, store.Findings.Single().Outcome, fixture.Case.Id);
+                Assert.IsNotNull(kit.Request);
+                Assert.AreEqual(ModelRole.CandidateTriage, kit.Request.Role);
+                Assert.AreEqual(fixture.PromptIdentity, RenderedMessagesIdentity.Compute(kit.Request.Messages,
+                    kit.Request.JsonObjectOutput, kit.Request.MaxOutputTokens), fixture.Case.Id);
+                var expected = rendered.Parse(reply).Answer!;
+                if (expected.Move is "keep" or "uncertain") Assert.IsNull(result, fixture.Case.Id);
+                else
+                {
+                    Assert.IsNotNull(result, fixture.Case.Id);
+                    Assert.AreEqual(expected.Move, result.Move, fixture.Case.Id);
+                    Assert.AreEqual(expected.TargetKey, result.Candidate.ProviderResultId, fixture.Case.Id);
+                }
+            }
+            if (RetainPickControlIds.Contains(fixture.Case.Id))
+            {
+                Assert.IsNotNull(context.Pick);
+                Assert.AreEqual(CandidateConfidenceTier.Strong, CandidateConfidence.Classify(context.Pick), fixture.Case.Id);
+                var eligible = context.Candidates.Where(c => CandidateConfidence.Allows(context.Level, CandidateConfidence.Classify(c)));
+                Assert.AreEqual(context.Pick, ExternalCandidateRanker.SelectBest(eligible, context.Pick.MediaType), fixture.Case.Id);
+                foreach (var move in new[] { "veto", "author_variant", "prefer" })
+                    Assert.IsFalse(rendered.Parse(TuningReplies.Render(ModelRole.CandidateTriage,
+                        new(Move: move, TargetKey: "first"), rendered)).IsValid, fixture.Case.Id + " " + move);
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task RemovingTheCurrentPickReproducesQuarantineAndCannotCountAsProductionReachable()
+    {
+        foreach (var fixture in Corpus.Cases.Where(c => RetainPickControlIds.Contains(c.Case.Id)))
+        {
+            var input = (CandidateTriageCaseInput)fixture.Case.Input;
+            var unreachable = input with { Candidates = input.Candidates.Where(c => c.Candidate.Key != "selected").ToArray(), PickKey = null };
+            var item = fixture.Case with { Input = unreachable };
+            Assert.ThrowsExactly<ArgumentException>(() => TuningCaseRenderer.Render(item), item.Id);
+            Assert.IsNotNull(TuningCaseRenderer.Render(item with { Coverage = TuningCoverage.ContractOnly }));
+            var kit = new TriageExecution(fixture.ReferenceReplies[0]);
+            var store = new FakeFindingStore();
+            await new CandidateTriageService(kit, kit, store, kit).GetAsync(Guid.NewGuid(), Guid.NewGuid(),
+                "example-source", TuningCaseRenderer.BuildTriageContext(unreachable), CancellationToken.None);
+            Assert.AreEqual(0, kit.Resolutions, item.Id);
+            Assert.AreEqual(0, kit.Calls, item.Id);
+            Assert.HasCount(0, store.Findings);
+        }
+    }
+
+    [TestMethod]
+    public void ReviewedTriageContractsPreserveBaselinesWithoutMeasuringOptionalActionsAsAbility()
+    {
+        var fixtures = Corpus.Cases.Where(c => c.Case.Role == ModelRole.CandidateTriage).ToArray();
+        var cases = fixtures.Select(f => f.Case).ToArray();
+        int CorrectConstant(string move) => fixtures.Count(f =>
+        {
+            var rendered = TuningCaseRenderer.Render(f.Case);
+            return TuningScoring.Score(f.Case, rendered,
+                Completion(TuningReplies.Render(ModelRole.CandidateTriage, new(Move: move), rendered))).Score == TuningScore.Correct;
+        });
+        Assert.AreEqual(30, CorrectConstant("keep"));
+        Assert.AreEqual(19, CorrectConstant("uncertain"));
+        var baseline = TuningScoring.EvaluateAbstainBaseline(cases);
+        Assert.AreEqual(.5m, baseline.Score);
+        Assert.AreEqual(30, baseline.Correct);
+        Assert.AreEqual(30, baseline.Incorrect);
+        Assert.AreEqual(26, cases.Count(TuningScoring.RequiresNonAbstention));
+
+        var contracts = fixtures.Where(f => f.Case.Expected.Acceptable.Any(a => a.Move is "veto" or "prefer")).ToArray();
+        Assert.HasCount(10, contracts);
+        Assert.HasCount(5, contracts.Where(f => f.Case.Expected.Acceptable.Any(a => a.Move == "veto")).ToArray());
+        Assert.HasCount(5, contracts.Where(f => f.Case.Expected.Acceptable.Any(a => a.Move == "prefer")).ToArray());
+        foreach (var fixture in contracts)
+        {
+            Assert.IsTrue(fixture.Case.Expected.Acceptable.Any(a => a.Move == "keep" && a.TargetKey is null));
+            Assert.IsFalse(TuningScoring.RequiresNonAbstention(fixture.Case));
+        }
+        var observations = contracts.Select(f => new CaseObservation(TuningCaseIdentity.From(f.Case), 0,
+            TuningScoring.Score(f.Case, TuningCaseRenderer.Render(f.Case), Completion(f.ReferenceReplies[0])))).ToArray();
+        var score = TuningMetrics.Summarize(contracts.Select(f => f.Case).ToArray(), observations, 1,
+            Corpus.CalibrationKey(ModelRole.CandidateTriage));
+        Assert.AreEqual(1m, score.TaskScore);
+        Assert.IsNull(score.ActionRecall, "Optional successful veto/prefer contracts are not required-action ability.");
+        Assert.IsNull(score.Stability, "One repeat cannot measure repeat agreement.");
     }
 
     [TestMethod]
@@ -477,6 +625,27 @@ public sealed class TuningCoreTests
         Assert.AreEqual(3, TuningComparison.Repeats(TuningComparison.Tier(TuningGoal.Best)));
         Assert.AreEqual(1, TuningComparison.Repeats(TuningTier.Quick));
         Assert.AreNotEqual(Model, new TuningModelKey("other-connection", Model.Alias));
+    }
+
+    private sealed class TriageExecution(string reply) : IModelRoleResolver, IModelExecutionPolicy, IClock
+    {
+        public DateTimeOffset UtcNow => DateTimeOffset.UnixEpoch;
+        public int Resolutions { get; private set; }
+        public int Calls { get; private set; }
+        public ModelExecutionRequest? Request { get; private set; }
+        public Task<ModelRoleResolution> ResolveAsync(ModelRole role, CancellationToken cancellationToken)
+        {
+            Resolutions++;
+            return Task.FromResult(new ModelRoleResolution(role, ModelUnavailableReason.None, new Uri("http://model.test"),
+                null, "scripted", false, ModelExecutionLimits.Default));
+        }
+        public Task<ModelExecution<T>> ExecuteAsync<T>(ModelExecutionRequest request, Func<string, ModelParseResult<T>> parse, CancellationToken cancellationToken)
+        {
+            Calls++;
+            Request = request;
+            var parsed = parse(reply);
+            return Task.FromResult(new ModelExecution<T>(parsed.Failure, parsed.Value, parsed.Detail, null, 0, "scripted", false));
+        }
     }
 
     private sealed class CapturingPolicy : IModelExecutionPolicy

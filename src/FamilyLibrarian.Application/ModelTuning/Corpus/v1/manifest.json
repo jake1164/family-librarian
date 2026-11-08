@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "corpusVersion": "synthetic-2",
-  "labelVersion": "owner-reviewed-1",
+  "corpusVersion": "synthetic-4",
+  "labelVersion": "owner-reviewed-3",
   "roles": [
     {
       "role": "ArtifactValidationAssessment",
