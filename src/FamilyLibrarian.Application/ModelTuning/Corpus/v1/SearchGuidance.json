@@ -6,10 +6,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "Visible result explicitly names The Copper Grove as alternate published title.",
+    "rationale": "Visible result explicitly names The Copper Grove as alternate published title. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -102,6 +102,10 @@
             {
               "reason": "alternate_published_title",
               "value": "The Copper Grove"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -118,7 +122,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:508742ff753b0aebde3a6bf3583294f0fe277f173a9c0dd7b30c34f012482c35",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -128,10 +133,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "Visible collection explicitly contains the requested title.",
+    "rationale": "Visible collection explicitly contains the requested title. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -225,6 +230,10 @@
             {
               "reason": "contained_in",
               "value": "The Lantern Ledger Collected Volume"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -241,7 +250,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:610621f1c0e3ee4217d83ddea9a5e4b7bc7c19b5506b063144844f3ce2534afb",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -303,10 +313,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "alternate_published_title: one explicit hint; visible bibliographic label provides The Copper Grove.",
+    "rationale": "alternate_published_title: one explicit hint; visible bibliographic label provides The Copper Grove. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -399,6 +409,10 @@
             {
               "reason": "alternate_published_title",
               "value": "The Copper Grove"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -415,7 +429,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:e1e05c254c98eae48af998c98e5bd98e978dcba3f956c2a5b1c0ce9fd7ecb63b",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -425,10 +440,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "alternate_published_title: irrelevant result before hint; visible bibliographic label provides The Copper Grove.",
+    "rationale": "alternate_published_title: irrelevant result before hint; visible bibliographic label provides The Copper Grove. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -574,6 +589,10 @@
             {
               "reason": "alternate_published_title",
               "value": "The Copper Grove"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -590,7 +609,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:b9047ceb464e55bb383b60376402fb5192578c38b59a30db162dca0c09c38be6",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -600,10 +620,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "alternate_published_title: hint with unknown language; visible bibliographic label provides The Copper Grove.",
+    "rationale": "alternate_published_title: hint with unknown language; visible bibliographic label provides The Copper Grove. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -696,6 +716,10 @@
             {
               "reason": "alternate_published_title",
               "value": "The Copper Grove"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -712,7 +736,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:c19fddaa7d6e1599564e5afbed899b873eb58f2484d78f0f5ec50e1d106d234f",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -722,10 +747,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "alternate_published_title: hint amid fifteen results; visible bibliographic label provides The Copper Grove.",
+    "rationale": "alternate_published_title: hint amid fifteen results; visible bibliographic label provides The Copper Grove. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -1560,6 +1585,10 @@
             {
               "reason": "alternate_published_title",
               "value": "The Copper Grove"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -1576,7 +1605,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:269a8a1cce636f36757c313354e4e39ac0782c0196b0c42feba21adb12ed1191",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Copper Grove\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -1586,10 +1616,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "original_language_title: one explicit hint; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner.",
+    "rationale": "original_language_title: one explicit hint; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 2
+      "labelRevision": 3
     },
     "input": {
       "requested": {
@@ -1682,6 +1712,10 @@
             {
               "reason": "original_language_title",
               "value": "The Amber Atrium"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -1697,6 +1731,10 @@
             {
               "reason": "alternate_published_title",
               "value": "The Amber Atrium"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -1714,7 +1752,9 @@
     "promptIdentity": "rendered-messages/1:e3e5f3d87b23dae527f42b963aab77b5027cb62bc516199f54bc0c6a2d0b211e",
     "referenceReplies": [
       "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -1724,10 +1764,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "original_language_title: irrelevant result before hint; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner.",
+    "rationale": "original_language_title: irrelevant result before hint; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 2
+      "labelRevision": 3
     },
     "input": {
       "requested": {
@@ -1873,6 +1913,10 @@
             {
               "reason": "original_language_title",
               "value": "The Amber Atrium"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -1888,6 +1932,10 @@
             {
               "reason": "alternate_published_title",
               "value": "The Amber Atrium"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -1905,7 +1953,9 @@
     "promptIdentity": "rendered-messages/1:d7ec64ba17b72d509a62ee89ce542981347f8fa2aa9da818b0a9dbbdd44d6b90",
     "referenceReplies": [
       "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}",
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -1915,10 +1965,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "original_language_title: hint with unknown language; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner.",
+    "rationale": "original_language_title: hint with unknown language; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 2
+      "labelRevision": 3
     },
     "input": {
       "requested": {
@@ -2011,6 +2061,10 @@
             {
               "reason": "original_language_title",
               "value": "The Amber Atrium"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -2026,6 +2080,10 @@
             {
               "reason": "alternate_published_title",
               "value": "The Amber Atrium"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -2043,7 +2101,9 @@
     "promptIdentity": "rendered-messages/1:e4e834fdee84f2a68271af256d63f3885b2acb53465cc9cd8e00be86c70d4443",
     "referenceReplies": [
       "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -2053,10 +2113,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "original_language_title: hint amid fifteen results; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner.",
+    "rationale": "original_language_title: hint amid fifteen results; visible bibliographic label provides The Amber Atrium. Audit correction: an original published title is also an alternate published title; both reason tags produce the same production query. Accept either tag for the exact supplied The Amber Atrium name; arbitrary names remain wrong. Revised label approved by the owner. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 2
+      "labelRevision": 3
     },
     "input": {
       "requested": {
@@ -2891,6 +2951,10 @@
             {
               "reason": "original_language_title",
               "value": "The Amber Atrium"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -2906,6 +2970,10 @@
             {
               "reason": "alternate_published_title",
               "value": "The Amber Atrium"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -2923,7 +2991,9 @@
     "promptIdentity": "rendered-messages/1:42837348dd49f601ec0e853e3bcfa4985c40318568f92ddaa822317dd0c35c7e",
     "referenceReplies": [
       "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}",
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"original_language_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"alternate_published_title\",\"value\":\"The Amber Atrium\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -4216,10 +4286,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "author_variant: one explicit hint; visible bibliographic label provides N. Bellwick.",
+    "rationale": "author_variant: one explicit hint; visible bibliographic label provides N. Bellwick. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -4312,6 +4382,10 @@
             {
               "reason": "author_variant",
               "value": "N. Bellwick"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -4328,7 +4402,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:fda5bcd9b42021563c525579c0ad64f17b73e1271362fb36f2d920d5f4949b7a",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -4338,10 +4413,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "author_variant: irrelevant result before hint; visible bibliographic label provides N. Bellwick.",
+    "rationale": "author_variant: irrelevant result before hint; visible bibliographic label provides N. Bellwick. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -4487,6 +4562,10 @@
             {
               "reason": "author_variant",
               "value": "N. Bellwick"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -4503,7 +4582,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:68dbb474dbab007649ca1746af0eed8b347df8221a83b2db5fe22be59a6adfe0",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -4513,10 +4593,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "author_variant: hint with unknown language; visible bibliographic label provides N. Bellwick.",
+    "rationale": "author_variant: hint with unknown language; visible bibliographic label provides N. Bellwick. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -4609,6 +4689,10 @@
             {
               "reason": "author_variant",
               "value": "N. Bellwick"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -4625,7 +4709,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:5ad36df570905f78c568b36e40191942c466b831b662a270455e2d7d457b6bc6",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -4635,10 +4720,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "author_variant: hint amid fifteen results; visible bibliographic label provides N. Bellwick.",
+    "rationale": "author_variant: hint amid fifteen results; visible bibliographic label provides N. Bellwick. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -5473,6 +5558,10 @@
             {
               "reason": "author_variant",
               "value": "N. Bellwick"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -5489,7 +5578,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:fb40fc43aad39c69ff0a685721a7640e700d3e46b47c63d758a2efeb6f1d9b77",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"author_variant\",\"value\":\"N. Bellwick\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -5499,10 +5589,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "contained_in: one explicit hint; visible bibliographic label provides The Lantern Ledger Collected Volume.",
+    "rationale": "contained_in: one explicit hint; visible bibliographic label provides The Lantern Ledger Collected Volume. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -5595,6 +5685,10 @@
             {
               "reason": "contained_in",
               "value": "The Lantern Ledger Collected Volume"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -5611,7 +5705,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:8649861068fadde4b9c64d4f83c7a9ba4af70c4b33a132f2007072b04f011aad",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -5621,10 +5716,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "contained_in: irrelevant result before hint; visible bibliographic label provides The Lantern Ledger Collected Volume.",
+    "rationale": "contained_in: irrelevant result before hint; visible bibliographic label provides The Lantern Ledger Collected Volume. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -5770,6 +5865,10 @@
             {
               "reason": "contained_in",
               "value": "The Lantern Ledger Collected Volume"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -5786,7 +5885,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:88e3675cd1fcf35a4f615cd04f0e06e267beda70bcf5b0902f3260d3e96839bc",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r2\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -5796,10 +5896,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "contained_in: hint with unknown language; visible bibliographic label provides The Lantern Ledger Collected Volume.",
+    "rationale": "contained_in: hint with unknown language; visible bibliographic label provides The Lantern Ledger Collected Volume. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -5892,6 +5992,10 @@
             {
               "reason": "contained_in",
               "value": "The Lantern Ledger Collected Volume"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -5908,7 +6012,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:1573847ea2de221b924c2eeb32b4f13b4a6deff605c30dea99faf66ef03d283c",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r1\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {
@@ -5918,10 +6023,10 @@
     "role": "SearchGuidance",
     "category": "judgment",
     "coverage": "productionReachable",
-    "rationale": "contained_in: hint amid fifteen results; visible bibliographic label provides The Lantern Ledger Collected Volume.",
+    "rationale": "contained_in: hint amid fifteen results; visible bibliographic label provides The Lantern Ledger Collected Volume. Owner-approved B1: retain the required supplied hint; optionally accept the exact supplied, untried canonical series name with the known requested position.",
     "review": {
       "state": "approved",
-      "labelRevision": 1
+      "labelRevision": 2
     },
     "input": {
       "requested": {
@@ -6756,6 +6861,10 @@
             {
               "reason": "contained_in",
               "value": "The Lantern Ledger Collected Volume"
+            },
+            {
+              "reason": "series_naming",
+              "value": "The Lantern Ledger"
             }
           ],
           "requiredSuggestions": [
@@ -6772,7 +6881,8 @@
     "syntheticSupplement": null,
     "promptIdentity": "rendered-messages/1:cd3a50178fc05fe80cd95a4d903e454db56f88a25995d777a0901f60f15fe2bd",
     "referenceReplies": [
-      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}"
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"}]}",
+      "{\"schema\":\"search-guidance/1\",\"give_up\":false,\"suggestions\":[{\"reason\":\"contained_in\",\"value\":\"The Lantern Ledger Collected Volume\",\"evidence_ids\":[\"r15\"],\"note\":\"The supplied result provides this name.\"},{\"reason\":\"series_naming\",\"value\":\"The Lantern Ledger\",\"evidence_ids\":[\"req-series\"],\"note\":\"The exact supplied series name and requested position provide another untried query.\"}]}"
     ]
   },
   {

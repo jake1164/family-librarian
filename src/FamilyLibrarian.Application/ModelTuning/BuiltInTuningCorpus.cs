@@ -1,6 +1,4 @@
 using System.Text.Json;
-using System.Text;
-using System.Security.Cryptography;
 using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Application.ModelTuning;
@@ -13,11 +11,8 @@ public sealed record BuiltInTuningCorpus(TuningCorpusManifest Manifest, IReadOnl
     public TuningCalibrationKey CalibrationKey(ModelRole role)
     {
         if (!TuningRoles.IsScored(role)) throw new ArgumentException("Role is not scored.", nameof(role));
-        var prompts = Cases.Where(c => c.Case.Role == role).OrderBy(c => c.Case.Id, StringComparer.Ordinal)
-            .Select(c => new { c.Case.Id, c.PromptIdentity }).ToArray();
-        var identity = JsonSerializer.Serialize(new { contract = TuningContractIdentity.Current, role, prompts }, TuningInputJson.Options);
-        return new(Manifest.CorpusVersion, Manifest.LabelVersion, Manifest.SchemaVersion,
-            Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity))));
+        return TuningCalibrationKey.ForCases(Manifest.CorpusVersion, Manifest.LabelVersion, Manifest.SchemaVersion,
+            Cases.Where(c => c.Case.Role == role).Select(c => c.Case).ToArray());
     }
 
     public static BuiltInTuningCorpus LoadEmbedded()

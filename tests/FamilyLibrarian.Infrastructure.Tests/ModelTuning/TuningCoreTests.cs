@@ -35,7 +35,10 @@ public sealed class TuningCoreTests
         {
             var rendered = TuningCaseRenderer.Render(fixture.Case);
             Assert.AreEqual(fixture.PromptIdentity, rendered.PromptIdentity, fixture.Case.Id);
-            Assert.AreEqual(fixture.Case.Expected.Acceptable.Count, fixture.ReferenceReplies.Count, fixture.Case.Id);
+            Assert.IsGreaterThanOrEqualTo(fixture.Case.Expected.Acceptable.Count, fixture.ReferenceReplies.Count, fixture.Case.Id);
+            foreach (var alternative in fixture.Case.Expected.Acceptable)
+                Assert.IsTrue(fixture.ReferenceReplies.Any(reply => TuningScoring.Score(fixture.Case with
+                { Expected = fixture.Case.Expected with { Acceptable = [alternative] } }, rendered, Completion(reply)).Score == TuningScore.Correct), fixture.Case.Id);
             foreach (var reply in fixture.ReferenceReplies)
             {
                 var score = TuningScoring.Score(fixture.Case, rendered, Completion(reply));

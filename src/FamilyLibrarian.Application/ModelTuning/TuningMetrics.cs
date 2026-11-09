@@ -1,7 +1,25 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
 namespace FamilyLibrarian.Application.ModelTuning;
 
 public sealed record TuningCalibrationKey(string CorpusVersion, string LabelVersion, int SchemaVersion,
-    string PromptParserRulesScorerIdentity);
+    string PromptParserRulesScorerIdentity)
+{
+    public static TuningCalibrationKey ForCases(string corpusVersion, string labelVersion, int schemaVersion, IReadOnlyList<TuningCase> cases)
+    {
+        ArgumentNullException.ThrowIfNull(cases);
+        if (string.IsNullOrWhiteSpace(corpusVersion) || string.IsNullOrWhiteSpace(labelVersion) || schemaVersion != 1 ||
+            cases.Count == 0 || cases.Any(c => c.Source != TuningSource.BuiltIn) || cases.Select(c => c.Role).Distinct().Count() != 1)
+            throw new ArgumentException("Calibration identity requires one built-in role and versioned cases.", nameof(cases));
+        var role = cases[0].Role;
+        var prompts = cases.OrderBy(c => c.Id, StringComparer.Ordinal)
+            .Select(c => new { c.Id, PromptIdentity = TuningCaseRenderer.Render(c).PromptIdentity }).ToArray();
+        var identity = JsonSerializer.Serialize(new { contract = TuningContractIdentity.Current, role, prompts }, TuningInputJson.Options);
+        return new(corpusVersion, labelVersion, schemaVersion, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity))));
+    }
+}
 public sealed record CaseObservation(TuningCaseIdentity Case, int Repeat, CaseScore Result);
 public sealed record RoleScorecard(TuningSource Source, TuningCalibrationKey Identity, int CaseCount, int Repeats,
     int Correct, int Incorrect, int Unknown, decimal Validity, decimal? Stability, decimal Baseline,
@@ -67,7 +85,10 @@ public static class TuningMetrics
 
 public enum TuningAdequacy { NotApplicable, Disqualified, Incomplete, Provisional, BelowThreshold, Adequate }
 public sealed record RoleThreshold(decimal AbsoluteFloor, decimal BaselineMargin, decimal NoiseBand);
-public sealed record FrozenRoleCalibration(TuningCalibrationKey Identity, RoleThreshold Threshold, bool IsFrozen, int MinimumCases = 40);
+public enum TuningNoiseBasis { Unspecified, Prior }
+public sealed record FrozenRoleCalibration(TuningCalibrationKey Identity, RoleThreshold Threshold, bool IsFrozen, int MinimumCases = 40,
+    decimal MinimumValidity = .95m, decimal MinimumAgreement = .90m,
+    TuningNoiseBasis NoiseBasis = TuningNoiseBasis.Unspecified, decimal? MeasuredRepeatRange = null);
 
 public static class TuningAdequacyRules
 {
@@ -78,13 +99,21 @@ public static class TuningAdequacyRules
         if (score.HasDisqualifier || score.Unknown != 0) return TuningAdequacy.Disqualified;
         if (!score.IsComplete || !score.LabelsApproved) return TuningAdequacy.Incomplete;
         if (calibration is null || !calibration.IsFrozen || score.Repeats < 2 || score.Stability is null) return TuningAdequacy.Provisional;
-        if (calibration.MinimumCases < 40) throw new ArgumentException("Calibration sample size is too small.", nameof(calibration));
+        ValidateCalibration(calibration, score.Identity, score.Baseline);
         if (score.CaseCount < calibration.MinimumCases) return TuningAdequacy.Incomplete;
-        if (calibration.Identity != score.Identity) throw new ArgumentException("Built-in calibration identity differs.", nameof(calibration));
+        var t = calibration.Threshold;
+        return score.Validity >= calibration.MinimumValidity && score.Stability >= calibration.MinimumAgreement && score.TaskScore >= t.AbsoluteFloor &&
+            score.TaskScore >= score.Baseline + t.BaselineMargin ? TuningAdequacy.Adequate : TuningAdequacy.BelowThreshold;
+    }
+
+    internal static void ValidateCalibration(FrozenRoleCalibration calibration, TuningCalibrationKey identity, decimal baseline)
+    {
+        if (calibration.MinimumCases < 40) throw new ArgumentException("Calibration sample size is too small.", nameof(calibration));
+        if (calibration.Identity != identity) throw new ArgumentException("Built-in calibration identity differs.", nameof(calibration));
         var t = calibration.Threshold;
         if (t.AbsoluteFloor is < 0 or > 1 || t.BaselineMargin is <= 0 or > 1 || t.NoiseBand is < 0 or > 1 ||
-            score.Baseline + t.BaselineMargin > 1) throw new ArgumentException("Invalid calibrated thresholds.", nameof(calibration));
-        return score.Validity >= .95m && score.Stability >= .90m && score.TaskScore >= t.AbsoluteFloor &&
-            score.TaskScore >= score.Baseline + t.BaselineMargin ? TuningAdequacy.Adequate : TuningAdequacy.BelowThreshold;
+            baseline + t.BaselineMargin > 1 || calibration.MinimumValidity is < .95m or > 1 ||
+            calibration.MinimumAgreement is < .90m or > 1 || !Enum.IsDefined(calibration.NoiseBasis) ||
+            calibration.MeasuredRepeatRange is < 0 or > 1) throw new ArgumentException("Invalid calibrated thresholds.", nameof(calibration));
     }
 }

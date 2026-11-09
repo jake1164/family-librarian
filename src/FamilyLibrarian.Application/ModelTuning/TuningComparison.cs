@@ -60,7 +60,6 @@ public static class TuningComparison
     }
 }
 
-// Plan contracts only: selectors and the distinct-local counter wait for frozen checkpoint-3 noise bands.
 public static class TuningPlanRules
 {
     public const int MaxModels = 16;
@@ -71,8 +70,12 @@ public enum TuningPlanStatus { Complete, NoCompletePlan, NoRolesSelected }
 public sealed record AdministratorModelOrder(TuningModelKey Model, int Rank);
 public sealed record CloudPreferenceOverride(ModelRole Role, TuningModelKey Model, string AdministratorOrderIdentity);
 public sealed record RolePlanOption(TuningOptionKey Option, TuningPlacement Placement, decimal Score,
-    decimal BestAdmissibleScore, decimal FrozenNoiseBand, TuningAdequacy Adequacy);
+    decimal BestAdmissibleScore, decimal FrozenNoiseBand, TuningAdequacy Adequacy)
+{
+    public decimal ScoreGap => BestAdmissibleScore - Score;
+}
 public sealed record ReportedHouseholdEvidence(ModelRole Role, TuningModelKey Model, decimal? Score,
     int KnownOutcomes, int UnknownOutcomes, string DatasetIdentity);
 public sealed record TuningPlan(TuningPlanKind Kind, TuningPlanStatus Status, IReadOnlyList<RolePlanOption> Assignments,
-    IReadOnlyList<ModelRole> UncoveredRoles, ComparisonCoverage Coverage, IReadOnlyList<ReportedHouseholdEvidence> HouseholdEvidence);
+    IReadOnlyList<ModelRole> UncoveredRoles, ComparisonCoverage Coverage, IReadOnlyList<ReportedHouseholdEvidence> HouseholdEvidence,
+    IReadOnlyList<ModelRole> NotAssessableRoles, IReadOnlyList<ModelRole> UnscoredRoles);
