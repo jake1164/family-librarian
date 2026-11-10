@@ -11,7 +11,7 @@
           "corpusVersion": "synthetic-5",
           "labelVersion": "owner-reviewed-4",
           "schemaVersion": 1,
-          "promptParserRulesScorerIdentity": "c7129005b412e2abcafafa88e6fc8540fb6daebcd92639a7a55420a7e3483af9"
+          "promptParserRulesScorerIdentity": "230deada69e58bd7e41abceb97d3598b796d968e5d2eec26c1716cd04760b4af"
         },
         "threshold": {
           "absoluteFloor": 0.8,
@@ -41,7 +41,7 @@
           "corpusVersion": "synthetic-5",
           "labelVersion": "owner-reviewed-4",
           "schemaVersion": 1,
-          "promptParserRulesScorerIdentity": "3ef59bdbba62ca1828a91a576c9cf5f649fef25458b858151ff3189a00f3ba7f"
+          "promptParserRulesScorerIdentity": "413aa89eb7621b39434330b03b5b9d1889712813deeb3010abd04f1a276840a3"
         },
         "threshold": {
           "absoluteFloor": 0.8,
@@ -77,7 +77,7 @@
           "corpusVersion": "synthetic-5",
           "labelVersion": "owner-reviewed-4",
           "schemaVersion": 1,
-          "promptParserRulesScorerIdentity": "02c292aa101c686e762092b4ffaaf9f7c88fb36cf4192e80ffe33c578ce91a10"
+          "promptParserRulesScorerIdentity": "d65808b1ecafd95fa1660bbebadacd8d015bca3ae082bfc9f0a20a93eafb66e1"
         },
         "threshold": {
           "absoluteFloor": 0.9,

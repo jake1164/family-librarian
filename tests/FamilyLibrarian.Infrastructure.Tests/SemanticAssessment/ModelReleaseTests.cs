@@ -96,6 +96,19 @@ public sealed class ModelReleaseTests
     }
 
     [TestMethod]
+    [DataRow("uncertain", "")]
+    [DataRow("uncertain", ",\"claims\":[]")]
+    [DataRow("release", "")]
+    [DataRow("release", ",\"claims\":[]")]
+    public void ReleaseRepliesStillNeedTheirClaims(string verdict, string claims)
+    {
+        var asset = Held();
+        var input = ArtifactDecisionEvidence.Render(asset, AuthorFacts, ArtifactDecisionKit.Expected, [], true);
+        var reply = $"{{\"schema\":\"artifact-decision/1\",\"verdict\":\"{verdict}\"{claims}}}";
+        Assert.IsFalse(SemanticAssessmentParser.ParseArtifactRelease(reply, asset, AuthorFacts, input).IsValid);
+    }
+
+    [TestMethod]
     [DataRow("idv.ev-title,idv.ev-language,idv.ev-series", true)]
     [DataRow("idv.ev-title", false)]
     [DataRow("idv.ev-language,idv.ev-series", false)]

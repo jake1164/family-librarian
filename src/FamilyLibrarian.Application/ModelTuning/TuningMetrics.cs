@@ -16,7 +16,7 @@ public sealed record TuningCalibrationKey(string CorpusVersion, string LabelVers
         var role = cases[0].Role;
         var prompts = cases.OrderBy(c => c.Id, StringComparer.Ordinal)
             .Select(c => new { c.Id, PromptIdentity = TuningCaseRenderer.Render(c).PromptIdentity }).ToArray();
-        var identity = JsonSerializer.Serialize(new { contract = TuningContractIdentity.Current, role, prompts }, TuningInputJson.Options);
+        var identity = JsonSerializer.Serialize(new { contract = TuningContractIdentity.ForRole(role), role, prompts }, TuningInputJson.Options);
         return new(corpusVersion, labelVersion, schemaVersion, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity))));
     }
 }

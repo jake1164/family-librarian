@@ -76,6 +76,63 @@ public sealed class ArtifactDecisionTests
         Assert.IsFalse(SemanticAssessmentParser.ParseArtifactDecision(reply, []).IsValid);
 
     [TestMethod]
+    [DataRow("no_objection", "")]
+    [DataRow("no_objection", ",\"claims\":[]")]
+    [DataRow("uncertain", "")]
+    [DataRow("uncertain", ",\"claims\":[]")]
+    public void ANonHoldingVerdictMayOmitOrEmptyItsClaims(string verdict, string claims)
+    {
+        var parsed = SemanticAssessmentParser.ParseArtifactDecision(
+            $"{{\"schema\":\"artifact-decision/1\",\"verdict\":\"{verdict}\"{claims}}}", []);
+        Assert.IsTrue(parsed.IsValid);
+        Assert.AreEqual(verdict, parsed.Value!.Verdict);
+        Assert.HasCount(0, parsed.Value.Claims);
+    }
+
+    [TestMethod]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"hold\"}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"hold\",\"claims\":[]}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"release\"}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"contains_requested\",\"claims\":[]}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"no_objection\",\"note\":\"x\"}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"no_objection\",\"claims\":[],\"note\":\"x\"}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"no_objection\",\"verdict\":\"uncertain\"}")]
+    [DataRow("{\"schema\":\"artifact-decision/2\",\"verdict\":\"no_objection\"}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":null}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"no_objection\",\"claims\":null}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"no_objection\",\"claims\":{}}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"no_objection\",\"claims\":\"\"}")]
+    [DataRow("{\"schema\":\"artifact-decision/1\",\"verdict\":\"no_objection\",\"claims\":[{}]}")]
+    [DataRow("[]")]
+    public void OnlyTheTwoNonHoldingVerdictsMayLeaveOutClaimsAndNothingElseRelaxes(string reply) =>
+        Assert.IsFalse(SemanticAssessmentParser.ParseArtifactDecision(reply, [new("idv.ev-concern", "code", EvidencePolarity.Weak, "Fact.")]).IsValid);
+
+    [TestMethod]
+    public void AClaimWithAForgedCitationStillRejectsANonHoldingVerdict() =>
+        Assert.IsFalse(SemanticAssessmentParser.ParseArtifactDecision(ArtifactDecisionKit.Reply("no_objection", id: "forged"), []).IsValid);
+
+    [TestMethod]
+    [DataRow("no_objection", ModelWorkflowEffect.NoChange)]
+    [DataRow("uncertain", ModelWorkflowEffect.Abstained)]
+    public async Task AQuietReplyWithoutClaimsIsASucceededNonHoldAndReuseAcceptsItAgain(string verdict, ModelWorkflowEffect effect)
+    {
+        var id = Guid.NewGuid();
+        var kit = new ArtifactDecisionKit { UsageRecordId = id, Response = $"{{\"schema\":\"artifact-decision/1\",\"verdict\":\"{verdict}\"}}" };
+        var observer = new FamilyLibrarian.Infrastructure.Tests.ModelGateway.RecordingWorkflowObserver();
+        var service = new ArtifactDecisionService(kit, kit, kit.Store, kit, workflow: observer);
+        var asset = ArtifactDecisionKit.Asset(); var result = ArtifactDecisionKit.Match();
+        Assert.IsNull(await service.GetHoldAsync(asset, result, ArtifactDecisionKit.Expected, CancellationToken.None));
+        Assert.IsNull(await service.GetHoldAsync(asset, result, ArtifactDecisionKit.Expected, CancellationToken.None));
+        Assert.AreEqual(1, kit.Calls);
+        var finding = kit.Store.Findings.Single();
+        Assert.AreEqual(ModelCallOutcome.Succeeded, finding.Outcome);
+        Assert.AreEqual(verdict, finding.Verdict);
+        Assert.AreEqual("[]", finding.ClaimsJson);
+        Assert.HasCount(2, observer.Observations);
+        Assert.IsTrue(observer.Observations.All(o => o.Id == id && o.Effects == effect));
+    }
+
+    [TestMethod]
     public void ForgedIdsDuplicateIdsUnknownKindsAndUnsafeNotesAreRejected()
     {
         EvidenceFinding[] evidence = [new("idv.ev-concern", "code", EvidencePolarity.Weak, "Fact.")];

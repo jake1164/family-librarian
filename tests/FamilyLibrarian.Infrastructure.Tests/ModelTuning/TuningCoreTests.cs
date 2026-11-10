@@ -273,6 +273,72 @@ public sealed class TuningCoreTests
             Completion(TuningReplies.Render(item.Role, new(Verdict: "consistent"), rendered))).Score);
     }
 
+    private static readonly ModelRole[] ScoredRoles =
+    [
+        ModelRole.ArtifactValidationAssessment, ModelRole.ArtifactValidationDecision, ModelRole.CandidateAmbiguityAssessment,
+        ModelRole.CandidateTriage, ModelRole.SearchGuidance, ModelRole.IntentInterpretation
+    ];
+
+    [TestMethod]
+    public void ARoleExclusiveSourceChangeInvalidatesOnlyThatRolesContractIdentity()
+    {
+        var sources = TuningContractIdentity.Snapshot.Sources;
+        foreach (var (owner, paths) in TuningContractIdentity.RoleExclusiveSources)
+            foreach (var path in paths)
+            {
+                var changed = sources.ToDictionary(p => p.Key, p => p.Key == path ? "changed" : p.Value, StringComparer.Ordinal);
+                foreach (var role in ScoredRoles)
+                {
+                    var same = TuningContractIdentity.ForRole(role, sources) == TuningContractIdentity.ForRole(role, changed);
+                    Assert.AreEqual(role != owner, same, $"{path} / {role}");
+                }
+            }
+    }
+
+    [TestMethod]
+    public void ASharedSourceChangeInvalidatesEveryRolesContractIdentity()
+    {
+        var sources = TuningContractIdentity.Snapshot.Sources;
+        var exclusive = TuningContractIdentity.RoleExclusiveSources.Values.SelectMany(v => v).ToHashSet(StringComparer.Ordinal);
+        foreach (var shared in sources.Keys.Where(p => !exclusive.Contains(p)))
+        {
+            var changed = sources.ToDictionary(p => p.Key, p => p.Key == shared ? "changed" : p.Value, StringComparer.Ordinal);
+            foreach (var role in ScoredRoles)
+                Assert.AreNotEqual(TuningContractIdentity.ForRole(role, sources), TuningContractIdentity.ForRole(role, changed), $"{shared} / {role}");
+        }
+    }
+
+    [TestMethod]
+    public void RoleExclusiveSourcesAreFingerprintedBelongToOneRoleAndAreNotReferencedByAnotherRolesSources()
+    {
+        var all = TuningContractIdentity.RoleExclusiveSources.Values.SelectMany(v => v).ToArray();
+        Assert.HasCount(all.Distinct(StringComparer.Ordinal).Count(), all);
+        foreach (var path in all) Assert.IsTrue(TuningContractIdentity.Snapshot.Sources.ContainsKey(path), path);
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "FamilyLibrarian.slnx"))) root = root.Parent;
+        Assert.IsNotNull(root);
+        // A file may be role-exclusive only if no source outside its own file set names the types it declares. Another role's file
+        // naming them would also be a dependency that role's identity could not see. Partial declarations (the shared parser class)
+        // only add members and are not treated as owned types. ModelTuning files are shared by design.
+        var declaration = new System.Text.RegularExpressions.Regex(
+            @"^\s*(?:public |internal |sealed |static |abstract |readonly )*(?<partial>partial )?(?:record struct|record|class|enum|struct|interface)\s+(?<name>[A-Z]\w+)",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+        foreach (var (owner, paths) in TuningContractIdentity.RoleExclusiveSources)
+        {
+            var typeNames = paths.SelectMany(p => declaration.Matches(File.ReadAllText(Path.Combine(root.FullName, p)))
+                    .Where(m => !m.Groups["partial"].Success).Select(m => m.Groups["name"].Value))
+                .Distinct(StringComparer.Ordinal).ToArray();
+            Assert.IsNotEmpty(typeNames, owner.ToString());
+            foreach (var other in TuningContractIdentity.Snapshot.Sources.Keys.Where(p => !paths.Contains(p) &&
+                !p.Contains("/ModelTuning/", StringComparison.Ordinal)))
+            {
+                var text = File.ReadAllText(Path.Combine(root.FullName, other));
+                foreach (var name in typeNames)
+                    Assert.IsFalse(System.Text.RegularExpressions.Regex.IsMatch(text, $@"\b{name}\b"), $"{other} refers to {name} declared by a {owner} source");
+            }
+        }
+    }
+
     [TestMethod]
     public void ParserPolicyAndScorerSourceChangesInvalidateTheContractRevision()
     {

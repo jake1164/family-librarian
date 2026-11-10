@@ -48,6 +48,27 @@ public static partial class SemanticAssessmentParser
         return grounded ? parsed : ModelParse.SchemaRejected<ArtifactDecision>("Release lacks the required cited identity evidence.", ModelFailureReason.NoSupportingEvidence);
     }
 
+    /// <summary>
+    /// True only for exactly <c>{schema, verdict}</c> or <c>{schema, verdict, claims: []}</c> with the right schema and a verdict that
+    /// never holds. Duplicate or extra keys, a non-empty or non-array claims value and every other verdict fall through to the
+    /// strict parser, so the key set stays exact and a hold still needs a grounded claim.
+    /// </summary>
+    private static bool IsNonHoldingWithoutClaims(JsonElement root, out string verdict)
+    {
+        verdict = string.Empty;
+        if (root.ValueKind != JsonValueKind.Object) return false;
+        var names = root.EnumerateObject().Select(property => property.Name).ToArray();
+        if (names.Distinct(StringComparer.Ordinal).Count() != names.Length) return false;
+        var hasClaims = names.Contains("claims", StringComparer.Ordinal);
+        if (names.Length != (hasClaims ? 3 : 2) || !names.Contains("schema", StringComparer.Ordinal) ||
+            !names.Contains("verdict", StringComparer.Ordinal)) return false;
+        if (hasClaims && (root.GetProperty("claims") is not { ValueKind: JsonValueKind.Array } claims || claims.GetArrayLength() != 0)) return false;
+        if (!IsString(root.GetProperty("schema"), out var schema) || schema != ArtifactDecisionSchema ||
+            !IsString(root.GetProperty("verdict"), out var value) || value is not ("no_objection" or "uncertain")) return false;
+        verdict = value;
+        return true;
+    }
+
     private static ModelParseResult<ArtifactDecision> ParseArtifactDecisionCore(string? content,
         IReadOnlyList<EvidenceFinding> evidence, bool release)
     {
@@ -57,6 +78,10 @@ public static partial class SemanticAssessmentParser
         {
             using var document = JsonDocument.Parse(content, new JsonDocumentOptions { MaxDepth = 6 });
             var root = document.RootElement;
+            // A review with nothing to report may leave claims out or send none. Only a verdict that can never hold may do so,
+            // and a release reply always needs its cited identity evidence.
+            if (!release && IsNonHoldingWithoutClaims(root, out var quietVerdict))
+                return ModelParse.Ok(new ArtifactDecision(quietVerdict, []));
             if (root.ValueKind != JsonValueKind.Object || !HasExactly(root, TopLevel) ||
                 !IsString(root.GetProperty("schema"), out var schema) || schema != ArtifactDecisionSchema ||
                 !IsString(root.GetProperty("verdict"), out var verdict) ||
