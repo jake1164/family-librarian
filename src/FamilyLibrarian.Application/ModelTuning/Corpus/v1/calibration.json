@@ -77,7 +77,7 @@
           "corpusVersion": "synthetic-5",
           "labelVersion": "owner-reviewed-4",
           "schemaVersion": 1,
-          "promptParserRulesScorerIdentity": "d65808b1ecafd95fa1660bbebadacd8d015bca3ae082bfc9f0a20a93eafb66e1"
+          "promptParserRulesScorerIdentity": "9a655f1e4b7a9e218079b550b581673d6e70925e21e0969f077793907b1350af"
         },
         "threshold": {
           "absoluteFloor": 0.9,

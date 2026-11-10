@@ -17,6 +17,19 @@ namespace FamilyLibrarian.Infrastructure.Tests.SemanticAssessment;
 public sealed class CandidateTriageServiceTests
 {
     [TestMethod]
+    public void TiedPickGuidanceRequiresStrongerPositiveEvidenceAndPreservesAuthorVariantInstructions()
+    {
+        const string tied = "Never prefer CURRENT_PICK. If CURRENT_PICK is best with no tied alternative, answer keep. " +
+            "When CURRENT_PICK is tied, keep unless another candidate named on TIED has clearly stronger supplied Positive evidence; " +
+            "then prefer that candidate and cite its Positive evidence. An equal tie alone is not a reason to move.";
+        const string authorVariant = "author_variant requires only an author conflict, a strong matching title plus exact series position, " +
+            "identifier, or both year and publisher evidence. Never upgrade other conflicts.";
+        Assert.IsTrue(CandidateTriageEvidence.SystemPrompt.Contains(tied, StringComparison.Ordinal));
+        Assert.IsTrue(CandidateTriageEvidence.SystemPrompt.Contains(authorVariant, StringComparison.Ordinal));
+        Assert.IsFalse(CandidateTriageEvidence.SystemPrompt.Contains("If CURRENT_PICK is tied or best, answer keep.", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public async Task AnAllowedProposalIsNotAUsedSelectionUntilTheConsumerReportsUse()
     {
         var id = Guid.NewGuid();
@@ -219,6 +232,7 @@ public sealed class CandidateTriageServiceTests
         {
             Calls++; BeforeParse?.Invoke(cancellationToken);
             Assert.AreEqual(ModelRole.CandidateTriage, request.Role); Assert.AreEqual(300, request.MaxOutputTokens);
+            Assert.AreEqual(CandidateTriageEvidence.SystemPrompt, request.Messages[0].Content);
             var result = parse(reply);
             return Task.FromResult(new ModelExecution<T>(result.Failure, result.Value, result.Detail, null, 1, "test", false, UsageRecordId: UsageRecordId));
         }

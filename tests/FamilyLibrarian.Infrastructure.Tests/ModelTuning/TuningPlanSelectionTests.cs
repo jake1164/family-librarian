@@ -271,6 +271,21 @@ public sealed class TuningPlanSelectionTests
     }
 
     [TestMethod]
+    public void ThePreWordingIntentIdentityCannotCertifyTheNewPrompt()
+    {
+        const string priorIdentity = "d65808b1ecafd95fa1660bbebadacd8d015bca3ae082bfc9f0a20a93eafb66e1";
+        var manifest = BuiltInTuningCalibration.LoadEmbedded(Corpus);
+        var intent = manifest.Roles.Single(r => r.Role == ModelRole.IntentInterpretation);
+        Assert.AreNotEqual(priorIdentity, intent.Calibration!.Identity.PromptParserRulesScorerIdentity);
+        var stale = manifest with { Roles = manifest.Roles.Select(r => r == intent ? r with
+        {
+            Calibration = r.Calibration! with { Identity = r.Calibration.Identity with { PromptParserRulesScorerIdentity = priorIdentity } }
+        } : r).ToArray() };
+        Assert.ThrowsExactly<ArgumentException>(() => BuiltInTuningCalibration.Load(Corpus,
+            JsonSerializer.Serialize(stale, TuningInputJson.Options)));
+    }
+
+    [TestMethod]
     public void B1AcceptsOnlyRequiredHintPlusTheExactOptionalSuppliedCanonicalSeries()
     {
         string[] ids = ["SG-01", "SG-02", "SG-04", "SG-05", "SG-06", "SG-07", "SG-08", "SG-09", "SG-10", "SG-11",

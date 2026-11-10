@@ -124,6 +124,29 @@ public sealed class BookIntentInterpreterTests
     }
 
     [TestMethod]
+    [DataRow("Could you find Dune?", null)]
+    [DataRow("No, I meant Dune, not Frank Herbert.", "Dune Frank Herbert")]
+    [DataRow("Find Dune instead.", "The Hobbit J. R. R. Tolkien")]
+    public async Task SuppliedAuthorInstructionsAndContextReachTheProductionRequest(string message, string? previous)
+    {
+        // The scripted response checks plumbing and the nullable contract, not model compliance with the wording.
+        var (interpreter, model, _) = Real((_, _) => ScriptedModel.Ok(Json(title: "\"Dune\"", author: "null")));
+        var result = await interpreter.InterpretAsync(Guid.NewGuid(), message, previous, CancellationToken.None);
+        Assert.IsNotNull(result);
+        Assert.IsNull(result.Author);
+        Assert.AreEqual("Dune", result.Title);
+        var prompt = model.Calls.Single().Request.Messages[0].Content;
+        const string approved = "give your best guess of its title as you would type it into a catalog search. " +
+            "Return an author only when the MESSAGE explicitly states that author, or when PREVIOUS SEARCH explicitly states that author " +
+            "for the book the message is correcting or narrowing and the message does not replace or reject that author. " +
+            "Otherwise return JSON null for author, even if you recognize the title. Do not infer an author from a title, series, plot, " +
+            "or your own knowledge. Keep the title best-effort even when the author is unknown.";
+        Assert.IsTrue(prompt.Contains(approved, StringComparison.Ordinal));
+        Assert.AreEqual(previous is null ? "MESSAGE: " + message : "MESSAGE: " + message + "\nPREVIOUS SEARCH: " + previous,
+            model.Calls.Single().Request.Messages[1].Content);
+    }
+
+    [TestMethod]
     public async Task ADisabledModelOverBudgetOrBrokenReplyYieldsNoInterpretation()
     {
         var disabled = Real((_, _) => ScriptedModel.Ok(Json()), enabled: false);
@@ -172,18 +195,21 @@ public sealed class BookIntentInterpreterTests
     public async Task ASentenceWithWeakCatalogResultsIsInterpretedAndTheGuessReplacesThemWithOneLeadLine()
     {
         const string Sentence = "which novel is the one with the russian submarine captain";
-        var interpreter = new FakeInterpreter(_ => new BookIntentInterpretation(BookIntent.FindBook, "The Sum of All Fears", "Tom Clancy"));
+        var interpreter = new FakeInterpreter(_ => new BookIntentInterpretation(BookIntent.FindBook, "The Sum of All Fears", null));
         var harness = Harness(interpreter);
         harness.Tools.Results[Sentence] = new ConversationSearchResult(
             [FakeTools.Choice("x1", "Dimensions of Prayer", "Someone"), FakeTools.Choice("x2", "Gravity of Frustration", "Else")], false, []);
-        harness.Tools.Results["The Sum of All Fears Tom Clancy"] = new ConversationSearchResult(
+        harness.Tools.Results["The Sum of All Fears"] = new ConversationSearchResult(
             [FakeTools.Choice("sof", "The Sum of All Fears", "Tom Clancy")], false, []);
 
         var result = await harness.SayAsync(Sentence);
 
         Assert.AreEqual(ConversationReplyKind.Choices, result.Reply.Kind);
         Assert.AreEqual("The Sum of All Fears", result.Reply.Choices.Single().Title);
-        StringAssert.StartsWith(result.Reply.Text, "I wasn't sure what you meant, so I took a guess at “The Sum of All Fears Tom Clancy”. I found these:");
+        Assert.AreEqual("Tom Clancy", result.Reply.Choices.Single().Authors, "The author comes from the catalog result.");
+        Assert.IsTrue(harness.Tools.Calls.Contains("search:The Sum of All Fears"));
+        Assert.IsFalse(harness.Tools.Calls.Contains("search:The Sum of All Fears Tom Clancy"));
+        StringAssert.StartsWith(result.Reply.Text, "I wasn't sure what you meant, so I took a guess at “The Sum of All Fears”. I found these:");
         Assert.IsFalse(result.Reply.Text.Contains("I found these for", StringComparison.Ordinal), "The search is described once, not twice.");
         Assert.AreEqual(1, interpreter.Calls.Count);
         Assert.AreEqual(0, harness.Tools.Created.Count);

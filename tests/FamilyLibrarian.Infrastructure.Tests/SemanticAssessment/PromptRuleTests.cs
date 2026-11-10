@@ -19,11 +19,13 @@ public sealed class PromptRuleTests
     }
 
     [TestMethod]
-    public void TheTriagePromptNeverAllowsPreferringTheCurrentPickAndSaysATieMeansKeep()
+    public void TheTriagePromptKeepsATieUnlessAnotherTiedCandidateHasStrongerPositiveEvidence()
     {
         var prompt = CandidateTriageEvidence.SystemPrompt;
         StringAssert.Contains(prompt, "Never prefer CURRENT_PICK");
-        StringAssert.Contains(prompt, "If CURRENT_PICK is tied or best, answer keep");
+        Assert.IsTrue(prompt.Contains("If CURRENT_PICK is best with no tied alternative, answer keep", StringComparison.Ordinal));
+        Assert.IsTrue(prompt.Contains("When CURRENT_PICK is tied, keep unless another candidate named on TIED has clearly stronger supplied Positive evidence; then prefer that candidate", StringComparison.Ordinal));
+        Assert.IsTrue(prompt.Contains("An equal tie alone is not a reason to move", StringComparison.Ordinal));
         StringAssert.Contains(prompt, "veto and prefer apply only to a candidate named on the CURRENT_PICK line (veto) or the TIED line (prefer)");
         StringAssert.Contains(prompt, "for any other candidate answer keep");
         StringAssert.Contains(prompt, "keep and uncertain cite at most 6 evidence ids in total");

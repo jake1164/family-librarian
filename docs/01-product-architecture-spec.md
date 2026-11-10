@@ -1182,6 +1182,10 @@ prompts, replies or book excerpts. Older calls retain their recorded broad outco
 detailed reasons are shown explicitly. These are call outcomes, not book outcomes: a valid
 recommendation to hold a book is still an accepted reply. The page does not retry calls.
 
+Chat interpretation keeps the title best-effort. It supplies an author only when
+stated in the message or applicable previous search; otherwise it uses a title-only
+catalog query, and the person still chooses a real catalog result.
+
 The optional `SearchGuidance` role is off by default. After scheduled external
 sources exhaust deterministic searches without an eligible download or product
 question, it may propose up to five bounded bibliographic searches. Proposed
@@ -1196,8 +1200,10 @@ not enable AI candidate triage or artifact release decisions.
 The separate `CandidateTriage` role is also off by default. When enabled, it
 can veto an automatic candidate, choose between equally ranked eligible
 candidates, or resolve an author-only conflict with independent bibliographic
-corroboration. The server enforces each move against supplied candidates and
-evidence; Strict never gains an AI confidence upgrade. Every submission checks
+corroboration. For a tied current pick, the prompt says to keep it unless another
+tied candidate has clearly stronger supplied Positive evidence, then prefer that
+candidate; an equal tie alone does not justify moving. The server enforces each
+move against supplied candidates and evidence; Strict never gains an AI confidence upgrade. Every submission checks
 fresh source facts, and downloaded files still pass all security, identity and
 delivery checks. Candidate triage does not enable artifact release decisions.
 

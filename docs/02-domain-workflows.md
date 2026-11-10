@@ -1298,7 +1298,10 @@ The closed `candidate-triage/1` response allows `keep`, `uncertain`, `veto`,
 A veto must name the current choice and cite its negative or conditional
 evidence; it excludes that copy for this pass at every confidence level. Vetoing
 a companion part defers that set. Preference must cite positive evidence for a
-supplied member of the genuinely tied best candidates. An author variant must
+supplied member of the genuinely tied best candidates. The prompt keeps a tied
+current choice unless another tied candidate has clearly stronger supplied Positive
+evidence, then prefers that candidate; an equal tie alone is not a reason to move.
+An author variant must
 have strong title support, only an author conflict, and independent matching
 series and position, ISBN, or both year and publisher. It cannot override
 language, title, series, edition, narration or completeness conflicts.

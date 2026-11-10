@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "sources": {
-    "src/FamilyLibrarian.Application/Conversation/BookIntentInterpreter.cs": "c72ee9899e37c40a1163edf2a2323020b5d39d5e32734953ede1931585aaaf81",
+    "src/FamilyLibrarian.Application/Conversation/BookIntentInterpreter.cs": "5e4422e4e8ba871614a6326534de01b7a00eb556ae535bbfb2f9a3515dd93a5e",
     "src/FamilyLibrarian.Application/Matching/AuthorAffinity.cs": "735a5a8d1993320c0c5605056e3b47540a68db0b0c2a17809fc8282f0075210c",
     "src/FamilyLibrarian.Application/Matching/ReleaseTitleEvidence.cs": "36febad83dcad28b9d2f13201d133ce15b0e10d158195307e014cd3b89b2c3cd",
     "src/FamilyLibrarian.Application/ModelTuning/BuiltInTuningCalibration.cs": "3cccc00ecb789d72649a791e26a48553d33bb025531cc07c075071b95c0322e5",
@@ -30,7 +30,7 @@
     "src/FamilyLibrarian.Application/SemanticAssessment/ArtifactSemanticAnalysis.cs": "4ae7b32e949c66aca8164344dafde2337e1acb46d60b1279cde6ab6c06860692",
     "src/FamilyLibrarian.Application/SemanticAssessment/CandidateSemanticAnalysis.cs": "9e59af1301ef0fc737df156ffa7df294c21cb8a07406de2df321d43ebc27192b",
     "src/FamilyLibrarian.Application/SemanticAssessment/CandidateTriage.cs": "64d66da292c3c3614e656594229e51d8587abd7691ae0d699bc1d5b5ca19657c",
-    "src/FamilyLibrarian.Application/SemanticAssessment/CandidateTriageEvidence.cs": "5c4dfffe520a5ac0885105bd5a41fe71c4aa7ca28c72eabc41027272042a6eb7",
+    "src/FamilyLibrarian.Application/SemanticAssessment/CandidateTriageEvidence.cs": "677d4fa518eb211dced5c0d69fb89c4c05ae8186baae5610e26e9fc6f0fcf319",
     "src/FamilyLibrarian.Application/SemanticAssessment/CandidateTriageRules.cs": "1a5e1c344932c50f3625b96d9a4a758105b4e73ef2fa5dc8b6cf21dabb58f170",
     "src/FamilyLibrarian.Application/SemanticAssessment/CandidateTriageService.cs": "ae6f377935c84a301905c248cfbbd84ad0190748aca06146076d4e1884d08ac7",
     "src/FamilyLibrarian.Application/SemanticAssessment/SearchGuidance.cs": "6997dc7cf1a3c71b62d44c1fb9dd35879df7594278160a20a8b6bc733894400d",

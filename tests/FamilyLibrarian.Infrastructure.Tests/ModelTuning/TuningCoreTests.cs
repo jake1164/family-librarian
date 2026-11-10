@@ -181,6 +181,39 @@ public sealed class TuningCoreTests
     }
 
     [TestMethod]
+    public void TiedPreferenceFixturesKeepBothApprovedActionsAndIndependentlyTiedTargets()
+    {
+        string[] ids = ["CT-87", "CT-88", "CT-89", "CT-90", "CT-91"];
+        var fixtures = Corpus.Cases.Where(f => ids.Contains(f.Case.Id, StringComparer.Ordinal)).ToArray();
+        Assert.HasCount(5, fixtures);
+        foreach (var fixture in fixtures)
+        {
+            var input = (CandidateTriageCaseInput)fixture.Case.Input;
+            var context = TuningCaseRenderer.BuildTriageContext(input);
+            var preferred = fixture.Case.Expected.Acceptable.Single(a => a.Move == "prefer");
+            Assert.HasCount(2, fixture.Case.Expected.Acceptable);
+            Assert.IsTrue(fixture.Case.Expected.Acceptable.Any(a => a.Move == "keep" && a.TargetKey is null));
+            Assert.IsNotNull(context.Pick);
+            var target = context.Candidates.Single(c => c.ProviderResultId == preferred.TargetKey);
+            Assert.AreNotEqual(context.Pick.ProviderResultId, target.ProviderResultId);
+            Assert.IsTrue(context.TiedResultIds.Contains(target.ProviderResultId));
+            Assert.IsTrue(ExternalCandidateRanker.AreTied(context.Pick, target, target.MediaType), fixture.Case.Id);
+            Assert.HasCount(2, fixture.ReferenceReplies);
+            var rendered = TuningCaseRenderer.Render(fixture.Case);
+            foreach (var reply in fixture.ReferenceReplies)
+                Assert.AreEqual(TuningScore.Correct, TuningScoring.Score(fixture.Case, rendered, Completion(reply)).Score, fixture.Case.Id);
+            if (fixture.Case.Id is "CT-88" or "CT-89" or "CT-91")
+            {
+                var pickCodes = CandidateTriageEvidence.Findings(context.Pick).Where(f => f.Polarity == EvidencePolarity.Positive)
+                    .Select(f => f.Code).ToHashSet(StringComparer.Ordinal);
+                var targetCodes = CandidateTriageEvidence.Findings(target).Where(f => f.Polarity == EvidencePolarity.Positive)
+                    .Select(f => f.Code).ToHashSet(StringComparer.Ordinal);
+                Assert.IsTrue(targetCodes.IsProperSupersetOf(pickCodes), fixture.Case.Id);
+            }
+        }
+    }
+
+    [TestMethod]
     public void ReviewedTriageContractsPreserveBaselinesWithoutMeasuringOptionalActionsAsAbility()
     {
         var fixtures = Corpus.Cases.Where(c => c.Case.Role == ModelRole.CandidateTriage).ToArray();
