@@ -1,6 +1,7 @@
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Domain.Requests;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -21,6 +22,27 @@ namespace FamilyLibrarian.Web.Tests;
 [TestClass]
 public sealed class MigrationUpgradeTests
 {
+    [TestMethod]
+    public async Task NewModelSettingsUse1024WhileStored512LimitsAndTheMigrationModelStayUnchanged()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var existing = new ModelGatewaySettings(now);
+        existing.ConfigureLimits(ModelExecutionLimits.Default with { MaxOutputTokens = 512 }, null, now);
+        var fresh = new ModelGatewaySettings(now);
+        Assert.AreEqual(1024, fresh.MaxOutputTokens);
+
+        database.ModelGatewaySettingsRows.AddRange(existing, fresh);
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+
+        Assert.AreEqual(512, (await database.ModelGatewaySettingsRows.SingleAsync(s => s.Id == existing.Id)).MaxOutputTokens);
+        Assert.AreEqual(1024, (await database.ModelGatewaySettingsRows.SingleAsync(s => s.Id == fresh.Id)).MaxOutputTokens);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
     [TestMethod]
     public async Task WorkflowObservationUpgradeLeavesHistoricalImpactUnknownAndPreservesUsageAndFindings()
     {

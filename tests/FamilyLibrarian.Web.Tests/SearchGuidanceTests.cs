@@ -331,7 +331,7 @@ public sealed class SearchGuidanceTests
             Calls++;
             LastRequest = request;
             Assert.AreEqual(ModelBudgetClass.BackgroundValidation, request.Budget);
-            Assert.AreEqual(400, request.MaxOutputTokens);
+            Assert.AreEqual(1000, request.MaxOutputTokens);
             Assert.IsTrue(cancellationToken.CanBeCanceled);
             if (Failure == "timeout") throw new OperationCanceledException("Model timed out.");
             if (Failure == "transport") throw new HttpRequestException("Provider failed.");

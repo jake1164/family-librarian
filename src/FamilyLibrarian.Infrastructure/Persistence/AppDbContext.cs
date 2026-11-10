@@ -412,7 +412,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             var defaults = ModelExecutionLimits.Default;
             entity.Property(settings => settings.TimeoutSeconds).HasColumnName("timeout_seconds").HasDefaultValue(defaults.TimeoutSeconds);
             entity.Property(settings => settings.MaxInputCharacters).HasColumnName("max_input_characters").HasDefaultValue(defaults.MaxInputCharacters);
-            entity.Property(settings => settings.MaxOutputTokens).HasColumnName("max_output_tokens").HasDefaultValue(defaults.MaxOutputTokens);
+            // Preserve the migrated database default; new settings explicitly use the current domain default.
+            entity.Property(settings => settings.MaxOutputTokens).HasColumnName("max_output_tokens").HasDefaultValue(512);
             entity.Property(settings => settings.MaxConcurrentCalls).HasColumnName("max_concurrent_calls").HasDefaultValue(defaults.MaxConcurrentCalls);
             entity.Property(settings => settings.CloudDailyRequests).HasColumnName("cloud_daily_requests").HasDefaultValue(defaults.CloudDailyRequests);
             entity.Property(settings => settings.CloudDailyTokens).HasColumnName("cloud_daily_tokens").HasDefaultValue(defaults.CloudDailyTokens);

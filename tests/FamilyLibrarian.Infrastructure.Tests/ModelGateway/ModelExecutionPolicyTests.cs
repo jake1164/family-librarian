@@ -231,13 +231,14 @@ public sealed class ModelExecutionPolicyTests
         // Each call is reserved and charged at a conservative estimate above 500 tokens when no usage is reported.
         var rig = new Rig(new ScriptedModel((_, _) => new ModelResponse(true, ModelFailureKind.None, null, "{}", [], "stop", "m", null, 5)),
             Configured(SmallBackground(requests: 100, tokens: 1_500), role: ModelRole.CandidateTriage));
-        Assert.IsTrue((await RunAsync(rig, Background())).Succeeded);
+        var request = Background() with { MaxOutputTokens = 512 };
+        Assert.IsTrue((await RunAsync(rig, request)).Succeeded);
 
-        var refused = await RunAsync(rig, Background());
+        var refused = await RunAsync(rig, request);
 
         Assert.AreEqual(ModelCallOutcome.BudgetExhausted, refused.Outcome, "The second review fits the installation allowance but not the file-review share.");
         StringAssert.Contains(refused.Detail, "file-review share");
-        Assert.IsTrue((await RunAsync(rig, Background() with { Role = ModelRole.CandidateTriage })).Succeeded);
+        Assert.IsTrue((await RunAsync(rig, request with { Role = ModelRole.CandidateTriage })).Succeeded);
     }
 
     [TestMethod]
@@ -358,7 +359,7 @@ public sealed class ModelExecutionPolicyTests
         Assert.AreEqual(ModelCallOutcome.InvalidJson, await OutcomeOf((_, _) => ScriptedModel.Ok("nope"), _ => ModelParse.NotJson<string>("not json")));
         Assert.AreEqual(ModelCallOutcome.SchemaRejected, await OutcomeOf((_, _) => ScriptedModel.Ok("{}"), _ => ModelParse.SchemaRejected<string>("extra field")));
         Assert.AreEqual(ModelCallOutcome.SchemaRejected, await OutcomeOf((_, _) => ScriptedModel.Ok("{}"), _ => throw new FormatException("boom")));
-        Assert.AreEqual(ModelCallOutcome.OutputTooLarge, await OutcomeOf((_, _) => ScriptedModel.Ok(new string('x', 512 * 8 + 1))));
+        Assert.AreEqual(ModelCallOutcome.OutputTooLarge, await OutcomeOf((_, _) => ScriptedModel.Ok(new string('x', ModelExecutionLimits.Default.MaxOutputTokens * 8 + 1))));
     }
 
     [TestMethod]
@@ -500,6 +501,24 @@ public sealed class ModelExecutionPolicyTests
         Assert.AreEqual(64, rig.Model.Calls[0].Request.MaxOutputTokens);
         Assert.AreEqual(ModelExecutionLimits.Default.MaxOutputTokens, rig.Model.Calls[1].Request.MaxOutputTokens);
         Assert.AreEqual(TimeSpan.FromSeconds(ModelExecutionLimits.Default.TimeoutSeconds), rig.Model.Calls[0].Connection.Timeout);
+    }
+
+    [TestMethod]
+    [DataRow(null, 1000)]
+    [DataRow(512, 512)]
+    [DataRow(1000, 1000)]
+    [DataRow(1024, 1000)]
+    [DataRow(2048, 1000)]
+    public async Task A1000TokenSearchRequestRespectsTheDefaultOrConfiguredInstallationLimit(int? installationLimit, int expectedCap)
+    {
+        var limits = installationLimit is { } cap ? ModelExecutionLimits.Default with { MaxOutputTokens = cap } : null;
+        var rig = new Rig(new ScriptedModel((_, _) => ScriptedModel.Ok("{}")), Configured(limits, role: ModelRole.SearchGuidance));
+
+        var result = await RunAsync(rig, Background() with { Role = ModelRole.SearchGuidance, MaxOutputTokens = 1000 });
+
+        Assert.IsTrue(result.Succeeded);
+        Assert.AreEqual(1024, ModelExecutionLimits.Default.MaxOutputTokens);
+        Assert.AreEqual(expectedCap, rig.Model.Calls.Single().Request.MaxOutputTokens);
     }
 
     [TestMethod]
@@ -714,7 +733,10 @@ public sealed class ModelExecutionPolicyTests
     [TestMethod]
     public void LimitsValidationRejectsOutOfRangeValuesAndAcceptsTheDefaults()
     {
+        Assert.IsTrue(ModelExecutionLimits.Default.MaxOutputTokens is >= 16 and <= 2048);
         Assert.IsNull(ModelExecutionLimits.Default.Validate());
+        Assert.IsNotNull((ModelExecutionLimits.Default with { MaxOutputTokens = 15 }).Validate());
+        Assert.IsNotNull((ModelExecutionLimits.Default with { MaxOutputTokens = 2049 }).Validate());
         Assert.IsNotNull((ModelExecutionLimits.Default with { TimeoutSeconds = 1 }).Validate());
         Assert.IsNotNull((ModelExecutionLimits.Default with { MaxConcurrentCalls = 0 }).Validate());
         Assert.IsNotNull((ModelExecutionLimits.Default with { CloudDailyTokens = -1 }).Validate());

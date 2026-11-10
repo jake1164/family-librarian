@@ -157,6 +157,7 @@ public sealed class SearchGuidanceServiceTests
         public Action<CancellationToken>? BeforeParse { get; init; }
         public Task<ModelExecution<T>> ExecuteAsync<T>(ModelExecutionRequest request, Func<string, ModelParseResult<T>> parse, CancellationToken cancellationToken)
         {
+            Assert.AreEqual(1000, request.MaxOutputTokens);
             Calls++;
             BeforeParse?.Invoke(cancellationToken);
             if (Refuse) return Task.FromResult(new ModelExecution<T>(ModelCallOutcome.BudgetExhausted, default, "Budget", null, 0, "fake", false));

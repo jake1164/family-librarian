@@ -35,7 +35,7 @@
     "src/FamilyLibrarian.Application/SemanticAssessment/CandidateTriageService.cs": "ae6f377935c84a301905c248cfbbd84ad0190748aca06146076d4e1884d08ac7",
     "src/FamilyLibrarian.Application/SemanticAssessment/SearchGuidance.cs": "6997dc7cf1a3c71b62d44c1fb9dd35879df7594278160a20a8b6bc733894400d",
     "src/FamilyLibrarian.Application/SemanticAssessment/SearchGuidanceEvidence.cs": "434a16e2893354eb0e13ce70571ecb9d402eabcd8010fa52c25dafecba219afe",
-    "src/FamilyLibrarian.Application/SemanticAssessment/SearchGuidanceService.cs": "2421ff2a622eedc31ec64621b966b4db9a62cd01a86fae9dc74ea36f507d11da",
+    "src/FamilyLibrarian.Application/SemanticAssessment/SearchGuidanceService.cs": "284e3809bb8210da0806bff7d2b52df7443ad3551086c00caa559024dc905199",
     "src/FamilyLibrarian.Application/SemanticAssessment/SemanticAssessment.cs": "19ae0a183534c5cd219abba1934e2e7f53b2e9a9c3bf117afaaeaf646be04d8d",
     "src/FamilyLibrarian.Application/SemanticAssessment/SemanticAssessmentParser.cs": "d094de5d9222f597e66e983b4fd34c535e7679277410b346f6172396b5d19d15",
     "src/FamilyLibrarian.Application/SemanticAssessment/SemanticJson.cs": "e859ba99e116d9e8e9d22e4645bf79b5d927100fb160e40f04d0956bf0736744"

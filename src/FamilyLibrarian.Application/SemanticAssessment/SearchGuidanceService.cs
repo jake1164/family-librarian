@@ -13,7 +13,7 @@ namespace FamilyLibrarian.Application.SemanticAssessment;
 public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
     IModelWorkflowObserver? workflow = null)
 {
-    internal const int MaxOutputTokens = 400;
+    internal const int MaxOutputTokens = 1000;
     public Task ObserveSearchAsync(SearchGuidance guidance, bool returnedResults, CancellationToken cancellationToken) =>
         workflow?.ObserveAsync(guidance.UsageRecordId, ModelWorkflowEffect.ExtraSearchCompleted |
             (returnedResults ? ModelWorkflowEffect.ExtraSearchReturnedResults : ModelWorkflowEffect.None), cancellationToken) ?? Task.CompletedTask;

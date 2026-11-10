@@ -1277,11 +1277,14 @@ Collection results still require deterministic containment proof before the
 existing requester question can be offered. Source confidence, attempt limits,
 consent, security and content checks continue to govern every download.
 
-Guidance uses the background model budget, a 400-token output cap and a linked
-60-second timeout, subject to installation limits. Refused, timed-out, failed,
-empty, invalid or inapplicable replies leave the deterministic result intact;
-caller cancellation still propagates. Call outcomes and validated proposals
-are persisted as semantic findings, and identical reusable findings are reused
+Guidance uses the background model budget, a 1000-token request output cap and a
+linked 60-second timeout. The installation output limit (default 1024 tokens)
+applies if lower. Existing installations retain their saved limit; an
+administrator must raise **Max output (tokens)** in **AI models**, under
+**Limits & usage**, to at least 1000 to use the full request cap.
+Refused, timed-out, failed, empty, invalid or inapplicable replies leave the
+deterministic result intact; caller cancellation still propagates. Call outcomes
+and validated proposals are persisted as semantic findings, and identical reusable findings are reused
 for seven days. A `give_up` reply ends extra searches for that cycle across
 sources; the base search remains eligible next cycle. Existing candidate and
 artifact semantic assessments remain advisory shadows.

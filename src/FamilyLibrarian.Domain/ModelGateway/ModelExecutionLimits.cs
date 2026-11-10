@@ -87,7 +87,7 @@ public sealed record ModelExecutionLimits(
     public static ModelExecutionLimits Default { get; } = new(
         TimeoutSeconds: 30,
         MaxInputCharacters: 12_000,
-        MaxOutputTokens: 512,
+        MaxOutputTokens: 1024,
         MaxConcurrentCalls: 2,
         Interactive: new ModelBudget(UserDailyRequests: 30, UserDailyTokens: 60_000, InstallationDailyRequests: 300, InstallationDailyTokens: 600_000),
         Background: new ModelBudget(UserDailyRequests: 0, UserDailyTokens: 0, InstallationDailyRequests: 200, InstallationDailyTokens: 400_000),
