@@ -85,7 +85,8 @@ public sealed class DirectAcquisitionService(
         AudiobookPartSetMember? partSet = null,
         SearchVariantRef? searchVariant = null,
         PeerSizeEvidence? peerSizeEvidence = null,
-        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null)
+        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null,
+        bool allowAdditionalCopy = false)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
@@ -398,7 +399,8 @@ public sealed class DirectAcquisitionService(
         if (existingJob is not null)
             return ManualImportResult.AcquisitionInProgress(existingJob.Id);
 
-        if (partSet is null && await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken))
+        // An upgrade deliberately fetches a second copy of a format that is already delivered; nothing else may.
+        if (partSet is null && !allowAdditionalCopy && await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken))
             return ManualImportResult.Invalid("A copy for that format has already been received and is being checked or is available.");
 
         // Different numbered members of this same validated set may run

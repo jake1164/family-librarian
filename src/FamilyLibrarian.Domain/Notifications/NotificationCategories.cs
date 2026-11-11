@@ -63,6 +63,15 @@ public static class NotificationCategories
     /// <summary>The disk holding staged files is below its safety floor; new downloads wait and safe clean-up runs sooner.</summary>
     public const string StorageLow = "storage.low";
 
+    /// <summary>A better copy of an already delivered, apparently incomplete book was found; nothing has changed yet.</summary>
+    public const string BetterCopyAvailable = "request.better_copy_available";
+
+    /// <summary>A delivered copy was replaced by a better one, confirmed in the library before the old one was removed.</summary>
+    public const string LibraryUpgraded = "request.library_upgraded";
+
+    /// <summary>An automatic upgrade of a delivered copy stopped; the detail says what the library was left holding.</summary>
+    public const string UpgradeStopped = "request.upgrade_stopped";
+
     /// <summary>A later search found a better copy that passed its checks and replaced one waiting for a person.</summary>
     public const string BetterCopyFound = "request.better_copy_found";
 

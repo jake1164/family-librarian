@@ -59,6 +59,69 @@ public sealed class AudiobookshelfApiClient(
             title, author, ExtractCandidates(body, title), cancellationToken, acceptedLanguage);
     }
 
+    public async Task<bool> CanDeleteAsync(CancellationToken cancellationToken)
+    {
+        var (client, baseUrl) = await TryCreateAuthorizedClientAsync(cancellationToken);
+        if (client is null) return false;
+        using (client)
+        {
+            using var response = await client.GetAsync($"{baseUrl}/api/me", cancellationToken);
+            if (!response.IsSuccessStatusCode) return false;
+            var me = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var type = me?["type"]?.GetValue<string>();
+            return type is "root" or "admin" || me?["permissions"]?["delete"]?.GetValue<bool>() == true;
+        }
+    }
+
+    public async Task<string?> FindItemIdByExactTitleAsync(string exactTitle, CancellationToken cancellationToken)
+    {
+        var settings = await settingsStore.FindAsync(cancellationToken);
+        var (client, baseUrl) = await TryCreateAuthorizedClientAsync(cancellationToken);
+        if (client is null || settings is null) return null;
+        using (client)
+        {
+            using var response = await client.GetAsync($"{baseUrl}/api/libraries/{settings.LibraryId}/items", cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+            var results = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))?["results"]?.AsArray();
+            var matches = results?.Where(item => item?["media"]?["metadata"]?["title"]?.GetValue<string>() == exactTitle).ToArray() ?? [];
+            return matches.Length == 1 ? matches[0]!["id"]?.GetValue<string>() : null;
+        }
+    }
+
+    public async Task<bool> DeleteItemHardAsync(string itemId, CancellationToken cancellationToken)
+    {
+        var (client, baseUrl) = await TryCreateAuthorizedClientAsync(cancellationToken);
+        if (client is null) return false;
+        using (client)
+        {
+            using var response = await client.DeleteAsync($"{baseUrl}/api/items/{Uri.EscapeDataString(itemId)}?hard=1", cancellationToken);
+            return response.IsSuccessStatusCode;
+        }
+    }
+
+    public async Task<bool> RenameItemAsync(string itemId, string title, CancellationToken cancellationToken)
+    {
+        var (client, baseUrl) = await TryCreateAuthorizedClientAsync(cancellationToken);
+        if (client is null) return false;
+        using (client)
+        {
+            var body = new JsonObject { ["metadata"] = new JsonObject { ["title"] = title } }.ToJsonString();
+            using var request = new HttpRequestMessage(HttpMethod.Patch, $"{baseUrl}/api/items/{Uri.EscapeDataString(itemId)}/media")
+            { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
+            using var response = await client.SendAsync(request, cancellationToken);
+            return response.IsSuccessStatusCode;
+        }
+    }
+
+    private async Task<(HttpClient? Client, string BaseUrl)> TryCreateAuthorizedClientAsync(CancellationToken cancellationToken)
+    {
+        var settings = await settingsStore.FindAsync(cancellationToken);
+        if (settings is null || string.IsNullOrWhiteSpace(settings.BaseUrl) || string.IsNullOrWhiteSpace(settings.LibraryId) || !settings.HasApiToken)
+            return (null, string.Empty);
+        var token = await ResolveTokenAsync(settings.ProtectedApiToken!, settings.ApiTokenFormatVersion);
+        return token is null ? (null, string.Empty) : (CreateClient(token), settings.BaseUrl.TrimEnd('/'));
+    }
+
     public Task<AudiobookshelfUploadResult> UploadAsync(
         Stream content,
         string filename,

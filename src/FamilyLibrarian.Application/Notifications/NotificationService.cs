@@ -237,6 +237,24 @@ public sealed class NotificationService(
             subjectId: providerId.ToString(),
             cancellationToken);
 
+    /// <summary>Tells administrators, once per request, that a better copy of a delivered book that looks incomplete was found.</summary>
+    public Task RecordBetterCopyAvailableAsync(Guid requestId, string workTitle, CancellationToken cancellationToken) =>
+        UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.BetterCopyAvailable, NotificationSeverity.Info,
+            $"A better copy of \"{workTitle}\" may be available",
+            "The copy in the library shows signs of being incomplete, and a stronger one was found. Nothing has been changed.",
+            NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+
+    /// <summary>Tells administrators that a delivered copy was replaced by a better one in the library.</summary>
+    public Task RecordLibraryUpgradedAsync(Guid requestId, string workTitle, CancellationToken cancellationToken) =>
+        UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.LibraryUpgraded, NotificationSeverity.Info,
+            $"\"{workTitle}\" was upgraded", "A better copy was delivered and confirmed in the library, and the incomplete one was removed.",
+            NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+
+    /// <summary>Tells administrators that an upgrade stopped and what state the library was left in.</summary>
+    public Task RecordUpgradeStoppedAsync(Guid requestId, string workTitle, string reason, CancellationToken cancellationToken) =>
+        UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.UpgradeStopped, NotificationSeverity.Warning,
+            $"The upgrade of \"{workTitle}\" stopped", reason, NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+
     /// <summary>Tells administrators that a better copy replaced one that was waiting for a person, so the review needs no action.</summary>
     public Task RecordBetterCopyFoundAsync(Guid requestId, string workTitle, CancellationToken cancellationToken) =>
         UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.BetterCopyFound, NotificationSeverity.Info,

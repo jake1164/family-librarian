@@ -122,6 +122,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<ProviderInteractionAlert> ProviderInteractionAlerts => Set<ProviderInteractionAlert>();
 
+    public DbSet<LibraryUpgrade> LibraryUpgrades => Set<LibraryUpgrade>();
+
     public DbSet<ProviderInteractionAlertRecipient> ProviderInteractionAlertRecipients => Set<ProviderInteractionAlertRecipient>();
 
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
@@ -894,6 +896,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(format => format.MediaType).HasColumnName("media_type").HasConversion<string>().HasMaxLength(32);
             entity.Property(format => format.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
             entity.Property(format => format.AcceptedLanguage).HasColumnName("accepted_language").HasMaxLength(32);
+            entity.Property(format => format.UpgradeScannedAtUtc).HasColumnName("upgrade_scanned_at_utc").HasColumnType("timestamp with time zone");
             entity.Property(format => format.AcceptedVariantKind).HasColumnName("accepted_variant_kind").HasConversion<string>().HasMaxLength(32);
             entity.Property(format => format.AcceptedVariantDetail).HasColumnName("accepted_variant_detail").HasMaxLength(256);
             ConfigureTimestamps(entity);
@@ -1418,6 +1421,35 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(claim => claim.ClaimedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<LibraryUpgrade>(entity =>
+        {
+            entity.ToTable("library_upgrades", "acquisition");
+            entity.HasKey(upgrade => upgrade.Id);
+            entity.Property(upgrade => upgrade.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(upgrade => upgrade.RequestId).HasColumnName("request_id");
+            entity.Property(upgrade => upgrade.RequestFormatId).HasColumnName("request_format_id");
+            entity.Property(upgrade => upgrade.DeliveredAssetId).HasColumnName("delivered_asset_id");
+            entity.Property(upgrade => upgrade.ProviderId).HasColumnName("provider_id").HasMaxLength(128).IsRequired();
+            entity.Property(upgrade => upgrade.CandidateReference).HasColumnName("candidate_reference").HasMaxLength(512).IsRequired();
+            entity.Property(upgrade => upgrade.CandidateFingerprint).HasColumnName("candidate_fingerprint").HasMaxLength(128);
+            entity.Property(upgrade => upgrade.Reasons).HasColumnName("reasons").HasMaxLength(LibraryUpgrade.MaxReasonsLength).IsRequired();
+            entity.Property(upgrade => upgrade.State).HasColumnName("state").HasConversion<string>().HasMaxLength(24);
+            entity.Property(upgrade => upgrade.NewAssetId).HasColumnName("new_asset_id");
+            entity.Property(upgrade => upgrade.FailureReason).HasColumnName("failure_reason").HasMaxLength(512);
+            entity.Property(upgrade => upgrade.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(upgrade => upgrade.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(upgrade => upgrade.CompletedAtUtc).HasColumnName("completed_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(upgrade => upgrade.Version).HasColumnName("xmin").IsRowVersion();
+            entity.Ignore(upgrade => upgrade.IsOpen);
+
+            // At most one open upgrade per format, enforced by the database and not only by the service.
+            entity.HasIndex(upgrade => upgrade.RequestFormatId).IsUnique()
+                .HasFilter("state IN ('Proposed','Acquiring','Publishing','Verified')");
+            entity.HasIndex(upgrade => new { upgrade.RequestFormatId, upgrade.CreatedAtUtc });
+
+            entity.HasOne<RequestFormat>().WithMany().HasForeignKey(upgrade => upgrade.RequestFormatId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<ProviderInteractionAlert>(entity =>

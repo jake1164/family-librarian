@@ -36,6 +36,9 @@ public sealed class RequestFormat
 
     public RequestFormatStatus Status { get; private set; }
 
+    /// <summary>When the delivered copy was last looked at for a better one (A6-UPGRADE-1 U-2); null if never.</summary>
+    public DateTimeOffset? UpgradeScannedAtUtc { get; private set; }
+
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
     public DateTimeOffset UpdatedAtUtc { get; private set; }

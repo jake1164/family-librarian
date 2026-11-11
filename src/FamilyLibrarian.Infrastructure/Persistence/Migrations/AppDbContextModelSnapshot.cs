@@ -351,6 +351,91 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("acquisition_jobs", "acquisition");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.LibraryUpgrade", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CandidateFingerprint")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("candidate_fingerprint");
+
+                    b.Property<string>("CandidateReference")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("candidate_reference");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at_utc");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid>("DeliveredAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("delivered_asset_id");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<Guid?>("NewAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("new_asset_id");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<string>("Reasons")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("reasons");
+
+                    b.Property<Guid>("RequestFormatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_format_id");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("state");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestFormatId")
+                        .IsUnique()
+                        .HasFilter("state IN ('Proposed','Acquiring','Publishing','Verified')");
+
+                    b.HasIndex("RequestFormatId", "CreatedAtUtc");
+
+                    b.ToTable("library_upgrades", "acquisition");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.MediaAsset", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4254,6 +4339,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at_utc");
 
+                    b.Property<DateTimeOffset?>("UpgradeScannedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("upgrade_scanned_at_utc");
+
                     b.Property<uint>("Version")
                         .IsConcurrencyToken()
                         .ValueGeneratedOnAddOrUpdate()
@@ -5199,6 +5288,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("RequestId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.LibraryUpgrade", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
+                        .WithMany()
+                        .HasForeignKey("RequestFormatId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

@@ -91,6 +91,41 @@ public sealed partial class CwaEreaderSessionClient(
         }
     }
 
+    public async Task<CwaDeleteResult> DeleteBookAsync(
+        CwaSettings settings, string serviceAccountUsername, string serviceAccountPassword, string cwaBookId, CancellationToken cancellationToken)
+    {
+        if (!cwaBookId.All(char.IsAsciiDigit) || cwaBookId.Length == 0)
+            return new CwaDeleteResult(false, "The book id is not a number.");
+        var baseUrl = settings.OpdsBaseUrl!.TrimEnd('/');
+        var client = httpClientFactory.CreateClient(HttpClientName);
+        try
+        {
+            var (loginSucceeded, cookies, csrfToken) = await SignInAsync(client, baseUrl, serviceAccountUsername, serviceAccountPassword, cancellationToken);
+            if (!loginSucceeded || csrfToken is null) return new CwaDeleteResult(false, "The service account could not sign in to CWA.");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/ajax/delete/{cwaBookId}");
+            request.Headers.Add("X-CSRFToken", csrfToken);
+            ApplyCookies(request, cookies);
+            using var response = await client.SendAsync(request, cancellationToken);
+            if (response.StatusCode != HttpStatusCode.OK) return new CwaDeleteResult(false, $"CWA refused the delete (HTTP {(int)response.StatusCode}).");
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            // The reply is a JSON array; only an entry of type "success" counts. A "danger" entry (no permission, not found) or anything else fails closed.
+            using var document = JsonDocument.Parse(body);
+            var succeeded = document.RootElement.ValueKind == JsonValueKind.Array && document.RootElement.EnumerateArray().Any(entry =>
+                entry.ValueKind == JsonValueKind.Object && entry.TryGetProperty("type", out var type) && type.GetString() == "success");
+            return succeeded ? new CwaDeleteResult(true, null) : new CwaDeleteResult(false, "CWA did not report the book deleted.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogTransportFailure(exception.GetType().Name);
+            return new CwaDeleteResult(false, "CWA could not be reached or returned an unexpected reply.");
+        }
+    }
+
     public async Task<CwaEreaderLoginResult> TestLoginAsync(
         CwaSettings settings,
         string serviceAccountUsername,

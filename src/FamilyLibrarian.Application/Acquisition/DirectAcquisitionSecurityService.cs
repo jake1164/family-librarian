@@ -23,7 +23,8 @@ public sealed class DirectAcquisitionSecurityService(
         bool isAutomaticAcquisition = false,
         SearchVariantRef? searchVariant = null,
         PeerSizeEvidence? peerSizeEvidence = null,
-        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null)
+        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null,
+        bool allowAdditionalCopy = false)
     {
         var result = await acquisitions.AcquireAsync(
             requestId,
@@ -34,7 +35,8 @@ public sealed class DirectAcquisitionSecurityService(
             confirmLowConfidenceMatch,
             allowDownloadTimeDrmValidation,
             isAutomaticAcquisition,
-            searchVariant: searchVariant, peerSizeEvidence: peerSizeEvidence, triageAuthorization: triageAuthorization);
+            searchVariant: searchVariant, peerSizeEvidence: peerSizeEvidence, triageAuthorization: triageAuthorization,
+            allowAdditionalCopy: allowAdditionalCopy);
 
         if (result.Outcome == ManualImportOutcome.Success)
         {
@@ -80,11 +82,13 @@ public sealed class DirectAcquisitionSecurityService(
         bool isAutomaticAcquisition = false,
         SearchVariantRef? searchVariant = null,
         PeerSizeEvidence? peerSizeEvidence = null,
-        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null)
+        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null,
+        bool allowAdditionalCopy = false)
     {
         var result = await AcquireAndEvaluateAsync(
             requestId, requestFormatId, providerId, providerResultId, cancellationToken,
-            confirmLowConfidenceMatch, allowDownloadTimeDrmValidation, isAutomaticAcquisition, searchVariant, peerSizeEvidence, triageAuthorization);
+            confirmLowConfidenceMatch, allowDownloadTimeDrmValidation, isAutomaticAcquisition, searchVariant, peerSizeEvidence, triageAuthorization,
+            allowAdditionalCopy);
 
         if (result.Outcome != ManualImportOutcome.Success || assets is null)
         {

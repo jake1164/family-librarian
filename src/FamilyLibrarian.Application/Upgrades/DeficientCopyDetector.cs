@@ -28,15 +28,18 @@ public sealed record DeficiencyAssessment(bool Deficient, IReadOnlyList<string> 
 /// </summary>
 public static class DeficientCopyDetector
 {
-    private static readonly HashSet<string> DeficientCodes = new(StringComparer.Ordinal)
-    {
+    /// <summary>The evidence codes that, recorded as a condition or a negative, make a copy worth upgrading.</summary>
+    public static IReadOnlyList<string> CodesThatMakeACopyDeficient { get; } =
+    [
         EvidenceReasonCodes.ArtifactCompleteness.SampleMarkerInMetadata,
         EvidenceReasonCodes.ArtifactCompleteness.TocTargetsMissing,
         EvidenceReasonCodes.ArtifactCompleteness.SpineContentMissing,
         EvidenceReasonCodes.ArtifactCompleteness.DuplicateReadingOrderItems,
         EvidenceReasonCodes.ArtifactAudio.TrackSetGap,
         EvidenceReasonCodes.ArtifactAudio.TrackSetDuplicate
-    };
+    ];
+
+    private static readonly HashSet<string> DeficientCodes = new(CodesThatMakeACopyDeficient, StringComparer.Ordinal);
 
     public static DeficiencyAssessment Assess(DeliveredCopyFacts copy)
     {

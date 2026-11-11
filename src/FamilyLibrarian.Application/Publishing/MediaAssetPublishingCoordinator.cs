@@ -21,12 +21,20 @@ namespace FamilyLibrarian.Application.Publishing;
 public sealed class MediaAssetPublishingCoordinator(
     CwaPublishingService cwaPublishing,
     AudiobookshelfPublishingService audiobookshelfPublishing,
-    IAuditWriter audit)
+    IAuditWriter audit,
+    Upgrades.IUpgradeCopyPublisher? upgradeCopies = null)
 {
     public async Task PublishAsync(MediaAsset asset, CancellationToken cancellationToken)
     {
         try
         {
+            // The better copy of an upgrade is delivered next to the old one by its own path; the normal path would recognise the
+            // old copy by title and throw this one away.
+            if (upgradeCopies is not null && await upgradeCopies.TryPublishAlongsideAsync([asset], cancellationToken))
+            {
+                return;
+            }
+
             if (asset.MediaType == RequestMediaType.Ebook)
             {
                 await cwaPublishing.PublishAsync(asset, cancellationToken);
@@ -56,6 +64,11 @@ public sealed class MediaAssetPublishingCoordinator(
     {
         try
         {
+            if (upgradeCopies is not null && await upgradeCopies.TryPublishAlongsideAsync(tracks, cancellationToken))
+            {
+                return;
+            }
+
             await audiobookshelfPublishing.PublishBundleAsync(tracks, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

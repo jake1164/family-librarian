@@ -295,6 +295,11 @@ public static class DependencyInjection
         services.AddScoped<FamilyLibrarian.Application.Storage.StorageMaintenanceService>();
         services.AddScoped<FamilyLibrarian.Application.Storage.IDatabaseRetentionStore, FamilyLibrarian.Infrastructure.Storage.DatabaseRetentionStore>();
         services.AddScoped<FamilyLibrarian.Application.Storage.DatabaseRetentionService>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.ILibraryUpgradeStore, FamilyLibrarian.Infrastructure.Upgrades.LibraryUpgradeStore>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeScanService>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeAdminService>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeService>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.IUpgradeCopyPublisher, FamilyLibrarian.Application.Upgrades.LibraryUpgradeCopyPublisher>();
         services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureWriter, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureWriter>();
         services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureLog, FamilyLibrarian.Infrastructure.DecisionCapture.LoggingDecisionCaptureLog>();
         services.AddScoped<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureSink, FamilyLibrarian.Application.DecisionCapture.DecisionCaptureRecorder>();

@@ -96,6 +96,30 @@ table is handled separately, so one failure never stops the rest. The periods ca
 `AlertDays`, `CommunicationDays`, `AuditDays`, `BatchSize` and `MaxBatchesPerTable`; values are clamped (the audit log is
 never kept for less than a year). Model usage and saved AI decisions have their own, shorter retention.
 
+## Better copies of delivered books
+
+A copy that was delivered but whose recorded checks showed it may be incomplete (a sample marker in its metadata, table-of-contents
+or reading-order entries pointing at missing content, duplicate reading-order items, or a gap or duplicate in an audiobook's track
+set) is looked at again about every 30 days. A copy a person chose (a manual upload, or a file an administrator released over a
+hold) is never touched.
+
+When a strong candidate that was not tried before turns up, administrators are notified ("A better copy of X may be available")
+and, **by default**, the upgrade is carried out when the library can be changed safely:
+
+1. The better copy is fetched and goes through every normal check.
+2. It is delivered **next to** the old copy: to CWA as a second book, to Audiobookshelf under a temporary title ("Title (upgrade
+   1a2b3c4d)") so it cannot merge with or overwrite the old item.
+3. It is confirmed in the library. Only then is the old copy removed (CWA: the book is deleted; Audiobookshelf: the item and its
+   files are deleted and the new item is given the real title).
+4. Anything unexpected at any step leaves both copies as they are and notifies administrators.
+
+It only starts when the destination can remove the old copy: for audiobooks the Audiobookshelf token must have the *delete*
+permission; for ebooks the CWA e-reader service account must be configured and allowed to delete books. Otherwise the proposal
+stays an alert, and an administrator can start it from the Upgrades API (`POST /api/v1/admin/upgrades/{id}/approve`) or set it aside
+(`.../dismiss`). Set `Upgrades__AutoReplace=false` to make every proposal wait for an administrator; `Upgrades__ScanIntervalDays`
+(default 30, minimum 7) and `Upgrades__BatchSize` tune the search. An item replaced in Audiobookshelf is a new item, so listening
+progress on the old one is lost.
+
 ## Optional linked ebook libraries
 
 Calibre-Web and Calibre-Web Automated (CWA) are optional integrations, not

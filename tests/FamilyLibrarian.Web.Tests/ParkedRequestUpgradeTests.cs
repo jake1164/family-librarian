@@ -219,7 +219,12 @@ internal sealed class UpgradeProviderClient : IExternalProviderClient
     /// <summary>When false the candidate states no identifiers and gives only the author's last name: a title-only style match (last name only), plausible but not strong.</summary>
     public bool StatesIdentifiers { get; set; } = true;
 
+    /// <summary>When true the candidate names only the author's last name: a plausible, not strong, match.</summary>
+    public bool WeakAuthor { get; set; }
+
     public int SubmitCalls { get; private set; }
+
+    public int SearchCalls { get; private set; }
 
     private byte[] OutputBytes() => OutputFormat == "mobi" ? MobiTestFixture.Build() : EpubTestFixture.BuildMinimalEpubBytes(OutputTitle);
 
@@ -235,11 +240,12 @@ internal sealed class UpgradeProviderClient : IExternalProviderClient
     public Task<IReadOnlyList<ExternalProviderCandidate>> SearchAsync(
         string baseUrl, string? apiKey, ExternalProviderSearchRequest request, CancellationToken cancellationToken)
     {
+        SearchCalls++;
         IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
             ?
             [
                 new ExternalProviderCandidate(CandidateId,
-                    new ExternalProviderWorkEvidence("The Hobbit", null, [new BookAuthor(StatesIdentifiers ? "J. R. R. Tolkien" : "Tolkien", "author")], [], []),
+                    new ExternalProviderWorkEvidence("The Hobbit", null, [new BookAuthor(StatesIdentifiers && !WeakAuthor ? "J. R. R. Tolkien" : "Tolkien", "author")], [], []),
                     new ExternalProviderEditionEvidence("en", null, null, StatesIdentifiers ? request.Edition?.Identifiers ?? [] : []),
                     new ExternalProviderReleaseEvidence(null, OutputFormat, null, false, 1, false, null, null, [], null, ExternalProviderDrmStatus.None))
             ]
