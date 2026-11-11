@@ -184,6 +184,15 @@ to be the same call. No user identifiers, credentials, prompts, replies or book
 excerpts are returned. Retention is up to 90 days; the endpoint is read-only and
 does not retry or change a book decision.
 
+Saved AI decisions are administered through five routes under
+`/api/v1/admin/model-gateway/capture`, each administrator-only, with an anti-forgery token
+required for state changes: `GET /` and `PUT /` read and change the two switches and the
+retention limits; `POST /preview` reports how many records the next cleanup would remove under
+proposed limits; `GET /insight` returns counts, dates and approximate byte sizes per feature and
+per table and never saved content; `POST /purge` deletes the saved decisions for one captured
+role, or for all when no role is given, and audits counts only. `PUT /` and `POST /preview`
+reject any value outside the fixed ranges.
+
 The administrator-only `GET /api/v1/admin/model-gateway/usage` preserves per-feature
 counts while distinguishing the actual `model`, local/cloud placement, safe `reasonCode`
 and optional `workflowEffects` on grouped call rows. Null effects mean untracked; fixed

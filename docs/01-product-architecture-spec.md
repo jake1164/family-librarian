@@ -1182,6 +1182,18 @@ prompts, replies or book excerpts. Older calls retain their recorded broad outco
 detailed reasons are shown explicitly. These are call outcomes, not book outcomes: a valid
 recommendation to hold a book is still an accepted reply. The page does not retry calls.
 
+Administrators can have Family Librarian keep a record of each real decision made by the six
+scored AI features, so that other models can later be compared on the household's own cases.
+Saving is on by default for book decisions and off for chat messages; both have switches on the
+Limits & usage tab. What is saved is an allow-listed copy of the facts the model was shown (never
+book excerpts, file names, hashes, storage references, provider data, download links or tokens),
+which model answered and how, and later facts about what happened. It can reveal reading
+interests and is included in database backups. Storage is capped per feature and by age within
+fixed ceilings, administrators can see counts and approximate sizes (never content), and
+everything can be deleted at any time, including while AI is off. There is no export. Replies
+are not saved. This is separate from, and does not change, the rule that the usage ledger and
+findings store no prompts, replies or excerpts.
+
 Chat interpretation keeps the title best-effort. It supplies an author only when
 stated in the message or applicable previous search; otherwise it uses a title-only
 catalog query, and the person still chooses a real catalog result.
