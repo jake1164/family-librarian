@@ -390,11 +390,13 @@ public sealed class AcquisitionJobPollingService(
         // Not the provider's fault and not specific to this copy, so it neither
         // fails the attempt nor advances to the next candidate (which needs the
         // same space): the job waits and is re-checked once space is freed.
-        if (outputPolicy.MinFreeDiskBytes > 0 && stagingStore.GetAvailableFreeBytes() is { } freeBytes &&
-            freeBytes - outputPolicy.MinFreeDiskBytes < declaredTotal)
+        // The headroom is never below the storage safety floor (the larger of 5 GB or 10% of the volume), whatever the policy says.
+        var headroom = Storage.StorageDiskFloor.Headroom(outputPolicy.MinFreeDiskBytes, stagingStore.GetVolumeInfo());
+        if (headroom > 0 && stagingStore.GetAvailableFreeBytes() is { } freeBytes &&
+            freeBytes - headroom < declaredTotal)
         {
             var message = $"Waiting for disk space: this download needs about {FormatBytes(declaredTotal)} plus " +
-                $"{FormatBytes(outputPolicy.MinFreeDiskBytes)} headroom, but only {FormatBytes(freeBytes)} is free.";
+                $"{FormatBytes(headroom)} headroom, but only {FormatBytes(freeBytes)} is free.";
             job.ApplyStatus(
                 job.LifecycleState, job.Phase, job.InteractionType, job.InteractionMessage, job.InteractionExpiresAtUtc,
                 job.InteractionResumeSupported, job.InteractionActionUrl, job.ProgressPercent, job.ProgressBytesCompleted,

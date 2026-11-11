@@ -59,6 +59,12 @@ public static class NotificationCategories
     /// un-dismisses a still-broken provider's notification every cycle.
     /// </summary>
     public const string ProviderHealthDegraded = "provider.health_degraded";
+
+    /// <summary>The disk holding staged files is below its safety floor; new downloads wait and safe clean-up runs sooner.</summary>
+    public const string StorageLow = "storage.low";
+
+    /// <summary>A held copy waiting for a person is half way to its automatic removal date.</summary>
+    public const string HeldCopyExpiring = "storage.held_copy_expiring";
 }
 
 public static class NotificationSubjectTypes
@@ -67,4 +73,5 @@ public static class NotificationSubjectTypes
     public const string DeliveryAttempt = "delivery_attempt";
     public const string Work = "work";
     public const string ExternalProvider = "external_provider";
+    public const string Storage = "storage";
 }

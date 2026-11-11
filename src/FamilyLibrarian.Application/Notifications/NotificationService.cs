@@ -237,6 +237,39 @@ public sealed class NotificationService(
             subjectId: providerId.ToString(),
             cancellationToken);
 
+    /// <summary>
+    /// Admin alert that the staging disk is under its safety floor. One alert per day at most: a persistent shortage must not
+    /// bring a dismissed notification back every maintenance pass.
+    /// </summary>
+    public async Task RecordStorageLowAsync(string detail, CancellationToken cancellationToken)
+    {
+        var existing = await repository.FindLatestAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.StorageLow,
+            NotificationSubjectTypes.Storage, "disk", cancellationToken);
+        if (existing is not null && clock.UtcNow - existing.LastOccurredAtUtc < TimeSpan.FromHours(24))
+        {
+            return;
+        }
+
+        await UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.StorageLow, NotificationSeverity.Warning,
+            "Disk space is low", detail, NotificationSubjectTypes.Storage, "disk", cancellationToken);
+    }
+
+    /// <summary>Tells administrators, once per request, that a held copy waiting for a person will be removed on a given date.</summary>
+    public async Task RecordHeldCopyExpiringAsync(Guid requestId, string workTitle, DateTimeOffset removalDateUtc, CancellationToken cancellationToken)
+    {
+        var existing = await repository.FindLatestAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.HeldCopyExpiring,
+            NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+        if (existing is not null)
+        {
+            return;
+        }
+
+        await UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.HeldCopyExpiring, NotificationSeverity.Info,
+            $"A held copy of \"{workTitle}\" will be removed",
+            $"It is waiting for a person and will be removed on {removalDateUtc:yyyy-MM-dd}. Release it before then to keep it; otherwise the request goes back to automatic search.",
+            NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+    }
+
     public async Task<IReadOnlyList<NotificationView>> ListForViewerAsync(
         bool isAdmin, CancellationToken cancellationToken)
     {

@@ -291,6 +291,8 @@ public static class DependencyInjection
         services.AddScoped<FamilyLibrarian.Application.DecisionCapture.DecisionCaptureService>();
         services.AddScoped<FamilyLibrarian.Application.Storage.IStorageInsightStore, FamilyLibrarian.Infrastructure.Storage.StorageInsightStore>();
         services.AddScoped<FamilyLibrarian.Application.Storage.StorageInsightService>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.IStorageMaintenanceStore, FamilyLibrarian.Infrastructure.Storage.StorageMaintenanceStore>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.StorageMaintenanceService>();
         services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureWriter, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureWriter>();
         services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureLog, FamilyLibrarian.Infrastructure.DecisionCapture.LoggingDecisionCaptureLog>();
         services.AddScoped<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureSink, FamilyLibrarian.Application.DecisionCapture.DecisionCaptureRecorder>();

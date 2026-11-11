@@ -6,8 +6,9 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ## [Unreleased]
 
-### Storage visibility
+### Storage visibility and automatic clean-up
 
+- Clean up unwanted files automatically so an unattended install does not fill its disk: rejected files after 14 days, held copies the search has moved past after 7, held ebooks waiting for a person after 30 and audiobooks after 14 (with a 10 GB total cap), and stuck or unrecorded files. Trusted files are never removed. Administrators are reminded half way and alerted when disk space is low; new downloads wait below the larger of 5 GB or 10% free.
 - Add an administrator Storage page (read-only, no file or book names): free disk space, files on disk by stage with age and size, files held for a person or ruled out, files on disk the system has no record of, and rows and size per database table.
 - Rotate container logs in the Compose file (three 10 MB files per service) so logs cannot fill the disk.
 

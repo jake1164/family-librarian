@@ -44,6 +44,37 @@ fulfillment schedules a retry while the request remains pending. A completed
 ZIP is re-used after restart and is fully read during extraction before it is
 accepted.
 
+## Disk space and automatic clean-up
+
+Family Librarian cleans up after itself so an installation that runs unattended does not fill its disk. Administrators can
+see the result on **Storage** (free space, files by stage, files held and why, files on disk no record accounts for, and
+database table sizes). The page shows no book titles or file names and deletes nothing.
+
+A clean-up pass runs about every six hours. It removes only files nobody needs:
+
+| Kept for | Removed after |
+| --- | --- |
+| Rejected (failed a security check) | 14 days |
+| Held copy the automatic search has already moved past | 7 days |
+| Held ebook waiting for a person | 30 days |
+| Held audiobook waiting for a person | 14 days |
+| Received or being checked, never finished | 7 days |
+| File with no record at all (not in the trusted zone) | 24 hours after it appeared |
+
+Copies waiting for a person are also capped at 10 GB in total; beyond that the oldest go first, audiobooks before ebooks.
+Administrators get a notification when a waiting copy is half way to removal, with the removal date, and when a copy is
+removed the request is left open to another automatic search. A file that is trusted or part of a set with a trusted track
+is never removed. Each removal is recorded in the audit log (counts and ids only, never names).
+
+When free space falls below the larger of 5 GB or 10% of the volume, new downloads wait, administrators are alerted once a
+day, and rejected and ruled-out copies are kept for one day instead of their usual period. Copies waiting for a person are
+never removed early, because one may be the only copy.
+
+The periods can be changed with `Storage__Retention__RejectedDays`, `RuledOutDays`, `WaitingEbookDays`,
+`WaitingAudiobookDays`, `StuckDays`, `HeldBytesCap`, `OrphanGraceHours`, `BatchSize` and `PressureDays`. Values are clamped
+to fixed limits (for example an ebook always gets at least 7 days) so a typing mistake cannot switch clean-up off or make
+it aggressive. Container logs are rotated by the Compose file (three 10 MB files per service).
+
 ## Optional linked ebook libraries
 
 Calibre-Web and Calibre-Web Automated (CWA) are optional integrations, not

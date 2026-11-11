@@ -62,6 +62,10 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<LibriVoxDownloadWorkspaceCleanupHostedService>();
     builder.Services.AddHostedService<OrphanedWorkRetirementHostedService>();
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
+    // Defaults are the owner-agreed retention periods; any configured value is clamped to fixed ceilings (see StorageRetentionOptions).
+    builder.Services.AddSingleton((builder.Configuration.GetSection("Storage:Retention").Get<FamilyLibrarian.Application.Storage.StorageRetentionOptions>()
+        ?? new FamilyLibrarian.Application.Storage.StorageRetentionOptions()).Clamped());
+    builder.Services.AddHostedService<StorageMaintenanceHostedService>();
     builder.Services.AddHostedService<AcquisitionJobPollingHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
     builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();

@@ -49,6 +49,7 @@ public static class AuditActions
     public const string AssetApproved = "asset.approved";
     public const string AssetRejected = "asset.rejected";
     public const string AssetDestroyed = "asset.destroyed";
+    public const string StorageMaintenanceRun = "storage.maintenance_run";
     public const string AssetMalwareDestroyed = "asset.malware_destroyed";
     public const string AssetMalwareDestructionFailed = "asset.malware_destruction_failed";
     public const string AssetPublished = "asset.published";
@@ -134,6 +135,7 @@ public static class AuditSubjectTypes
 {
     public const string ModelTest = "model_test";
     public const string ModelGateway = "model_gateway";
+    public const string Storage = "storage";
     public const string Provider = "provider";
     public const string Invitation = "invitation";
     public const string Account = "account";
