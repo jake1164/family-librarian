@@ -289,6 +289,9 @@ public static class DependencyInjection
         services.AddScoped<ISemanticFindingStore, SemanticFindingStore>();
         services.AddScoped<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureStore, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureStore>();
         services.AddScoped<FamilyLibrarian.Application.DecisionCapture.DecisionCaptureService>();
+        services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureWriter, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureWriter>();
+        services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureLog, FamilyLibrarian.Infrastructure.DecisionCapture.LoggingDecisionCaptureLog>();
+        services.AddScoped<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureSink, FamilyLibrarian.Application.DecisionCapture.DecisionCaptureRecorder>();
         services.AddScoped<CandidateSemanticAnalyzer>();
         services.AddScoped<SearchGuidanceService>();
         services.AddScoped<CandidateTriageService>();

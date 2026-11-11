@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.DecisionCapture;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.ModelTesting;
@@ -150,7 +151,7 @@ public sealed record SemanticAnalysisReport(SemanticAnalysisResult Result, Excep
 /// skipped entirely when the role is off.
 /// </summary>
 public sealed class CandidateSemanticAnalyzer(IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
-    IModelWorkflowObserver? workflow = null)
+    IModelWorkflowObserver? workflow = null, IDecisionCaptureSink? capture = null)
 {
     public static readonly TimeSpan ReuseWindow = TimeSpan.FromDays(7);
     internal const int MaxOutputTokens = 400;
@@ -198,12 +199,30 @@ public sealed class CandidateSemanticAnalyzer(IModelExecutionPolicy policy, ISem
             await store.AddAsync(finding, cancellationToken);
             if (execution.Succeeded && workflow is not null)
                 await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.AdvisorySaved, cancellationToken);
+            await CaptureAsync(requestId, assessment, execution, finding, cancellationToken);
             return new(SemanticAnalysisResult.Recorded, null, execution.Outcome);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // Shadow mode: no failure here may reach, delay or alter anything deterministic. The caller may log it.
             return new(SemanticAnalysisResult.Failed, exception);
+        }
+    }
+
+    /// <summary>Saves the decision for later replay after the finding is stored. The sink swallows its own failures, so this cannot alter the report.</summary>
+    private async Task CaptureAsync(Guid? requestId, CandidateIdentityAssessment assessment, ModelExecution<SemanticAssessment> execution,
+        SemanticFinding finding, CancellationToken cancellationToken)
+    {
+        if (capture is null || execution.UsageRecordId is null) return;
+        try
+        {
+            var (input, links) = DecisionSnapshotInputs.CandidateAssessment(assessment);
+            await capture.CaptureAsync(new CapturedDecision(ModelRole.CandidateAmbiguityAssessment, input, finding.SubjectReference, requestId, null, null,
+                false, DecisionCaptureRuns.From(execution, finding.Id, SemanticSchema.Candidate.Id, finding.Verdict), links), cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Building the snapshot input can never change the result of the analysis.
         }
     }
 

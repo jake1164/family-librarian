@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.DecisionCapture;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Domain.Evidence;
@@ -12,7 +13,7 @@ public sealed record CandidateTriageResult(string Move, FulfillmentOption Candid
 
 /// <summary>One governed comparison per provider pass; persisted decisions are re-grounded before reuse.</summary>
 public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
-    IModelWorkflowObserver? workflow = null)
+    IModelWorkflowObserver? workflow = null, IDecisionCaptureSink? capture = null)
 {
     internal const int MaxOutputTokens = 300;
     public Task ObserveSelectionAsync(CandidateTriageResult result, CancellationToken cancellationToken) =>
@@ -68,11 +69,13 @@ public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecu
                 var claims = decision is null ? null : JsonSerializer.Serialize(new
                     { schema = SemanticAssessmentParser.CandidateTriageSchema, move = decision.Move, candidate = decision.Candidate,
                       evidence_ids = decision.EvidenceIds, note = decision.Note });
-                await store.AddAsync(new SemanticFinding(SemanticSubjectKind.CandidateTriage,
+                var finding = new SemanticFinding(SemanticSubjectKind.CandidateTriage,
                     formatId.ToString("N") + ":" + providerId, requestId, providerId, SemanticAssessmentParser.CandidateTriageSchema,
                     input.Digest, context.Pick is null ? "NoAutomaticPick" : "AutomaticPick", ModelRole.CandidateTriage,
                     execution.Model ?? "unknown", execution.IsCloud, execution.Outcome, decision?.Move, claims,
-                    execution.Succeeded ? null : execution.Detail, clock.UtcNow, execution.UsageRecordId), cancellationToken);
+                    execution.Succeeded ? null : execution.Detail, clock.UtcNow, execution.UsageRecordId);
+                await store.AddAsync(finding, cancellationToken);
+                await CaptureAsync(requestId, context, execution, finding, cancellationToken);
             }
             if (decision?.Move is "keep" or "uncertain" && workflow is not null)
                 await workflow.ObserveAsync(usageRecordId, decision.Move == "uncertain" ? ModelWorkflowEffect.Abstained : ModelWorkflowEffect.NoChange, cancellationToken);
@@ -86,6 +89,23 @@ public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecu
         {
             // Role/storage failures are deterministic fallback, never an unrecorded permission.
             return null;
+        }
+    }
+
+    /// <summary>Saves the decision for later replay after the finding is stored. It can never change the move; the sink swallows its own failures.</summary>
+    private async Task CaptureAsync(Guid requestId, CandidateTriageContext context, ModelExecution<CandidateTriage> execution,
+        SemanticFinding finding, CancellationToken cancellationToken)
+    {
+        if (capture is null || execution.UsageRecordId is null) return;
+        try
+        {
+            var (input, links) = DecisionSnapshotInputs.Triage(context);
+            await capture.CaptureAsync(new CapturedDecision(ModelRole.CandidateTriage, input, finding.SubjectReference, requestId, null, null, false,
+                DecisionCaptureRuns.From(execution, finding.Id, SemanticAssessmentParser.CandidateTriageSchema, finding.Verdict), links), cancellationToken);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Building the snapshot input can never change the move that was already decided.
         }
     }
 }

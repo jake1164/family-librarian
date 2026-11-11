@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.DecisionCapture;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Application.Security;
@@ -13,7 +14,7 @@ namespace FamilyLibrarian.Application.SemanticAssessment;
 public sealed class ArtifactDecisionService(
     IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
     IArtifactEvidenceStore? recordedEvidence = null, IModelGatewaySettingsStore? settings = null,
-    IArtifactExcerptExtractor? excerpts = null, IModelWorkflowObserver? workflow = null)
+    IArtifactExcerptExtractor? excerpts = null, IModelWorkflowObserver? workflow = null, IDecisionCaptureSink? capture = null)
 {
     internal const int MaxOutputTokens = 400;
     public async Task<Guid?> GetReleaseAsync(MediaAsset asset, AssetIdentityVerificationResult result,
@@ -136,12 +137,14 @@ public sealed class ArtifactDecisionService(
                 cancellationToken.ThrowIfCancellationRequested();
                 decision = execution.Succeeded ? execution.Value : null;
                 usageRecordId = execution.UsageRecordId;
-                await store.AddAsync(new SemanticFinding(SemanticSubjectKind.ArtifactDecision, asset.Id.ToString("N"), null, null,
+                var finding = new SemanticFinding(SemanticSubjectKind.ArtifactDecision, asset.Id.ToString("N"), null, null,
                     SemanticAssessmentParser.ArtifactDecisionSchema, input.Digest, "Match", ModelRole.ArtifactValidationDecision,
                     execution.Model ?? resolution.Model ?? "unknown", execution.IsCloud, execution.Outcome, decision?.Verdict,
                     decision is null ? null : CandidateSemanticAnalyzer.SerializeClaims(new(SemanticAssessmentParser.ArtifactDecisionSchema,
                         SemanticVerdict.Uncertain, decision.Claims)), execution.Succeeded ? null : bookText.Count > 0
-                            ? "Artifact review did not return a usable decision." : execution.Detail, clock.UtcNow, execution.UsageRecordId), cancellationToken);
+                            ? "Artifact review did not return a usable decision." : execution.Detail, clock.UtcNow, execution.UsageRecordId);
+                await store.AddAsync(finding, cancellationToken);
+                await CaptureAsync(asset, result, expected, prior, input.IncludesDetails, bookText, execution, finding, cancellationToken);
             }
             cancellationToken.ThrowIfCancellationRequested();
             if (limit.IsCancellationRequested) return null;
@@ -154,6 +157,28 @@ public sealed class ArtifactDecisionService(
         {
             // An unrecorded or unavailable model decision cannot change the deterministic verdict.
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Saves the hold review for later replay after the finding is stored. Book text is never stored: only the codes derived from it, with
+    /// the decision marked as having involved excerpts. The sink swallows its own failures, so this cannot change a hold.
+    /// </summary>
+    private async Task CaptureAsync(MediaAsset asset, AssetIdentityVerificationResult result, ExpectedArtifactProfile? expected,
+        IReadOnlyList<ArtifactEvidence> prior, bool includeDetails, IReadOnlyList<ArtifactExcerpt> bookText, ModelExecution<ArtifactDecision> execution,
+        SemanticFinding finding, CancellationToken cancellationToken)
+    {
+        if (capture is null || execution.UsageRecordId is null) return;
+        try
+        {
+            var input = DecisionSnapshotInputs.ArtifactHold(asset, result, expected, prior, includeDetails, bookText);
+            await capture.CaptureAsync(new CapturedDecision(ModelRole.ArtifactValidationDecision, input, finding.SubjectReference, null, null, asset.Id,
+                bookText.Count > 0, DecisionCaptureRuns.From(execution, finding.Id, SemanticAssessmentParser.ArtifactDecisionSchema, finding.Verdict)),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Building the snapshot input can never change the hold decision.
         }
     }
 

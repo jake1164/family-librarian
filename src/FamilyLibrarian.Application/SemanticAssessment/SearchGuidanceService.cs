@@ -2,6 +2,7 @@ using System.Text.Json;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.DecisionCapture;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Domain.Evidence;
@@ -11,7 +12,7 @@ namespace FamilyLibrarian.Application.SemanticAssessment;
 
 /// <summary>Governed, persisted search proposals. Every failure leaves deterministic search and acquisition unchanged.</summary>
 public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecutionPolicy policy, ISemanticFindingStore store, IClock clock,
-    IModelWorkflowObserver? workflow = null)
+    IModelWorkflowObserver? workflow = null, IDecisionCaptureSink? capture = null)
 {
     internal const int MaxOutputTokens = 1000;
     public Task ObserveSearchAsync(SearchGuidance guidance, bool returnedResults, CancellationToken cancellationToken) =>
@@ -73,11 +74,13 @@ public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecut
                 execution = execution with { Outcome = ModelCallOutcome.OutputTooLarge, Value = null, Detail = "Validated proposals exceed stored bounds." };
                 claims = null;
             }
-            await store.AddAsync(new SemanticFinding(SemanticSubjectKind.SearchGuidance, subject, requestId, null,
+            var finding = new SemanticFinding(SemanticSubjectKind.SearchGuidance, subject, requestId, null,
                 SemanticAssessmentParser.SearchGuidanceSchema, input.Digest, "NoAllowedCandidate", ModelRole.SearchGuidance,
                 execution.Model ?? "unknown", execution.IsCloud, execution.Outcome,
                 execution.Succeeded ? execution.Value!.GiveUp ? "GiveUp" : "Search" : null, claims,
-                execution.Succeeded ? null : execution.Detail, clock.UtcNow, execution.UsageRecordId), cancellationToken);
+                execution.Succeeded ? null : execution.Detail, clock.UtcNow, execution.UsageRecordId);
+            await store.AddAsync(finding, cancellationToken);
+            await CaptureAsync(requestId, subject, requested, results, triedKeys, execution, finding, cancellationToken);
             if (execution.Succeeded && execution.Value?.GiveUp == true && workflow is not null)
                 await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.NoChange, cancellationToken);
             return execution.Succeeded ? execution.Value : null;
@@ -86,6 +89,26 @@ public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecut
         {
             // A storage/role problem cannot turn a proposal into permission or prevent deterministic processing.
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Saves the decision for later replay. It runs after the finding is stored, so it cannot change the proposal, and the sink
+    /// swallows its own failures. A reused finding never reaches here (no call was made).
+    /// </summary>
+    private async Task CaptureAsync(Guid requestId, string subject, BookIdentity requested, IReadOnlyList<FulfillmentOption> results,
+        IReadOnlyCollection<string> triedKeys, ModelExecution<SearchGuidance> execution, SemanticFinding finding, CancellationToken cancellationToken)
+    {
+        if (capture is null || execution.UsageRecordId is null) return;
+        try
+        {
+            var (input, links) = DecisionSnapshotInputs.Search(requested, results, triedKeys);
+            await capture.CaptureAsync(new CapturedDecision(ModelRole.SearchGuidance, input, subject, requestId, null, null, false,
+                DecisionCaptureRuns.From(execution, finding.Id, SemanticAssessmentParser.SearchGuidanceSchema, finding.Verdict), links), cancellationToken);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Building the snapshot input can never change the proposal that was already returned to the caller.
         }
     }
 

@@ -100,6 +100,10 @@ public sealed class DecisionSnapshot
 
     public string? StaleReason { get; private set; }
 
+    /// <summary>Records why the snapshot cannot reproduce the prompt that was sent. Reported, never hidden and never repaired.</summary>
+    public void MarkStale(string? reason) =>
+        StaleReason = reason is null ? null : reason.Length <= MaxStaleReasonLength ? reason : reason[..MaxStaleReasonLength];
+
     public void MarkSeen(DateTimeOffset seenAtUtc)
     {
         TimesSeen++;
@@ -113,7 +117,8 @@ public sealed class DecisionSnapshot
 /// </summary>
 public sealed class DecisionCall
 {
-    public const int MaxHashLength = 80;
+    /// <summary>"rendered-messages/1:" plus 64 hex digits is 84 characters; the margin allows a longer version tag.</summary>
+    public const int MaxHashLength = 96;
     public const int MaxAnswerLength = 200;
 
     private DecisionCall()

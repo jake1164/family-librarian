@@ -42,7 +42,7 @@ public sealed class DecisionCapturePanelTests
     private static HttpResponseMessage Json<T>(T value) => new(HttpStatusCode.OK) { Content = JsonContent.Create(value) };
 
     [TestMethod]
-    public async Task ThePanelExplainsWhatIsSavedWhatIsNeverSavedAndThatNothingIsSavedYetAndShowsOnlyCounts()
+    public async Task ThePanelExplainsWhatIsSavedWhatIsNeverSavedAndThatFeaturesAreAddedOneAtATimeAndShowsOnlyCounts()
     {
         var insight = new DecisionCaptureInsightResponse(DateTimeOffset.UtcNow,
             [new("CandidateTriage", 4, 1, 3, DateTimeOffset.UtcNow.AddDays(-9), DateTimeOffset.UtcNow, 2_048),
@@ -58,7 +58,7 @@ public sealed class DecisionCapturePanelTests
         StringAssert.Contains(html, "reading interests");
         StringAssert.Contains(html, "database backups");
         StringAssert.Contains(html, "There is no export");
-        StringAssert.Contains(html, "Nothing is saved yet by this release");
+        StringAssert.Contains(html, "Saving is being added one AI feature at a time");
         StringAssert.Contains(html, "on by default, including on installations upgraded");
         StringAssert.Contains(html, "Save the decisions AI features make");
         StringAssert.Contains(html, "Also save chat messages (more personal; off by default)");

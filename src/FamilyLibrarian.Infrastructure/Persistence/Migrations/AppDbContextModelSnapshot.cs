@@ -2099,8 +2099,8 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("RenderedMessagesHash")
                         .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)")
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)")
                         .HasColumnName("rendered_messages_hash");
 
                     b.Property<string>("ReportedModel")

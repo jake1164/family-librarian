@@ -40,6 +40,13 @@ public sealed class ConversationBoundaryTests
     /// </summary>
     private static readonly HashSet<Type> MayObserveModelWorkflow = [typeof(ConversationService), typeof(CoverIdentificationService)];
 
+    /// <summary>
+    /// The only conversation type that may hand a finished decision to the decision-capture sink (A6-TUNER-C1-b). The sink saves the
+    /// normalized message only while the administrator's separate chat switch is on, and it cannot start a model call or change how a
+    /// message is read: failures are swallowed.
+    /// </summary>
+    private static readonly HashSet<Type> MayCaptureDecisions = [typeof(ModelBookIntentInterpreter)];
+
     private static IEnumerable<Type> ConversationTypes() =>
         typeof(IConversationService).Assembly.GetTypes()
             .Where(type => type.Namespace == "FamilyLibrarian.Application.Conversation" && !type.IsNested && !type.IsInterface);
@@ -56,6 +63,7 @@ public sealed class ConversationBoundaryTests
                               AllowedExternalDependencies.Contains(parameterType) ||
                               (parameterType == typeof(IModelExecutionPolicy) && MayUseTheModelExecutionPolicy.Contains(type)) ||
                               (parameterType == typeof(IModelWorkflowObserver) && MayObserveModelWorkflow.Contains(type)) ||
+                              (parameterType == typeof(FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureSink) && MayCaptureDecisions.Contains(type)) ||
                               parameterType.Namespace?.StartsWith("System", StringComparison.Ordinal) == true;
                 Assert.IsTrue(allowed, $"{type.Name} must not depend on {parameterType.FullName}.");
             }

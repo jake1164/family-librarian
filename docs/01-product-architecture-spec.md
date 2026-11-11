@@ -1191,7 +1191,11 @@ which model answered and how, and later facts about what happened. It can reveal
 interests and is included in database backups. Storage is capped per feature and by age within
 fixed ceilings, administrators can see counts and approximate sizes (never content), and
 everything can be deleted at any time, including while AI is off. There is no export. Replies
-are not saved. This is separate from, and does not change, the rule that the usage ledger and
+are not saved. Saving is added one AI feature at a time, and the counts on that tab show which
+features have saved decisions. A saved decision records the exact request that was sent as a hash, so a
+later replay can show whether it reproduces the original; a decision that cannot (for example because
+the model was shown book text, or a release name that looks like a file name was withheld) is kept and
+marked as not exact rather than hidden or altered. This is separate from, and does not change, the rule that the usage ledger and
 findings store no prompts, replies or excerpts.
 
 Chat interpretation keeps the title best-effort. It supplies an author only when

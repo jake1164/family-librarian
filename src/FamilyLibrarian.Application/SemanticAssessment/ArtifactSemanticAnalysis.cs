@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Channels;
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.DecisionCapture;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Application.Publishing;
@@ -152,7 +153,8 @@ public sealed class ArtifactSemanticAnalyzer(
     IArtifactEvidenceStore evidenceStore,
     IWorkLookup works,
     IClock clock,
-    IModelWorkflowObserver? workflow = null)
+    IModelWorkflowObserver? workflow = null,
+    IDecisionCaptureSink? capture = null)
 {
     internal const int MaxOutputTokens = 400;
 
@@ -175,6 +177,23 @@ public sealed class ArtifactSemanticAnalyzer(
             : (await store.FindLatestForSubjectsAsync(SemanticSubjectKind.Artifact, siblings, cancellationToken)).Count;
         var allowance = ArtifactSemanticEvidence.HasConcern(evidence) ? MaxAssessmentsPerBundleWithConcerns : MaxAssessmentsPerBundle;
         return assessed >= allowance;
+    }
+
+    /// <summary>Saves the decision for later replay after the finding is stored. The sink swallows its own failures, so this cannot alter the report or any hold.</summary>
+    private async Task CaptureAsync(MediaAsset asset, Publishing.WorkSummary? work, IReadOnlyList<ArtifactEvidence> evidence, bool includeDetails,
+        ModelExecution<SemanticAssessment> execution, SemanticFinding finding, CancellationToken cancellationToken)
+    {
+        if (capture is null || execution.UsageRecordId is null) return;
+        try
+        {
+            var input = DecisionSnapshotInputs.ArtifactAssessment(asset, work, evidence, includeDetails);
+            await capture.CaptureAsync(new CapturedDecision(ModelRole.ArtifactValidationAssessment, input, finding.SubjectReference, null, null, asset.Id,
+                false, DecisionCaptureRuns.From(execution, finding.Id, SemanticSchema.Artifact.Id, finding.Verdict)), cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Building the snapshot input can never change the result of the analysis.
+        }
     }
 
     public async Task<SemanticAnalysisReport> AnalyzeAsync(Guid assetId, CancellationToken cancellationToken)
@@ -229,18 +248,18 @@ public sealed class ArtifactSemanticAnalyzer(
                 return new(SemanticAnalysisResult.Refused, null, execution.Outcome);
             }
 
-            await store.AddAsync(
-                new SemanticFinding(
-                    SemanticSubjectKind.Artifact, assetId.ToString("N"), null, null, SemanticSchema.Artifact.Id, digest,
-                    asset.StorageState.ToString(), ModelRole.ArtifactValidationAssessment, execution.Model ?? "unknown", execution.IsCloud,
-                    execution.Outcome,
-                    execution.Succeeded ? execution.Value!.Verdict.ToString() : null,
-                    execution.Succeeded ? CandidateSemanticAnalyzer.SerializeClaims(execution.Value!) : null,
-                    execution.Succeeded ? null : execution.Detail,
-                    clock.UtcNow, execution.UsageRecordId),
-                cancellationToken);
+            var finding = new SemanticFinding(
+                SemanticSubjectKind.Artifact, assetId.ToString("N"), null, null, SemanticSchema.Artifact.Id, digest,
+                asset.StorageState.ToString(), ModelRole.ArtifactValidationAssessment, execution.Model ?? "unknown", execution.IsCloud,
+                execution.Outcome,
+                execution.Succeeded ? execution.Value!.Verdict.ToString() : null,
+                execution.Succeeded ? CandidateSemanticAnalyzer.SerializeClaims(execution.Value!) : null,
+                execution.Succeeded ? null : execution.Detail,
+                clock.UtcNow, execution.UsageRecordId);
+            await store.AddAsync(finding, cancellationToken);
             if (execution.Succeeded && workflow is not null)
                 await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.AdvisorySaved, cancellationToken);
+            await CaptureAsync(asset, work, evidence, includeDetails, execution, finding, cancellationToken);
             return new(SemanticAnalysisResult.Recorded, null, execution.Outcome);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

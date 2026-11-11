@@ -42,6 +42,7 @@ public static class ModelParse
 /// <param name="ReportedModel">The model name the provider said answered (bounded, control characters removed); null for a refusal.</param>
 /// <param name="Reasoning">The reasoning mode that was actually requested for this call.</param>
 /// <param name="RenderedMessagesHash">Version-tagged hash of the final messages, JSON mode and clamped output cap that were sent; null for a refusal.</param>
+/// <param name="AppliedMaxOutputTokens">The output cap that was actually sent, after the caller's request was clamped to the configured limit.</param>
 /// <param name="SettingsId">The gateway settings row used. With the placement (<see cref="IsCloud"/>) it identifies the connection.</param>
 public sealed record ModelExecution<T>(
     ModelCallOutcome Outcome,
@@ -56,7 +57,8 @@ public sealed record ModelExecution<T>(
     string? ReportedModel = null,
     ModelReasoningMode Reasoning = ModelReasoningMode.Inherit,
     string? RenderedMessagesHash = null,
-    Guid? SettingsId = null)
+    Guid? SettingsId = null,
+    int? AppliedMaxOutputTokens = null)
 {
     public bool Succeeded => Outcome == ModelCallOutcome.Succeeded;
 
@@ -403,7 +405,8 @@ public sealed class ModelExecutionPolicy(
             ReportedModel = SafeReportedModel(response.ReportedModel),
             Reasoning = resolution.Reasoning,
             RenderedMessagesHash = SafeRenderedHash(request, maxOutputTokens),
-            SettingsId = resolution.SettingsId
+            SettingsId = resolution.SettingsId,
+            AppliedMaxOutputTokens = maxOutputTokens
         };
     }
 
