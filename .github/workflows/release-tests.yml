@@ -63,7 +63,7 @@ jobs:
           FL_DB_PASSWORD: ci-browser-e2e-database-only
           ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
           ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
-        run: docker compose --project-name family-librarian-browser-e2e up --build --wait
+        run: docker compose -f compose.yaml -f compose.release-e2e.yaml --project-name family-librarian-browser-e2e up --build --wait
 
       - name: Test
         env:
@@ -79,4 +79,4 @@ jobs:
           FL_DB_PASSWORD: ci-browser-e2e-database-only
           ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
           ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!
-        run: docker compose --project-name family-librarian-browser-e2e down --volumes --remove-orphans
+        run: docker compose -f compose.yaml -f compose.release-e2e.yaml --project-name family-librarian-browser-e2e down --volumes --remove-orphans

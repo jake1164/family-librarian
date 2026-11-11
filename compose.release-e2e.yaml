@@ -1,0 +1,20 @@
+# Test-only overlay for the release-tier browser E2E (see .github/workflows/release-tests.yml).
+# A fresh deployment has no delivery destination, and the request form stays disabled until one passes its
+# connection test. This stub answers the OPDS search probe with an empty Atom feed so the test can enable a
+# local-ingest destination without a real library server. Never use it for a real deployment.
+services:
+  opds-stub:
+    image: nginx:1.27.5-alpine
+    configs:
+      - source: opds-stub-conf
+        target: /etc/nginx/conf.d/default.conf
+configs:
+  opds-stub-conf:
+    content: |
+      server {
+        listen 80;
+        location / {
+          default_type application/atom+xml;
+          return 200 '<feed xmlns="http://www.w3.org/2005/Atom"><title>stub</title></feed>';
+        }
+      }
