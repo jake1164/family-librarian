@@ -75,6 +75,27 @@ The periods can be changed with `Storage__Retention__RejectedDays`, `RuledOutDay
 to fixed limits (for example an ebook always gets at least 7 days) so a typing mistake cannot switch clean-up off or make
 it aggressive. Container logs are rotated by the Compose file (three 10 MB files per service).
 
+### Database clean-up
+
+Once a day the database is trimmed of rows that only ever grow and explain nothing still in use:
+
+| Kept for | Removed after |
+| --- | --- |
+| Detailed file-check evidence for a file that no longer exists (never an identity-override record, never while a review of that request is open) | 90 days |
+| Advisory AI findings | 180 days |
+| Per-source attempt history of a finished (in the library or cancelled) request | 180 days |
+| Search wordings tried for a finished request | 30 days |
+| In-app notifications and their read receipts | 90 days |
+| Closed source-interaction alerts | 90 days |
+| Chat or e-mail messages already sent (an unsent message is never removed) | 90 days |
+| Audit log | 2 years |
+
+Open requests, files that still exist, and unresolved reviews keep all of their history. Each pass is bounded and each
+table is handled separately, so one failure never stops the rest. The periods can be changed with
+`Storage__DatabaseRetention__EvidenceDays`, `SemanticFindingDays`, `AttemptDays`, `SearchMemoryDays`, `NotificationDays`,
+`AlertDays`, `CommunicationDays`, `AuditDays`, `BatchSize` and `MaxBatchesPerTable`; values are clamped (the audit log is
+never kept for less than a year). Model usage and saved AI decisions have their own, shorter retention.
+
 ## Optional linked ebook libraries
 
 Calibre-Web and Calibre-Web Automated (CWA) are optional integrations, not

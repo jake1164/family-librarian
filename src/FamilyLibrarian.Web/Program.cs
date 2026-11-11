@@ -66,6 +66,9 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddSingleton((builder.Configuration.GetSection("Storage:Retention").Get<FamilyLibrarian.Application.Storage.StorageRetentionOptions>()
         ?? new FamilyLibrarian.Application.Storage.StorageRetentionOptions()).Clamped());
     builder.Services.AddHostedService<StorageMaintenanceHostedService>();
+    builder.Services.AddSingleton((builder.Configuration.GetSection("Storage:DatabaseRetention").Get<FamilyLibrarian.Application.Storage.DatabaseRetentionOptions>()
+        ?? new FamilyLibrarian.Application.Storage.DatabaseRetentionOptions()).Clamped());
+    builder.Services.AddHostedService<DatabaseRetentionHostedService>();
     builder.Services.AddHostedService<AcquisitionJobPollingHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
     builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();

@@ -50,6 +50,7 @@ public static class AuditActions
     public const string AssetRejected = "asset.rejected";
     public const string AssetDestroyed = "asset.destroyed";
     public const string StorageMaintenanceRun = "storage.maintenance_run";
+    public const string DatabaseRetentionRun = "storage.database_retention_run";
     public const string AssetMalwareDestroyed = "asset.malware_destroyed";
     public const string AssetMalwareDestructionFailed = "asset.malware_destruction_failed";
     public const string AssetPublished = "asset.published";
