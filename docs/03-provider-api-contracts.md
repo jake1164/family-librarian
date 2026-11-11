@@ -204,6 +204,14 @@ no timestamp-based correlation or foreign-key deletion coupling is introduced.
 These are saved recommendations, not applied actions or measured accuracy. Responses do not
 include prompts, reply bodies, claims/notes, credentials or user IDs. Historical calls are
 not backfilled with inferred effects. No endpoint accepts arbitrary browser-authored impact.
+`usage` accepts `days` of 1 (default), 7, 30 or 90 and any other value is a validation error; the response states the
+`days` used and adds `latency` rows per role, model and placement (median and 95th percentile, nearest rank, and reported
+tokens). Opportunity flags (`opportunities` on a row) describe the situation a call was made in and are separate from
+`workflowEffects`; a row with only opportunity flags still has null `workflowEffects`. `GET .../usage/trend?weeks=` (1 to
+156, default 52) returns the weekly counts kept after the 90-day prune, and `GET .../usage/effectiveness?days=` returns,
+per role, how many calls changed something and how many of those decisions later had a good-only, bad-only or mixed
+result and how many an administrator decided after seeing the model's note. All three are administrator-only, return
+counts only, and the full purge of saved decisions also clears the weekly counts.
 
 With both role and permission enabled, a separate artifact-decision/1 release
 call may propose `release` with a grounded `supports_declared_identity` claim,

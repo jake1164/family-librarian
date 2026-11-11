@@ -91,7 +91,19 @@ public sealed record ModelRecommendationSummaryRow(ModelRole Role, string Model,
 
 /// <summary>Per-role/outcome counts for the last day. Reported tokens exclude calls where the provider gave no usage.</summary>
 public sealed record ModelUsageSummary(DateTimeOffset Since, IReadOnlyList<ModelUsageSummaryRow> Rows,
-    IReadOnlyList<ModelRecommendationSummaryRow>? Recommendations = null);
+    IReadOnlyList<ModelRecommendationSummaryRow>? Recommendations = null,
+    IReadOnlyList<ModelLatencySummaryRow>? Latency = null);
+
+/// <summary>How long finished calls took, per role and actual model. Median and 95th percentile by nearest rank; tokens are only what providers reported.</summary>
+public sealed record ModelLatencySummaryRow(
+    ModelRole Role, string Model, bool IsCloud, int Calls, long MedianMilliseconds, long P95Milliseconds, long ReportedTokens);
+
+/// <summary>One week of counts that survives the 90-day ledger prune. See <see cref="ModelUsageRollup"/>.</summary>
+public sealed record ModelUsageRollupRow(
+    DateTimeOffset WeekStartUtc, ModelRole Role, string Model, bool IsCloud, int OpportunityFlags, int Calls, int AcceptedReplies,
+    int RejectedReplies, int ProviderErrors, int CancelledCalls, int ActionCalls, int NoChangeCalls, int AbstainedCalls, int AdvisoryCalls,
+    long ReportedTokens, int CallsWithoutUsage, long LatencyMillisecondsSum, int LatencyCalls, long LatencyP95Milliseconds,
+    int DownstreamPositive, int DownstreamNegative);
 
 public sealed record ModelCallFailure(
     Guid Id, ModelRole Role, string Model, bool IsCloud, ModelCallOutcome Outcome,
@@ -121,6 +133,13 @@ public interface IModelUsageLedger
 
     Task<ModelCallFailures> ListFailuresAsync(DateTimeOffset since, DateTimeOffset until, ModelRole? role, int page, CancellationToken cancellationToken,
         ModelCallDiagnosticFilter? filter = null);
+
+    /// <summary>
+    /// Weekly counts kept after the ledger's 90-day prune, oldest first. The default keeps existing fakes compiling; the real ledger
+    /// overrides it.
+    /// </summary>
+    Task<IReadOnlyList<ModelUsageRollupRow>> ListRollupsAsync(int weeks, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ModelUsageRollupRow>>([]);
 }
 
 /// <summary>Process-wide state that must outlive a request: the reservation lock and the in-flight counters.</summary>

@@ -67,7 +67,9 @@ public sealed class DecisionCaptureStore(AppDbContext database) : IDecisionCaptu
             new("Findings", await database.SemanticFindings.LongCountAsync(cancellationToken), await SizeAsync("evidence.semantic_findings"),
                 await database.SemanticFindings.MinAsync(finding => (DateTimeOffset?)finding.CreatedAtUtc, cancellationToken)),
             new("Usage ledger", await database.ModelUsageRecords.LongCountAsync(cancellationToken), await SizeAsync("integrations.model_usage_ledger"),
-                await database.ModelUsageRecords.MinAsync(record => (DateTimeOffset?)record.OccurredAtUtc, cancellationToken))
+                await database.ModelUsageRecords.MinAsync(record => (DateTimeOffset?)record.OccurredAtUtc, cancellationToken)),
+            new("Weekly usage counts", await database.ModelUsageRollups.LongCountAsync(cancellationToken), await SizeAsync("integrations.model_usage_rollups"),
+                await database.ModelUsageRollups.MinAsync(rollup => (DateTimeOffset?)rollup.WeekStartUtc, cancellationToken))
         };
 
         return new DecisionCaptureInsight(nowUtc, roles, tables, tables.Sum(table => table.ApproximateBytes), sizesAvailable);
@@ -104,6 +106,32 @@ public sealed class DecisionCaptureStore(AppDbContext database) : IDecisionCaptu
         return new DecisionCaptureRetentionCounts(plan.SnapshotIds.Count, plan.CallIds.Count, findings);
     }
 
+    public async Task<IReadOnlyList<DecisionCaptureEffectivenessRow>> GetEffectivenessAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken)
+    {
+        // Calls that changed something (an action effect) and the saved decision each belongs to. The ledger keeps 90 days, so that is the reach.
+        var acted = await (from call in database.DecisionCalls.AsNoTracking()
+                           join record in database.ModelUsageRecords.AsNoTracking() on call.ModelUsageRecordId equals record.Id
+                           where record.OccurredAtUtc >= sinceUtc && record.Outcome == ModelCallOutcome.Succeeded &&
+                               ((record.WorkflowEffects ?? 0) & ModelWorkflowEffects.ActionMask) != 0
+                           select new { record.Role, call.SnapshotId }).ToListAsync(cancellationToken);
+        if (acted.Count == 0) return [];
+        var snapshotIds = acted.Select(row => row.SnapshotId).Distinct().ToArray();
+        var facts = (await database.DecisionOutcomes.AsNoTracking().Where(outcome => snapshotIds.Contains(outcome.SnapshotId))
+            .Select(outcome => new { outcome.SnapshotId, outcome.Kind, outcome.InfluencedByModelNote }).ToListAsync(cancellationToken))
+            .ToLookup(fact => fact.SnapshotId);
+        return [.. acted.GroupBy(row => row.Role).OrderBy(group => group.Key).Select(group =>
+        {
+            var snapshots = group.Select(row => row.SnapshotId).Distinct().ToArray();
+            var withFacts = snapshots.Where(id => facts[id].Any()).ToArray();
+            bool Positive(Guid id) => facts[id].Any(fact => DecisionOutcomeKinds.IsPositive(fact.Kind));
+            bool Negative(Guid id) => facts[id].Any(fact => !DecisionOutcomeKinds.IsPositive(fact.Kind));
+            return new DecisionCaptureEffectivenessRow(
+                group.Key, group.Count(), withFacts.Length,
+                withFacts.Count(id => Positive(id) && !Negative(id)), withFacts.Count(id => Negative(id) && !Positive(id)),
+                withFacts.Count(id => Positive(id) && Negative(id)), withFacts.Count(id => facts[id].Any(fact => fact.InfluencedByModelNote)));
+        })];
+    }
+
     public async Task<DecisionCapturePurgeResult> PurgeAsync(ModelRole? role, CancellationToken cancellationToken)
     {
         var snapshots = role is { } selected
@@ -114,8 +142,10 @@ public sealed class DecisionCaptureStore(AppDbContext database) : IDecisionCaptu
         var outcomes = await database.DecisionOutcomes.CountAsync(outcome => snapshots.Any(snapshot => snapshot.Id == outcome.SnapshotId), cancellationToken);
         var links = await database.CandidateLinks.CountAsync(link => snapshots.Any(snapshot => snapshot.Id == link.SnapshotId), cancellationToken);
         var removed = await snapshots.ExecuteDeleteAsync(cancellationToken);
+        // Purging everything starts fresh, including the weekly usage counts; purging one role leaves them (they are about all calls).
+        var rollups = role is null ? await database.ModelUsageRollups.ExecuteDeleteAsync(cancellationToken) : 0;
         await transaction.CommitAsync(cancellationToken);
-        return new DecisionCapturePurgeResult(removed, calls, outcomes, links);
+        return new DecisionCapturePurgeResult(removed, calls, outcomes, links, rollups);
     }
 
     private sealed record Plan(IReadOnlyList<Guid> SnapshotIds, IReadOnlyList<Guid> CallIds, int FindingCount);

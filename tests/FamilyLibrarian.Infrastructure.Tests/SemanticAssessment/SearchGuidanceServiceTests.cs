@@ -24,14 +24,15 @@ public sealed class SearchGuidanceServiceTests
         Assert.IsNotNull(proposal);
         Assert.AreEqual(id, proposal.UsageRecordId);
         Assert.AreEqual(id, store.Findings.Single().ModelUsageRecordId);
-        Assert.HasCount(0, observer.Observations);
+        Assert.HasCount(0, observer.Observations.Where(o => (o.Effects & ~ModelWorkflowEffect.AllOpportunities) != 0).ToArray());
         clock.UtcNow = Now.AddDays(1);
         var reused = await service.GetAsync(request, format, Requested, [], [], clock.UtcNow, CancellationToken.None);
         Assert.IsNotNull(reused);
         Assert.AreEqual(id, reused.UsageRecordId);
         await service.ObserveSearchAsync(reused, true, CancellationToken.None);
-        Assert.AreEqual(id, observer.Observations.Single().Id);
-        Assert.AreEqual(ModelWorkflowEffect.ExtraSearchCompleted | ModelWorkflowEffect.ExtraSearchReturnedResults, observer.Observations.Single().Effects);
+        var applied = observer.Observations.Where(o => (o.Effects & ~ModelWorkflowEffect.AllOpportunities) != 0).Single();
+        Assert.AreEqual(id, applied.Id);
+        Assert.AreEqual(ModelWorkflowEffect.ExtraSearchCompleted | ModelWorkflowEffect.ExtraSearchReturnedResults, applied.Effects);
         Assert.AreEqual(1, policy.Calls);
     }
 

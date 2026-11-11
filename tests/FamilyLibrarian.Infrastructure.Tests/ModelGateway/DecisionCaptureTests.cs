@@ -30,6 +30,16 @@ internal sealed class FakeCaptureStore : IDecisionCaptureStore
     public Task<DecisionCaptureRetentionCounts> RunRetentionAsync(DecisionCaptureLimits limits, DateTimeOffset nowUtc, CancellationToken cancellationToken) =>
         Task.FromResult(Counts);
 
+    public List<DecisionCaptureEffectivenessRow> Effectiveness { get; } = [];
+
+    public DateTimeOffset? EffectivenessSince { get; private set; }
+
+    public Task<IReadOnlyList<DecisionCaptureEffectivenessRow>> GetEffectivenessAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken)
+    {
+        EffectivenessSince = sinceUtc;
+        return Task.FromResult<IReadOnlyList<DecisionCaptureEffectivenessRow>>(Effectiveness);
+    }
+
     public Task<DecisionCapturePurgeResult> PurgeAsync(ModelRole? role, CancellationToken cancellationToken)
     {
         Purges.Add(role);

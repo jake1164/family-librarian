@@ -1139,7 +1139,7 @@ their saved fields; failed saves and unrelated credential actions leave other ed
 Instant-save controls do not create an unsaved draft by themselves.
 
 Administrators can view AI activity below source status on Tasks: per-role model calls,
-accepted replies, rejected replies, provider errors and pending calls over the last 24 hours, alongside current enablement.
+accepted replies, rejected replies, provider errors and pending calls over a period the administrator chooses (24 hours, 7, 30 or 90 days), alongside current enablement.
 Cancelled and unclassified calls have separate counts when present; there is no combined failure count.
 Accepted replies passed response validation, including valid hold, negative or uncertain assessments.
 Rejected replies include invalid JSON, unsupported evidence and repeated searches; provider errors
@@ -1148,6 +1148,17 @@ execution and response validation, independently of the book assessment and work
 These use the durable gateway usage ledger, survive restarts, include historical calls to
 roles now off, and exclude cached decisions and attempts blocked before a provider call.
 Successful calls alone do not establish that a model changed an acquisition or file decision.
+Each feature also shows a plain status computed by fixed rules from those counts (failing when more than half of at
+least twenty evaluated calls were rejected or errored; too little data under twenty accepted calls; doing work when a
+workflow action was applied or advice was saved; otherwise safe but idle), each with its reason. The status says what the
+feature is doing, never whether it is right, and household volume is small, so it states when it has too little data.
+A speed-and-tokens table gives the median and 95th percentile of finished calls per feature and model. Alongside the
+observed effects, each triage, hold-review and search-guidance call records the situation it was made in (for example that a
+tie existed), written once and kept apart from what the model did, so "kept the choice" can be told from "never had a
+chance to move". Weekly per-feature counts (no people, books or text) are kept when the 90-day call history is pruned so a
+trend survives, and administrators can see, for calls that changed something, how many of those decisions later had a
+recorded good, bad or mixed result. These are counts of decisions, not accuracy: most decisions never get a result,
+and a result that an administrator reached after reading the model's note favors that model.
 Quality signals separate recorded provider replies from accepted replies: provider reliability is
 responses received / (responses received + provider errors), while reply acceptance rate is
 validated responses / responses received. Pending and explicitly cancelled calls are excluded;

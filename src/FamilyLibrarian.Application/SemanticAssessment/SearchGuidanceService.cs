@@ -81,6 +81,9 @@ public sealed class SearchGuidanceService(IModelRoleResolver roles, IModelExecut
                 execution.Succeeded ? null : execution.Detail, clock.UtcNow, execution.UsageRecordId);
             await store.AddAsync(finding, cancellationToken);
             await CaptureAsync(requestId, subject, requested, results, triedKeys, execution, finding, cancellationToken);
+            // Guidance is only asked for once the fixed searches have run out, so every call was made after them.
+            if (workflow is not null && execution.UsageRecordId is not null)
+                await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.SearchAfterFixedSearches, cancellationToken);
             if (execution.Succeeded && execution.Value?.GiveUp == true && workflow is not null)
                 await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.NoChange, cancellationToken);
             return execution.Succeeded ? execution.Value : null;

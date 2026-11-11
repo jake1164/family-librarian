@@ -64,8 +64,9 @@ public sealed class SearchGuidanceTests
         if (reason == "author_variant") Assert.AreEqual(original.Work.Title, changed[0].Work.Title);
         else CollectionAssert.AreEqual(original.Work.Authors.ToArray(), changed[0].Work.Authors.ToArray());
         Assert.IsEmpty(client.SubmittedCandidates, "A model proposal never supplies identity proof.");
-        Assert.AreEqual(usageId, workflow.Events.Single().Id);
-        Assert.AreEqual(ModelWorkflowEffect.ExtraSearchCompleted | ModelWorkflowEffect.ExtraSearchReturnedResults, workflow.Events.Single().Effects);
+        var searched = workflow.Events.Where(e => (e.Effects & ~ModelWorkflowEffect.AllOpportunities) != 0).Single();
+        Assert.AreEqual(usageId, searched.Id);
+        Assert.AreEqual(ModelWorkflowEffect.ExtraSearchCompleted | ModelWorkflowEffect.ExtraSearchReturnedResults, searched.Effects);
     }
 
     [TestMethod]

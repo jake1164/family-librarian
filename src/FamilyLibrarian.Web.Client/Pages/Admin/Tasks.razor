@@ -104,7 +104,9 @@
         </MudPaper>
 
         <SourcesNow Snapshot="@sourcesSnapshot" Failed="@sourcesFailed" />
-        <AiUsageSummary Settings="aiSettings" Usage="aiUsage" Failed="aiUsageFailed" Loading="aiUsageLoading" Refresh="LoadAiUsageAsync" />
+        <AiUsageSummary Settings="aiSettings" Usage="aiUsage" Failed="aiUsageFailed" Loading="aiUsageLoading" Refresh="LoadAiUsageAsync"
+                        Days="aiDays" DaysChanged="ChangeAiDaysAsync" />
+        <AiInsightPanels Days="aiDays" />
 
         <MudPaper Outlined="true" Class="pa-4" id="tasks-source">
             <MudText Typo="Typo.h5">Source and download activity</MudText>
@@ -264,6 +266,7 @@
     private ModelGatewaySettingsResponse? aiSettings;
     private ModelUsageResponse? aiUsage;
     private bool aiUsageFailed, aiUsageLoading;
+    private int aiDays = 1;
     private AdminSourcesResponse? sourcesSnapshot;
     private bool sourcesFailed;
     private AdminRequestAttentionResponse? attention;
@@ -312,13 +315,19 @@
 
 
 
+    private async Task ChangeAiDaysAsync(int days)
+    {
+        aiDays = days;
+        await LoadAiUsageAsync();
+    }
+
     private async Task LoadAiUsageAsync()
     {
         aiUsageLoading = true;
         try
         {
             aiSettings = await ModelsApi.GetAsync();
-            aiUsage = await ModelsApi.GetUsageAsync();
+            aiUsage = await ModelsApi.GetUsageAsync(aiDays);
             aiUsageFailed = false;
         }
         catch (HttpRequestException)

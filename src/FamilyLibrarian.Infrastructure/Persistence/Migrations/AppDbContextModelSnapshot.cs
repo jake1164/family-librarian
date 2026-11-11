@@ -3031,6 +3031,116 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("model_usage_ledger", "integrations");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelUsageRollup", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AbstainedCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("abstained_calls");
+
+                    b.Property<int>("AcceptedReplies")
+                        .HasColumnType("integer")
+                        .HasColumnName("accepted_replies");
+
+                    b.Property<int>("ActionCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("action_calls");
+
+                    b.Property<int>("AdvisoryCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("advisory_calls");
+
+                    b.Property<int>("Calls")
+                        .HasColumnType("integer")
+                        .HasColumnName("calls");
+
+                    b.Property<int>("CallsWithoutUsage")
+                        .HasColumnType("integer")
+                        .HasColumnName("calls_without_usage");
+
+                    b.Property<int>("CancelledCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("cancelled_calls");
+
+                    b.Property<int>("DownstreamNegative")
+                        .HasColumnType("integer")
+                        .HasColumnName("downstream_negative");
+
+                    b.Property<int>("DownstreamPositive")
+                        .HasColumnType("integer")
+                        .HasColumnName("downstream_positive");
+
+                    b.Property<bool>("IsCloud")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_cloud");
+
+                    b.Property<int>("LatencyCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("latency_calls");
+
+                    b.Property<long>("LatencyMillisecondsMax")
+                        .HasColumnType("bigint")
+                        .HasColumnName("latency_ms_max");
+
+                    b.Property<long>("LatencyMillisecondsSum")
+                        .HasColumnType("bigint")
+                        .HasColumnName("latency_ms_sum");
+
+                    b.Property<long>("LatencyP95Milliseconds")
+                        .HasColumnType("bigint")
+                        .HasColumnName("latency_p95_ms");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("model");
+
+                    b.Property<int>("NoChangeCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("no_change_calls");
+
+                    b.Property<int>("OpportunityFlags")
+                        .HasColumnType("integer")
+                        .HasColumnName("opportunity_flags");
+
+                    b.Property<int>("ProviderErrors")
+                        .HasColumnType("integer")
+                        .HasColumnName("provider_errors");
+
+                    b.Property<int>("RejectedReplies")
+                        .HasColumnType("integer")
+                        .HasColumnName("rejected_replies");
+
+                    b.Property<long>("ReportedTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("reported_tokens");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("role");
+
+                    b.Property<int>("UnclassifiedCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("unclassified_calls");
+
+                    b.Property<DateTimeOffset>("WeekStartUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("week_start_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WeekStartUtc", "Role", "Model", "IsCloud", "OpportunityFlags")
+                        .IsUnique();
+
+                    b.ToTable("model_usage_rollups", "integrations");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.ModelTesting.ModelTestSettings", b =>
                 {
                     b.Property<Guid>("Id")

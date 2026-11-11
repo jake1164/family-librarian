@@ -22,6 +22,8 @@ internal static class ModelGatewayEndpoints
         group.MapGet("/", GetAsync);
         group.MapPost("/connection/resolve", ResolveConnectionAsync);
         group.MapGet("/usage", UsageAsync);
+        group.MapGet("/usage/trend", TrendAsync);
+        group.MapGet("/usage/effectiveness", EffectivenessAsync);
         group.MapGet("/failures", FailuresAsync);
         group.MapGet("/models", ListModelsAsync);
         group.MapPut("/", SaveAsync);
@@ -83,7 +85,7 @@ internal static class ModelGatewayEndpoints
         }
 
         return CaptureResult(await service.PurgeAsync(role, cancellationToken),
-            purged => new DecisionCapturePurgeResponse(purged.Snapshots, purged.Calls, purged.Outcomes, purged.CandidateLinks));
+            purged => new DecisionCapturePurgeResponse(purged.Snapshots, purged.Calls, purged.Outcomes, purged.CandidateLinks, purged.UsageRollups));
     }
 
     private static IResult CaptureResult<TValue, TResponse>(DecisionCaptureResult<TValue> result, Func<TValue, TResponse> map) =>
@@ -160,7 +162,7 @@ internal static class ModelGatewayEndpoints
     }
 
     private static async Task<IResult> UsageAsync(
-        ModelGatewaySettingsService settings, IModelUsageLedger ledger, IClock clock, CancellationToken cancellationToken)
+        int? days, ModelGatewaySettingsService settings, IModelUsageLedger ledger, IClock clock, CancellationToken cancellationToken)
     {
         // The settings service is the administrator check; usage is only shown to someone it would let read the settings.
         if ((await settings.GetAsync(cancellationToken)).Forbidden)
@@ -168,16 +170,63 @@ internal static class ModelGatewayEndpoints
             return Results.StatusCode(StatusCodes.Status403Forbidden);
         }
 
-        var summary = await ledger.SummarizeAsync(clock.UtcNow.AddDays(-1), cancellationToken);
+        var window = days ?? 1;
+        if (window is not (1 or 7 or 30 or 90))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["days"] = ["Choose 1, 7, 30 or 90 days."] });
+        }
+
+        var summary = await ledger.SummarizeAsync(clock.UtcNow.AddDays(-window), cancellationToken);
         return Results.Ok(new ModelUsageResponse(
             summary.Since,
             [.. summary.Rows.Select(row => new ModelUsageRowResponse(
                 row.Role.ToString(), row.Budget.ToString(), row.Outcome.ToString(), row.IsCloud, row.Calls, row.ReportedTokens, row.CallsWithoutUsage,
-                row.Model, row.FailureReason?.ToString(), row.WorkflowEffects is not { } effects ? null :
-                    [.. Enum.GetValues<ModelWorkflowEffect>().Where(effect => effect != ModelWorkflowEffect.None && effect != ModelWorkflowEffect.All &&
-                        (effects & (int)effect) != 0).Select(effect => effect.ToString())]))],
+                row.Model, row.FailureReason?.ToString(),
+                // Opportunity flags are written as soon as a call is made; only observed actions and agreement mean "observed".
+                row.WorkflowEffects is not { } effects || (effects & ~ModelWorkflowEffects.OpportunityMask) == 0 ? null : EffectNames(effects & ~ModelWorkflowEffects.OpportunityMask),
+                row.WorkflowEffects is { } flags && (flags & ModelWorkflowEffects.OpportunityMask) != 0 ? EffectNames(flags & ModelWorkflowEffects.OpportunityMask) : null))],
             [.. (summary.Recommendations ?? []).Select(row => new ModelRecommendationRowResponse(
-                row.Role.ToString(), row.Model, row.IsCloud, SafeVerdict(row.Role, row.Verdict), row.Findings))]));
+                row.Role.ToString(), row.Model, row.IsCloud, SafeVerdict(row.Role, row.Verdict), row.Findings))],
+            [.. (summary.Latency ?? []).Select(row => new ModelLatencyRowResponse(
+                row.Role.ToString(), row.Model, row.IsCloud, row.Calls, row.MedianMilliseconds, row.P95Milliseconds, row.ReportedTokens))],
+            window));
+    }
+
+    private static string[] EffectNames(int bits) =>
+        [.. Enum.GetValues<ModelWorkflowEffect>().Where(effect => effect != ModelWorkflowEffect.None && effect != ModelWorkflowEffect.All &&
+            effect != ModelWorkflowEffect.AllOpportunities && (bits & (int)effect) != 0).Select(effect => effect.ToString())];
+
+    /// <summary>Weekly counts kept after the 90-day ledger prune. Counts only.</summary>
+    private static async Task<IResult> TrendAsync(
+        int? weeks, ModelGatewaySettingsService settings, IModelUsageLedger ledger, CancellationToken cancellationToken)
+    {
+        if ((await settings.GetAsync(cancellationToken)).Forbidden)
+        {
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        }
+
+        var count = weeks ?? 52;
+        if (count is < 1 or > 156)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["weeks"] = ["Choose 1 to 156 weeks."] });
+        }
+
+        var rows = await ledger.ListRollupsAsync(count, cancellationToken);
+        return Results.Ok(new ModelUsageTrendResponse(count, [.. rows.Select(row => new ModelUsageTrendRowResponse(
+            row.WeekStartUtc, row.Role.ToString(), row.Model, row.IsCloud, row.Calls, row.AcceptedReplies, row.RejectedReplies, row.ProviderErrors,
+            row.CancelledCalls, row.ActionCalls, row.NoChangeCalls, row.AbstainedCalls, row.AdvisoryCalls, row.ReportedTokens, row.CallsWithoutUsage,
+            row.LatencyMillisecondsSum, row.LatencyCalls, row.LatencyP95Milliseconds, row.DownstreamPositive, row.DownstreamNegative,
+            EffectNames(row.OpportunityFlags)))]));
+    }
+
+    private static async Task<IResult> EffectivenessAsync(int? days, DecisionCaptureService service, CancellationToken cancellationToken)
+    {
+        var window = days ?? 30;
+        var result = await service.EffectivenessAsync(window, cancellationToken);
+        return result.Forbidden ? Results.StatusCode(StatusCodes.Status403Forbidden)
+            : !result.Succeeded ? Results.ValidationProblem(new Dictionary<string, string[]> { ["days"] = [result.Error!] })
+            : Results.Ok(new AiEffectivenessResponse(window, [.. result.Value!.Select(row => new AiEffectivenessRowResponse(
+                row.Role.ToString(), row.ActedCalls, row.WithFacts, row.PositiveOnly, row.NegativeOnly, row.Mixed, row.InfluencedByNote))]));
     }
 
     private static string SafeVerdict(ModelRole role, string verdict) => (role, verdict) switch

@@ -1,0 +1,140 @@
+@using FamilyLibrarian.Contracts.ModelGateway
+@using FamilyLibrarian.Web.Client.ModelGateway
+@inject ModelGatewayApiClient Api
+
+<MudPaper Outlined="true" Class="pa-4 mt-3" id="tasks-ai-insight">
+    <MudStack Spacing="2">
+        <MudText Typo="Typo.h6">What happened after the AI acted, and earlier weeks</MudText>
+
+        <details>
+            <summary>When the AI changed something, what happened next</summary>
+            <MudText Typo="Typo.body2" Class="my-2">
+                For calls that changed something (for example a candidate was vetoed or a file was held) over the period above, or the last 30 days if that is longer, how many of those
+                decisions later had a recorded result, and whether it was good, bad or mixed. This counts decisions, not accuracy: most never get a
+                result, and where an administrator made the decision after reading the model's note the result favors that model. It only reaches back
+                as far as the 90 days of call history.
+            </MudText>
+            <MudButton Variant="Variant.Outlined" Disabled="@effectivenessBusy" OnClick="LoadEffectivenessAsync">@(effectiveness is null ? "Show" : "Refresh")</MudButton>
+            @if (effectivenessFailed)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">This could not be loaded. Try again.</MudAlert>
+            }
+            else if (effectiveness is { Roles.Count: 0 })
+            {
+                <MudText Typo="Typo.body2" Class="mt-2">No call in this period changed anything yet.</MudText>
+            }
+            else if (effectiveness is not null)
+            {
+                <MudTable Items="effectiveness.Roles" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm" Class="mt-2" TableAttributes="EffectivenessAttributes">
+                    <HeaderContent>
+                        <MudTh>Feature</MudTh><MudTh>Calls that changed something</MudTh><MudTh>Decisions with a later result</MudTh>
+                        <MudTh>Good only</MudTh><MudTh>Bad only</MudTh><MudTh>Mixed</MudTh><MudTh>Administrator saw the note</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Feature">@ModelRoleLabels.Title(context.Role)</MudTd>
+                        <MudTd DataLabel="Calls that changed something">@context.ActedCalls</MudTd>
+                        <MudTd DataLabel="Decisions with a later result">@context.WithFacts</MudTd>
+                        <MudTd DataLabel="Good only">@context.PositiveOnly</MudTd>
+                        <MudTd DataLabel="Bad only">@context.NegativeOnly</MudTd>
+                        <MudTd DataLabel="Mixed">@context.Mixed</MudTd>
+                        <MudTd DataLabel="Administrator saw the note">@context.InfluencedByNote</MudTd>
+                    </RowTemplate>
+                </MudTable>
+                <MudText Typo="Typo.caption">
+                    Counts only. With under @AiRoleStatus.MinAcceptedCalls calls in a row, treat the numbers as anecdotes, not a rate.
+                </MudText>
+            }
+        </details>
+
+        <details>
+            <summary>Earlier weeks (kept as counts after 90 days)</summary>
+            <MudText Typo="Typo.body2" Class="my-2">
+                Weekly counts per feature and model that are kept after the detailed call history is removed, so a trend survives. No people, books or
+                text are in them. A week split across two clean-ups has an upper-bound 95th percentile.
+            </MudText>
+            <MudButton Variant="Variant.Outlined" Disabled="@trendBusy" OnClick="LoadTrendAsync">@(trend is null ? "Show" : "Refresh")</MudButton>
+            @if (trendFailed)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">This could not be loaded. Try again.</MudAlert>
+            }
+            else if (trend is { Rows.Count: 0 })
+            {
+                <MudText Typo="Typo.body2" Class="mt-2">Nothing has been kept yet: weekly counts start once call history is older than 90 days.</MudText>
+            }
+            else if (trend is not null)
+            {
+                <MudTable Items="trend.Rows" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm" Class="mt-2" TableAttributes="TrendAttributes">
+                    <HeaderContent>
+                        <MudTh>Week of</MudTh><MudTh>Feature</MudTh><MudTh>Model</MudTh><MudTh>Calls</MudTh><MudTh>Accepted</MudTh><MudTh>Rejected</MudTh>
+                        <MudTh>Provider errors</MudTh><MudTh>Changed something</MudTh><MudTh>Average speed</MudTh><MudTh>Later good</MudTh><MudTh>Later bad</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Week of">@context.WeekStartUtc.ToLocalTime().ToString("d", System.Globalization.CultureInfo.CurrentCulture)</MudTd>
+                        <MudTd DataLabel="Feature">@ModelRoleLabels.Title(context.Role)@(context.IsCloud ? " (cloud)" : "")</MudTd>
+                        <MudTd DataLabel="Model">@context.Model</MudTd>
+                        <MudTd DataLabel="Calls">@context.Calls</MudTd>
+                        <MudTd DataLabel="Accepted">@context.AcceptedReplies</MudTd>
+                        <MudTd DataLabel="Rejected">@context.RejectedReplies</MudTd>
+                        <MudTd DataLabel="Provider errors">@context.ProviderErrors</MudTd>
+                        <MudTd DataLabel="Changed something">@context.ActionCalls</MudTd>
+                        <MudTd DataLabel="Average speed">@AverageSpeed(context)</MudTd>
+                        <MudTd DataLabel="Later good">@context.DownstreamPositive</MudTd>
+                        <MudTd DataLabel="Later bad">@context.DownstreamNegative</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </details>
+    </MudStack>
+</MudPaper>
+
+@code {
+    private static readonly Dictionary<string, object?> EffectivenessAttributes = new() { ["aria-label"] = "What happened after the AI changed something" };
+    private static readonly Dictionary<string, object?> TrendAttributes = new() { ["aria-label"] = "Weekly AI counts kept after 90 days" };
+
+    /// <summary>The usage period the page is showing; "what happened next" covers the same period (never more than 90 days).</summary>
+    [Parameter] public int Days { get; set; } = 1;
+
+    private AiEffectivenessResponse? effectiveness;
+    private ModelUsageTrendResponse? trend;
+    private bool effectivenessBusy, effectivenessFailed, trendBusy, trendFailed;
+
+    private async Task LoadEffectivenessAsync()
+    {
+        effectivenessBusy = true;
+        try
+        {
+            // A single day says almost nothing for a household; look back at least 30 days here.
+            effectiveness = await Api.GetEffectivenessAsync(Days < 30 ? 30 : Days);
+            effectivenessFailed = false;
+        }
+        catch (HttpRequestException)
+        {
+            effectivenessFailed = true;
+        }
+        finally
+        {
+            effectivenessBusy = false;
+        }
+    }
+
+    private async Task LoadTrendAsync()
+    {
+        trendBusy = true;
+        try
+        {
+            trend = await Api.GetUsageTrendAsync();
+            trendFailed = false;
+        }
+        catch (HttpRequestException)
+        {
+            trendFailed = true;
+        }
+        finally
+        {
+            trendBusy = false;
+        }
+    }
+
+    private static string AverageSpeed(ModelUsageTrendRowResponse row) =>
+        row.LatencyCalls == 0 ? "—" : $"{row.LatencyMillisecondsSum / (double)row.LatencyCalls / 1000.0:0.0} s";
+}

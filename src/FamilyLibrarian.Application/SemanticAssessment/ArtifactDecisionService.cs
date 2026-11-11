@@ -145,6 +145,9 @@ public sealed class ArtifactDecisionService(
                             ? "Artifact review did not return a usable decision." : execution.Detail, clock.UtcNow, execution.UsageRecordId);
                 await store.AddAsync(finding, cancellationToken);
                 await CaptureAsync(asset, result, expected, prior, input.IncludesDetails, bookText, execution, finding, cancellationToken);
+                // Only reviews that could ground a hold reach a model, so every call here had the chance to hold.
+                if (workflow is not null && execution.UsageRecordId is not null)
+                    await workflow.ObserveAsync(execution.UsageRecordId, ModelWorkflowEffect.HoldReviewEligible, cancellationToken);
             }
             cancellationToken.ThrowIfCancellationRequested();
             if (limit.IsCancellationRequested) return null;

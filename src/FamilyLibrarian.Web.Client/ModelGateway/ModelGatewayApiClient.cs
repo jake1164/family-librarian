@@ -14,9 +14,17 @@ public sealed class ModelGatewayApiClient(HttpClient httpClient, AntiforgeryToke
         await httpClient.GetFromJsonAsync<ModelGatewaySettingsResponse>($"{BasePath}/", cancellationToken)
         ?? throw new InvalidOperationException("The host returned no settings.");
 
-    public async Task<ModelUsageResponse> GetUsageAsync(CancellationToken cancellationToken = default) =>
-        await httpClient.GetFromJsonAsync<ModelUsageResponse>($"{BasePath}/usage", cancellationToken)
+    public async Task<ModelUsageResponse> GetUsageAsync(int days = 1, CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<ModelUsageResponse>($"{BasePath}/usage?days={days}", cancellationToken)
         ?? throw new InvalidOperationException("The host returned no usage.");
+
+    public async Task<ModelUsageTrendResponse> GetUsageTrendAsync(int weeks = 52, CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<ModelUsageTrendResponse>($"{BasePath}/usage/trend?weeks={weeks}", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no usage trend.");
+
+    public async Task<AiEffectivenessResponse> GetEffectivenessAsync(int days = 30, CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<AiEffectivenessResponse>($"{BasePath}/usage/effectiveness?days={days}", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no effectiveness data.");
 
     public async Task<ModelListResponse> GetModelsAsync(CancellationToken cancellationToken = default) =>
         await httpClient.GetFromJsonAsync<ModelListResponse>($"{BasePath}/models", cancellationToken)

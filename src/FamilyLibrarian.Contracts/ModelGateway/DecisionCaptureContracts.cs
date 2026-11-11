@@ -25,7 +25,7 @@ public sealed record DecisionCaptureRetentionPreviewResponse(int Snapshots, int 
 /// <param name="Role">One captured role name, or null / <c>All</c> for every role.</param>
 public sealed record PurgeDecisionCaptureRequest(string? Role);
 
-public sealed record DecisionCapturePurgeResponse(int Snapshots, int Calls, int Outcomes, int CandidateLinks);
+public sealed record DecisionCapturePurgeResponse(int Snapshots, int Calls, int Outcomes, int CandidateLinks, int UsageRollups = 0);
 
 /// <summary>Numbers only: there is no title, author, message or snapshot content anywhere in this response.</summary>
 public sealed record DecisionCaptureRoleInsightDto(

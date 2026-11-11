@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Application.ModelTesting;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -83,17 +84,137 @@ public sealed class ModelUsageLedger(IServiceScopeFactory scopes, TimeProvider t
             .GroupBy(finding => new { finding.Role, finding.Model, finding.IsCloud, finding.Verdict })
             .Select(group => new { group.Key.Role, group.Key.Model, group.Key.IsCloud, group.Key.Verdict, Findings = group.Count() })
             .ToListAsync(cancellationToken);
+        var latencyRows = await database.ModelUsageRecords.AsNoTracking()
+            .Where(record => record.OccurredAtUtc >= since && record.Outcome != ModelCallOutcome.Pending && record.LatencyMilliseconds > 0)
+            .Select(record => new { record.Role, record.Model, record.IsCloud, Latency = record.LatencyMilliseconds!.Value, record.ReportedTotalTokens })
+            .ToListAsync(cancellationToken);
+        var latency = latencyRows.GroupBy(row => new { row.Role, row.Model, row.IsCloud })
+            .Select(group =>
+            {
+                var sorted = group.Select(row => row.Latency).Order().ToArray();
+                return new ModelLatencySummaryRow(group.Key.Role, group.Key.Model, group.Key.IsCloud, sorted.Length,
+                    Percentile(sorted, 50), Percentile(sorted, 95), group.Sum(row => (long)(row.ReportedTotalTokens ?? 0)));
+            })
+            .OrderBy(row => row.Role).ThenBy(row => row.Model, StringComparer.Ordinal).ToArray();
         return new ModelUsageSummary(
             since,
             [.. rows.OrderBy(row => row.Role).ThenBy(row => row.Outcome)
                 .Select(row => new ModelUsageSummaryRow(row.Role, row.BudgetClass, row.Outcome, row.IsCloud, row.Calls, row.Tokens, row.Unreported,
                     row.Model, row.FailureReason, row.WorkflowEffects))],
-            [.. recommendations.Select(row => new ModelRecommendationSummaryRow(row.Role, row.Model, row.IsCloud, row.Verdict ?? "Other", row.Findings))]);
+            [.. recommendations.Select(row => new ModelRecommendationSummaryRow(row.Role, row.Model, row.IsCloud, row.Verdict ?? "Other", row.Findings))],
+            latency);
+    }
+
+    /// <summary>Nearest-rank percentile of an ascending sequence. Never interpolates, so it reports a latency that really happened.</summary>
+    internal static long Percentile(IReadOnlyList<long> sortedAscending, int percentile)
+    {
+        if (sortedAscending.Count == 0) return 0;
+        var rank = (int)Math.Ceiling(percentile / 100.0 * sortedAscending.Count);
+        return sortedAscending[Math.Clamp(rank, 1, sortedAscending.Count) - 1];
+    }
+
+    public async Task<IReadOnlyList<ModelUsageRollupRow>> ListRollupsAsync(int weeks, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(weeks, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(weeks, 260);
+        await using var scope = scopes.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var since = WeekStart(time.GetUtcNow()).AddDays(-7 * weeks);
+        var rows = await database.ModelUsageRollups.AsNoTracking().Where(rollup => rollup.WeekStartUtc >= since)
+            .OrderBy(rollup => rollup.WeekStartUtc).ThenBy(rollup => rollup.Role).ThenBy(rollup => rollup.Model).ToListAsync(cancellationToken);
+        return [.. rows.Select(rollup => new ModelUsageRollupRow(
+            rollup.WeekStartUtc, rollup.Role, rollup.Model, rollup.IsCloud, rollup.OpportunityFlags, rollup.Calls, rollup.AcceptedReplies,
+            rollup.RejectedReplies, rollup.ProviderErrors, rollup.CancelledCalls, rollup.ActionCalls, rollup.NoChangeCalls, rollup.AbstainedCalls,
+            rollup.AdvisoryCalls, rollup.ReportedTokens, rollup.CallsWithoutUsage, rollup.LatencyMillisecondsSum, rollup.LatencyCalls,
+            rollup.LatencyP95Milliseconds, rollup.DownstreamPositive, rollup.DownstreamNegative))];
+    }
+
+    /// <summary>Monday 00:00 UTC of the week containing <paramref name="moment"/>.</summary>
+    internal static DateTimeOffset WeekStart(DateTimeOffset moment)
+    {
+        var date = moment.UtcDateTime.Date;
+        return new DateTimeOffset(date.AddDays(-(((int)date.DayOfWeek + 6) % 7)), TimeSpan.Zero);
+    }
+
+    /// <summary>
+    /// Folds finished calls older than the cutoff into weekly counts before they are deleted, so the trend outlives the 90-day ledger.
+    /// Additive: a week split across two prunes simply adds up. Runs in one transaction with the delete, so no call is counted twice
+    /// or lost. Counts only; nothing about a person or a book.
+    /// </summary>
+    private static async Task RollUpAsync(AppDbContext database, DateTimeOffset cutoff, CancellationToken cancellationToken)
+    {
+        var old = await database.ModelUsageRecords.AsNoTracking()
+            .Where(record => record.OccurredAtUtc < cutoff && record.Outcome != ModelCallOutcome.Pending)
+            .Select(record => new
+            {
+                record.Id, record.Role, record.Model, record.IsCloud, record.Outcome, record.FailureReason, record.WorkflowEffects,
+                record.OccurredAtUtc, record.ReportedTotalTokens, record.LatencyMilliseconds
+            }).ToListAsync(cancellationToken);
+        if (old.Count == 0)
+        {
+            await PruneRollupsAsync(database, cutoff, cancellationToken);
+            return;
+        }
+
+        // What happened afterwards to the decisions these calls were part of: positive only, negative only, or neither (mixed or none).
+        var ids = old.Select(record => (Guid?)record.Id).ToArray();
+        var downstream = (await (from call in database.DecisionCalls.AsNoTracking()
+                                 join outcome in database.DecisionOutcomes.AsNoTracking() on call.SnapshotId equals outcome.SnapshotId
+                                 where ids.Contains(call.ModelUsageRecordId)
+                                 select new { Usage = call.ModelUsageRecordId!.Value, outcome.Kind }).ToListAsync(cancellationToken))
+            .GroupBy(row => row.Usage)
+            .ToDictionary(group => group.Key, group =>
+            {
+                var positive = group.Any(row => DecisionOutcomeKinds.IsPositive(row.Kind));
+                var negative = group.Any(row => !DecisionOutcomeKinds.IsPositive(row.Kind));
+                return positive == negative ? (bool?)null : positive;
+            });
+
+        await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+        foreach (var group in old.GroupBy(record => new
+        {
+            Week = WeekStart(record.OccurredAtUtc), record.Role, record.Model, record.IsCloud,
+            Flags = (record.WorkflowEffects ?? 0) & ModelWorkflowEffects.OpportunityMask
+        }))
+        {
+            var key = group.Key;
+            var rollup = await database.ModelUsageRollups.FirstOrDefaultAsync(row =>
+                row.WeekStartUtc == key.Week && row.Role == key.Role && row.Model == key.Model && row.IsCloud == key.IsCloud &&
+                row.OpportunityFlags == key.Flags, cancellationToken);
+            if (rollup is null)
+            {
+                rollup = new ModelUsageRollup(key.Week, key.Role, key.Model, key.IsCloud, key.Flags);
+                database.ModelUsageRollups.Add(rollup);
+            }
+
+            foreach (var record in group)
+            {
+                rollup.Add(ModelCallClassification.Classify(record.Outcome, record.FailureReason), record.WorkflowEffects, record.ReportedTotalTokens,
+                    record.LatencyMilliseconds > 0 ? record.LatencyMilliseconds : null, downstream.GetValueOrDefault(record.Id));
+            }
+
+            rollup.MergeLatencyP95(Percentile([.. group.Where(record => record.LatencyMilliseconds > 0).Select(record => record.LatencyMilliseconds!.Value).Order()], 95));
+        }
+
+        await database.SaveChangesAsync(cancellationToken);
+        await database.ModelUsageRecords.Where(record => record.OccurredAtUtc < cutoff).ExecuteDeleteAsync(cancellationToken);
+        // The weekly counts are kept for three years, then they go too: the table stays small and nothing in it is kept for ever.
+        var rollupCutoff = WeekStart(cutoff).AddDays(-7 * RollupRetentionWeeks);
+        await database.ModelUsageRollups.Where(rollup => rollup.WeekStartUtc < rollupCutoff).ExecuteDeleteAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    internal const int RollupRetentionWeeks = 156;
+
+    private static async Task PruneRollupsAsync(AppDbContext database, DateTimeOffset cutoff, CancellationToken cancellationToken)
+    {
+        var rollupCutoff = WeekStart(cutoff).AddDays(-7 * RollupRetentionWeeks);
+        await database.ModelUsageRollups.Where(rollup => rollup.WeekStartUtc < rollupCutoff).ExecuteDeleteAsync(cancellationToken);
     }
 
     public async Task ObserveWorkflowAsync(Guid recordId, ModelWorkflowEffect effects, CancellationToken cancellationToken)
     {
-        if (effects == ModelWorkflowEffect.None || (effects & ~ModelWorkflowEffect.All) != 0)
+        if (effects == ModelWorkflowEffect.None || (effects & ~(ModelWorkflowEffect.All | ModelWorkflowEffect.AllOpportunities)) != 0)
             throw new ArgumentOutOfRangeException(nameof(effects));
         await using var scope = scopes.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -145,7 +266,19 @@ public sealed class ModelUsageLedger(IServiceScopeFactory scopes, TimeProvider t
             return;
         }
 
-        var cutoff = now - Retention;
-        await database.ModelUsageRecords.Where(record => record.OccurredAtUtc < cutoff).ExecuteDeleteAsync(cancellationToken);
+        await RunPruneAsync(database, now, cancellationToken);
     }
+
+    /// <summary>
+    /// Folds finished calls older than the retention window into weekly counts and removes them, unconditionally. The throttled path above
+    /// calls this once a day; it is public so a test (or an operator tool) can run it without waiting for the interval.
+    /// </summary>
+    public async Task RunPruneNowAsync(CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        await RunPruneAsync(scope.ServiceProvider.GetRequiredService<AppDbContext>(), time.GetUtcNow(), cancellationToken);
+    }
+
+    private static Task RunPruneAsync(AppDbContext database, DateTimeOffset now, CancellationToken cancellationToken) =>
+        RollUpAsync(database, now - Retention, cancellationToken);
 }

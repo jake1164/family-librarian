@@ -43,7 +43,8 @@ public sealed class CandidateTriageTests
         });
         Assert.AreEqual(1, model.Calls);
         Assert.AreEqual("b", client.SubmittedCandidates.Single());
-        Assert.AreEqual((usageId, ModelWorkflowEffect.CandidateVetoUsed), workflow.Events.Single());
+        // The call's situation (a pick existed) is noted too; the assertion is about what the model's veto did.
+        Assert.AreEqual((usageId, ModelWorkflowEffect.CandidateVetoUsed), workflow.Events.Where(e => (e.Effects & ~ModelWorkflowEffect.AllOpportunities) != 0).Single());
     }
 
     [TestMethod]

@@ -39,13 +39,13 @@ public sealed class CandidateTriageServiceTests
         var request = Guid.NewGuid(); var format = Guid.NewGuid();
         var proposal = await service.GetAsync(request, format, "example-source", Context(Option()), CancellationToken.None);
         Assert.IsNotNull(proposal);
-        Assert.HasCount(0, observer.Observations);
+        Assert.HasCount(0, observer.Observations.Where(o => (o.Effects & ~ModelWorkflowEffect.AllOpportunities) != 0).ToArray());
         var reused = await service.GetAsync(request, format, "example-source", Context(Option()), CancellationToken.None);
         Assert.IsNotNull(reused);
         Assert.AreEqual(id, reused.UsageRecordId);
         Assert.AreEqual(id, store.Findings.Single().ModelUsageRecordId);
         await service.ObserveSelectionAsync(reused, CancellationToken.None);
-        Assert.AreEqual(ModelWorkflowEffect.CandidateSelectionUsed, observer.Observations.Single().Effects);
+        Assert.AreEqual(ModelWorkflowEffect.CandidateSelectionUsed, observer.Observations.Where(o => (o.Effects & ~ModelWorkflowEffect.AllOpportunities) != 0).Single().Effects);
     }
 
     private static readonly DateTimeOffset Now = new(2026, 10, 18, 14, 0, 0, TimeSpan.Zero);

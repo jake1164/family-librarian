@@ -76,6 +76,7 @@ public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecu
                     execution.Succeeded ? null : execution.Detail, clock.UtcNow, execution.UsageRecordId);
                 await store.AddAsync(finding, cancellationToken);
                 await CaptureAsync(requestId, context, execution, finding, cancellationToken);
+                await NoteOpportunitiesAsync(context, execution.UsageRecordId, cancellationToken);
             }
             if (decision?.Move is "keep" or "uncertain" && workflow is not null)
                 await workflow.ObserveAsync(usageRecordId, decision.Move == "uncertain" ? ModelWorkflowEffect.Abstained : ModelWorkflowEffect.NoChange, cancellationToken);
@@ -90,6 +91,20 @@ public sealed class CandidateTriageService(IModelRoleResolver roles, IModelExecu
             // Role/storage failures are deterministic fallback, never an unrecorded permission.
             return null;
         }
+    }
+
+    /// <summary>
+    /// Records which situations this call was made in, so "kept the current pick" can be told from "never had a chance to move".
+    /// Facts about the situation, written once per new call; the observer never throws and nothing here changes the move.
+    /// </summary>
+    private async Task NoteOpportunitiesAsync(CandidateTriageContext context, Guid? usageRecordId, CancellationToken cancellationToken)
+    {
+        if (workflow is null || usageRecordId is null) return;
+        var flags = ModelWorkflowEffect.None;
+        if (context.Candidates.Any(CandidateTriageRules.IsAuthorOnlyConflict)) flags |= ModelWorkflowEffect.TriageAuthorOnlyConflictEligible;
+        if (context.TiedResultIds.Count >= 2) flags |= ModelWorkflowEffect.TriageTiedPreferEligible;
+        if (context.Pick is not null) flags |= ModelWorkflowEffect.TriageVetoEligible;
+        if (flags != ModelWorkflowEffect.None) await workflow.ObserveAsync(usageRecordId, flags, cancellationToken);
     }
 
     /// <summary>Saves the decision for later replay after the finding is stored. It can never change the move; the sink swallows its own failures.</summary>

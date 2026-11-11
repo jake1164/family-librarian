@@ -37,7 +37,14 @@ public sealed record DecisionCaptureRetentionCounts(int Snapshots, int Calls, in
 }
 
 /// <summary>What a purge removed. Counts only, so it is safe to audit.</summary>
-public sealed record DecisionCapturePurgeResult(int Snapshots, int Calls, int Outcomes, int CandidateLinks);
+public sealed record DecisionCapturePurgeResult(int Snapshots, int Calls, int Outcomes, int CandidateLinks, int UsageRollups = 0);
+
+/// <summary>
+/// When a model's call changed something, what was observed afterwards, per role. Decision counts, not a score: facts are partly
+/// influenced by the model's own note, and most decisions never get one.
+/// </summary>
+public sealed record DecisionCaptureEffectivenessRow(
+    ModelRole Role, int ActedCalls, int WithFacts, int PositiveOnly, int NegativeOnly, int Mixed, int InfluencedByNote);
 
 /// <summary>
 /// Storage for decision capture. C1-a needs only the administration side: insight, retention and purge. Writing snapshots arrives
@@ -57,6 +64,9 @@ public interface IDecisionCaptureStore
     /// </summary>
     Task<DecisionCaptureRetentionCounts> RunRetentionAsync(DecisionCaptureLimits limits, DateTimeOffset nowUtc, CancellationToken cancellationToken);
 
-    /// <summary>Deletes snapshots (and, by cascade, their calls, outcomes and links) for one role, or for every role when null.</summary>
+    /// <summary>Per role, for calls since <paramref name="sinceUtc"/> that changed something: how many decisions later had facts, and of what kind.</summary>
+    Task<IReadOnlyList<DecisionCaptureEffectivenessRow>> GetEffectivenessAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken);
+
+    /// <summary>Deletes snapshots (and, by cascade, their calls, outcomes and links) for one role, or for every role when null. Purging everything also clears the weekly usage counts.</summary>
     Task<DecisionCapturePurgeResult> PurgeAsync(ModelRole? role, CancellationToken cancellationToken);
 }

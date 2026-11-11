@@ -100,6 +100,22 @@ public sealed class DecisionCaptureService(
         return DecisionCaptureResult.Success<DecisionCaptureInsight>(await captureStore.GetInsightAsync(clock.UtcNow, cancellationToken));
     }
 
+    /// <param name="days">1, 7, 30 or 90: the ledger keeps 90 days, so that is as far back as "what happened next" can reach.</param>
+    public async Task<DecisionCaptureResult<IReadOnlyList<DecisionCaptureEffectivenessRow>>> EffectivenessAsync(int days, CancellationToken cancellationToken)
+    {
+        if (!IsAdministrator())
+        {
+            return DecisionCaptureResult.NotAllowed<IReadOnlyList<DecisionCaptureEffectivenessRow>>();
+        }
+
+        if (days is not (1 or 7 or 30 or 90))
+        {
+            return DecisionCaptureResult.Invalid<IReadOnlyList<DecisionCaptureEffectivenessRow>>("Choose 1, 7, 30 or 90 days.");
+        }
+
+        return DecisionCaptureResult.Success(await captureStore.GetEffectivenessAsync(clock.UtcNow.AddDays(-days), cancellationToken));
+    }
+
     /// <param name="role">One scored role, or null for all of them.</param>
     public async Task<DecisionCaptureResult<DecisionCapturePurgeResult>> PurgeAsync(ModelRole? role, CancellationToken cancellationToken)
     {
@@ -116,7 +132,7 @@ public sealed class DecisionCaptureService(
         var purged = await captureStore.PurgeAsync(role, cancellationToken);
         await audit.WriteAsync(
             AuditActions.DecisionCapturePurged, AuditSubjectTypes.ModelGateway, SubjectId,
-            new { Role = role?.ToString() ?? "All", purged.Snapshots, purged.Calls, purged.Outcomes, purged.CandidateLinks }, cancellationToken);
+            new { Role = role?.ToString() ?? "All", purged.Snapshots, purged.Calls, purged.Outcomes, purged.CandidateLinks, purged.UsageRollups }, cancellationToken);
         return DecisionCaptureResult.Success<DecisionCapturePurgeResult>(purged);
     }
 

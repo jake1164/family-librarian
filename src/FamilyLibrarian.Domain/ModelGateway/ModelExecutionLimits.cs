@@ -216,7 +216,29 @@ public enum ModelWorkflowEffect
     FileHoldApplied = 512,
     FileReleaseApplied = 1024,
     All = NoChange | Abstained | AdvisorySaved | IntentUsed | CoverSearchCompleted | ExtraSearchCompleted |
-        ExtraSearchReturnedResults | CandidateVetoUsed | CandidateSelectionUsed | FileHoldApplied | FileReleaseApplied
+        ExtraSearchReturnedResults | CandidateVetoUsed | CandidateSelectionUsed | FileHoldApplied | FileReleaseApplied,
+
+    // Opportunity flags (A6-TUNER-C1-d step 2): facts about the situation a call was made in, not about what the model did. They
+    // let "never had a chance" be told from "had a chance and declined". Written once per call, where the service already computes
+    // eligibility before calling; they carry no content.
+    TriageAuthorOnlyConflictEligible = 2048,
+    TriageTiedPreferEligible = 4096,
+    TriageVetoEligible = 8192,
+    HoldReviewEligible = 16384,
+    SearchAfterFixedSearches = 32768,
+    AllOpportunities = TriageAuthorOnlyConflictEligible | TriageTiedPreferEligible | TriageVetoEligible | HoldReviewEligible | SearchAfterFixedSearches
+}
+
+public static class ModelWorkflowEffects
+{
+    /// <summary>The effects that say a model changed or added something (as opposed to agreeing, abstaining or noting an opportunity).</summary>
+    public const ModelWorkflowEffect Actions = ModelWorkflowEffect.IntentUsed | ModelWorkflowEffect.CoverSearchCompleted |
+        ModelWorkflowEffect.ExtraSearchCompleted | ModelWorkflowEffect.CandidateVetoUsed | ModelWorkflowEffect.CandidateSelectionUsed |
+        ModelWorkflowEffect.FileHoldApplied | ModelWorkflowEffect.FileReleaseApplied;
+
+    public const int OpportunityMask = (int)ModelWorkflowEffect.AllOpportunities;
+
+    public const int ActionMask = (int)Actions;
 }
 
 /// <summary>One reserved/completed model call. Metadata only: never a prompt, reply, excerpt or key.</summary>
@@ -268,7 +290,7 @@ public sealed class ModelUsageRecord
 
     public void ObserveWorkflow(ModelWorkflowEffect effects)
     {
-        if (effects == ModelWorkflowEffect.None || (effects & ~ModelWorkflowEffect.All) != 0)
+        if (effects == ModelWorkflowEffect.None || (effects & ~(ModelWorkflowEffect.All | ModelWorkflowEffect.AllOpportunities)) != 0)
             throw new ArgumentOutOfRangeException(nameof(effects));
         if (Outcome == ModelCallOutcome.Succeeded) WorkflowEffects = (WorkflowEffects ?? 0) | (int)effects;
     }

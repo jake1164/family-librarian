@@ -24,7 +24,8 @@ public sealed class ArtifactDecisionTests
         var hold = await service.GetHoldAsync(ArtifactDecisionKit.Asset(), ArtifactDecisionKit.Match(), ArtifactDecisionKit.Expected, CancellationToken.None);
         Assert.AreEqual(id, hold!.UsageRecordId);
         Assert.AreEqual(id, kit.Store.Findings.Single().ModelUsageRecordId);
-        Assert.HasCount(0, observer.Observations);
+        // The call's situation (it could have held) is noted at once; no action or agreement is claimed until a consumer reports one.
+        Assert.HasCount(0, observer.Observations.Where(o => (o.Effects & ~ModelWorkflowEffect.AllOpportunities) != 0).ToArray());
     }
 
     [TestMethod]
@@ -128,8 +129,10 @@ public sealed class ArtifactDecisionTests
         Assert.AreEqual(ModelCallOutcome.Succeeded, finding.Outcome);
         Assert.AreEqual(verdict, finding.Verdict);
         Assert.AreEqual("[]", finding.ClaimsJson);
-        Assert.HasCount(2, observer.Observations);
-        Assert.IsTrue(observer.Observations.All(o => o.Id == id && o.Effects == effect));
+        var observed = observer.Observations.Where(o => (o.Effects & ~ModelWorkflowEffect.AllOpportunities) != 0).ToArray();
+        Assert.HasCount(2, observed);
+        Assert.IsTrue(observed.All(o => o.Id == id && o.Effects == effect));
+        Assert.AreEqual(1, observer.Observations.Count(o => o.Effects == ModelWorkflowEffect.HoldReviewEligible), "The situation is noted once, for the one call that was made.");
     }
 
     [TestMethod]

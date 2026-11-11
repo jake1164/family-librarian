@@ -87,6 +87,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<SemanticFinding> SemanticFindings => Set<SemanticFinding>();
 
+    public DbSet<ModelUsageRollup> ModelUsageRollups => Set<ModelUsageRollup>();
+
     public DbSet<DecisionSnapshot> DecisionSnapshots => Set<DecisionSnapshot>();
 
     public DbSet<DecisionCall> DecisionCalls => Set<DecisionCall>();
@@ -484,6 +486,38 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(record => record.UsageEstimated).HasColumnName("usage_estimated");
             entity.HasIndex(record => record.OccurredAtUtc);
             entity.HasIndex(record => new { record.UserId, record.OccurredAtUtc });
+        });
+
+        // Weekly counts that outlive the usage ledger's 90-day prune (A6-TUNER-C1-d step 3). Counts only.
+        builder.Entity<ModelUsageRollup>(entity =>
+        {
+            entity.ToTable("model_usage_rollups", "integrations");
+            entity.HasKey(rollup => rollup.Id);
+            entity.Property(rollup => rollup.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(rollup => rollup.WeekStartUtc).HasColumnName("week_start_utc").HasColumnType("timestamp with time zone");
+            entity.Property(rollup => rollup.Role).HasColumnName("role").HasConversion<string>().HasMaxLength(48);
+            entity.Property(rollup => rollup.Model).HasColumnName("model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
+            entity.Property(rollup => rollup.IsCloud).HasColumnName("is_cloud");
+            entity.Property(rollup => rollup.OpportunityFlags).HasColumnName("opportunity_flags");
+            entity.Property(rollup => rollup.Calls).HasColumnName("calls");
+            entity.Property(rollup => rollup.AcceptedReplies).HasColumnName("accepted_replies");
+            entity.Property(rollup => rollup.RejectedReplies).HasColumnName("rejected_replies");
+            entity.Property(rollup => rollup.ProviderErrors).HasColumnName("provider_errors");
+            entity.Property(rollup => rollup.CancelledCalls).HasColumnName("cancelled_calls");
+            entity.Property(rollup => rollup.UnclassifiedCalls).HasColumnName("unclassified_calls");
+            entity.Property(rollup => rollup.ActionCalls).HasColumnName("action_calls");
+            entity.Property(rollup => rollup.NoChangeCalls).HasColumnName("no_change_calls");
+            entity.Property(rollup => rollup.AbstainedCalls).HasColumnName("abstained_calls");
+            entity.Property(rollup => rollup.AdvisoryCalls).HasColumnName("advisory_calls");
+            entity.Property(rollup => rollup.ReportedTokens).HasColumnName("reported_tokens");
+            entity.Property(rollup => rollup.CallsWithoutUsage).HasColumnName("calls_without_usage");
+            entity.Property(rollup => rollup.LatencyMillisecondsSum).HasColumnName("latency_ms_sum");
+            entity.Property(rollup => rollup.LatencyMillisecondsMax).HasColumnName("latency_ms_max");
+            entity.Property(rollup => rollup.LatencyCalls).HasColumnName("latency_calls");
+            entity.Property(rollup => rollup.LatencyP95Milliseconds).HasColumnName("latency_p95_ms");
+            entity.Property(rollup => rollup.DownstreamPositive).HasColumnName("downstream_positive");
+            entity.Property(rollup => rollup.DownstreamNegative).HasColumnName("downstream_negative");
+            entity.HasIndex(rollup => new { rollup.WeekStartUtc, rollup.Role, rollup.Model, rollup.IsCloud, rollup.OpportunityFlags }).IsUnique();
         });
 
         builder.Entity<SemanticFinding>(entity =>
