@@ -1,4 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.DecisionCapture;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Publishing;
@@ -34,7 +36,8 @@ public sealed class ApprovalService(
     IModelGatewaySettingsStore? modelSettings = null,
     IArtifactEvidenceStore? modelEvidence = null,
     ISemanticFindingStore? modelFindings = null,
-    IExpectedArtifactProfileSource? expectedProfiles = null, IModelWorkflowObserver? workflow = null) : IPolicyAssetApprovalService
+    IExpectedArtifactProfileSource? expectedProfiles = null, IModelWorkflowObserver? workflow = null,
+    IDecisionOutcomeRecorder? outcomes = null) : IPolicyAssetApprovalService
 {
     public async Task<ApprovalResult> ReleaseHoldByModelAsync(Guid assetId, Guid findingId, CancellationToken cancellationToken)
     {
@@ -299,6 +302,15 @@ public sealed class ApprovalService(
                 new { AssetId = assetId, ActorType = actorType, PolicyName = policyName, Reason = reason }, cancellationToken);
 
         if (modelRelease is null) await PublishApprovedAsync(asset, cancellationToken);
+        // What happened to the file, reported only now that it is committed. An administrator's own decisions are strong facts;
+        // the automatic policy and the model's own release are weak (they are not independent of the model).
+        var administrator = actorType == ApprovalActorType.Admin;
+        await outcomes.ReportAsync(
+            modelRelease is not null ? DecisionOutcomeKind.ModelReleaseApplied
+                : identityOverrideConfirmed ? DecisionOutcomeKind.IdentityOverridden : DecisionOutcomeKind.FileApproved,
+            modelRelease is not null ? "model-release" : identityOverrideConfirmed ? "admin-override" : administrator ? "admin-approval" : "policy-approval",
+            administrator && modelRelease is null ? DecisionOutcomeStrength.Strong : DecisionOutcomeStrength.Weak,
+            DecisionOutcomeTarget.File(assetId), cancellationToken, administratorDecided: administrator && modelRelease is null);
         return ApprovalResult.Success();
     }
 
@@ -371,6 +383,8 @@ public sealed class ApprovalService(
             new { AssetId = assetId, Reason = reason },
             cancellationToken);
 
+        await outcomes.ReportAsync(DecisionOutcomeKind.FileRejected, "admin-rejection", DecisionOutcomeStrength.Strong,
+            DecisionOutcomeTarget.File(assetId), cancellationToken, administratorDecided: true);
         return ApprovalResult.Success();
     }
 }

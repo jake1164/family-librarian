@@ -18,6 +18,17 @@ public enum DecisionOutcomeKind
     SearchReturnedNoResults = 11
 }
 
+public static class DecisionOutcomeKinds
+{
+    /// <summary>
+    /// Whether the fact says the thing the model looked at turned out well (a file accepted, a candidate that verified, a search that
+    /// found the book). Used only to recognise a disputed decision: one that has both a good and a bad fact attached.
+    /// </summary>
+    public static bool IsPositive(DecisionOutcomeKind kind) => kind is
+        DecisionOutcomeKind.FileApproved or DecisionOutcomeKind.IdentityOverridden or DecisionOutcomeKind.ModelReleaseApplied or
+        DecisionOutcomeKind.CandidateDownloadedVerified or DecisionOutcomeKind.SearchFoundSelectedResult;
+}
+
 public enum DecisionOutcomeStrength
 {
     Weak = 1,

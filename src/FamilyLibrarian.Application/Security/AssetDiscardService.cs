@@ -1,4 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.DecisionCapture;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Domain.Acquisition;
@@ -15,7 +17,8 @@ public sealed class AssetDiscardService(
     IAssetStagingStore stagingStore,
     IAuditWriter audit,
     ICurrentUser currentUser,
-    IClock clock)
+    IClock clock,
+    IDecisionOutcomeRecorder? outcomes = null)
 {
     public async Task<AssetDiscardResult> DiscardAsync(Guid assetId, CancellationToken cancellationToken)
     {
@@ -44,6 +47,9 @@ public sealed class AssetDiscardService(
         foreach (var target in targets)
         {
             await DestroyAsync(target, reason: null, cancellationToken);
+            // Only a person's discard is a fact; the automatic clean-up of settled copies (below) is housekeeping, not a judgment.
+            await outcomes.ReportAsync(DecisionOutcomeKind.FileDiscarded, "admin-discard", DecisionOutcomeStrength.Weak,
+                DecisionOutcomeTarget.File(target.Id), cancellationToken, administratorDecided: true);
         }
 
         return AssetDiscardResult.Success();

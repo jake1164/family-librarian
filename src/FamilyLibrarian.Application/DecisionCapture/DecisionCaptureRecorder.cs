@@ -15,7 +15,8 @@ namespace FamilyLibrarian.Application.DecisionCapture;
 /// silently relabeled and never "fixed" by widening the allow-list.
 /// </summary>
 public sealed class DecisionCaptureRecorder(
-    IModelGatewaySettingsStore settings, IDecisionCaptureWriter writer, IClock clock, IDecisionCaptureLog log) : IDecisionCaptureSink
+    IModelGatewaySettingsStore settings, IDecisionCaptureWriter writer, IClock clock, IDecisionCaptureLog log,
+    IDecisionCaptureMaintenance? maintenance = null) : IDecisionCaptureSink
 {
     public const string StaleRenderMismatch = "render-mismatch";
     public const string StaleRenderFailed = "render-failed";
@@ -51,6 +52,7 @@ public sealed class DecisionCaptureRecorder(
                 run.ModelAlias, run.ReportedModel, run.Reasoning, run.RenderedMessagesHash ?? "none", run.ParserVersion,
                 run.Outcome, run.FailureReason, run.Answer, now);
             await writer.WriteAsync(new DecisionCaptureWrite(snapshot, call, decision.Links ?? []), cancellationToken);
+            if (maintenance is not null) await maintenance.RunIfDueAsync(cancellationToken);
         }
         catch (Exception exception)
         {

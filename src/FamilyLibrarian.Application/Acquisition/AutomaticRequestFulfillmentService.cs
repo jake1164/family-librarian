@@ -1,5 +1,7 @@
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.DecisionCapture;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
@@ -55,7 +57,8 @@ public sealed class AutomaticRequestFulfillmentService(
     ICurrentUser currentUser,
     IUserAccountStore accounts,
     AcquisitionQuestionService? questions = null,
-    AcquisitionPreferenceService? preferences = null) : IPartSetReviewRouter
+    AcquisitionPreferenceService? preferences = null,
+    IDecisionOutcomeRecorder? outcomes = null) : IPartSetReviewRouter
 {
     private const int BatchSize = 20;
 
@@ -102,6 +105,9 @@ public sealed class AutomaticRequestFulfillmentService(
             request.RecordAutomaticCandidateFailure(
                 requestFormatId, providerId, candidateReference, reason, clock.UtcNow, candidateFingerprint);
             failures = request.CountAutomaticCandidateFailures(requestFormatId, providerId);
+            // The downloaded copy failed its post-download check. Fixed fact only: the free-text reason is never recorded.
+            await outcomes.ReportAsync(DecisionOutcomeKind.VerificationFailed, "automatic-verification", DecisionOutcomeStrength.Strong,
+                DecisionOutcomeTarget.Candidate(requestId, providerId, candidateReference), cancellationToken);
 
             if (failures < automaticAttemptLimit)
             {
@@ -649,6 +655,7 @@ public sealed class AutomaticRequestFulfillmentService(
             return PreferenceAmbiguityResolutionOutcome.Conflict;
         }
 
+        var declined = request.ReviewCandidates.Select(candidate => (candidate.ProviderId, candidate.ProviderResultId)).ToArray();
         try
         {
             request.DismissReviewPreference(actorUserId, clock.UtcNow);
@@ -659,6 +666,10 @@ public sealed class AutomaticRequestFulfillmentService(
         }
 
         await requests.SaveChangesAsync(cancellationToken);
+        // "Keep looking": the person declined each offered copy. Weak, because it is a preference, not a check.
+        foreach (var (providerId, providerResultId) in declined)
+            await outcomes.ReportAsync(DecisionOutcomeKind.RequesterDeclined, "requester-keep-looking", DecisionOutcomeStrength.Weak,
+                DecisionOutcomeTarget.Candidate(request.Id, providerId, providerResultId), cancellationToken);
         return PreferenceAmbiguityResolutionOutcome.Resolved;
     }
 

@@ -1195,8 +1195,16 @@ are not saved. Saving is added one AI feature at a time, and the counts on that 
 features have saved decisions. A saved decision records the exact request that was sent as a hash, so a
 later replay can show whether it reproduces the original; a decision that cannot (for example because
 the model was shown book text, or a release name that looks like a file name was withheld) is kept and
-marked as not exact rather than hidden or altered. This is separate from, and does not change, the rule that the usage ledger and
-findings store no prompts, replies or excerpts.
+marked as not exact rather than hidden or altered. When something later happens to what a model looked at (a file is approved, rejected, overridden or deleted by an
+administrator, a candidate copy downloads and verifies or fails its checks, a person says "keep looking", a
+model-suggested search finds the chosen copy or comes back empty), that fact is attached to the saved decision, once.
+Facts are not labels: they record what happened, never a conclusion, and silence is never recorded. A fact an
+administrator made after seeing the model's note is marked as such, because it favors that model. Saving stays within
+its limits without an administrator doing anything: after a save, an occasional cleanup (at most every ten minutes)
+removes expired and over-cap decisions, oldest first, beginning with decisions that have no known result, then weak
+ones, then strongly labeled ones (taken evenly across kinds so a rare kind survives), and keeping decisions with
+conflicting facts longest; it also trims old calls and removes AI findings past their retention. This is separate
+from, and does not change, the rule that the usage ledger and findings store no prompts, replies or excerpts.
 
 Chat interpretation keeps the title best-effort. It supplies an author only when
 stated in the message or applicable previous search; otherwise it uses a title-only

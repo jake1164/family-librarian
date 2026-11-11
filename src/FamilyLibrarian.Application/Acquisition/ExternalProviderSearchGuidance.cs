@@ -1,8 +1,10 @@
 using System.Runtime.ExceptionServices;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.DecisionCapture;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
@@ -107,6 +109,10 @@ public sealed partial class ExternalProviderRecheckService
                     break;
                 }
                 await searchGuidance.ObserveSearchAsync(guidance, added.Count > 0, cancellationToken);
+                // A model-suggested search that came back empty is a fact about that suggestion (weak: nothing to find is not a verdict).
+                if (added.Count == 0)
+                    await outcomes.ReportAsync(DecisionOutcomeKind.SearchReturnedNoResults, "ai-search-empty", DecisionOutcomeStrength.Weak,
+                        DecisionOutcomeTarget.SuggestedSearches(format.Id), cancellationToken);
                 var remembered = memory.FirstOrDefault(a => a.VariantKind == nameof(SearchVariantKind.AiSuggestion) && a.VariantKey == variant.Key);
                 if (remembered is null)
                 {

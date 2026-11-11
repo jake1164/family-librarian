@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.DecisionCapture;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Providers;
@@ -10,6 +11,7 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
@@ -39,7 +41,8 @@ public sealed partial class ExternalProviderRecheckService(
     AcquisitionQuestionService? questions = null,
     ISavedAcquisitionQuestionAcceptor? savedQuestions = null,
     SemanticAssessment.SearchGuidanceService? searchGuidance = null,
-    SemanticAssessment.CandidateTriageService? candidateTriage = null)
+    SemanticAssessment.CandidateTriageService? candidateTriage = null,
+    IDecisionOutcomeRecorder? outcomes = null)
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
@@ -410,6 +413,7 @@ public sealed partial class ExternalProviderRecheckService(
                             }
 
                             search.MarkSelected(automaticMatches[0], clock.UtcNow);
+                            await ReportSearchFoundAsync(search, automaticMatches[0], format, cancellationToken);
                             var (acquireResult, identityFailure) = await security.AcquireEvaluateAndVerifyAsync(
                                 request.Id,
                                 format.Id,
@@ -491,6 +495,7 @@ public sealed partial class ExternalProviderRecheckService(
                         }
 
                         search.MarkSelected(reviewCandidates[0], clock.UtcNow);
+                        await ReportSearchFoundAsync(search, reviewCandidates[0], format, cancellationToken);
                         advanced = true;
                         var recorded = await MarkForCandidateReviewAsync(
                             request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates, search,
@@ -576,6 +581,13 @@ public sealed partial class ExternalProviderRecheckService(
 
         return checks;
     }
+
+    /// <summary>The selected candidate came from a model-suggested search: the suggestion found it. Other variants are not the model's.</summary>
+    private Task ReportSearchFoundAsync(PooledSearch search, FulfillmentOption option, RequestFormat format, CancellationToken cancellationToken) =>
+        search.VariantOf(option).Kind == SearchVariantKind.AiSuggestion
+            ? outcomes.ReportAsync(DecisionOutcomeKind.SearchFoundSelectedResult, "ai-search-selected", DecisionOutcomeStrength.Strong,
+                DecisionOutcomeTarget.SuggestedSearches(format.Id), cancellationToken)
+            : Task.CompletedTask;
 
     private static readonly TimeSpan RateLimitFloor = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan PassTimeCap = TimeSpan.FromMinutes(6);
@@ -968,6 +980,8 @@ public sealed partial class ExternalProviderRecheckService(
             format.Id, provider.ProviderId, option.ProviderResultId, reason, clock.UtcNow,
             ExternalReleaseFingerprint.Compute(option.ReleaseName, option.SizeBytes));
         var failures = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId);
+        await outcomes.ReportAsync(DecisionOutcomeKind.VerificationFailed, "automatic-verification", DecisionOutcomeStrength.Strong,
+            DecisionOutcomeTarget.Candidate(request.Id, provider.ProviderId, option.ProviderResultId), cancellationToken);
 
         if (failures >= provider.AutomaticAttemptLimit)
         {
@@ -1000,6 +1014,7 @@ public sealed partial class ExternalProviderRecheckService(
         SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null)
     {
         search.MarkSelected(option, clock.UtcNow);
+        await ReportSearchFoundAsync(search, option, format, cancellationToken);
         var (result, identityFailure) = await security.AcquireEvaluateAndVerifyAsync(
             request.Id, format.Id, provider.ProviderId, option.ProviderResultId, cancellationToken,
             allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(option), isAutomaticAcquisition: true,
@@ -1025,6 +1040,8 @@ public sealed partial class ExternalProviderRecheckService(
         request.RecordAutomaticCandidateFailure(
             format.Id, provider.ProviderId, option.ProviderResultId, reason, clock.UtcNow,
             ExternalReleaseFingerprint.Compute(option.ReleaseName, option.SizeBytes));
+        await outcomes.ReportAsync(DecisionOutcomeKind.VerificationFailed, "automatic-verification", DecisionOutcomeStrength.Strong,
+            DecisionOutcomeTarget.Candidate(request.Id, provider.ProviderId, option.ProviderResultId), cancellationToken);
         request.AddReviewNote($"A newer copy was tried once after the attempt limit and also failed: {reason}", clock.UtcNow);
         AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
             $"A stronger new copy was tried once after the attempt limit and failed: {reason}", nextCheck);

@@ -2172,6 +2172,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SnapshotId");
 
+                    b.HasIndex("SnapshotId", "Kind", "CandidateKey")
+                        .IsUnique();
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("SnapshotId", "Kind", "CandidateKey"), false);
+
                     b.ToTable("decision_outcomes", "tuning");
                 });
 

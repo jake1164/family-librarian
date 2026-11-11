@@ -2,6 +2,8 @@ using System.Net;
 using System.Text.Json;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.DecisionCapture;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Requests;
@@ -36,7 +38,8 @@ public sealed class AcquisitionJobPollingService(
     IClock clock,
     IAutomaticFulfillmentSignal? fulfillmentSignal = null,
     AudiobookPartSetFailureService? partSetFailures = null,
-    ISecurityEvaluationRepository? assets = null)
+    ISecurityEvaluationRepository? assets = null,
+    IDecisionOutcomeRecorder? outcomes = null)
 {
     private const int BatchSize = 25;
     private static readonly TimeSpan DiskSpaceRecheckDelay = TimeSpan.FromMinutes(15);
@@ -531,6 +534,9 @@ public sealed class AcquisitionJobPollingService(
                 "Downloaded. The copy was received and passed on for checking and publishing.", clock.UtcNow,
                 nextEligibleCheckAtUtc: null, providerAcquisitionJobId: job.Id));
             await attempts.SaveChangesAsync(cancellationToken);
+            // The copy was downloaded and every check on it passed.
+            await outcomes.ReportAsync(DecisionOutcomeKind.CandidateDownloadedVerified, "download-verified", DecisionOutcomeStrength.Strong,
+                DecisionOutcomeTarget.Candidate(job.RequestId, job.ProviderId, job.CandidateReference), cancellationToken);
         }
 
         if (job.IsAutomaticAcquisition && unusable is not null)

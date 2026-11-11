@@ -1,5 +1,7 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.DecisionCapture;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.SemanticAssessment;
 using FamilyLibrarian.Domain.Acquisition;
@@ -30,7 +32,8 @@ public sealed class AssetIdentityVerificationService(
     IArtifactEvidenceRecorder? evidence = null,
     IExpectedArtifactProfileSource? expectedProfiles = null,
     IArtifactEvidenceStore? profileEvidence = null,
-    ArtifactDecisionService? modelDecisions = null, IModelWorkflowObserver? workflow = null) : IAssetIdentityVerificationService
+    ArtifactDecisionService? modelDecisions = null, IModelWorkflowObserver? workflow = null,
+    IDecisionOutcomeRecorder? outcomes = null) : IAssetIdentityVerificationService
 {
     public async Task<AssetIdentityVerificationResult> VerifyAsync(
         Guid assetId,
@@ -82,6 +85,10 @@ public sealed class AssetIdentityVerificationService(
         // Evidence only: recorded after the verdict above is saved and audited.
         if (modelHoldUsageId is not null && workflow is not null)
             await workflow.ObserveAsync(modelHoldUsageId, ModelWorkflowEffect.FileHoldApplied, cancellationToken);
+        // The model's own hold was applied to this file. Weak: it is the model's action, not an independent verdict.
+        if (modelHoldUsageId is not null)
+            await outcomes.ReportAsync(DecisionOutcomeKind.ModelHoldApplied, "model-hold", DecisionOutcomeStrength.Weak,
+                DecisionOutcomeTarget.File(assetId), cancellationToken);
         if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, ForRecording(result), cancellationToken);
 
         if (!result.IsMatch && modelDecisions is not null)

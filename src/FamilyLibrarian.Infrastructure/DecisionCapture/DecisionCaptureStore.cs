@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.DecisionCapture;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -121,12 +122,20 @@ public sealed class DecisionCaptureStore(AppDbContext database) : IDecisionCaptu
 
     private async Task<Plan> PlanAsync(DecisionCaptureLimits limits, DateTimeOffset nowUtc, CancellationToken cancellationToken)
     {
-        var rows = await database.DecisionSnapshots.AsNoTracking()
-            .Select(snapshot => new SnapshotRow(
-                snapshot.Id, snapshot.Role, snapshot.LastSeenAtUtc,
-                database.DecisionOutcomes.Any(outcome => outcome.SnapshotId == snapshot.Id),
-                database.DecisionOutcomes.Any(outcome => outcome.SnapshotId == snapshot.Id && outcome.Strength == Domain.DecisionCapture.DecisionOutcomeStrength.Strong)))
-            .ToListAsync(cancellationToken);
+        var snapshots = await database.DecisionSnapshots.AsNoTracking()
+            .Select(snapshot => new { snapshot.Id, snapshot.Role, snapshot.LastSeenAtUtc }).ToListAsync(cancellationToken);
+        var outcomes = (await database.DecisionOutcomes.AsNoTracking()
+            .Select(outcome => new { outcome.SnapshotId, outcome.Kind, outcome.Strength }).ToListAsync(cancellationToken))
+            .ToLookup(outcome => outcome.SnapshotId);
+        var rows = snapshots.Select(snapshot =>
+        {
+            var facts = outcomes[snapshot.Id].ToArray();
+            var strong = facts.Where(fact => fact.Strength == DecisionOutcomeStrength.Strong).Select(fact => fact.Kind).Order().ToArray();
+            return new SnapshotRow(
+                snapshot.Id, snapshot.Role, snapshot.LastSeenAtUtc, facts.Length > 0, strong.Length > 0,
+                facts.Any(fact => DecisionOutcomeKinds.IsPositive(fact.Kind)) && facts.Any(fact => !DecisionOutcomeKinds.IsPositive(fact.Kind)),
+                strong.Length > 0 ? strong[0] : null);
+        }).ToList();
 
         var doomed = new HashSet<Guid>();
         var unlabeledCutoff = nowUtc.AddDays(-limits.UnlabeledSnapshotDays);
@@ -145,14 +154,13 @@ public sealed class DecisionCaptureStore(AppDbContext database) : IDecisionCaptu
             }
         }
 
-        // Over the cap: no outcome first, then weak outcomes only, then strong ones; the oldest first within each group.
         foreach (var group in rows.Where(row => !doomed.Contains(row.Id)).GroupBy(row => row.Role))
         {
             var excess = group.Count() - limits.SnapshotsPerRole;
             if (excess <= 0) continue;
-            foreach (var row in group.OrderBy(Tier).ThenBy(row => row.LastSeenAtUtc).ThenBy(row => row.Id).Take(excess))
+            foreach (var id in CapEvictions(group.ToList(), excess))
             {
-                doomed.Add(row.Id);
+                doomed.Add(id);
             }
         }
 
@@ -171,9 +179,37 @@ public sealed class DecisionCaptureStore(AppDbContext database) : IDecisionCaptu
         var findingCutoff = nowUtc.AddDays(-limits.FindingsDays);
         var findings = await database.SemanticFindings.AsNoTracking().CountAsync(finding => finding.CreatedAtUtc < findingCutoff, cancellationToken);
         return new Plan([.. doomed], callIds, findings);
-
-        static int Tier(SnapshotRow row) => !row.HasOutcome ? 0 : row.HasStrongOutcome ? 2 : 1;
     }
 
-    private sealed record SnapshotRow(Guid Id, ModelRole Role, DateTimeOffset LastSeenAtUtc, bool HasOutcome, bool HasStrongOutcome);
+    /// <summary>
+    /// Which snapshots go when a role is over its cap. Order: no outcome, then weak outcomes only, then strongly labeled ones (balanced:
+    /// the oldest of whichever outcome kind has the most, so a rare kind survives), and disputed ones last. Oldest first within a group.
+    /// </summary>
+    private static List<Guid> CapEvictions(List<SnapshotRow> candidates, int excess)
+    {
+        var evict = new List<Guid>(excess);
+        List<SnapshotRow> Tier(Func<SnapshotRow, bool> pick) =>
+            [.. candidates.Where(pick).OrderBy(row => row.LastSeenAtUtc).ThenBy(row => row.Id)];
+        foreach (var tier in new[] { Tier(row => !row.HasOutcome), Tier(row => row.HasOutcome && !row.HasStrongOutcome) })
+        {
+            foreach (var row in tier.Take(excess - evict.Count)) evict.Add(row.Id);
+        }
+
+        var strong = Tier(row => row.HasStrongOutcome && !row.IsDisputed).GroupBy(row => row.PrimaryKind!.Value)
+            .ToDictionary(group => group.Key, group => new Queue<SnapshotRow>(group));
+        while (evict.Count < excess && strong.Count > 0)
+        {
+            // Take from the largest group; ties go to the group whose oldest snapshot is oldest.
+            var largest = strong.OrderByDescending(pair => pair.Value.Count)
+                .ThenBy(pair => pair.Value.Peek().LastSeenAtUtc).ThenBy(pair => pair.Key).First();
+            evict.Add(largest.Value.Dequeue().Id);
+            if (largest.Value.Count == 0) strong.Remove(largest.Key);
+        }
+
+        foreach (var row in Tier(row => row.IsDisputed).Take(excess - evict.Count)) evict.Add(row.Id);
+        return evict;
+    }
+
+    private sealed record SnapshotRow(
+        Guid Id, ModelRole Role, DateTimeOffset LastSeenAtUtc, bool HasOutcome, bool HasStrongOutcome, bool IsDisputed, DecisionOutcomeKind? PrimaryKind);
 }

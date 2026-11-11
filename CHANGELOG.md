@@ -14,7 +14,7 @@ All notable changes to Family Librarian are documented here. Newest release at t
 - Spend less of the AI allowance on file review: audiobook tracks are assessed a few times per bundle instead of once per track, and a hold review is skipped when nothing could justify a hold.
 - Pause a model setting that the model keeps refusing, and keep one call slot free for decision-bearing roles.
 - Add an "Ask for low reasoning" option for models that cannot switch reasoning off; search guidance keeps new names from a reply that also repeats earlier searches.
-- Add switches, limits, a counts-only view and a delete button for saved AI decisions Saving is being added one AI feature at a time, starting with suggested searches.
+- Add switches, limits, a counts-only view and a delete button for saved AI decisions Saved AI decisions record what happened to them afterwards (file decisions, candidate checks, suggested searches) and are kept within their limits automatically.
 
 The file-review safeguards and scoped acceptance are complete. Real-model effectiveness
 tuning remains deferred: passing response validation or applying a recommendation does

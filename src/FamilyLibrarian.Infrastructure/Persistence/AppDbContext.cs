@@ -578,6 +578,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(outcome => outcome.Strength).HasColumnName("strength").HasConversion<string>().HasMaxLength(16);
             entity.Property(outcome => outcome.ObservedAtUtc).HasColumnName("observed_at_utc").HasColumnType("timestamp with time zone");
             entity.HasIndex(outcome => outcome.SnapshotId);
+            // Each fact is recorded once per decision and candidate. NULL candidate keys compare equal, so a file fact cannot repeat either.
+            entity.HasIndex(outcome => new { outcome.SnapshotId, outcome.Kind, outcome.CandidateKey }).IsUnique().AreNullsDistinct(false);
             entity.HasOne<DecisionSnapshot>().WithMany().HasForeignKey(outcome => outcome.SnapshotId).OnDelete(DeleteBehavior.Cascade);
         });
 

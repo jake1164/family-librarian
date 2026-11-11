@@ -292,6 +292,9 @@ public static class DependencyInjection
         services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureWriter, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureWriter>();
         services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureLog, FamilyLibrarian.Infrastructure.DecisionCapture.LoggingDecisionCaptureLog>();
         services.AddScoped<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureSink, FamilyLibrarian.Application.DecisionCapture.DecisionCaptureRecorder>();
+        services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionOutcomeWriter, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionOutcomeWriter>();
+        services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureMaintenance, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureMaintenance>();
+        services.AddScoped<FamilyLibrarian.Application.DecisionCapture.IDecisionOutcomeRecorder, FamilyLibrarian.Application.DecisionCapture.DecisionOutcomeRecorder>();
         services.AddScoped<CandidateSemanticAnalyzer>();
         services.AddScoped<SearchGuidanceService>();
         services.AddScoped<CandidateTriageService>();
