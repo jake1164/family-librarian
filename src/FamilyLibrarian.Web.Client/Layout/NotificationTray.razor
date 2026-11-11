@@ -264,6 +264,7 @@
     // Matches FamilyLibrarian.Domain.Notifications.NotificationCategories.ProviderHealthDegraded.
     private const string ProviderHealthDegradedCategory = "provider.health_degraded";
     // Match FamilyLibrarian.Domain.Notifications.NotificationCategories.StorageLow and HeldCopyExpiring.
+    private const string BetterCopyFoundCategory = "request.better_copy_found";
     private const string StorageLowCategory = "storage.low";
     private const string HeldCopyExpiringCategory = "storage.held_copy_expiring";
 
@@ -291,6 +292,7 @@
         (ProviderHealthDegradedCategory, "external_provider", not null) => "settings/sources",
         (StorageLowCategory, "storage", not null) => "admin/storage",
         (HeldCopyExpiringCategory, "book_request", { } id) => $"admin/requests/{id}",
+        (BetterCopyFoundCategory, "book_request", { } id) => $"admin/requests/{id}",
         _ => null
     };
 

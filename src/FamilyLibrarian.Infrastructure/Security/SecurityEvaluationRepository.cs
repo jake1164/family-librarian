@@ -59,6 +59,17 @@ public sealed class SecurityEvaluationRepository(AppDbContext database) : ISecur
             .Take(maximumCount)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<MediaAsset>> ListHeldAssetsSupersededByVerifiedCopyAsync(
+        int maximumCount, CancellationToken cancellationToken) =>
+        await database.MediaAssets
+            .Where(held => held.StorageState == MediaAssetStorageState.Unmatched &&
+                database.MediaAssets.Any(better => better.AssociatedRequestFormatId == held.AssociatedRequestFormatId &&
+                    (better.StorageState == MediaAssetStorageState.Trusted || better.StorageState == MediaAssetStorageState.Archived) &&
+                    (held.BundleId == null || better.BundleId != held.BundleId)))
+            .OrderBy(held => held.UpdatedAtUtc)
+            .Take(maximumCount)
+            .ToListAsync(cancellationToken);
+
     public Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken) =>
         database.SecurityEvaluations
             .Include(evaluation => evaluation.ScanResults)

@@ -541,6 +541,19 @@ public sealed class AcquisitionJobPollingService(
                 DecisionOutcomeTarget.Candidate(job.RequestId, job.ProviderId, job.CandidateReference), cancellationToken);
         }
 
+        if (unusable is null && job.PartSetId is null && job.IsAutomaticAcquisition)
+        {
+            // A copy fetched while its request sat in review (parked on a held copy, or past its attempt budget) has now passed
+            // every check, so the review is moot. Best effort: a problem here never undoes the download.
+            try
+            {
+                await automaticFulfillment.RecordExternalAcquisitionSuccessAsync(job.RequestId, cancellationToken);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+            }
+        }
+
         if (job.IsAutomaticAcquisition && unusable is not null)
         {
             var now = clock.UtcNow;

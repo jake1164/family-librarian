@@ -1247,8 +1247,13 @@ date when it is later than the request date, otherwise on the request date;
 the provider's own interval remains the minimum wait. A new eligible copy
 withdraws a pending preference question with a requester notice. After a spent
 budget, only a new strong candidate may get an extra attempt: at most one per
-recheck and at most the provider's attempt limit in total. Failed copies and
-reposts remain excluded. Requests requiring manual fulfillment are excluded,
+recheck and at most the provider's attempt limit in total. The same rule applies
+to a review parked below the limit (every candidate tried, or a copy held for a
+person), so a better copy that turns up later is still found. If that copy passes
+its checks the review is withdrawn, administrators are notified, and any held
+copy of the same format is removed at once, because it is no longer the only
+copy; a weaker candidate, or a copy that fails its checks, changes nothing.
+Failed copies and reposts remain excluded. Requests requiring manual fulfillment are excluded,
 and batches consider the least recently searched requests first.
 
 Search proposals do not resolve a source's identity review. Ordinary saved

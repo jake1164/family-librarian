@@ -99,9 +99,15 @@ public sealed partial class ExternalProviderRecheckService(
 
                     // A review that is not a preference question is rechecked only once the attempt budget is spent: that is the
                     // request left waiting for a better copy. Any other NeedsReview request belongs to a librarian.
+                    // U-1: a review does not end the search. A request parked here (every candidate tried, or a copy held for a
+                    // person) keeps looking on the provider's schedule, so a better copy that turns up later can replace what is
+                    // waiting. It only ever downloads a strong, new candidate, once per check; anything weaker keeps waiting.
+                    var parkedReview = request.Status == RequestStatus.NeedsReview &&
+                        request.ReviewCategory != RequestReviewCategory.PreferenceAmbiguity && !request.RequiresManualFulfillment;
                     if (request.Status == RequestStatus.NeedsReview &&
                         request.ReviewCategory != RequestReviewCategory.PreferenceAmbiguity &&
                         request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) < provider.AutomaticAttemptLimit &&
+                        !parkedReview &&
                         (questions is null || work is null || await questions.FindReserveAsync(request, format, work.Title, cancellationToken) is null))
                     {
                         continue;
@@ -364,6 +370,29 @@ public sealed partial class ExternalProviderRecheckService(
                         // rather than walking further down a list that may be
                         // costing real transfers against a metered source.
                         var failuresSoFar = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId);
+                        // A parked request below its attempt limit gets the same single, strong, cautious try as one whose budget is
+                        // spent: the better copy is downloaded and checked with the review still open, and the review is withdrawn
+                        // (and the held copy it replaces removed) only if it passes. Anything weaker only keeps waiting.
+                        if (parkedReview && failuresSoFar < provider.AutomaticAttemptLimit && automaticMatches.Length == 1 &&
+                            IsStrong(automaticMatches[0], ExternalCandidateExclusions.None))
+                        {
+                            advanced = true;
+                            await TryExtraAttemptAsync(
+                                request, format, provider, work.Title, automaticMatches[0], search, waitingNext,
+                                PeerSizeEvidence.From(automaticMatches[0], ReviewableForRequester(options, work.Language)), cancellationToken, triage.Authorization);
+                            break;
+                        }
+
+                        if (parkedReview && failuresSoFar < provider.AutomaticAttemptLimit && automaticMatches.Length > 0)
+                        {
+                            // Found something, but not strong enough to act on while a person may still be looking at this
+                            // request. It stays as it is and is looked at again on the next scheduled check.
+                            advanced = true;
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
+                                "A possible copy was found, but it is not strong enough to replace what is already under review.", waitingNext);
+                            break;
+                        }
+
                         if (automaticMatches.Length == 1 &&
                             failuresSoFar >= provider.AutomaticAttemptLimit)
                         {
@@ -1024,7 +1053,11 @@ public sealed partial class ExternalProviderRecheckService(
         {
             AddAttempt(request, format, provider, ProviderAttemptOutcome.Acquired,
                 "Found a stronger new copy after the attempt limit; it passed its checks.", nextEligibleCheckAtUtc: null);
-            request.WithdrawReviewForSuccessfulAttempt("A newer copy passed its checks.", clock.UtcNow);
+            if (request.WithdrawReviewForSuccessfulAttempt("A newer copy passed its checks.", clock.UtcNow))
+            {
+                await notifications.RecordBetterCopyFoundAsync(request.Id, workTitle, cancellationToken);
+            }
+
             return;
         }
 
@@ -1045,7 +1078,6 @@ public sealed partial class ExternalProviderRecheckService(
         request.AddReviewNote($"A newer copy was tried once after the attempt limit and also failed: {reason}", clock.UtcNow);
         AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
             $"A stronger new copy was tried once after the attempt limit and failed: {reason}", nextCheck);
-        _ = workTitle;
     }
 
     /// <summary>

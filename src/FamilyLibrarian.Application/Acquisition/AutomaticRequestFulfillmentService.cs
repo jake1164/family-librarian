@@ -124,6 +124,23 @@ public sealed class AutomaticRequestFulfillmentService(
     }
 
     /// <summary>
+    /// An automatically fetched copy passed every check. If its request was waiting in review (parked on a held copy, or past its
+    /// attempt budget) the review is moot: it is withdrawn and administrators are told. The held copy is removed by clean-up.
+    /// </summary>
+    public async Task RecordExternalAcquisitionSuccessAsync(Guid requestId, CancellationToken cancellationToken)
+    {
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null || !request.WithdrawReviewForSuccessfulAttempt("A newer copy passed its checks.", clock.UtcNow))
+        {
+            return;
+        }
+
+        await requests.SaveChangesAsync(cancellationToken);
+        var view = await requests.FindAdminViewAsync(request.Id, cancellationToken);
+        await notifications.RecordBetterCopyFoundAsync(request.Id, view?.Request.WorkTitle ?? "a book", cancellationToken);
+    }
+
+    /// <summary>
     /// How long to wait before asking the same provider about the same format
     /// again after it found nothing. A free catalog's contents change slowly,
     /// so this trades a little latency for not hammering an unauthenticated

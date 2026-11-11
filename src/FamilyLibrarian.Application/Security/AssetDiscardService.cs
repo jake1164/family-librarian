@@ -72,6 +72,22 @@ public sealed class AssetDiscardService(
         return settled.Count;
     }
 
+    /// <summary>
+    /// Removes held copies once a better copy of the same format has passed its checks. This does not wait for publishing or for
+    /// the format to settle: the held copy is not the only copy any more, which is what made it worth keeping.
+    /// </summary>
+    /// <returns>How many files were deleted.</returns>
+    public async Task<int> DiscardSupersededHeldCopiesAsync(int maximumCount, CancellationToken cancellationToken)
+    {
+        var superseded = await repository.ListHeldAssetsSupersededByVerifiedCopyAsync(maximumCount, cancellationToken);
+        foreach (var asset in superseded)
+        {
+            await DestroyAsync(asset, "A better copy passed its checks and replaced this held copy.", cancellationToken);
+        }
+
+        return superseded.Count;
+    }
+
     private async Task DestroyAsync(MediaAsset target, string? reason, CancellationToken cancellationToken)
     {
         var previousState = target.StorageState;

@@ -3,6 +3,7 @@ using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Notifications;
+using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Application.Storage;
 using FamilyLibrarian.Contracts.Authentication;
 using FamilyLibrarian.Contracts.Catalog;
@@ -284,6 +285,38 @@ public sealed class StorageMaintenanceTests
         Assert.AreEqual(MediaAssetStorageState.Destroyed, await StateAsync(factory, held.Id));
         Assert.AreEqual(MediaAssetStorageState.Processing, await StateAsync(factory, moved.Id));
         Assert.IsTrue(FileExists(factory, moved.Stored), "Its file is untouched.");
+    }
+
+    [TestMethod]
+    public async Task AHeldCopyIsRemovedAsSoonAsAnotherCopyOfItsFormatHasPassedItsChecks()
+    {
+        await using var factory = new FamilyLibrarianAppFactory(WebTestFixture.Require(fixture).ConnectionString);
+        var withBetter = await SeedRequestAsync(factory);
+        var withoutBetter = await SeedRequestAsync(factory);
+        var setSeed = await SeedRequestAsync(factory);
+        var heldReplaced = await AddAssetAsync(factory, withBetter, MediaAssetStorageState.Unmatched, RequestMediaType.Ebook, 0);
+        var heldRuledOutReplaced = await AddAssetAsync(factory, withBetter, MediaAssetStorageState.Unmatched, RequestMediaType.Ebook, 0, ruledOut: true);
+        var rejectedKept = await AddAssetAsync(factory, withBetter, MediaAssetStorageState.Rejected, RequestMediaType.Ebook, 0);
+        var better = await AddAssetAsync(factory, withBetter, MediaAssetStorageState.Trusted, RequestMediaType.Ebook, 0);
+        var heldAlone = await AddAssetAsync(factory, withoutBetter, MediaAssetStorageState.Unmatched, RequestMediaType.Ebook, 0);
+        // A set whose own track is the trusted one is one delivery in progress, not a replacement.
+        var set = Guid.NewGuid();
+        var setHeld = await AddAssetAsync(factory, setSeed, MediaAssetStorageState.Unmatched, RequestMediaType.Audiobook, 0, bundle: set, sequence: 1);
+        var setTrusted = await AddAssetAsync(factory, setSeed, MediaAssetStorageState.Trusted, RequestMediaType.Audiobook, 0, bundle: set, sequence: 2);
+
+        int removed;
+        await using (var scope = factory.Services.CreateAsyncScope())
+            removed = await scope.ServiceProvider.GetRequiredService<AssetDiscardService>().DiscardSupersededHeldCopiesAsync(50, CancellationToken.None);
+
+        Assert.IsGreaterThanOrEqualTo(2, removed, "Other tests share this database, so only the rows of this test are asserted below.");
+        Assert.AreEqual(MediaAssetStorageState.Destroyed, await StateAsync(factory, heldReplaced.Id));
+        Assert.AreEqual(MediaAssetStorageState.Destroyed, await StateAsync(factory, heldRuledOutReplaced.Id));
+        Assert.IsFalse(FileExists(factory, heldReplaced.Stored), "The file goes with it.");
+        Assert.AreEqual(MediaAssetStorageState.Trusted, await StateAsync(factory, better.Id), "The better copy is never touched.");
+        Assert.AreEqual(MediaAssetStorageState.Rejected, await StateAsync(factory, rejectedKept.Id), "Rejected copies keep their own clock.");
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, await StateAsync(factory, heldAlone.Id), "Nothing replaced it: it may be the only copy.");
+        Assert.AreEqual(MediaAssetStorageState.Unmatched, await StateAsync(factory, setHeld.Id), "A track of the same set being trusted is not a replacement.");
+        Assert.AreEqual(MediaAssetStorageState.Trusted, await StateAsync(factory, setTrusted.Id));
     }
 
     [TestMethod]

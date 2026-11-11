@@ -63,6 +63,9 @@ public static class NotificationCategories
     /// <summary>The disk holding staged files is below its safety floor; new downloads wait and safe clean-up runs sooner.</summary>
     public const string StorageLow = "storage.low";
 
+    /// <summary>A later search found a better copy that passed its checks and replaced one waiting for a person.</summary>
+    public const string BetterCopyFound = "request.better_copy_found";
+
     /// <summary>A held copy waiting for a person is half way to its automatic removal date.</summary>
     public const string HeldCopyExpiring = "storage.held_copy_expiring";
 }

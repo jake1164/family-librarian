@@ -53,7 +53,8 @@ public sealed partial class AutomaticRequestFulfillmentHostedService(
                 // Its own step, so a cleanup problem never stops fulfilment (or the reverse).
                 await using var scope = scopeFactory.CreateAsyncScope();
                 var discards = scope.ServiceProvider.GetRequiredService<AssetDiscardService>();
-                var deleted = await discards.DiscardSettledHeldCopiesAsync(HeldCopyCleanupBatch, stoppingToken);
+                var deleted = await discards.DiscardSettledHeldCopiesAsync(HeldCopyCleanupBatch, stoppingToken) +
+                    await discards.DiscardSupersededHeldCopiesAsync(HeldCopyCleanupBatch, stoppingToken);
                 if (deleted > 0)
                 {
                     LogDeletedHeldCopies(deleted);

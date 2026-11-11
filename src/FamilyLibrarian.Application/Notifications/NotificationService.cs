@@ -237,6 +237,13 @@ public sealed class NotificationService(
             subjectId: providerId.ToString(),
             cancellationToken);
 
+    /// <summary>Tells administrators that a better copy replaced one that was waiting for a person, so the review needs no action.</summary>
+    public Task RecordBetterCopyFoundAsync(Guid requestId, string workTitle, CancellationToken cancellationToken) =>
+        UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.BetterCopyFound, NotificationSeverity.Info,
+            $"A better copy of \"{workTitle}\" was found",
+            "It passed its checks, so the review was withdrawn and the held copy it replaces will be removed.",
+            NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+
     /// <summary>
     /// Admin alert that the staging disk is under its safety floor. One alert per day at most: a persistent shortage must not
     /// bring a dismissed notification back every maintenance pass.

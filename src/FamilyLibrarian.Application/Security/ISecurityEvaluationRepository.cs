@@ -21,6 +21,14 @@ public interface ISecurityEvaluationRepository
     Task<IReadOnlyList<MediaAsset>> ListHeldAssetsOfSettledFormatsAsync(int maximumCount, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<MediaAsset>>([]);
 
+    /// <summary>
+    /// Held (unmatched) copies of a request format that another copy has since replaced: a copy of the same format has passed
+    /// every check (trusted or already archived) outside the held copy's own multi-file set. The held copy is no longer the
+    /// only copy, so keeping it only costs disk.
+    /// </summary>
+    Task<IReadOnlyList<MediaAsset>> ListHeldAssetsSupersededByVerifiedCopyAsync(int maximumCount, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MediaAsset>>([]);
+
     Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken);
 
     void AddEvaluation(SecurityEvaluation evaluation);
