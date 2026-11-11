@@ -34,6 +34,7 @@ internal static class SecurityQueueEndpoints
         int? limit,
         MediaAssetQueueService queue,
         ISemanticFindingStore semanticFindings,
+        FamilyLibrarian.Application.Storage.MaintenanceSettingsService maintenance,
         CancellationToken cancellationToken)
     {
         var maximumCount = limit ?? 50;
@@ -47,17 +48,20 @@ internal static class SecurityQueueEndpoints
 
         var entries = await queue.ListRecentAsync(maximumCount, cancellationToken);
         var findings = await LoadFindingsAsync(semanticFindings, entries, cancellationToken);
-        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(entry => ToMediaAssetAdminResponse(entry, findings)).ToArray()));
+        var (retention, _, _) = await maintenance.EffectiveAsync(cancellationToken);
+        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(entry => ToMediaAssetAdminResponse(entry, findings, retention)).ToArray()));
     }
 
     private static async Task<IResult> ListMediaAssetsAsync(
         MediaAssetQueueService queue,
         ISemanticFindingStore semanticFindings,
+        FamilyLibrarian.Application.Storage.MaintenanceSettingsService maintenance,
         CancellationToken cancellationToken)
     {
         var entries = await queue.ListAsync(cancellationToken);
         var findings = await LoadFindingsAsync(semanticFindings, entries, cancellationToken);
-        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(entry => ToMediaAssetAdminResponse(entry, findings)).ToArray()));
+        var (retention, _, _) = await maintenance.EffectiveAsync(cancellationToken);
+        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(entry => ToMediaAssetAdminResponse(entry, findings, retention)).ToArray()));
     }
 
     /// <summary>Show actionable hold/release decisions and their citations ahead of advisory shadow notes.</summary>
@@ -78,6 +82,16 @@ internal static class SecurityQueueEndpoints
         }
         return findings;
     }
+
+    /// <summary>The same response plus the date the age rule will remove a held file (null for a file clean-up never touches).</summary>
+    private static MediaAssetAdminResponse ToMediaAssetAdminResponse(
+        MediaAssetQueueEntry entry, IReadOnlyDictionary<string, FamilyLibrarian.Domain.Evidence.SemanticFinding>? findings,
+        FamilyLibrarian.Application.Storage.StorageRetentionOptions retention) =>
+        ToMediaAssetAdminResponse(entry, findings) with
+        {
+            RemovalDateUtc = FamilyLibrarian.Application.Storage.StorageRetentionPlanner.RemovalDate(
+                entry.Asset.StorageState, entry.Asset.MediaType, entry.Asset.RuledOutAtUtc is not null, entry.Asset.UpdatedAtUtc, retention)
+        };
 
     internal static MediaAssetAdminResponse ToMediaAssetAdminResponse(MediaAssetQueueEntry entry) =>
         ToMediaAssetAdminResponse(entry, null);

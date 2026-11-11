@@ -203,7 +203,14 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
         // File.Delete is intentionally idempotent. A process crash after the
         // bytes are removed but before the record is saved must be recoverable
         // by repeating the same deletion operation.
-        File.Delete(Path.Combine(ZoneDirectory(zone), storedFilename));
+        // File.Delete ignores a missing file but throws when the folder itself is missing (nothing was ever stored in this zone, or it was
+        // wiped by a restore). Both mean the same thing here: there is nothing to delete.
+        var path = Path.Combine(ZoneDirectory(zone), storedFilename);
+        if (Directory.Exists(ZoneDirectory(zone)))
+        {
+            File.Delete(path);
+        }
+
         return Task.CompletedTask;
     }
 

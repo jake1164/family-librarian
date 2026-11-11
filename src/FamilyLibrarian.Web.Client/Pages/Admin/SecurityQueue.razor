@@ -68,6 +68,14 @@ else
                     @asset.OriginalFilename (@FormatSize(asset.SizeBytes)) — received
                     @asset.CreatedAtUtc.ToLocalTime().ToString("g")
                 </MudText>
+                @if (asset.RemovalDateUtc is { } removal && asset.StorageState is "Unmatched" or "Rejected" or "Quarantine" or "Processing")
+                {
+                    <MudText Typo="Typo.caption" Class="d-block" data-removal-date="@removal.ToString("o", System.Globalization.CultureInfo.InvariantCulture)">
+                        @(asset.StorageState == "Unmatched" && !IsRuledOut(asset)
+                            ? $"Removed automatically on {removal.ToLocalTime().ToString("d", System.Globalization.CultureInfo.CurrentCulture)} unless you release it; the request then goes back to automatic search."
+                            : $"Removed automatically on {removal.ToLocalTime().ToString("d", System.Globalization.CultureInfo.CurrentCulture)}.")
+                    </MudText>
+                }
                 @if (setCount > 1)
                 {
                     <MudText Typo="Typo.caption">

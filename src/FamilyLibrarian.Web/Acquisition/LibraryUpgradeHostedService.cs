@@ -1,4 +1,4 @@
-using FamilyLibrarian.Application.Upgrades;
+using FamilyLibrarian.Application.Storage;
 
 namespace FamilyLibrarian.Web.Acquisition;
 
@@ -18,7 +18,7 @@ public sealed partial class LibraryUpgradeHostedService(IServiceScopeFactory sco
                 try
                 {
                     await using var scope = scopeFactory.CreateAsyncScope();
-                    var report = await scope.ServiceProvider.GetRequiredService<LibraryUpgradeScanService>().RunAsync(stoppingToken);
+                    var report = await scope.ServiceProvider.GetRequiredService<MaintenanceCycle>().RunUpgradeScanAsync(stoppingToken);
                     if (report.Proposed > 0 || report.Failures > 0)
                     {
                         LogPass(report.Looked, report.Proposed, report.Failures);

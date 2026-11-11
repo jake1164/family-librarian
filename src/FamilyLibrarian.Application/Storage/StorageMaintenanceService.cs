@@ -43,9 +43,12 @@ public sealed class StorageMaintenanceService(
     IClock clock,
     StorageRetentionOptions options)
 {
-    public async Task<StorageMaintenanceReport> RunAsync(CancellationToken cancellationToken)
+    public Task<StorageMaintenanceReport> RunAsync(CancellationToken cancellationToken) => RunAsync(options, cancellationToken);
+
+    /// <summary>Runs with the given periods (the administrator's saved settings), not the ones this service was built with.</summary>
+    public async Task<StorageMaintenanceReport> RunAsync(StorageRetentionOptions effective, CancellationToken cancellationToken)
     {
-        var o = options.Clamped();
+        var o = effective.Clamped();
         var now = clock.UtcNow;
         var volume = staging.GetVolumeInfo();
         var pressure = StorageDiskFloor.IsUnderPressure(volume);

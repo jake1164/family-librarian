@@ -9,7 +9,8 @@ public sealed record StorageZoneResponse(
 
 /// <summary>Files the records say are held, grouped by state and media type. Numbers only: no title, name or path.</summary>
 public sealed record HeldFileGroupResponse(
-    string State, string MediaType, bool RuledOut, int Files, long Bytes, DateTimeOffset? OldestUpdatedAtUtc);
+    string State, string MediaType, bool RuledOut, int Files, long Bytes, DateTimeOffset? OldestUpdatedAtUtc,
+    DateTimeOffset? OldestRemovalDateUtc = null);
 
 /// <param name="ApproximateRows">The planner's estimate; <paramref name="ApproximateBytes"/> includes indexes.</param>
 public sealed record StorageTableResponse(string Schema, string Table, long ApproximateRows, long ApproximateBytes);

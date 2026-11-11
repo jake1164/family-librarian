@@ -469,6 +469,143 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("library_upgrade_settings", "acquisition");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.MaintenanceSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AlertDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("alert_days");
+
+                    b.Property<int>("AttemptDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_days");
+
+                    b.Property<int>("AuditDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("audit_days");
+
+                    b.Property<int>("CommunicationDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("communication_days");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<bool>("Customized")
+                        .HasColumnType("boolean")
+                        .HasColumnName("customized");
+
+                    b.Property<DateTimeOffset?>("DatabaseLastRunAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("database_last_run_at_utc");
+
+                    b.Property<int>("DatabaseLastRunFailures")
+                        .HasColumnType("integer")
+                        .HasColumnName("database_last_run_failures");
+
+                    b.Property<int>("DatabaseLastRunRemoved")
+                        .HasColumnType("integer")
+                        .HasColumnName("database_last_run_removed");
+
+                    b.Property<int>("EvidenceDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("evidence_days");
+
+                    b.Property<int>("HeldCapGb")
+                        .HasColumnType("integer")
+                        .HasColumnName("held_cap_gb");
+
+                    b.Property<int>("NotificationDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("notification_days");
+
+                    b.Property<int>("OrphanGraceHours")
+                        .HasColumnType("integer")
+                        .HasColumnName("orphan_grace_hours");
+
+                    b.Property<int>("PressureDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("pressure_days");
+
+                    b.Property<int>("RejectedDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("rejected_days");
+
+                    b.Property<int>("RuledOutDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("ruled_out_days");
+
+                    b.Property<int>("SearchMemoryDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("search_memory_days");
+
+                    b.Property<int>("SemanticFindingDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("semantic_finding_days");
+
+                    b.Property<DateTimeOffset?>("StorageLastRunAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("storage_last_run_at_utc");
+
+                    b.Property<int>("StorageLastRunFailures")
+                        .HasColumnType("integer")
+                        .HasColumnName("storage_last_run_failures");
+
+                    b.Property<int>("StorageLastRunRemoved")
+                        .HasColumnType("integer")
+                        .HasColumnName("storage_last_run_removed");
+
+                    b.Property<int>("StuckDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("stuck_days");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.Property<DateTimeOffset?>("UpgradeLastRunAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("upgrade_last_run_at_utc");
+
+                    b.Property<int>("UpgradeLastRunFailures")
+                        .HasColumnType("integer")
+                        .HasColumnName("upgrade_last_run_failures");
+
+                    b.Property<int>("UpgradeLastRunProposed")
+                        .HasColumnType("integer")
+                        .HasColumnName("upgrade_last_run_proposed");
+
+                    b.Property<int>("UpgradeScanIntervalDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("upgrade_scan_interval_days");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<int>("WaitingAudiobookDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("waiting_audiobook_days");
+
+                    b.Property<int>("WaitingEbookDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("waiting_ebook_days");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("maintenance_settings", "acquisition");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.MediaAsset", b =>
                 {
                     b.Property<Guid>("Id")

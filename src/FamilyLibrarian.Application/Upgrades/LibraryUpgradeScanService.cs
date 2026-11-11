@@ -27,7 +27,7 @@ public sealed record LibraryUpgradeOptions
     /// </summary>
     public bool AutoReplace { get; init; } = true;
 
-    public LibraryUpgradeOptions Clamped() => this with { ScanIntervalDays = Math.Clamp(ScanIntervalDays, 7, 365), BatchSize = Math.Clamp(BatchSize, 1, 100) };
+    public LibraryUpgradeOptions Clamped() => this with { ScanIntervalDays = Storage.MaintenanceLimits.Clamp(ScanIntervalDays, Storage.MaintenanceLimits.UpgradeScanIntervalDays), BatchSize = Math.Clamp(BatchSize, 1, 100) };
 }
 
 /// <summary>A source's release already known for a format: the delivered copy's, or one proposed and then dismissed or failed.</summary>
@@ -89,9 +89,12 @@ public sealed class LibraryUpgradeScanService(
 {
     private static readonly TimeSpan SearchTimeout = TimeSpan.FromMinutes(2);
 
-    public async Task<LibraryUpgradeScanReport> RunAsync(CancellationToken cancellationToken)
+    public Task<LibraryUpgradeScanReport> RunAsync(CancellationToken cancellationToken) => RunAsync(options, cancellationToken);
+
+    /// <summary>Runs with the given settings (the administrator's saved interval), not the ones this service was built with.</summary>
+    public async Task<LibraryUpgradeScanReport> RunAsync(LibraryUpgradeOptions effective, CancellationToken cancellationToken)
     {
-        var o = options.Clamped();
+        var o = effective.Clamped();
         var enabled = (await providers.ListEnabledAsync(cancellationToken))
             .Where(provider => !ExternalCandidateAvailabilityChecker.IsKnownSearchUnavailable(provider)).ToArray();
         if (enabled.Length == 0) return new LibraryUpgradeScanReport(0, 0, 0);

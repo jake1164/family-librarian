@@ -41,16 +41,43 @@ public sealed record StorageRetentionOptions
 
     public StorageRetentionOptions Clamped() => this with
     {
-        RejectedDays = Math.Clamp(RejectedDays, 1, 90),
-        RuledOutDays = Math.Clamp(RuledOutDays, 1, 30),
-        WaitingEbookDays = Math.Clamp(WaitingEbookDays, 7, 90),
-        WaitingAudiobookDays = Math.Clamp(WaitingAudiobookDays, 3, 60),
-        StuckDays = Math.Clamp(StuckDays, 2, 30),
-        HeldBytesCap = Math.Clamp(HeldBytesCap, Gigabyte, 100 * Gigabyte),
-        OrphanGraceHours = Math.Clamp(OrphanGraceHours, 6, 168),
+        RejectedDays = MaintenanceLimits.Clamp(RejectedDays, MaintenanceLimits.RejectedDays),
+        RuledOutDays = MaintenanceLimits.Clamp(RuledOutDays, MaintenanceLimits.RuledOutDays),
+        WaitingEbookDays = MaintenanceLimits.Clamp(WaitingEbookDays, MaintenanceLimits.WaitingEbookDays),
+        WaitingAudiobookDays = MaintenanceLimits.Clamp(WaitingAudiobookDays, MaintenanceLimits.WaitingAudiobookDays),
+        StuckDays = MaintenanceLimits.Clamp(StuckDays, MaintenanceLimits.StuckDays),
+        HeldBytesCap = Math.Clamp(HeldBytesCap, MaintenanceLimits.HeldCapGb.Min * Gigabyte, MaintenanceLimits.HeldCapGb.Max * Gigabyte),
+        OrphanGraceHours = MaintenanceLimits.Clamp(OrphanGraceHours, MaintenanceLimits.OrphanGraceHours),
         BatchSize = Math.Clamp(BatchSize, 1, 500),
-        PressureDays = Math.Clamp(PressureDays, 1, 7)
+        PressureDays = MaintenanceLimits.Clamp(PressureDays, MaintenanceLimits.PressureDays)
     };
+}
+
+/// <summary>
+/// The smallest and largest value each setting may take. One place, used by the clamping in the options records and by the settings screen,
+/// so what the screen says is allowed is exactly what is enforced.
+/// </summary>
+public static class MaintenanceLimits
+{
+    public static readonly (int Min, int Max) RejectedDays = (1, 90);
+    public static readonly (int Min, int Max) RuledOutDays = (1, 30);
+    public static readonly (int Min, int Max) WaitingEbookDays = (7, 90);
+    public static readonly (int Min, int Max) WaitingAudiobookDays = (3, 60);
+    public static readonly (int Min, int Max) StuckDays = (2, 30);
+    public static readonly (int Min, int Max) HeldCapGb = (1, 100);
+    public static readonly (int Min, int Max) OrphanGraceHours = (6, 168);
+    public static readonly (int Min, int Max) PressureDays = (1, 7);
+    public static readonly (int Min, int Max) EvidenceDays = (30, 3650);
+    public static readonly (int Min, int Max) SemanticFindingDays = (30, 3650);
+    public static readonly (int Min, int Max) AttemptDays = (30, 3650);
+    public static readonly (int Min, int Max) SearchMemoryDays = (7, 3650);
+    public static readonly (int Min, int Max) NotificationDays = (14, 3650);
+    public static readonly (int Min, int Max) AlertDays = (14, 3650);
+    public static readonly (int Min, int Max) CommunicationDays = (14, 3650);
+    public static readonly (int Min, int Max) AuditDays = (365, 3650);
+    public static readonly (int Min, int Max) UpgradeScanIntervalDays = (7, 365);
+
+    public static int Clamp(int value, (int Min, int Max) limit) => Math.Clamp(value, limit.Min, limit.Max);
 }
 
 /// <summary>The disk safety floor: the larger of 5 GB or 10% of the volume.</summary>
@@ -180,6 +207,24 @@ public static class StorageRetentionPlanner
         // Oldest first, so a capped batch always makes progress on the longest-waiting files.
         var ordered = removals.OrderBy(removal => copies.Where(copy => removal.AssetIds.Contains(copy.AssetId)).Max(copy => copy.UpdatedAtUtc)).Take(o.BatchSize).ToArray();
         return new RetentionPlan(ordered, [.. reminders.DistinctBy(reminder => reminder.RequestId)]);
+    }
+
+    /// <summary>
+    /// When the age rule will remove a copy that has been in its state since <paramref name="stateSinceUtc"/>; null for a state clean-up
+    /// never touches. It is the latest date by age: the size limit or a low disk can remove a held copy sooner, and releasing it keeps it.
+    /// </summary>
+    public static DateTimeOffset? RemovalDate(
+        MediaAssetStorageState state, RequestMediaType type, bool ruledOut, DateTimeOffset stateSinceUtc, StorageRetentionOptions options)
+    {
+        var o = options.Clamped();
+        return state switch
+        {
+            MediaAssetStorageState.Rejected => stateSinceUtc + Days(o.RejectedDays),
+            MediaAssetStorageState.Quarantine or MediaAssetStorageState.Processing => stateSinceUtc + Days(o.StuckDays),
+            MediaAssetStorageState.Unmatched when ruledOut => stateSinceUtc + Days(o.RuledOutDays),
+            MediaAssetStorageState.Unmatched => stateSinceUtc + Days(WaitingDays(type, o)),
+            _ => null
+        };
     }
 
     public static int WaitingDays(RequestMediaType type, StorageRetentionOptions options) =>

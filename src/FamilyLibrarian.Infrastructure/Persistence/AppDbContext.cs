@@ -126,6 +126,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<LibraryUpgradeSettings> LibraryUpgradeSettings => Set<LibraryUpgradeSettings>();
 
+    public DbSet<MaintenanceSettings> MaintenanceSettings => Set<MaintenanceSettings>();
+
     public DbSet<ProviderInteractionAlertRecipient> ProviderInteractionAlertRecipients => Set<ProviderInteractionAlertRecipient>();
 
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
@@ -1423,6 +1425,44 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(claim => claim.ClaimedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<MaintenanceSettings>(entity =>
+        {
+            entity.ToTable("maintenance_settings", "acquisition");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.RejectedDays).HasColumnName("rejected_days");
+            entity.Property(settings => settings.RuledOutDays).HasColumnName("ruled_out_days");
+            entity.Property(settings => settings.WaitingEbookDays).HasColumnName("waiting_ebook_days");
+            entity.Property(settings => settings.WaitingAudiobookDays).HasColumnName("waiting_audiobook_days");
+            entity.Property(settings => settings.StuckDays).HasColumnName("stuck_days");
+            entity.Property(settings => settings.HeldCapGb).HasColumnName("held_cap_gb");
+            entity.Property(settings => settings.OrphanGraceHours).HasColumnName("orphan_grace_hours");
+            entity.Property(settings => settings.PressureDays).HasColumnName("pressure_days");
+            entity.Property(settings => settings.EvidenceDays).HasColumnName("evidence_days");
+            entity.Property(settings => settings.SemanticFindingDays).HasColumnName("semantic_finding_days");
+            entity.Property(settings => settings.AttemptDays).HasColumnName("attempt_days");
+            entity.Property(settings => settings.SearchMemoryDays).HasColumnName("search_memory_days");
+            entity.Property(settings => settings.NotificationDays).HasColumnName("notification_days");
+            entity.Property(settings => settings.AlertDays).HasColumnName("alert_days");
+            entity.Property(settings => settings.CommunicationDays).HasColumnName("communication_days");
+            entity.Property(settings => settings.AuditDays).HasColumnName("audit_days");
+            entity.Property(settings => settings.UpgradeScanIntervalDays).HasColumnName("upgrade_scan_interval_days");
+            entity.Property(settings => settings.StorageLastRunRemoved).HasColumnName("storage_last_run_removed");
+            entity.Property(settings => settings.StorageLastRunFailures).HasColumnName("storage_last_run_failures");
+            entity.Property(settings => settings.DatabaseLastRunRemoved).HasColumnName("database_last_run_removed");
+            entity.Property(settings => settings.DatabaseLastRunFailures).HasColumnName("database_last_run_failures");
+            entity.Property(settings => settings.UpgradeLastRunProposed).HasColumnName("upgrade_last_run_proposed");
+            entity.Property(settings => settings.UpgradeLastRunFailures).HasColumnName("upgrade_last_run_failures");
+            entity.Property(settings => settings.StorageLastRunAtUtc).HasColumnName("storage_last_run_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.DatabaseLastRunAtUtc).HasColumnName("database_last_run_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpgradeLastRunAtUtc).HasColumnName("upgrade_last_run_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Customized).HasColumnName("customized");
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
         });
 
         builder.Entity<LibraryUpgradeSettings>(entity =>

@@ -24,7 +24,8 @@ public sealed record MediaAssetAdminResponse(
     AdminArtifactSemanticFindingResponse? SemanticFinding = null,
     Guid? BundleId = null,
     int? BundleTrackCount = null,
-    DateTimeOffset? RuledOutAtUtc = null);
+    DateTimeOffset? RuledOutAtUtc = null,
+    DateTimeOffset? RemovalDateUtc = null);
 
 public sealed record AdminArtifactSemanticClaimResponse(string Kind, string Stance, IReadOnlyList<string> EvidenceIds, string Note);
 

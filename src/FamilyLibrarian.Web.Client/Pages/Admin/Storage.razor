@@ -50,7 +50,7 @@
                 <MudText Typo="Typo.h5">Files on disk</MudText>
                 <MudText Typo="Typo.body2">
                     What is physically in each storage folder. A file with no matching record that is more than a day old is "unrecognized": most likely
-                    left over from a crash. Nothing is removed from here yet.
+                    left over from a crash. They are removed automatically after the grace period set below (the passed-and-awaiting-delivery folder is never swept).
                 </MudText>
                 <MudTable Items="insight.Zones" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm" TableAttributes="ZoneAttributes">
                     <HeaderContent>
@@ -72,7 +72,8 @@
                 <MudText Typo="Typo.h5">Files held, by what they are waiting for</MudText>
                 <MudText Typo="Typo.body2">
                     From the records: how many files are held in each state, how big they are and how long the oldest has waited. "Ruled out" means the
-                    search already moved on to another copy and nobody needs to act on it.
+                    search already moved on to another copy and nobody needs to act on it. "Oldest removed on" is when the age limit below will remove the
+                    oldest file in the row; the size limit or a low disk can remove held files sooner, and releasing a file keeps it.
                 </MudText>
                 @if (insight.HeldFiles.Count == 0)
                 {
@@ -82,7 +83,7 @@
                 {
                     <MudTable Items="insight.HeldFiles" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm" TableAttributes="HeldAttributes">
                         <HeaderContent>
-                            <MudTh>State</MudTh><MudTh>Kind</MudTh><MudTh>Ruled out</MudTh><MudTh>Files</MudTh><MudTh>Size</MudTh><MudTh>Oldest wait</MudTh>
+                            <MudTh>State</MudTh><MudTh>Kind</MudTh><MudTh>Ruled out</MudTh><MudTh>Files</MudTh><MudTh>Size</MudTh><MudTh>Oldest wait</MudTh><MudTh>Oldest removed on</MudTh>
                         </HeaderContent>
                         <RowTemplate>
                             <MudTd DataLabel="State">@StorageText.Zone(context.State)</MudTd>
@@ -91,11 +92,14 @@
                             <MudTd DataLabel="Files">@context.Files</MudTd>
                             <MudTd DataLabel="Size">@StorageText.Size(context.Bytes)</MudTd>
                             <MudTd DataLabel="Oldest wait">@StorageText.Age(context.OldestUpdatedAtUtc, insight.AsOfUtc)</MudTd>
+                            <MudTd DataLabel="Oldest removed on">@StorageText.Date(context.OldestRemovalDateUtc)</MudTd>
                         </RowTemplate>
                     </MudTable>
                 }
             </MudStack>
         </MudPaper>
+
+        <MaintenanceSettingsPanel />
 
         <MudPaper Outlined="true" Class="pa-4" id="storage-database">
             <MudStack Spacing="2">

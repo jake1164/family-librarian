@@ -53,6 +53,8 @@ public static class AuditActions
     public const string LibraryUpgradeProposed = "library_upgrade.proposed";
     public const string LibraryUpgradeDismissed = "library_upgrade.dismissed";
     public const string LibraryUpgradeStarted = "library_upgrade.started";
+    public const string MaintenanceSettingsChanged = "storage.settings_changed";
+    public const string MaintenanceSettingsReset = "storage.settings_reset";
     public const string LibraryUpgradeSettingsChanged = "library_upgrade.settings_changed";
     public const string LibraryUpgradeCompleted = "library_upgrade.completed";
     public const string LibraryUpgradeFailed = "library_upgrade.failed";

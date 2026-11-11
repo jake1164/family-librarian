@@ -181,7 +181,7 @@ public sealed class StorageInsightEndpointTests
     {
         var http = new HttpClient(new StubHandler(respond)) { BaseAddress = new Uri("http://localhost/") };
         await using var services = new ServiceCollection().AddLogging().AddMudServices().AddSingleton<IJSRuntime, NoJs>()
-            .AddSingleton(new StorageApiClient(http)).AddSingleton(new AntiforgeryTokenProvider(http)).BuildServiceProvider();
+            .AddSingleton(new StorageApiClient(http, new AntiforgeryTokenProvider(http))).AddSingleton(new AntiforgeryTokenProvider(http)).BuildServiceProvider();
         await using var renderer = new HtmlRenderer(services, NullLoggerFactory.Instance);
         return await renderer.Dispatcher.InvokeAsync(async () =>
             (await renderer.RenderComponentAsync<Storage>(ParameterView.Empty)).ToHtmlString());
@@ -207,6 +207,8 @@ public sealed class StorageInsightEndpointTests
         StringAssert.Contains(html, "2.33 GB");
         StringAssert.Contains(html, "security.artifact_evidence");
         StringAssert.Contains(html, "Unrecognized");
+        StringAssert.Contains(html, "Clean-up", "The page carries the clean-up settings section.");
+        StringAssert.Contains(html, "Oldest removed on");
     }
 
     [TestMethod]

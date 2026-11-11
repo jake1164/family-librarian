@@ -293,6 +293,9 @@ public static class DependencyInjection
         services.AddScoped<FamilyLibrarian.Application.Storage.StorageInsightService>();
         services.AddScoped<FamilyLibrarian.Application.Storage.IStorageMaintenanceStore, FamilyLibrarian.Infrastructure.Storage.StorageMaintenanceStore>();
         services.AddScoped<FamilyLibrarian.Application.Storage.StorageMaintenanceService>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.IMaintenanceSettingsStore, FamilyLibrarian.Infrastructure.Storage.MaintenanceSettingsStore>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.MaintenanceSettingsService>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.MaintenanceCycle>();
         services.AddScoped<FamilyLibrarian.Application.Storage.IDatabaseRetentionStore, FamilyLibrarian.Infrastructure.Storage.DatabaseRetentionStore>();
         services.AddScoped<FamilyLibrarian.Application.Storage.DatabaseRetentionService>();
         services.AddScoped<FamilyLibrarian.Application.Upgrades.ILibraryUpgradeStore, FamilyLibrarian.Infrastructure.Upgrades.LibraryUpgradeStore>();

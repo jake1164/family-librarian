@@ -19,7 +19,7 @@ public sealed partial class StorageMaintenanceHostedService(IServiceScopeFactory
                 try
                 {
                     await using var scope = scopeFactory.CreateAsyncScope();
-                    var report = await scope.ServiceProvider.GetRequiredService<StorageMaintenanceService>().RunAsync(stoppingToken);
+                    var report = await scope.ServiceProvider.GetRequiredService<MaintenanceCycle>().RunStorageAsync(stoppingToken);
                     if (report.TotalRemoved > 0 || report.UnderDiskPressure || report.Failures > 0)
                     {
                         LogPass(report.TotalRemoved, report.UnderDiskPressure, report.Failures);

@@ -70,7 +70,11 @@ When free space falls below the larger of 5 GB or 10% of the volume, new downloa
 day, and rejected and ruled-out copies are kept for one day instead of their usual period. Copies waiting for a person are
 never removed early, because one may be the only copy.
 
-The periods can be changed with `Storage__Retention__RejectedDays`, `RuledOutDays`, `WaitingEbookDays`,
+Administrators change them on **Storage > Clean-up** (Admin menu): every period is a labelled field showing its allowed range and
+default, a value outside its range is refused with the reason (never quietly changed), **Restore defaults** undoes any change, and the
+same section shows when each clean-up last ran, what it did and when the next pass is due. The saved values win; until someone saves,
+the configured defaults apply. The **Security queue** and the Storage page show the date a held file will be removed (by age; the size
+limit or a low disk can remove it sooner, and releasing it keeps it). Operators can still set the defaults with `Storage__Retention__RejectedDays`, `RuledOutDays`, `WaitingEbookDays`,
 `WaitingAudiobookDays`, `StuckDays`, `HeldBytesCap`, `OrphanGraceHours`, `BatchSize` and `PressureDays`. Values are clamped
 to fixed limits (for example an ebook always gets at least 7 days) so a typing mistake cannot switch clean-up off or make
 it aggressive. Container logs are rotated by the Compose file (three 10 MB files per service).
@@ -91,7 +95,7 @@ Once a day the database is trimmed of rows that only ever grow and explain nothi
 | Audit log | 2 years |
 
 Open requests, files that still exist, and unresolved reviews keep all of their history. Each pass is bounded and each
-table is handled separately, so one failure never stops the rest. The periods can be changed with
+table is handled separately, so one failure never stops the rest. The configured defaults (used until an administrator saves values on **Storage > Clean-up**) are
 `Storage__DatabaseRetention__EvidenceDays`, `SemanticFindingDays`, `AttemptDays`, `SearchMemoryDays`, `NotificationDays`,
 `AlertDays`, `CommunicationDays`, `AuditDays`, `BatchSize` and `MaxBatchesPerTable`; values are clamped (the audit log is
 never kept for less than a year). Model usage and saved AI decisions have their own, shorter retention.

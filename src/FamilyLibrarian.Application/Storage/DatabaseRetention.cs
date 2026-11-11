@@ -42,14 +42,14 @@ public sealed record DatabaseRetentionOptions
 
     public DatabaseRetentionOptions Clamped() => this with
     {
-        EvidenceDays = Math.Clamp(EvidenceDays, 30, 3650),
-        SemanticFindingDays = Math.Clamp(SemanticFindingDays, 30, 3650),
-        AttemptDays = Math.Clamp(AttemptDays, 30, 3650),
-        SearchMemoryDays = Math.Clamp(SearchMemoryDays, 7, 3650),
-        NotificationDays = Math.Clamp(NotificationDays, 14, 3650),
-        AlertDays = Math.Clamp(AlertDays, 14, 3650),
-        CommunicationDays = Math.Clamp(CommunicationDays, 14, 3650),
-        AuditDays = Math.Clamp(AuditDays, 365, 3650),
+        EvidenceDays = MaintenanceLimits.Clamp(EvidenceDays, MaintenanceLimits.EvidenceDays),
+        SemanticFindingDays = MaintenanceLimits.Clamp(SemanticFindingDays, MaintenanceLimits.SemanticFindingDays),
+        AttemptDays = MaintenanceLimits.Clamp(AttemptDays, MaintenanceLimits.AttemptDays),
+        SearchMemoryDays = MaintenanceLimits.Clamp(SearchMemoryDays, MaintenanceLimits.SearchMemoryDays),
+        NotificationDays = MaintenanceLimits.Clamp(NotificationDays, MaintenanceLimits.NotificationDays),
+        AlertDays = MaintenanceLimits.Clamp(AlertDays, MaintenanceLimits.AlertDays),
+        CommunicationDays = MaintenanceLimits.Clamp(CommunicationDays, MaintenanceLimits.CommunicationDays),
+        AuditDays = MaintenanceLimits.Clamp(AuditDays, MaintenanceLimits.AuditDays),
         BatchSize = Math.Clamp(BatchSize, 100, 5000),
         MaxBatchesPerTable = Math.Clamp(MaxBatchesPerTable, 1, 100)
     };
@@ -97,9 +97,12 @@ public sealed record DatabaseRetentionReport(IReadOnlyDictionary<RetentionTarget
 /// </summary>
 public sealed class DatabaseRetentionService(IDatabaseRetentionStore store, IAuditWriter audit, IClock clock, DatabaseRetentionOptions options)
 {
-    public async Task<DatabaseRetentionReport> RunAsync(CancellationToken cancellationToken)
+    public Task<DatabaseRetentionReport> RunAsync(CancellationToken cancellationToken) => RunAsync(options, cancellationToken);
+
+    /// <summary>Runs with the given periods (the administrator's saved settings), not the ones this service was built with.</summary>
+    public async Task<DatabaseRetentionReport> RunAsync(DatabaseRetentionOptions effective, CancellationToken cancellationToken)
     {
-        var o = options.Clamped();
+        var o = effective.Clamped();
         var now = clock.UtcNow;
         var removed = new Dictionary<RetentionTarget, int>();
         var failures = 0;
