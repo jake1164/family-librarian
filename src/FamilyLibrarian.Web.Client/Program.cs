@@ -60,6 +60,7 @@ builder.Services.AddScoped<MatrixLinkApiClient>();
 builder.Services.AddScoped<FamilyLibrarian.Web.Client.Conversation.ConversationApiClient>();
 builder.Services.AddScoped<FamilyLibrarian.Web.Client.ModelTesting.ModelTestApiClient>();
 builder.Services.AddScoped<FamilyLibrarian.Web.Client.ModelGateway.ModelGatewayApiClient>();
+builder.Services.AddScoped<FamilyLibrarian.Web.Client.Storage.StorageApiClient>();
 builder.Services.AddScoped<FeedbackApiClient>();
 builder.Services.AddScoped<FollowApiClient>();
 builder.Services.AddScoped<DeliveryTargetApiClient>();

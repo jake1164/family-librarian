@@ -6,6 +6,11 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ## [Unreleased]
 
+### Storage visibility
+
+- Add an administrator Storage page (read-only, no file or book names): free disk space, files on disk by stage with age and size, files held for a person or ruled out, files on disk the system has no record of, and rows and size per database table.
+- Rotate container logs in the Compose file (three 10 MB files per service) so logs cannot fill the disk.
+
 ### File review and AI activity
 
 - Complete the scoped Phase 8 file-review work, including bounded EPUB excerpts used only during analysis, grounded hold decisions and separately enabled narrow hold release. Excerpt text is not retained in findings, logs or API responses.

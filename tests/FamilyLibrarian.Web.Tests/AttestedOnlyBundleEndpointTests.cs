@@ -153,6 +153,43 @@ public sealed class AttestedOnlyBundleEndpointTests
         Assert.AreEqual(MediaAssetStorageState.Trusted, after[2].StorageState);
     }
 
+    /// <summary>
+    /// The open M1 release gate: one administrator override on a multi-file set must never reach a sibling that failed a security check or
+    /// is still unscanned. Only siblings held (Unmatched) for the same shared reason are released; the others stay exactly where they were.
+    /// </summary>
+    [TestMethod]
+    [DataRow("Rejected")]
+    [DataRow("Quarantine")]
+    [DataRow("Destroyed")]
+    public async Task ASiblingThatFailedSecurityOrIsStillUnscannedIsNeverReleasedByTheSetOverride(string siblingState)
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        var (factory, admin, set) = await SeedHeldSetAsync(fixture, AssetOrigin.ExternalProvider);
+        await using var _ = factory;
+        using var __ = admin;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var middle = set.AssetIds[1];
+            await database.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE acquisition.media_assets SET storage_state = {siblingState} WHERE id = {middle}");
+        }
+
+        var overridden = await admin.PostAsJsonAsync(
+            $"/api/v1/admin/media-assets/{set.AssetIds[0]}/override-identity", new { reason = "Set looks right." });
+        Assert.IsTrue(overridden.IsSuccessStatusCode, overridden.StatusCode.ToString());
+
+        var after = await LoadAsync(factory, set.AssetIds);
+        Assert.AreEqual(MediaAssetStorageState.Trusted, after[0].StorageState);
+        Assert.AreEqual(Enum.Parse<MediaAssetStorageState>(siblingState), after[1].StorageState,
+            $"A {siblingState} sibling is not a track held for the shared reason, so the override leaves it alone.");
+        Assert.AreEqual(MediaAssetStorageState.Trusted, after[2].StorageState, "The tracks held for the shared reason are still released.");
+        await using var evidenceScope = factory.Services.CreateAsyncScope();
+        var overrideEvidence = await evidenceScope.ServiceProvider.GetRequiredService<AppDbContext>().ArtifactEvidenceItems.AsNoTracking()
+            .CountAsync(item => item.MediaAssetId == set.AssetIds[1] && item.RecordKind == "identity-override");
+        Assert.AreEqual(0, overrideEvidence, "No override evidence is written for a track the override did not release.");
+    }
+
     [TestMethod]
     public async Task ASetFromABuiltInProviderWithNoContentCheckIsTrustedAsBefore()
     {
