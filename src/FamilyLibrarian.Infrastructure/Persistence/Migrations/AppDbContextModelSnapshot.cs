@@ -436,6 +436,39 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("library_upgrades", "acquisition");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.LibraryUpgradeSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("AutoReplace")
+                        .HasColumnType("boolean")
+                        .HasColumnName("auto_replace");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("library_upgrade_settings", "acquisition");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.MediaAsset", b =>
                 {
                     b.Property<Guid>("Id")

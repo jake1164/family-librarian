@@ -50,7 +50,9 @@ public sealed class LibraryUpgradeService(
     {
         var upgrade = await store.FindAsync(upgradeId, cancellationToken);
         if (upgrade is null || upgrade.State != LibraryUpgradeState.Proposed) return LibraryUpgradeStartResult.No("Only a proposal can be started.");
-        if (!approvedByAdministrator && !options.AutoReplace) return LibraryUpgradeStartResult.No("Automatic replacement is off.");
+        // The administrator's saved choice wins over the configured default; with neither, it is on.
+        var automatic = await store.GetAutoReplaceAsync(cancellationToken) ?? options.AutoReplace;
+        if (!approvedByAdministrator && !automatic) return LibraryUpgradeStartResult.No("Automatic replacement is off.");
         var delivered = await assets.FindAssetAsync(upgrade.DeliveredAssetId, cancellationToken);
         if (delivered is null) return LibraryUpgradeStartResult.No("The delivered copy is no longer on record.");
         var readiness = await CheckReadinessAsync(delivered, cancellationToken);

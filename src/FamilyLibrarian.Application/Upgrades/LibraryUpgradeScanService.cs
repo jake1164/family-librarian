@@ -38,6 +38,9 @@ public sealed record UpgradeSubject(
     Guid RequestId, Guid RequestFormatId, Guid WorkId, RequestMediaType MediaType, Guid DeliveredAssetId,
     DeliveredCopyFacts Copy, IReadOnlyList<KnownCandidate> Known);
 
+/// <summary>A proposal with what an administrator needs to recognise the book. Titles appear only here, on administrator pages.</summary>
+public sealed record LibraryUpgradeView(LibraryUpgrade Upgrade, string WorkTitle, RequestMediaType MediaType);
+
 public interface ILibraryUpgradeStore
 {
     /// <summary>
@@ -56,7 +59,12 @@ public interface ILibraryUpgradeStore
 
     Task<IReadOnlyList<LibraryUpgrade>> ListByStateAsync(LibraryUpgradeState state, int maximumCount, CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<LibraryUpgrade>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken);
+    Task<IReadOnlyList<LibraryUpgradeView>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken);
+
+    /// <summary>The administrator's choice about automatic replacement, or null when they have never changed it (the default then applies).</summary>
+    Task<bool?> GetAutoReplaceAsync(CancellationToken cancellationToken);
+
+    Task SetAutoReplaceAsync(bool autoReplace, Guid? actorUserId, DateTimeOffset atUtc, CancellationToken cancellationToken);
 
     Task SaveAsync(CancellationToken cancellationToken);
 }
@@ -134,7 +142,7 @@ public sealed class LibraryUpgradeScanService(
                 new { UpgradeId = upgrade.Id, subject.RequestFormatId, Provider = provider.ProviderId, Reasons = assessment.Reasons }, cancellationToken);
             await notifications.RecordBetterCopyAvailableAsync(subject.RequestId, work.Title, cancellationToken);
             // On by default: carry it out when the destination can be changed. Otherwise (or when switched off) it waits for an administrator.
-            if (upgrades is not null && options.AutoReplace)
+            if (upgrades is not null && await store.GetAutoReplaceAsync(cancellationToken) is not false && options.AutoReplace)
             {
                 await upgrades.StartAsync(upgrade.Id, approvedByAdministrator: false, cancellationToken);
             }
@@ -172,7 +180,7 @@ public sealed record LibraryUpgradeAdminResult(bool Succeeded, bool Forbidden, b
 /// <summary>Administrator view of proposed upgrades, and the one action available while nothing has been changed: set a proposal aside.</summary>
 public sealed class LibraryUpgradeAdminService(
     ILibraryUpgradeStore store, ICurrentUser currentUser, ICurrentAdministrator administrator, IAuditWriter audit, IClock clock,
-    LibraryUpgradeService service)
+    LibraryUpgradeService service, LibraryUpgradeOptions options)
 {
     /// <summary>Starts a proposal now: the way to carry one out when automatic replacement is off. Refused, with the reason, when the destination cannot be changed safely.</summary>
     public async Task<LibraryUpgradeAdminResult> ApproveAsync(Guid id, CancellationToken cancellationToken)
@@ -183,7 +191,22 @@ public sealed class LibraryUpgradeAdminService(
         return started.Started ? LibraryUpgradeAdminResult.Ok() : LibraryUpgradeAdminResult.Invalid(started.Reason ?? "It could not be started.");
     }
 
-    public async Task<(bool Forbidden, IReadOnlyList<LibraryUpgrade> Upgrades)> ListAsync(CancellationToken cancellationToken)
+    public async Task<(bool Forbidden, bool AutoReplace)> GetSettingsAsync(CancellationToken cancellationToken)
+    {
+        if (!IsAdmin) return (true, false);
+        return (false, await store.GetAutoReplaceAsync(cancellationToken) ?? options.AutoReplace);
+    }
+
+    public async Task<LibraryUpgradeAdminResult> SetAutoReplaceAsync(bool autoReplace, CancellationToken cancellationToken)
+    {
+        if (!IsAdmin) return LibraryUpgradeAdminResult.ForbiddenResult();
+        await store.SetAutoReplaceAsync(autoReplace, currentUser.UserId, clock.UtcNow, cancellationToken);
+        await audit.WriteAsync(AuditActions.LibraryUpgradeSettingsChanged, AuditSubjectTypes.Storage, null,
+            new { AutoReplace = autoReplace, ActorUserId = currentUser.UserId }, cancellationToken);
+        return LibraryUpgradeAdminResult.Ok();
+    }
+
+    public async Task<(bool Forbidden, IReadOnlyList<LibraryUpgradeView> Upgrades)> ListAsync(CancellationToken cancellationToken)
     {
         if (!IsAdmin) return (true, []);
         return (false, await store.ListRecentAsync(100, cancellationToken));

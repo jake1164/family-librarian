@@ -115,8 +115,10 @@ and, **by default**, the upgrade is carried out when the library can be changed 
 
 It only starts when the destination can remove the old copy: for audiobooks the Audiobookshelf token must have the *delete*
 permission; for ebooks the CWA e-reader service account must be configured and allowed to delete books. Otherwise the proposal
-stays an alert, and an administrator can start it from the Upgrades API (`POST /api/v1/admin/upgrades/{id}/approve`) or set it aside
-(`.../dismiss`). Set `Upgrades__AutoReplace=false` to make every proposal wait for an administrator; `Upgrades__ScanIntervalDays`
+stays an alert. Administrators see every proposal on **Better copies** (Admin menu) and can start one (**Replace**) or set it aside;
+the same page has the **Replace incomplete books automatically** switch. The saved switch wins; before anyone changes it,
+`Upgrades__AutoReplace` (default true) applies. The API behind the page is `GET /api/v1/admin/upgrades`, `POST .../{id}/approve`,
+`POST .../{id}/dismiss` and `GET`/`PUT .../settings`. With it off every proposal waits for an administrator; `Upgrades__ScanIntervalDays`
 (default 30, minimum 7) and `Upgrades__BatchSize` tune the search. An item replaced in Audiobookshelf is a new item, so listening
 progress on the old one is lost.
 

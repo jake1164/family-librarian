@@ -172,6 +172,12 @@ public static class MediaTypeVisuals
     public static Color StatusColor(string status, string? progressCode = null) => status switch
     {
         "Available" or "Trusted" or "Archived" or "Passed" => Color.Success,
+        // A better copy of a delivered book (library upgrades): found and waiting for a person (or about to start) needs attention;
+        // fetching, delivering and removing the old copy are the system working; replaced is done; set aside is settled.
+        "Proposed" => Color.Warning,
+        "Acquiring" or "Publishing" or "Verified" => Color.Info,
+        "Completed" => Color.Success,
+        "Dismissed" => Color.Default,
         "Quarantine" or "Processing" or "Scanning" or "AwaitingScan" => Color.Info,
         "Unmatched" or "ReviewRequired" or "ScanInterrupted" or "ScanIncomplete" or "ScanStalled" => Color.Warning,
         "Rejected" or "Destroyed" or "Failed" => Color.Error,
@@ -210,6 +216,12 @@ public static class MediaTypeVisuals
         "Destroyed" => "File deleted",
         "Unmatched" => "Identity review required",
         "RuledOut" => "Ruled out",
+        "Proposed" => "Better copy found",
+        "Acquiring" => "Fetching",
+        "Publishing" => "Delivering",
+        "Verified" => "Removing old copy",
+        "Completed" => "Upgraded",
+        "Dismissed" => "Set aside",
         "PendingAcquisition" or "Requested" => "Waiting",
         "NeedsReview" => "Needs review",
         "NotAvailable" => "Not available",

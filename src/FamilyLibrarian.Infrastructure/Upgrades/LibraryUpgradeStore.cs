@@ -70,8 +70,33 @@ public sealed class LibraryUpgradeStore(AppDbContext database) : ILibraryUpgrade
     public async Task<IReadOnlyList<LibraryUpgrade>> ListByStateAsync(LibraryUpgradeState state, int maximumCount, CancellationToken cancellationToken) =>
         await database.LibraryUpgrades.Where(upgrade => upgrade.State == state).OrderBy(upgrade => upgrade.UpdatedAtUtc).Take(maximumCount).ToListAsync(cancellationToken);
 
-    public async Task<IReadOnlyList<LibraryUpgrade>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken) =>
-        await database.LibraryUpgrades.AsNoTracking().OrderByDescending(upgrade => upgrade.CreatedAtUtc).Take(maximumCount).ToListAsync(cancellationToken);
+    public async Task<IReadOnlyList<LibraryUpgradeView>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken)
+    {
+        var rows = await (
+            from upgrade in database.LibraryUpgrades.AsNoTracking()
+            join format in database.RequestFormats.AsNoTracking() on upgrade.RequestFormatId equals format.Id
+            join request in database.BookRequests.AsNoTracking() on format.RequestId equals request.Id
+            join work in database.Works.AsNoTracking() on request.WorkId equals work.Id
+            orderby upgrade.CreatedAtUtc descending
+            select new { upgrade, work.CanonicalTitle, format.MediaType }).Take(maximumCount).ToListAsync(cancellationToken);
+        return [.. rows.Select(row => new LibraryUpgradeView(row.upgrade, row.CanonicalTitle, row.MediaType))];
+    }
+
+    public async Task<bool?> GetAutoReplaceAsync(CancellationToken cancellationToken) =>
+        (await database.LibraryUpgradeSettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken))?.AutoReplace;
+
+    public async Task SetAutoReplaceAsync(bool autoReplace, Guid? actorUserId, DateTimeOffset atUtc, CancellationToken cancellationToken)
+    {
+        var settings = await database.LibraryUpgradeSettings.FirstOrDefaultAsync(cancellationToken);
+        if (settings is null)
+        {
+            settings = new LibraryUpgradeSettings(atUtc);
+            database.LibraryUpgradeSettings.Add(settings);
+        }
+
+        settings.SetAutoReplace(autoReplace, actorUserId, atUtc);
+        await database.SaveChangesAsync(cancellationToken);
+    }
 
     public Task SaveAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);
 }

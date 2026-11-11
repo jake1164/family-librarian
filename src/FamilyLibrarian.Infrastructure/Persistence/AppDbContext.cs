@@ -124,6 +124,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 
     public DbSet<LibraryUpgrade> LibraryUpgrades => Set<LibraryUpgrade>();
 
+    public DbSet<LibraryUpgradeSettings> LibraryUpgradeSettings => Set<LibraryUpgradeSettings>();
+
     public DbSet<ProviderInteractionAlertRecipient> ProviderInteractionAlertRecipients => Set<ProviderInteractionAlertRecipient>();
 
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
@@ -1421,6 +1423,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
                 .WithMany()
                 .HasForeignKey(claim => claim.ClaimedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<LibraryUpgradeSettings>(entity =>
+        {
+            entity.ToTable("library_upgrade_settings", "acquisition");
+            entity.HasKey(settings => settings.Id);
+            entity.Property(settings => settings.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(settings => settings.AutoReplace).HasColumnName("auto_replace");
+            entity.Property(settings => settings.UpdatedByUserId).HasColumnName("updated_by_user_id");
+            entity.Property(settings => settings.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.UpdatedAtUtc).HasColumnName("updated_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(settings => settings.Version).HasColumnName("xmin").IsRowVersion();
         });
 
         builder.Entity<LibraryUpgrade>(entity =>
