@@ -287,6 +287,8 @@ public static class DependencyInjection
 
         // Shadow semantic analysis (alpha.6 M4-3): advisory findings stored beside, never inside, deterministic results.
         services.AddScoped<ISemanticFindingStore, SemanticFindingStore>();
+        services.AddScoped<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureStore, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureStore>();
+        services.AddScoped<FamilyLibrarian.Application.DecisionCapture.DecisionCaptureService>();
         services.AddScoped<CandidateSemanticAnalyzer>();
         services.AddScoped<SearchGuidanceService>();
         services.AddScoped<CandidateTriageService>();

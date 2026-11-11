@@ -87,6 +87,26 @@ public sealed class ModelGatewaySettings
         new ModelBudget(BackgroundUserDailyRequests, BackgroundUserDailyTokens, BackgroundInstallationDailyRequests, BackgroundInstallationDailyTokens),
         CloudDailyRequests, CloudDailyTokens);
 
+    /// <summary>Whether real decisions of the scored roles are saved for later replay (A6-TUNER-C1). On by default after an upgrade.</summary>
+    public bool DecisionCaptureEnabled { get; private set; } = true;
+
+    /// <summary>A separate switch for chat messages, which are more personal than book metadata. Off by default.</summary>
+    public bool ChatCaptureEnabled { get; private set; }
+
+    public int CaptureSnapshotsPerRole { get; private set; } = DecisionCaptureLimits.DefaultSnapshotsPerRole;
+
+    public int CaptureUnlabeledSnapshotDays { get; private set; } = DecisionCaptureLimits.DefaultUnlabeledSnapshotDays;
+
+    public int? CaptureLabeledSnapshotDays { get; private set; }
+
+    public int CaptureCallsPerSnapshot { get; private set; } = DecisionCaptureLimits.DefaultCallsPerSnapshot;
+
+    public int CaptureFindingsDays { get; private set; } = DecisionCaptureLimits.DefaultFindingsDays;
+
+    /// <summary>The capture limits as one value. Persisted as flat columns.</summary>
+    public DecisionCaptureLimits CaptureLimits => new(
+        CaptureSnapshotsPerRole, CaptureUnlabeledSnapshotDays, CaptureLabeledSnapshotDays, CaptureCallsPerSnapshot, CaptureFindingsDays);
+
     public Guid? UpdatedByUserId { get; private set; }
 
     public DateTimeOffset CreatedAtUtc { get; private set; }
@@ -148,6 +168,25 @@ public sealed class ModelGatewaySettings
         BackgroundUserDailyTokens = limits.Background.UserDailyTokens;
         BackgroundInstallationDailyRequests = limits.Background.InstallationDailyRequests;
         BackgroundInstallationDailyTokens = limits.Background.InstallationDailyTokens;
+        Touch(actorUserId, updatedAtUtc);
+    }
+
+    public void ConfigureDecisionCapture(
+        bool decisionCapture, bool chatCapture, DecisionCaptureLimits limits, Guid? actorUserId, DateTimeOffset updatedAtUtc)
+    {
+        ArgumentNullException.ThrowIfNull(limits);
+        if (limits.Validate() is { } problem)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limits), problem);
+        }
+
+        DecisionCaptureEnabled = decisionCapture;
+        ChatCaptureEnabled = chatCapture;
+        CaptureSnapshotsPerRole = limits.SnapshotsPerRole;
+        CaptureUnlabeledSnapshotDays = limits.UnlabeledSnapshotDays;
+        CaptureLabeledSnapshotDays = limits.LabeledSnapshotDays;
+        CaptureCallsPerSnapshot = limits.CallsPerSnapshot;
+        CaptureFindingsDays = limits.FindingsDays;
         Touch(actorUserId, updatedAtUtc);
     }
 

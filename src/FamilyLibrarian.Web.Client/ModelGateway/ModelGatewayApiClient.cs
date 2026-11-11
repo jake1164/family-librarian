@@ -45,6 +45,23 @@ public sealed class ModelGatewayApiClient(HttpClient httpClient, AntiforgeryToke
     public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> ClearApiKeyAsync(CancellationToken cancellationToken = default) =>
         SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Delete, $"{BasePath}/api-key", null, cancellationToken);
 
+    public async Task<DecisionCaptureSettingsResponse> GetCaptureAsync(CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<DecisionCaptureSettingsResponse>($"{BasePath}/capture/", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no capture settings.");
+
+    public async Task<DecisionCaptureInsightResponse> GetCaptureInsightAsync(CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<DecisionCaptureInsightResponse>($"{BasePath}/capture/insight", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no capture insight.");
+
+    public Task<ModelGatewayCallResult<DecisionCaptureSettingsResponse>> SaveCaptureAsync(SaveDecisionCaptureSettingsRequest request, CancellationToken cancellationToken = default) =>
+        SendAsync<DecisionCaptureSettingsResponse>(HttpMethod.Put, $"{BasePath}/capture/", request, cancellationToken);
+
+    public Task<ModelGatewayCallResult<DecisionCaptureRetentionPreviewResponse>> PreviewCaptureAsync(DecisionCaptureLimitsDto limits, CancellationToken cancellationToken = default) =>
+        SendAsync<DecisionCaptureRetentionPreviewResponse>(HttpMethod.Post, $"{BasePath}/capture/preview", limits, cancellationToken);
+
+    public Task<ModelGatewayCallResult<DecisionCapturePurgeResponse>> PurgeCaptureAsync(string? role, CancellationToken cancellationToken = default) =>
+        SendAsync<DecisionCapturePurgeResponse>(HttpMethod.Post, $"{BasePath}/capture/purge", new PurgeDecisionCaptureRequest(role), cancellationToken);
+
     private async Task<ModelGatewayCallResult<T>> SendAsync<T>(HttpMethod method, string path, object? payload, CancellationToken cancellationToken)
         where T : class
     {

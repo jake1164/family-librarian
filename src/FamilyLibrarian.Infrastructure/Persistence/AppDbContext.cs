@@ -7,6 +7,7 @@ using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Catalog;
 using FamilyLibrarian.Domain.Communications;
 using FamilyLibrarian.Domain.Conversation;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Domain.ModelTesting;
 using FamilyLibrarian.Domain.Delivery;
@@ -85,6 +86,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<ModelUsageRecord> ModelUsageRecords => Set<ModelUsageRecord>();
 
     public DbSet<SemanticFinding> SemanticFindings => Set<SemanticFinding>();
+
+    public DbSet<DecisionSnapshot> DecisionSnapshots => Set<DecisionSnapshot>();
+
+    public DbSet<DecisionCall> DecisionCalls => Set<DecisionCall>();
+
+    public DbSet<DecisionOutcome> DecisionOutcomes => Set<DecisionOutcome>();
+
+    public DbSet<CandidateLink> CandidateLinks => Set<CandidateLink>();
 
     public DbSet<StoredConversationSession> ConversationSessions => Set<StoredConversationSession>();
 
@@ -425,6 +434,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(settings => settings.BackgroundUserDailyTokens).HasColumnName("background_user_daily_tokens").HasDefaultValue(defaults.Background.UserDailyTokens);
             entity.Property(settings => settings.BackgroundInstallationDailyRequests).HasColumnName("background_installation_daily_requests").HasDefaultValue(defaults.Background.InstallationDailyRequests);
             entity.Property(settings => settings.BackgroundInstallationDailyTokens).HasColumnName("background_installation_daily_tokens").HasDefaultValue(defaults.Background.InstallationDailyTokens);
+            // Decision capture (A6-TUNER-C1): decisions are saved by default after an upgrade; chat messages are not.
+            entity.Ignore(settings => settings.CaptureLimits);
+            entity.Property(settings => settings.DecisionCaptureEnabled).HasColumnName("decision_capture_enabled").HasDefaultValue(true);
+            entity.Property(settings => settings.ChatCaptureEnabled).HasColumnName("chat_capture_enabled").HasDefaultValue(false);
+            entity.Property(settings => settings.CaptureSnapshotsPerRole).HasColumnName("capture_snapshots_per_role").HasDefaultValue(DecisionCaptureLimits.DefaultSnapshotsPerRole);
+            entity.Property(settings => settings.CaptureUnlabeledSnapshotDays).HasColumnName("capture_unlabeled_snapshot_days").HasDefaultValue(DecisionCaptureLimits.DefaultUnlabeledSnapshotDays);
+            entity.Property(settings => settings.CaptureLabeledSnapshotDays).HasColumnName("capture_labeled_snapshot_days");
+            entity.Property(settings => settings.CaptureCallsPerSnapshot).HasColumnName("capture_calls_per_snapshot").HasDefaultValue(DecisionCaptureLimits.DefaultCallsPerSnapshot);
+            entity.Property(settings => settings.CaptureFindingsDays).HasColumnName("capture_findings_days").HasDefaultValue(DecisionCaptureLimits.DefaultFindingsDays);
             entity.HasMany(settings => settings.Roles).WithOne().HasForeignKey(role => role.SettingsId).OnDelete(DeleteBehavior.Cascade);
             entity.Navigation(settings => settings.Roles).UsePropertyAccessMode(PropertyAccessMode.Field);
         });
@@ -493,6 +511,85 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Ignore(finding => finding.IsReusable);
             entity.HasIndex(finding => new { finding.Kind, finding.EvidenceDigest, finding.CreatedAtUtc });
             entity.HasIndex(finding => finding.RequestId);
+        });
+
+        // Decision capture (A6-TUNER-C1). Allow-listed snapshots, the calls made against them and the facts observed afterwards.
+        // Request and user deletion cascades so a future deletion feature cannot leave snapshots behind; assets are kept, so the
+        // asset id is a plain column. The usage ledger prunes at 90 days, so call rows carry its id without a foreign key.
+        builder.Entity<DecisionSnapshot>(entity =>
+        {
+            entity.ToTable("decision_snapshots", "tuning");
+            entity.HasKey(snapshot => snapshot.Id);
+            entity.Property(snapshot => snapshot.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(snapshot => snapshot.Role).HasColumnName("role").HasConversion<string>().HasMaxLength(48);
+            entity.Property(snapshot => snapshot.SchemaVersion).HasColumnName("schema_version");
+            entity.Property(snapshot => snapshot.SubjectReference).HasColumnName("subject_reference").HasMaxLength(DecisionSnapshot.MaxReferenceLength);
+            entity.Property(snapshot => snapshot.SnapshotDigest).HasColumnName("snapshot_digest").HasMaxLength(DecisionSnapshot.MaxDigestLength);
+            entity.Property(snapshot => snapshot.SnapshotJson).HasColumnName("snapshot_json").HasMaxLength(DecisionCaptureLimits.MaxSnapshotBytes);
+            entity.Property(snapshot => snapshot.RequestId).HasColumnName("request_id");
+            entity.Property(snapshot => snapshot.UserId).HasColumnName("user_id");
+            entity.Property(snapshot => snapshot.MediaAssetId).HasColumnName("media_asset_id");
+            entity.Property(snapshot => snapshot.ExcerptsInvolved).HasColumnName("excerpts_involved");
+            entity.Property(snapshot => snapshot.FirstSeenAtUtc).HasColumnName("first_seen_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(snapshot => snapshot.LastSeenAtUtc).HasColumnName("last_seen_at_utc").HasColumnType("timestamp with time zone");
+            entity.Property(snapshot => snapshot.TimesSeen).HasColumnName("times_seen");
+            entity.Property(snapshot => snapshot.StaleReason).HasColumnName("stale_reason").HasMaxLength(DecisionSnapshot.MaxStaleReasonLength);
+            entity.HasIndex(snapshot => new { snapshot.Role, snapshot.SchemaVersion, snapshot.SubjectReference, snapshot.SnapshotDigest }).IsUnique();
+            entity.HasIndex(snapshot => new { snapshot.Role, snapshot.LastSeenAtUtc });
+            entity.HasIndex(snapshot => snapshot.RequestId);
+            entity.HasIndex(snapshot => snapshot.UserId);
+            entity.HasOne<BookRequest>().WithMany().HasForeignKey(snapshot => snapshot.RequestId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<AppUser>().WithMany().HasForeignKey(snapshot => snapshot.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<DecisionCall>(entity =>
+        {
+            entity.ToTable("decision_calls", "tuning");
+            entity.HasKey(call => call.Id);
+            entity.Property(call => call.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(call => call.SnapshotId).HasColumnName("snapshot_id");
+            entity.Property(call => call.ModelUsageRecordId).HasColumnName("model_usage_record_id");
+            entity.Property(call => call.SemanticFindingId).HasColumnName("semantic_finding_id");
+            entity.Property(call => call.SettingsId).HasColumnName("settings_id");
+            entity.Property(call => call.Placement).HasColumnName("placement").HasConversion<string>().HasMaxLength(16);
+            entity.Property(call => call.ModelAlias).HasColumnName("model_alias").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
+            entity.Property(call => call.ReportedModel).HasColumnName("reported_model").HasMaxLength(ModelGatewaySettings.MaxModelNameLength);
+            entity.Property(call => call.Reasoning).HasColumnName("reasoning_mode").HasConversion<string>().HasMaxLength(16);
+            entity.Property(call => call.RenderedMessagesHash).HasColumnName("rendered_messages_hash").HasMaxLength(DecisionCall.MaxHashLength);
+            entity.Property(call => call.ParserVersion).HasColumnName("parser_version").HasMaxLength(64);
+            entity.Property(call => call.Outcome).HasColumnName("outcome").HasConversion<string>().HasMaxLength(32);
+            entity.Property(call => call.FailureReason).HasColumnName("failure_reason").HasConversion<string>().HasMaxLength(32);
+            entity.Property(call => call.Answer).HasColumnName("answer").HasMaxLength(DecisionCall.MaxAnswerLength);
+            entity.Property(call => call.CreatedAtUtc).HasColumnName("created_at_utc").HasColumnType("timestamp with time zone");
+            entity.HasIndex(call => new { call.SnapshotId, call.CreatedAtUtc });
+            entity.HasOne<DecisionSnapshot>().WithMany().HasForeignKey(call => call.SnapshotId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<DecisionOutcome>(entity =>
+        {
+            entity.ToTable("decision_outcomes", "tuning");
+            entity.HasKey(outcome => outcome.Id);
+            entity.Property(outcome => outcome.Id).HasColumnName("id").ValueGeneratedNever();
+            entity.Property(outcome => outcome.SnapshotId).HasColumnName("snapshot_id");
+            entity.Property(outcome => outcome.CandidateKey).HasColumnName("candidate_key").HasMaxLength(64);
+            entity.Property(outcome => outcome.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(48);
+            entity.Property(outcome => outcome.Source).HasColumnName("source").HasMaxLength(48);
+            entity.Property(outcome => outcome.InfluencedByModelNote).HasColumnName("influenced_by_model_note");
+            entity.Property(outcome => outcome.Strength).HasColumnName("strength").HasConversion<string>().HasMaxLength(16);
+            entity.Property(outcome => outcome.ObservedAtUtc).HasColumnName("observed_at_utc").HasColumnType("timestamp with time zone");
+            entity.HasIndex(outcome => outcome.SnapshotId);
+            entity.HasOne<DecisionSnapshot>().WithMany().HasForeignKey(outcome => outcome.SnapshotId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<CandidateLink>(entity =>
+        {
+            entity.ToTable("candidate_links", "tuning");
+            entity.HasKey(link => new { link.SnapshotId, link.CandidateKey });
+            entity.Property(link => link.SnapshotId).HasColumnName("snapshot_id");
+            entity.Property(link => link.CandidateKey).HasColumnName("candidate_key").HasMaxLength(64);
+            entity.Property(link => link.ProviderId).HasColumnName("provider_id").HasMaxLength(64);
+            entity.Property(link => link.ProviderResultId).HasColumnName("provider_result_id").HasMaxLength(256);
+            entity.HasOne<DecisionSnapshot>().WithMany().HasForeignKey(link => link.SnapshotId).OnDelete(DeleteBehavior.Cascade);
         });
 
         // Conversation (alpha.6 M2-3): minimal structured state, plus the records that make a replayed message harmless.

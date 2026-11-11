@@ -132,6 +132,39 @@ public sealed class MigrationUpgradeTests
     }
 
     [TestMethod]
+    public async Task DecisionCaptureUpgradeStartsExistingInstallationsOnWithTheDefaultLimitsAndKeepsEverythingElse()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddDecisionCapture", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        var original = new FamilyLibrarian.Domain.ModelGateway.ModelGatewaySettings(DateTimeOffset.UtcNow);
+        original.Configure("http://example.test", true, null, DateTimeOffset.UtcNow);
+        original.SetAllowModelHoldRelease(true, null, DateTimeOffset.UtcNow);
+        database.ModelGatewaySettingsRows.Add(original);
+        await database.SaveChangesAsync();
+
+        // Back to the model before capture existed (the row survives without the new columns), then forward again as an upgrade does.
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        Assert.IsFalse(await database.Database.SqlQuery<int>(
+            $"SELECT count(*)::int AS \"Value\" FROM information_schema.tables WHERE table_schema = 'tuning'").SingleAsync() > 0,
+            "The tuning schema's tables are gone after going down.");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var settings = await database.ModelGatewaySettingsRows.SingleAsync();
+        Assert.IsTrue(settings.DecisionCaptureEnabled, "Capture starts on after the upgrade (owner decision).");
+        Assert.IsFalse(settings.ChatCaptureEnabled);
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.DecisionCaptureLimits.Default, settings.CaptureLimits);
+        Assert.AreEqual("http://example.test", settings.EndpointUrl);
+        Assert.IsTrue(settings.AllowCloud);
+        Assert.AreEqual(0, await database.DecisionSnapshots.CountAsync());
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
     public async Task ModelHoldReleaseUpgradeDefaultsExistingSettingsOffAndDownUpPreservesOtherSettings()
     {
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());

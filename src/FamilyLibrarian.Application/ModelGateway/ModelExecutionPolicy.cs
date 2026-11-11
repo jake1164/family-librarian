@@ -39,6 +39,10 @@ public static class ModelParse
 }
 
 /// <param name="Usage">What the provider reported, or null when it reported nothing. Null is not zero.</param>
+/// <param name="ReportedModel">The model name the provider said answered (bounded, control characters removed); null for a refusal.</param>
+/// <param name="Reasoning">The reasoning mode that was actually requested for this call.</param>
+/// <param name="RenderedMessagesHash">Version-tagged hash of the final messages, JSON mode and clamped output cap that were sent; null for a refusal.</param>
+/// <param name="SettingsId">The gateway settings row used. With the placement (<see cref="IsCloud"/>) it identifies the connection.</param>
 public sealed record ModelExecution<T>(
     ModelCallOutcome Outcome,
     T? Value,
@@ -48,7 +52,11 @@ public sealed record ModelExecution<T>(
     string? Model,
     bool IsCloud,
     ModelFailureReason? FailureReason = null,
-    Guid? UsageRecordId = null)
+    Guid? UsageRecordId = null,
+    string? ReportedModel = null,
+    ModelReasoningMode Reasoning = ModelReasoningMode.Inherit,
+    string? RenderedMessagesHash = null,
+    Guid? SettingsId = null)
 {
     public bool Succeeded => Outcome == ModelCallOutcome.Succeeded;
 
@@ -389,7 +397,14 @@ public sealed class ModelExecutionPolicy(
         var execution = Interpret(response, resolution, parse, maxOutputTokens, breaker, breakerKey, capabilityKey, clock.UtcNow);
         CaptureRejectedReply(request, response, execution);
         await CompleteQuietlyAsync(reservation.Id, execution.Outcome, response.LatencyMilliseconds, response.Usage, execution.FailureReason);
-        return execution with { UsageRecordId = reservation.Id };
+        return execution with
+        {
+            UsageRecordId = reservation.Id,
+            ReportedModel = SafeReportedModel(response.ReportedModel),
+            Reasoning = resolution.Reasoning,
+            RenderedMessagesHash = SafeRenderedHash(request, maxOutputTokens),
+            SettingsId = resolution.SettingsId
+        };
     }
 
     /// <summary>
@@ -432,6 +447,27 @@ public sealed class ModelExecutionPolicy(
         catch (Exception)
         {
             // Diagnostics must never change the result of a model call.
+        }
+    }
+
+    /// <summary>Provider text is untrusted: bound it and drop control characters before it can reach any record.</summary>
+    private static string? SafeReportedModel(string? reported)
+    {
+        if (string.IsNullOrWhiteSpace(reported)) return null;
+        var cleaned = new string([.. reported.Where(character => !char.IsControl(character))]).Trim();
+        return cleaned.Length == 0 ? null : cleaned.Length <= ModelGatewaySettings.MaxModelNameLength ? cleaned : cleaned[..ModelGatewaySettings.MaxModelNameLength];
+    }
+
+    /// <summary>Identity of what was sent. A failure to compute it must never change the call's result, so it is simply absent.</summary>
+    private static string? SafeRenderedHash(ModelExecutionRequest request, int maxOutputTokens)
+    {
+        try
+        {
+            return ModelTuning.RenderedMessagesIdentity.Compute(request.Messages, request.JsonObjectOutput, maxOutputTokens);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+        {
+            return null;
         }
     }
 

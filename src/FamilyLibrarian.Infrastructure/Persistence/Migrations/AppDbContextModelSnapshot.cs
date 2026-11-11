@@ -18,7 +18,7 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("identity")
-                .HasAnnotation("ProductVersion", "10.0.13")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -2015,6 +2015,247 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("sessions", "conversation");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.CandidateLink", b =>
+                {
+                    b.Property<Guid>("SnapshotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("snapshot_id");
+
+                    b.Property<string>("CandidateKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("candidate_key");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<string>("ProviderResultId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("provider_result_id");
+
+                    b.HasKey("SnapshotId", "CandidateKey");
+
+                    b.ToTable("candidate_links", "tuning");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionCall", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Answer")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("answer");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<string>("ModelAlias")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("model_alias");
+
+                    b.Property<Guid?>("ModelUsageRecordId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("model_usage_record_id");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("outcome");
+
+                    b.Property<string>("ParserVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("parser_version");
+
+                    b.Property<string>("Placement")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("placement");
+
+                    b.Property<string>("Reasoning")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("reasoning_mode");
+
+                    b.Property<string>("RenderedMessagesHash")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("rendered_messages_hash");
+
+                    b.Property<string>("ReportedModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("reported_model");
+
+                    b.Property<Guid?>("SemanticFindingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("semantic_finding_id");
+
+                    b.Property<Guid?>("SettingsId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("settings_id");
+
+                    b.Property<Guid>("SnapshotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("snapshot_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SnapshotId", "CreatedAtUtc");
+
+                    b.ToTable("decision_calls", "tuning");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionOutcome", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CandidateKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("candidate_key");
+
+                    b.Property<bool>("InfluencedByModelNote")
+                        .HasColumnType("boolean")
+                        .HasColumnName("influenced_by_model_note");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("kind");
+
+                    b.Property<DateTimeOffset>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at_utc");
+
+                    b.Property<Guid>("SnapshotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("snapshot_id");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("source");
+
+                    b.Property<string>("Strength")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("strength");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SnapshotId");
+
+                    b.ToTable("decision_outcomes", "tuning");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("ExcerptsInvolved")
+                        .HasColumnType("boolean")
+                        .HasColumnName("excerpts_involved");
+
+                    b.Property<DateTimeOffset>("FirstSeenAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at_utc");
+
+                    b.Property<DateTimeOffset>("LastSeenAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at_utc");
+
+                    b.Property<Guid?>("MediaAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("media_asset_id");
+
+                    b.Property<Guid?>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("role");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<string>("SnapshotDigest")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("snapshot_digest");
+
+                    b.Property<string>("SnapshotJson")
+                        .IsRequired()
+                        .HasMaxLength(32768)
+                        .HasColumnType("character varying(32768)")
+                        .HasColumnName("snapshot_json");
+
+                    b.Property<string>("StaleReason")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("stale_reason");
+
+                    b.Property<string>("SubjectReference")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("subject_reference");
+
+                    b.Property<int>("TimesSeen")
+                        .HasColumnType("integer")
+                        .HasColumnName("times_seen");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Role", "LastSeenAtUtc");
+
+                    b.HasIndex("Role", "SchemaVersion", "SubjectReference", "SnapshotDigest")
+                        .IsUnique();
+
+                    b.ToTable("decision_snapshots", "tuning");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Delivery.DeliveryAttempt", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2519,6 +2760,40 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(0)
                         .HasColumnName("background_user_daily_tokens");
 
+                    b.Property<int>("CaptureCallsPerSnapshot")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(10)
+                        .HasColumnName("capture_calls_per_snapshot");
+
+                    b.Property<int>("CaptureFindingsDays")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(180)
+                        .HasColumnName("capture_findings_days");
+
+                    b.Property<int?>("CaptureLabeledSnapshotDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("capture_labeled_snapshot_days");
+
+                    b.Property<int>("CaptureSnapshotsPerRole")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(200)
+                        .HasColumnName("capture_snapshots_per_role");
+
+                    b.Property<int>("CaptureUnlabeledSnapshotDays")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(180)
+                        .HasColumnName("capture_unlabeled_snapshot_days");
+
+                    b.Property<bool>("ChatCaptureEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("chat_capture_enabled");
+
                     b.Property<int>("CloudDailyRequests")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
@@ -2534,6 +2809,12 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
+
+                    b.Property<bool>("DecisionCaptureEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("decision_capture_enabled");
 
                     b.Property<string>("EndpointUrl")
                         .HasMaxLength(512)
@@ -5044,6 +5325,46 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.CandidateLink", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.DecisionCapture.DecisionSnapshot", null)
+                        .WithMany()
+                        .HasForeignKey("SnapshotId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionCall", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.DecisionCapture.DecisionSnapshot", null)
+                        .WithMany()
+                        .HasForeignKey("SnapshotId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionOutcome", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.DecisionCapture.DecisionSnapshot", null)
+                        .WithMany()
+                        .HasForeignKey("SnapshotId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionSnapshot", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Delivery.DeliveryAttempt", b =>

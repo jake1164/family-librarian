@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.DecisionCapture;
 using FamilyLibrarian.Application.ModelGateway;
 using FamilyLibrarian.Contracts.ModelGateway;
 using FamilyLibrarian.Domain.ModelGateway;
@@ -27,7 +28,88 @@ internal static class ModelGatewayEndpoints
         group.MapPut("/enabled", SetEnabledAsync);
         group.MapPut("/api-key", SetApiKeyAsync);
         group.MapDelete("/api-key", ClearApiKeyAsync);
+
+        // Decision capture (A6-TUNER-C1). No route returns snapshot content; the insight is counts and sizes only. None of these
+        // makes a model call, so they work whether AI is on or off.
+        var capture = group.MapGroup("/capture");
+        capture.MapGet("/", GetCaptureAsync);
+        capture.MapPut("/", SaveCaptureAsync);
+        capture.MapPost("/preview", PreviewCaptureAsync);
+        capture.MapGet("/insight", CaptureInsightAsync);
+        capture.MapPost("/purge", PurgeCaptureAsync);
     }
+
+    private static async Task<IResult> GetCaptureAsync(DecisionCaptureService service, CancellationToken cancellationToken) =>
+        CaptureResult(await service.GetAsync(cancellationToken), ToCaptureResponse);
+
+    private static async Task<IResult> SaveCaptureAsync(
+        SaveDecisionCaptureSettingsRequest request, DecisionCaptureService service, CancellationToken cancellationToken)
+    {
+        if (request.Limits is null)
+        {
+            return CaptureProblem("The retention limits are required.");
+        }
+
+        return CaptureResult(
+            await service.SaveAsync(new SaveDecisionCaptureSettings(request.DecisionCaptureEnabled, request.ChatCaptureEnabled, ToCaptureLimits(request.Limits)), cancellationToken),
+            ToCaptureResponse);
+    }
+
+    private static async Task<IResult> PreviewCaptureAsync(
+        DecisionCaptureLimitsDto request, DecisionCaptureService service, CancellationToken cancellationToken) =>
+        CaptureResult(await service.PreviewAsync(ToCaptureLimits(request), cancellationToken),
+            counts => new DecisionCaptureRetentionPreviewResponse(counts.Snapshots, counts.Calls, counts.Findings, counts.Total));
+
+    private static async Task<IResult> CaptureInsightAsync(DecisionCaptureService service, CancellationToken cancellationToken) =>
+        CaptureResult(await service.InsightAsync(cancellationToken), insight => new DecisionCaptureInsightResponse(
+            insight.AsOfUtc,
+            [.. insight.Roles.Select(role => new DecisionCaptureRoleInsightDto(
+                role.Role.ToString(), role.Snapshots, role.WithOutcomes, role.WithoutOutcomes, role.Oldest, role.Newest, role.ApproximateBytes))],
+            [.. insight.Tables.Select(table => new DecisionCaptureTableInsightDto(table.Table, table.Rows, table.ApproximateBytes, table.Oldest))],
+            insight.TotalApproximateBytes, insight.SizesAvailable));
+
+    private static async Task<IResult> PurgeCaptureAsync(
+        PurgeDecisionCaptureRequest request, DecisionCaptureService service, CancellationToken cancellationToken)
+    {
+        ModelRole? role = null;
+        if (!string.IsNullOrWhiteSpace(request.Role) && !string.Equals(request.Role, "All", StringComparison.Ordinal))
+        {
+            if (!Enum.TryParse<ModelRole>(request.Role, ignoreCase: false, out var parsed) || !Enum.IsDefined(parsed) || parsed.ToString() != request.Role)
+            {
+                return CaptureProblem("Choose one of the AI features that are captured, or All.");
+            }
+
+            role = parsed;
+        }
+
+        return CaptureResult(await service.PurgeAsync(role, cancellationToken),
+            purged => new DecisionCapturePurgeResponse(purged.Snapshots, purged.Calls, purged.Outcomes, purged.CandidateLinks));
+    }
+
+    private static IResult CaptureResult<TValue, TResponse>(DecisionCaptureResult<TValue> result, Func<TValue, TResponse> map) =>
+        result.Forbidden ? Results.StatusCode(StatusCodes.Status403Forbidden)
+        : !result.Succeeded ? CaptureProblem(result.Error!)
+        : Results.Ok(map(result.Value!));
+
+    private static IResult CaptureProblem(string error) =>
+        Results.ValidationProblem(new Dictionary<string, string[]> { ["decisionCapture"] = [error] });
+
+    private static DecisionCaptureSettingsResponse ToCaptureResponse(DecisionCaptureSettingsView view) => new(
+        view.DecisionCaptureEnabled, view.ChatCaptureEnabled, ToDto(view.Limits),
+        new DecisionCaptureRangesDto(
+            DecisionCaptureLimits.MinSnapshotsPerRole, DecisionCaptureLimits.MaxSnapshotsPerRole,
+            DecisionCaptureLimits.MinUnlabeledSnapshotDays, DecisionCaptureLimits.MaxUnlabeledSnapshotDays,
+            DecisionCaptureLimits.MinLabeledSnapshotDays, DecisionCaptureLimits.MaxLabeledSnapshotDays,
+            DecisionCaptureLimits.MinCallsPerSnapshot, DecisionCaptureLimits.MaxCallsPerSnapshot,
+            DecisionCaptureLimits.MinFindingsDays, DecisionCaptureLimits.MaxFindingsDays,
+            DecisionCaptureLimits.MaxSnapshotBytes),
+        ToDto(DecisionCaptureLimits.Default));
+
+    private static DecisionCaptureLimitsDto ToDto(DecisionCaptureLimits limits) =>
+        new(limits.SnapshotsPerRole, limits.UnlabeledSnapshotDays, limits.LabeledSnapshotDays, limits.CallsPerSnapshot, limits.FindingsDays);
+
+    private static DecisionCaptureLimits ToCaptureLimits(DecisionCaptureLimitsDto dto) =>
+        new(dto.SnapshotsPerRole, dto.UnlabeledSnapshotDays, dto.LabeledSnapshotDays, dto.CallsPerSnapshot, dto.FindingsDays);
 
     private static async Task<IResult> GetAsync(
         ModelGatewaySettingsService service, ModelConnectionService connections, CancellationToken cancellationToken)
