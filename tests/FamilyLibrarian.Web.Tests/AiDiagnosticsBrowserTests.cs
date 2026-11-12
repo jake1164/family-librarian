@@ -19,7 +19,7 @@ public sealed class AiDiagnosticsBrowserTests
         await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
         await using var original = new FamilyLibrarianAppFactory(fixture.ConnectionString);
         await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
-        factory.UseKestrel(0);
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
         using var client = factory.CreateClient();
         var artifact = await AiFailureEndpointTests.SeedTrackAsync(factory.Services);
         using (var scope = factory.Services.CreateScope())

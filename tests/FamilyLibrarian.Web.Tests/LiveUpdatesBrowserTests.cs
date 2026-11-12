@@ -31,7 +31,7 @@ public sealed class LiveUpdatesBrowserTests
         await using var original = new FamilyLibrarianAppFactory(available.ConnectionString,
             services => services.AddHostedService<SourceActivityUpdatesHostedService>());
         await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
-        factory.UseKestrel(0);
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
         using var client = factory.CreateClient();
         await using (var scope = factory.Services.CreateAsyncScope())
         {
@@ -113,13 +113,31 @@ public sealed class LiveUpdatesBrowserTests
 
     private static async Task AssertCompactSummaryAsync(IPage page, int columns, int maximumHeight)
     {
-        Assert.IsTrue(await page.Locator(".tasks-summary-strip .task-summary-metric").EvaluateAllAsync<bool>(
-            $$"""
-            cards => cards.length === 6 &&
-                cards.filter(card => Math.abs(card.getBoundingClientRect().top - cards[0].getBoundingClientRect().top) < 1).length === {{columns}} &&
-                cards.every(card => card.scrollHeight <= card.clientHeight + 1 && card.scrollWidth <= card.clientWidth + 1) &&
-                cards[0].closest('.tasks-summary-strip').getBoundingClientRect().height <= {{maximumHeight}}
-            """), $"Summary strip should have {columns} columns, fit within {maximumHeight}px, and show all content.");
+        var inspectLayout = $$"""
+            cards => {
+                const actualColumns = cards.filter(card => Math.abs(card.getBoundingClientRect().top - cards[0].getBoundingClientRect().top) < 1).length;
+                const height = cards[0]?.closest('.tasks-summary-strip').getBoundingClientRect().height;
+                const overflowing = cards.filter(card => card.scrollHeight > card.clientHeight + 1 || card.scrollWidth > card.clientWidth + 1)
+                    .map(card => ({ text: card.innerText, width: card.clientWidth, scrollWidth: card.scrollWidth,
+                        height: card.clientHeight, scrollHeight: card.scrollHeight }));
+                return cards.length === 6 && actualColumns === {{columns}} && overflowing.length === 0 && height <= {{maximumHeight}}
+                    ? '' : JSON.stringify({ count: cards.length, columns: actualColumns, height, overflowing });
+            }
+            """;
+        try
+        {
+            // Resizing also updates the responsive navigation asynchronously.
+            // Keep every geometry requirement while allowing the layout to settle.
+            await page.WaitForFunctionAsync(
+                $$"""() => ({{inspectLayout}})(Array.from(document.querySelectorAll('.tasks-summary-strip .task-summary-metric'))) === ''""",
+                options: new() { Timeout = 5000 });
+        }
+        catch (TimeoutException)
+        {
+            var layoutFailure = await page.Locator(".tasks-summary-strip .task-summary-metric")
+                .EvaluateAllAsync<string>(inspectLayout);
+            Assert.Fail($"Summary strip should have {columns} columns, fit within {maximumHeight}px, and show all content. Actual: {layoutFailure}");
+        }
     }
 
     [TestMethod]
@@ -131,7 +149,7 @@ public sealed class LiveUpdatesBrowserTests
         var available = WebTestFixture.Require(fixture);
         await using var original = new FamilyLibrarianAppFactory(available.ConnectionString);
         await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
-        factory.UseKestrel(0);
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
         using var client = factory.CreateClient();
         Guid firstId;
         Guid ownerId;
@@ -252,7 +270,7 @@ public sealed class LiveUpdatesBrowserTests
         var available = WebTestFixture.Require(fixture);
         await using var original = new FamilyLibrarianAppFactory(available.ConnectionString);
         await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
-        factory.UseKestrel(0);
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
         using var client = factory.CreateClient();
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new()
@@ -326,7 +344,7 @@ public sealed class LiveUpdatesBrowserTests
         var available = WebTestFixture.Require(fixture);
         await using var original = new FamilyLibrarianAppFactory(available.ConnectionString);
         await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
-        factory.UseKestrel(0);
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
         using var client = factory.CreateClient();
 
         Guid providerId;

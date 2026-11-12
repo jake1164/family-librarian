@@ -68,6 +68,8 @@ jobs:
       - name: Test
         env:
           FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS: "1"
+          FAMILY_LIBRARIAN_SETTINGS_BROWSER_TESTS: "1"
+          FAMILY_LIBRARIAN_AI_DIAGNOSTICS_BROWSER_TESTS: "1"
           FAMILY_LIBRARIAN_E2E_BASE_URL: http://localhost:8080
           FAMILY_LIBRARIAN_E2E_ADMIN_EMAIL: browser-e2e-admin@family-librarian.example
           FAMILY_LIBRARIAN_E2E_ADMIN_PASSWORD: Browser-E2E-CI-Only-Password1!

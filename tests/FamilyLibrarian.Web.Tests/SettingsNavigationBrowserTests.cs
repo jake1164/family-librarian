@@ -17,7 +17,7 @@ public sealed class SettingsNavigationBrowserTests
         var available = WebTestFixture.Require(fixture);
         await using var original = new FamilyLibrarianAppFactory(available.ConnectionString);
         await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
-        factory.UseKestrel(0);
+        factory.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
         using var client = factory.CreateClient();
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new()
