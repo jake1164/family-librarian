@@ -6,31 +6,47 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ## [Unreleased]
 
-### Storage visibility and automatic clean-up
+---
 
-- Configure clean-up from the Storage page: every retention period (files, database, and how often better copies are searched for) is a field with its allowed range and default, refused with the reason when out of range, with Restore defaults. The page shows when each clean-up last ran, what it did and when the next pass is due; held files show the date they will be removed (also on the Security queue). Fix: clean-up no longer fails when a storage zone folder does not exist.
-- Upgrade delivered books that look incomplete: a recorded sign of an incomplete copy (and nothing a person chose) triggers a search about every 30 days. A strong new candidate is announced to administrators and, by default, fetched, checked, delivered next to the old copy, confirmed in the library, and only then is the old copy removed (CWA or Audiobookshelf). Anything unexpected leaves both copies and notifies administrators. A new Better copies page (Admin menu) lists what was found and what happened, lets an administrator start or set aside a proposal, and has the switch for automatic replacement (on by default).
-- Keep looking for a better copy: a request parked in review (every candidate tried, or a copy held for a person) is rechecked on the source's schedule. A strong new candidate is fetched and checked once per check; if it passes, the review is withdrawn, administrators are told, and the held copy it replaces is removed straight away instead of waiting for its timer. Weaker candidates and copies that fail their checks change nothing.
-- Clean up unwanted files automatically so an unattended install does not fill its disk: rejected files after 14 days, held copies the search has moved past after 7, held ebooks waiting for a person after 30 and audiobooks after 14 (with a 10 GB total cap), and stuck or unrecorded files. Trusted files are never removed. Administrators are reminded half way and alerted when disk space is low; new downloads wait below the larger of 5 GB or 10% free.
-- Trim old database rows once a day: evidence for files that no longer exist (90 days), AI findings and finished requests' attempt history (180 days), search memory (30), notifications, closed alerts and sent messages (90), and the audit log (2 years). Open requests, existing files, unresolved reviews and identity-override records keep their history.
-- Add an administrator Storage page (read-only, no file or book names): free disk space, files on disk by stage with age and size, files held for a person or ruled out, files on disk the system has no record of, and rows and size per database table.
-- Rotate container logs in the Compose file (three 10 MB files per service) so logs cannot fill the disk.
+## [v1.0.0-alpha.6] — 2026-11-12
 
-### File review and AI activity
+Family Librarian can now talk and think: a conversational assistant on the web and Matrix, optional AI help with searching and checking files, much stronger automatic book finding and validation, and an install that looks after its own disk and library without an administrator.
 
-- Complete the scoped Phase 8 file-review work, including bounded EPUB excerpts used only during analysis, grounded hold decisions and separately enabled narrow hold release. Excerpt text is not retained in findings, logs or API responses.
-- Add durable administrator AI activity and diagnostics with separate accepted replies, rejected replies, provider errors, cancellations, pending and unclassified calls; include actual-model breakdowns, safe rejection reasons, file/track references and tracked workflow use.
-- Warn before leaving settings forms with unsaved changes.
-- Spend less of the AI allowance on file review: audiobook tracks are assessed a few times per bundle instead of once per track, and a hold review is skipped when nothing could justify a hold.
-- Pause a model setting that the model keeps refusing, and keep one call slot free for decision-bearing roles.
-- Add an "Ask for low reasoning" option for models that cannot switch reasoning off; search guidance keeps new names from a reply that also repeats earlier searches.
-- Add switches, limits, a counts-only view and a delete button for saved AI decisions Saved AI decisions record what happened to them afterwards (file decisions, candidate checks, suggested searches) and are kept within their limits automatically.
-- AI activity on Tasks can now cover 7, 30 or 90 days, shows a plain status per feature (failing, too little data, doing work, safe but idle) with its reason, adds speed and token figures, keeps weekly counts after 90 days, and shows what happened after the AI changed something.
+### Conversation and requests
 
-The file-review safeguards and scoped acceptance are complete. Real-model effectiveness
-tuning remains deferred: passing response validation or applying a recommendation does
-not establish accuracy or benefit. Release hardening and broad comparative model evaluation
-remain separate work.
+- Ask for books in plain language on a new web chat page or over Matrix; both use the same conversation engine and the same permissions as the rest of the app. Matrix shows typing while the assistant works.
+- Requests ask the requester about product choices (such as which edition) and remember saved preferences.
+- Audiobooks are handled as one request per book rather than per file, and mixed ebook/audiobook requests proceed independently.
+
+### AI assistance (optional, off until configured)
+
+- Connect an OpenAI-compatible model with per-role settings, budgets, concurrency limits, and a test panel. Every AI call is recorded; nothing the AI says changes a book without deterministic checks agreeing.
+- AI helps with search guidance, choosing between close candidates, and reviewing downloaded files, including bounded EPUB excerpts used only during analysis and never stored.
+- AI activity page on Tasks: accepted and rejected replies, provider errors, speed, tokens, a plain status per feature, and what happened after the AI changed something. Saved AI decisions have their own switches, limits and delete button.
+- Cost and reliability controls: fewer calls per audiobook, skipped reviews when nothing could justify a hold, a pause for settings the model keeps refusing, and an "Ask for low reasoning" option.
+- Tuning tools to compare models on saved decisions.
+
+### Finding and validating books
+
+- Searches try deterministic variants, remember what was tried, and keep waiting requests searching with bounded extra attempts.
+- Per-source confidence levels, same-work collapsing, and corroborating the author from context make matching stricter about the wrong book and kinder to the right one.
+- Downloaded files are checked against what was asked for: MP3 and Ogg/Opus identity checks, catalog profile comparison, and incomplete-artifact holds.
+- Source status panel and clearer Sources page.
+
+### Storage and self-maintenance
+
+- Administrator Storage page: disk space, files by stage, and database size, with no book names. Compose log rotation keeps logs from filling the disk.
+- Unwanted files and old database rows are cleaned up automatically on documented schedules, configured from the Storage page; trusted files are never removed. Administrators are warned when disk space is low and new downloads wait below the threshold.
+- Parked requests keep looking for a better copy, and delivered books that look incomplete are upgraded safely (new Better copies page, with an automatic-replacement switch on by default). Anything unexpected keeps both copies and notifies administrators.
+
+### Security and operations
+
+- Settings forms warn about unsaved changes; the asset-origin default is hardened; Sources, dashboard and admin pages are tidier.
+- Fix: Audiobookshelf variant matching, CWA downloads without a user-agent, duplicate automatic/manual provider jobs importing twice, and storage clean-up failing when a zone folder was missing.
+
+Known limits: real-model accuracy tuning and broad model comparison are still future work; passing response validation does not establish that a model is accurate.
+
+---
 
 ## [v1.0.0-alpha.5] — 2026-10-10
 
