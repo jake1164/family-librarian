@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Concurrency;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
@@ -40,7 +41,7 @@ public sealed class DirectAcquisitionService(
     IClock clock,
     ActiveAcquisitionTracker activityTracker) : IAudiobookPartSetMemberAcquirer
 {
-    private static readonly KeyedAsyncLock ExternalSubmissionLock = new();
+    private static readonly KeyedAsyncLock<Guid> ExternalSubmissionLock = new();
 
     public Task<ManualImportResult> AcquireMemberAsync(
         Guid requestId,

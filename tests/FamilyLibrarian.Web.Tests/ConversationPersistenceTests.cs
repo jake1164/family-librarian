@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Conversation;
+using FamilyLibrarian.Application.Storage;
 using FamilyLibrarian.Infrastructure.Conversation;
 using FamilyLibrarian.Infrastructure.Persistence;
 using FamilyLibrarian.Web.Tests.Harness;
@@ -175,21 +176,26 @@ public sealed class ConversationPersistenceTests
     }
 
     [TestMethod]
-    public async Task ProcessedEventsOlderThanTheRetentionAreRemovedButRequestKeysAreKept()
+    public async Task TheDailyCleanUpRemovesOldProcessedEventsButNotRequestKeysAndClaimingNoLongerPrunes()
     {
         await using var scope = WebTestFixture.Require(fixture).Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var userId = await AnyUserAsync(database);
         var room = $"!{Unique()}:example.test";
-        var old = DateTimeOffset.UtcNow - EfConversationEventLog.EventRetention - TimeSpan.FromDays(1);
+        var old = DateTimeOffset.UtcNow - TimeSpan.FromDays(new DatabaseRetentionOptions().ConversationEventDays + 1);
         var oldLog = new EfConversationEventLog(database, new FixedClock(old));
         var key = ConversationService.RequestKey("matrix", room, "$old");
         await oldLog.TryClaimAsync(userId, "matrix", room, "$old", CancellationToken.None);
         await oldLog.TryClaimRequestKeyAsync(userId, key, CancellationToken.None);
 
         await scope.ServiceProvider.GetRequiredService<IConversationEventLog>().TryClaimAsync(userId, "matrix", room, "$new", CancellationToken.None);
+        Assert.IsNotNull(await oldLog.FindAsync("matrix", room, "$old", CancellationToken.None), "A message turn does no clean-up work.");
 
+        var report = await scope.ServiceProvider.GetRequiredService<DatabaseRetentionService>().RunAsync(CancellationToken.None);
+
+        Assert.IsGreaterThanOrEqualTo(1, report.Removed[RetentionTarget.ConversationEvents]);
         Assert.IsNull(await oldLog.FindAsync("matrix", room, "$old", CancellationToken.None));
+        Assert.IsNotNull(await oldLog.FindAsync("matrix", room, "$new", CancellationToken.None), "A recent event is kept.");
         Assert.IsFalse((await oldLog.TryClaimRequestKeyAsync(userId, key, CancellationToken.None)).Claimed, "The key outlives its event.");
     }
 

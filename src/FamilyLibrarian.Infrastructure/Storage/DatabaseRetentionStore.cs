@@ -38,6 +38,9 @@ public sealed class DatabaseRetentionStore(AppDbContext database) : IDatabaseRet
             .OrderBy(message => message.CreatedAtUtc).Take(batchSize).ExecuteDeleteAsync(cancellationToken),
         RetentionTarget.AuditEvents => database.AuditEvents.Where(entry => entry.OccurredAtUtc < cutoffUtc)
             .OrderBy(entry => entry.OccurredAtUtc).Take(batchSize).ExecuteDeleteAsync(cancellationToken),
+        // Request keys are not touched: they outlive the event so a repeated request is never created twice.
+        RetentionTarget.ConversationEvents => database.ProcessedConversationEvents.Where(item => item.CreatedAtUtc < cutoffUtc)
+            .OrderBy(item => item.CreatedAtUtc).Take(batchSize).ExecuteDeleteAsync(cancellationToken),
         _ => throw new ArgumentOutOfRangeException(nameof(target), target, "Unknown retention target.")
     };
 

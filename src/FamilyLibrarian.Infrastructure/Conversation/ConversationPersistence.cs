@@ -46,9 +46,6 @@ public sealed class EfConversationSessionStore(AppDbContext database) : IConvers
 /// </summary>
 public sealed class EfConversationEventLog(AppDbContext database, IClock clock) : IConversationEventLog
 {
-    /// <summary>Processed-event rows older than this are removed on the next claim. Request keys are kept.</summary>
-    public static readonly TimeSpan EventRetention = TimeSpan.FromDays(30);
-
     public async Task<ConversationEventRecord?> FindAsync(string transport, string scopeKey, string eventId, CancellationToken cancellationToken)
     {
         var stored = await database.ProcessedConversationEvents.AsNoTracking()
@@ -58,9 +55,8 @@ public sealed class EfConversationEventLog(AppDbContext database, IClock clock) 
 
     public async Task<bool> TryClaimAsync(Guid userId, string transport, string scopeKey, string eventId, CancellationToken cancellationToken)
     {
+        // Old rows are removed by the daily database clean-up, not here: this runs on every message, inside the turn.
         var now = clock.UtcNow;
-        var cutoff = now - EventRetention;
-        await database.ProcessedConversationEvents.Where(item => item.CreatedAtUtc < cutoff).ExecuteDeleteAsync(cancellationToken);
         var inserted = await database.Database.ExecuteSqlAsync(
             $"""
             INSERT INTO conversation.processed_events (id, user_id, transport, scope_key, event_id, created_at_utc)

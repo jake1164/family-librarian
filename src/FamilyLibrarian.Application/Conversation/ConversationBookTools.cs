@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Concurrency;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Requests;
@@ -64,7 +65,7 @@ public sealed partial class ConversationBookTools(
 
     private const int MaxDescriptionLength = 400;
 
-    private static readonly KeyedAsyncLock ResolveLocks = new();
+    private static readonly KeyedAsyncLock<string> ResolveLocks = new();
 
     public async Task<ConversationSearchResult> SearchBooksAsync(string text, int maxChoices, CancellationToken cancellationToken)
     {

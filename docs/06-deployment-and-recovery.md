@@ -92,12 +92,13 @@ Once a day the database is trimmed of rows that only ever grow and explain nothi
 | In-app notifications and their read receipts | 90 days |
 | Closed source-interaction alerts | 90 days |
 | Chat or e-mail messages already sent (an unsent message is never removed) | 90 days |
+| Chat message ids already handled (kept so a redelivered message is answered once; request keys are kept) | 30 days |
 | Audit log | 2 years |
 
 Open requests, files that still exist, and unresolved reviews keep all of their history. Each pass is bounded and each
 table is handled separately, so one failure never stops the rest. The configured defaults (used until an administrator saves values on **Storage > Clean-up**) are
 `Storage__DatabaseRetention__EvidenceDays`, `SemanticFindingDays`, `AttemptDays`, `SearchMemoryDays`, `NotificationDays`,
-`AlertDays`, `CommunicationDays`, `AuditDays`, `BatchSize` and `MaxBatchesPerTable`; values are clamped (the audit log is
+`AlertDays`, `CommunicationDays`, `AuditDays`, `ConversationEventDays` (configuration only, never less than 7), `BatchSize` and `MaxBatchesPerTable`; values are clamped (the audit log is
 never kept for less than a year). Model usage and saved AI decisions have their own, shorter retention.
 
 ## Better copies of delivered books

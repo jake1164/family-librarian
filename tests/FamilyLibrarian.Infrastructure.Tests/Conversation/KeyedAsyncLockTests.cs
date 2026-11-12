@@ -1,4 +1,4 @@
-using FamilyLibrarian.Application.Conversation;
+using FamilyLibrarian.Application.Concurrency;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Conversation;
 
@@ -8,7 +8,7 @@ public sealed class KeyedAsyncLockTests
     [TestMethod]
     public async Task OneKeyAdmitsOneHolderAtATimeAndInOrderOfArrival()
     {
-        var locks = new KeyedAsyncLock();
+        var locks = new KeyedAsyncLock<string>();
         var concurrent = 0;
         var maxConcurrent = 0;
 
@@ -28,7 +28,7 @@ public sealed class KeyedAsyncLockTests
     [TestMethod]
     public async Task DifferentKeysDoNotWaitForEachOther()
     {
-        var locks = new KeyedAsyncLock();
+        var locks = new KeyedAsyncLock<string>();
         using var first = await locks.AcquireAsync("a", CancellationToken.None);
 
         using var second = await locks.AcquireAsync("b", new CancellationTokenSource(TimeSpan.FromSeconds(2)).Token);
@@ -39,7 +39,7 @@ public sealed class KeyedAsyncLockTests
     [TestMethod]
     public async Task ACancelledWaiterLeavesNoEntryBehindAndDoesNotBlockOthers()
     {
-        var locks = new KeyedAsyncLock();
+        var locks = new KeyedAsyncLock<string>();
         var held = await locks.AcquireAsync("book", CancellationToken.None);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
@@ -53,7 +53,7 @@ public sealed class KeyedAsyncLockTests
     [TestMethod]
     public async Task DisposingTwiceReleasesOnlyOnce()
     {
-        var locks = new KeyedAsyncLock();
+        var locks = new KeyedAsyncLock<string>();
         var held = await locks.AcquireAsync("book", CancellationToken.None);
 
         held.Dispose();
@@ -61,5 +61,19 @@ public sealed class KeyedAsyncLockTests
 
         Assert.AreEqual(0, locks.ActiveKeys);
         using var next = await locks.AcquireAsync("book", CancellationToken.None);
+    }
+
+    [TestMethod]
+    public async Task AnyKeyTypeWorksAndEqualKeysShareOneLock()
+    {
+        var locks = new KeyedAsyncLock<Guid>();
+        var id = Guid.NewGuid();
+        var held = await locks.AcquireAsync(id, CancellationToken.None);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => locks.AcquireAsync(Guid.Parse(id.ToString()), cancellation.Token));
+        held.Dispose();
+
+        Assert.AreEqual(0, locks.ActiveKeys);
     }
 }

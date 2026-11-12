@@ -34,6 +34,12 @@ public sealed record DatabaseRetentionOptions
     /// <summary>Chat/e-mail messages that have already been sent.</summary>
     public int CommunicationDays { get; init; } = 90;
 
+    /// <summary>
+    /// Chat message ids already handled, kept so a redelivered message is answered once, not twice. Configuration only (not on the
+    /// Clean-up screen); never less than a week, because a chat service may redeliver for days.
+    /// </summary>
+    public int ConversationEventDays { get; init; } = 30;
+
     /// <summary>The audit trail. Two years by default and never less than a year.</summary>
     public int AuditDays { get; init; } = 730;
 
@@ -53,6 +59,7 @@ public sealed record DatabaseRetentionOptions
         AlertDays = MaintenanceLimits.Clamp(AlertDays, MaintenanceLimits.AlertDays),
         CommunicationDays = MaintenanceLimits.Clamp(CommunicationDays, MaintenanceLimits.CommunicationDays),
         AuditDays = MaintenanceLimits.Clamp(AuditDays, MaintenanceLimits.AuditDays),
+        ConversationEventDays = Math.Clamp(ConversationEventDays, 7, 3650),
         BatchSize = Math.Clamp(BatchSize, 100, 5000),
         MaxBatchesPerTable = Math.Clamp(MaxBatchesPerTable, 1, 100)
     };
@@ -67,6 +74,7 @@ public sealed record DatabaseRetentionOptions
         RetentionTarget.InteractionAlerts => AlertDays,
         RetentionTarget.Communications => CommunicationDays,
         RetentionTarget.AuditEvents => AuditDays,
+        RetentionTarget.ConversationEvents => ConversationEventDays,
         _ => throw new ArgumentOutOfRangeException(nameof(target), target, "Unknown retention target.")
     };
 }
@@ -80,7 +88,8 @@ public enum RetentionTarget
     Notifications,
     InteractionAlerts,
     Communications,
-    AuditEvents
+    AuditEvents,
+    ConversationEvents
 }
 
 /// <summary>Removes at most <c>batchSize</c> expired rows of one kind and returns how many went. Each rule keeps what is still in use.</summary>

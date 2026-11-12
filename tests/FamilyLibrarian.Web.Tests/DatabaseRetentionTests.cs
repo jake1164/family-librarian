@@ -360,7 +360,8 @@ public sealed class DatabaseRetentionTests
     [TestMethod]
     public void ConfiguredPeriodsCannotEraseHistoryEarlyOrDisableTrimming()
     {
-        var wild = new DatabaseRetentionOptions { EvidenceDays = 0, AuditDays = 1, NotificationDays = -3, BatchSize = 1, MaxBatchesPerTable = 100000 }.Clamped();
+        var wild = new DatabaseRetentionOptions { EvidenceDays = 0, AuditDays = 1, NotificationDays = -3, ConversationEventDays = 0, BatchSize = 1, MaxBatchesPerTable = 100000 }.Clamped();
+        Assert.AreEqual(7, wild.ConversationEventDays, "A redelivered chat message is still recognised for at least a week.");
         Assert.AreEqual(30, wild.EvidenceDays);
         Assert.AreEqual(365, wild.AuditDays, "The audit trail is never kept for less than a year.");
         Assert.AreEqual(14, wild.NotificationDays);

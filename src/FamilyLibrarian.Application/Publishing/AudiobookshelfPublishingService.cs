@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Concurrency;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
@@ -36,7 +37,7 @@ public sealed class AudiobookshelfPublishingService(
     NotificationService notifications,
     Acquisition.FulfilledFormatDownloadCancellation? remainingDownloads = null)
 {
-    private static readonly Acquisition.KeyedAsyncLock BundlePublishLock = new();
+    private static readonly KeyedAsyncLock<Guid> BundlePublishLock = new();
 
     public async Task PublishAsync(MediaAsset asset, CancellationToken cancellationToken)
     {

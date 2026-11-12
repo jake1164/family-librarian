@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Concurrency;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
@@ -38,7 +39,7 @@ public sealed class AcquisitionStagingService(
     // fetching one book. The duplicate-content check below only sees assets already saved, so without this the two
     // passes both succeed and the format gets two copies (and, for an audiobook, two bundles published). Staging is
     // serialized per format so the second pass runs after the first has saved and is refused as a duplicate.
-    private static readonly KeyedAsyncLock FormatStagingLock = new();
+    private static readonly KeyedAsyncLock<Guid> FormatStagingLock = new();
 
     public async Task<ManualImportResult> StageAsync(
         BookRequest request,
