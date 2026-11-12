@@ -121,6 +121,8 @@ and, **by default**, the upgrade is carried out when the library can be changed 
    (for example by a restart) is simply repeated on the next pass: an old copy that is already gone counts as removed.
 5. If the better copy never arrives (the source gives up, or the copy fails its checks or is removed), the upgrade is closed, the
    copy in the library stays, administrators are notified, and the book is looked at again on the next pass.
+6. The system cleans up after itself: an unused extra copy a stopped upgrade left in the trusted zone is removed automatically a
+   day later, and the removal is audited and noted in the request's history. Held copies removed by storage clean-up are noted there too.
 
 It only starts when the destination can remove the old copy: for audiobooks the Audiobookshelf token must have the *delete*
 permission; for ebooks the CWA e-reader service account must be configured and allowed to delete books. Otherwise the proposal

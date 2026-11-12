@@ -66,6 +66,15 @@ public interface ILibraryUpgradeStore
     /// </summary>
     Task<bool> IsAcquisitionInFlightAsync(LibraryUpgrade upgrade, DateTimeOffset approvedSinceUtc, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Trusted copies that no upgrade will ever deliver: the format is in the library, an upgrade of it failed before they arrived, none is
+    /// open now, and they have sat untouched since <paramref name="staleBeforeUtc"/>. The library already holds a copy, so these are surplus.
+    /// </summary>
+    Task<IReadOnlyList<UpgradeLeftover>> ListLeftoverCopiesAsync(DateTimeOffset staleBeforeUtc, int maximumCount, CancellationToken cancellationToken);
+
+    /// <summary>Adds a note to the request's history (any status) saying what the system did on its own.</summary>
+    Task NoteAsync(Guid requestId, string note, DateTimeOffset atUtc, CancellationToken cancellationToken);
+
     Task<IReadOnlyList<LibraryUpgradeView>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken);
 
     /// <summary>The administrator's choice about automatic replacement, or null when they have never changed it (the default then applies).</summary>
@@ -75,6 +84,9 @@ public interface ILibraryUpgradeStore
 
     Task SaveAsync(CancellationToken cancellationToken);
 }
+
+/// <summary>A trusted copy left behind by a stopped upgrade, and the request it belongs to.</summary>
+public sealed record UpgradeLeftover(Guid AssetId, Guid RequestId);
 
 public sealed record LibraryUpgradeScanReport(int Looked, int Proposed, int Failures);
 

@@ -436,6 +436,17 @@ public sealed class BookRequest
         return true;
     }
 
+    /// <summary>
+    /// Adds a plain note to the history in any status, without changing the status: how the system records something it did on its
+    /// own (for example removing an unused copy) so the trail explains it.
+    /// </summary>
+    public void AddNote(string note, DateTimeOffset atUtc)
+    {
+        UpdatedAtUtc = atUtc;
+        _statusHistory.Add(new RequestStatusHistory(
+            Id, Status, Status, actorUserId: null, CleanNote(note, MaxReasonLength, nameof(note)), atUtc));
+    }
+
     /// <summary>Adds a note to the history of a review that stays open, without changing its status or candidates.</summary>
     public void AddReviewNote(string note, DateTimeOffset atUtc)
     {

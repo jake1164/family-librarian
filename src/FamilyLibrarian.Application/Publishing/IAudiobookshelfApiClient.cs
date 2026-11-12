@@ -25,7 +25,10 @@ public interface IAudiobookshelfApiClient
     /// </summary>
     Task<bool> CanDeleteAsync(CancellationToken cancellationToken) => Task.FromResult(false);
 
-    /// <summary>The id of the one library item whose title is exactly this, or null when none or more than one. Used to confirm an upgrade copy.</summary>
+    /// <summary>
+    /// The id of the one library item whose title, or whose upload folder, is exactly this, or null when none or more than one. The folder
+    /// counts because Audiobookshelf titles an item from the audio files' tags when they have any. Used to confirm an upgrade copy.
+    /// </summary>
     Task<string?> FindItemIdByExactTitleAsync(string exactTitle, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
 
     /// <summary>Removes an item and its files (<c>hard=1</c>); without it the files stay and the next scan brings the item back.</summary>

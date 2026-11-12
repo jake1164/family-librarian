@@ -15,8 +15,8 @@ public sealed class LibraryUpgradeStore(AppDbContext database) : ILibraryUpgrade
     /// <summary>
     /// The copies that count as "in the library": delivered (archived) ones, and trusted ones still waiting to be delivered. A trusted
     /// copy that appeared after an upgrade of the same format failed is that upgrade's leftover, never delivered, so it is not the
-    /// library copy: judging it would hide the real one. Left in place (a trusted file is never removed automatically); the stopped
-    /// upgrade already told administrators.
+    /// library copy: judging it would hide the real one. Until the clean-up removes it (see LibraryUpgradeLeftoverCleaner) it is
+    /// simply not counted.
     /// </summary>
     private IQueryable<MediaAsset> DeliveredCopies() =>
         database.MediaAssets.AsNoTracking().Where(asset => asset.StorageState == MediaAssetStorageState.Archived ||
@@ -95,6 +95,28 @@ public sealed class LibraryUpgradeStore(AppDbContext database) : ILibraryUpgrade
             (asset.StorageState == MediaAssetStorageState.Quarantine || asset.StorageState == MediaAssetStorageState.Processing ||
                 asset.StorageState == MediaAssetStorageState.Unmatched ||
                 (asset.StorageState == MediaAssetStorageState.Trusted && asset.UpdatedAtUtc >= approvedSinceUtc)), cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<UpgradeLeftover>> ListLeftoverCopiesAsync(DateTimeOffset staleBeforeUtc, int maximumCount, CancellationToken cancellationToken) =>
+        await (
+            from asset in database.MediaAssets.AsNoTracking()
+            join format in database.RequestFormats.AsNoTracking() on asset.AssociatedRequestFormatId equals format.Id
+            where asset.StorageState == MediaAssetStorageState.Trusted && asset.UpdatedAtUtc < staleBeforeUtc &&
+                format.Status == RequestFormatStatus.Available &&
+                database.LibraryUpgrades.Any(upgrade => upgrade.RequestFormatId == format.Id && upgrade.State == LibraryUpgradeState.Failed &&
+                    upgrade.CreatedAtUtc <= asset.CreatedAtUtc) &&
+                // A newer upgrade of the same format may be delivering this very copy.
+                !database.LibraryUpgrades.Any(upgrade => upgrade.RequestFormatId == format.Id && OpenStates.Contains(upgrade.State))
+            orderby asset.UpdatedAtUtc
+            select new UpgradeLeftover(asset.Id, format.RequestId))
+            .Take(maximumCount).ToListAsync(cancellationToken);
+
+    public async Task NoteAsync(Guid requestId, string note, DateTimeOffset atUtc, CancellationToken cancellationToken)
+    {
+        var request = await database.BookRequests.Include(item => item.StatusHistory).FirstOrDefaultAsync(item => item.Id == requestId, cancellationToken);
+        if (request is null) return;
+        request.AddNote(note, atUtc);
+        await database.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<LibraryUpgradeView>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken)

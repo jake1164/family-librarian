@@ -41,6 +41,20 @@ public sealed class MediaAssetTests
     }
 
     [TestMethod]
+    public void ATrustedCopyThatWillNeverBeDeliveredMayBeDestroyedButTheDestroyedStateIsFinal()
+    {
+        var asset = CreateAsset();
+        asset.TransitionStorageState(MediaAssetStorageState.Processing, Now.AddMinutes(1));
+        asset.TransitionStorageState(MediaAssetStorageState.Trusted, Now.AddMinutes(2));
+
+        asset.TransitionStorageState(MediaAssetStorageState.Destroyed, Now.AddMinutes(3));
+
+        Assert.AreEqual(MediaAssetStorageState.Destroyed, asset.StorageState);
+        Assert.ThrowsExactly<InvalidMediaAssetStorageTransitionException>(() =>
+            asset.TransitionStorageState(MediaAssetStorageState.Trusted, Now.AddMinutes(4)));
+    }
+
+    [TestMethod]
     public void QuarantineCannotMoveDirectlyToTrusted()
     {
         var asset = CreateAsset();

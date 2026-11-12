@@ -1,6 +1,5 @@
 using FamilyLibrarian.Application.Storage;
 using FamilyLibrarian.Domain.Acquisition;
-using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -64,12 +63,12 @@ public sealed class StorageMaintenanceStore(AppDbContext database) : IStorageMai
     public async Task NoteHeldCopyRemovedAsync(Guid requestId, string note, DateTimeOffset atUtc, CancellationToken cancellationToken)
     {
         var request = await database.BookRequests.Include(item => item.StatusHistory).FirstOrDefaultAsync(item => item.Id == requestId, cancellationToken);
-        if (request is not { Status: RequestStatus.NeedsReview })
+        if (request is null)
         {
             return;
         }
 
-        request.AddReviewNote(note, atUtc);
+        request.AddNote(note, atUtc);
         await database.SaveChangesAsync(cancellationToken);
     }
 }

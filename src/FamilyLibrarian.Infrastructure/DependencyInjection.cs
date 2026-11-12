@@ -301,6 +301,7 @@ public static class DependencyInjection
         services.AddScoped<FamilyLibrarian.Application.Upgrades.ILibraryUpgradeStore, FamilyLibrarian.Infrastructure.Upgrades.LibraryUpgradeStore>();
         services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeScanService>();
         services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeAdminService>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeLeftoverCleaner>();
         services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeService>();
         services.AddScoped<FamilyLibrarian.Application.Upgrades.IUpgradeCopyPublisher, FamilyLibrarian.Application.Upgrades.LibraryUpgradeCopyPublisher>();
         services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureWriter, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureWriter>();

@@ -113,6 +113,56 @@ public sealed class AudiobookshelfApiClientTests
         Assert.AreEqual(BookMatchDecision.NoMatch, result.Decision);
     }
 
+    private const string Temporary = "The Hobbit (upgrade ab12cd34)";
+
+    [TestMethod]
+    public async Task AnUpgradeCopyAudiobookshelfNamedFromItsTagsIsStillFoundByItsTemporaryUploadTitle()
+    {
+        // The real-world case: the better copy's tracks carry an album tag, so Audiobookshelf lists it under that title.
+        var client = ClientReturningItems(
+            ItemWithFolder("The Hobbit", "J. R. R. Tolkien", "li_old", "J. R. R. Tolkien/The Hobbit"),
+            ItemWithFolder("There and Back Again (Unabridged)", "J. R. R. Tolkien", "li_new", "J. R. R. Tolkien/" + Temporary));
+
+        Assert.AreEqual("li_new", await client.FindItemIdByExactTitleAsync(Temporary, CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task AnUpgradeCopyIsStillFoundAfterItWasRenamedBecauseItsFolderKeepsTheTemporaryName()
+    {
+        var client = ClientReturningItems(
+            ItemWithFolder("The Hobbit", "J. R. R. Tolkien", "li_new", "J. R. R. Tolkien/" + Temporary));
+
+        Assert.AreEqual("li_new", await client.FindItemIdByExactTitleAsync(Temporary, CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task AnItemWithANeighbouringTitleOrFolderIsNeverTakenForTheUpgradeCopy()
+    {
+        var client = ClientReturningItems(
+            ItemWithFolder("The Hobbit", "J. R. R. Tolkien", "li_old", "J. R. R. Tolkien/The Hobbit"),
+            ItemWithFolder("Other", "Someone", "li_other", "Someone/The Hobbit (upgrade 99999999)"));
+
+        Assert.IsNull(await client.FindItemIdByExactTitleAsync(Temporary, CancellationToken.None), "Another upgrade's folder and the old item are not it.");
+    }
+
+    [TestMethod]
+    public async Task TwoItemsThatBothLookLikeTheUpgradeCopyAreNotGuessedBetween()
+    {
+        var client = ClientReturningItems(
+            ItemWithFolder("A", "x", "li_1", "x/" + Temporary),
+            ItemWithFolder(Temporary, "x", "li_2", "x/Elsewhere"));
+
+        Assert.IsNull(await client.FindItemIdByExactTitleAsync(Temporary, CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task AnItemWhoseTitleIsExactlyTheOneAskedForIsStillFoundWithoutAFolder()
+    {
+        var client = ClientReturningItems(Item("The Hobbit", "J. R. R. Tolkien", "li_1"));
+
+        Assert.AreEqual("li_1", await client.FindItemIdByExactTitleAsync("The Hobbit", CancellationToken.None));
+    }
+
     private static string ItemWithFolder(string title, string author, string id, string relPath) =>
         $$"""{"id": "{{id}}", "relPath": "{{relPath}}", "media": {"metadata": {"title": "{{title}}", "authorName": "{{author}}" } } }""";
 

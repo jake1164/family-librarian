@@ -41,7 +41,8 @@ public sealed class LibraryUpgradeService(
     NotificationService notifications,
     IAuditWriter audit,
     IClock clock,
-    LibraryUpgradeOptions options)
+    LibraryUpgradeOptions options,
+    LibraryUpgradeLeftoverCleaner leftovers)
 {
     private static readonly TimeSpan ConfirmationDeadline = TimeSpan.FromHours(24);
 
@@ -156,6 +157,8 @@ public sealed class LibraryUpgradeService(
             }
         }
 
+        // Self-cleaning: whatever a stopped upgrade left in the trusted zone is removed and noted, never left for an administrator.
+        await leftovers.RemoveAsync(cancellationToken);
         return done;
     }
 
@@ -230,17 +233,8 @@ public sealed class LibraryUpgradeService(
                 ? await absDeliveries.FindByBundleIdAsync(freshBundleId, cancellationToken)
                 : await absDeliveries.FindByAssetIdAsync(fresh.Id, cancellationToken);
             var newItemId = newDelivery?.ExternalItemId;
-            if (newItemId is null)
-            {
-                newItemId = await abs.FindItemIdByExactTitleAsync(LibraryUpgradeCopyPublisher.TemporaryTitle(title, upgrade.Id), cancellationToken);
-                if (newItemId is null && upgrade.State == LibraryUpgradeState.Verified)
-                {
-                    // Resuming: the temporary title is gone only if the better copy was already renamed. With the old item removed it is
-                    // then the one item carrying the real title.
-                    var renamed = await abs.FindItemIdByExactTitleAsync(title, cancellationToken);
-                    if (renamed is not null && renamed != oldItemId) newItemId = renamed;
-                }
-            }
+            // The upload folder keeps the temporary name even after the item is renamed, so this finds the better copy on a resumed run too.
+            newItemId ??= await abs.FindItemIdByExactTitleAsync(LibraryUpgradeCopyPublisher.TemporaryTitle(title, upgrade.Id), cancellationToken);
 
             if (newItemId is null || newItemId == oldItemId) return await WaitOrExpireAsync(upgrade, cancellationToken);
             await MarkVerifiedAsync(upgrade, cancellationToken);

@@ -83,7 +83,11 @@ public sealed class AudiobookshelfApiClient(
             using var response = await client.GetAsync($"{baseUrl}/api/libraries/{settings.LibraryId}/items", cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
             var results = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))?["results"]?.AsArray();
-            var matches = results?.Where(item => item?["media"]?["metadata"]?["title"]?.GetValue<string>() == exactTitle).ToArray() ?? [];
+            // Audiobookshelf names an item from the audio files' own tags when they have any, not from the upload, so the title alone
+            // would miss most real audiobooks. The item's folder (the last part of relPath) is named from the title it was uploaded under
+            // and never changes, even after a rename, so it recognises our own upload either way.
+            var matches = results?.Where(item => item?["media"]?["metadata"]?["title"]?.GetValue<string>() == exactTitle ||
+                UploadFolderIsTheRequestedTitle(item?["relPath"]?.GetValue<string>(), exactTitle)).ToArray() ?? [];
             return matches.Length == 1 ? matches[0]!["id"]?.GetValue<string>() : null;
         }
     }

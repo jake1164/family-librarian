@@ -130,7 +130,7 @@ public sealed class StorageMaintenanceService(
         if (removal.WasWaitingForPerson && removal.RequestId is { } requestId)
         {
             await Safely(async () => await store.NoteHeldCopyRemovedAsync(requestId,
-                "A held copy waiting for a person was removed automatically; the request is open to another automatic search.", now, cancellationToken), cancellationToken);
+                "A copy that was waiting for a person was removed automatically after its time limit.", now, cancellationToken), cancellationToken);
         }
 
         return assets.Count;

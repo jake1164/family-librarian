@@ -32,7 +32,9 @@ public static class MediaAssetStorageTransitions
             // the asset outright.
             MediaAssetStorageState.Quarantine
         ],
-        [MediaAssetStorageState.Trusted] = [MediaAssetStorageState.Archived],
+        // Archived once the destination confirms it. Destroyed when it will never be delivered (for example the leftover of a stopped
+        // upgrade): the system cleans up after itself instead of leaving files for an administrator to find.
+        [MediaAssetStorageState.Trusted] = [MediaAssetStorageState.Archived, MediaAssetStorageState.Destroyed],
         [MediaAssetStorageState.Unmatched] =
         [
             // An administrator may retry deterministic identity verification

@@ -670,25 +670,80 @@ public sealed class LibraryUpgradeReplacementTests
         Assert.AreEqual(1, await NotificationsAsync(a, NotificationCategories.UpgradeStopped));
     }
 
+    /// <summary>The state a stopped upgrade leaves: the upgrade is Failed and its better copy sits Trusted, never delivered.</summary>
+    private static async Task<MediaAsset> StoppedUpgradeWithALeftoverAsync(Arranged a)
+    {
+        await a.WithDb(async db =>
+        {
+            var upgrade = await db.LibraryUpgrades.SingleAsync(u => u.Id == a.UpgradeId);
+            upgrade.MarkFailed("The better copy was not confirmed in the library within a day.", DateTimeOffset.UtcNow);
+            await db.SaveChangesAsync();
+            return 0;
+        });
+        return await NewTrustedCopyAsync(a, RequestMediaType.Ebook);
+    }
+
     [TestMethod]
     public async Task ATrustedCopyLeftByAFailedUpgradeIsNeverMistakenForTheCopyInTheLibrary()
     {
         await using var a = await ArrangeAsync(RequestMediaType.Ebook);
-        a.Cwa.NewCopyVisible = false;
-        var leftover = await NewTrustedCopyAsync(a, RequestMediaType.Ebook);
-        await PublishAlongsideAsync(a, leftover);
-        a.Clock.Advance(TimeSpan.FromHours(25));
-        await FinalizeAsync(a);
-        Assert.AreEqual(LibraryUpgradeState.Failed, (await a.UpgradeAsync()).State);
+        var leftover = await StoppedUpgradeWithALeftoverAsync(a);
 
         await using var scope = a.Factory.Services.CreateAsyncScope();
         var subjects = await scope.ServiceProvider.GetRequiredService<ILibraryUpgradeStore>()
             .ListSubjectsAsync(DateTimeOffset.UtcNow.AddMinutes(1), 20, CancellationToken.None);
 
         Assert.AreEqual(a.OldAssetId, subjects.Single(subject => subject.RequestFormatId == a.FormatId).DeliveredAssetId,
-            "The copy that was delivered is the one judged, not the stray the failed upgrade left in the trusted zone.");
-        Assert.AreEqual(MediaAssetStorageState.Trusted, await StateOfAsync(a, leftover), "A trusted file is never removed automatically; administrators were told.");
+            "The copy that was delivered is the one judged, not the stray the stopped upgrade left in the trusted zone.");
+        Assert.AreEqual(MediaAssetStorageState.Trusted, await StateOfAsync(a, leftover), "Still within its grace period, so not removed yet.");
+    }
+
+    [TestMethod]
+    public async Task ACopyLeftByAStoppedUpgradeIsRemovedAfterItsGraceAndTheRemovalIsAuditedAndNotedOnTheRequest()
+    {
+        await using var a = await ArrangeAsync(RequestMediaType.Ebook);
+        var leftover = await StoppedUpgradeWithALeftoverAsync(a);
+
+        await FinalizeAsync(a);
+        Assert.AreEqual(MediaAssetStorageState.Trusted, await StateOfAsync(a, leftover), "A copy that may still be being delivered is not taken.");
         Assert.IsTrue(TrustedFileExists(a, leftover));
+
+        a.Clock.Advance(LibraryUpgradeLeftoverCleaner.Grace + TimeSpan.FromHours(1));
+        await FinalizeAsync(a);
+
+        Assert.AreEqual(MediaAssetStorageState.Destroyed, await StateOfAsync(a, leftover));
+        Assert.IsFalse(TrustedFileExists(a, leftover), "The file is gone from disk, not only the record.");
+        Assert.AreEqual(MediaAssetStorageState.Archived, await a.WithDb(db => db.MediaAssets.AsNoTracking().Where(x => x.Id == a.OldAssetId).Select(x => x.StorageState).SingleAsync()),
+            "The copy in the library is never touched.");
+        Assert.AreEqual(1, await a.WithDb(db => db.AuditEvents.CountAsync(e => e.SubjectId == leftover.Id.ToString() && e.Action == FamilyLibrarian.Domain.Audit.AuditActions.AssetDestroyed)));
+        var notes = await a.WithDb(db => db.RequestStatusHistory.AsNoTracking().Where(h => h.RequestId == a.RequestId && h.Reason != null && h.Reason.Contains("removed automatically")).ToListAsync());
+        Assert.HasCount(1, notes, "Noted once on the request.");
+
+        await FinalizeAsync(a);
+        Assert.HasCount(1, await a.WithDb(db => db.RequestStatusHistory.AsNoTracking().Where(h => h.RequestId == a.RequestId && h.Reason != null && h.Reason.Contains("removed automatically")).ToListAsync()),
+            "A second pass finds nothing left to do.");
+    }
+
+    [TestMethod]
+    public async Task ATrustedCopyIsNotRemovedWhileAnUpgradeOfThatBookIsStillOpen()
+    {
+        await using var a = await ArrangeAsync(RequestMediaType.Ebook, acquiring: false);
+        // An earlier attempt failed, and a newer one is open: the trusted copy may be the one it is delivering.
+        await a.WithDb(async db =>
+        {
+            var earlier = new LibraryUpgrade(a.RequestId, a.FormatId, a.OldAssetId, "upgrade-external", "better-0", null, ["x"], DateTimeOffset.UtcNow.AddMinutes(-5));
+            earlier.MarkAcquiring(DateTimeOffset.UtcNow.AddMinutes(-4));
+            earlier.MarkFailed("stopped", DateTimeOffset.UtcNow.AddMinutes(-3));
+            db.LibraryUpgrades.Add(earlier);
+            await db.SaveChangesAsync();
+            return 0;
+        });
+        var inFlight = await NewTrustedCopyAsync(a, RequestMediaType.Ebook);
+
+        a.Clock.Advance(LibraryUpgradeLeftoverCleaner.Grace + TimeSpan.FromHours(1));
+        await FinalizeAsync(a);
+
+        Assert.AreEqual(MediaAssetStorageState.Trusted, await StateOfAsync(a, inFlight), "The proposal for this book is still open.");
     }
 
     /// <summary>A scan that is allowed to start what it proposes, with the configured default given and a candidate no earlier upgrade used.</summary>

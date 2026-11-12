@@ -165,6 +165,12 @@ public sealed class StorageMaintenanceTests
         }
 
         Assert.AreEqual(MediaAssetStorageState.Trusted, await StateAsync(factory, trustedAncient.Id), "A trusted file is never touched, however old.");
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var notes = await scope.ServiceProvider.GetRequiredService<AppDbContext>().RequestStatusHistory.AsNoTracking()
+            .Where(history => history.RequestId == seed.RequestId && history.Reason != null && history.Reason.Contains("removed automatically")).ToListAsync();
+        Assert.IsNotEmpty(notes, "The removal is noted on the request, whatever its status.");
+        Assert.IsTrue(notes.All(note => note.FromStatus == note.ToStatus), "A note never changes the status.");
     }
 
     [TestMethod]
