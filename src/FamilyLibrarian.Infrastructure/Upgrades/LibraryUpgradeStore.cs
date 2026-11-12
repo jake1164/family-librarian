@@ -12,7 +12,17 @@ public sealed class LibraryUpgradeStore(AppDbContext database) : ILibraryUpgrade
     private static readonly LibraryUpgradeState[] OpenStates =
         [LibraryUpgradeState.Proposed, LibraryUpgradeState.Acquiring, LibraryUpgradeState.Publishing, LibraryUpgradeState.Verified];
 
-    private static readonly MediaAssetStorageState[] DeliveredStates = [MediaAssetStorageState.Archived, MediaAssetStorageState.Trusted];
+    /// <summary>
+    /// The copies that count as "in the library": delivered (archived) ones, and trusted ones still waiting to be delivered. A trusted
+    /// copy that appeared after an upgrade of the same format failed is that upgrade's leftover, never delivered, so it is not the
+    /// library copy: judging it would hide the real one. Left in place (a trusted file is never removed automatically); the stopped
+    /// upgrade already told administrators.
+    /// </summary>
+    private IQueryable<MediaAsset> DeliveredCopies() =>
+        database.MediaAssets.AsNoTracking().Where(asset => asset.StorageState == MediaAssetStorageState.Archived ||
+            (asset.StorageState == MediaAssetStorageState.Trusted &&
+                !database.LibraryUpgrades.Any(upgrade => upgrade.RequestFormatId == asset.AssociatedRequestFormatId &&
+                    upgrade.State == LibraryUpgradeState.Failed && upgrade.CreatedAtUtc <= asset.CreatedAtUtc)));
 
     public async Task<IReadOnlyList<UpgradeSubject>> ListSubjectsAsync(DateTimeOffset notScannedSince, int maximumCount, CancellationToken cancellationToken)
     {
@@ -22,7 +32,7 @@ public sealed class LibraryUpgradeStore(AppDbContext database) : ILibraryUpgrade
             where format.Status == RequestFormatStatus.Available &&
                 (format.UpgradeScannedAtUtc == null || format.UpgradeScannedAtUtc < notScannedSince) &&
                 !database.LibraryUpgrades.Any(upgrade => upgrade.RequestFormatId == format.Id && OpenStates.Contains(upgrade.State)) &&
-                database.MediaAssets.Any(asset => asset.AssociatedRequestFormatId == format.Id && DeliveredStates.Contains(asset.StorageState) &&
+                DeliveredCopies().Any(asset => asset.AssociatedRequestFormatId == format.Id &&
                     database.ArtifactEvidenceItems.Any(item => item.MediaAssetId == asset.Id && codes.Contains(item.Code) &&
                         (item.Polarity == EvidencePolarity.Condition || item.Polarity == EvidencePolarity.Negative)))
             orderby format.UpgradeScannedAtUtc
@@ -33,8 +43,8 @@ public sealed class LibraryUpgradeStore(AppDbContext database) : ILibraryUpgrade
         foreach (var candidate in candidates)
         {
             var workId = await database.BookRequests.AsNoTracking().Where(request => request.Id == candidate.RequestId).Select(request => request.WorkId).SingleAsync(cancellationToken);
-            var newest = await database.MediaAssets.AsNoTracking()
-                .Where(asset => asset.AssociatedRequestFormatId == candidate.Id && DeliveredStates.Contains(asset.StorageState))
+            var newest = await DeliveredCopies()
+                .Where(asset => asset.AssociatedRequestFormatId == candidate.Id)
                 .OrderByDescending(asset => asset.CreatedAtUtc).FirstAsync(cancellationToken);
             // The newest delivery is the copy in the library now; an older one that an upgrade replaced is not judged again.
             var deliveredIds = newest.BundleId is { } bundle

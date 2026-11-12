@@ -106,7 +106,7 @@ public sealed partial class CwaEreaderSessionClient(
             // CWA answers "Book Successfully Deleted" even for an id that does not exist, so its reply alone proves nothing. The book
             // must be there before and gone after, or this does not report success.
             if (!await BookPageExistsAsync(client, baseUrl, cwaBookId, cookies, cancellationToken))
-                return new CwaDeleteResult(false, "CWA has no book with that id.");
+                return new CwaDeleteResult(false, "CWA has no book with that id.", AlreadyGone: true);
 
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/ajax/delete/{cwaBookId}");
             request.Headers.Add("X-CSRFToken", csrfToken);

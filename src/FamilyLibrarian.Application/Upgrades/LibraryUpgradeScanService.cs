@@ -115,7 +115,7 @@ public sealed class LibraryUpgradeScanService(
             looked++;
             try
             {
-                if (await ProposeAsync(subject, assessment, enabled, cancellationToken)) proposed++;
+                if (await ProposeAsync(subject, assessment, enabled, o.AutoReplace, cancellationToken)) proposed++;
                 await store.MarkScannedAsync(subject.RequestFormatId, clock.UtcNow, cancellationToken);
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
@@ -129,7 +129,8 @@ public sealed class LibraryUpgradeScanService(
     }
 
     private async Task<bool> ProposeAsync(
-        UpgradeSubject subject, DeficiencyAssessment assessment, IReadOnlyList<Domain.Providers.ExternalProvider> enabled, CancellationToken cancellationToken)
+        UpgradeSubject subject, DeficiencyAssessment assessment, IReadOnlyList<Domain.Providers.ExternalProvider> enabled, bool autoReplaceDefault,
+        CancellationToken cancellationToken)
     {
         var work = await workLookup.FindAsync(subject.WorkId, cancellationToken);
         if (work is null) return false;
@@ -152,7 +153,8 @@ public sealed class LibraryUpgradeScanService(
                 new { UpgradeId = upgrade.Id, subject.RequestFormatId, Provider = provider.ProviderId, Reasons = assessment.Reasons }, cancellationToken);
             await notifications.RecordBetterCopyAvailableAsync(subject.RequestId, work.Title, cancellationToken);
             // On by default: carry it out when the destination can be changed. Otherwise (or when switched off) it waits for an administrator.
-            if (upgrades is not null && await store.GetAutoReplaceAsync(cancellationToken) is not false && options.AutoReplace)
+            // The administrator's saved choice wins over the configured default, the same rule StartAsync applies.
+            if (upgrades is not null && (await store.GetAutoReplaceAsync(cancellationToken) ?? autoReplaceDefault))
             {
                 await upgrades.StartAsync(upgrade.Id, approvedByAdministrator: false, cancellationToken);
             }

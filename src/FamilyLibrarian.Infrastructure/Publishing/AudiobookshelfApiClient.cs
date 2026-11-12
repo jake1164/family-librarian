@@ -95,8 +95,21 @@ public sealed class AudiobookshelfApiClient(
         using (client)
         {
             using var response = await client.DeleteAsync($"{baseUrl}/api/items/{Uri.EscapeDataString(itemId)}?hard=1", cancellationToken);
-            return response.IsSuccessStatusCode;
+            if (response.IsSuccessStatusCode) return true;
+            // "Not found" is also what a wrong address or a proxy answers, so it only counts as "already deleted" (an upgrade resuming
+            // after an interruption) when the library's own listing loads and no longer contains the item.
+            return response.StatusCode == System.Net.HttpStatusCode.NotFound && await IsAbsentFromLibraryAsync(client, baseUrl, itemId, cancellationToken);
         }
+    }
+
+    private async Task<bool> IsAbsentFromLibraryAsync(HttpClient client, string baseUrl, string itemId, CancellationToken cancellationToken)
+    {
+        var settings = await settingsStore.FindAsync(cancellationToken);
+        if (settings is null) return false;
+        using var response = await client.GetAsync($"{baseUrl}/api/libraries/{settings.LibraryId}/items", cancellationToken);
+        if (!response.IsSuccessStatusCode) return false;
+        var results = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))?["results"]?.AsArray();
+        return results is not null && results.All(item => item?["id"]?.GetValue<string>() != itemId);
     }
 
     public async Task<bool> RenameItemAsync(string itemId, string title, CancellationToken cancellationToken)

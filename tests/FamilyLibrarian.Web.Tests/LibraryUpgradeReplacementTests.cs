@@ -48,6 +48,9 @@ public sealed class LibraryUpgradeReplacementTests
 
         public CwaDeleteResult DeleteResult { get; set; } = new(true, null);
 
+        /// <summary>Stands in for the host stopping mid-way: the call fails after everything before it was saved.</summary>
+        public bool ThrowOnDelete { get; set; }
+
         public int Written { get; private set; }
 
         public ICwaIngestTransport Create(CwaSettings settings) => this;
@@ -73,6 +76,7 @@ public sealed class LibraryUpgradeReplacementTests
         public Task<CwaDeleteResult> DeleteBookAsync(CwaSettings settings, string serviceAccountUsername, string serviceAccountPassword, string cwaBookId, CancellationToken cancellationToken)
         {
             calls.Log.Add("cwa.delete:" + cwaBookId);
+            if (ThrowOnDelete) throw new InvalidOperationException("interrupted");
             return Task.FromResult(DeleteResult);
         }
 
@@ -88,6 +92,8 @@ public sealed class LibraryUpgradeReplacementTests
         public bool CanDelete { get; set; } = true;
 
         public bool DeleteWorks { get; set; } = true;
+
+        public bool ThrowOnDelete { get; set; }
 
         public bool NewItemVisible { get; set; } = true;
 
@@ -106,6 +112,7 @@ public sealed class LibraryUpgradeReplacementTests
         public Task<bool> DeleteItemHardAsync(string itemId, CancellationToken cancellationToken)
         {
             calls.Log.Add("abs.delete:" + itemId);
+            if (ThrowOnDelete) throw new InvalidOperationException("interrupted");
             return Task.FromResult(DeleteWorks);
         }
 
@@ -316,6 +323,9 @@ public sealed class LibraryUpgradeReplacementTests
         StringAssert.Contains(upgrade.FailureReason, "Both copies");
         Assert.AreEqual(1, await NotificationsAsync(a, NotificationCategories.UpgradeStopped));
         Assert.AreEqual(0, await NotificationsAsync(a, NotificationCategories.LibraryUpgraded));
+        Assert.AreEqual(MediaAssetStorageState.Archived, await StateOfAsync(a, copy), "The better copy is in the library, so it is recorded as delivered, not left as a stray trusted file.");
+        Assert.IsFalse(TrustedFileExists(a, copy));
+        Assert.AreEqual(NewBookId, (await a.WithDb(db => db.LibraryImports.AsNoTracking().SingleAsync(i => i.AssetId == copy.Id))).ExternalBookId);
     }
 
     [TestMethod]
@@ -574,6 +584,161 @@ public sealed class LibraryUpgradeReplacementTests
         Assert.AreEqual(MediaAssetStorageState.Destroyed, await StateOfAsync(a, awaitingDecision));
         Assert.IsFalse(TrustedFileExists(a, awaitingDecision), "The file is gone from disk, not only the record.");
         Assert.AreEqual(MediaAssetStorageState.Processing, await StateOfAsync(a, stillBeingChecked), "A check that has not finished is not a copy waiting for a person.");
+    }
+
+    private static Task<int> CountImportsAsync(Arranged a, MediaAsset copy) =>
+        a.WithDb(db => db.LibraryImports.CountAsync(i => i.AssetId == copy.Id));
+
+    [TestMethod]
+    public async Task AnEbookUpgradeInterruptedAfterTheBetterCopyWasConfirmedIsFinishedOnTheNextPass()
+    {
+        await using var a = await ArrangeAsync(RequestMediaType.Ebook);
+        a.Cwa.ThrowOnDelete = true;
+        var copy = await NewTrustedCopyAsync(a, RequestMediaType.Ebook);
+        await PublishAlongsideAsync(a, copy);
+
+        await FinalizeAsync(a);
+
+        Assert.AreEqual(LibraryUpgradeState.Verified, (await a.UpgradeAsync()).State, "Interrupted while removing the old copy: not failed, not forgotten.");
+        Assert.AreEqual(1, await CountImportsAsync(a, copy), "The better copy was recorded before the old one was touched.");
+        Assert.AreEqual(MediaAssetStorageState.Archived, await StateOfAsync(a, copy));
+
+        // The old copy was in fact already removed before the interruption.
+        a.Cwa.ThrowOnDelete = false;
+        a.Cwa.DeleteResult = new CwaDeleteResult(false, "CWA has no book with that id.", AlreadyGone: true);
+        Assert.AreEqual(1, await FinalizeAsync(a));
+
+        Assert.AreEqual(LibraryUpgradeState.Completed, (await a.UpgradeAsync()).State);
+        Assert.AreEqual(1, await CountImportsAsync(a, copy), "Resuming never records the better copy twice.");
+        Assert.AreEqual(1, await NotificationsAsync(a, NotificationCategories.LibraryUpgraded));
+        Assert.AreEqual(0, await NotificationsAsync(a, NotificationCategories.UpgradeStopped));
+    }
+
+    [TestMethod]
+    public async Task AnAudiobookUpgradeInterruptedAfterTheBetterCopyWasConfirmedIsFinishedWithoutLookingItUpAgain()
+    {
+        await using var a = await ArrangeAsync(RequestMediaType.Audiobook);
+        a.Abs.ThrowOnDelete = true;
+        var copy = await NewTrustedCopyAsync(a, RequestMediaType.Audiobook);
+        await PublishAlongsideAsync(a, copy);
+
+        await FinalizeAsync(a);
+
+        Assert.AreEqual(LibraryUpgradeState.Verified, (await a.UpgradeAsync()).State);
+        Assert.AreEqual(1, await a.WithDb(db => db.Deliveries.CountAsync(d => d.AssetId == copy.Id)), "The better copy's item id was recorded before the old item was touched.");
+
+        // Audiobookshelf no longer shows the temporary title (it may already have been renamed); the recorded item id is enough.
+        a.Abs.ThrowOnDelete = false;
+        a.Abs.NewItemVisible = false;
+        Assert.AreEqual(1, await FinalizeAsync(a));
+
+        Assert.AreEqual(LibraryUpgradeState.Completed, (await a.UpgradeAsync()).State);
+        Assert.AreEqual(1, await a.WithDb(db => db.Deliveries.CountAsync(d => d.AssetId == copy.Id)));
+        Assert.IsTrue(a.Calls.Log.Contains("abs.rename:new-item"));
+    }
+
+    [TestMethod]
+    public async Task AnOldCopyThatIsAlreadyGoneCountsAsRemoved()
+    {
+        await using var a = await ArrangeAsync(RequestMediaType.Ebook);
+        a.Cwa.DeleteResult = new CwaDeleteResult(false, "CWA has no book with that id.", AlreadyGone: true);
+        var copy = await NewTrustedCopyAsync(a, RequestMediaType.Ebook);
+        await PublishAlongsideAsync(a, copy);
+
+        Assert.AreEqual(1, await FinalizeAsync(a));
+
+        Assert.AreEqual(LibraryUpgradeState.Completed, (await a.UpgradeAsync()).State);
+    }
+
+    [TestMethod]
+    public async Task AFinishingStepThatKeepsFailingAfterConfirmationIsReportedWithoutClaimingTheOldCopyIsSafe()
+    {
+        await using var a = await ArrangeAsync(RequestMediaType.Ebook);
+        a.Cwa.ThrowOnDelete = true;
+        var copy = await NewTrustedCopyAsync(a, RequestMediaType.Ebook);
+        await PublishAlongsideAsync(a, copy);
+        await FinalizeAsync(a);
+        Assert.AreEqual(LibraryUpgradeState.Verified, (await a.UpgradeAsync()).State, "Retried, not failed, while it is still early.");
+
+        a.Clock.Advance(TimeSpan.FromHours(25));
+        await FinalizeAsync(a);
+
+        var upgrade = await a.UpgradeAsync();
+        Assert.AreEqual(LibraryUpgradeState.Failed, upgrade.State);
+        StringAssert.Contains(upgrade.FailureReason, "may already have been removed");
+        Assert.IsFalse(upgrade.FailureReason!.Contains("left as they are", StringComparison.Ordinal), "It must not claim both copies are still there.");
+        Assert.AreEqual(1, await NotificationsAsync(a, NotificationCategories.UpgradeStopped));
+    }
+
+    [TestMethod]
+    public async Task ATrustedCopyLeftByAFailedUpgradeIsNeverMistakenForTheCopyInTheLibrary()
+    {
+        await using var a = await ArrangeAsync(RequestMediaType.Ebook);
+        a.Cwa.NewCopyVisible = false;
+        var leftover = await NewTrustedCopyAsync(a, RequestMediaType.Ebook);
+        await PublishAlongsideAsync(a, leftover);
+        a.Clock.Advance(TimeSpan.FromHours(25));
+        await FinalizeAsync(a);
+        Assert.AreEqual(LibraryUpgradeState.Failed, (await a.UpgradeAsync()).State);
+
+        await using var scope = a.Factory.Services.CreateAsyncScope();
+        var subjects = await scope.ServiceProvider.GetRequiredService<ILibraryUpgradeStore>()
+            .ListSubjectsAsync(DateTimeOffset.UtcNow.AddMinutes(1), 20, CancellationToken.None);
+
+        Assert.AreEqual(a.OldAssetId, subjects.Single(subject => subject.RequestFormatId == a.FormatId).DeliveredAssetId,
+            "The copy that was delivered is the one judged, not the stray the failed upgrade left in the trusted zone.");
+        Assert.AreEqual(MediaAssetStorageState.Trusted, await StateOfAsync(a, leftover), "A trusted file is never removed automatically; administrators were told.");
+        Assert.IsTrue(TrustedFileExists(a, leftover));
+    }
+
+    /// <summary>A scan that is allowed to start what it proposes, with the configured default given and a candidate no earlier upgrade used.</summary>
+    private static async Task<(Arranged A, LibraryUpgradeScanReport Report)> ScanAfterEmptyingTheProposalAsync(bool? savedChoice, bool configuredDefault)
+    {
+        var a = await ArrangeAsync(RequestMediaType.Ebook, acquiring: false, configure: provider => provider.CandidateId = "better-2");
+        await a.WithDb(db => db.LibraryUpgrades.Where(u => u.Id == a.UpgradeId).ExecuteDeleteAsync());
+        await using var scope = a.Factory.Services.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+        var store = sp.GetRequiredService<ILibraryUpgradeStore>();
+        if (savedChoice is { } saved) await store.SetAutoReplaceAsync(saved, null, DateTimeOffset.UtcNow, CancellationToken.None);
+        var options = new LibraryUpgradeOptions { AutoReplace = configuredDefault };
+        var report = await new LibraryUpgradeScanService(store, sp.GetRequiredService<IExternalProviderStore>(),
+            sp.GetRequiredService<FamilyLibrarian.Application.Catalog.ExternalCandidateAvailabilityChecker>(), sp.GetRequiredService<IWorkLookup>(),
+            sp.GetRequiredService<FamilyLibrarian.Application.Notifications.NotificationService>(), sp.GetRequiredService<IAuditWriter>(),
+            sp.GetRequiredService<IClock>(), options, sp.GetRequiredService<LibraryUpgradeService>()).RunAsync(options, CancellationToken.None);
+        return (a, report);
+    }
+
+    [TestMethod]
+    public async Task ASavedOnChoiceStartsProposalsEvenWhenTheConfiguredDefaultIsOff()
+    {
+        var (a, report) = await ScanAfterEmptyingTheProposalAsync(savedChoice: true, configuredDefault: false);
+        await using var _ = a;
+
+        Assert.AreEqual(1, report.Proposed);
+        Assert.AreEqual(LibraryUpgradeState.Acquiring, (await a.WithDb(db => db.LibraryUpgrades.AsNoTracking().SingleAsync(u => u.RequestFormatId == a.FormatId))).State,
+            "The administrator switched it on in the app; the configured default must not veto that.");
+    }
+
+    [TestMethod]
+    public async Task ASavedOffChoiceOnlyProposesEvenWhenTheConfiguredDefaultIsOn()
+    {
+        var (a, report) = await ScanAfterEmptyingTheProposalAsync(savedChoice: false, configuredDefault: true);
+        await using var _ = a;
+
+        Assert.AreEqual(1, report.Proposed);
+        Assert.AreEqual(LibraryUpgradeState.Proposed, (await a.WithDb(db => db.LibraryUpgrades.AsNoTracking().SingleAsync(u => u.RequestFormatId == a.FormatId))).State);
+    }
+
+    [TestMethod]
+    public async Task WithNothingSavedTheConfiguredDefaultDecides()
+    {
+        var (off, _) = await ScanAfterEmptyingTheProposalAsync(savedChoice: null, configuredDefault: false);
+        await using (off)
+            Assert.AreEqual(LibraryUpgradeState.Proposed, (await off.WithDb(db => db.LibraryUpgrades.AsNoTracking().SingleAsync(u => u.RequestFormatId == off.FormatId))).State);
+
+        var (on, _) = await ScanAfterEmptyingTheProposalAsync(savedChoice: null, configuredDefault: true);
+        await using (on)
+            Assert.AreEqual(LibraryUpgradeState.Acquiring, (await on.WithDb(db => db.LibraryUpgrades.AsNoTracking().SingleAsync(u => u.RequestFormatId == on.FormatId))).State);
     }
 
     private static async Task<LibraryUpgradeStartResult> StartAsync(Arranged a, bool approved)

@@ -123,12 +123,15 @@ public sealed class LibraryUpgradeService(
 
     /// <summary>
     /// Confirms delivered upgrade copies in their destination and removes the old ones. Run on a short timer. One upgrade failing never
-    /// stops the others.
+    /// stops the others. An upgrade already confirmed (<see cref="LibraryUpgradeState.Verified"/>) is picked up again here, so a restart
+    /// between confirming the better copy and removing the old one finishes the job instead of stranding it.
     /// </summary>
     public async Task<int> FinalizeAsync(CancellationToken cancellationToken)
     {
         var done = 0;
-        foreach (var upgrade in await store.ListByStateAsync(LibraryUpgradeState.Publishing, 20, cancellationToken))
+        var pending = (await store.ListByStateAsync(LibraryUpgradeState.Publishing, 20, cancellationToken))
+            .Concat(await store.ListByStateAsync(LibraryUpgradeState.Verified, 20, cancellationToken));
+        foreach (var upgrade in pending)
         {
             try
             {
@@ -136,7 +139,8 @@ public sealed class LibraryUpgradeService(
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
-                await FailAsync(upgrade, "Finishing the upgrade failed unexpectedly; both copies were left as they are.", cancellationToken);
+                if (upgrade.State == LibraryUpgradeState.Verified) await RetryOrGiveUpAsync(upgrade, cancellationToken);
+                else await FailAsync(upgrade, "Finishing the upgrade failed unexpectedly; both copies were left as they are.", cancellationToken);
             }
         }
 
@@ -182,60 +186,110 @@ public sealed class LibraryUpgradeService(
         var title = work?.Title ?? "Unknown title";
         var newFiles = fresh.BundleId is { } bundle ? await assets.FindAssetsByBundleIdAsync(bundle, cancellationToken) : [fresh];
 
-        string? newId2;
+        // Every step below can be repeated: the record of the better copy is written once, a copy already removed counts as removed,
+        // and the upgrade is only marked complete at the very end. So running this again after an interruption finishes the job.
         if (fresh.MediaType == RequestMediaType.Ebook)
         {
             var settings = await cwaSettings.FindAsync(cancellationToken);
             var oldImport = await cwaImports.FindByAssetIdAsync(delivered.Id, cancellationToken);
-            var found = await cwaCatalog.FindImportedFileAsync(title, fresh.Format.TrimStart('.'), fresh.SizeBytes, fresh.Sha256, cancellationToken);
-            newId2 = found.Decision == Matching.BookMatchDecision.Match && found.MatchedId != oldImport?.ExternalBookId ? found.MatchedId : null;
-            if (newId2 is null) return await WaitOrExpireAsync(upgrade, cancellationToken);
-            upgrade.MarkVerified(clock.UtcNow);
-            await store.SaveAsync(cancellationToken);
+            var newImport = await cwaImports.FindByAssetIdAsync(fresh.Id, cancellationToken);
+            var newBookId = newImport?.ExternalBookId;
+            if (newBookId is null)
+            {
+                var found = await cwaCatalog.FindImportedFileAsync(title, fresh.Format.TrimStart('.'), fresh.SizeBytes, fresh.Sha256, cancellationToken);
+                newBookId = found.Decision == Matching.BookMatchDecision.Match && found.MatchedId != oldImport?.ExternalBookId ? found.MatchedId : null;
+            }
+
+            if (newBookId is null) return await WaitOrExpireAsync(upgrade, cancellationToken);
+            await MarkVerifiedAsync(upgrade, cancellationToken);
+
+            // The better copy is confirmed in the library, so it is recorded and its local bytes retired now, before the old copy is
+            // touched: whatever happens next, the library holds it and the records say so.
+            if (newImport is null)
+            {
+                var import = new LibraryImport(fresh.Id, clock.UtcNow);
+                import.MarkAwaitingVerification(PublishingFilenames.BuildTargetFilename(title, fresh.Format));
+                import.MarkAvailable(newBookId, clock.UtcNow);
+                cwaImports.Add(import);
+                await cwaImports.SaveChangesAsync(cancellationToken);
+            }
+
+            await RetireStagedCopyAsync(newFiles, cancellationToken);
 
             var credentials = settings is null ? null : CwaCredentials(settings);
             if (settings is null || credentials is null || oldImport?.ExternalBookId is null)
                 return await StopWithBothAsync(upgrade, title, "CWA can no longer remove the old copy. Both copies are in the library; remove the incomplete one by hand.", cancellationToken);
             var removed = await cwaSession.DeleteBookAsync(settings, credentials.Value.Username, credentials.Value.Password, oldImport.ExternalBookId, cancellationToken);
-            if (!removed.Succeeded)
+            if (!removed.Succeeded && !removed.AlreadyGone)
                 return await StopWithBothAsync(upgrade, title, "CWA would not remove the old copy (" + removed.Message + "). Both copies are in the library; remove the incomplete one by hand.", cancellationToken);
-
-            var import = new LibraryImport(fresh.Id, clock.UtcNow);
-            import.MarkAwaitingVerification(PublishingFilenames.BuildTargetFilename(title, fresh.Format));
-            import.MarkAvailable(newId2, clock.UtcNow);
-            cwaImports.Add(import);
-            await cwaImports.SaveChangesAsync(cancellationToken);
         }
         else
         {
-            var temporary = LibraryUpgradeCopyPublisher.TemporaryTitle(title, upgrade.Id);
-            newId2 = await abs.FindItemIdByExactTitleAsync(temporary, cancellationToken);
             var oldItemId = await OldItemIdAsync(delivered, cancellationToken);
-            if (newId2 is null || newId2 == oldItemId) return await WaitOrExpireAsync(upgrade, cancellationToken);
-            upgrade.MarkVerified(clock.UtcNow);
-            await store.SaveAsync(cancellationToken);
+            var newDelivery = fresh.BundleId is { } freshBundleId
+                ? await absDeliveries.FindByBundleIdAsync(freshBundleId, cancellationToken)
+                : await absDeliveries.FindByAssetIdAsync(fresh.Id, cancellationToken);
+            var newItemId = newDelivery?.ExternalItemId;
+            if (newItemId is null)
+            {
+                newItemId = await abs.FindItemIdByExactTitleAsync(LibraryUpgradeCopyPublisher.TemporaryTitle(title, upgrade.Id), cancellationToken);
+                if (newItemId is null && upgrade.State == LibraryUpgradeState.Verified)
+                {
+                    // Resuming: the temporary title is gone only if the better copy was already renamed. With the old item removed it is
+                    // then the one item carrying the real title.
+                    var renamed = await abs.FindItemIdByExactTitleAsync(title, cancellationToken);
+                    if (renamed is not null && renamed != oldItemId) newItemId = renamed;
+                }
+            }
 
+            if (newItemId is null || newItemId == oldItemId) return await WaitOrExpireAsync(upgrade, cancellationToken);
+            await MarkVerifiedAsync(upgrade, cancellationToken);
+
+            if (newDelivery is null)
+            {
+                var delivery = fresh.BundleId is { } freshBundle ? AudiobookshelfDelivery.ForBundle(freshBundle, clock.UtcNow) : new AudiobookshelfDelivery(fresh.Id, clock.UtcNow);
+                delivery.MarkVerifying();
+                delivery.MarkDelivered(newItemId, clock.UtcNow);
+                absDeliveries.Add(delivery);
+                await absDeliveries.SaveChangesAsync(cancellationToken);
+            }
+
+            await RetireStagedCopyAsync(newFiles, cancellationToken);
+
+            // A delete that finds nothing there (the interrupted run already did it) is what was wanted.
             if (oldItemId is null || !await abs.DeleteItemHardAsync(oldItemId, cancellationToken))
                 return await StopWithBothAsync(upgrade, title, "Audiobookshelf would not remove the old copy. Both copies are in the library under different names; remove the incomplete one by hand.", cancellationToken);
             // Best effort: the better copy is already the only one, and only its temporary title is left to tidy.
-            _ = await abs.RenameItemAsync(newId2, title, cancellationToken);
-
-            var delivery = fresh.BundleId is { } freshBundle ? AudiobookshelfDelivery.ForBundle(freshBundle, clock.UtcNow) : new AudiobookshelfDelivery(fresh.Id, clock.UtcNow);
-            delivery.MarkVerifying();
-            delivery.MarkDelivered(newId2, clock.UtcNow);
-            absDeliveries.Add(delivery);
-            await absDeliveries.SaveChangesAsync(cancellationToken);
-        }
-
-        foreach (var file in newFiles.Where(file => file.StorageState == MediaAssetStorageState.Trusted))
-        {
-            file.TransitionStorageState(MediaAssetStorageState.Archived, clock.UtcNow);
+            _ = await abs.RenameItemAsync(newItemId, title, cancellationToken);
         }
 
         upgrade.MarkCompleted(clock.UtcNow);
         await store.SaveAsync(cancellationToken);
+        await audit.WriteSystemAsync(AuditActions.LibraryUpgradeCompleted, AuditSubjectTypes.BookRequest, upgrade.RequestId.ToString(),
+            new { UpgradeId = upgrade.Id, upgrade.RequestFormatId }, cancellationToken);
+        await notifications.RecordLibraryUpgradedAsync(upgrade.RequestId, title, cancellationToken);
+        return true;
+    }
+
+    /// <summary>Saves "confirmed in the library" once; a resumed upgrade is already there.</summary>
+    private async Task MarkVerifiedAsync(LibraryUpgrade upgrade, CancellationToken cancellationToken)
+    {
+        if (upgrade.State != LibraryUpgradeState.Publishing) return;
+        upgrade.MarkVerified(clock.UtcNow);
+        await store.SaveAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// The better copy is in the library, so its staged bytes are redundant: the record becomes archived (what the destination
+    /// confirmed) and the local file is removed. Only copies still in the trusted zone are touched, so a repeat does nothing.
+    /// </summary>
+    private async Task RetireStagedCopyAsync(IReadOnlyList<MediaAsset> files, CancellationToken cancellationToken)
+    {
+        var staged = files.Where(file => file.StorageState == MediaAssetStorageState.Trusted).ToArray();
+        if (staged.Length == 0) return;
+        foreach (var file in staged) file.TransitionStorageState(MediaAssetStorageState.Archived, clock.UtcNow);
         await assets.SaveChangesAsync(cancellationToken);
-        foreach (var file in newFiles)
+        foreach (var file in staged)
         {
             try
             {
@@ -246,11 +300,18 @@ public sealed class LibraryUpgradeService(
                 // A leftover file in the trusted zone is for the clean-up sweep; it is never a reason to undo a finished upgrade.
             }
         }
+    }
 
-        await audit.WriteSystemAsync(AuditActions.LibraryUpgradeCompleted, AuditSubjectTypes.BookRequest, upgrade.RequestId.ToString(),
-            new { UpgradeId = upgrade.Id, upgrade.RequestFormatId }, cancellationToken);
-        await notifications.RecordLibraryUpgradedAsync(upgrade.RequestId, title, cancellationToken);
-        return true;
+    /// <summary>
+    /// A step after the better copy was confirmed failed. The old copy may already be gone, so nothing is claimed about it: the step is
+    /// simply tried again on the next pass, and only after a day of failing is the administrator told to look.
+    /// </summary>
+    private async Task RetryOrGiveUpAsync(LibraryUpgrade upgrade, CancellationToken cancellationToken)
+    {
+        if (clock.UtcNow - upgrade.UpdatedAtUtc <= ConfirmationDeadline) return;
+        await FailAsync(upgrade,
+            "Finishing the upgrade kept failing after the better copy was confirmed in the library. The old copy may already have been removed; check the library and remove any duplicate by hand.",
+            cancellationToken);
     }
 
     /// <summary>Not confirmed yet: keep waiting, but never past the deadline. Past it, both copies stay and administrators are told.</summary>

@@ -79,4 +79,8 @@ public sealed record CwaEreaderSendResult(CwaEreaderSendStatus Status, string? C
 
 public sealed record CwaEreaderLoginResult(bool Succeeded, string Message);
 
-public sealed record CwaDeleteResult(bool Succeeded, string? Message);
+/// <param name="AlreadyGone">
+/// The book was not there to delete. For a caller that only wants the book gone (an upgrade resuming after an interruption) that is the
+/// wanted outcome; <paramref name="Succeeded"/> stays false because nothing was deleted by this call.
+/// </param>
+public sealed record CwaDeleteResult(bool Succeeded, string? Message, bool AlreadyGone = false);

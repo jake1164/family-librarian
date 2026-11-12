@@ -116,6 +116,8 @@ and, **by default**, the upgrade is carried out when the library can be changed 
 3. It is confirmed in the library. Only then is the old copy removed (CWA: the book is deleted; Audiobookshelf: the item and its
    files are deleted and the new item is given the real title).
 4. Anything unexpected at any step leaves both copies as they are and notifies administrators.
+   The better copy is recorded as delivered as soon as it is confirmed, before the old one is touched, and a step that is interrupted
+   (for example by a restart) is simply repeated on the next pass: an old copy that is already gone counts as removed.
 5. If the better copy never arrives (the source gives up, or the copy fails its checks or is removed), the upgrade is closed, the
    copy in the library stays, administrators are notified, and the book is looked at again on the next pass.
 
