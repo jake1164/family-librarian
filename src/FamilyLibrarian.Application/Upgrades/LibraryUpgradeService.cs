@@ -45,6 +45,13 @@ public sealed class LibraryUpgradeService(
 {
     private static readonly TimeSpan ConfirmationDeadline = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// How long a fetch is left alone before it is asked whether anything is still on its way. It covers the moments between steps
+    /// (a source job ending and its file being recorded, an approval and the delivery that follows it) so a fetch in progress is
+    /// never called abandoned.
+    /// </summary>
+    private static readonly TimeSpan AcquisitionGrace = TimeSpan.FromHours(1);
+
     /// <summary>Starts a proposed upgrade. Called for every proposal when automatic replacement is on, and by an administrator's approval.</summary>
     public async Task<LibraryUpgradeStartResult> StartAsync(Guid upgradeId, bool approvedByAdministrator, CancellationToken cancellationToken)
     {
@@ -133,7 +140,32 @@ public sealed class LibraryUpgradeService(
             }
         }
 
+        foreach (var upgrade in await store.ListByStateAsync(LibraryUpgradeState.Acquiring, 20, cancellationToken))
+        {
+            try
+            {
+                await ReleaseIfAbandonedAsync(upgrade, cancellationToken);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Nothing was changed in the library; the same question is asked again on the next pass.
+            }
+        }
+
         return done;
+    }
+
+    /// <summary>
+    /// Ends an upgrade whose better copy will never arrive: the source gave up, or the copy failed its checks or was removed. Without
+    /// this the upgrade would stay open for good, and an open upgrade stops the book from ever being looked at again. The copy in the
+    /// library is not touched; closing the upgrade is what lets the next scan look for another copy.
+    /// </summary>
+    private async Task ReleaseIfAbandonedAsync(LibraryUpgrade upgrade, CancellationToken cancellationToken)
+    {
+        var now = clock.UtcNow;
+        if (now - upgrade.UpdatedAtUtc < AcquisitionGrace) return;
+        if (await store.IsAcquisitionInFlightAsync(upgrade, now - AcquisitionGrace, cancellationToken)) return;
+        await FailAsync(upgrade, "The better copy could not be fetched or did not pass its checks. The copy in the library was left as it is; another copy will be looked for.", cancellationToken);
     }
 
     private async Task<bool> FinalizeOneAsync(LibraryUpgrade upgrade, CancellationToken cancellationToken)

@@ -131,6 +131,38 @@ public sealed class DatabaseRetentionTests
     }
 
     [TestMethod]
+    public async Task EvidenceOfTheDeliveredCopyStaysUntilANewerDeliveryReplacesIt()
+    {
+        // The upgrade scan reads this evidence to recognise an incomplete delivered copy, however long ago it was delivered.
+        await using var factory = Factory();
+        var seed = await SeedRequestAsync(factory);
+        var delivered = await AddArchivedAsync(factory, seed, 300);
+        var evidence = await AddEvidenceAsync(factory, delivered, ArtifactEvidenceRecordKinds.SecurityEvaluation);
+        // A newer copy that was never confirmed in the library (still trusted) does not make the delivered one replaceable.
+        await AddAssetAsync(factory, seed, MediaAssetStorageState.Trusted, 200);
+
+        await RunAsync(factory);
+        Assert.IsTrue(await ExistsAsync(factory, db => db.ArtifactEvidenceItems.Where(e => e.Id == evidence)),
+            "The copy in the library keeps its evidence so a better copy can still be looked for.");
+
+        var replacement = await AddArchivedAsync(factory, seed, 200);
+        var replacementEvidence = await AddEvidenceAsync(factory, replacement, ArtifactEvidenceRecordKinds.SecurityEvaluation);
+        await RunAsync(factory);
+
+        Assert.IsFalse(await ExistsAsync(factory, db => db.ArtifactEvidenceItems.Where(e => e.Id == evidence)), "Once a newer delivery replaced it, the old copy's evidence expires.");
+        Assert.IsTrue(await ExistsAsync(factory, db => db.ArtifactEvidenceItems.Where(e => e.Id == replacementEvidence)), "The copy that replaced it is now the one kept.");
+    }
+
+    private static async Task<Guid> AddArchivedAsync(FamilyLibrarianAppFactory factory, Seed seed, int ageDays)
+    {
+        var id = await AddAssetAsync(factory, seed, MediaAssetStorageState.Trusted, ageDays);
+        await using var scope = factory.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>().MediaAssets.Where(a => a.Id == id)
+            .ExecuteUpdateAsync(set => set.SetProperty(a => a.StorageState, MediaAssetStorageState.Archived));
+        return id;
+    }
+
+    [TestMethod]
     public async Task EvidenceBehindAnOpenReviewStaysEvenWhenOld()
     {
         await using var factory = Factory();

@@ -9,7 +9,7 @@ namespace FamilyLibrarian.Infrastructure.Storage;
 
 /// <summary>
 /// One rule per table. A rule only removes rows that explain nothing still in use: a request that is open, a file that still exists,
-/// an unresolved review and an identity-override record are always kept.
+/// the copy that was delivered to the library, an unresolved review and an identity-override record are always kept.
 /// </summary>
 public sealed class DatabaseRetentionStore(AppDbContext database) : IDatabaseRetentionStore
 {
@@ -45,7 +45,14 @@ public sealed class DatabaseRetentionStore(AppDbContext database) : IDatabaseRet
         database.ArtifactEvidenceItems
             .Where(item => item.RecordKind != ArtifactEvidenceRecordKinds.IdentityOverride &&
                 database.MediaAssets.Any(asset => asset.Id == item.MediaAssetId &&
-                    (asset.StorageState == MediaAssetStorageState.Destroyed || asset.StorageState == MediaAssetStorageState.Archived) &&
+                    (asset.StorageState == MediaAssetStorageState.Destroyed ||
+                        // An archived file is the copy in the library. Its evidence is how a later pass recognises that the copy is
+                        // incomplete and keeps looking for a better one, so it stays for as long as that copy is the delivered one.
+                        // It expires only once a newer delivery of the same format has been confirmed in its place.
+                        (asset.StorageState == MediaAssetStorageState.Archived &&
+                            database.MediaAssets.Any(newer => newer.AssociatedRequestFormatId == asset.AssociatedRequestFormatId &&
+                                newer.StorageState == MediaAssetStorageState.Archived && newer.CreatedAtUtc > asset.CreatedAtUtc &&
+                                (newer.BundleId == null || newer.BundleId != asset.BundleId)))) &&
                     asset.UpdatedAtUtc < cutoffUtc &&
                     // Evidence behind a review that is still open explains the question being asked, so it stays.
                     !database.RequestFormats.Any(format => format.Id == asset.AssociatedRequestFormatId &&

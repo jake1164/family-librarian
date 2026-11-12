@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Storage;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Domain.Security;
 using FamilyLibrarian.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -23,7 +24,10 @@ public sealed class StorageMaintenanceStore(AppDbContext database) : IStorageMai
             select new
             {
                 asset.Id, asset.BundleId, asset.StorageState, asset.MediaType, RuledOut = asset.RuledOutAtUtc != null, asset.SizeBytes,
-                asset.UpdatedAtUtc, RequestId = format == null ? (Guid?)null : format.RequestId, Title = work == null ? null : work.CanonicalTitle
+                asset.UpdatedAtUtc, RequestId = format == null ? (Guid?)null : format.RequestId, Title = work == null ? null : work.CanonicalTitle,
+                // The newest evaluation tells a check that never finished from one that finished and waits for a librarian.
+                LatestEvaluation = database.SecurityEvaluations.Where(evaluation => evaluation.AssetId == asset.Id)
+                    .OrderByDescending(evaluation => evaluation.CreatedAtUtc).Select(evaluation => (SecurityEvaluationStatus?)evaluation.Status).FirstOrDefault()
             }).ToListAsync(cancellationToken);
 
         var bundles = rows.Where(row => row.BundleId != null).Select(row => row.BundleId!.Value).Distinct().ToArray();
@@ -35,7 +39,8 @@ public sealed class StorageMaintenanceStore(AppDbContext database) : IStorageMai
                 .Select(asset => asset.BundleId!.Value).Distinct().ToListAsync(cancellationToken)).ToHashSet();
 
         return [.. rows.Select(row => new RemovableCopy(row.Id, row.BundleId, row.StorageState, row.MediaType, row.RuledOut, row.SizeBytes,
-            row.UpdatedAtUtc, row.RequestId, row.Title, row.BundleId is { } bundle && trustedBundles.Contains(bundle)))];
+            row.UpdatedAtUtc, row.RequestId, row.Title, row.BundleId is { } bundle && trustedBundles.Contains(bundle),
+            StorageRetentionPlanner.IsAwaitingDecision(row.StorageState, row.LatestEvaluation)))];
     }
 
     public async Task<IReadOnlyList<MediaAsset>> LoadForRemovalAsync(

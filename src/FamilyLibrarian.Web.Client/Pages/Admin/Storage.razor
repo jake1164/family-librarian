@@ -86,7 +86,7 @@
                             <MudTh>State</MudTh><MudTh>Kind</MudTh><MudTh>Ruled out</MudTh><MudTh>Files</MudTh><MudTh>Size</MudTh><MudTh>Oldest wait</MudTh><MudTh>Oldest removed on</MudTh>
                         </HeaderContent>
                         <RowTemplate>
-                            <MudTd DataLabel="State">@StorageText.Zone(context.State)</MudTd>
+                            <MudTd DataLabel="State">@StorageText.Zone(context.State)@(context.AwaitingDecision ? " (waiting for a decision)" : "")</MudTd>
                             <MudTd DataLabel="Kind">@context.MediaType</MudTd>
                             <MudTd DataLabel="Ruled out">@(context.RuledOut ? "Yes" : "No")</MudTd>
                             <MudTd DataLabel="Files">@context.Files</MudTd>

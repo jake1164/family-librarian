@@ -59,6 +59,13 @@ public interface ILibraryUpgradeStore
 
     Task<IReadOnlyList<LibraryUpgrade>> ListByStateAsync(LibraryUpgradeState state, int maximumCount, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Whether anything is still on its way for an upgrade that is fetching its better copy: a source job that has not ended, or a
+    /// copy of the format that arrived after the upgrade started and is still being checked, held for a person, or was approved
+    /// since <paramref name="approvedSinceUtc"/> and is about to be delivered. False means nothing can move the upgrade forward.
+    /// </summary>
+    Task<bool> IsAcquisitionInFlightAsync(LibraryUpgrade upgrade, DateTimeOffset approvedSinceUtc, CancellationToken cancellationToken);
+
     Task<IReadOnlyList<LibraryUpgradeView>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken);
 
     /// <summary>The administrator's choice about automatic replacement, or null when they have never changed it (the default then applies).</summary>

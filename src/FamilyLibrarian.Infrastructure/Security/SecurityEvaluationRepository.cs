@@ -9,6 +9,10 @@ namespace FamilyLibrarian.Infrastructure.Security;
 
 public sealed class SecurityEvaluationRepository(AppDbContext database) : ISecurityEvaluationRepository
 {
+    // From the moment the better copy is being fetched until the old one is retracted, copies of that format are the upgrade's business.
+    private static readonly LibraryUpgradeState[] UpgradeInProgress =
+        [LibraryUpgradeState.Acquiring, LibraryUpgradeState.Publishing, LibraryUpgradeState.Verified];
+
     public async Task<ApprovalResult> ExecuteModelReleaseAsync(Guid assetId, Func<Task<ApprovalResult>> action, CancellationToken cancellationToken)
     {
         await using var transaction = await database.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
@@ -53,16 +57,23 @@ public sealed class SecurityEvaluationRepository(AppDbContext database) : ISecur
             join request in database.BookRequests on format.RequestId equals request.Id
             where (asset.StorageState == MediaAssetStorageState.Unmatched || asset.StorageState == MediaAssetStorageState.Rejected) &&
                 (format.Status == RequestFormatStatus.Available || format.Status == RequestFormatStatus.Cancelled ||
-                    request.Status == RequestStatus.Available || request.Status == RequestStatus.Cancelled)
+                    request.Status == RequestStatus.Available || request.Status == RequestStatus.Cancelled) &&
+                !database.LibraryUpgrades.Any(upgrade => upgrade.RequestFormatId == format.Id && UpgradeInProgress.Contains(upgrade.State))
             orderby asset.UpdatedAtUtc
             select asset)
             .Take(maximumCount)
             .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<MediaAsset>> ListHeldAssetsSupersededByVerifiedCopyAsync(
-        int maximumCount, CancellationToken cancellationToken) =>
+        int maximumCount, DateTimeOffset awaitingDecisionBeforeUtc, CancellationToken cancellationToken) =>
         await database.MediaAssets
-            .Where(held => held.StorageState == MediaAssetStorageState.Unmatched &&
+            .Where(held => (held.StorageState == MediaAssetStorageState.Unmatched ||
+                    // Checked and waiting for a librarian: the newest evaluation finished without failing.
+                    (held.StorageState == MediaAssetStorageState.Processing && held.UpdatedAtUtc < awaitingDecisionBeforeUtc &&
+                        database.SecurityEvaluations.Where(evaluation => evaluation.AssetId == held.Id)
+                            .OrderByDescending(evaluation => evaluation.CreatedAtUtc).Take(1)
+                            .Any(evaluation => evaluation.Status == SecurityEvaluationStatus.Passed || evaluation.Status == SecurityEvaluationStatus.ReviewRequired))) &&
+                !database.LibraryUpgrades.Any(upgrade => upgrade.RequestFormatId == held.AssociatedRequestFormatId && UpgradeInProgress.Contains(upgrade.State)) &&
                 database.MediaAssets.Any(better => better.AssociatedRequestFormatId == held.AssociatedRequestFormatId &&
                     (better.StorageState == MediaAssetStorageState.Trusted || better.StorageState == MediaAssetStorageState.Archived) &&
                     (held.BundleId == null || better.BundleId != held.BundleId)))

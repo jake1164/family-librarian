@@ -70,6 +70,23 @@ public sealed class LibraryUpgradeStore(AppDbContext database) : ILibraryUpgrade
     public async Task<IReadOnlyList<LibraryUpgrade>> ListByStateAsync(LibraryUpgradeState state, int maximumCount, CancellationToken cancellationToken) =>
         await database.LibraryUpgrades.Where(upgrade => upgrade.State == state).OrderBy(upgrade => upgrade.UpdatedAtUtc).Take(maximumCount).ToListAsync(cancellationToken);
 
+    public async Task<bool> IsAcquisitionInFlightAsync(LibraryUpgrade upgrade, DateTimeOffset approvedSinceUtc, CancellationToken cancellationToken)
+    {
+        if (await database.ProviderAcquisitionJobs.AsNoTracking().AnyAsync(job => job.RequestFormatId == upgrade.RequestFormatId &&
+                (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Queued || job.LifecycleState == ProviderAcquisitionJobLifecycleState.Running ||
+                    job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting), cancellationToken))
+        {
+            return true;
+        }
+
+        // While the upgrade is fetching, its last change is the moment it started; only a copy that arrived since can be its copy.
+        return await database.MediaAssets.AsNoTracking().AnyAsync(asset => asset.AssociatedRequestFormatId == upgrade.RequestFormatId &&
+            asset.Id != upgrade.DeliveredAssetId && asset.CreatedAtUtc >= upgrade.UpdatedAtUtc &&
+            (asset.StorageState == MediaAssetStorageState.Quarantine || asset.StorageState == MediaAssetStorageState.Processing ||
+                asset.StorageState == MediaAssetStorageState.Unmatched ||
+                (asset.StorageState == MediaAssetStorageState.Trusted && asset.UpdatedAtUtc >= approvedSinceUtc)), cancellationToken);
+    }
+
     public async Task<IReadOnlyList<LibraryUpgradeView>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken)
     {
         var rows = await (

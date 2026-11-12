@@ -10,7 +10,10 @@ namespace FamilyLibrarian.Application.Storage;
 /// </summary>
 public sealed record DatabaseRetentionOptions
 {
-    /// <summary>Detailed file-check evidence for files that no longer exist (D-6: at least 90 days after the workflow completed).</summary>
+    /// <summary>
+    /// Detailed file-check evidence for files that were removed or replaced (D-6: at least 90 days after the workflow completed). The copy
+    /// currently in the library keeps its evidence regardless: it is what lets a later pass see the copy is incomplete and look for a better one.
+    /// </summary>
     public int EvidenceDays { get; init; } = 90;
 
     /// <summary>Advisory AI findings.</summary>

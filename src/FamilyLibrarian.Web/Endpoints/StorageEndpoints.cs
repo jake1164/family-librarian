@@ -30,7 +30,10 @@ internal static class StorageEndpoints
                 zone.Zone.ToString(), zone.Files, zone.Bytes, zone.OldestFileUtc, zone.UnrecognizedFiles, zone.UnrecognizedBytes))],
             [.. insight.HeldFiles.Select(group => new HeldFileGroupResponse(
                 group.State.ToString(), group.MediaType.ToString(), group.RuledOut, group.Files, group.Bytes, group.OldestUpdatedAtUtc,
-                group.OldestUpdatedAtUtc is { } oldest ? StorageRetentionPlanner.RemovalDate(group.State, group.MediaType, group.RuledOut, oldest, storage) : null))],
+                group.OldestUpdatedAtUtc is { } oldest
+                    ? StorageRetentionPlanner.RemovalDate(group.State, group.MediaType, group.RuledOut, group.AwaitingDecision, oldest, storage)
+                    : null,
+                group.AwaitingDecision))],
             [.. insight.Tables.Select(table => new StorageTableResponse(table.Schema, table.Table, table.ApproximateRows, table.ApproximateBytes))],
             insight.DatabaseApproximateBytes));
     }
@@ -79,6 +82,8 @@ internal static class StorageEndpoints
         ToDto(view.Values), ToDto(view.Defaults), view.IsCustomized, Limits(), ToRun(view.Storage), ToRun(view.Database), ToRun(view.Upgrades));
 
     /// <summary>The date the age rule will remove a held file, for the security queue; null for a file clean-up never touches.</summary>
-    internal static DateTimeOffset? RemovalDate(MediaAssetStorageState state, RequestMediaType type, DateTimeOffset? ruledOutAtUtc, DateTimeOffset updatedAtUtc, StorageRetentionOptions options) =>
-        StorageRetentionPlanner.RemovalDate(state, type, ruledOutAtUtc is not null, updatedAtUtc, options);
+    internal static DateTimeOffset? RemovalDate(
+        MediaAssetStorageState state, RequestMediaType type, DateTimeOffset? ruledOutAtUtc, bool awaitingDecision, DateTimeOffset updatedAtUtc,
+        StorageRetentionOptions options) =>
+        StorageRetentionPlanner.RemovalDate(state, type, ruledOutAtUtc is not null, awaitingDecision, updatedAtUtc, options);
 }

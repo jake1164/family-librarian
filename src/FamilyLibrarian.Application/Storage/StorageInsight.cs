@@ -6,8 +6,10 @@ using FamilyLibrarian.Domain.Requests;
 namespace FamilyLibrarian.Application.Storage;
 
 /// <summary>Files the application's records say it holds, by state and media type. Counts, bytes and ages only: never a title or name.</summary>
+/// <param name="AwaitingDecision">Checked files waiting in Processing for a librarian; they follow the waiting periods, not the stuck one.</param>
 public sealed record HeldFileGroup(
-    MediaAssetStorageState State, RequestMediaType MediaType, bool RuledOut, int Files, long Bytes, DateTimeOffset? OldestUpdatedAtUtc);
+    MediaAssetStorageState State, RequestMediaType MediaType, bool RuledOut, int Files, long Bytes, DateTimeOffset? OldestUpdatedAtUtc,
+    bool AwaitingDecision = false);
 
 /// <summary>One database table's approximate row count and total size (including indexes), from the database's own statistics.</summary>
 public sealed record StorageTableInfo(string Schema, string Table, long ApproximateRows, long ApproximateBytes);

@@ -90,7 +90,9 @@ internal static class SecurityQueueEndpoints
         ToMediaAssetAdminResponse(entry, findings) with
         {
             RemovalDateUtc = FamilyLibrarian.Application.Storage.StorageRetentionPlanner.RemovalDate(
-                entry.Asset.StorageState, entry.Asset.MediaType, entry.Asset.RuledOutAtUtc is not null, entry.Asset.UpdatedAtUtc, retention)
+                entry.Asset.StorageState, entry.Asset.MediaType, entry.Asset.RuledOutAtUtc is not null,
+                FamilyLibrarian.Application.Storage.StorageRetentionPlanner.IsAwaitingDecision(entry.Asset.StorageState, entry.LatestEvaluation?.Status),
+                entry.Asset.UpdatedAtUtc, retention)
         };
 
     internal static MediaAssetAdminResponse ToMediaAssetAdminResponse(MediaAssetQueueEntry entry) =>

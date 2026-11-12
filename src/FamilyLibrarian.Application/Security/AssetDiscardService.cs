@@ -73,13 +73,14 @@ public sealed class AssetDiscardService(
     }
 
     /// <summary>
-    /// Removes held copies once a better copy of the same format has passed its checks. This does not wait for publishing or for
-    /// the format to settle: the held copy is not the only copy any more, which is what made it worth keeping.
+    /// Removes copies waiting for a person (held, or checked and waiting for a librarian's decision) once a better copy of the same
+    /// format has passed its checks. This does not wait for publishing or for the format to settle: the waiting copy is not the only
+    /// copy any more, which is what made it worth keeping.
     /// </summary>
     /// <returns>How many files were deleted.</returns>
     public async Task<int> DiscardSupersededHeldCopiesAsync(int maximumCount, CancellationToken cancellationToken)
     {
-        var superseded = await repository.ListHeldAssetsSupersededByVerifiedCopyAsync(maximumCount, cancellationToken);
+        var superseded = await repository.ListHeldAssetsSupersededByVerifiedCopyAsync(maximumCount, clock.UtcNow - ApprovalInProgressGrace, cancellationToken);
         foreach (var asset in superseded)
         {
             await DestroyAsync(asset, "A better copy passed its checks and replaced this held copy.", cancellationToken);
@@ -87,6 +88,9 @@ public sealed class AssetDiscardService(
 
         return superseded.Count;
     }
+
+    /// <summary>A checked copy is only called "waiting for a decision" after this long, so one that is being approved right now is never removed.</summary>
+    private static readonly TimeSpan ApprovalInProgressGrace = TimeSpan.FromHours(1);
 
     private async Task DestroyAsync(MediaAsset target, string? reason, CancellationToken cancellationToken)
     {

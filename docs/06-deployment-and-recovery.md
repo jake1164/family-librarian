@@ -85,7 +85,7 @@ Once a day the database is trimmed of rows that only ever grow and explain nothi
 
 | Kept for | Removed after |
 | --- | --- |
-| Detailed file-check evidence for a file that no longer exists (never an identity-override record, never while a review of that request is open) | 90 days |
+| Detailed file-check evidence for a file that was removed, or for a delivered copy that a newer delivery has replaced (never the copy currently in the library, never an identity-override record, never while a review of that request is open) | 90 days |
 | Advisory AI findings | 180 days |
 | Per-source attempt history of a finished (in the library or cancelled) request | 180 days |
 | Search wordings tried for a finished request | 30 days |
@@ -116,6 +116,8 @@ and, **by default**, the upgrade is carried out when the library can be changed 
 3. It is confirmed in the library. Only then is the old copy removed (CWA: the book is deleted; Audiobookshelf: the item and its
    files are deleted and the new item is given the real title).
 4. Anything unexpected at any step leaves both copies as they are and notifies administrators.
+5. If the better copy never arrives (the source gives up, or the copy fails its checks or is removed), the upgrade is closed, the
+   copy in the library stays, administrators are notified, and the book is looked at again on the next pass.
 
 It only starts when the destination can remove the old copy: for audiobooks the Audiobookshelf token must have the *delete*
 permission; for ebooks the CWA e-reader service account must be configured and allowed to delete books. Otherwise the proposal

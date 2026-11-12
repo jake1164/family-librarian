@@ -63,7 +63,7 @@ public sealed class StorageMaintenanceTests
     /// <summary>Writes a real file, creates its record in the wanted state with the wanted age, and puts the file in that zone's folder.</summary>
     private static async Task<(Guid Id, string Stored)> AddAssetAsync(
         FamilyLibrarianAppFactory factory, Seed seed, MediaAssetStorageState state, RequestMediaType type, double ageDays,
-        bool ruledOut = false, Guid? bundle = null, int sequence = 1)
+        bool ruledOut = false, Guid? bundle = null, int sequence = 1, bool checkFinished = false)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -87,6 +87,14 @@ public sealed class StorageMaintenanceTests
 
         if (ruledOut) asset.MarkRuledOut(now);
         database.MediaAssets.Add(asset);
+        if (checkFinished)
+        {
+            // No scanner or validator result recorded, so the evaluation resolves to Passed: checked, waiting for an approval.
+            var evaluation = new FamilyLibrarian.Domain.Security.SecurityEvaluation(asset.Id, "test", now);
+            evaluation.Evaluate(now);
+            database.SecurityEvaluations.Add(evaluation);
+        }
+
         await database.SaveChangesAsync();
         var then = now.AddDays(-ageDays);
         await database.MediaAssets.Where(a => a.Id == asset.Id).ExecuteUpdateAsync(set => set.SetProperty(a => a.UpdatedAtUtc, then));
@@ -132,6 +140,7 @@ public sealed class StorageMaintenanceTests
         var waitingEbookNew = await AddAssetAsync(factory, seed, MediaAssetStorageState.Unmatched, RequestMediaType.Ebook, 5);
         var waitingAudioOld = await AddAssetAsync(factory, seed, MediaAssetStorageState.Unmatched, RequestMediaType.Audiobook, 15);
         var stuck = await AddAssetAsync(factory, seed, MediaAssetStorageState.Processing, RequestMediaType.Ebook, 9);
+        var awaitingLibrarian = await AddAssetAsync(factory, seed, MediaAssetStorageState.Processing, RequestMediaType.Ebook, 9, checkFinished: true);
         var trustedAncient = await AddAssetAsync(factory, seed, MediaAssetStorageState.Trusted, RequestMediaType.Ebook, 400);
 
         var report = await RunAsync(factory);
@@ -147,7 +156,9 @@ public sealed class StorageMaintenanceTests
             Assert.IsFalse(FileExists(factory, gone.Stored), "The file is gone from disk, not only the record.");
         }
 
-        foreach (var kept in new[] { rejectedNew, waitingEbookNew, trustedAncient })
+        Assert.AreEqual(MediaAssetStorageState.Processing, await StateAsync(factory, awaitingLibrarian.Id),
+            "A checked file waiting for a librarian is past the stuck period but is not stuck.");
+        foreach (var kept in new[] { rejectedNew, waitingEbookNew, trustedAncient, awaitingLibrarian })
         {
             Assert.AreNotEqual(MediaAssetStorageState.Destroyed, await StateAsync(factory, kept.Id));
             Assert.IsTrue(FileExists(factory, kept.Stored));

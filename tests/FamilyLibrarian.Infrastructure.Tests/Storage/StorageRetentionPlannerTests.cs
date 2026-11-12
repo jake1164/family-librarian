@@ -2,6 +2,7 @@ using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Storage;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Domain.Security;
 
 namespace FamilyLibrarian.Infrastructure.Tests.Storage;
 
@@ -13,8 +14,8 @@ public sealed class StorageRetentionPlannerTests
     private static readonly StorageRetentionOptions Defaults = new();
 
     private static RemovableCopy Copy(MediaAssetStorageState state, RequestMediaType type, double ageDays, bool ruledOut = false, long bytes = 100,
-        Guid? bundle = null, Guid? request = null, bool siblingTrusted = false) =>
-        new(Guid.NewGuid(), bundle, state, type, ruledOut, bytes, Now.AddDays(-ageDays), request, "A Book", siblingTrusted);
+        Guid? bundle = null, Guid? request = null, bool siblingTrusted = false, bool awaitingDecision = false) =>
+        new(Guid.NewGuid(), bundle, state, type, ruledOut, bytes, Now.AddDays(-ageDays), request, "A Book", siblingTrusted, awaitingDecision);
 
     private static IReadOnlyList<PlannedRemoval> Removals(IReadOnlyList<RemovableCopy> copies, bool pressure = false, StorageRetentionOptions? options = null) =>
         StorageRetentionPlanner.Plan(copies, options ?? Defaults, Now, pressure).Removals;
@@ -47,6 +48,65 @@ public sealed class StorageRetentionPlannerTests
         Assert.IsEmpty(Removals([Copy(state, RequestMediaType.Ebook, 6.9)]));
         Assert.AreEqual(RemovalReason.Stuck, Removals([Copy(state, RequestMediaType.Ebook, 7.0)]).Single().Reason);
     }
+
+    [TestMethod]
+    [DataRow(RequestMediaType.Ebook, 29.9, false)]
+    [DataRow(RequestMediaType.Ebook, 30.0, true)]
+    [DataRow(RequestMediaType.Audiobook, 13.9, false)]
+    [DataRow(RequestMediaType.Audiobook, 14.0, true)]
+    public void ACheckedFileWaitingForALibrarianIsNotStuckAndKeepsTheWaitingLimit(RequestMediaType type, double age, bool removed)
+    {
+        var removals = Removals([Copy(MediaAssetStorageState.Processing, type, age, awaitingDecision: true)]);
+
+        Assert.IsFalse(removals.Any(r => r.Reason == RemovalReason.Stuck), "A finished check waiting for a person is never 'stuck'.");
+        Assert.AreEqual(removed, removals.Any(r => r.Reason == RemovalReason.WaitingExpired));
+        Assert.IsTrue(removals.All(r => r.WasWaitingForPerson && r.State == MediaAssetStorageState.Processing));
+    }
+
+    [TestMethod]
+    public void ACheckedFileWaitingForALibrarianIsRemindedCountsTowardTheCapAndIsNotRushedByALowDisk()
+    {
+        var request = Guid.NewGuid();
+        var waiting = Copy(MediaAssetStorageState.Processing, RequestMediaType.Ebook, 15.0, request: request, awaitingDecision: true);
+
+        var plan = StorageRetentionPlanner.Plan([waiting], Defaults, Now, underPressure: true);
+        Assert.IsEmpty(plan.Removals, "A low disk never shortens the wait for a person.");
+        Assert.AreEqual(Now.AddDays(15), plan.Reminders.Single(r => r.RequestId == request).RemovalDateUtc);
+
+        var big = Copy(MediaAssetStorageState.Processing, RequestMediaType.Audiobook, 2, bytes: 11 * StorageRetentionOptions.Gigabyte, awaitingDecision: true);
+        Assert.AreEqual(RemovalReason.HeldCap, Removals([big]).Single().Reason, "It is bytes waiting for a person, so it counts toward the size limit.");
+    }
+
+    [TestMethod]
+    public void ACheckedFileTheSearchMovedPastGoesOnTheRuledOutTimer()
+    {
+        Assert.IsEmpty(Removals([Copy(MediaAssetStorageState.Processing, RequestMediaType.Ebook, 6.9, ruledOut: true, awaitingDecision: true)]));
+        Assert.AreEqual(RemovalReason.RuledOut,
+            Removals([Copy(MediaAssetStorageState.Processing, RequestMediaType.Ebook, 7.0, ruledOut: true, awaitingDecision: true)]).Single().Reason);
+    }
+
+    [TestMethod]
+    public void OneTrackWaitingForALibrarianKeepsTheWholeSetOffTheStuckTimer()
+    {
+        var bundle = Guid.NewGuid();
+        var set = new[]
+        {
+            Copy(MediaAssetStorageState.Processing, RequestMediaType.Audiobook, 9, bundle: bundle, awaitingDecision: true),
+            Copy(MediaAssetStorageState.Processing, RequestMediaType.Audiobook, 9, bundle: bundle)
+        };
+
+        Assert.IsEmpty(Removals(set), "Removing the unfinished track would break the copy a person is deciding on.");
+    }
+
+    [TestMethod]
+    [DataRow(MediaAssetStorageState.Processing, null, false)]
+    [DataRow(MediaAssetStorageState.Processing, SecurityEvaluationStatus.Pending, false)]
+    [DataRow(MediaAssetStorageState.Processing, SecurityEvaluationStatus.Failed, false)]
+    [DataRow(MediaAssetStorageState.Processing, SecurityEvaluationStatus.Passed, true)]
+    [DataRow(MediaAssetStorageState.Processing, SecurityEvaluationStatus.ReviewRequired, true)]
+    [DataRow(MediaAssetStorageState.Quarantine, SecurityEvaluationStatus.Passed, false)]
+    public void OnlyAFinishedCheckInProcessingIsWaitingForADecision(MediaAssetStorageState state, SecurityEvaluationStatus? latest, bool expected) =>
+        Assert.AreEqual(expected, StorageRetentionPlanner.IsAwaitingDecision(state, latest));
 
     [TestMethod]
     public void WhatIsKeptIsNeverARemovalOfATrustedFile()

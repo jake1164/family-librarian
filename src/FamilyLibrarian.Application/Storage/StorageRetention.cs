@@ -1,6 +1,7 @@
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Domain.Security;
 
 namespace FamilyLibrarian.Application.Storage;
 
@@ -24,7 +25,10 @@ public sealed record StorageRetentionOptions
     /// <summary>Held audiobooks waiting for a person. Large, so kept for less time.</summary>
     public int WaitingAudiobookDays { get; init; } = 14;
 
-    /// <summary>Received or being checked for this long means the check will never finish.</summary>
+    /// <summary>
+    /// Received or being checked for this long means the check will never finish. Never applied to a file whose check did finish and
+    /// which is waiting for a librarian's decision: that one follows the waiting periods above.
+    /// </summary>
     public int StuckDays { get; init; } = 7;
 
     /// <summary>Total size of copies waiting for a person; beyond it the oldest go first (audiobooks before ebooks).</summary>
@@ -101,9 +105,13 @@ public static class StorageDiskFloor
 
 /// <summary>One file held on disk that clean-up might remove. Never carries a name or path.</summary>
 /// <param name="SiblingIsTrusted">A track of the same set is already trusted or archived: the set is partly in the library, so it is left alone.</param>
+/// <param name="AwaitingDecision">
+/// The security check finished and the file is waiting in Processing for a librarian to approve or reject it. It is waiting for a
+/// person, exactly like a held copy, and is never treated as a check that got stuck.
+/// </param>
 public sealed record RemovableCopy(
     Guid AssetId, Guid? BundleId, MediaAssetStorageState State, RequestMediaType MediaType, bool RuledOut, long Bytes,
-    DateTimeOffset UpdatedAtUtc, Guid? RequestId, string? WorkTitle, bool SiblingIsTrusted);
+    DateTimeOffset UpdatedAtUtc, Guid? RequestId, string? WorkTitle, bool SiblingIsTrusted, bool AwaitingDecision);
 
 public enum RemovalReason
 {
@@ -151,21 +159,24 @@ public static class StorageRetentionPlanner
                     }
 
                     break;
-                case MediaAssetStorageState.Quarantine or MediaAssetStorageState.Processing:
+                case MediaAssetStorageState.Quarantine:
+                case MediaAssetStorageState.Processing when !group.AwaitingDecision:
+                    // Only a check that never finished is stuck. A finished check waiting for a librarian falls through to the
+                    // waiting rules below, so the copy a person was asked to decide on is not removed on the short timer.
                     if (age >= Days(o.StuckDays))
                     {
                         removals.Add(group.ToRemoval(RemovalReason.Stuck));
                     }
 
                     break;
-                case MediaAssetStorageState.Unmatched when group.RuledOut:
+                case MediaAssetStorageState.Unmatched or MediaAssetStorageState.Processing when group.RuledOut:
                     if (age >= Days(underPressure ? Math.Min(o.RuledOutDays, o.PressureDays) : o.RuledOutDays))
                     {
                         removals.Add(group.ToRemoval(RemovalReason.RuledOut));
                     }
 
                     break;
-                case MediaAssetStorageState.Unmatched:
+                case MediaAssetStorageState.Unmatched or MediaAssetStorageState.Processing:
                     // Waiting for a person: never sooner because the disk is tight; the cap below is the only size-based rule.
                     if (age >= Days(WaitingDays(group.MediaType, o)))
                     {
@@ -214,18 +225,28 @@ public static class StorageRetentionPlanner
     /// never touches. It is the latest date by age: the size limit or a low disk can remove a held copy sooner, and releasing it keeps it.
     /// </summary>
     public static DateTimeOffset? RemovalDate(
-        MediaAssetStorageState state, RequestMediaType type, bool ruledOut, DateTimeOffset stateSinceUtc, StorageRetentionOptions options)
+        MediaAssetStorageState state, RequestMediaType type, bool ruledOut, bool awaitingDecision, DateTimeOffset stateSinceUtc,
+        StorageRetentionOptions options)
     {
         var o = options.Clamped();
         return state switch
         {
             MediaAssetStorageState.Rejected => stateSinceUtc + Days(o.RejectedDays),
-            MediaAssetStorageState.Quarantine or MediaAssetStorageState.Processing => stateSinceUtc + Days(o.StuckDays),
-            MediaAssetStorageState.Unmatched when ruledOut => stateSinceUtc + Days(o.RuledOutDays),
-            MediaAssetStorageState.Unmatched => stateSinceUtc + Days(WaitingDays(type, o)),
+            MediaAssetStorageState.Quarantine => stateSinceUtc + Days(o.StuckDays),
+            MediaAssetStorageState.Processing when !awaitingDecision => stateSinceUtc + Days(o.StuckDays),
+            MediaAssetStorageState.Unmatched or MediaAssetStorageState.Processing when ruledOut => stateSinceUtc + Days(o.RuledOutDays),
+            MediaAssetStorageState.Unmatched or MediaAssetStorageState.Processing => stateSinceUtc + Days(WaitingDays(type, o)),
             _ => null
         };
     }
+
+    /// <summary>
+    /// True when a file's security check finished and it is waiting in Processing for a librarian. Passed and ReviewRequired both stay
+    /// there until an explicit approval; Pending (or no evaluation at all) means the check itself has not finished.
+    /// </summary>
+    public static bool IsAwaitingDecision(MediaAssetStorageState state, SecurityEvaluationStatus? latestEvaluation) =>
+        state == MediaAssetStorageState.Processing &&
+        latestEvaluation is SecurityEvaluationStatus.Passed or SecurityEvaluationStatus.ReviewRequired;
 
     public static int WaitingDays(RequestMediaType type, StorageRetentionOptions options) =>
         type == RequestMediaType.Audiobook ? options.WaitingAudiobookDays : options.WaitingEbookDays;
@@ -242,6 +263,9 @@ public static class StorageRetentionPlanner
         public DateTimeOffset Newest => Members.Max(member => member.UpdatedAtUtc);
 
         public long Bytes => Members.Sum(member => member.Bytes);
+
+        // One track waiting for a librarian makes the whole set wait: removing its other tracks would break the copy under review.
+        public bool AwaitingDecision => Members.Any(member => member.AwaitingDecision);
 
         public RequestMediaType MediaType => Members[0].MediaType;
 

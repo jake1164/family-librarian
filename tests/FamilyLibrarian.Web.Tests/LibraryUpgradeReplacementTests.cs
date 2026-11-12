@@ -461,6 +461,121 @@ public sealed class LibraryUpgradeReplacementTests
         Assert.AreEqual(1, await NotificationsAsync(a, NotificationCategories.LibraryUpgraded));
     }
 
+    /// <summary>A copy of the format that arrived after the upgrade started, with its real bytes in that state's folder.</summary>
+    private static async Task<MediaAsset> NewWaitingCopyAsync(Arranged a, MediaAssetStorageState state, bool checkFinished = false)
+    {
+        await using var scope = a.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var staging = scope.ServiceProvider.GetRequiredService<IAssetStagingStore>();
+        await using var content = new MemoryStream(System.Text.Encoding.ASCII.GetBytes("waiting-" + Guid.NewGuid()));
+        var staged = await staging.WriteToQuarantineAsync(content, "waiting.bin", 1_000_000, CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+        var asset = new MediaAsset(a.WorkId, null, RequestMediaType.Ebook, ".epub", "waiting", staged.StoredFilename, staged.SizeBytes,
+            staged.Sha256, staged.DetectedMimeType, a.FormatId, null, now, origin: AssetOrigin.ExternalProvider);
+        asset.TransitionStorageState(MediaAssetStorageState.Processing, now);
+        await staging.MoveAsync(MediaAssetStorageState.Quarantine, MediaAssetStorageState.Processing, staged.StoredFilename, CancellationToken.None);
+        if (state != MediaAssetStorageState.Processing)
+        {
+            asset.TransitionStorageState(state, now);
+            await staging.MoveAsync(MediaAssetStorageState.Processing, state, staged.StoredFilename, CancellationToken.None);
+        }
+
+        db.MediaAssets.Add(asset);
+        if (checkFinished)
+        {
+            // No scanner or validator result, so it resolves to Passed: checked, and waiting for a librarian's approval.
+            var evaluation = new FamilyLibrarian.Domain.Security.SecurityEvaluation(asset.Id, "test", now);
+            evaluation.Evaluate(now);
+            db.SecurityEvaluations.Add(evaluation);
+        }
+
+        await db.SaveChangesAsync();
+        return asset;
+    }
+
+    private static async Task<int> DiscardAsync(Arranged a)
+    {
+        await using var scope = a.Factory.Services.CreateAsyncScope();
+        var discards = scope.ServiceProvider.GetRequiredService<FamilyLibrarian.Application.Security.AssetDiscardService>();
+        return await discards.DiscardSettledHeldCopiesAsync(50, CancellationToken.None) + await discards.DiscardSupersededHeldCopiesAsync(50, CancellationToken.None);
+    }
+
+    private static Task<MediaAssetStorageState> StateOfAsync(Arranged a, MediaAsset copy) =>
+        a.WithDb(db => db.MediaAssets.AsNoTracking().Where(x => x.Id == copy.Id).Select(x => x.StorageState).SingleAsync());
+
+    [TestMethod]
+    public async Task AnUpgradeWhoseBetterCopyNeverArrivesIsClosedSoTheBookCanBeLookedAtAgain()
+    {
+        await using var a = await ArrangeAsync(RequestMediaType.Ebook);
+
+        await FinalizeAsync(a);
+        Assert.AreEqual(LibraryUpgradeState.Acquiring, (await a.UpgradeAsync()).State, "A fetch that only just started is left alone.");
+
+        a.Clock.Advance(TimeSpan.FromHours(2));
+        await FinalizeAsync(a);
+
+        var upgrade = await a.UpgradeAsync();
+        Assert.AreEqual(LibraryUpgradeState.Failed, upgrade.State, "Nothing is on its way, so the upgrade must not stay open and block the book for good.");
+        Assert.IsFalse(upgrade.IsOpen);
+        Assert.AreEqual(MediaAssetStorageState.Archived, await a.WithDb(db => db.MediaAssets.AsNoTracking().Where(x => x.Id == a.OldAssetId).Select(x => x.StorageState).SingleAsync()));
+        Assert.IsEmpty(a.Calls.Log, "The library was not touched.");
+        Assert.AreEqual(1, await NotificationsAsync(a, NotificationCategories.UpgradeStopped));
+    }
+
+    [TestMethod]
+    public async Task AnUpgradeStaysOpenWhileItsSourceIsStillWorkingAndClosesWhenTheSourceGivesUp()
+    {
+        await using var a = await ArrangeAsync(RequestMediaType.Ebook, acquiring: false);
+        Assert.IsTrue((await StartAsync(a, approved: false)).Started);
+        a.Clock.Advance(TimeSpan.FromHours(2));
+
+        await FinalizeAsync(a);
+        Assert.AreEqual(LibraryUpgradeState.Acquiring, (await a.UpgradeAsync()).State, "The source job has not ended.");
+
+        Assert.IsGreaterThanOrEqualTo(1, await a.WithDb(db => db.ProviderAcquisitionJobs.Where(job => job.RequestFormatId == a.FormatId)
+            .ExecuteUpdateAsync(set => set.SetProperty(job => job.LifecycleState, ProviderAcquisitionJobLifecycleState.Failed))));
+        await FinalizeAsync(a);
+
+        Assert.AreEqual(LibraryUpgradeState.Failed, (await a.UpgradeAsync()).State, "The source gave up and no copy arrived.");
+    }
+
+    [TestMethod]
+    public async Task TheBetterCopyOfAnUpgradeIsNotCleanedUpWhileItWaitsForAPersonAndTheUpgradeClosesOnceItIsGone()
+    {
+        await using var a = await ArrangeAsync(RequestMediaType.Ebook);
+        var held = await NewWaitingCopyAsync(a, MediaAssetStorageState.Unmatched);
+        var awaitingDecision = await NewWaitingCopyAsync(a, MediaAssetStorageState.Processing, checkFinished: true);
+        a.Clock.Advance(TimeSpan.FromHours(2));
+
+        Assert.AreEqual(0, await DiscardAsync(a), "The book is in the library, but these may be the copy that replaces it.");
+        await FinalizeAsync(a);
+        Assert.AreEqual(LibraryUpgradeState.Acquiring, (await a.UpgradeAsync()).State, "A copy is waiting for a person, so the upgrade can still go ahead.");
+
+        await a.WithDb(db => db.MediaAssets.Where(x => x.Id == held.Id || x.Id == awaitingDecision.Id)
+            .ExecuteUpdateAsync(set => set.SetProperty(x => x.StorageState, MediaAssetStorageState.Destroyed)));
+        await FinalizeAsync(a);
+
+        Assert.AreEqual(LibraryUpgradeState.Failed, (await a.UpgradeAsync()).State, "The copies it was waiting for are gone.");
+    }
+
+    [TestMethod]
+    public async Task ACheckedCopyWaitingForALibrarianIsRemovedOnceABetterCopyIsInTheLibrary()
+    {
+        // No upgrade in progress (only a proposal): the copy in the library is the better copy, so anything still waiting is surplus.
+        await using var a = await ArrangeAsync(RequestMediaType.Ebook, acquiring: false);
+        var awaitingDecision = await NewWaitingCopyAsync(a, MediaAssetStorageState.Processing, checkFinished: true);
+        var stillBeingChecked = await NewWaitingCopyAsync(a, MediaAssetStorageState.Processing);
+
+        Assert.AreEqual(0, await DiscardAsync(a), "A copy checked a moment ago may be in the middle of being approved.");
+
+        a.Clock.Advance(TimeSpan.FromHours(2));
+        Assert.AreEqual(1, await DiscardAsync(a));
+
+        Assert.AreEqual(MediaAssetStorageState.Destroyed, await StateOfAsync(a, awaitingDecision));
+        Assert.IsFalse(TrustedFileExists(a, awaitingDecision), "The file is gone from disk, not only the record.");
+        Assert.AreEqual(MediaAssetStorageState.Processing, await StateOfAsync(a, stillBeingChecked), "A check that has not finished is not a copy waiting for a person.");
+    }
+
     private static async Task<LibraryUpgradeStartResult> StartAsync(Arranged a, bool approved)
     {
         await using var scope = a.Factory.Services.CreateAsyncScope();

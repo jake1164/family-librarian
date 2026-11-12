@@ -8,9 +8,10 @@ public sealed record StorageZoneResponse(
     string Zone, int Files, long Bytes, DateTimeOffset? OldestFileUtc, int UnrecognizedFiles, long UnrecognizedBytes);
 
 /// <summary>Files the records say are held, grouped by state and media type. Numbers only: no title, name or path.</summary>
+/// <param name="AwaitingDecision">Checked files waiting for a librarian's decision, as opposed to files still being checked.</param>
 public sealed record HeldFileGroupResponse(
     string State, string MediaType, bool RuledOut, int Files, long Bytes, DateTimeOffset? OldestUpdatedAtUtc,
-    DateTimeOffset? OldestRemovalDateUtc = null);
+    DateTimeOffset? OldestRemovalDateUtc = null, bool AwaitingDecision = false);
 
 /// <param name="ApproximateRows">The planner's estimate; <paramref name="ApproximateBytes"/> includes indexes.</param>
 public sealed record StorageTableResponse(string Schema, string Table, long ApproximateRows, long ApproximateBytes);

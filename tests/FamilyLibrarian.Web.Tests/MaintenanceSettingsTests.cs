@@ -400,21 +400,26 @@ public sealed class MaintenanceSettingsTests
         // The date shown to people and the rule that does the removing must never disagree.
         var now = new DateTimeOffset(2026, 11, 12, 12, 0, 0, TimeSpan.Zero);
         var options = new StorageRetentionOptions();
-        var cases = new (MediaAssetStorageState State, RequestMediaType Type, bool RuledOut)[]
+        var cases = new (MediaAssetStorageState State, RequestMediaType Type, bool RuledOut, bool Awaiting)[]
         {
-            (MediaAssetStorageState.Rejected, RequestMediaType.Ebook, false), (MediaAssetStorageState.Quarantine, RequestMediaType.Ebook, false),
-            (MediaAssetStorageState.Processing, RequestMediaType.Audiobook, false), (MediaAssetStorageState.Unmatched, RequestMediaType.Audiobook, true),
-            (MediaAssetStorageState.Unmatched, RequestMediaType.Ebook, false), (MediaAssetStorageState.Unmatched, RequestMediaType.Audiobook, false)
+            (MediaAssetStorageState.Rejected, RequestMediaType.Ebook, false, false), (MediaAssetStorageState.Quarantine, RequestMediaType.Ebook, false, false),
+            (MediaAssetStorageState.Processing, RequestMediaType.Audiobook, false, false), (MediaAssetStorageState.Unmatched, RequestMediaType.Audiobook, true, false),
+            (MediaAssetStorageState.Unmatched, RequestMediaType.Ebook, false, false), (MediaAssetStorageState.Unmatched, RequestMediaType.Audiobook, false, false),
+            (MediaAssetStorageState.Processing, RequestMediaType.Ebook, false, true), (MediaAssetStorageState.Processing, RequestMediaType.Audiobook, false, true),
+            (MediaAssetStorageState.Processing, RequestMediaType.Ebook, true, true)
         };
-        foreach (var (state, type, ruledOut) in cases)
+        foreach (var (state, type, ruledOut, awaiting) in cases)
         {
             var since = now.AddDays(-100);
-            var due = StorageRetentionPlanner.RemovalDate(state, type, ruledOut, since, options)!.Value;
-            RemovableCopy Copy() => new(Guid.NewGuid(), null, state, type, ruledOut, 10, since, Guid.NewGuid(), "t", false);
-            Assert.HasCount(1, StorageRetentionPlanner.Plan([Copy()], options, due, false).Removals, $"{state}/{type}/{ruledOut}: removed on the date shown");
-            Assert.IsEmpty(StorageRetentionPlanner.Plan([Copy()], options, due.AddMinutes(-1), false).Removals, $"{state}/{type}/{ruledOut}: not before it");
+            var due = StorageRetentionPlanner.RemovalDate(state, type, ruledOut, awaiting, since, options)!.Value;
+            RemovableCopy Copy() => new(Guid.NewGuid(), null, state, type, ruledOut, 10, since, Guid.NewGuid(), "t", false, awaiting);
+            Assert.HasCount(1, StorageRetentionPlanner.Plan([Copy()], options, due, false).Removals, $"{state}/{type}/{ruledOut}/{awaiting}: removed on the date shown");
+            Assert.IsEmpty(StorageRetentionPlanner.Plan([Copy()], options, due.AddMinutes(-1), false).Removals, $"{state}/{type}/{ruledOut}/{awaiting}: not before it");
         }
 
-        Assert.IsNull(StorageRetentionPlanner.RemovalDate(MediaAssetStorageState.Trusted, RequestMediaType.Ebook, false, now, options), "A trusted file has no removal date.");
+        Assert.AreEqual(now.AddDays(30), StorageRetentionPlanner.RemovalDate(MediaAssetStorageState.Processing, RequestMediaType.Ebook, false, true, now, options),
+            "A checked file waiting for a librarian shows the waiting period, not the short stuck one.");
+
+        Assert.IsNull(StorageRetentionPlanner.RemovalDate(MediaAssetStorageState.Trusted, RequestMediaType.Ebook, false, false, now, options), "A trusted file has no removal date.");
     }
 }
