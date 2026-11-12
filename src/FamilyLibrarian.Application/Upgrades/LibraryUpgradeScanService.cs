@@ -122,11 +122,19 @@ public sealed class LibraryUpgradeScanService(
         int looked = 0, proposed = 0, failures = 0;
         foreach (var subject in subjects)
         {
-            var assessment = DeficientCopyDetector.Assess(subject.Copy);
-            if (!assessment.EligibleForUpgrade) continue;
-            looked++;
             try
             {
+                var assessment = DeficientCopyDetector.Assess(subject.Copy);
+                if (!assessment.EligibleForUpgrade)
+                {
+                    // Looked at and set aside (a copy a person chose, or nothing wrong on the newest copy). It is marked like any other
+                    // so it waits out the interval: left unmarked it would be listed again every pass, and enough of them would fill the
+                    // batch and starve the books that are eligible.
+                    await store.MarkScannedAsync(subject.RequestFormatId, clock.UtcNow, cancellationToken);
+                    continue;
+                }
+
+                looked++;
                 if (await ProposeAsync(subject, assessment, enabled, o.AutoReplace, cancellationToken)) proposed++;
                 await store.MarkScannedAsync(subject.RequestFormatId, clock.UtcNow, cancellationToken);
             }

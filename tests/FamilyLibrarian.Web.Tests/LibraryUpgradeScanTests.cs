@@ -164,6 +164,26 @@ public sealed class LibraryUpgradeScanTests
     }
 
     [TestMethod]
+    public async Task ASetAsideCopyWaitsOutTheIntervalSoItCannotFillTheBatchEveryPass()
+    {
+        var s = await ArrangeAsync();
+        await using var factory = s.Factory;
+        using var admin = s.Admin;
+        await DeliverAsync(s, AssetOrigin.ExternalProvider, EvidenceReasonCodes.ArtifactCompleteness.TocTargetsMissing, extraRecordKind: ArtifactEvidenceRecordKinds.IdentityOverride);
+        await using var scope = s.Factory.Services.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<ILibraryUpgradeStore>();
+        var due = DateTimeOffset.UtcNow.AddDays(-30);
+        Assert.AreEqual(1, (await store.ListSubjectsAsync(due, 20, CancellationToken.None)).Count(subject => subject.RequestFormatId == s.FormatId), "Listed before the first pass.");
+
+        var report = await ScanAsync(s);
+
+        Assert.AreEqual(0, report.Looked, "It was not eligible, so nothing was searched for.");
+        Assert.AreEqual(0, (await store.ListSubjectsAsync(due, 20, CancellationToken.None)).Count(subject => subject.RequestFormatId == s.FormatId),
+            "Marked as looked at, so it is not listed again until the interval passes and cannot take a batch place every day.");
+        Assert.AreEqual(0, s.Provider.SearchCalls);
+    }
+
+    [TestMethod]
     public async Task AWeakerCandidateIsNeverProposed()
     {
         var s = await ArrangeAsync(p => p.StatesIdentifiers = false);
