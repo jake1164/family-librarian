@@ -2,9 +2,6 @@
 
 All notable changes to Family Librarian are documented here. Newest release at the top.
 
----
-
-## [Unreleased]
 
 ---
 
