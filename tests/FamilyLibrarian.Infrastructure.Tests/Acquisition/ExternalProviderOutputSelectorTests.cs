@@ -130,6 +130,81 @@ public sealed class ExternalProviderOutputSelectorTests
                 RequestMediaType.Ebook, ImportPolicy, OutputPolicy));
     }
 
+    // The lab: "Rebecca.Yarros.-.[The.Empyrean.03.5].-.Threshing.Day.(azw3.epub.mobi)" downloaded fine and was then refused
+    // as ambiguous, because the same book in three formats looked like three competing books.
+    [TestMethod]
+    public void OneBookInSeveralFormatsIsTheEpub()
+    {
+        const string stem = "Rebecca Yarros - Threshing Day";
+        var selected = ExternalProviderOutputSelector.Select(
+            [Output("a", $"{stem}.azw3", "ebook"), Output("e", $"{stem}.epub", "ebook"), Output("m", $"{stem}.mobi", "ebook")],
+            RequestMediaType.Ebook, ImportPolicy, OutputPolicy);
+
+        Assert.AreEqual("e", selected.Single().OutputId);
+    }
+
+    [TestMethod]
+    public void WithoutAnEpubTheNextFormatInTheImportOrderIsTaken()
+    {
+        var selected = ExternalProviderOutputSelector.Select(
+            [Output("m", "Book.MOBI", "ebook"), Output("a", "folder/Book.azw3", null)],
+            RequestMediaType.Ebook, ImportPolicy, OutputPolicy);
+
+        Assert.AreEqual("a", selected.Single().OutputId);
+    }
+
+    [TestMethod]
+    public void FiveFormatsOfOneBookTakeTheFirstInTheImportOrder()
+    {
+        var selected = ExternalProviderOutputSelector.Select(
+            [
+                Output("fb2", "Book.fb2", "ebook"), Output("kepub", "Book.kepub", "ebook"), Output("azw", "Book.azw", "ebook"),
+                Output("mobi", "Book.mobi", "ebook"), Output("azw3", "Book.azw3", "ebook")
+            ],
+            RequestMediaType.Ebook, ImportPolicy, OutputPolicy);
+
+        Assert.AreEqual("azw3", selected.Single().OutputId);
+    }
+
+    // The second lab run: the same release with obfuscated file names, as Usenet releases often have.
+    [TestMethod]
+    public void ObfuscatedNamesForOneBookInSeveralFormatsTakeTheEpub()
+    {
+        var selected = ExternalProviderOutputSelector.Select(
+            [
+                Output("0001", "7e318bc757af2d592b9b44ea9889c397.mobi", "ebook"),
+                Output("0002", "94ee0f5423d60eee6c878c3e6536b29b.epub", "ebook"),
+                Output("0003", "9e2f7e4375f894fb7ab5343f6aa0a099.azw3", "ebook")
+            ],
+            RequestMediaType.Ebook, ImportPolicy, OutputPolicy);
+
+        Assert.AreEqual("0002", selected.Single().OutputId);
+    }
+
+    [TestMethod]
+    public void TwoBooksInTheSameFormatAreStillAmbiguous()
+    {
+        Assert.ThrowsExactly<InvalidExternalProviderOutputException>(() => ExternalProviderOutputSelector.Select(
+            [Output("one", "Threshing Day.epub", "ebook"), Output("two", "Fourth Wing.epub", "ebook")],
+            RequestMediaType.Ebook, ImportPolicy, OutputPolicy));
+    }
+
+    [TestMethod]
+    public void TwoCopiesOfTheSameFormatAreStillAmbiguous()
+    {
+        Assert.ThrowsExactly<InvalidExternalProviderOutputException>(() => ExternalProviderOutputSelector.Select(
+            [Output("one", "dir1/Book.epub", "ebook"), Output("two", "dir2/Book.epub", "ebook")],
+            RequestMediaType.Ebook, ImportPolicy, OutputPolicy));
+    }
+
+    [TestMethod]
+    public void AFormatBesideAnAudiobookPartIsStillRefused()
+    {
+        Assert.ThrowsExactly<InvalidExternalProviderOutputException>(() => ExternalProviderOutputSelector.Select(
+            [Output("e", "Book.epub", "ebook"), Output("m", "Book.mobi", "audio-part")],
+            RequestMediaType.Ebook, ImportPolicy, OutputPolicy));
+    }
+
     private static ExternalProviderOutput Output(string id, string filename, string? role, int? sequence = null) =>
         new(id, ProviderOutputKind.File, role, filename, null, null, null, null, null, null, sequence);
 }

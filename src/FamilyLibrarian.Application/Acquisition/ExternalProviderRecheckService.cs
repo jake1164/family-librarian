@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.DecisionCapture;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Providers;
@@ -9,6 +11,7 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Accounts;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
@@ -16,18 +19,12 @@ namespace FamilyLibrarian.Application.Acquisition;
 
 /// <summary>
 /// Rechecks administrator-approved external providers on their configured
-/// cadence. A single ISBN-corroborated ("Identifier"-basis) candidate is
-/// trusted and acquired automatically, exactly like the manual acquire flow
-/// already trusts one (docs/04-external-provider-http-protocol.md §7,
-/// <see cref="ExternalCandidateAvailabilityChecker"/>) -- but only for a
-/// provider with <see cref="ExternalProvider.AutoAcquireEnabled"/> separately
-/// turned on; the recheck schedule alone only controls how often this
-/// service looks, never whether it may fetch. Anything weaker -- title/author
-/// only, unconfirmed, language-excluded, or more than one equally plausible
-/// candidate -- is evidence for a librarian, never permission to fetch a
-/// third-party file without review, regardless of that toggle.
+/// cadence. Automatic downloads require confidence permitted by the provider's
+/// effective level. Identity,
+/// language, release and attempt-budget gates apply before submission; every
+/// downloaded file still passes security and content validation.
 /// </summary>
-public sealed class ExternalProviderRecheckService(
+public sealed partial class ExternalProviderRecheckService(
     IRequestRepository requests,
     IProviderAttemptRepository attempts,
     IExternalProviderStore providers,
@@ -38,7 +35,14 @@ public sealed class ExternalProviderRecheckService(
     NotificationService notifications,
     IUserAccountStore accounts,
     IAutomaticFulfillmentSignal? fulfillmentSignal = null,
-    AudiobookPartSetAcquisitionService? partSets = null)
+    AudiobookPartSetAcquisitionService? partSets = null,
+    SemanticAssessment.ICandidateSemanticShadow? semanticShadow = null,
+    ManualImportPolicy? importPolicy = null,
+    AcquisitionQuestionService? questions = null,
+    ISavedAcquisitionQuestionAcceptor? savedQuestions = null,
+    SemanticAssessment.SearchGuidanceService? searchGuidance = null,
+    SemanticAssessment.CandidateTriageService? candidateTriage = null,
+    IDecisionOutcomeRecorder? outcomes = null)
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan BackgroundSearchTimeout = TimeSpan.FromMinutes(2);
@@ -54,7 +58,11 @@ public sealed class ExternalProviderRecheckService(
             return 0;
         }
 
-        var pending = await requests.ListPendingForAutomaticFulfillmentAsync(BatchSize, cancellationToken);
+        // Requests waiting on a person, or whose attempt budget is spent, stay in the batch (AF-10, OQ-5); least recently looked at
+        // first so a batch of not-yet-due requests cannot starve the ones behind it.
+        var pending = await requests.ListPendingForAutomaticFulfillmentAsync(
+            BatchSize, cancellationToken, includeNeedsReview: true, includeSpentBudgetReviews: true,
+            orderByLeastRecentlyAttempted: true);
         if (pending.Count == 0)
         {
             return 0;
@@ -63,18 +71,44 @@ public sealed class ExternalProviderRecheckService(
         var checks = 0;
         foreach (var request in pending)
         {
+            if (request.QuestionKind is not null && savedQuestions is not null &&
+                await savedQuestions.TryAcceptAsync(request.Id, cancellationToken)) continue;
             var work = await workLookup.FindAsync(request.WorkId, cancellationToken);
+            if (questions is not null && work is not null) await questions.RemindAsync(request, work.Title, cancellationToken);
             foreach (var format in request.Formats.Where(format => format.Status == RequestFormatStatus.Requested))
             {
-                if (await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken))
+                var offers = new List<AcquisitionQuestionOffer>();
+                var searchedProviders = 0;
+                var advanced = false;
+                // One download per format at a time: a second source starting the same book while the first is still
+                // downloading only spends a (possibly metered) download on a duplicate.
+                if (await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken) ||
+                    await requests.HasDownloadInProgressAsync(format.Id, cancellationToken))
                 {
                     continue;
                 }
 
+                var prepared = await PrepareSearchGuidanceAsync(request, format, work, scheduledProviders, cancellationToken);
                 foreach (var provider in scheduledProviders)
                 {
                     var latest = await attempts.FindLatestForFormatAsync(format.Id, provider.ProviderId, cancellationToken);
                     if (!IsDue(latest, request, clock.UtcNow))
+                    {
+                        continue;
+                    }
+
+                    // A review that is not a preference question is rechecked only once the attempt budget is spent: that is the
+                    // request left waiting for a better copy. Any other NeedsReview request belongs to a librarian.
+                    // U-1: a review does not end the search. A request parked here (every candidate tried, or a copy held for a
+                    // person) keeps looking on the provider's schedule, so a better copy that turns up later can replace what is
+                    // waiting. It only ever downloads a strong, new candidate, once per check; anything weaker keeps waiting.
+                    var parkedReview = request.Status == RequestStatus.NeedsReview &&
+                        request.ReviewCategory != RequestReviewCategory.PreferenceAmbiguity && !request.RequiresManualFulfillment;
+                    if (request.Status == RequestStatus.NeedsReview &&
+                        request.ReviewCategory != RequestReviewCategory.PreferenceAmbiguity &&
+                        request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) < provider.AutomaticAttemptLimit &&
+                        !parkedReview &&
+                        (questions is null || work is null || await questions.FindReserveAsync(request, format, work.Title, cancellationToken) is null))
                     {
                         continue;
                     }
@@ -128,15 +162,72 @@ public sealed class ExternalProviderRecheckService(
                         // rather than re-nominating the one that just failed.
                         var exclusions = ExternalCandidateExclusions.From(
                             request.DeclinedCandidates, provider.ProviderId, format.Id);
+                        // How long to leave this request before looking again when it is waiting: the provider cadence, or
+                        // the AF-10 sliding scale from the publication (or request) date, whichever is longer.
+                        var waitingNext = clock.UtcNow + MaxInterval(
+                            ToInterval(provider.RecheckSchedule),
+                            RecheckSchedule.WaitingInterval(work.FirstPublicationDate, request.RequestedAtUtc, clock.UtcNow));
                         var alreadyTried = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId) > 0;
 
-                        var options = await candidateChecker.FindForProviderAsync(
-                            provider, identity, format.MediaType, searchCancellation.Token, exclusions);
+                        // Several one-dimension searches are pooled, then judged once exactly as a single search was.
+                        var retryPass = latest?.Outcome == ProviderAttemptOutcome.Retrying;
+                        var cycleStart = DateTimeOffset.MinValue;
+                        if (retryPass)
+                        {
+                            // The current cycle's searches all ran after the previous cycle's closing lookup (the second-latest
+                            // lookup that was not itself a step of the retry loop). The cycle's own closing lookup is written
+                            // after its searches, so it cannot be the boundary.
+                            cycleStart = (await attempts.ListForRequestAsync(request.Id, cancellationToken))
+                                .Where(attempt => attempt.RequestFormatId == format.Id &&
+                                    string.Equals(attempt.ProviderId, provider.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+                                    attempt.Outcome != ProviderAttemptOutcome.Retrying)
+                                .Select(attempt => attempt.AttemptedAtUtc)
+                                .OrderDescending().Skip(1)
+                                .DefaultIfEmpty(DateTimeOffset.MinValue).First();
+                        }
+
+                        PooledSearch search;
+                        if (prepared.TryGetValue(provider.ProviderId, out var cached))
+                        {
+                            if (cached.TimedOut) searchCancellation.Cancel();
+                            cached.Error?.Throw();
+                            search = cached.Search!;
+                        }
+                        else search = await SearchPooledAsync(
+                            provider, identity, format.MediaType, exclusions, searchCancellation, format.Id, retryPass, cycleStart,
+                            cancellationToken);
+                        var options = search.Options;
+                        if (search.RateLimitedFor is null && search.Complete) searchedProviders++;
+                        var userExclusions = ExternalCandidateExclusions.From(request.DeclinedCandidates
+                            .Where(c => c.Reason == DeclinedCandidateReason.RequesterDeclined), provider.ProviderId, format.Id);
+                        var questionOptions = options.Where(o => !userExclusions.Excludes(o)).ToArray();
+                        if (search.RateLimitedFor is { } rateLimitedFor)
+                        {
+                            nextCheck = clock.UtcNow + rateLimitedFor;
+                        }
+
                         var searchFoundSomething = options.Count > 0;
+                        // Shadow only: hands unsettled candidates to a background reviewer and returns at once.
+                        semanticShadow?.Observe(request.Id, options);
                         // By ID, and by release: a copy that failed is not
                         // tried again just because the same posting turns up
                         // under another reference.
                         options = options.Where(option => !exclusions.Excludes(option)).ToArray();
+
+                        // Previously language-held copies remain excluded from automatic acquisition. Only a language question may re-admit them.
+                        if (options.Count == 0 && questions is not null && AcquisitionQuestionPolicy.Select(identity, questionOptions,
+                                format.MediaType, provider.EffectiveConfidence(format.MediaType)) is { Kind: AcquisitionQuestionKind.OtherLanguageOnly } foreign)
+                        {
+                            offers.Add(foreign with { SearchVariant = search.VariantOf(foreign.Candidate).ToStored() });
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound, "A language choice is available; still checking for a copy in the requested language.", waitingNext);
+                            continue;
+                        }
+
+                        if (options.Count == 0 && questions is not null && await questions.FindReserveAsync(request, format, work.Title, cancellationToken) is not null)
+                        {
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.NoMatch, "No narrated copy was found; a dramatized copy is kept in reserve.", waitingNext);
+                            continue;
+                        }
 
                         // Everything this source offers has now been tried and
                         // failed. That is emphatically not "nothing found": it
@@ -147,7 +238,7 @@ public sealed class ExternalProviderRecheckService(
                         {
                             var exhaustedReason = DescribeExhaustedAttempts(request, format, provider);
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
-                                exhaustedReason, nextEligibleCheckAtUtc: null);
+                                exhaustedReason, waitingNext);
                             await MarkForReviewAsync(request, work.Title, exhaustedReason, cancellationToken);
                             break;
                         }
@@ -169,11 +260,16 @@ public sealed class ExternalProviderRecheckService(
                         // puts an unknown container last, and the
                         // post-download audio structural validator remains the
                         // gate on whether the bytes are a usable audiobook.
+                        // A stated container that the configured import policy refuses (FLAC, Opus...) is never
+                        // usable, however well it ranks: fetching it only spends a download on a file staging rejects.
                         var reviewableOptions = format.MediaType == RequestMediaType.Audiobook
                             ? options.Where(option =>
                                 string.IsNullOrWhiteSpace(option.Format) ||
-                                AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format)).ToArray()
+                                (AudiobookFormatPolicy.IsUsableForAutomaticAcquisition(option.Format) &&
+                                 IsImportableAudiobookFormat(option.Format))).ToArray()
                             : options;
+                        // Pool-level identity must see every reviewable record before presentation deduplication.
+                        var sameWorkPool = ReviewableForRequester(reviewableOptions, work.Language);
                         reviewableOptions = CollapseEquivalentReviewOptions(reviewableOptions);
                         if (reviewableOptions.Count == 0)
                         {
@@ -184,6 +280,42 @@ public sealed class ExternalProviderRecheckService(
 
                         reviewableOptions = ExternalCandidateRanker.Rank(reviewableOptions, format.MediaType).ToArray();
 
+                        // Only a result that could be this book is worth a person's time. A result that
+                        // contradicts the requested work, or exists only in another language, is recorded
+                        // as no acceptable copy: the request keeps waiting and nobody is asked to choose.
+                        // Automatic acquisition below still sees every option; this narrows review only.
+                        var reviewCandidates = ReviewableForRequester(reviewableOptions, work.Language);
+
+                        // The source's effective level gates confidence tiers. Within an allowed
+                        // tier the shared ranker orders copies; a failed copy advances through
+                        // the existing exclusions and attempt budget on the next recheck.
+                        var automaticMatches = CandidateConfidence.Rank(
+                            reviewableOptions.Where(option => !exclusions.Excludes(option) &&
+                                CandidateConfidence.Allows(provider.EffectiveConfidence(format.MediaType), CandidateConfidence.Classify(option))),
+                            format.MediaType).ToArray();
+
+                        if (automaticMatches.Length == 0 &&
+                            SameWorkCandidateSelector.TrySelect(sameWorkPool, identity, format.MediaType,
+                                provider.EffectiveConfidence(format.MediaType)) is { } sameWork &&
+                            CandidateConfidence.Allows(provider.EffectiveConfidence(format.MediaType), sameWork.Tier))
+                            automaticMatches = [sameWork.Winner];
+
+                        var completeSet = format.MediaType == RequestMediaType.Audiobook &&
+                            provider.EffectiveConfidence(format.MediaType) != ProviderConfidenceLevel.SuggestOnly && partSets is not null
+                            ? AudiobookPartSetSelector.TrySelect(
+                                [.. reviewableOptions.Where(option => search.VariantOf(option).IsBase)], provider.EffectiveConfidence(format.MediaType))
+                            : null;
+                        var triage = await ApplyCandidateTriageAsync(request, format, provider, identity, reviewableOptions,
+                            automaticMatches, completeSet, cancellationToken);
+                        automaticMatches = triage.Matches;
+                        completeSet = triage.Parts;
+                        if (triage.VetoedId is { } vetoed)
+                        {
+                            reviewCandidates = reviewCandidates.Where(c => c.ProviderResultId != vetoed).ToArray();
+                            reviewableOptions = reviewableOptions.Where(c => c.ProviderResultId != vetoed).ToArray();
+                            options = options.Where(c => c.ProviderResultId != vetoed).ToArray();
+                            questionOptions = questionOptions.Where(c => c.ProviderResultId != vetoed).ToArray();
+                        }
                         // A provider that lists one audiobook as separately
                         // numbered fragments ("1 of 2", "2 of 2") has no single
                         // record that is the whole book. When every part of one
@@ -191,57 +323,39 @@ public sealed class ExternalProviderRecheckService(
                         // fetch them all; anything weaker keeps the ordinary
                         // review path below. The set is re-derived server-side
                         // for each part, and publishes only if every part passes.
-                        if (format.MediaType == RequestMediaType.Audiobook && provider.AutoAcquireEnabled &&
-                            partSets is not null &&
-                            AudiobookPartSetSelector.TrySelect(reviewableOptions) is { } completeSet)
+                        if (completeSet is not null)
                         {
-                            var started = await partSets.StartAsync(
+                            var started = await partSets!.StartAsync(
                                 request.Id, format.Id, provider.ProviderId, completeSet, cancellationToken);
                             if (started.Started)
                             {
                                 AddAttempt(request, format, provider, ProviderAttemptOutcome.Submitted,
                                     $"Fetching a complete {completeSet.Total}-part audiobook set. Each part is scanned and " +
                                     "checked on its own, and the book is published only once every part passes.",
-                                    nextEligibleCheckAtUtc: null);
+                                    nextEligibleCheckAtUtc: null, providerAcquisitionJobId: started.FirstJobId);
                             }
                             else
                             {
                                 var setReason = $"A complete {completeSet.Total}-part audiobook set was found, but it " +
                                     $"could not be fetched. {started.Error}";
                                 var setRecorded = await MarkForCandidateReviewAsync(
-                                    request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
+                                    request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates, search,
                                     setReason, cancellationToken);
                                 AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
                                     setRecorded
                                         ? setReason
                                         : $"{setReason} This request is already under review for a different reason.",
-                                    nextEligibleCheckAtUtc: null);
+                                    waitingNext);
                             }
 
+                            advanced = true;
                             break;
                         }
 
-                        // Identifier evidence is strongest, but identical normalized title and
-                        // observed-author records are also a deterministic single-work choice.
-                        // This does not apply to the broad TitleAuthor fallback, derivatives,
-                        // or a language conflict. The selected option is fetched exactly once;
-                        // failure reaches review rather than triggering a fallback download.
-                        var automaticMatches = reviewableOptions
-                            .Where(option =>
-                                (option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle) &&
-                                !option.RequiresLanguageConfirmation &&
-                                (!option.RequiresReleaseConfirmation || IsUnknownDrmOnlyConcern(option)))
-                            .ToArray();
-
                         // A narration-aware winner replaces raw format-rank
                         // collapsing here too -- same selector, same rules,
-                        // as the built-in Gutenberg path. Unlike that fully
-                        // trusted path, anything short of exactly one clean
-                        // winner still falls through to this method's existing
-                        // conservative review fallback below (reviewableOptions),
-                        // matching this service's doc comment: for an
-                        // admin-registered provider, weaker evidence is always
-                        // for a librarian, never silent automatic acquisition.
+                        // as the built-in Gutenberg path. Without exactly one
+                        // eligible winner, the pool goes to review below.
                         AudiobookCandidateSelectionResult? audiobookSelection = null;
                         if (format.MediaType == RequestMediaType.Audiobook)
                         {
@@ -249,30 +363,86 @@ public sealed class ExternalProviderRecheckService(
                             audiobookSelection = AudiobookCandidateSelector.Select(automaticMatches, preference);
                             automaticMatches = audiobookSelection.Winner is { } winner ? [winner] : [];
                         }
+                        else if (automaticMatches.Length > 1) automaticMatches = [automaticMatches[0]];
 
                         // The attempt budget is spent: stop downloading and let
                         // a librarian see every candidate that already failed,
                         // rather than walking further down a list that may be
                         // costing real transfers against a metered source.
                         var failuresSoFar = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId);
-                        if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled &&
+                        // A parked request below its attempt limit gets the same single, strong, cautious try as one whose budget is
+                        // spent: the better copy is downloaded and checked with the review still open, and the review is withdrawn
+                        // (and the held copy it replaces removed) only if it passes. Anything weaker only keeps waiting.
+                        if (parkedReview && failuresSoFar < provider.AutomaticAttemptLimit && automaticMatches.Length == 1 &&
+                            IsStrong(automaticMatches[0], ExternalCandidateExclusions.None))
+                        {
+                            advanced = true;
+                            await TryExtraAttemptAsync(
+                                request, format, provider, work.Title, automaticMatches[0], search, waitingNext,
+                                PeerSizeEvidence.From(automaticMatches[0], ReviewableForRequester(options, work.Language)), cancellationToken, triage.Authorization);
+                            break;
+                        }
+
+                        if (parkedReview && failuresSoFar < provider.AutomaticAttemptLimit && automaticMatches.Length > 0)
+                        {
+                            // Found something, but not strong enough to act on while a person may still be looking at this
+                            // request. It stays as it is and is looked at again on the next scheduled check.
+                            advanced = true;
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
+                                "A possible copy was found, but it is not strong enough to replace what is already under review.", waitingNext);
+                            break;
+                        }
+
+                        if (automaticMatches.Length == 1 &&
                             failuresSoFar >= provider.AutomaticAttemptLimit)
                         {
+                            advanced = true;
+                            // One extra attempt for a candidate that is new, strong and within the cap (OQ-5, OQ-14): it
+                            // downloads with the review still open. Anything else only waits.
+                            if (request.Status == RequestStatus.NeedsReview &&
+                                request.ReviewCategory != RequestReviewCategory.PreferenceAmbiguity &&
+                                failuresSoFar - provider.AutomaticAttemptLimit < provider.AutomaticAttemptLimit &&
+                                IsStrong(automaticMatches[0], ExternalCandidateExclusions.None))
+                            {
+                                await TryExtraAttemptAsync(
+                                    request, format, provider, work.Title, automaticMatches[0], search, waitingNext,
+                                    PeerSizeEvidence.From(automaticMatches[0], ReviewableForRequester(options, work.Language)), cancellationToken, triage.Authorization);
+                                break;
+                            }
+
                             var exhaustedReason = DescribeExhaustedAttempts(request, format, provider);
                             var exhaustedRecorded = await MarkForCandidateReviewAsync(
-                                request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
+                                request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates, search,
                                 exhaustedReason, cancellationToken);
                             AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
                                 exhaustedRecorded
                                     ? exhaustedReason
                                     : $"{exhaustedReason} This request is already under review for a different " +
                                       "reason; it will be reconsidered once that is resolved.",
-                                nextEligibleCheckAtUtc: null);
+                                waitingNext);
                             break;
                         }
 
-                        if (automaticMatches.Length == 1 && provider.AutoAcquireEnabled)
+                        if (automaticMatches.Length == 1)
                         {
+                            advanced = true;
+                            // A copy that needs no answer makes a pending question moot: withdraw it, tell the requesters, and
+                            // carry on into the download. The status changes before any attempt row is written, so the next
+                            // pass is not due at once.
+                            if (request is { Status: RequestStatus.NeedsReview, ReviewCategory: RequestReviewCategory.PreferenceAmbiguity } &&
+                                (request.QuestionKind is null || request.QuestionFormatId == format.Id))
+                            {
+                                request.WithdrawPreferenceReviewForAutomaticCandidate("Found a copy that needs no answer.", clock.UtcNow);
+                                foreach (var requesterId in request.ActiveRequesterIds)
+                                {
+                                    await notifications.RecordReviewWithdrawnAsync(
+                                        requesterId, request.Id, work.Title,
+                                        "Found a standalone copy; no answer is needed.", cancellationToken);
+                                }
+                            }
+
+                            search.MarkSelected(automaticMatches[0], clock.UtcNow);
+                            await ReportSearchFoundAsync(search, automaticMatches[0], format, cancellationToken);
                             var (acquireResult, identityFailure) = await security.AcquireEvaluateAndVerifyAsync(
                                 request.Id,
                                 format.Id,
@@ -280,7 +450,10 @@ public sealed class ExternalProviderRecheckService(
                                 automaticMatches[0].ProviderResultId,
                                 cancellationToken,
                                 allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(automaticMatches[0]),
-                                isAutomaticAcquisition: true);
+                                isAutomaticAcquisition: true,
+                                // Re-derive the option by the very search that found it.
+                                searchVariant: search.VariantOf(automaticMatches[0]),
+                                peerSizeEvidence: PeerSizeEvidence.From(automaticMatches[0], ReviewableForRequester(options, work.Language)), triageAuthorization: triage.Authorization);
 
                             // A clean download of the wrong book is the exact
                             // case the retry loop exists for, so it is routed
@@ -290,7 +463,7 @@ public sealed class ExternalProviderRecheckService(
                             {
                                 await RecordAutomaticFailureAsync(
                                     request, format, provider, work.Title, automaticMatches[0], identityFailure,
-                                    cancellationToken);
+                                    waitingNext, cancellationToken);
                                 break;
                             }
 
@@ -315,7 +488,8 @@ public sealed class ExternalProviderRecheckService(
                                             automaticMatches[0].ReleaseName, automaticMatches[0].Title,
                                             automaticMatches[0].Format, automaticMatches[0].SizeBytes),
                                         failuresSoFar + 1, provider.AutomaticAttemptLimit),
-                                    nextEligibleCheckAtUtc: null);
+                                    nextEligibleCheckAtUtc: null,
+                                    providerAcquisitionJobId: acquireResult.ProviderAcquisitionJobId);
                                 break;
                             }
 
@@ -328,19 +502,41 @@ public sealed class ExternalProviderRecheckService(
                             await RecordAutomaticFailureAsync(
                                 request, format, provider, work.Title, automaticMatches[0],
                                 acquireResult.Error ?? "The automatic copy could not be acquired.",
-                                cancellationToken);
+                                waitingNext, cancellationToken);
                             break;
                         }
 
+                        if (questions is not null && AcquisitionQuestionPolicy.Select(identity, reviewableOptions,
+                                format.MediaType, provider.EffectiveConfidence(format.MediaType)) is { } offer)
+                        {
+                            offers.Add(offer with { SearchVariant = search.VariantOf(offer.Candidate).ToStored() });
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound, "A product choice is available; still checking other sources.", waitingNext);
+                            continue;
+                        }
+
+                        if (reviewCandidates.Length == 0)
+                        {
+                            AddAttempt(request, format, provider, ProviderAttemptOutcome.NoMatch,
+                                triage.VetoedId is not null && options.Count == 0
+                                    ? "Automated candidate review deferred this copy for this pass; still looking for another acceptable copy."
+                                    : DescribeNoAcceptableCopy(options, work.Language), waitingNext);
+                            continue;
+                        }
+
+                        search.MarkSelected(reviewCandidates[0], clock.UtcNow);
+                        await ReportSearchFoundAsync(search, reviewCandidates[0], format, cancellationToken);
+                        advanced = true;
                         var recorded = await MarkForCandidateReviewAsync(
-                            request, format, provider, work.Title, work.PrimaryAuthor, reviewableOptions,
-                            DescribeCandidateReviewReason(reviewableOptions, provider.AutoAcquireEnabled), cancellationToken);
+                            request, format, provider, work.Title, work.PrimaryAuthor, reviewCandidates, search,
+                            provider.EffectiveConfidence(format.MediaType) == ProviderConfidenceLevel.SuggestOnly
+                                ? "This source is set to suggest only. A librarian must verify and choose a copy before downloading."
+                                : DescribeCandidateReviewReason(reviewCandidates), cancellationToken);
                         AddAttempt(request, format, provider, ProviderAttemptOutcome.CandidatesFound,
                             recorded
-                                ? $"Found {reviewableOptions.Count} candidate(s); choose a reviewed candidate before acquisition."
-                                : $"Found {reviewableOptions.Count} candidate(s), but this request is already under " +
+                                ? $"Found {reviewCandidates.Length} candidate(s); choose a reviewed candidate before acquisition."
+                                : $"Found {reviewCandidates.Length} candidate(s), but this request is already under " +
                                   "review for a different reason; it will be reconsidered once that is resolved.",
-                            nextEligibleCheckAtUtc: null);
+                            waitingNext);
                         break;
                     }
                     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested &&
@@ -357,6 +553,12 @@ public sealed class ExternalProviderRecheckService(
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
                         throw;
+                    }
+                    catch (HttpRequestException exception) when (RateLimitWait(exception) is { } wait)
+                    {
+                        AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+                            $"The provider asked Family Librarian to slow down; retrying after {clock.UtcNow + wait:yyyy-MM-dd HH:mm} UTC.",
+                            clock.UtcNow + wait);
                     }
                     catch (HttpRequestException exception) when (IsTransientProviderOutage(exception))
                     {
@@ -387,6 +589,19 @@ public sealed class ExternalProviderRecheckService(
                         searchCancellation?.Dispose();
                     }
                 }
+
+                if (!advanced && searchedProviders == scheduledProviders.Length && questions is not null && work is not null)
+                {
+                    var rankedOffers = CandidateConfidence.Rank(offers.Select(o => o.Candidate), format.MediaType);
+                    var best = rankedOffers.Count == 0 ? null : rankedOffers[0];
+                    var offer = best is null ? await questions.FindReserveAsync(request, format, work.Title, cancellationToken)
+                        : offers.First(o => ReferenceEquals(o.Candidate, best));
+                    if (offer is not null && await questions.AskAsync(request, format, work.Title, offer, cancellationToken))
+                    {
+                        if (savedQuestions is not null && await savedQuestions.TryAcceptAsync(request.Id, cancellationToken)) break;
+                        await questions.NotifyAsync(request, work.Title, cancellationToken);
+                    }
+                }
             }
 
             await attempts.SaveChangesAsync(cancellationToken);
@@ -395,6 +610,121 @@ public sealed class ExternalProviderRecheckService(
 
         return checks;
     }
+
+    /// <summary>The selected candidate came from a model-suggested search: the suggestion found it. Other variants are not the model's.</summary>
+    private Task ReportSearchFoundAsync(PooledSearch search, FulfillmentOption option, RequestFormat format, CancellationToken cancellationToken) =>
+        search.VariantOf(option).Kind == SearchVariantKind.AiSuggestion
+            ? outcomes.ReportAsync(DecisionOutcomeKind.SearchFoundSelectedResult, "ai-search-selected", DecisionOutcomeStrength.Strong,
+                DecisionOutcomeTarget.SuggestedSearches(format.Id), cancellationToken)
+            : Task.CompletedTask;
+
+    private static readonly TimeSpan RateLimitFloor = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan PassTimeCap = TimeSpan.FromMinutes(6);
+
+    private sealed record PooledSearch(
+        IReadOnlyList<FulfillmentOption> Options,
+        IReadOnlyDictionary<string, SearchVariantRef> Found,
+        TimeSpan? RateLimitedFor,
+        IReadOnlyList<SearchVariantAttempt> Memory,
+        bool Complete = true)
+    {
+        /// <summary>Remembers that this candidate (downloaded, or first in review) came from the variant that found it.</summary>
+        public void MarkSelected(FulfillmentOption option, DateTimeOffset at)
+        {
+            var variant = VariantOf(option);
+            Memory.FirstOrDefault(row => row.VariantKind == variant.Kind.ToString() && row.VariantKey == variant.Key)
+                ?.MarkFoundSelected(at);
+        }
+
+        public SearchVariantRef VariantOf(FulfillmentOption option) =>
+            Found.GetValueOrDefault(option.ProviderResultId) ?? new SearchVariantRef(SearchVariantKind.Base, string.Empty);
+    }
+
+    /// <summary>
+    /// Runs the planned variants in order (each at most once per pass), pooling and de-duplicating what they return, and stops
+    /// early on a strong candidate. Then applies the single-strict-winner step once to the pool. A rate-limit answer (or, once
+    /// something has been found, any later failure) ends the list; the pool so far is still judged.
+    /// </summary>
+    private async Task<PooledSearch> SearchPooledAsync(
+        ExternalProvider provider, BookIdentity identity, RequestMediaType mediaType, ExternalCandidateExclusions exclusions,
+        CancellationTokenSource searchCancellation, Guid requestFormatId, bool retryPass, DateTimeOffset cycleStartUtc,
+        CancellationToken cancellationToken)
+    {
+        var memory = (await attempts.ListVariantAttemptsAsync(requestFormatId, provider.ProviderId, cancellationToken)).ToList();
+        var plan = SearchVariantPlanner.Plan(identity, mediaType).ToList();
+        if (retryPass)
+        {
+            foreach (var row in memory.Where(row => row.VariantKind == nameof(SearchVariantKind.AiSuggestion) &&
+                         row.LastResultCount > 0 && row.LastTriedAtUtc >= cycleStartUtc))
+            {
+                if (SearchGuidanceVariants.Restore(identity, new(SearchVariantKind.AiSuggestion, row.VariantKey)) is { } variant)
+                    plan.Add(variant);
+            }
+        }
+        var pool = new ExternalCandidatePool(mediaType);
+        var clockStart = clock.UtcNow;
+        TimeSpan? rateLimited = null;
+        var complete = true;
+        for (var index = 0; index < plan.Count; index++)
+        {
+            // A time guard for one provider pass, not a search budget: variants not reached run on the next recheck.
+            if (index > 0 && clock.UtcNow - clockStart > PassTimeCap) { complete = false; break; }
+
+            // A retry pass rebuilds the pool only to get fresh acquire tokens: the base search and the variants that
+            // returned something this cycle. A scheduled recheck runs the whole list again.
+            var kind = plan[index].Kind.ToString();
+            var remembered = memory.FirstOrDefault(row => row.VariantKind == kind && row.VariantKey == plan[index].Key);
+            if (retryPass && index > 0 && !(remembered is { LastResultCount: > 0 } && remembered.LastTriedAtUtc >= cycleStartUtc))
+            {
+                complete = false;
+                continue;
+            }
+
+            searchCancellation.CancelAfter(BackgroundSearchTimeout);
+            IReadOnlyList<FulfillmentOption> raw;
+            try
+            {
+                raw = await candidateChecker.SearchVariantAsync(provider, identity, mediaType, plan[index], searchCancellation.Token);
+            }
+            catch (Exception exception) when (pool.Options.Count > 0 && !cancellationToken.IsCancellationRequested &&
+                                              (exception is HttpRequestException || exception is OperationCanceledException))
+            {
+                rateLimited = exception is HttpRequestException http ? RateLimitWait(http) : null;
+                complete = false;
+                break;
+            }
+
+            if (remembered is null)
+            {
+                remembered = new SearchVariantAttempt(requestFormatId, provider.ProviderId, kind, plan[index].Key, clock.UtcNow, raw.Count);
+                memory.Add(remembered);
+                attempts.AddVariantAttempt(remembered);
+            }
+            else
+            {
+                remembered.RecordTry(clock.UtcNow, raw.Count);
+            }
+
+            pool.Merge(raw, plan[index].Ref);
+            if (pool.Options.Any(option => IsStrong(option, exclusions))) break;
+        }
+
+        return new PooledSearch(
+            ExternalCandidateAvailabilityChecker.SelectOneStrictCandidate(pool.Options, mediaType, exclusions), pool.Found, rateLimited, memory, complete);
+    }
+
+    /// <summary>An identifier or strict title-and-author copy with nothing left for a person to confirm.</summary>
+    private static bool IsStrong(FulfillmentOption option, ExternalCandidateExclusions exclusions) =>
+        CandidateConfidence.Classify(option) == CandidateConfidenceTier.Strong &&
+        !exclusions.Excludes(option);
+
+    /// <summary>How long to leave a provider alone after it asked to be slowed down; null when the failure is not a rate limit.</summary>
+    private static TimeSpan? RateLimitWait(HttpRequestException exception) => exception switch
+    {
+        ExternalProviderRateLimitedException limited => limited.RetryAfter is { } after && after > RateLimitFloor ? after : RateLimitFloor,
+        { StatusCode: System.Net.HttpStatusCode.TooManyRequests } => RateLimitFloor,
+        _ => null
+    };
 
     /// <summary>No HTTP status means the request never completed (refused, reset, DNS); 502-504 mean the provider or its gateway was briefly down.</summary>
     private static bool IsTransientProviderOutage(HttpRequestException exception) =>
@@ -416,7 +746,7 @@ public sealed class ExternalProviderRecheckService(
         // A cancellation followed by "Ask again" begins a new request cycle.
         // Preserve previous attempts for the audit trail, but do not make their
         // next-check timestamp block the new request.
-        latest is null || latest.AttemptedAtUtc < request.StatusChangedAtUtc ||
+        latest is null || request.QuestionKind is null && latest.AttemptedAtUtc < request.StatusChangedAtUtc ||
         latest.NextEligibleCheckAtUtc is { } next && next <= now;
 
     /// <summary>
@@ -430,6 +760,9 @@ public sealed class ExternalProviderRecheckService(
         options
             .GroupBy(option => new ReviewCandidatePresentationKey(
                 NormalizeReviewFact(option.ProviderId),
+                NormalizeReviewFact(option.Title),
+                NormalizeReviewFact(option.Author),
+                NormalizeReviewFact(option.ReleaseName),
                 option.MediaType,
                 NormalizeReviewFact(option.Format),
                 NormalizeReviewFact(option.Language),
@@ -474,6 +807,9 @@ public sealed class ExternalProviderRecheckService(
 
     private sealed record ReviewCandidatePresentationKey(
         string? ProviderId,
+        string? Title,
+        string? Author,
+        string? ReleaseName,
         RequestMediaType MediaType,
         string? Format,
         string? Language,
@@ -501,6 +837,10 @@ public sealed class ExternalProviderRecheckService(
         return account?.AudiobookNarrationPreference ?? AudiobookNarrationPreference.PreferHuman;
     }
 
+    private bool IsImportableAudiobookFormat(string format) =>
+        importPolicy is null ||
+        importPolicy.IsExtensionAllowed(RequestMediaType.Audiobook, "." + format.Trim().TrimStart('.'));
+
     private static bool IsUnknownDrmOnlyConcern(FulfillmentOption option) =>
         option.DrmStatus == "unknown" &&
         string.Equals(
@@ -514,9 +854,11 @@ public sealed class ExternalProviderRecheckService(
         ExternalProvider provider,
         ProviderAttemptOutcome outcome,
         string summary,
-        DateTimeOffset? nextEligibleCheckAtUtc) =>
+        DateTimeOffset? nextEligibleCheckAtUtc,
+        Guid? providerAcquisitionJobId = null) =>
         attempts.Add(new ProviderAttempt(
-            request.Id, format.Id, provider.ProviderId, outcome, summary, clock.UtcNow, nextEligibleCheckAtUtc));
+            request.Id, format.Id, provider.ProviderId, outcome, summary, clock.UtcNow, nextEligibleCheckAtUtc,
+            providerAcquisitionJobId));
 
     private async Task MarkForReviewAsync(
         BookRequest request, string workTitle, string reason, CancellationToken cancellationToken)
@@ -544,16 +886,60 @@ public sealed class ExternalProviderRecheckService(
     /// for an unrelated reason in the same pass, and there is nothing this
     /// provider can add to that.
     /// </returns>
+    /// <summary>
+    /// What a person may be asked to choose between: not blocked by the identity assessment (a rule-level
+    /// contradiction of title, language or edition) and in the accepted language. Author spelling alone never
+    /// blocks. The checker's own result is untouched because browsing callers and the admin debug search show it all.
+    /// </summary>
+    private static FulfillmentOption[] ReviewableForRequester(
+        IReadOnlyList<FulfillmentOption> options, string? acceptedLanguage) =>
+        options.Where(option =>
+            option.AcquisitionAssessment?.Suitability != AcquisitionSuitability.Blocked &&
+            LanguageAcceptance.IsAcceptedOrUnspecified(option.Language, acceptedLanguage)).ToArray();
+
+    private static string DescribeNoAcceptableCopy(IReadOnlyList<FulfillmentOption> options, string? acceptedLanguage)
+    {
+        var otherLanguages = options
+            .Where(option => !LanguageAcceptance.IsAcceptedOrUnspecified(option.Language, acceptedLanguage))
+            .Select(option => option.Language!).ToArray();
+        return otherLanguages.Length == options.Count
+            ? "Found only editions in other languages (" +
+              string.Join(", ", otherLanguages.Select(DescribeLanguage).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)) + ")."
+            : $"Found {options.Count} result(s); none of them is this book.";
+    }
+
+    private static string DescribeLanguage(string language)
+    {
+        var code = language.Trim();
+        var separator = code.IndexOfAny(['-', '_']);
+        try
+        {
+            return CultureInfo.GetCultureInfo(separator > 0 ? code[..separator] : code).EnglishName;
+        }
+        catch (CultureNotFoundException)
+        {
+            return code;
+        }
+    }
+
     private async Task<bool> MarkForCandidateReviewAsync(
         BookRequest request,
         RequestFormat format,
         ExternalProvider provider,
         string workTitle,
         string? workAuthor,
-        IReadOnlyList<FulfillmentOption> options,
+        FulfillmentOption[] options,
+        PooledSearch search,
         string reason,
         CancellationToken cancellationToken)
     {
+        if (options.Length == 0)
+        {
+            return false;
+        }
+
+        if (request.QuestionKind is not null) return false;
+
         // The stored review may collapse records that are identical to the
         // requester, so do not report the raw provider result count as though
         // it were the number of choices a person will see.
@@ -566,7 +952,7 @@ public sealed class ExternalProviderRecheckService(
         // that none of them was the requested book.
         var candidates = options
             .Select(option => RequestReviewCandidateRecord.WithCatalogFallback(
-                RequestReviewCandidateRecord.From(format.Id, option), workTitle, workAuthor))
+                RequestReviewCandidateRecord.From(format.Id, option, search.VariantOf(option).ToStored()), workTitle, workAuthor))
             .ToArray();
 
         if (request.Status == RequestStatus.PendingAcquisition)
@@ -617,18 +1003,20 @@ public sealed class ExternalProviderRecheckService(
     /// </remarks>
     private async Task RecordAutomaticFailureAsync(
         BookRequest request, RequestFormat format, ExternalProvider provider, string workTitle,
-        FulfillmentOption option, string reason, CancellationToken cancellationToken)
+        FulfillmentOption option, string reason, DateTimeOffset exhaustedNextCheck, CancellationToken cancellationToken)
     {
         request.RecordAutomaticCandidateFailure(
             format.Id, provider.ProviderId, option.ProviderResultId, reason, clock.UtcNow,
             ExternalReleaseFingerprint.Compute(option.ReleaseName, option.SizeBytes));
         var failures = request.CountAutomaticCandidateFailures(format.Id, provider.ProviderId);
+        await outcomes.ReportAsync(DecisionOutcomeKind.VerificationFailed, "automatic-verification", DecisionOutcomeStrength.Strong,
+            DecisionOutcomeTarget.Candidate(request.Id, provider.ProviderId, option.ProviderResultId), cancellationToken);
 
         if (failures >= provider.AutomaticAttemptLimit)
         {
             AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
                 AutomaticAttemptNarrative.Exhausted(reason, failures, provider.AutomaticAttemptLimit),
-                nextEligibleCheckAtUtc: null);
+                exhaustedNextCheck);
             await MarkForReviewAsync(request, workTitle, reason, cancellationToken);
             return;
         }
@@ -640,6 +1028,56 @@ public sealed class ExternalProviderRecheckService(
             AutomaticAttemptNarrative.Advancing(reason, failures, provider.AutomaticAttemptLimit),
             nextEligibleCheckAtUtc: clock.UtcNow);
         fulfillmentSignal?.Request();
+    }
+
+    private static TimeSpan MaxInterval(TimeSpan first, TimeSpan second) => first >= second ? first : second;
+
+    /// <summary>
+    /// The one extra attempt a spent budget allows (AUTOFIND 2c, owner answers OQ-5 and OQ-14): a new, strong candidate is
+    /// downloaded while the review stays open. Success withdraws the review; a failure rules the candidate out, adds a note to
+    /// the open review and sends no second notification. Never advances to the next candidate by itself.
+    /// </summary>
+    private async Task TryExtraAttemptAsync(
+        BookRequest request, RequestFormat format, ExternalProvider provider, string workTitle, FulfillmentOption option,
+        PooledSearch search, DateTimeOffset nextCheck, PeerSizeEvidence? peers, CancellationToken cancellationToken,
+        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null)
+    {
+        search.MarkSelected(option, clock.UtcNow);
+        await ReportSearchFoundAsync(search, option, format, cancellationToken);
+        var (result, identityFailure) = await security.AcquireEvaluateAndVerifyAsync(
+            request.Id, format.Id, provider.ProviderId, option.ProviderResultId, cancellationToken,
+            allowDownloadTimeDrmValidation: IsUnknownDrmOnlyConcern(option), isAutomaticAcquisition: true,
+            searchVariant: search.VariantOf(option), peerSizeEvidence: peers, triageAuthorization: triageAuthorization);
+
+        if (result.Outcome == ManualImportOutcome.Success && identityFailure is null)
+        {
+            AddAttempt(request, format, provider, ProviderAttemptOutcome.Acquired,
+                "Found a stronger new copy after the attempt limit; it passed its checks.", nextEligibleCheckAtUtc: null);
+            if (request.WithdrawReviewForSuccessfulAttempt("A newer copy passed its checks.", clock.UtcNow))
+            {
+                await notifications.RecordBetterCopyFoundAsync(request.Id, workTitle, cancellationToken);
+            }
+
+            return;
+        }
+
+        if (result.Outcome == ManualImportOutcome.AcquisitionInProgress)
+        {
+            AddAttempt(request, format, provider, ProviderAttemptOutcome.Submitted,
+                "Found a stronger new copy after the attempt limit; trying it once.", nextEligibleCheckAtUtc: null,
+                providerAcquisitionJobId: result.ProviderAcquisitionJobId);
+            return;
+        }
+
+        var reason = identityFailure ?? result.Error ?? "The automatic copy could not be acquired.";
+        request.RecordAutomaticCandidateFailure(
+            format.Id, provider.ProviderId, option.ProviderResultId, reason, clock.UtcNow,
+            ExternalReleaseFingerprint.Compute(option.ReleaseName, option.SizeBytes));
+        await outcomes.ReportAsync(DecisionOutcomeKind.VerificationFailed, "automatic-verification", DecisionOutcomeStrength.Strong,
+            DecisionOutcomeTarget.Candidate(request.Id, provider.ProviderId, option.ProviderResultId), cancellationToken);
+        request.AddReviewNote($"A newer copy was tried once after the attempt limit and also failed: {reason}", clock.UtcNow);
+        AddAttempt(request, format, provider, ProviderAttemptOutcome.Failed,
+            $"A stronger new copy was tried once after the attempt limit and failed: {reason}", nextCheck);
     }
 
     /// <summary>
@@ -669,17 +1107,16 @@ public sealed class ExternalProviderRecheckService(
             : $"{summary}. A librarian must choose a source.";
     }
 
-    private static string DescribeCandidateReviewReason(
-        IReadOnlyList<FulfillmentOption> options,
-        bool autoAcquireEnabled)
+    private static string DescribeCandidateReviewReason(IReadOnlyList<FulfillmentOption> options)
     {
-        var hasConfirmedWorkIdentity = options.Any(option =>
-            option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle);
+        var hasConfirmedWorkIdentity = options.All(option =>
+            option.MatchBasis is BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor ||
+            option.MatchBasis == BookMatchBasis.StrictTitle && option.AuthorAffinity?.HasStrongSupport == true);
 
         if (!hasConfirmedWorkIdentity)
         {
             if (options.Any(option => option.HasPlausibleTitle))
-                return "The release names include the requested title, but other identity or release details need a librarian review before acquisition.";
+                return "The source titles or release names include the requested title, but author, work identity or release details still need librarian verification before acquisition.";
             return "Possible copies were found, but their titles could not be confirmed as the requested work. A librarian must verify the source before acquisition.";
         }
 
@@ -688,8 +1125,6 @@ public sealed class ExternalProviderRecheckService(
         if (releaseConcerns.Length > 0)
             return $"Matching titles were found. {string.Join(" ", releaseConcerns)}";
 
-        return autoAcquireEnabled
-            ? "Several matching copies need a librarian comparison before acquisition."
-            : "Matching copies were found, but automatic acquisition is disabled. A librarian will verify and select one.";
+        return "Several matching copies need a librarian comparison before acquisition.";
     }
 }

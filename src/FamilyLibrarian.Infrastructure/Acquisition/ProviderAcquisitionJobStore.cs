@@ -57,7 +57,60 @@ public sealed class ProviderAcquisitionJobStore(AppDbContext database) : IProvid
             .OrderBy(job => job.PartNumber)
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListWithProviderJobAsync(
+        int maximumCount, CancellationToken cancellationToken) =>
+        await database.ProviderAcquisitionJobs
+            .Where(job => job.ProviderJobId != null)
+            .OrderByDescending(job => job.CreatedAtUtc)
+            .Take(maximumCount)
+            .ToArrayAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<AttemptJobFacts>> ListAttemptJobFactsAsync(
+        IReadOnlyCollection<Guid> jobIds, CancellationToken cancellationToken)
+    {
+        if (jobIds.Count == 0)
+        {
+            return [];
+        }
+
+        var linked = await database.ProviderAcquisitionJobs
+            .AsNoTracking()
+            .Where(job => jobIds.Contains(job.Id))
+            .Select(job => new AttemptJobFacts(job.Id, job.LifecycleState, job.PartSetId))
+            .ToListAsync(cancellationToken);
+        var setIds = linked.Where(fact => fact.PartSetId != null).Select(fact => fact.PartSetId!.Value).Distinct().ToArray();
+        if (setIds.Length > 0)
+        {
+            linked.AddRange(await database.ProviderAcquisitionJobs
+                .AsNoTracking()
+                .Where(job => job.PartSetId != null && setIds.Contains(job.PartSetId.Value) && !jobIds.Contains(job.Id))
+                .Select(job => new AttemptJobFacts(job.Id, job.LifecycleState, job.PartSetId))
+                .ToListAsync(cancellationToken));
+        }
+
+        return linked;
+    }
+
+    public async Task<IReadOnlyList<ProviderAcquisitionJob>> ListActiveForFormatAsync(
+        Guid requestFormatId, CancellationToken cancellationToken) =>
+        await database.ProviderAcquisitionJobs
+            .Include(job => job.Outputs)
+            .Where(job => job.RequestFormatId == requestFormatId &&
+                (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Queued ||
+                 job.LifecycleState == ProviderAcquisitionJobLifecycleState.Running ||
+                 job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting))
+            .ToArrayAsync(cancellationToken);
+
     public void Add(ProviderAcquisitionJob job) => database.ProviderAcquisitionJobs.Add(job);
+
+    public async Task<IReadOnlyList<SourceJobActivity>> ListSourceActivityAsync(CancellationToken cancellationToken) =>
+        await database.ProviderAcquisitionJobs.AsNoTracking()
+            .Where(job => job.LifecycleState == ProviderAcquisitionJobLifecycleState.Queued ||
+                job.LifecycleState == ProviderAcquisitionJobLifecycleState.Running ||
+                job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting)
+            .Select(job => new SourceJobActivity(job.ProviderId, job.RequestFormatId,
+                job.LifecycleState, job.Phase, job.InteractionType != null))
+            .ToArrayAsync(cancellationToken);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);
 }

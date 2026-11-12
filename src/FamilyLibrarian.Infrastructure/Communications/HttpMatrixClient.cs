@@ -91,13 +91,47 @@ public sealed class HttpMatrixClient(IHttpClientFactory httpClientFactory) : IMa
             var transactionId = Guid.NewGuid().ToString("N");
             var requestUri = $"_matrix/client/v3/rooms/{Uri.EscapeDataString(roomId)}/send/m.room.message/{transactionId}";
             using var response = await client.PutAsJsonAsync(requestUri, payload, cancellationToken);
-            return response.IsSuccessStatusCode
-                ? SendResult.Success()
-                : SendResult.Failure(await DescribeErrorAsync(response, cancellationToken));
+            if (!response.IsSuccessStatusCode)
+                return SendResult.Failure(await DescribeErrorAsync(response, cancellationToken));
+            // The event id is optional metadata: a delivered message stays successful when the response has no readable id.
+            try
+            {
+                if (JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken)) is JsonObject body &&
+                    body["event_id"] is JsonValue value && value.TryGetValue<string>(out var eventId))
+                    return SendResult.Success(eventId);
+            }
+            catch (Exception exception) when (exception is System.Text.Json.JsonException or HttpRequestException or OperationCanceledException)
+            {
+            }
+            return SendResult.Success();
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
             return SendResult.Failure($"Could not reach the Matrix homeserver: {exception.Message}");
+        }
+    }
+
+    public async Task SetTypingAsync(
+        MatrixSettings settings, string accessToken, string roomId, bool typing, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(settings.BotUserId))
+        {
+            return;
+        }
+
+        try
+        {
+            using var client = CreateClient(settings, accessToken);
+            // The indicator expires by itself after the timeout, so a crash can never leave it on.
+            var payload = typing
+                ? new JsonObject { ["typing"] = true, ["timeout"] = 45_000 }
+                : new JsonObject { ["typing"] = false };
+            var requestUri = $"_matrix/client/v3/rooms/{Uri.EscapeDataString(roomId)}/typing/{Uri.EscapeDataString(settings.BotUserId)}";
+            using var response = await client.PutAsJsonAsync(requestUri, payload, cancellationToken);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            // Cosmetic only.
         }
     }
 
@@ -206,8 +240,22 @@ public sealed class HttpMatrixClient(IHttpClientFactory httpClientFactory) : IMa
                     if (room?["timeline"]?["events"] is not JsonArray events) continue;
                     foreach (var candidateEvent in events)
                     {
-                        if (candidateEvent?["type"]?.GetValue<string>() != "m.room.message") continue;
-                        var sender = candidateEvent["sender"]?.GetValue<string>();
+                        var eventType = candidateEvent?["type"]?.GetValue<string>();
+                        if (eventType == "m.room.encrypted")
+                        {
+                            // Cannot be read (D-1: unencrypted rooms only); surfaced so the router can explain, never decrypted.
+                            var encryptedSender = candidateEvent!["sender"]?.GetValue<string>();
+                            if (encryptedSender is not null && !string.Equals(encryptedSender, botUserId, StringComparison.Ordinal))
+                            {
+                                messages.Add(new MatrixInboundMessage(
+                                    roomId, encryptedSender, string.Empty, EventId: candidateEvent["event_id"]?.GetValue<string>(), IsEncrypted: true));
+                            }
+
+                            continue;
+                        }
+
+                        if (eventType != "m.room.message") continue;
+                        var sender = candidateEvent!["sender"]?.GetValue<string>();
                         var messageBody = candidateEvent["content"]?["body"]?.GetValue<string>();
                         var msgType = candidateEvent["content"]?["msgtype"]?.GetValue<string>();
                         if (sender is null || messageBody is null || msgType != "m.text") continue;
@@ -215,7 +263,7 @@ public sealed class HttpMatrixClient(IHttpClientFactory httpClientFactory) : IMa
                         if (botUserId is not null && string.Equals(sender, botUserId, StringComparison.Ordinal)) continue;
 
                         var replyToEventId = candidateEvent["content"]?["m.relates_to"]?["m.in_reply_to"]?["event_id"]?.GetValue<string>();
-                        messages.Add(new MatrixInboundMessage(roomId, sender, messageBody, replyToEventId));
+                        messages.Add(new MatrixInboundMessage(roomId, sender, messageBody, replyToEventId, candidateEvent["event_id"]?.GetValue<string>()));
                     }
                 }
             }

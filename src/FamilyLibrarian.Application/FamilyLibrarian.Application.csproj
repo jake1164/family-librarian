@@ -1,5 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <InternalsVisibleTo Include="FamilyLibrarian.Infrastructure.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../FamilyLibrarian.Domain/FamilyLibrarian.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="ModelTuning/Corpus/v1/*.json" LogicalName="FamilyLibrarian.ModelTuning.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

@@ -45,12 +45,21 @@ remaining release-name evidence after its existing title, series, narration,
 language and packaging checks. It does not guess that text before a dash is an
 author.
 
+Review labels retain source claims separately from catalog context. A source
+that supplies only a release name does not acquire the requested author as
+its own metadata. Its raw release leads the administrator review, while
+unconfirmed release-only fallback identity choices require a librarian; they
+cannot be accepted through the requester edition-choice endpoint. Explicit product
+questions continue through their independently verified consent path. Media
+fact deduplication must preserve differences in title, author and release name.
+
 Local author affinity uses the existing Unicode KC word normalizer, invariant
 case, punctuation/whitespace boundaries, comma-order handling, and harmless
 Jr/Sr/II/III/IV suffix removal. Its ordered supporting weights are exact full
 name (100), compatible full name or first initial plus exact surname (90),
 fuzzy first plus exact surname (80), surname only (70), exact first plus fuzzy
-surname (60), first only (50), both fuzzy (40), unknown (0), conflict (-100).
+surname (60), context-corroborated structured spelling (55), first only (50),
+both fuzzy (40), unknown (0), conflict (-100).
 Typo evidence permits one insertion, deletion or substitution per component
 only when both tokens have at least five and at most 64 characters. There is no substring
 matching or arbitrary initial matching.
@@ -84,6 +93,12 @@ arbitrary residual descriptors are never compared as a whole author name.
 Explicit author conflicts prevent strict identity. Owned-library/destination
 matching keeps its separate policy and is unchanged by the release matcher.
 
+Context corroboration permits up to two edits per structured author name component,
+with the same first letter and component count, only with an exact title and
+independent catalog agreement: series name and position, an edition ISBN-13, or
+publication year and publisher. It records Weak author evidence; it does not
+relax explicit release-name author credits or other contradictions.
+
 Series positions conflict only when catalog and candidate contain comparable
 positions for the same series. Numeric positions compare invariantly (`03`
 and `3` agree; `3.5` and `4` disagree). Inferred release prefixes retain
@@ -101,11 +116,112 @@ scan and artifact-identity checks remain deterministic. A language assertion
 is not discarded because it appears in brackets. Unclassified publisher/uploader
 labels do not imply an edition change by themselves.
 
-Optional future semantic resolvers can consume this assessment after
-`DeterministicCandidateIdentityResolver.Assess` and before an ambiguous result
-is mapped to human review. They must preserve deterministic facts and cannot
-approve acquisition. No semantic resolver, AI setting or model dependency ships
-with this phase; deterministic operation is a complete supported mode.
+The deterministic identity layer does not depend on a model; deterministic
+operation is a complete supported mode. Existing candidate/artifact semantic
+assessments remain advisory shadows. Optional search guidance changes bounded
+search inputs only and does not enable candidate triage.
+
+The separate, off-by-default `CandidateTriage` role consumes these facts before
+automatic submission. It preserves the assessment and uses only server-supplied
+candidate/evidence IDs. Independent server rules allow a grounded veto, a true
+tie preference, or a corroborated author-only variant at Standard/Liberal
+confidence. Strict is unchanged. This requires no provider protocol extension:
+the selected candidate is retrieved and verified again through the existing
+query/reference flow, and altered source facts invalidate the decision.
+Triage cannot invent acquisition targets, preconfirm artifact identity or
+bypass any security, edition, completeness or delivery check.
+
+The optional `ArtifactValidationDecision` role is a host-side pre-approval
+review of in-memory verifier and profile-comparison evidence. It needs no
+provider protocol change. Its hold-call contract cannot accept a collection or
+release a file.
+Only a grounded concern can add `identity.hold.model_concern`; model errors
+leave the deterministic verdict unchanged. Automatic declines caused by this
+hold begin with `[model]` and consume the existing source attempt budget.
+
+EPUB/KEPUB hold review may include transient copyright/chapter/last-page
+`BOOK_TEXT` blocks, explicitly untrusted and bounded to 1,200 characters each.
+Unknown excerpt IDs can support only their corresponding deterministic fact;
+they cannot justify a hold or release alone. Sample and abridgement cues are
+Condition, conservative prose-language cues Weak, and printed/catalog ISBN
+agreement Positive. Excerpts never appear in payloads sent to acquisition providers, persisted
+artifact evidence, semantic claims, ledger, audit, exceptions, logs or API
+responses. Only cited IDs, safe model notes and an input digest persist. Notes
+that copy eight consecutive excerpt words are rejected. Extraction and model
+execution share the existing maximum 45-second deadline. Role off means no
+extraction; cloud without `AllowCloudExcerpts` receives no excerpts or file
+values. Audio has no excerpts. Provider errors cannot echo excerpt text into
+stored findings. No acquisition-provider protocol or trust change is needed.
+
+The separate administrator setting `AllowModelHoldRelease` defaults to false.
+The existing authenticated/antiforgery-protected
+`PUT /api/v1/admin/model-gateway/` accepts nullable `allowModelHoldRelease`
+(omission preserves its value), and GET/settings responses expose the saved
+boolean. Changes use the existing `ModelGatewaySettingsChanged` audit with the
+new permission value. Members cannot read or change this administrator surface.
+Providers cannot enable release or submit a finding for approval.
+
+`GET /api/v1/admin/model-gateway/failures` is administrator-only and never calls a
+model. Optional `role` selects a known role name, `days` is 1–90 (default 1), and
+`page` is 1–2000 (default 1). Optional `category` selects `RejectedReply`, `ProviderError`,
+`Cancelled` or `Unknown`; unsupported values are rejected. The category filter is applied
+before pagination and combines with the feature/time filters. Rejected replies cover response
+validation (including schema/evidence and repeated searches); provider errors cover transport,
+timeouts and unavailable/unsupported models. A cancellation reason takes precedence over its
+broad outcome, so cancellation never inflates either category. Unrecognized outcomes remain
+unclassified. Omitting category returns all diagnostic categories as individual rows, without
+a combined failure statistic. Responses contain at most 50 diagnostic calls, newest
+first with a unique ID tie-breaker, plus `hasMore` and UTC window bounds. Pass the
+returned `untilUtc` as `until` when paging to exclude newly started calls. Accepted
+and pending calls are excluded. Each row exposes only call ID, feature, configured
+model, local/cloud placement, broad outcome, optional fixed reason code, safe
+explanation, time and latency. File calls are optionally associated with
+`mediaAssetId`; when the file still exists, `artifact`
+contains only its file/work IDs, allowlisted format, bundle ID and track number/count.
+No original or stored filename is included. Historical rows without a diagnostic code remain
+explicitly unknown at that level; separate assessment findings are not guessed
+to be the same call. No user identifiers, credentials, prompts, replies or book
+excerpts are returned. Retention is up to 90 days; the endpoint is read-only and
+does not retry or change a book decision.
+
+Saved AI decisions are administered through five routes under
+`/api/v1/admin/model-gateway/capture`, each administrator-only, with an anti-forgery token
+required for state changes: `GET /` and `PUT /` read and change the two switches and the
+retention limits; `POST /preview` reports how many records the next cleanup would remove under
+proposed limits; `GET /insight` returns counts, dates and approximate byte sizes per feature and
+per table and never saved content; `POST /purge` deletes the saved decisions for one captured
+role, or for all when no role is given, and audits counts only. `PUT /` and `POST /preview`
+reject any value outside the fixed ranges.
+
+The administrator-only `GET /api/v1/admin/model-gateway/usage` preserves per-feature
+counts while distinguishing the actual `model`, local/cloud placement, safe `reasonCode`
+and optional `workflowEffects` on grouped call rows. Null effects mean untracked; fixed
+effect names describe application observations, never model claims. Atomic monotonic
+updates on successful invocations make reuse/retries idempotent without double-counting
+a call. Semantic findings carry an optional exact invocation ID for later consumer use;
+no timestamp-based correlation or foreign-key deletion coupling is introduced.
+`recommendations` separately aggregates allowlisted validated verdicts by role/model/placement.
+These are saved recommendations, not applied actions or measured accuracy. Responses do not
+include prompts, reply bodies, claims/notes, credentials or user IDs. Historical calls are
+not backfilled with inferred effects. No endpoint accepts arbitrary browser-authored impact.
+`usage` accepts `days` of 1 (default), 7, 30 or 90 and any other value is a validation error; the response states the
+`days` used and adds `latency` rows per role, model and placement (median and 95th percentile, nearest rank, and reported
+tokens). Opportunity flags (`opportunities` on a row) describe the situation a call was made in and are separate from
+`workflowEffects`; a row with only opportunity flags still has null `workflowEffects`. `GET .../usage/trend?weeks=` (1 to
+156, default 52) returns the weekly counts kept after the 90-day prune, and `GET .../usage/effectiveness?days=` returns,
+per role, how many calls changed something and how many of those decisions later had a good-only, bad-only or mixed
+result and how many an administrator decided after seeing the model's note. All three are administrator-only, return
+counts only, and the full purge of saved decisions also clears the weekly counts.
+
+With both role and permission enabled, a separate artifact-decision/1 release
+call may propose `release` with a grounded `supports_declared_identity` claim,
+or `contains_requested` citing tier-B contents for an already accepted collection.
+The host checks deterministic eligibility before/after the model and again in
+ApprovalService. Arbitrary Negative observations, model-concern holds, forged
+citations and model failures never release a file. Applied releases use
+`model-hold-release-v1`, audit `asset.identity_released_by_model` with no user
+actor, model/finding ids, and evidence source `model`. These are internal host
+decisions; no external-provider protocol or acquisition trust changes.
 
 Numbered audiobook fragments (`Part 2`, `1.of.2`, `2 of 2`) are completeness
 evidence distinct from work identity and from tracks inside one complete
@@ -122,8 +238,8 @@ every number remains review evidence by default: numbering alone cannot
 establish the same audiobook edition. It must not claim a partial or
 ambiguous set is a complete audiobook.
 
-A provider registered with automatic acquisition enabled may have a complete
-set fetched without review, but only when one provider returns exactly one
+An enabled provider whose effective download confidence is not Suggest only may
+have a complete set fetched without review, but only when one provider returns exactly one
 compatible record for every number `1..N` (`2 <= N <= 8`), each record's only
 release concern is that it is a fragment (no sample, collection, abridged or
 DRM concern, no language confirmation), each has a plausible title and no
@@ -401,17 +517,37 @@ matching entry rather than the first: a single distinct book ID is accepted,
 while more than one distinct ID is treated as ambiguous and returns "not found"
 rather than guessing. It also rejects an otherwise-matching entry whose title
 carries a known derivative/combined-work marker (e.g. "Summary of Debt of
-Honor", "Debt of Honor / Executive Orders") — see
-`docs/family-librarian-book-matching-design-findings.md` §5/§6/§8. This guard
+Honor", "Debt of Honor / Executive Orders"): a title-substring match is grounds
+for further comparison, never automatic identity. This guard
 is a fixed, non-exhaustive keyword list, not the fuller
-`ExpectedBookProfile`/`CandidateMatchResult` evidence model that document
-describes for the separate acquisition-provider matching pipeline — that
+`ExpectedBookProfile`/`CandidateMatchResult` evidence model that was sketched
+early on for the separate acquisition-provider matching pipeline — that
 remains future work if CWA correlation needs it. Still weaker than full
 identifier-first matching: a missing `<author>` element on a CWA entry is not
 treated as a mismatch (CWA's OPDS template does not reliably include one),
 and no per-edition ISBN is threaded through — any ISBN known for the Work is
 tried, not specifically the edition being published. Both are accepted,
 documented gaps rather than oversights.
+
+**Approved-file destination confirmation.** An approved artifact can have a byline
+that differs from the canonical author, or no creator. After handoff, and only for
+a Trusted asset whose ordinary lookup returned NoMatch, `FindImportedFileAsync`
+discovers title-compatible, language-eligible entries through title queries and the
+recent-books feed. It downloads an explicitly offered format through the configured
+OPDS endpoint and requires the approved asset's exact byte count and SHA-256. One
+matching book ID confirms the import; multiple matching IDs remain ambiguous.
+Ownership and pre-handoff duplicate checks retain their existing matching rules.
+This adds no model call or identity decision and never releases a held asset.
+
+The fallback checks at most eight distinct candidate IDs, with a 45-second deadline
+covering discovery and streaming. Candidate overflow, HTTP/read failure, changed bytes,
+or an unavailable format leave the import unconfirmed for a later recheck. Reads stop
+after at most one byte beyond the approved size; content is neither persisted nor
+sent to a model. Acquisition URLs must equal the expected same-origin OPDS download
+route. Requests include a neutral User-Agent for CWA download compatibility; HTTP/read
+failures produce a diagnostic log without file content or credentials. This fallback
+depends on CWA preserving original bytes, including on download; metadata embedding,
+fixing or conversion can make it fail safely.
 
 `ILibraryDestination` publishes an already approved staged artifact and verifies
 the result. The destination becomes the permanent store for the media; Family
@@ -494,9 +630,38 @@ MANUAL   No background lookup; an administrator explicitly checks it.
 ```
 
 The bundled Project Gutenberg and LibriVox implementations have effective
-`ONCE` behavior. Registered external providers default to `MANUAL`; an administrator may explicitly select
-`DAILY` or `WEEKLY` for each enabled provider. The application owns that policy,
-not the provider manifest.
+`ONCE` behavior. Newly registered external providers default to `DAILY`; an administrator may select
+`MANUAL` or `WEEKLY` for each enabled provider. Existing providers retain their saved
+schedule. The application owns that policy, not the provider manifest.
+
+Enabled sources download candidates permitted by the source's effective download
+confidence. Strict permits strong identity; Standard adds
+corroborated close calls; Liberal also permits incomplete author metadata on a
+plausible title. Suggest only (`SuggestOnly` in the admin API) finds copies for
+review and requires a librarian's selection before downloading, including multipart
+audiobooks. Ebook and audiobook overrides optionally replace the source
+level. New sources default to Strict; migrated sources default to Standard with
+an administrator review notice until their levels are saved. The confidence
+setting is local administration policy and adds nothing to the provider protocol.
+
+When no candidate qualifies individually, same-work collapse can produce a
+pool-level CloseCall at Standard or Liberal. Every reviewable candidate must
+reduce to the requested title core, carry no conditions or other release/language
+concerns beyond unknown DRM, and have no author conflict; at least one needs
+strong or fuzzy author support. Ranking chooses one copy only after that whole-pool
+check. Presentation deduplication cannot hide a different work or derivative from
+the check. Acquisition repeats the confidence decision against fresh source
+evidence; content validation still uses the catalog identity.
+
+Optional search guidance uses the existing structured search request and adds
+no provider capability or protocol field. Each `AiSuggestion` changes only the
+specified title or author dimension; a series-name proposal uses the existing
+series-position search shape. Its server-stored key identifies the reason and
+normalized value so acquisition can repeat the search against fresh source
+results. Provider IDs, candidate references, acquire tokens and download URLs
+are never model-selected targets. Only independently verified source results
+can enter the existing acquisition or requester-consent paths. See the
+[domain workflow](02-domain-workflows.md) for guidance eligibility and limits.
 
 Each automatic lookup creates an append-only, administrator-only
 provider-attempt entry containing provider ID, request format, attempt time,

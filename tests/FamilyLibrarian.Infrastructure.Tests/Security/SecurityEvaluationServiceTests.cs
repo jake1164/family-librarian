@@ -4,6 +4,7 @@ using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.Requests;
 using FamilyLibrarian.Domain.Security;
 
@@ -211,6 +212,245 @@ public sealed class SecurityEvaluationServiceTests
             context.Audit.Entries.Select(entry => entry.Action).ToArray());
     }
 
+    [TestMethod]
+    public async Task RecordingEvidenceNeverChangesTheSecurityDecisionAndRunsAfterItIsSaved()
+    {
+        foreach (var scanner in new IMalwareScanner[] { new AlwaysCleanScanner(), new DetectedThreatScanner(), new LimitExceededScanner() })
+        {
+            var plain = new TestContext();
+            var plainAsset = plain.SeedAsset();
+            var plainResult = await plain.CreateService(scanner).EvaluateAsync(plainAsset.Id, CancellationToken.None);
+
+            var observed = new TestContext();
+            var observedAsset = observed.SeedAsset();
+            var recorder = new CapturingRecorder(observed.Repository);
+            var observedResult = await observed.CreateService(scanner, recorder).EvaluateAsync(observedAsset.Id, CancellationToken.None);
+
+            Assert.AreEqual(plainResult.Status, observedResult.Status, scanner.GetType().Name);
+            Assert.AreEqual(plainAsset.StorageState, observedAsset.StorageState, scanner.GetType().Name);
+            Assert.AreEqual(plain.Repository.SaveCount, observed.Repository.SaveCount, "Recording must add no save of its own to the decision path.");
+            CollectionAssert.AreEqual(
+                plain.Audit.Entries.Select(entry => entry.Action).ToArray(),
+                observed.Audit.Entries.Select(entry => entry.Action).ToArray());
+            Assert.AreEqual(1, recorder.Calls);
+            Assert.AreEqual(observedResult.Status, recorder.StatusWhenCalled, "Evidence is recorded after the decision exists.");
+            // Pending evaluation, the scan result and the final outcome were all saved before recording
+            // (a destroyed malware file adds one more save afterwards).
+            Assert.IsGreaterThanOrEqualTo(3, recorder.SavesWhenCalled, "Evidence is recorded after the decision is saved.");
+        }
+    }
+
+    private sealed class FixedInspector(params IdentityFact[] facts) : IAssetTechnicalInspector
+    {
+        public string Id => "fixed";
+
+        public bool Supports(MediaAsset asset) => true;
+
+        public Task<IReadOnlyList<IdentityFact>> InspectAsync(MediaAsset asset, Stream content, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<IdentityFact>>(facts);
+    }
+
+    private sealed class ThrowingInspector : IAssetTechnicalInspector
+    {
+        public string Id => "throwing";
+
+        public bool Supports(MediaAsset asset) => true;
+
+        public Task<IReadOnlyList<IdentityFact>> InspectAsync(MediaAsset asset, Stream content, CancellationToken cancellationToken) =>
+            throw new InvalidDataException("hostile header");
+    }
+
+    private sealed class FixedProfileInspector(bool throws = false) : IAssetProfileInspector
+    {
+        public string Id => "fixed-profile";
+
+        public bool Supports(MediaAsset asset) => true;
+
+        public Task<IReadOnlyList<IdentityFact>> InspectAsync(MediaAsset asset, Stream content, CancellationToken cancellationToken) =>
+            throws
+                ? throw new InvalidDataException("hostile header")
+                : Task.FromResult<IReadOnlyList<IdentityFact>>(
+                    [new IdentityFact("ev-profile-duration", EvidenceDimension.Profile, EvidenceReasonCodes.ArtifactProfile.AudioTotalDuration,
+                        EvidencePolarity.Unknown, "seconds=60;tracks=1")]);
+    }
+
+    [TestMethod]
+    public async Task AnAudiobooksProfileIsReportedWithItsMeasurementsAndChangesNothing()
+    {
+        var plain = new TestContext();
+        var plainAsset = plain.SeedAudioTrack();
+        var plainResult = await plain.CreateService(new AlwaysCleanScanner()).EvaluateAsync(plainAsset.Id, CancellationToken.None);
+
+        var profiled = new TestContext();
+        var asset = profiled.SeedAudioTrack();
+        var recorder = new CapturingRecorder(profiled.Repository);
+        var result = await profiled.CreateService(new AlwaysCleanScanner(), recorder, [new FixedInspector(Duration())], [new FixedProfileInspector()])
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(plainResult.Status, result.Status);
+        Assert.AreEqual(plain.Repository.SaveCount, profiled.Repository.SaveCount);
+        var findings = recorder.Technical.Single().Findings;
+        Assert.IsTrue(findings.Any(finding => finding.Code == EvidenceReasonCodes.ArtifactAudio.DurationMeasured));
+        Assert.IsTrue(findings.Any(finding => finding.Dimension == EvidenceDimension.Profile));
+    }
+
+    [TestMethod]
+    public async Task AProfileInspectorThatThrowsStillLeavesTheMeasurementsRecorded()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAudioTrack();
+        var recorder = new CapturingRecorder(context.Repository);
+
+        var result = await context.CreateService(new AlwaysCleanScanner(), recorder, [new FixedInspector(Duration())], [new FixedProfileInspector(throws: true)])
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(SecurityEvaluationStatus.Passed, result.Status);
+        var findings = recorder.Technical.Single().Findings;
+        Assert.AreEqual(EvidenceReasonCodes.ArtifactAudio.DurationMeasured, findings.Single().Code);
+    }
+
+    private static IdentityFact Duration() => new(
+        "ev-audio-duration", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.DurationMeasured,
+        EvidencePolarity.Unknown, "seconds=60;basis=media_header");
+
+    [TestMethod]
+    public async Task AnAudiobookIsMeasuredAfterTheDecisionIsSavedAndTheMeasurementChangesNothing()
+    {
+        var plain = new TestContext();
+        var plainAsset = plain.SeedAudioTrack();
+        var plainResult = await plain.CreateService(new AlwaysCleanScanner()).EvaluateAsync(plainAsset.Id, CancellationToken.None);
+
+        var measured = new TestContext();
+        var asset = measured.SeedAudioTrack();
+        var recorder = new CapturingRecorder(measured.Repository);
+        var result = await measured.CreateService(new AlwaysCleanScanner(), recorder, [new FixedInspector(Duration())])
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(plainResult.Status, result.Status);
+        Assert.AreEqual(plainAsset.StorageState, asset.StorageState);
+        Assert.AreEqual(plain.Repository.SaveCount, measured.Repository.SaveCount, "Measuring adds no save to the decision path.");
+        var technical = recorder.Technical.Single();
+        Assert.AreEqual(SecurityEvaluationStatus.Passed, technical.StatusAtTime, "Recorded after the decision exists.");
+        Assert.AreEqual("inspector:fixed", technical.Source);
+        Assert.AreEqual(EvidenceReasonCodes.ArtifactAudio.DurationMeasured, technical.Findings.Single().Code);
+    }
+
+    [TestMethod]
+    public async Task AnAudiobookWithNoInspectorForItsFormatRecordsNotAssessedNeverAGuess()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAudioTrack();
+        var recorder = new CapturingRecorder(context.Repository);
+
+        await context.CreateService(new AlwaysCleanScanner(), recorder).EvaluateAsync(asset.Id, CancellationToken.None);
+
+        var finding = recorder.Technical.Single().Findings.Single();
+        Assert.AreEqual(EvidenceReasonCodes.ArtifactAudio.NotAssessed, finding.Code);
+        Assert.AreEqual(EvidencePolarity.Unknown, finding.Polarity);
+    }
+
+    [TestMethod]
+    public async Task AnInspectorThatThrowsOnAHostileFileLeavesTheDecisionAloneAndRecordsUnavailable()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAudioTrack();
+        var recorder = new CapturingRecorder(context.Repository);
+
+        var result = await context.CreateService(new AlwaysCleanScanner(), recorder, [new ThrowingInspector()])
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(SecurityEvaluationStatus.Passed, result.Status);
+        Assert.AreEqual(EvidenceReasonCodes.ArtifactAudio.DurationUnavailable, recorder.Technical.Single().Findings.Single().Code);
+    }
+
+    [TestMethod]
+    public async Task EbooksAndFailedEvaluationsAreNeverMeasured()
+    {
+        var ebook = new TestContext();
+        var ebookAsset = ebook.SeedAsset();
+        var ebookRecorder = new CapturingRecorder(ebook.Repository);
+        await ebook.CreateService(new AlwaysCleanScanner(), ebookRecorder, [new FixedInspector(Duration())])
+            .EvaluateAsync(ebookAsset.Id, CancellationToken.None);
+        Assert.IsEmpty(ebookRecorder.Technical, "Only audiobooks are measured.");
+
+        var infected = new TestContext();
+        var infectedAsset = infected.SeedAudioTrack();
+        var infectedRecorder = new CapturingRecorder(infected.Repository);
+        await infected.CreateService(new DetectedThreatScanner(), infectedRecorder, [new FixedInspector(Duration())])
+            .EvaluateAsync(infectedAsset.Id, CancellationToken.None);
+        Assert.IsEmpty(infectedRecorder.Technical, "A failed evaluation's bytes are not inspected.");
+    }
+
+    [TestMethod]
+    public async Task ATrackOfANumberedSetRecordsItsPositionAndAnyGapOrRepeat()
+    {
+        var context = new TestContext();
+        var bundle = Guid.NewGuid();
+        context.SeedAudioTrack(bundle, 1, 4);
+        var second = context.SeedAudioTrack(bundle, 2, 4);
+        context.SeedAudioTrack(bundle, 2, 4);
+        var recorder = new CapturingRecorder(context.Repository);
+
+        await context.CreateService(new AlwaysCleanScanner(), recorder, [new FixedInspector(Duration())])
+            .EvaluateAsync(second.Id, CancellationToken.None);
+
+        var findings = recorder.Technical.Single().Findings;
+        Assert.AreEqual("2/4", findings.Single(finding => finding.Code == EvidenceReasonCodes.ArtifactAudio.TrackPosition).Value);
+        Assert.AreEqual("missing=3,4", findings.Single(finding => finding.Code == EvidenceReasonCodes.ArtifactAudio.TrackSetGap).Value);
+        Assert.AreEqual("repeated=2", findings.Single(finding => finding.Code == EvidenceReasonCodes.ArtifactAudio.TrackSetDuplicate).Value);
+        Assert.IsTrue(findings.All(finding => finding.Dimension == EvidenceDimension.AudioTechnical));
+    }
+
+    [TestMethod]
+    public async Task AFailingSetLookupStillRecordsTheMeasurements()
+    {
+        var context = new TestContext();
+        var asset = context.SeedAudioTrack(Guid.NewGuid(), 1, 2);
+        context.Repository.BundleLookupFails = true;
+        var recorder = new CapturingRecorder(context.Repository);
+
+        await context.CreateService(new AlwaysCleanScanner(), recorder, [new FixedInspector(Duration())])
+            .EvaluateAsync(asset.Id, CancellationToken.None);
+
+        Assert.AreEqual(EvidenceReasonCodes.ArtifactAudio.DurationMeasured, recorder.Technical.Single().Findings.Single().Code);
+    }
+
+    private sealed class CapturingRecorder(FakeSecurityEvaluationRepository repository) : IArtifactEvidenceRecorder
+    {
+        public int Calls { get; private set; }
+
+        public SecurityEvaluationStatus? StatusWhenCalled { get; private set; }
+
+        public int SavesWhenCalled { get; private set; }
+
+        public Task RecordSecurityEvaluationAsync(
+            MediaAsset asset, SecurityEvaluation evaluation, IReadOnlyDictionary<string, string?> toolVersions,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            StatusWhenCalled = evaluation.Status;
+            SavesWhenCalled = repository.SaveCount;
+            return Task.CompletedTask;
+        }
+
+        public Task RecordIdentityVerificationAsync(
+            MediaAsset asset, AssetIdentityVerificationResult result, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task RecordIdentityOverrideAsync(
+            MediaAsset asset, Guid? administratorUserId, string? overriddenHoldCode, string reason, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public List<(IReadOnlyList<IdentityFact> Findings, string Source, SecurityEvaluationStatus? StatusAtTime)> Technical { get; } = [];
+
+        public Task RecordTechnicalInspectionAsync(
+            MediaAsset asset, IReadOnlyList<IdentityFact> findings, string source, CancellationToken cancellationToken)
+        {
+            Technical.Add((findings, source, StatusWhenCalled));
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class TestContext
     {
         public TestContext()
@@ -274,8 +514,21 @@ public sealed class SecurityEvaluationServiceTests
             return asset;
         }
 
-        public SecurityEvaluationService CreateService(IMalwareScanner scanner) =>
-            new(Repository, StagingStore, [scanner], [], Audit, Clock);
+        public SecurityEvaluationService CreateService(
+            IMalwareScanner scanner, IArtifactEvidenceRecorder? evidence = null, IAssetTechnicalInspector[]? inspectors = null,
+            IAssetProfileInspector[]? profileInspectors = null) =>
+            new(Repository, StagingStore, [scanner], [], Audit, Clock, evidence, inspectors, profileInspectors);
+
+        public MediaAsset SeedAudioTrack(Guid? bundleId = null, int? sequence = null, int? total = null, string format = ".m4b")
+        {
+            var asset = new MediaAsset(
+                Guid.NewGuid(), editionId: null, RequestMediaType.Audiobook, format, $"book{format}", $"{Guid.NewGuid():N}{format}",
+                sizeBytes: 1024, sha256: new string('b', 64), detectedMimeType: "audio/mp4", Guid.NewGuid(),
+                sourceAcquisitionCandidateId: null, Now, bundleId, sequence, total);
+            Repository.Assets[asset.Id] = asset;
+            StagingStore.Seed(asset.StoredFilename, MediaAssetStorageState.Quarantine);
+            return asset;
+        }
     }
 
     private sealed class FakeSecurityEvaluationRepository : ISecurityEvaluationRepository
@@ -289,8 +542,12 @@ public sealed class SecurityEvaluationServiceTests
         public Task<MediaAsset?> FindAssetAsync(Guid assetId, CancellationToken cancellationToken) =>
             Task.FromResult(Assets.GetValueOrDefault(assetId));
 
+        public bool BundleLookupFails { get; set; }
+
         public Task<IReadOnlyList<MediaAsset>> FindAssetsByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            BundleLookupFails
+                ? throw new IOException("lookup failed")
+                : Task.FromResult<IReadOnlyList<MediaAsset>>(Assets.Values.Where(asset => asset.BundleId == bundleId).ToList());
 
         public Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken) =>
             Task.FromResult(AddedEvaluations.LastOrDefault(evaluation => evaluation.AssetId == assetId));

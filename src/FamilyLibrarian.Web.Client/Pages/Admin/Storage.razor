@@ -1,0 +1,156 @@
+@page "/admin/storage"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Storage
+@using FamilyLibrarian.Web.Client.Storage
+@inject StorageApiClient Api
+
+<PageTitle>Storage · Family Librarian</PageTitle>
+
+<MudStack Spacing="3">
+    <div>
+        <MudText Typo="Typo.h3">Storage</MudText>
+        <MudText Typo="Typo.body1">
+            What this installation is holding and what is using space. This page only shows numbers: no titles, authors or file names. It does not
+            delete anything.
+        </MudText>
+    </div>
+
+    @if (failed)
+    {
+        <MudAlert Severity="Severity.Warning" role="alert">Storage information could not be loaded. Refresh to try again.</MudAlert>
+    }
+
+    @if (insight is null && !failed)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" aria-label="Loading storage information" />
+    }
+    else if (insight is not null)
+    {
+        <MudPaper Outlined="true" Class="pa-4" id="storage-disk">
+            <MudStack Spacing="1">
+                <MudStack Row="true" AlignItems="AlignItems.Center">
+                    <MudText Typo="Typo.h5">Disk</MudText>
+                    <MudSpacer />
+                    <MudButton Variant="Variant.Text" OnClick="LoadAsync" Disabled="busy">Refresh</MudButton>
+                </MudStack>
+                @if (StorageText.FreeSpaceNote(insight.Volume) is { } note)
+                {
+                    <MudText Typo="Typo.body1">@note</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2">The host could not report free space for the storage volume.</MudText>
+                }
+                <MudText Typo="Typo.caption">As of @insight.AsOfUtc.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture).</MudText>
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4" id="storage-files">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h5">Files on disk</MudText>
+                <MudText Typo="Typo.body2">
+                    What is physically in each storage folder. A file with no matching record that is more than a day old is "unrecognized": most likely
+                    left over from a crash. They are removed automatically after the grace period set below (the passed-and-awaiting-delivery folder is never swept).
+                </MudText>
+                <MudTable Items="insight.Zones" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm" TableAttributes="ZoneAttributes">
+                    <HeaderContent>
+                        <MudTh>Where</MudTh><MudTh>Files</MudTh><MudTh>Size</MudTh><MudTh>Oldest</MudTh><MudTh>Unrecognized</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Where">@StorageText.Zone(context.Zone)</MudTd>
+                        <MudTd DataLabel="Files">@context.Files</MudTd>
+                        <MudTd DataLabel="Size">@StorageText.Size(context.Bytes)</MudTd>
+                        <MudTd DataLabel="Oldest">@StorageText.Age(context.OldestFileUtc, insight.AsOfUtc)</MudTd>
+                        <MudTd DataLabel="Unrecognized">@context.UnrecognizedFiles@(context.UnrecognizedFiles > 0 ? $" ({StorageText.Size(context.UnrecognizedBytes)})" : "")</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4" id="storage-held">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h5">Files held, by what they are waiting for</MudText>
+                <MudText Typo="Typo.body2">
+                    From the records: how many files are held in each state, how big they are and how long the oldest has waited. "Ruled out" means the
+                    search already moved on to another copy and nobody needs to act on it. "Oldest removed on" is when the age limit below will remove the
+                    oldest file in the row; the size limit or a low disk can remove held files sooner, and releasing a file keeps it.
+                </MudText>
+                @if (insight.HeldFiles.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No files are being held.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="insight.HeldFiles" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm" TableAttributes="HeldAttributes">
+                        <HeaderContent>
+                            <MudTh>State</MudTh><MudTh>Kind</MudTh><MudTh>Ruled out</MudTh><MudTh>Files</MudTh><MudTh>Size</MudTh><MudTh>Oldest wait</MudTh><MudTh>Oldest removed on</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="State">@StorageText.Zone(context.State)@(context.AwaitingDecision ? " (waiting for a decision)" : "")</MudTd>
+                            <MudTd DataLabel="Kind">@context.MediaType</MudTd>
+                            <MudTd DataLabel="Ruled out">@(context.RuledOut ? "Yes" : "No")</MudTd>
+                            <MudTd DataLabel="Files">@context.Files</MudTd>
+                            <MudTd DataLabel="Size">@StorageText.Size(context.Bytes)</MudTd>
+                            <MudTd DataLabel="Oldest wait">@StorageText.Age(context.OldestUpdatedAtUtc, insight.AsOfUtc)</MudTd>
+                            <MudTd DataLabel="Oldest removed on">@StorageText.Date(context.OldestRemovalDateUtc)</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudStack>
+        </MudPaper>
+
+        <MaintenanceSettingsPanel />
+
+        <MudPaper Outlined="true" Class="pa-4" id="storage-database">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h5">Database</MudText>
+                <MudText Typo="Typo.body2">
+                    About @StorageText.Size(insight.DatabaseApproximateBytes) across all tables, largest first. Row counts are the database's estimates and
+                    sizes include indexes.
+                </MudText>
+                <MudTable Items="insight.Tables.Take(25)" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm" TableAttributes="TableAttributes">
+                    <HeaderContent><MudTh>Table</MudTh><MudTh>Rows (about)</MudTh><MudTh>Size</MudTh></HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Table">@context.Schema.@context.Table</MudTd>
+                        <MudTd DataLabel="Rows (about)">@context.ApproximateRows.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)</MudTd>
+                        <MudTd DataLabel="Size">@StorageText.Size(context.ApproximateBytes)</MudTd>
+                    </RowTemplate>
+                </MudTable>
+                @if (insight.Tables.Count > 25)
+                {
+                    <MudText Typo="Typo.caption">The @(insight.Tables.Count - 25) smallest tables are not listed.</MudText>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+</MudStack>
+
+@code {
+    private static readonly Dictionary<string, object?> ZoneAttributes = new() { ["aria-label"] = "Files on disk by storage folder" };
+    private static readonly Dictionary<string, object?> HeldAttributes = new() { ["aria-label"] = "Held files by state" };
+    private static readonly Dictionary<string, object?> TableAttributes = new() { ["aria-label"] = "Database tables by size" };
+
+    private StorageInsightResponse? insight;
+    private bool failed;
+    private bool busy;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        busy = true;
+        try
+        {
+            insight = await Api.GetAsync();
+            failed = false;
+        }
+        catch (HttpRequestException)
+        {
+            failed = true;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

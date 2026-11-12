@@ -1,0 +1,115 @@
+using System.Net;
+using System.Net.Http.Json;
+using FamilyLibrarian.Contracts.ModelGateway;
+using FamilyLibrarian.Web.Client.Authentication;
+
+namespace FamilyLibrarian.Web.Client.ModelGateway;
+
+/// <summary>Typed client for the administrator-only model gateway settings. The API key is write-only: nothing here can read it back.</summary>
+public sealed class ModelGatewayApiClient(HttpClient httpClient, AntiforgeryTokenProvider antiforgery)
+{
+    private const string BasePath = "api/v1/admin/model-gateway";
+
+    public async Task<ModelGatewaySettingsResponse> GetAsync(CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<ModelGatewaySettingsResponse>($"{BasePath}/", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no settings.");
+
+    public async Task<ModelUsageResponse> GetUsageAsync(int days = 1, CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<ModelUsageResponse>($"{BasePath}/usage?days={days}", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no usage.");
+
+    public async Task<ModelUsageTrendResponse> GetUsageTrendAsync(int weeks = 52, CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<ModelUsageTrendResponse>($"{BasePath}/usage/trend?weeks={weeks}", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no usage trend.");
+
+    public async Task<AiEffectivenessResponse> GetEffectivenessAsync(int days = 30, CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<AiEffectivenessResponse>($"{BasePath}/usage/effectiveness?days={days}", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no effectiveness data.");
+
+    public async Task<ModelListResponse> GetModelsAsync(CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<ModelListResponse>($"{BasePath}/models", cancellationToken)
+        ?? new ModelListResponse([], "The host returned no model list.");
+
+    public async Task<ModelCallFailuresResponse> GetFailuresAsync(string? role, int page, int days, DateTimeOffset? until,
+        string? category = null, CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<ModelCallFailuresResponse>(
+            $"{BasePath}/failures?page={page}&days={days}&role={Uri.EscapeDataString(role ?? string.Empty)}" +
+            $"&category={Uri.EscapeDataString(category ?? string.Empty)}" +
+            (until is { } end ? $"&until={Uri.EscapeDataString(end.ToString("O"))}" : string.Empty), cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no AI call diagnostics.");
+
+    public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SaveAsync(SaveModelGatewaySettingsRequest request, CancellationToken cancellationToken = default) =>
+        SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/", request, cancellationToken);
+
+    public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
+        SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/enabled", new SetModelGatewayEnabledRequest(enabled), cancellationToken);
+
+    public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> ResolveConnectionAsync(string keep, CancellationToken cancellationToken = default) =>
+        SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Post, $"{BasePath}/connection/resolve", new ResolveModelConnectionRequest(keep), cancellationToken);
+
+    public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> SetApiKeyAsync(string apiKey, CancellationToken cancellationToken = default) =>
+        SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Put, $"{BasePath}/api-key", new SetModelGatewayApiKeyRequest(apiKey), cancellationToken);
+
+    public Task<ModelGatewayCallResult<ModelGatewaySettingsResponse>> ClearApiKeyAsync(CancellationToken cancellationToken = default) =>
+        SendAsync<ModelGatewaySettingsResponse>(HttpMethod.Delete, $"{BasePath}/api-key", null, cancellationToken);
+
+    public async Task<DecisionCaptureSettingsResponse> GetCaptureAsync(CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<DecisionCaptureSettingsResponse>($"{BasePath}/capture/", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no capture settings.");
+
+    public async Task<DecisionCaptureInsightResponse> GetCaptureInsightAsync(CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<DecisionCaptureInsightResponse>($"{BasePath}/capture/insight", cancellationToken)
+        ?? throw new InvalidOperationException("The host returned no capture insight.");
+
+    public Task<ModelGatewayCallResult<DecisionCaptureSettingsResponse>> SaveCaptureAsync(SaveDecisionCaptureSettingsRequest request, CancellationToken cancellationToken = default) =>
+        SendAsync<DecisionCaptureSettingsResponse>(HttpMethod.Put, $"{BasePath}/capture/", request, cancellationToken);
+
+    public Task<ModelGatewayCallResult<DecisionCaptureRetentionPreviewResponse>> PreviewCaptureAsync(DecisionCaptureLimitsDto limits, CancellationToken cancellationToken = default) =>
+        SendAsync<DecisionCaptureRetentionPreviewResponse>(HttpMethod.Post, $"{BasePath}/capture/preview", limits, cancellationToken);
+
+    public Task<ModelGatewayCallResult<DecisionCapturePurgeResponse>> PurgeCaptureAsync(string? role, CancellationToken cancellationToken = default) =>
+        SendAsync<DecisionCapturePurgeResponse>(HttpMethod.Post, $"{BasePath}/capture/purge", new PurgeDecisionCaptureRequest(role), cancellationToken);
+
+    private async Task<ModelGatewayCallResult<T>> SendAsync<T>(HttpMethod method, string path, object? payload, CancellationToken cancellationToken)
+        where T : class
+    {
+        using var request = new HttpRequestMessage(method, path);
+        if (payload is not null)
+        {
+            request.Content = JsonContent.Create(payload);
+        }
+
+        await antiforgery.AttachAsync(request, cancellationToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            return new ModelGatewayCallResult<T>(true, null, await response.Content.ReadFromJsonAsync<T>(cancellationToken));
+        }
+
+        return new ModelGatewayCallResult<T>(false, await ReadErrorAsync(response, cancellationToken), null);
+    }
+
+    private static async Task<string> ReadErrorAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.StatusCode == HttpStatusCode.Forbidden)
+        {
+            return "Administrator access is required.";
+        }
+
+        try
+        {
+            var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(cancellationToken);
+            return problem?.Errors?.Values.SelectMany(messages => messages).FirstOrDefault() ?? problem?.Detail ?? "That could not be done.";
+        }
+        catch (Exception exception) when (exception is HttpRequestException or NotSupportedException or System.Text.Json.JsonException)
+        {
+            return "That could not be done.";
+        }
+    }
+
+    private sealed record ProblemPayload(Dictionary<string, string[]>? Errors, string? Detail);
+}
+
+public sealed record ModelGatewayCallResult<T>(bool Succeeded, string? Error, T? Value)
+    where T : class;
+

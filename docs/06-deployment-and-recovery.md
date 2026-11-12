@@ -44,6 +44,95 @@ fulfillment schedules a retry while the request remains pending. A completed
 ZIP is re-used after restart and is fully read during extraction before it is
 accepted.
 
+## Disk space and automatic clean-up
+
+Family Librarian cleans up after itself so an installation that runs unattended does not fill its disk. Administrators can
+see the result on **Storage** (free space, files by stage, files held and why, files on disk no record accounts for, and
+database table sizes). The page shows no book titles or file names and deletes nothing.
+
+A clean-up pass runs about every six hours. It removes only files nobody needs:
+
+| Kept for | Removed after |
+| --- | --- |
+| Rejected (failed a security check) | 14 days |
+| Held copy the automatic search has already moved past | 7 days |
+| Held ebook waiting for a person | 30 days |
+| Held audiobook waiting for a person | 14 days |
+| Received or being checked, never finished | 7 days |
+| File with no record at all (not in the trusted zone) | 24 hours after it appeared |
+
+Copies waiting for a person are also capped at 10 GB in total; beyond that the oldest go first, audiobooks before ebooks.
+Administrators get a notification when a waiting copy is half way to removal, with the removal date, and when a copy is
+removed the request is left open to another automatic search. A file that is trusted or part of a set with a trusted track
+is never removed. Each removal is recorded in the audit log (counts and ids only, never names).
+
+When free space falls below the larger of 5 GB or 10% of the volume, new downloads wait, administrators are alerted once a
+day, and rejected and ruled-out copies are kept for one day instead of their usual period. Copies waiting for a person are
+never removed early, because one may be the only copy.
+
+Administrators change them on **Storage > Clean-up** (Admin menu): every period is a labelled field showing its allowed range and
+default, a value outside its range is refused with the reason (never quietly changed), **Restore defaults** undoes any change, and the
+same section shows when each clean-up last ran, what it did and when the next pass is due. The saved values win; until someone saves,
+the configured defaults apply. The **Security queue** and the Storage page show the date a held file will be removed (by age; the size
+limit or a low disk can remove it sooner, and releasing it keeps it). Operators can still set the defaults with `Storage__Retention__RejectedDays`, `RuledOutDays`, `WaitingEbookDays`,
+`WaitingAudiobookDays`, `StuckDays`, `HeldBytesCap`, `OrphanGraceHours`, `BatchSize` and `PressureDays`. Values are clamped
+to fixed limits (for example an ebook always gets at least 7 days) so a typing mistake cannot switch clean-up off or make
+it aggressive. Container logs are rotated by the Compose file (three 10 MB files per service).
+
+### Database clean-up
+
+Once a day the database is trimmed of rows that only ever grow and explain nothing still in use:
+
+| Kept for | Removed after |
+| --- | --- |
+| Detailed file-check evidence for a file that was removed, or for a delivered copy that a newer delivery has replaced (never the copy currently in the library, never an identity-override record, never while a review of that request is open) | 90 days |
+| Advisory AI findings | 180 days |
+| Per-source attempt history of a finished (in the library or cancelled) request | 180 days |
+| Search wordings tried for a finished request | 30 days |
+| In-app notifications and their read receipts | 90 days |
+| Closed source-interaction alerts | 90 days |
+| Chat or e-mail messages already sent (an unsent message is never removed) | 90 days |
+| Chat message ids already handled (kept so a redelivered message is answered once; request keys are kept) | 30 days |
+| Audit log | 2 years |
+
+Open requests, files that still exist, and unresolved reviews keep all of their history. Each pass is bounded and each
+table is handled separately, so one failure never stops the rest. The configured defaults (used until an administrator saves values on **Storage > Clean-up**) are
+`Storage__DatabaseRetention__EvidenceDays`, `SemanticFindingDays`, `AttemptDays`, `SearchMemoryDays`, `NotificationDays`,
+`AlertDays`, `CommunicationDays`, `AuditDays`, `ConversationEventDays` (configuration only, never less than 7), `BatchSize` and `MaxBatchesPerTable`; values are clamped (the audit log is
+never kept for less than a year). Model usage and saved AI decisions have their own, shorter retention.
+
+## Better copies of delivered books
+
+A copy that was delivered but whose recorded checks showed it may be incomplete (a sample marker in its metadata, table-of-contents
+or reading-order entries pointing at missing content, duplicate reading-order items, or a gap or duplicate in an audiobook's track
+set) is looked at again about every 30 days. A copy a person chose (a manual upload, or a file an administrator released over a
+hold) is never touched.
+
+When a strong candidate that was not tried before turns up, administrators are notified ("A better copy of X may be available")
+and, **by default**, the upgrade is carried out when the library can be changed safely:
+
+1. The better copy is fetched and goes through every normal check.
+2. It is delivered **next to** the old copy: to CWA as a second book, to Audiobookshelf under a temporary title ("Title (upgrade
+   1a2b3c4d)") so it cannot merge with or overwrite the old item.
+3. It is confirmed in the library. Only then is the old copy removed (CWA: the book is deleted; Audiobookshelf: the item and its
+   files are deleted and the new item is given the real title).
+4. Anything unexpected at any step leaves both copies as they are and notifies administrators.
+   The better copy is recorded as delivered as soon as it is confirmed, before the old one is touched, and a step that is interrupted
+   (for example by a restart) is simply repeated on the next pass: an old copy that is already gone counts as removed.
+5. If the better copy never arrives (the source gives up, or the copy fails its checks or is removed), the upgrade is closed, the
+   copy in the library stays, administrators are notified, and the book is looked at again on the next pass.
+6. The system cleans up after itself: an unused extra copy a stopped upgrade left in the trusted zone is removed automatically a
+   day later, and the removal is audited and noted in the request's history. Held copies removed by storage clean-up are noted there too.
+
+It only starts when the destination can remove the old copy: for audiobooks the Audiobookshelf token must have the *delete*
+permission; for ebooks the CWA e-reader service account must be configured and allowed to delete books. Otherwise the proposal
+stays an alert. Administrators see every proposal on **Better copies** (Admin menu) and can start one (**Replace**) or set it aside;
+the same page has the **Replace incomplete books automatically** switch. The saved switch wins; before anyone changes it,
+`Upgrades__AutoReplace` (default true) applies. The API behind the page is `GET /api/v1/admin/upgrades`, `POST .../{id}/approve`,
+`POST .../{id}/dismiss` and `GET`/`PUT .../settings`. With it off every proposal waits for an administrator; `Upgrades__ScanIntervalDays`
+(default 30, minimum 7) and `Upgrades__BatchSize` tune the search. An item replaced in Audiobookshelf is a new item, so listening
+progress on the old one is lost.
+
 ## Optional linked ebook libraries
 
 Calibre-Web and Calibre-Web Automated (CWA) are optional integrations, not

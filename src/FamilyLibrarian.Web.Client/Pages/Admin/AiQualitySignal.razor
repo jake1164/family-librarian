@@ -1,0 +1,13 @@
+@using FamilyLibrarian.Web.Client.ModelGateway
+
+<MudText Typo="Typo.body2"><strong>@Metrics.Signal</strong></MudText>
+<MudText Typo="Typo.body2">Provider replies: @Metrics.ProviderRate</MudText>
+<MudText Typo="Typo.body2">Accepted replies: @Metrics.UsableRate</MudText>
+@if (Metrics.ProviderIssue is { } providerIssue) { <MudText Typo="Typo.caption">Provider error · @providerIssue</MudText> }
+@if (Metrics.RejectionIssue is { } rejectionIssue) { <MudText Typo="Typo.caption">Rejected reply · @rejectionIssue</MudText> }
+@if (Metrics.Cancelled > 0) { <MudText Typo="Typo.caption">Cancelled calls excluded from rates: @Metrics.Cancelled</MudText> }
+@if (Metrics.Unclassified > 0) { <MudText Typo="Typo.caption">Unclassified calls excluded from rates: @Metrics.Unclassified</MudText> }
+
+@code {
+    [Parameter, EditorRequired] public AiQualityMetrics Metrics { get; set; } = AiQualityMetrics.From([]);
+}

@@ -1,0 +1,10 @@
+@using FamilyLibrarian.Web.Client.Theme
+
+<MudChip T="string" Size="Size.Small" Color="@MediaTypeVisuals.SourceStateColor(State)">
+    @MediaTypeVisuals.SourceStateLabel(State)@(Count is { } count ? $" · {count}" : string.Empty)
+</MudChip>
+
+@code {
+    [Parameter, EditorRequired] public string State { get; set; } = null!;
+    [Parameter] public int? Count { get; set; }
+}

@@ -22,7 +22,12 @@ public static class EpubTestFixture
 {
     public static byte[] BuildMinimalEpubBytes(
         string title = "The Hobbit",
-        string author = "J. R. R. Tolkien")
+        string author = "J. R. R. Tolkien",
+        bool withReadingOrder = true,
+        string? subject = null,
+        int readingOrderFilesMissing = 0,
+        int deadNavigationLinks = 0,
+        int? totalNavigationEntries = null)
     {
         using var stream = new MemoryStream();
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
@@ -46,15 +51,42 @@ public static class EpubTestFixture
                 </container>
                 """);
 
+            // The reading order: one real chapter, plus (for the completeness tests) items whose files are absent.
+            var manifest = "<item id=\"c1\" href=\"chapter1.xhtml\" media-type=\"application/xhtml+xml\"/>";
+            var spine = "<itemref idref=\"c1\"/>";
+            for (var missing = 1; missing <= readingOrderFilesMissing; missing++)
+            {
+                manifest += $"<item id=\"m{missing}\" href=\"missing{missing}.xhtml\" media-type=\"application/xhtml+xml\"/>";
+                spine += $"<itemref idref=\"m{missing}\"/>";
+            }
+
+            if (deadNavigationLinks > 0)
+            {
+                manifest += "<item id=\"nav\" href=\"nav.xhtml\" properties=\"nav\" media-type=\"application/xhtml+xml\"/>";
+                WriteTextEntry(archive, "OEBPS/nav.xhtml",
+                    "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><nav><a href=\"chapter1.xhtml\">One</a>" +
+                    string.Concat(Enumerable.Range(2, (totalNavigationEntries ?? deadNavigationLinks + 1) - deadNavigationLinks - 1)
+                        .Select(i => $"<a href=\"chapter1.xhtml#section-{i}\">Section {i}</a>")) +
+                    string.Concat(Enumerable.Range(1, deadNavigationLinks).Select(i => $"<a href=\"gone{i}.xhtml\">Gone {i}</a>")) +
+                    "</nav></body></html>");
+            }
+
             WriteTextEntry(archive, "OEBPS/content.opf", $"""
                 <?xml version="1.0" encoding="UTF-8"?>
                 <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
                   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
                     <dc:title>{title}</dc:title>
                     <dc:creator>{author}</dc:creator>
+                    {(subject is null ? string.Empty : $"<dc:subject>{subject}</dc:subject>")}
                   </metadata>
+                  {(withReadingOrder ? $"<manifest>{manifest}</manifest><spine>{spine}</spine>" : string.Empty)}
                 </package>
                 """);
+
+            if (withReadingOrder)
+            {
+                WriteTextEntry(archive, "OEBPS/chapter1.xhtml", "<html><body><p>Text.</p></body></html>");
+            }
         }
 
         return stream.ToArray();

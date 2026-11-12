@@ -1,5 +1,7 @@
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.DecisionCapture;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Requests;
@@ -36,7 +38,10 @@ public enum PreferenceAmbiguityResolutionOutcome
     Resolved,
     NotFound,
     Unauthenticated,
-    Conflict
+    Conflict,
+    NotAsked,
+    InvalidPreference,
+    LibrarianReviewRequired
 }
 
 /// <summary>What happened to the retry budget when an automatic provider job failed.</summary>
@@ -50,7 +55,10 @@ public sealed class AutomaticRequestFulfillmentService(
     IClock clock,
     NotificationService notifications,
     ICurrentUser currentUser,
-    IUserAccountStore accounts) : IPartSetReviewRouter
+    IUserAccountStore accounts,
+    AcquisitionQuestionService? questions = null,
+    AcquisitionPreferenceService? preferences = null,
+    IDecisionOutcomeRecorder? outcomes = null) : IPartSetReviewRouter
 {
     private const int BatchSize = 20;
 
@@ -97,6 +105,9 @@ public sealed class AutomaticRequestFulfillmentService(
             request.RecordAutomaticCandidateFailure(
                 requestFormatId, providerId, candidateReference, reason, clock.UtcNow, candidateFingerprint);
             failures = request.CountAutomaticCandidateFailures(requestFormatId, providerId);
+            // The downloaded copy failed its post-download check. Fixed fact only: the free-text reason is never recorded.
+            await outcomes.ReportAsync(DecisionOutcomeKind.VerificationFailed, "automatic-verification", DecisionOutcomeStrength.Strong,
+                DecisionOutcomeTarget.Candidate(requestId, providerId, candidateReference), cancellationToken);
 
             if (failures < automaticAttemptLimit)
             {
@@ -110,6 +121,23 @@ public sealed class AutomaticRequestFulfillmentService(
         await MarkForReviewAsync(request, RequestReviewCategory.SecurityOrIdentityFailure, reason, cancellationToken);
         await requests.SaveChangesAsync(cancellationToken);
         return new ExternalFailureOutcome(false, failures, automaticAttemptLimit);
+    }
+
+    /// <summary>
+    /// An automatically fetched copy passed every check. If its request was waiting in review (parked on a held copy, or past its
+    /// attempt budget) the review is moot: it is withdrawn and administrators are told. The held copy is removed by clean-up.
+    /// </summary>
+    public async Task RecordExternalAcquisitionSuccessAsync(Guid requestId, CancellationToken cancellationToken)
+    {
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null || !request.WithdrawReviewForSuccessfulAttempt("A newer copy passed its checks.", clock.UtcNow))
+        {
+            return;
+        }
+
+        await requests.SaveChangesAsync(cancellationToken);
+        var view = await requests.FindAdminViewAsync(request.Id, cancellationToken);
+        await notifications.RecordBetterCopyFoundAsync(request.Id, view?.Request.WorkTitle ?? "a book", cancellationToken);
     }
 
     /// <summary>
@@ -354,7 +382,8 @@ public sealed class AutomaticRequestFulfillmentService(
         RequestFormat format,
         FulfillmentOption option,
         CancellationToken cancellationToken,
-        bool confirmLowConfidenceMatch = false)
+        bool confirmLowConfidenceMatch = false,
+        SearchVariantRef? searchVariant = null)
     {
         ManualImportResult result;
         try
@@ -366,7 +395,8 @@ public sealed class AutomaticRequestFulfillmentService(
                 option.ProviderResultId,
                 cancellationToken,
                 confirmLowConfidenceMatch,
-                isAutomaticAcquisition: true);
+                isAutomaticAcquisition: true,
+                searchVariant: searchVariant);
         }
         catch (Exception exception) when (exception is IOException or HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
@@ -408,7 +438,7 @@ public sealed class AutomaticRequestFulfillmentService(
             attempts.Add(new ProviderAttempt(
                 request.Id, format.Id, option.ProviderId, ProviderAttemptOutcome.Submitted,
                 "A high-confidence copy acquisition was submitted and is being tracked to completion.",
-                clock.UtcNow, nextEligibleCheckAtUtc: null));
+                clock.UtcNow, nextEligibleCheckAtUtc: null, providerAcquisitionJobId: result.ProviderAcquisitionJobId));
             await attempts.SaveChangesAsync(cancellationToken);
             return true;
         }
@@ -441,8 +471,12 @@ public sealed class AutomaticRequestFulfillmentService(
     /// it anyway"), scoped to their own request -- mirrors
     /// <c>DeliveryAttemptService.RetryAsync</c>'s owner-check shape.
     /// </summary>
-    public async Task<PreferenceAmbiguityResolutionOutcome> ResolvePreferenceAmbiguityAsync(
+    public Task<PreferenceAmbiguityResolutionOutcome> ResolvePreferenceAmbiguityAsync(
         Guid requestId, Guid candidateId, uint? expectedVersion, CancellationToken cancellationToken)
+        => ResolveWithPreferenceAsync(requestId, candidateId, expectedVersion, false, cancellationToken);
+
+    public async Task<PreferenceAmbiguityResolutionOutcome> ResolveWithPreferenceAsync(
+        Guid requestId, Guid candidateId, uint? expectedVersion, bool alwaysAccept, CancellationToken cancellationToken)
     {
         if (currentUser.UserId is not { } userId)
         {
@@ -464,9 +498,15 @@ public sealed class AutomaticRequestFulfillmentService(
         return await requests.InCreateRequestScopeAsync(userId, initial.WorkId, async token =>
         {
             var request = await requests.FindOwnedRequestAsync(requestId, userId, token);
-            return request is null || !IsActiveParticipant(request, userId)
-                ? PreferenceAmbiguityResolutionOutcome.NotFound
-                : await AcceptCandidateAsync(request, candidateId, expectedVersion, userId, token);
+            if (request is null || !IsActiveParticipant(request, userId)) return PreferenceAmbiguityResolutionOutcome.NotFound;
+            // A catalog fallback labels context, not an edition whose identity a requester can confirm.
+            // Explicit product questions have their own independently proven identity/consent path.
+            if (request.QuestionKind is null && request.ReviewCandidates.Any(c =>
+                    c.Id == candidateId && c.TitleIsRequestFallback && c.ReleaseName is not null))
+                return PreferenceAmbiguityResolutionOutcome.LibrarianReviewRequired;
+            if (preferences is not null && !await preferences.WasAskedAsync(request, userId, token))
+                return PreferenceAmbiguityResolutionOutcome.NotAsked;
+            return await AcceptCandidateAsync(request, candidateId, expectedVersion, userId, alwaysAccept, null, token);
         }, cancellationToken);
     }
 
@@ -489,7 +529,7 @@ public sealed class AutomaticRequestFulfillmentService(
             var request = await requests.FindRequestForAdminAsync(requestId, token);
             return request is null
                 ? PreferenceAmbiguityResolutionOutcome.NotFound
-                : await AcceptCandidateAsync(request, candidateId, expectedVersion, actorUserId, token);
+                : await AcceptCandidateAsync(request, candidateId, expectedVersion, actorUserId, false, null, token);
         }, cancellationToken);
     }
 
@@ -516,9 +556,10 @@ public sealed class AutomaticRequestFulfillmentService(
         return await requests.InCreateRequestScopeAsync(userId, initial.WorkId, async token =>
         {
             var request = await requests.FindOwnedRequestAsync(requestId, userId, token);
-            return request is null || !IsActiveParticipant(request, userId)
-                ? PreferenceAmbiguityResolutionOutcome.NotFound
-                : await DismissAsync(request, expectedVersion, userId, token);
+            if (request is null || !IsActiveParticipant(request, userId)) return PreferenceAmbiguityResolutionOutcome.NotFound;
+            if (preferences is not null && !await preferences.WasAskedAsync(request, userId, token))
+                return PreferenceAmbiguityResolutionOutcome.NotAsked;
+            return await DismissAsync(request, expectedVersion, userId, token);
         }, cancellationToken);
     }
 
@@ -542,16 +583,30 @@ public sealed class AutomaticRequestFulfillmentService(
         }, cancellationToken);
     }
 
+    /// <summary>Accepts only a current question to which every active requester has already consented.</summary>
+    public async Task<bool> AcceptBySavedPreferencesAsync(Guid requestId, CancellationToken cancellationToken)
+    {
+        if (preferences is null) return false;
+        var initial = await requests.FindAdminViewAsync(requestId, cancellationToken);
+        if (initial is null) return false;
+        return await requests.InCreateRequestScopeAsync(Guid.Empty, initial.Request.WorkId, async token =>
+        {
+            var request = await requests.FindRequestForAdminAsync(requestId, token);
+            if (request is null || request.RequiresManualFulfillment || request.Status != RequestStatus.NeedsReview ||
+                request.QuestionKind is not { } kind || request.ReviewCandidates.Count != 1 || !request.ActiveRequesterIds.Any()) return false;
+            var candidate = request.ReviewCandidates.Single();
+            if ((await preferences.MissingAsync(request.ActiveRequesterIds, kind, candidate.Language, token)).Count != 0) return false;
+            return await AcceptCandidateAsync(request, candidate.Id, null, null, false, "Accepted by your saved preferences.", token)
+                == PreferenceAmbiguityResolutionOutcome.Resolved;
+        }, cancellationToken);
+    }
+
     /// <summary>
-    /// Callers reload <paramref name="request"/> fresh, inside
-    /// <see cref="IRequestRepository.InCreateRequestScopeAsync{TResult}"/>'s
-    /// advisory lock on its Work, immediately before calling this -- the
-    /// combination is what actually closes the race two concurrent
-    /// resolutions could otherwise hit: checking <see cref="BookRequest.Version"/> against a version loaded
-    /// before the lock was acquired would let both callers pass the check.
+    /// Callers reload <paramref name="request"/> fresh inside the work lock before checking its version or authorizing a choice.
     /// </summary>
     private async Task<PreferenceAmbiguityResolutionOutcome> AcceptCandidateAsync(
-        BookRequest request, Guid candidateId, uint? expectedVersion, Guid? actorUserId, CancellationToken cancellationToken)
+        BookRequest request, Guid candidateId, uint? expectedVersion, Guid? actorUserId, bool alwaysAccept,
+        string? acceptanceReason, CancellationToken cancellationToken)
     {
         if (expectedVersion is not null && request.Version != expectedVersion)
         {
@@ -559,9 +614,23 @@ public sealed class AutomaticRequestFulfillmentService(
         }
 
         RequestReviewCandidate candidate;
+        var savedKind = request.QuestionKind;
+        var offeredPreference = request.ReviewCandidates.SingleOrDefault(c => c.Id == candidateId);
+        if (alwaysAccept && (preferences is null || actorUserId is null || savedKind is null || offeredPreference is null ||
+            offeredPreference.RequestFormatId != request.QuestionFormatId || AcquisitionPreferenceService.Key(savedKind.Value, offeredPreference.Language) is null))
+            return PreferenceAmbiguityResolutionOutcome.InvalidPreference;
+        IReadOnlyList<MediaAsset>? reserved = null;
+        if (request.QuestionKind == AcquisitionQuestionKind.DramatizedOnly)
+        {
+            var offered = request.ReviewCandidates.SingleOrDefault(c => c.Id == candidateId && c.RequestFormatId == request.QuestionFormatId);
+            if (questions is null || offered?.ProviderId != AcquisitionQuestionService.ReservedProvider ||
+                !Guid.TryParse(offered.ProviderResultId, out var assetId) ||
+                (reserved = await questions.ReservedAssetsAsync(assetId, offered.RequestFormatId, cancellationToken)) is null)
+                return PreferenceAmbiguityResolutionOutcome.NotFound;
+        }
         try
         {
-            candidate = request.AcceptReviewCandidate(candidateId, actorUserId, clock.UtcNow);
+            candidate = request.AcceptReviewCandidate(candidateId, actorUserId, clock.UtcNow, acceptanceReason);
         }
         catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
         {
@@ -569,7 +638,14 @@ public sealed class AutomaticRequestFulfillmentService(
         }
 
         var format = request.Formats.Single(candidateFormat => candidateFormat.Id == candidate.RequestFormatId);
+        if (alwaysAccept) await preferences!.RememberAsync(actorUserId!.Value, savedKind!.Value, candidate.Language, cancellationToken);
         await requests.SaveChangesAsync(cancellationToken);
+
+        if (reserved is not null)
+        {
+            await questions!.RetryReserveAsync(reserved, cancellationToken);
+            return PreferenceAmbiguityResolutionOutcome.Resolved;
+        }
 
         var option = new FulfillmentOption(
             candidate.ProviderId, candidate.ProviderResultId, request.WorkId, EditionId: null,
@@ -581,7 +657,9 @@ public sealed class AutomaticRequestFulfillmentService(
         // has been resolved -- a failure already re-flags the request as
         // SecurityOrIdentityFailure via AcquireOptionAsync, which the caller
         // will see on its next load.
-        await AcquireOptionAsync(request, format, option, cancellationToken, confirmLowConfidenceMatch: true);
+        await AcquireOptionAsync(
+            request, format, option, cancellationToken, confirmLowConfidenceMatch: true,
+            searchVariant: SearchVariantRef.FromStored(candidate.SearchVariant));
         return PreferenceAmbiguityResolutionOutcome.Resolved;
     }
 
@@ -594,6 +672,7 @@ public sealed class AutomaticRequestFulfillmentService(
             return PreferenceAmbiguityResolutionOutcome.Conflict;
         }
 
+        var declined = request.ReviewCandidates.Select(candidate => (candidate.ProviderId, candidate.ProviderResultId)).ToArray();
         try
         {
             request.DismissReviewPreference(actorUserId, clock.UtcNow);
@@ -604,6 +683,10 @@ public sealed class AutomaticRequestFulfillmentService(
         }
 
         await requests.SaveChangesAsync(cancellationToken);
+        // "Keep looking": the person declined each offered copy. Weak, because it is a preference, not a check.
+        foreach (var (providerId, providerResultId) in declined)
+            await outcomes.ReportAsync(DecisionOutcomeKind.RequesterDeclined, "requester-keep-looking", DecisionOutcomeStrength.Weak,
+                DecisionOutcomeTarget.Candidate(request.Id, providerId, providerResultId), cancellationToken);
         return PreferenceAmbiguityResolutionOutcome.Resolved;
     }
 

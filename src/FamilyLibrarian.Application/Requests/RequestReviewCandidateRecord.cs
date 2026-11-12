@@ -18,7 +18,7 @@ namespace FamilyLibrarian.Application.Requests;
 /// </remarks>
 public static class RequestReviewCandidateRecord
 {
-    public static RequestReviewCandidateInput From(Guid requestFormatId, FulfillmentOption option)
+    public static RequestReviewCandidateInput From(Guid requestFormatId, FulfillmentOption option, string? searchVariant = null)
     {
         var sourceTitle = Trimmed(option.Title);
         return new RequestReviewCandidateInput(
@@ -32,17 +32,18 @@ public static class RequestReviewCandidateRecord
             option.AdminInspectionUri?.ToString(),
             Trimmed(option.ReleaseName),
             sourceTitle is null,
-            option.AdminSourceSummary);
+            option.AdminSourceSummary,
+            searchVariant);
     }
 
     /// <summary>
-    /// Supplies the catalog title/author for a candidate whose source named
-    /// none. Every other candidate is returned untouched.
+    /// Supplies catalog title context when the source named none. An absent
+    /// source author stays absent; the requested author is not source evidence.
     /// </summary>
     public static RequestReviewCandidateInput WithCatalogFallback(
         RequestReviewCandidateInput candidate, string workTitle, string? workAuthor) =>
         candidate.TitleIsRequestFallback
-            ? candidate with { Title = workTitle, Author = candidate.Author ?? workAuthor }
+            ? candidate with { Title = workTitle }
             : candidate;
 
     private static string? Trimmed(string? value) =>

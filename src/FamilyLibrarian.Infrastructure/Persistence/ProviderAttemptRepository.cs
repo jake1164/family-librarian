@@ -40,6 +40,24 @@ public sealed class ProviderAttemptRepository(AppDbContext database) : IProvider
             .ToArray();
     }
 
+    public async Task<IReadOnlyList<SearchVariantAttempt>> ListVariantAttemptsAsync(
+        Guid requestFormatId, string providerId, CancellationToken cancellationToken)
+    {
+        var normalizedProviderId = providerId.Trim().ToLowerInvariant();
+        return await database.SearchVariantAttempts
+            .Where(row => row.RequestFormatId == requestFormatId && row.ProviderId == normalizedProviderId)
+            .ToArrayAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<SearchVariantAttempt>> ListVariantAttemptsForRequestAsync(
+        Guid requestId, CancellationToken cancellationToken) =>
+        await database.SearchVariantAttempts
+            .AsNoTracking()
+            .Where(row => database.RequestFormats.Any(format => format.Id == row.RequestFormatId && format.RequestId == requestId))
+            .ToArrayAsync(cancellationToken);
+
+    public void AddVariantAttempt(SearchVariantAttempt attempt) => database.SearchVariantAttempts.Add(attempt);
+
     public Task<ProviderAttempt?> FindLatestForFormatAsync(
         Guid requestFormatId,
         string providerId,

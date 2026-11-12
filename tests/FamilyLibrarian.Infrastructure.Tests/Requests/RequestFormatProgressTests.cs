@@ -172,4 +172,56 @@ public sealed class RequestFormatProgressTests
         Assert.IsNotNull(result);
         Assert.AreEqual("AcquisitionInProgress", result.Code);
     }
+
+    // The lab: a German copy ruled out for its language read "needs librarian identification", which was not the task.
+    [TestMethod]
+    public void ARuledOutCopyIsNotPresentedAsNeedingIdentification()
+    {
+        var waiting = RequestFormatProgress.Describe(
+            MediaAssetStorageState.Unmatched, SecurityEvaluationStatus.Passed, null, null,
+            assetRuledOut: true, requestInReview: false);
+        Assert.IsNotNull(waiting);
+        Assert.AreEqual("AcquisitionRetrying", waiting.Code);
+        Assert.DoesNotContain("identification", waiting.Description, StringComparison.OrdinalIgnoreCase);
+
+        var reviewing = RequestFormatProgress.Describe(
+            MediaAssetStorageState.Unmatched, SecurityEvaluationStatus.Passed, null, null,
+            assetRuledOut: true, requestInReview: true);
+        Assert.IsNotNull(reviewing);
+        Assert.AreEqual("NoAcceptableCopy", reviewing.Code);
+        Assert.Contains("choosing a source", reviewing.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [TestMethod]
+    public void AHeldCopyNobodyRuledOutStillNeedsIdentification()
+    {
+        var result = RequestFormatProgress.Describe(
+            MediaAssetStorageState.Unmatched, SecurityEvaluationStatus.Passed, null, null, requestInReview: true);
+        Assert.IsNotNull(result);
+        Assert.AreEqual("IdentityReviewRequired", result.Code);
+    }
+
+    // The lab: an ebook whose first copy was refused showed a red "acquisition failed" while the request was already
+    // waiting for a librarian to choose a source.
+    [TestMethod]
+    public void AFailedJobOnARequestAlreadyInReviewReadsAsWaitingForTheLibrarianNotAsANewFailure()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null, securityStatus: null, libraryImportStatus: null, deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Failed, requestInReview: true);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("NoAcceptableCopy", result.Code);
+    }
+
+    [TestMethod]
+    public void AFailedJobOnARequestNotInReviewStillNeedsAttention()
+    {
+        var result = RequestFormatProgress.Describe(
+            assetState: null, securityStatus: null, libraryImportStatus: null, deliveryStatus: null,
+            providerJobState: ProviderAcquisitionJobLifecycleState.Failed, requestInReview: false);
+
+        Assert.IsNotNull(result);
+        Assert.AreEqual("AcquisitionFailed", result.Code);
+    }
 }

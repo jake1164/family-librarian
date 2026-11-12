@@ -1,0 +1,61 @@
+@using FamilyLibrarian.Contracts.Acquisition
+
+@* Per docs/07-ui-conventions.md: model reviews are plain text without status chips. *@
+@if (Finding is { } finding)
+{
+    <details class="mt-1" style="overflow-wrap: anywhere;">
+        <summary>@(finding.IsDecision ? "AI validation review" : "AI second opinion (advisory only)")</summary>
+        <p class="mb-1"><small>
+            @if (finding.IsDecision)
+            {
+                <span>A hold call cannot release or approve a file. A separate release call needs the administrator's release permission and grounded evidence for a narrowly eligible hold. Other identity holds require a librarian override.</span>
+            }
+            else
+            {
+                <span>A model's note about this file's recorded evidence. It never holds, releases, approves or rejects anything, and a security or identity hold stays exactly as the fixed rules left it.</span>
+            }
+        </small></p>
+        @if (finding.Verdict is null)
+        {
+            <p class="mb-0">No usable answer from @finding.Model: @Describe(finding.Outcome)@(string.IsNullOrWhiteSpace(finding.FailureDetail) ? "" : $" ({finding.FailureDetail})").</p>
+        }
+        else
+        {
+            <p class="mb-1">Model view: <strong>@DescribeVerdict(finding.Verdict)</strong> (@finding.Model@(finding.IsCloud ? ", cloud" : ""), @finding.CreatedAtUtc.ToString("u")).</p>
+            <ul class="mb-0">
+                @foreach (var claim in finding.Claims)
+                {
+                    <li><code>@claim.Kind</code> — @claim.Note <small>(evidence: @string.Join(", ", claim.EvidenceIds))</small></li>
+                }
+            </ul>
+        }
+    </details>
+}
+
+@code {
+    [Parameter] public AdminArtifactSemanticFindingResponse? Finding { get; set; }
+
+    private static string DescribeVerdict(string verdict) => verdict switch
+    {
+        "Consistent" => "the recorded evidence looks consistent with what the file was staged as",
+        "Inconsistent" => "the recorded evidence looks inconsistent with what the file was staged as",
+        "hold" => "raised a concern requiring librarian review",
+        "no_objection" => "raised no additional concern",
+        "release" => "proposed an identity hold release; see the model release evidence for the applied decision",
+        "contains_requested" => "identified the requested work in an accepted collection; see the model release evidence for the applied decision",
+        _ => "uncertain"
+    };
+
+    private static string Describe(string outcome) => outcome switch
+    {
+        "EmptyContent" => "the model returned no text",
+        "InvalidJson" => "the reply was not valid JSON",
+        "SchemaRejected" => "the reply broke the required format and was discarded",
+        "OutputTooLarge" => "the reply was too long",
+        "Timeout" => "the model timed out",
+        "TransportFailure" => "the model could not be reached",
+        "ModelUnavailable" => "the model alias is not available",
+        "UnsupportedCapability" => "the model does not support what was asked",
+        _ => outcome
+    };
+}

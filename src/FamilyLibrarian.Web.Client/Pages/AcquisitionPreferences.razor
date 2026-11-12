@@ -1,0 +1,58 @@
+@page "/settings/acquisition-preferences"
+@attribute [Authorize]
+@using FamilyLibrarian.Contracts.Requests
+@using FamilyLibrarian.Web.Client.Requests
+@inject AcquisitionPreferenceApiClient Preferences
+
+<PageTitle>Saved acquisition choices · Family Librarian</PageTitle>
+<MudText Typo="Typo.h4" GutterBottom="true">Saved acquisition choices</MudText>
+<MudText Class="mb-4">Choices you saved with “Always accept” on a request. A shared request continues automatically only when everyone has saved the same choice.</MudText>
+@if (error is not null) { <MudAlert Severity="Severity.Error">@error</MudAlert> }
+@if (loading) { <MudProgressCircular Indeterminate="true" aria-label="Loading saved choices" /> }
+else if (choices.Length == 0) { <MudText>You have no saved acquisition choices.</MudText> }
+else
+{
+    @foreach (var choice in choices)
+    {
+        <MudPaper Outlined="true" Class="pa-4 mb-2">
+            <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <MudText>@Label(choice)</MudText>
+                <MudButton Disabled="@busy" OnClick="() => RemoveAsync(choice.Id)" aria-label="@($"Remove: {Label(choice)}")">Remove</MudButton>
+            </MudStack>
+        </MudPaper>
+    }
+}
+
+@code {
+    private AcquisitionPreferenceResponse[] choices = [];
+    private bool loading = true;
+    private bool busy;
+    private string? error;
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+    private async Task LoadAsync()
+    {
+        try { choices = await Preferences.ListAsync() ?? []; }
+        catch (HttpRequestException) { error = "We could not load your saved choices."; }
+        finally { loading = false; }
+    }
+    private async Task RemoveAsync(Guid id)
+    {
+        busy = true; error = null;
+        try
+        {
+            if (await Preferences.RemoveAsync(id)) await LoadAsync();
+            else error = "That choice could not be removed. Please reload and try again.";
+        }
+        catch (HttpRequestException) { error = "That choice could not be removed. Please try again."; }
+        finally { busy = false; }
+    }
+    private static string Label(AcquisitionPreferenceResponse choice) => choice.Kind == "AcceptCollectionsContaining"
+        ? "Always accept collections containing my book"
+        : $"Always accept books in {Language(choice.Value)}";
+    private static string? Language(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return code;
+        try { return System.Globalization.CultureInfo.GetCultureInfo(code).EnglishName; }
+        catch (System.Globalization.CultureNotFoundException) { return code; }
+    }
+}

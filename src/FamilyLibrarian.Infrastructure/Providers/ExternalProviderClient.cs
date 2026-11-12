@@ -296,6 +296,14 @@ public sealed class ExternalProviderClient(IHttpClientFactory httpClientFactory)
         }
 
         using var response = await client.PostAsync("search", JsonContent.Create(payload), cancellationToken);
+        if (response.StatusCode == HttpStatusCode.TooManyRequests ||
+            (response.StatusCode == HttpStatusCode.ServiceUnavailable && response.Headers.RetryAfter is not null))
+        {
+            var retryAfter = response.Headers.RetryAfter;
+            throw new ExternalProviderRateLimitedException(
+                response.StatusCode, retryAfter?.Delta ?? (retryAfter?.Date - DateTimeOffset.UtcNow));
+        }
+
         response.EnsureSuccessStatusCode();
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));

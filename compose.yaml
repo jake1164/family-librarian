@@ -1,7 +1,16 @@
 name: family-librarian
 
+# Container logs are kept by Docker's json-file driver, which never rotates by default: an installation that runs unattended for a year
+# would slowly fill its disk with logs. Every service rotates its own log (about 30 MB at most each).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
+    logging: *default-logging
     image: postgres:17.6-alpine
     environment:
       POSTGRES_DB: family_librarian
@@ -17,6 +26,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   migrate:
+    logging: *default-logging
     build:
       context: .
       target: final
@@ -35,6 +45,7 @@ services:
   # `:stable`/`:latest` — verify the current recommended release before
   # upgrading it.
   clamav:
+    logging: *default-logging
     # No arm64 build is published for this image; force amd64 so it still
     # pulls (and runs under emulation) on Apple Silicon hosts.
     platform: linux/amd64
@@ -80,6 +91,7 @@ services:
       - clamav-data:/var/lib/clamav
 
   family-librarian:
+    logging: *default-logging
     # Stable local-only name used by the VS Code Docker attach configurations.
     # This service is intentionally not scaled in the development Compose stack.
     container_name: family-librarian-web

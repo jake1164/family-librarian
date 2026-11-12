@@ -64,6 +64,34 @@ switch. Media-type icon still comes from the shared `MediaTypeVisuals.Icon`.
 
 ## Provider activity outcomes
 
+The Tasks dashboard's **Sources now** panel uses `Operations/SourceStatusChip`,
+backed by `MediaTypeVisuals.SourceStateColor`/`SourceStateLabel`. Idle and disabled
+are neutral; searching/checking/downloading/processing/queued/working/waiting are
+blue; action needed, incomplete setup and limited operations are amber;
+unavailable is red. Availability and current work are shown separately: disabling
+a source does not hide an existing job. Concurrent stages retain their own counts.
+These are current host activity and durable job states, never inferred from an
+old `Submitted` ledger row. Last recorded request activity is a ledger timestamp,
+not evidence of a current search or a connection check.
+
+The compact **Source status** dashboard card jumps to the panel below Requests.
+The six summaries form a compact strip: six across on wide screens, three on
+medium screens and two on phones. Use small icons and inline labels/counts,
+with the source breakdown beneath. Preserve readable wrapping and click/keyboard
+section jumps. Use the shared MudBlazor grid and compact card sizing; do not
+expand every card or row to fill the page's width or height. Browser checks must
+verify column counts and total strip height, not just equal card dimensions.
+Both render the same source snapshot. Its number is configured sources, with
+active/idle/attention counts beneath; disabled sources are counted separately.
+Attention takes color precedence over active work using the same centralized
+source-state mapping. A failed refresh shows status unavailable, never a false
+zero or stale idle state. Download statistics count received acquisition jobs
+over retained history once each, not files, ledger rows or books available in
+the library. Search statistics count calls started since the displayed app-start
+time, including failed/cancelled calls. Last request action uses historical
+wording such as Download requested rather than an In progress chip inferred
+from an old Submitted outcome.
+
 The provider-activity ledger (a request's admin detail page and the Tasks
 dashboard) records one row per automatic lookup. Its outcomes are their own
 vocabulary — they are not a request or format status — so they have their own
@@ -80,6 +108,15 @@ mapping on `MediaTypeVisuals` (`AttemptOutcomeColor`, `AttemptOutcomeLabel`,
 | `NoMatch` | grey, "Nothing found" | The source had nothing; it is asked again later. |
 | `Blocked` | amber | A setting stopped the lookup; check the source's configuration. |
 | `Failed` | red | A real failure that needs a librarian. |
+| `Paused` | amber | The source slowed or paused downloads; it is asked again after the wait it named. |
+| `Finished` | grey | *Display only.* A "submitted" row whose download has ended; the row after it says how. |
+| `MovedOn` | grey | *Display only.* A "trying next copy" row that a later step has replaced. |
+
+The ledger is append-only, so a `Submitted` or `Retrying` row is never updated when its download ends or the next
+copy is tried. The server works out what each row means *now* when the list is loaded (`ProviderAttemptDisplay`, using
+the job the row is linked to, or a later row for the same source when the row predates the link) and sends it as
+`DisplayOutcome`; pages draw `DisplayOutcome ?? Outcome`. `Finished` and `MovedOn` exist only there: they are never
+stored and never count as an issue. The request page groups rows by format, with one "now / next" line each.
 
 The rule worth protecting is that **red means a person must act**. The retry
 loop deliberately moves on from a bad copy by itself, so that step is
@@ -172,6 +209,19 @@ compare them and expose the provider/source inspection evidence only in the
 administrator panel. Do not collapse source records before persistence: the
 administrator must see every record, its human-facing source and record
 identifier, and the neutral media facts needed to compare it.
+
+For a release-only source, lead the administrator candidate card with the raw
+release name, or "Unnamed source record" when none was supplied. Never lead
+with the catalog fallback title/author as though they were source claims.
+Keep media details and language separate, and state that author/work identity
+still need verification even when a title phrase appears in the release.
+Fallback rows saved by older versions may contain an inherited catalog author;
+omit that author from review projections because its source provenance is unknown.
+Ordinary release-only fallback identity reviews show no requester acquisition
+choices; only a librarian can resolve them. Independently verified product questions retain
+their existing requester consent flow. Distinct source titles, authors and raw
+release names must survive media-fact deduplication. Source text uses normal
+Razor encoding and wraps on narrow screens.
 
 Administrator request-review provenance may include the optional provider-authored
 `sourceSummary` beside the source name and record identifier. It is bounded plain

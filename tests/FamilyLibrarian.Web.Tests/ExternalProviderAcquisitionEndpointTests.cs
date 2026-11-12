@@ -49,12 +49,13 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     public async Task AnEnabledExternalProvidersResultAppearsAndCanBeAcquired()
     {
         var fixture = WebTestFixture.Require(_fixture);
+        var providerClient = new FakeExternalProviderClient { SubmissionState = ProviderAcquisitionJobLifecycleState.Queued };
         await using var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
             services =>
             {
                 services.RemoveAll<IExternalProviderClient>();
-                services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient());
+                services.AddSingleton<IExternalProviderClient>(providerClient);
             });
 
         using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -98,6 +99,12 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         // here. Always confirming is safe either way (a no-op for an
         // Identifier-tier match); APlausibleButWrongTitleRequiresConfirmationBeforeFetching
         // below is what actually proves the confidence gate itself.
+        // A worker scope and the real admin endpoint can overlap. Neither may
+        // submit a second job for the copy already being acquired by the other.
+        await using var automaticScope = factory.Services.CreateAsyncScope();
+        var automatic = automaticScope.ServiceProvider.GetRequiredService<DirectAcquisitionService>().AcquireAsync(
+            request.Id, format.FormatId, "fake-external", option.ProviderResultId, CancellationToken.None,
+            confirmLowConfidenceMatch: true, isAutomaticAcquisition: true);
         var acquire = await admin.PostAsync(
             $"/api/v1/admin/requests/{request.Id}/formats/{format.FormatId}/direct-acquisitions/fake-external/{option.ProviderResultId}" +
             "?confirmLowConfidenceMatch=true",
@@ -107,6 +114,10 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         Assert.AreEqual(HttpStatusCode.Accepted, acquire.StatusCode);
         var result = await acquire.Content.ReadFromJsonAsync<ManualAcquisitionInProgressResponse>();
         Assert.IsNotNull(result);
+        var automaticResult = await automatic;
+        Assert.AreEqual(ManualImportOutcome.AcquisitionInProgress, automaticResult.Outcome);
+        Assert.AreEqual(automaticResult.ProviderAcquisitionJobId, result.ProviderAcquisitionJobId);
+        Assert.AreEqual(1, providerClient.SubmitCount);
 
         await using (var pollScope = factory.Services.CreateAsyncScope())
         {
@@ -116,6 +127,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
 
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(1, await database.ProviderAcquisitionJobs.CountAsync(candidate => candidate.RequestFormatId == format.FormatId));
         var job = await database.ProviderAcquisitionJobs.SingleAsync(
             acquisitionJob => acquisitionJob.Id == result.ProviderAcquisitionJobId);
         Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Completed, job.LifecycleState);
@@ -174,13 +186,17 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     [TestMethod]
     public async Task AScheduledExternalLookupCreatesAnAdminVisibleReviewRecordWithoutDownloading()
     {
-        var fixture = WebTestFixture.Require(_fixture);
+        // Other tests register enabled sources; Daily defaults make them due too. Isolate this review scenario.
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        var clock = new ReviewRecheckClock();
         await using var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
             services =>
             {
+                services.RemoveAll<FamilyLibrarian.Application.Abstractions.IClock>();
+                services.AddSingleton<FamilyLibrarian.Application.Abstractions.IClock>(clock);
                 services.RemoveAll<IExternalProviderClient>();
-                services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient());
+                services.AddSingleton<IExternalProviderClient>(new FakeExternalProviderClient(withAuthor: false));
             });
 
         using var admin = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -205,7 +221,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
         Assert.IsNotNull(work);
         var created = await admin.PostAsJsonAsync(
-            "/api/v1/requests/", new CreateBookRequestRequest(await WebTestFixture.Require(_fixture).CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
+            "/api/v1/requests/", new CreateBookRequestRequest(await fixture.CopyWorkForTestAsync(work.Id), ["Ebook"], null, false, false));
         var request = await created.Content.ReadFromJsonAsync<BookRequestResponse>();
         Assert.IsNotNull(request);
 
@@ -226,7 +242,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
         var attempt = attempts.Single();
         Assert.AreEqual("scheduled-external", attempt.ProviderId);
         Assert.AreEqual("CandidatesFound", attempt.Outcome);
-        Assert.IsNull(attempt.NextEligibleCheckAtUtc);
+        Assert.AreEqual(clock.UtcNow.AddDays(1), attempt.NextEligibleCheckAtUtc);
 
         await using var verificationScope = factory.Services.CreateAsyncScope();
         var database = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -394,8 +410,11 @@ public sealed class ExternalProviderAcquisitionEndpointTests
     }
 
     /// <summary>Always finds "the-hobbit"-matching searches and fetches a real, minimal, valid EPUB.</summary>
-    private sealed class FakeExternalProviderClient(string providerId = "fake-external") : IExternalProviderClient
+    private sealed class FakeExternalProviderClient(string providerId = "fake-external", bool withAuthor = true) : IExternalProviderClient
     {
+        private int submitCount;
+        public int SubmitCount => submitCount;
+        public ProviderAcquisitionJobLifecycleState? SubmissionState { get; init; }
         public ExternalProviderJobStatus? Status { get; set; }
         public Task<ExternalProviderManifest> GetManifestAsync(
             string baseUrl, string? apiKey, CancellationToken cancellationToken) =>
@@ -413,7 +432,7 @@ public sealed class ExternalProviderAcquisitionEndpointTests
             CancellationToken cancellationToken)
         {
             IReadOnlyList<ExternalProviderCandidate> candidates = request.MediaType == RequestMediaType.Ebook
-                ? [ExternalProviderCandidate.FromSimple("fake-hobbit-1", "The Hobbit", "J. R. R. Tolkien", "epub", null)]
+                ? [ExternalProviderCandidate.FromSimple("fake-hobbit-1", "The Hobbit", withAuthor ? "J. R. R. Tolkien" : null, "epub", null)]
                 : [];
             return Task.FromResult(candidates);
         }
@@ -427,9 +446,13 @@ public sealed class ExternalProviderAcquisitionEndpointTests
 
         public Task<ExternalProviderAcquireSubmission> SubmitAcquireAsync(
             string baseUrl, string? apiKey, ExternalAcquireRequest request, string idempotencyKey,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
-                "fake-job-1", Status?.State ?? ProviderAcquisitionJobLifecycleState.Completed, phase: null, pollAfterSeconds: 0));
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref submitCount);
+            return Task.FromResult(ExternalProviderAcquireSubmission.Accepted(
+                "fake-job-1", SubmissionState ?? Status?.State ?? ProviderAcquisitionJobLifecycleState.Completed,
+                phase: null, pollAfterSeconds: 0));
+        }
 
         public Task<ExternalProviderJobStatus> GetAcquireStatusAsync(
             string baseUrl, string? apiKey, string jobId, CancellationToken cancellationToken) =>

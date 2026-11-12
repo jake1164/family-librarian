@@ -18,7 +18,7 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("identity")
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -351,6 +351,261 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("acquisition_jobs", "acquisition");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.LibraryUpgrade", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CandidateFingerprint")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("candidate_fingerprint");
+
+                    b.Property<string>("CandidateReference")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("candidate_reference");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at_utc");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid>("DeliveredAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("delivered_asset_id");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<Guid?>("NewAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("new_asset_id");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<string>("Reasons")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("reasons");
+
+                    b.Property<Guid>("RequestFormatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_format_id");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("state");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestFormatId")
+                        .IsUnique()
+                        .HasFilter("state IN ('Proposed','Acquiring','Publishing','Verified')");
+
+                    b.HasIndex("RequestFormatId", "CreatedAtUtc");
+
+                    b.ToTable("library_upgrades", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.LibraryUpgradeSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("AutoReplace")
+                        .HasColumnType("boolean")
+                        .HasColumnName("auto_replace");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("library_upgrade_settings", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.MaintenanceSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AlertDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("alert_days");
+
+                    b.Property<int>("AttemptDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_days");
+
+                    b.Property<int>("AuditDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("audit_days");
+
+                    b.Property<int>("CommunicationDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("communication_days");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<bool>("Customized")
+                        .HasColumnType("boolean")
+                        .HasColumnName("customized");
+
+                    b.Property<DateTimeOffset?>("DatabaseLastRunAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("database_last_run_at_utc");
+
+                    b.Property<int>("DatabaseLastRunFailures")
+                        .HasColumnType("integer")
+                        .HasColumnName("database_last_run_failures");
+
+                    b.Property<int>("DatabaseLastRunRemoved")
+                        .HasColumnType("integer")
+                        .HasColumnName("database_last_run_removed");
+
+                    b.Property<int>("EvidenceDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("evidence_days");
+
+                    b.Property<int>("HeldCapGb")
+                        .HasColumnType("integer")
+                        .HasColumnName("held_cap_gb");
+
+                    b.Property<int>("NotificationDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("notification_days");
+
+                    b.Property<int>("OrphanGraceHours")
+                        .HasColumnType("integer")
+                        .HasColumnName("orphan_grace_hours");
+
+                    b.Property<int>("PressureDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("pressure_days");
+
+                    b.Property<int>("RejectedDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("rejected_days");
+
+                    b.Property<int>("RuledOutDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("ruled_out_days");
+
+                    b.Property<int>("SearchMemoryDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("search_memory_days");
+
+                    b.Property<int>("SemanticFindingDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("semantic_finding_days");
+
+                    b.Property<DateTimeOffset?>("StorageLastRunAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("storage_last_run_at_utc");
+
+                    b.Property<int>("StorageLastRunFailures")
+                        .HasColumnType("integer")
+                        .HasColumnName("storage_last_run_failures");
+
+                    b.Property<int>("StorageLastRunRemoved")
+                        .HasColumnType("integer")
+                        .HasColumnName("storage_last_run_removed");
+
+                    b.Property<int>("StuckDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("stuck_days");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.Property<DateTimeOffset?>("UpgradeLastRunAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("upgrade_last_run_at_utc");
+
+                    b.Property<int>("UpgradeLastRunFailures")
+                        .HasColumnType("integer")
+                        .HasColumnName("upgrade_last_run_failures");
+
+                    b.Property<int>("UpgradeLastRunProposed")
+                        .HasColumnType("integer")
+                        .HasColumnName("upgrade_last_run_proposed");
+
+                    b.Property<int>("UpgradeScanIntervalDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("upgrade_scan_interval_days");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<int>("WaitingAudiobookDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("waiting_audiobook_days");
+
+                    b.Property<int>("WaitingEbookDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("waiting_ebook_days");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("maintenance_settings", "acquisition");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.MediaAsset", b =>
                 {
                     b.Property<Guid>("Id")
@@ -393,6 +648,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("format");
 
+                    b.Property<string>("IdentityHoldCode")
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)")
+                        .HasColumnName("identity_hold_code");
+
                     b.Property<string>("IdentityMismatchReason")
                         .HasMaxLength(1024)
                         .HasColumnType("character varying(1024)")
@@ -410,11 +670,25 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("media_type");
 
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("origin");
+
+                    b.Property<Guid?>("OriginUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("origin_user_id");
+
                     b.Property<string>("OriginalFilename")
                         .IsRequired()
                         .HasMaxLength(1024)
                         .HasColumnType("character varying(1024)")
                         .HasColumnName("original_filename");
+
+                    b.Property<DateTimeOffset?>("RuledOutAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ruled_out_at_utc");
 
                     b.Property<string>("ScanFailureReason")
                         .HasMaxLength(1024)
@@ -473,7 +747,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("WorkId");
 
-                    b.ToTable("media_assets", "acquisition");
+                    b.ToTable("media_assets", "acquisition", t =>
+                        {
+                            t.HasCheckConstraint("ck_media_assets_origin_defined", "origin IN ('Legacy', 'Unknown', 'ManualUpload', 'BuiltInProvider', 'ExternalProvider')");
+                        });
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.ProviderAcquisitionJob", b =>
@@ -612,6 +889,14 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<int?>("PartTotal")
                         .HasColumnType("integer")
                         .HasColumnName("part_total");
+
+                    b.Property<int?>("PeerCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("peer_count");
+
+                    b.Property<long?>("PeerMedianSizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("peer_median_size_bytes");
 
                     b.Property<string>("Phase")
                         .HasMaxLength(64)
@@ -797,6 +1082,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("outcome");
 
+                    b.Property<Guid?>("ProviderAcquisitionJobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("provider_acquisition_job_id");
+
                     b.Property<string>("ProviderId")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -818,6 +1107,8 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnName("summary");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ProviderAcquisitionJobId");
 
                     b.HasIndex("RequestId", "AttemptedAtUtc");
 
@@ -1022,6 +1313,64 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasIndex("ClaimedByUserId");
 
                     b.ToTable("provider_interaction_claims", "acquisition");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.SearchVariantAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("FirstTriedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_tried_at_utc");
+
+                    b.Property<DateTimeOffset?>("FoundSelectedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("found_selected_at_utc");
+
+                    b.Property<int>("LastResultCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_result_count");
+
+                    b.Property<DateTimeOffset>("LastTriedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_tried_at_utc");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<Guid>("RequestFormatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_format_id");
+
+                    b.Property<int>("TimesTried")
+                        .HasColumnType("integer")
+                        .HasColumnName("times_tried");
+
+                    b.Property<string>("VariantKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("variant_key");
+
+                    b.Property<string>("VariantKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("variant_kind");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestFormatId");
+
+                    b.HasIndex("RequestFormatId", "ProviderId", "VariantKind", "VariantKey")
+                        .IsUnique();
+
+                    b.ToTable("search_variant_attempts", "acquisition");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Audit.AuditEvent", b =>
@@ -1372,6 +1721,19 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(1000)")
                         .HasColumnName("canonical_title");
 
+                    b.Property<int?>("CatalogAudioDurationSeconds")
+                        .HasColumnType("integer")
+                        .HasColumnName("catalog_audio_duration_seconds");
+
+                    b.Property<string>("CatalogLengthSource")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("catalog_length_source");
+
+                    b.Property<int?>("CatalogPageCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("catalog_page_count");
+
                     b.Property<string>("CoverUrl")
                         .HasMaxLength(2048)
                         .HasColumnType("character varying(2048)")
@@ -1558,6 +1920,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasMaxLength(2048)
                         .HasColumnType("character varying(2048)")
                         .HasColumnName("link");
+
+                    b.Property<string>("MatrixEventId")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("matrix_event_id");
 
                     b.Property<DateTimeOffset?>("ProcessedAtUtc")
                         .HasColumnType("timestamp with time zone")
@@ -1776,6 +2143,379 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("user_matrix_destinations", "communications");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.ConversationRequestKey", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("key");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<Guid?>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("request_keys", "conversation");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.ProcessedConversationEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<DateTimeOffset?>("DeliveredAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("delivered_at_utc");
+
+                    b.Property<string>("EventId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("event_id");
+
+                    b.Property<string>("ReplyJson")
+                        .HasMaxLength(8000)
+                        .HasColumnType("character varying(8000)")
+                        .HasColumnName("reply_json");
+
+                    b.Property<string>("ScopeKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("scope_key");
+
+                    b.Property<string>("Transport")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("transport");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Transport", "ScopeKey", "EventId")
+                        .IsUnique();
+
+                    b.ToTable("processed_events", "conversation");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.StoredConversationSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("LastActivityAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_activity_at_utc");
+
+                    b.Property<string>("ScopeKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("scope_key");
+
+                    b.Property<DateTimeOffset>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at_utc");
+
+                    b.Property<string>("StateJson")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("state_json");
+
+                    b.Property<string>("Transport")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("transport");
+
+                    b.Property<int>("TurnCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("turn_count");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Transport", "ScopeKey")
+                        .IsUnique();
+
+                    b.ToTable("sessions", "conversation");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.CandidateLink", b =>
+                {
+                    b.Property<Guid>("SnapshotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("snapshot_id");
+
+                    b.Property<string>("CandidateKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("candidate_key");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<string>("ProviderResultId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("provider_result_id");
+
+                    b.HasKey("SnapshotId", "CandidateKey");
+
+                    b.ToTable("candidate_links", "tuning");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionCall", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Answer")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("answer");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<string>("ModelAlias")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("model_alias");
+
+                    b.Property<Guid?>("ModelUsageRecordId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("model_usage_record_id");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("outcome");
+
+                    b.Property<string>("ParserVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("parser_version");
+
+                    b.Property<string>("Placement")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("placement");
+
+                    b.Property<string>("Reasoning")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("reasoning_mode");
+
+                    b.Property<string>("RenderedMessagesHash")
+                        .IsRequired()
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)")
+                        .HasColumnName("rendered_messages_hash");
+
+                    b.Property<string>("ReportedModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("reported_model");
+
+                    b.Property<Guid?>("SemanticFindingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("semantic_finding_id");
+
+                    b.Property<Guid?>("SettingsId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("settings_id");
+
+                    b.Property<Guid>("SnapshotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("snapshot_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SnapshotId", "CreatedAtUtc");
+
+                    b.ToTable("decision_calls", "tuning");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionOutcome", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CandidateKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("candidate_key");
+
+                    b.Property<bool>("InfluencedByModelNote")
+                        .HasColumnType("boolean")
+                        .HasColumnName("influenced_by_model_note");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("kind");
+
+                    b.Property<DateTimeOffset>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at_utc");
+
+                    b.Property<Guid>("SnapshotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("snapshot_id");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("source");
+
+                    b.Property<string>("Strength")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("strength");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SnapshotId");
+
+                    b.HasIndex("SnapshotId", "Kind", "CandidateKey")
+                        .IsUnique();
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("SnapshotId", "Kind", "CandidateKey"), false);
+
+                    b.ToTable("decision_outcomes", "tuning");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("ExcerptsInvolved")
+                        .HasColumnType("boolean")
+                        .HasColumnName("excerpts_involved");
+
+                    b.Property<DateTimeOffset>("FirstSeenAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at_utc");
+
+                    b.Property<DateTimeOffset>("LastSeenAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at_utc");
+
+                    b.Property<Guid?>("MediaAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("media_asset_id");
+
+                    b.Property<Guid?>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("role");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<string>("SnapshotDigest")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("snapshot_digest");
+
+                    b.Property<string>("SnapshotJson")
+                        .IsRequired()
+                        .HasMaxLength(32768)
+                        .HasColumnType("character varying(32768)")
+                        .HasColumnName("snapshot_json");
+
+                    b.Property<string>("StaleReason")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("stale_reason");
+
+                    b.Property<string>("SubjectReference")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("subject_reference");
+
+                    b.Property<int>("TimesSeen")
+                        .HasColumnType("integer")
+                        .HasColumnName("times_seen");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Role", "LastSeenAtUtc");
+
+                    b.HasIndex("Role", "SchemaVersion", "SubjectReference", "SnapshotDigest")
+                        .IsUnique();
+
+                    b.ToTable("decision_snapshots", "tuning");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Delivery.DeliveryAttempt", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1957,6 +2697,189 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.ToTable("delivery_targets", "delivery");
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Evidence.ArtifactEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("Dimension")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("dimension");
+
+                    b.Property<int>("EvidenceSchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("evidence_schema_version");
+
+                    b.Property<string>("FindingId")
+                        .IsRequired()
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)")
+                        .HasColumnName("finding_id");
+
+                    b.Property<Guid>("MediaAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("media_asset_id");
+
+                    b.Property<string>("Polarity")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("polarity");
+
+                    b.Property<Guid>("RecordId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("record_id");
+
+                    b.Property<string>("RecordKind")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("record_kind");
+
+                    b.Property<DateTimeOffset>("RecordedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at_utc");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sha256");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("source");
+
+                    b.Property<string>("ToolVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("tool_version");
+
+                    b.Property<string>("Value")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("value");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaAssetId", "RecordedAtUtc");
+
+                    b.HasIndex("MediaAssetId", "RecordId", "FindingId")
+                        .IsUnique();
+
+                    b.ToTable("artifact_evidence", "security");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Evidence.SemanticFinding", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ClaimsJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("claims_json");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("DeterministicDecision")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("deterministic_decision");
+
+                    b.Property<string>("EvidenceDigest")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("evidence_digest");
+
+                    b.Property<string>("FailureDetail")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("failure_detail");
+
+                    b.Property<bool>("IsCloud")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_cloud");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("model");
+
+                    b.Property<Guid?>("ModelUsageRecordId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("model_usage_record_id");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("outcome");
+
+                    b.Property<string>("ProviderId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("provider_id");
+
+                    b.Property<Guid?>("RequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("request_id");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("role");
+
+                    b.Property<string>("SchemaId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("schema_id");
+
+                    b.Property<string>("SubjectReference")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("subject_reference");
+
+                    b.Property<string>("Verdict")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("verdict");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId");
+
+                    b.HasIndex("Kind", "EvidenceDigest", "CreatedAtUtc");
+
+                    b.ToTable("semantic_findings", "evidence");
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Feedback.UserWorkFeedback", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2041,6 +2964,519 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("follows", "following");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelGatewaySettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("AllowCloud")
+                        .HasColumnType("boolean")
+                        .HasColumnName("allow_cloud");
+
+                    b.Property<bool>("AllowCloudExcerpts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("allow_cloud_excerpts");
+
+                    b.Property<bool>("AllowModelHoldRelease")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("allow_model_hold_release");
+
+                    b.Property<int>("ApiKeyFormatVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("api_key_format_version");
+
+                    b.Property<DateTimeOffset?>("ApiKeySetAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("api_key_set_at_utc");
+
+                    b.Property<int>("BackgroundInstallationDailyRequests")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(200)
+                        .HasColumnName("background_installation_daily_requests");
+
+                    b.Property<int>("BackgroundInstallationDailyTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(400000)
+                        .HasColumnName("background_installation_daily_tokens");
+
+                    b.Property<int>("BackgroundUserDailyRequests")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("background_user_daily_requests");
+
+                    b.Property<int>("BackgroundUserDailyTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("background_user_daily_tokens");
+
+                    b.Property<int>("CaptureCallsPerSnapshot")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(10)
+                        .HasColumnName("capture_calls_per_snapshot");
+
+                    b.Property<int>("CaptureFindingsDays")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(180)
+                        .HasColumnName("capture_findings_days");
+
+                    b.Property<int?>("CaptureLabeledSnapshotDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("capture_labeled_snapshot_days");
+
+                    b.Property<int>("CaptureSnapshotsPerRole")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(200)
+                        .HasColumnName("capture_snapshots_per_role");
+
+                    b.Property<int>("CaptureUnlabeledSnapshotDays")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(180)
+                        .HasColumnName("capture_unlabeled_snapshot_days");
+
+                    b.Property<bool>("ChatCaptureEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("chat_capture_enabled");
+
+                    b.Property<int>("CloudDailyRequests")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("cloud_daily_requests");
+
+                    b.Property<int>("CloudDailyTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("cloud_daily_tokens");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<bool>("DecisionCaptureEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("decision_capture_enabled");
+
+                    b.Property<string>("EndpointUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("endpoint_url");
+
+                    b.Property<int>("InteractiveInstallationDailyRequests")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(300)
+                        .HasColumnName("interactive_installation_daily_requests");
+
+                    b.Property<int>("InteractiveInstallationDailyTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(600000)
+                        .HasColumnName("interactive_installation_daily_tokens");
+
+                    b.Property<int>("InteractiveUserDailyRequests")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(30)
+                        .HasColumnName("interactive_user_daily_requests");
+
+                    b.Property<int>("InteractiveUserDailyTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(60000)
+                        .HasColumnName("interactive_user_daily_tokens");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<int>("MaxConcurrentCalls")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2)
+                        .HasColumnName("max_concurrent_calls");
+
+                    b.Property<int>("MaxInputCharacters")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(12000)
+                        .HasColumnName("max_input_characters");
+
+                    b.Property<int>("MaxOutputTokens")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(512)
+                        .HasColumnName("max_output_tokens");
+
+                    b.Property<string>("ProtectedApiKey")
+                        .HasColumnType("text")
+                        .HasColumnName("protected_api_key");
+
+                    b.Property<int>("TimeoutSeconds")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(30)
+                        .HasColumnName("timeout_seconds");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("model_gateway_settings", "integrations");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelRoleSetting", b =>
+                {
+                    b.Property<Guid>("SettingsId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("settings_id");
+
+                    b.Property<string>("Role")
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("role");
+
+                    b.Property<string>("CloudModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("cloud_model");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<string>("LocalModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("local_model");
+
+                    b.Property<string>("Placement")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("placement");
+
+                    b.Property<string>("Reasoning")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("reasoning_mode");
+
+                    b.HasKey("SettingsId", "Role");
+
+                    b.ToTable("model_role_settings", "integrations");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BudgetClass")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("budget_class");
+
+                    b.Property<int>("ChargedTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("charged_tokens");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<bool>("IsCloud")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_cloud");
+
+                    b.Property<long?>("LatencyMilliseconds")
+                        .HasColumnType("bigint")
+                        .HasColumnName("latency_ms");
+
+                    b.Property<Guid?>("MediaAssetId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("media_asset_id");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("model");
+
+                    b.Property<DateTimeOffset>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at_utc");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("outcome");
+
+                    b.Property<int?>("ReportedCompletionTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("reported_completion_tokens");
+
+                    b.Property<int?>("ReportedPromptTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("reported_prompt_tokens");
+
+                    b.Property<int?>("ReportedTotalTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("reported_total_tokens");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("role");
+
+                    b.Property<bool>("UsageEstimated")
+                        .HasColumnType("boolean")
+                        .HasColumnName("usage_estimated");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<int?>("WorkflowEffects")
+                        .HasColumnType("integer")
+                        .HasColumnName("workflow_effects");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OccurredAtUtc");
+
+                    b.HasIndex("UserId", "OccurredAtUtc");
+
+                    b.ToTable("model_usage_ledger", "integrations");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelUsageRollup", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AbstainedCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("abstained_calls");
+
+                    b.Property<int>("AcceptedReplies")
+                        .HasColumnType("integer")
+                        .HasColumnName("accepted_replies");
+
+                    b.Property<int>("ActionCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("action_calls");
+
+                    b.Property<int>("AdvisoryCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("advisory_calls");
+
+                    b.Property<int>("Calls")
+                        .HasColumnType("integer")
+                        .HasColumnName("calls");
+
+                    b.Property<int>("CallsWithoutUsage")
+                        .HasColumnType("integer")
+                        .HasColumnName("calls_without_usage");
+
+                    b.Property<int>("CancelledCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("cancelled_calls");
+
+                    b.Property<int>("DownstreamNegative")
+                        .HasColumnType("integer")
+                        .HasColumnName("downstream_negative");
+
+                    b.Property<int>("DownstreamPositive")
+                        .HasColumnType("integer")
+                        .HasColumnName("downstream_positive");
+
+                    b.Property<bool>("IsCloud")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_cloud");
+
+                    b.Property<int>("LatencyCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("latency_calls");
+
+                    b.Property<long>("LatencyMillisecondsMax")
+                        .HasColumnType("bigint")
+                        .HasColumnName("latency_ms_max");
+
+                    b.Property<long>("LatencyMillisecondsSum")
+                        .HasColumnType("bigint")
+                        .HasColumnName("latency_ms_sum");
+
+                    b.Property<long>("LatencyP95Milliseconds")
+                        .HasColumnType("bigint")
+                        .HasColumnName("latency_p95_ms");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("model");
+
+                    b.Property<int>("NoChangeCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("no_change_calls");
+
+                    b.Property<int>("OpportunityFlags")
+                        .HasColumnType("integer")
+                        .HasColumnName("opportunity_flags");
+
+                    b.Property<int>("ProviderErrors")
+                        .HasColumnType("integer")
+                        .HasColumnName("provider_errors");
+
+                    b.Property<int>("RejectedReplies")
+                        .HasColumnType("integer")
+                        .HasColumnName("rejected_replies");
+
+                    b.Property<long>("ReportedTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("reported_tokens");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasColumnName("role");
+
+                    b.Property<int>("UnclassifiedCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("unclassified_calls");
+
+                    b.Property<DateTimeOffset>("WeekStartUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("week_start_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WeekStartUtc", "Role", "Model", "IsCloud", "OpportunityFlags")
+                        .IsUnique();
+
+                    b.ToTable("model_usage_rollups", "integrations");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelTesting.ModelTestSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("AllowCloud")
+                        .HasColumnType("boolean")
+                        .HasColumnName("allow_cloud");
+
+                    b.Property<int>("ApiKeyFormatVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("api_key_format_version");
+
+                    b.Property<DateTimeOffset?>("ApiKeySetAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("api_key_set_at_utc");
+
+                    b.Property<string>("CloudModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("cloud_model");
+
+                    b.Property<string>("ComparisonModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("comparison_model");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("EndpointUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("endpoint_url");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<int>("MaxOutputTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_output_tokens");
+
+                    b.Property<string>("PrimaryModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("primary_model");
+
+                    b.Property<string>("ProtectedApiKey")
+                        .HasColumnType("text")
+                        .HasColumnName("protected_api_key");
+
+                    b.Property<string>("Reasoning")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("reasoning_mode");
+
+                    b.Property<int>("TimeoutSeconds")
+                        .HasColumnType("integer")
+                        .HasColumnName("timeout_seconds");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("model_test_settings", "integrations");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Notifications.NotificationEvent", b =>
@@ -2199,9 +3635,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("api_key_set_at_utc");
 
-                    b.Property<bool>("AutoAcquireEnabled")
-                        .HasColumnType("boolean")
-                        .HasColumnName("auto_acquire_enabled");
+                    b.Property<string>("AudiobookConfidenceLevel")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("audiobook_confidence_level");
 
                     b.Property<int>("AutomaticAttemptLimit")
                         .HasColumnType("integer")
@@ -2265,6 +3702,18 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("cached_search_operation_status");
 
+                    b.Property<string>("ConfidenceLevel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Standard")
+                        .HasColumnName("confidence_level");
+
+                    b.Property<DateTimeOffset?>("ConfidenceReviewedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("confidence_reviewed_at_utc");
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
@@ -2274,6 +3723,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)")
                         .HasColumnName("display_name");
+
+                    b.Property<string>("EbookConfidenceLevel")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("ebook_confidence_level");
 
                     b.Property<bool>("InstanceReplacedSincePreviousTest")
                         .HasColumnType("boolean")
@@ -2869,6 +4323,23 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
 
+                    b.Property<DateTimeOffset?>("QuestionAskedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("question_asked_at_utc");
+
+                    b.Property<Guid?>("QuestionFormatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("question_format_id");
+
+                    b.Property<string>("QuestionKind")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("question_kind");
+
+                    b.Property<DateTimeOffset?>("QuestionRemindedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("question_reminded_at_utc");
+
                     b.Property<DateTimeOffset>("RequestedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("requested_at_utc");
@@ -3004,6 +4475,16 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("accepted_language");
 
+                    b.Property<string>("AcceptedVariantDetail")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("accepted_variant_detail");
+
+                    b.Property<string>("AcceptedVariantKind")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("accepted_variant_kind");
+
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
@@ -3027,6 +4508,10 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at_utc");
+
+                    b.Property<DateTimeOffset?>("UpgradeScannedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("upgrade_scanned_at_utc");
 
                     b.Property<uint>("Version")
                         .IsConcurrencyToken()
@@ -3150,6 +4635,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("request_id");
 
+                    b.Property<string>("SearchVariant")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("search_variant");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(512)
@@ -3210,6 +4700,39 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasIndex("RequestId", "OccurredAtUtc");
 
                     b.ToTable("request_status_history", "requests");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Requests.RequesterAcquisitionPreference", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Value")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("value");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Kind", "Value")
+                        .IsUnique();
+
+                    b.ToTable("requester_acquisition_preferences", "requests");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Security.Approval", b =>
@@ -3938,6 +5461,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.LibraryUpgrade", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
+                        .WithMany()
+                        .HasForeignKey("RequestFormatId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.MediaAsset", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
@@ -4056,6 +5588,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Acquisition.SearchVariantAttempt", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.RequestFormat", null)
+                        .WithMany()
+                        .HasForeignKey("RequestFormatId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Catalog.Edition", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Catalog.Work", "Work")
@@ -4142,6 +5683,73 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.ConversationRequestKey", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.ProcessedConversationEvent", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.Conversation.StoredConversationSession", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.CandidateLink", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.DecisionCapture.DecisionSnapshot", null)
+                        .WithMany()
+                        .HasForeignKey("SnapshotId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionCall", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.DecisionCapture.DecisionSnapshot", null)
+                        .WithMany()
+                        .HasForeignKey("SnapshotId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionOutcome", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.DecisionCapture.DecisionSnapshot", null)
+                        .WithMany()
+                        .HasForeignKey("SnapshotId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.DecisionCapture.DecisionSnapshot", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Requests.BookRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade);
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Delivery.DeliveryAttempt", b =>
                 {
                     b.HasOne("FamilyLibrarian.Domain.Delivery.DeliveryTarget", null)
@@ -4171,6 +5779,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FamilyLibrarian.Domain.Evidence.ArtifactEvidence", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.Acquisition.MediaAsset", null)
+                        .WithMany()
+                        .HasForeignKey("MediaAssetId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FamilyLibrarian.Domain.Feedback.UserWorkFeedback", b =>
                 {
                     b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
@@ -4191,6 +5808,15 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
                     b.HasOne("FamilyLibrarian.Infrastructure.Identity.AppUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelRoleSetting", b =>
+                {
+                    b.HasOne("FamilyLibrarian.Domain.ModelGateway.ModelGatewaySettings", null)
+                        .WithMany("Roles")
+                        .HasForeignKey("SettingsId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
@@ -4456,6 +6082,11 @@ namespace FamilyLibrarian.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("FamilyLibrarian.Domain.Communications.OutboundCommunication", b =>
                 {
                     b.Navigation("Deliveries");
+                });
+
+            modelBuilder.Entity("FamilyLibrarian.Domain.ModelGateway.ModelGatewaySettings", b =>
+                {
+                    b.Navigation("Roles");
                 });
 
             modelBuilder.Entity("FamilyLibrarian.Domain.Requests.BookRequest", b =>

@@ -705,6 +705,22 @@ safely either way. Remaining gaps: no per-edition ISBN selection (any ISBN
 known for the Work is tried), and a CWA entry missing an `<author>` element
 is not treated as a mismatch.
 
+After a handoff, a canonical lookup miss can also be resolved by the exact approved
+file: title searches and the recent-books feed discover candidates, then the offered
+format must have the same byte count and SHA-256 as the Trusted asset. This permits
+an approved author variant or missing byline to reach Available without changing
+ownership matching or repeating identity approval. Language eligibility still applies;
+multiple byte-identical book IDs remain ambiguous. Unreadable or changed files stay
+AwaitingVerification. CWA must preserve the approved bytes for this fallback.
+
+Automatic fulfillment and an administrator's explicit external acquisition
+share active provider work for a requested format. After fresh source checks,
+submitting the same unchanged candidate returns the existing job; a competing
+copy must wait for completion or cancellation. Distinct numbered parts of the
+same validated audiobook set may proceed together; a job waiting on human
+interaction still permits a different copy to progress. Duplicate submissions must
+not be resolved by weakening the destination's catalog ambiguity checks.
+
 **Existing-artifact suitability is not yet modeled.** A `LibraryImport`
 reaching `Available`, or a `FulfillmentOption` with `OptionKind.Owned`, is
 currently treated as unconditionally usable. Nothing checks that the resolved
@@ -1183,10 +1199,134 @@ unchanged.
 This is intentionally limited to the bundled provider that explicitly opts in
 to automatic acquisition. Project Gutenberg has effective `Once` behavior: each outcome
 is recorded and it is not repeatedly queried. Admin-registered external
-providers default to `Manual`, but an administrator may select `Daily` or
-`Weekly` per enabled provider. A scheduled external lookup calls the provider over its registered API URL
-and records the outcome; a result moves the request to
-`NeedsReview` and never downloads the external artifact automatically.
+providers default to `Daily`, but an administrator may select `Manual` or
+`Weekly` per enabled provider. Existing providers retain their saved schedule.
+A scheduled external lookup calls the provider over its registered API URL
+and records the outcome. Candidates permitted by the source's download confidence
+proceed through the normal security and identity checks within the provider's
+attempt limit; other reviewable candidates go to `NeedsReview`.
+
+External sources have a download confidence level with optional ebook and audiobook
+overrides. Suggest only permits discovery and review, but no unattended downloads,
+including multipart audiobook sets. A librarian may explicitly choose a reviewed copy.
+Strict allows strong identifier, title/author or context-corroborated
+author evidence. Standard also permits close calls: exact titles with both author
+components within one edit, or missing/partial authors with independent agreement.
+Liberal additionally permits a plausible title with incomplete author metadata.
+Fuzzy titles, contradictions and unresolved language or release concerns remain
+ineligible at every level. Candidate pools are ordered by confidence tier, then
+the shared external-candidate ranker; the existing retry exclusions still apply.
+Complete multipart audiobooks also require every part to meet the format's
+effective source confidence, both at selection and before submission. Only the
+fragment concern resolved by that complete, compatible set is removed for this
+comparison. Within a set, a misspelled author without independent corroboration
+is a close call: Strict leaves it in ordinary review, while Standard may fetch
+it. Other concerns and whole-set security and identity checks still apply.
+When no individual candidate is allowed, a pool of at least two copies can form
+a CloseCall if every reviewable copy has the same normalized work-title core,
+no conditions or release/language concerns beyond unknown DRM, no author conflict,
+and at least one has strong or fuzzy author support. Standard and Liberal may
+fetch its highest-ranked copy; Strict still reviews it. A different work or a
+derivative condition anywhere in that pool prevents collapse. A pool with an
+already allowed strong candidate keeps its ordinary selection. Acquisition
+re-proves confidence from fresh source results before submitting a job; pool
+confidence does not set the file's pre-confirmed-identity flag.
+New sources start at Strict. Existing sources migrate to Standard and show a
+Sources-page review notice until every enabled source's confidence has been saved.
+
+A structured author spelling difference of up to two edits per name component,
+with the same first letter and component count, can be context-corroborated only
+when the title is exact and series name/position, an edition ISBN-13, or publication
+year and publisher independently agree with the catalog. Explicit conflicting
+release-name credits remain contradictions. Content verification still compares
+the downloaded copy with the catalog identity.
+
+Preference reviews and reviews opened after that limit keep being searched.
+Their wait slows from daily to monthly with age, anchored on the publication
+date when it is later than the request date, otherwise on the request date;
+the provider's own interval remains the minimum wait. A new eligible copy
+withdraws a pending preference question with a requester notice. After a spent
+budget, only a new strong candidate may get an extra attempt: at most one per
+recheck and at most the provider's attempt limit in total. The same rule applies
+to a review parked below the limit (every candidate tried, or a copy held for a
+person), so a better copy that turns up later is still found. If that copy passes
+its checks the review is withdrawn, administrators are notified, and any held
+copy of the same format is removed at once, because it is no longer the only
+copy; a weaker candidate, or a copy that fails its checks, changes nothing.
+Failed copies and reposts remain excluded. Requests requiring manual fulfillment are excluded,
+and batches consider the least recently searched requests first.
+
+Search proposals do not resolve a source's identity review. Ordinary saved
+release-only candidates whose labels fall back to catalog context require
+librarian verification; they are omitted from requester choices and the requester
+acceptance endpoint refuses those selections. Explicit product questions
+retain their separately verified identity and existing consent flow.
+
+**Optional AI search guidance:** the `SearchGuidance` role is off by default.
+It is considered only after deterministic variants finish for every scheduled
+external source for the requested format, with no candidate eligible for
+download and no product-choice question available. At most one guidance call
+is made per requested format and recheck cycle. With the role disabled, no
+guidance model-policy call is made.
+
+Guidance receives sanitized requested-work metadata, at most 15 pooled result
+summaries with fixed discard-reason codes, and previously tried variant keys.
+It may suggest an original-language title, alternate published title, series
+name, collection title or author form. At most five suggestions are accepted;
+values must be new and pass the bibliographic character, length and no-link
+rules. A new name is a search proposal only. Evidence IDs must have been
+supplied, and a collection suggestion must cite a result. Series searches use
+an existing, unambiguous catalog position. Suggestions run across scheduled
+sources, and results are pooled and verified against the requested work.
+Collection results still require deterministic containment proof before the
+existing requester question can be offered. Source confidence, attempt limits,
+consent, security and content checks continue to govern every download.
+
+Guidance uses the background model budget, a 1000-token request output cap and a
+linked 60-second timeout. The installation output limit (default 1024 tokens)
+applies if lower. Existing installations retain their saved limit; an
+administrator must raise **Max output (tokens)** in **AI models**, under
+**Limits & usage**, to at least 1000 to use the full request cap.
+Refused, timed-out, failed, empty, invalid or inapplicable replies leave the
+deterministic result intact; caller cancellation still propagates. Call outcomes
+and validated proposals are persisted as semantic findings, and identical reusable findings are reused
+for seven days. A `give_up` reply ends extra searches for that cycle across
+sources; the base search remains eligible next cycle. Existing candidate and
+artifact semantic assessments remain advisory shadows.
+
+**Optional AI candidate triage:** the separately enabled `CandidateTriage` role
+compares up to eight candidates before an external source's automatic
+submission, including complete audiobook sets. At most one model call occurs
+per requested format and source pass. The server supplies bounded, sanitized
+bibliographic fields and candidate-specific evidence IDs. Opaque source
+references, URLs and credentials are excluded. Provider text is untrusted data.
+
+The closed `candidate-triage/1` response allows `keep`, `uncertain`, `veto`,
+`prefer` and `author_variant`. Keep and uncertain preserve the original choice.
+A veto must name the current choice and cite its negative or conditional
+evidence; it excludes that copy for this pass at every confidence level. Vetoing
+a companion part defers that set. Preference must cite positive evidence for a
+supplied member of the genuinely tied best candidates. The prompt keeps a tied
+current choice unless another tied candidate has clearly stronger supplied Positive
+evidence, then prefers that candidate; an equal tie alone is not a reason to move.
+An author variant must
+have strong title support, only an author conflict, and independent matching
+series and position, ISBN, or both year and publisher. It cannot override
+language, title, series, edition, narration or completeness conflicts.
+Preference and author variants require Standard or Liberal confidence; Strict
+and SuggestOnly gain no upgrade. An author variant ranks as a close call and
+cannot displace a strong copy or a better deterministic close call. This ordering
+is checked again against fresh source results before submission.
+
+Triage uses the background budget, a 300-token output cap and linked 20-second
+deadline, subject to shorter installation limits. Refusal, invalid schema or
+IDs, timeout, transport or persistence failure preserve deterministic behavior;
+caller cancellation propagates. Validated decisions and outcomes are stored
+beside the original assessment and reusable for seven days only with identical
+evidence, with all move rules rechecked. Acquisition retrieves the candidate
+again and refuses a changed or stale triage decision. An AI author variant
+never preconfirms the downloaded file's identity. Attempt limits, product
+consent, DRM, scanning, artifact identity and destination checks remain in force.
 
 Project Gutenberg discovery reads the locally imported daily RDF catalogue, so it
 continues to work when external catalogue APIs are blocked. LibriVox discovery
@@ -1201,6 +1341,42 @@ detail views.
 acquisition cycle. Previous provider attempts remain visible in the audit
 timeline, but they cannot suppress new automatic or scheduled checks for the
 reopened request.
+
+**Product-choice questions:** after the search finds no copy allowed by the
+source's confidence level, a known collection containing the requested work,
+an abridged version, an edition available only in another language, or an
+incomplete part set can become a structured preference question. A dramatized
+audiobook already held in reserve is offered only after looking for a narrated
+copy. Active requesters see **Take it** and **Keep looking**; the first answer
+applies to the shared request, and administrators may answer too. Searching
+continues while the question is open, with one reminder after seven days. A
+new eligible standalone copy withdraws the question with a notice.
+
+Consent is recorded on the requested format and applies to the offered variant.
+An accepted collection must identify the requested work in its EPUB contents or
+headings when its package title differs. Abridgement and dramatization consent
+suppresses only the corresponding identity concern. All other identity checks,
+malware scanning, structural validation and approval rules still apply. Accepting
+a held dramatization rechecks the existing bytes through the security pipeline.
+An open question has amber progress and a card that says an answer is waiting.
+Linked Matrix users may answer with the whole-message keywords **take**, **take
+it**, **keep**, or **keep looking**. Numeric answers **1** and **2** require a
+reply relation to the event recorded for that recipient's question; missing or
+different event IDs never count as numeric consent. Kindle yes/no confirmations
+retain priority, and unbound numbers retain their conversation meaning.
+
+Requesters may save **Always accept collections containing my book** or an
+offered language when taking that choice. Saved choices are personal and can be
+removed under **Settings → Saved acquisition choices**. A shared request skips
+the question only when every active requester has the matching preference; the
+history says “Accepted by your saved preferences.” Otherwise only requesters
+without it receive the question and may answer. Holders see a read-only card
+waiting for the other requester(s); their answer attempts receive `NotAsked`
+(HTTP 409). Removing a preference makes its holder eligible to answer an open
+question again. Administrators may answer through the administrator request
+actions. Abridged, incomplete-part and dramatized choices always require an
+answer and have no “always” option. Saved consent uses the same acquisition and
+validation path as **Take it**.
 
 **Requester progress:** My Requests and the selected Work page supplement the
 stable request status with one safe, per-format workflow message whenever a file has entered the pipeline:
@@ -1257,11 +1433,116 @@ complete numbered-audiobook grouping policy. EPUB package identity verification 
 same title set after download. M4B audiobooks are verified the same way from
 their embedded iTunes-style tags: the title (`nam`/`alb`) must match, and the
 author/artist tags (`ART`/`aART`/`wrt`), when present, must include a match;
-a file with no author tag is judged on title alone. Formats with no verifier
-(for example MP3 or MOBI) that were not independently confirmed before
-download are held for a librarian's review.
+a file with no author tag is judged on title alone. MP3 and OGG/Opus identity
+checks use embedded album and author tags; a section title alone does not
+identify the book. Missing tags preserve the source's attested outcome rather
+than being recorded as content verification. Formats with no verifier, such as
+MOBI, remain subject to source-attestation review.
 
-When automatic acquisition is disabled or the remaining candidates need a
+An EPUB or tagged audiobook author spelling difference may pass only with an exact title
+and an independent embedded ISBN-13 or matching series name and position. Component
+counts and first letters must agree, with at most two edits per component.
+Only confirmed, bounded audio metadata supplies corroboration; ASIN remains
+evidence only, and truncated metadata cannot fabricate agreement.
+Audio strips one terminal abridged/unabridged edition marker in the supported
+English or German forms before requiring an exact core title. Explicit
+abridgement holds the file; German wording remains a language cue.
+
+Catalog page counts are filled from metadata on creation or ISBN reuse only
+while unknown; later values do not overwrite them. A text below 25% of the
+catalog estimate (250 words per page) holds only for works of at least 80 pages.
+An audio duration below 25% of a known catalog duration also holds; absent
+catalog lengths remain unknown. Missing TOC targets hold only when at least two
+entries and at least 10% of entries are missing. Moderate shortfalls and
+inferred heading language are evidence only. These identity holds occur before
+approval and publishing and remain reviewable; the security and structure gates
+are unchanged.
+
+An optional `ArtifactValidationDecision` role (off by default) can add
+`identity.hold.model_concern` synchronously after those deterministic checks and
+before approval. Only ExternalProvider or BuiltInProvider EPUB, KEPUB, M4B, MP3
+and OGG matches are eligible. Its `artifact-decision/1` reply must cite a Negative
+fact for an identity contradiction, or Negative, Weak or Condition evidence for
+an incompleteness, language or edition concern. Positive-only citations,
+uncertainty, release and collection-acceptance replies cannot add a hold.
+Unaccepted collections and other deterministic holds never reach this model.
+The held file stays Unmatched, with the model note and citations available to
+administrators. Identity retry preserves a model hold; the existing administrator
+identity override remains the release path. Automatic model holds use the normal
+candidate exclusion and attempt limit, with `[model]` at the start of the stored
+decline reason. Budget: BackgroundValidation, 400 output tokens, timeout capped
+at the smaller of the installation setting and 45 seconds. Any model error or
+timeout preserves the deterministic result; a disabled role makes no model call.
+Validated decisions and failures are recorded, and identical reusable findings
+are reused for seven days. File-derived values are stripped of control/invisible
+formatting and markup delimiters, bounded, and framed as untrusted data. Cloud
+roles receive those values only with the separate excerpt-sharing opt-in.
+
+EPUB/KEPUB hold reviews can also receive three transient excerpts: the first
+copyright/imprint/impressum/colophon item among the first five or last three
+spine items; the first linear prose item after front matter with at least 200
+words (first 200 words); and the last linear item's last 150 words. Each is
+limited to 1,200 characters, text nodes only, with script/style text, controls,
+invisible formatting and angle brackets removed, whitespace collapsed, and
+`BOOK_TEXT` delimiter tokens neutralized. Archive reads retain the inspectors'
+entry/size/compression limits, a 64 MiB aggregate read bound, 8 MiB item bound,
+DTD prohibition, and cancellation. No files are written. Audio has no tier C.
+
+The Unknown `tc-copyright`, `tc-chapter1` and `tc-last` IDs are supporting
+citations only. Exact last-page sample phrases and a copyright-page `abridged`
+word produce separate Condition facts. A conservative English/German function-word
+cue can produce a Weak chapter-language mismatch; short, mixed and unsupported
+language prose stays Unknown. A checksum-valid printed ISBN that matches a
+catalog ISBN produces a Positive fact before rendering. All derived values are
+fixed observations, never copied text. No deterministic approval changes from
+an excerpt alone; only a grounded model concern adds the existing model hold.
+
+Excerpts are sent only in explicitly untrusted `BOOK_TEXT` blocks. They never
+enter ArtifactEvidence, SemanticFinding claims, ledger/audit, exceptions, logs or
+API responses. Only a digest, safe notes and citation IDs persist. Notes remain
+at most 200 characters; eight consecutive normalized excerpt words reject the
+whole response. Provider failure details are replaced with a fixed message when
+excerpts were sent. Cached replies are regrounded and privacy-checked again.
+Role off means no extraction or calls. Cloud without `AllowCloudExcerpts` means
+no extraction or text blocks. Extraction shares the existing min(timeout,45s)
+deadline: failure falls back to tier A/B when time remains; deadline expiry
+leaves deterministic approval unchanged. Administrators see excerpt IDs only.
+
+`AllowModelHoldRelease` is a separate administrator-only audited permission,
+default false. With it and the decision role enabled, identity verification may
+request a release for attested-only external or content-inconclusive holds with
+no Negative facts. Positive technical facts alone cannot prove identity. A
+`release` reply must cite Positive identity evidence. The author-only exception
+requires the sole detailed Negative to be author difference, plus Positive title,
+language and series-position or identifier agreement, cited together by a
+`supports_declared_identity` claim. The recorder's derived contradiction summary
+is expanded into its underlying detailed observations; an independent Negative
+summary without those details still blocks. Independent completeness conditions
+that would hold also block release.
+
+An already accepted collection held because its TOC/heading check found no
+requested-work match can receive `contains_requested` citing a real tier-B TOC
+or heading fact. Only its expected title difference is allowed; author, language
+and every other Negative still block. This confirms contents, never requester
+consent. Cloud contents review needs the existing file-detail sharing opt-in.
+Tier C is restricted to hold review. Hold calls still reject release/contains_requested.
+
+The synchronous decision proposes a persisted finding; it does not itself trust
+bytes. After a fresh check following the call, `ReleaseHoldByModelAsync` checks
+the persisted asset, current permission/role, current facts, bytes/profile digest,
+finding/citations and passed security evaluation again under a transaction.
+It moves Unmatched through Processing to Trusted with policy
+`model-hold-release-v1`. `AssetIdentityReleasedByModel`
+(`asset.identity_released_by_model`) records actor null, model and finding id;
+identity-override evidence records source `model`. Audit/evidence and approval
+commit together before publishing. A failed persistence step restores the held
+file location. No release fans out to bundle siblings: each needs its own
+eligible hold and grounded finding. Model-concern holds remain administrator-only.
+The admin view labels applied model releases and shows the review's cited facts.
+
+When a scheduled external acquisition starts, its durable job records the median size of other pooled, requester-reviewable candidates in the same format, provided at least three peers have a positive known size. After staging, the exact job output links that snapshot to the asset, including across restarts. A download smaller than 30% of the median produces Weak `profile.compare.size_peer_outlier` evidence. This finding never deterministically holds a file or changes acquisition eligibility; the optional artifact decision reviewer may cite it for a concern. Two peers or unknown measurements produce no finding.
+
+When a source is set to Suggest only or the remaining candidates need a
 human review, Family Librarian does not ask a requester to guess between rows
 whose available evidence provides no meaningful distinction. The requester
 receives a concise explanation; the administrator receives the structured
@@ -1274,8 +1555,8 @@ the category name. When no candidate has identifier or strict title-and-author
 corroboration, it says that possible copies were found but their titles could
 not be confirmed as the requested work, and that a librarian must verify the
 source before acquisition. That is an identity review, not an edition
-preference. When work identity is confirmed but automatic acquisition is off,
-the explanation instead says that matching copies need librarian selection.
+preference. For a Suggest only source, the explanation names that policy and
+says that a librarian must verify and choose a copy before downloading.
 
 CWA receives the original approved source file and performs any library/device
 conversion later. FL does not yet receive CWA's converted EPUB as an artifact,

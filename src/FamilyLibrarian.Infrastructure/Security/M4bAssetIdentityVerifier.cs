@@ -1,9 +1,12 @@
 using System.Buffers.Binary;
 using System.Text;
+using System.Globalization;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Evidence;
 
 namespace FamilyLibrarian.Infrastructure.Security;
 
@@ -28,11 +31,19 @@ namespace FamilyLibrarian.Infrastructure.Security;
 /// ends in an unmatched result rather than an exception.
 /// </para>
 /// </remarks>
-public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher bookMatcher) : IAssetIdentityVerifier
+public sealed class M4bAssetIdentityVerifier(
+    IWorkLookup works, IBookMatcher bookMatcher, IBookRequestFulfillmentStore? requestFulfillment = null) : IAssetIdentityVerifier
 {
     private const int MaxBoxesPerLevel = 100_000;
     private const int MaxTagItems = 10_000;
     private const int MaxTagValueBytes = 64 * 1024;
+    private const int MaxProfileTagValueBytes = 4096;
+    private const int MaxTracks = 64;
+    private const int MaxLanguageTagBytes = 35;
+
+    // ISO 639-2 values that explicitly say "no usable language": undetermined, no linguistic content,
+    // uncoded, multiple. They are unknown, never a mismatch.
+    private static readonly string[] UnspecifiedLanguages = ["und", "zxx", "mis", "mul"];
 
     // 0xA9 is the "(c)" byte QuickTime/iTunes use to prefix text-tag atom names.
     private static readonly string[] TitleTags = ["©nam", "©alb"];
@@ -40,8 +51,7 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
 
     public string Id => "m4b-tag-metadata";
 
-    public bool Supports(MediaAsset asset) =>
-        string.Equals(asset.Format, ".m4b", StringComparison.OrdinalIgnoreCase);
+    public bool Supports(MediaAsset asset) => Mp4Audio.IsContainerFormat(asset.Format);
 
     public async Task<AssetIdentityVerificationResult> VerifyAsync(
         MediaAsset asset,
@@ -72,12 +82,16 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
                 Id, "The audiobook's metadata could not be read safely -- it may be malformed.");
         }
 
+        var profile = new AudioProfileTags();
+        if (tags.TryGetValue("©mvn", out var series)) profile.Add("mvnm", series[0]);
+        if (tags.TryGetValue("©mvi", out var position)) profile.Add("mvin", position[0]);
+        var profileFacts = profile.Facts();
         var titles = Collect(tags, TitleTags);
         var authors = Collect(tags, AuthorTags);
         if (titles.Count == 0 && authors.Count == 0)
         {
             return AssetIdentityVerificationResult.Unmatched(
-                Id, "The audiobook has no embedded title or author tags, so it can't be compared with the catalog entry.");
+                Id, "The audiobook has no embedded title or author tags, so it can't be compared with the catalog entry.", profileFacts);
         }
 
         var expectedTitles = new[] { expected.Title }
@@ -92,15 +106,367 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
         // -- the author tags are judged separately below, and a file with none
         // is judged on its exact title alone.
         var titleAuthor = string.IsNullOrWhiteSpace(expected.PrimaryAuthor) ? "Unknown" : expected.PrimaryAuthor;
-        var titleMatches = titles.Any(title => expectedTitles.Any(expectedTitle =>
-            bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, title, titleAuthor)));
+        var editions = titles.Select(AudioEditionMarker.Strip).ToArray();
+        // A trailing series designation ("Fourth Wing: Fourth Wing, Book 1") is packaging, not a different title, as
+        // long as its number agrees with the catalog's series position; the remaining title must still be exact.
+        // Part-of-set and dramatization markers are packaging, not title: see AudioPackagingMarkers.
+        var packaging = titles.Select(title => AudioPackagingMarkers.Read(title, asset.BundleTrackCount)).ToArray();
+        var titleMatches = packaging.Any(packaged =>
+        {
+            var core = AudioEditionMarker.Strip(packaged.CoreTitle).CoreTitle;
+            var withoutSeries = AudioSeriesDesignation.StripConsistentWith(core, expected.Series ?? []);
+            return expectedTitles.Any(expectedTitle =>
+                bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, core, titleAuthor) ||
+                (withoutSeries is not null &&
+                 bookMatcher.StrictTitleAuthorMatches(expectedTitle, titleAuthor, withoutSeries, titleAuthor)));
+        });
         var authorChecked = authors.Count > 0 && !string.IsNullOrWhiteSpace(expected.PrimaryAuthor);
         var authorMatches = !authorChecked || authors.Any(author => bookMatcher.AuthorMatches(expected.PrimaryAuthor, author));
 
-        return titleMatches && authorMatches
-            ? AssetIdentityVerificationResult.Match(Id)
-            : AssetIdentityVerificationResult.Unmatched(Id, DescribeMismatch(
-                expectedTitles, expected.PrimaryAuthor, titles, authors, titleMatches, authorMatches));
+        // A02: the audio track's own declared language (standard container field only) must not contradict
+        // the language accepted for this request. A missing, undetermined, unrecognized or unreadable
+        // value is unknown and is never treated as either a match or a mismatch.
+        var declaredLanguages = await ReadDeclaredLanguagesSafelyAsync(content, cancellationToken);
+        var request = requestFulfillment is null ? null : await requestFulfillment.FindByFormatIdAsync(asset.AssociatedRequestFormatId, cancellationToken);
+        var format = request?.Formats.SingleOrDefault(f => f.Id == asset.AssociatedRequestFormatId);
+        var acceptedLanguage = format?.AcceptedLanguage;
+        var languageAccepted = declaredLanguages is not { Count: > 0 } ||
+            declaredLanguages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage));
+
+        var facts = new List<IdentityFact>
+        {
+            IdentityFacts.Title(titles.Count > 0, titleMatches),
+            IdentityFacts.Author(authorChecked, authorMatches)
+        };
+        if (declaredLanguages is not null)
+        {
+            facts.Add(IdentityFacts.Language(declaredLanguages, languageAccepted));
+        }
+        facts.AddRange(profileFacts);
+        if (authorChecked && !authorMatches && titleMatches &&
+            ArtifactProfileComparer.HasCorroboration(facts, expected.Series ?? [], expected.Isbn13s) &&
+            authors.Any(author => AuthorSpelling.IsVariant(expected.PrimaryAuthor, author)))
+        {
+            authorMatches = true;
+            facts[facts.FindIndex(f => f.FindingId == "ev-author")] = new IdentityFact("ev-author", EvidenceDimension.IdentityCorroboration,
+                EvidenceReasonCodes.ArtifactIdentityCorroboration.AuthorSpellingVariant, EvidencePolarity.Weak);
+        }
+        facts.AddRange(editions.SelectMany(edition => edition.Facts(acceptedLanguage)).Distinct());
+        var markerLanguageConflict = editions.Any(edition => edition.IsGerman) &&
+            !LanguageAcceptance.IsAcceptedOrUnspecified("de", acceptedLanguage);
+        languageAccepted &= !markerLanguageConflict;
+
+        if (titleMatches && authorMatches && languageAccepted && packaging.Any(packaged => packaged.IsDramatized) &&
+            format?.AcceptedVariantKind != FamilyLibrarian.Domain.Requests.AcquisitionQuestionKind.DramatizedOnly)
+        {
+            // The right book, but a different production. Held in reserve, so the search looks for the narrated
+            // audiobook; if none is found the request reaches a person, who can release this one.
+            return AssetIdentityVerificationResult.Unmatched(
+                Id,
+                "This is a dramatized adaptation of the requested book (a full-cast production with several actors, music " +
+                "and sound effects), not the narrated audiobook. It is kept in reserve while a narrated copy is looked for; " +
+                "if none is found, a librarian can release this one.",
+                facts) with { HoldCode = EvidenceReasonCodes.IdentityHold.DramatizedAdaptation };
+        }
+
+        if (titleMatches && authorMatches && languageAccepted)
+        {
+            return AssetIdentityVerificationResult.Match(Id, facts);
+        }
+
+        var reason = titleMatches && authorMatches
+            ? string.Empty
+            : DescribeMismatch(expectedTitles, expected.PrimaryAuthor, titles, authors, titleMatches, authorMatches);
+        if (!languageAccepted)
+        {
+            var languageReason = (markerLanguageConflict ? "The audiobook's German edition marker conflicts with the language " :
+                $"The audiobook's declared language ({string.Join(", ", declaredLanguages!)}) doesn't match the language ") +
+                $"accepted for this request{(string.IsNullOrWhiteSpace(acceptedLanguage) ? string.Empty : $" ({acceptedLanguage})")}.";
+            reason = reason.Length == 0 ? languageReason : $"{reason} {languageReason}";
+        }
+
+        return AssetIdentityVerificationResult.Unmatched(Id, reason, facts);
+    }
+
+    /// <summary>
+    /// M1-4c: measured properties of the first audio track (duration from its media header, codec from its sample entry,
+    /// average bitrate from file size over duration) and the Nero chapter count. Bounded header reads only. A value that
+    /// cannot be read is reported as unavailable or not found, never guessed. Independent of identity.
+    /// </summary>
+    internal static async Task<IReadOnlyList<IdentityFact>> InspectTechnicalAsync(Stream content, CancellationToken cancellationToken)
+    {
+        double? seconds = null;
+        string? codec = null;
+        int? chapters = null;
+        try
+        {
+            if (await FindChildAsync(content, 0, content.Length, "moov", cancellationToken) is { } moov)
+            {
+                var position = moov.PayloadStart;
+                var tracks = 0;
+                for (var count = 0; count < MaxBoxesPerLevel && seconds is null; count++)
+                {
+                    if (await TryReadBoxAsync(content, position, moov.End, cancellationToken) is not { } box) break;
+                    position = box.End;
+                    if (box.Type != "trak") continue;
+                    if (++tracks > MaxTracks) break;
+                    if (await FindChildAsync(content, box.PayloadStart, box.End, "mdia", cancellationToken) is not { } mdia) continue;
+                    if (await ReadHandlerTypeAsync(content, mdia, cancellationToken) != "soun") continue;
+
+                    seconds = await ReadMediaDurationSecondsAsync(content, mdia, cancellationToken);
+                    codec = await ReadSampleEntryFormatAsync(content, mdia, cancellationToken);
+                }
+
+                if (await FindChildAsync(content, moov.PayloadStart, moov.End, "udta", cancellationToken) is { } udta &&
+                    await FindChildAsync(content, udta.PayloadStart, udta.End, "chpl", cancellationToken) is { } chpl)
+                {
+                    chapters = await ReadNeroChapterCountAsync(content, chpl, cancellationToken);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException)
+        {
+            // Unreadable parts stay unmeasured.
+        }
+
+        List<IdentityFact> facts = [];
+        if (seconds is > 0)
+        {
+            facts.Add(new("ev-audio-duration", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.DurationMeasured,
+                EvidencePolarity.Unknown, $"seconds={Math.Round(seconds.Value)};basis=media_header"));
+            facts.Add(new("ev-audio-bitrate", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.Bitrate,
+                EvidencePolarity.Unknown, $"kbps_avg={Math.Round(content.Length * 8d / seconds.Value / 1000d)};basis=file_size_over_duration"));
+        }
+        else
+        {
+            facts.Add(new("ev-audio-duration", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.DurationUnavailable,
+                EvidencePolarity.Unknown, "no readable audio media header"));
+        }
+
+        if (codec is not null)
+        {
+            facts.Add(new("ev-audio-codec", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.Codec, EvidencePolarity.Unknown, codec));
+        }
+
+        facts.Add(chapters is > 0
+            ? new IdentityFact("ev-audio-chapters", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.ChaptersCounted,
+                EvidencePolarity.Unknown, chapters.Value.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            : new IdentityFact("ev-audio-chapters", EvidenceDimension.AudioTechnical, EvidenceReasonCodes.ArtifactAudio.ChaptersNotFound,
+                EvidencePolarity.Unknown, "no chapter list in the container"));
+        return facts;
+    }
+
+    /// <summary><c>mdhd</c>: version 0 has 32-bit timescale at 12 and duration at 16; version 1 has timescale at 20 and a 64-bit duration at 24.</summary>
+    private static async Task<double?> ReadMediaDurationSecondsAsync(Stream content, BoxInfo mdia, CancellationToken cancellationToken)
+    {
+        if (await FindChildAsync(content, mdia.PayloadStart, mdia.End, "mdhd", cancellationToken) is not { } mdhd) return null;
+        var available = mdhd.End - mdhd.PayloadStart;
+        if (available < 1) return null;
+
+        var toRead = (int)Math.Min(available, 32);
+        var buffer = new byte[toRead];
+        content.Position = mdhd.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        uint timescale;
+        ulong duration;
+        if (buffer[0] == 0 && toRead >= 20)
+        {
+            timescale = BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(12, 4));
+            duration = BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(16, 4));
+        }
+        else if (buffer[0] == 1 && toRead >= 32)
+        {
+            timescale = BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(20, 4));
+            duration = BinaryPrimitives.ReadUInt64BigEndian(buffer.AsSpan(24, 8));
+        }
+        else
+        {
+            return null;
+        }
+
+        return timescale == 0 || duration == 0 || duration == uint.MaxValue || duration == ulong.MaxValue ? null : (double)duration / timescale;
+    }
+
+    /// <summary><c>minf/stbl/stsd</c>: four bytes version/flags, four of entry count, then the first entry's size and four-character format.</summary>
+    private static async Task<string?> ReadSampleEntryFormatAsync(Stream content, BoxInfo mdia, CancellationToken cancellationToken)
+    {
+        if (await FindChildAsync(content, mdia.PayloadStart, mdia.End, "minf", cancellationToken) is not { } minf ||
+            await FindChildAsync(content, minf.PayloadStart, minf.End, "stbl", cancellationToken) is not { } stbl ||
+            await FindChildAsync(content, stbl.PayloadStart, stbl.End, "stsd", cancellationToken) is not { } stsd ||
+            stsd.End - stsd.PayloadStart < 16)
+        {
+            return null;
+        }
+
+        var buffer = new byte[16];
+        content.Position = stsd.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        var format = Encoding.Latin1.GetString(buffer, 12, 4);
+        return format.All(character => char.IsAsciiLetterOrDigit(character) || character is ' ' or '-' or '_') ? format.Trim() : null;
+    }
+
+    /// <summary>
+    /// AUTOFIND 3c: the names of the first <paramref name="maximum"/> chapters of the Nero <c>chpl</c> list (each entry is an
+    /// 8-byte start time, a one-byte title length and that many UTF-8 bytes). One bounded read of the atom, never of the media
+    /// payload; empty when there is no list or it cannot be read safely. QuickTime text-track chapters are not parsed.
+    /// </summary>
+    internal static async Task<IReadOnlyList<string>> ReadChapterTitlesAsync(
+        Stream content, int maximum, CancellationToken cancellationToken)
+    {
+        const int MaxChplBytes = 64 * 1024;
+        var titles = new List<string>();
+        try
+        {
+            if (await FindChildAsync(content, 0, content.Length, "moov", cancellationToken) is not { } moov ||
+                await FindChildAsync(content, moov.PayloadStart, moov.End, "udta", cancellationToken) is not { } udta ||
+                await FindChildAsync(content, udta.PayloadStart, udta.End, "chpl", cancellationToken) is not { } chpl)
+            {
+                return titles;
+            }
+
+            var available = chpl.End - chpl.PayloadStart;
+            if (available < 9) return titles;
+            var buffer = new byte[(int)Math.Min(available, MaxChplBytes)];
+            content.Position = chpl.PayloadStart;
+            await ReadExactAsync(content, buffer, cancellationToken);
+            if (buffer[0] != 1) return titles;
+
+            var declared = buffer[8];
+            var position = 9;
+            for (var index = 0; index < declared && titles.Count < maximum && position + 9 <= buffer.Length; index++)
+            {
+                var length = buffer[position + 8];
+                position += 9;
+                if (position + length > buffer.Length) break;
+                if (Encoding.UTF8.GetString(buffer, position, length).Trim() is { Length: > 0 } title) titles.Add(title);
+                position += length;
+            }
+        }
+        catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException)
+        {
+            // Unreadable parts stay unmeasured.
+        }
+
+        return titles;
+    }
+
+    /// <summary>Nero <c>chpl</c> (version 1): four bytes version/flags, four reserved, then a one-byte chapter count.</summary>
+    private static async Task<int?> ReadNeroChapterCountAsync(Stream content, BoxInfo chpl, CancellationToken cancellationToken)
+    {
+        if (chpl.End - chpl.PayloadStart < 9) return null;
+        var buffer = new byte[9];
+        content.Position = chpl.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        return buffer[0] == 1 ? buffer[8] : null;
+    }
+
+    /// <summary>
+    /// The recognized, specified languages declared by the audio tracks, or <see langword="null"/> when the
+    /// container could not be read for language at all (recorded as not assessed, never as a match).
+    /// </summary>
+    private static async Task<List<string>?> ReadDeclaredLanguagesSafelyAsync(Stream content, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ReadDeclaredLanguagesAsync(content, cancellationToken);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads the standard media language of each <em>audio</em> track: the extended language tag (<c>elng</c>,
+    /// BCP 47) when present, otherwise the media header's packed ISO 639-2 code (<c>mdhd</c>). Non-audio tracks
+    /// (chapter text, cover) are ignored, as are tags such as a freeform "language" atom, which are not a
+    /// standard language field and are never trusted. Nothing is detected from the audio itself.
+    /// </summary>
+    private static async Task<List<string>> ReadDeclaredLanguagesAsync(Stream content, CancellationToken cancellationToken)
+    {
+        var languages = new List<string>();
+        var moov = await FindChildAsync(content, 0, content.Length, "moov", cancellationToken);
+        if (moov is null) return languages;
+
+        var position = moov.Value.PayloadStart;
+        var tracks = 0;
+        for (var count = 0; count < MaxBoxesPerLevel; count++)
+        {
+            if (await TryReadBoxAsync(content, position, moov.Value.End, cancellationToken) is not { } box) break;
+            position = box.End;
+            if (box.Type != "trak") continue;
+            if (++tracks > MaxTracks) break;
+
+            if (await FindChildAsync(content, box.PayloadStart, box.End, "mdia", cancellationToken) is not { } mdia) continue;
+            if (await ReadHandlerTypeAsync(content, mdia, cancellationToken) != "soun") continue;
+
+            var declared = await ReadExtendedLanguageAsync(content, mdia, cancellationToken)
+                ?? await ReadMediaHeaderLanguageAsync(content, mdia, cancellationToken);
+            if (declared is not null &&
+                !UnspecifiedLanguages.Contains(declared, StringComparer.OrdinalIgnoreCase) &&
+                LanguageAcceptance.IsRecognized(declared) &&
+                !languages.Contains(declared, StringComparer.OrdinalIgnoreCase))
+            {
+                languages.Add(declared);
+            }
+        }
+
+        return languages;
+    }
+
+    private static async Task<string?> ReadHandlerTypeAsync(Stream content, BoxInfo mdia, CancellationToken cancellationToken)
+    {
+        if (await FindChildAsync(content, mdia.PayloadStart, mdia.End, "hdlr", cancellationToken) is not { } hdlr ||
+            hdlr.End - hdlr.PayloadStart < 12)
+            return null;
+
+        var buffer = new byte[12];
+        content.Position = hdlr.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        return Encoding.Latin1.GetString(buffer, 8, 4);
+    }
+
+    /// <summary><c>elng</c>: a full box (4 bytes) holding a null-terminated BCP 47 tag.</summary>
+    private static async Task<string?> ReadExtendedLanguageAsync(Stream content, BoxInfo mdia, CancellationToken cancellationToken)
+    {
+        if (await FindChildAsync(content, mdia.PayloadStart, mdia.End, "elng", cancellationToken) is not { } elng) return null;
+        var length = (int)Math.Min(elng.End - elng.PayloadStart - 4, MaxLanguageTagBytes);
+        if (length <= 0) return null;
+
+        var buffer = new byte[4 + length];
+        content.Position = elng.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        var text = Encoding.ASCII.GetString(buffer, 4, length).Split('\0')[0].Trim();
+        return text.Length > 0 && text.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_') ? text : null;
+    }
+
+    /// <summary><c>mdhd</c>: version 0 or 1 full box whose packed 15-bit field holds three letters of ISO 639-2.</summary>
+    private static async Task<string?> ReadMediaHeaderLanguageAsync(Stream content, BoxInfo mdia, CancellationToken cancellationToken)
+    {
+        if (await FindChildAsync(content, mdia.PayloadStart, mdia.End, "mdhd", cancellationToken) is not { } mdhd) return null;
+        var available = mdhd.End - mdhd.PayloadStart;
+        if (available < 1) return null;
+
+        var version = new byte[1];
+        content.Position = mdhd.PayloadStart;
+        await ReadExactAsync(content, version, cancellationToken);
+        var languageOffset = version[0] switch { 0 => 20, 1 => 32, _ => -1 };
+        if (languageOffset < 0 || available < languageOffset + 2) return null;
+
+        var packed = new byte[2];
+        content.Position = mdhd.PayloadStart + languageOffset;
+        await ReadExactAsync(content, packed, cancellationToken);
+        var code = BinaryPrimitives.ReadUInt16BigEndian(packed);
+        Span<char> letters = stackalloc char[3];
+        letters[0] = (char)(((code >> 10) & 0x1F) + 0x60);
+        letters[1] = (char)(((code >> 5) & 0x1F) + 0x60);
+        letters[2] = (char)((code & 0x1F) + 0x60);
+        foreach (var letter in letters)
+        {
+            if (letter is < 'a' or > 'z') return null;
+        }
+
+        return new string(letters);
     }
 
     private static List<string> Collect(IReadOnlyDictionary<string, List<string>> tags, string[] names) =>
@@ -185,7 +551,9 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
             }
 
             position = item.End;
-            if (!TitleTags.Contains(item.Type) && !AuthorTags.Contains(item.Type))
+            var profileTag = item.Type is "©mvn" or "©mvi";
+            if ((!TitleTags.Contains(item.Type) && !AuthorTags.Contains(item.Type) && !profileTag) ||
+                profileTag && result.ContainsKey(item.Type))
             {
                 continue;
             }
@@ -194,7 +562,9 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
             while (await TryReadBoxAsync(content, dataPosition, item.End, cancellationToken) is { } data)
             {
                 dataPosition = data.End;
-                var text = data.Type == "data" ? await ReadTextValueAsync(content, data, cancellationToken) : null;
+                var text = data.Type != "data" ? null : item.Type == "©mvi"
+                    ? await ReadMovementIndexAsync(content, data, cancellationToken)
+                    : await ReadTextValueAsync(content, data, profileTag ? MaxProfileTagValueBytes : MaxTagValueBytes, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(text))
                 {
                     if (!result.TryGetValue(item.Type, out var values))
@@ -203,6 +573,7 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
                     }
 
                     values.Add(text);
+                    if (profileTag) break;
                 }
             }
         }
@@ -214,10 +585,10 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
     /// <c>data</c> atom layout: 1 byte version, 3 bytes type indicator (1 =
     /// UTF-8 text), 4 bytes locale, then the value. Anything else is ignored.
     /// </summary>
-    private static async Task<string?> ReadTextValueAsync(Stream content, BoxInfo data, CancellationToken cancellationToken)
+    private static async Task<string?> ReadTextValueAsync(Stream content, BoxInfo data, int maxValueBytes, CancellationToken cancellationToken)
     {
         var valueLength = data.End - data.PayloadStart - 8;
-        if (valueLength <= 0 || valueLength > MaxTagValueBytes)
+        if (valueLength <= 0 || valueLength > maxValueBytes)
         {
             return null;
         }
@@ -227,6 +598,19 @@ public sealed class M4bAssetIdentityVerifier(IWorkLookup works, IBookMatcher boo
         await ReadExactAsync(content, buffer, cancellationToken);
         var typeIndicator = BinaryPrimitives.ReadUInt32BigEndian(buffer) & 0x00FFFFFF;
         return typeIndicator == 1 ? Encoding.UTF8.GetString(buffer, 8, buffer.Length - 8).Trim() : null;
+    }
+
+    private static async Task<string?> ReadMovementIndexAsync(Stream content, BoxInfo data, CancellationToken cancellationToken)
+    {
+        var length = data.End - data.PayloadStart - 8;
+        if (length is not (1 or 2 or 3 or 4 or 8)) return null;
+        var buffer = new byte[8 + (int)length];
+        content.Position = data.PayloadStart;
+        await ReadExactAsync(content, buffer, cancellationToken);
+        if ((BinaryPrimitives.ReadUInt32BigEndian(buffer) & 0x00FFFFFF) != 21 || (buffer[8] & 0x80) != 0) return null;
+        long index = 0;
+        foreach (var value in buffer.AsSpan(8)) index = (index << 8) | value;
+        return index > 0 ? index.ToString(CultureInfo.InvariantCulture) : null;
     }
 
     private static async Task<BoxInfo?> FindChildAsync(

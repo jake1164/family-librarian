@@ -1,10 +1,16 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.DecisionCapture;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
 using FamilyLibrarian.Domain.Security;
+using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.ModelGateway;
+using FamilyLibrarian.Application.ModelGateway;
+using FamilyLibrarian.Application.SemanticAssessment;
 
 namespace FamilyLibrarian.Application.Security;
 
@@ -25,8 +31,73 @@ public sealed class ApprovalService(
     IAssetIdentityVerificationService identity,
     IAuditWriter audit,
     ICurrentUser currentUser,
-    IClock clock) : IPolicyAssetApprovalService
+    IClock clock,
+    IArtifactEvidenceRecorder? evidence = null,
+    IModelGatewaySettingsStore? modelSettings = null,
+    IArtifactEvidenceStore? modelEvidence = null,
+    ISemanticFindingStore? modelFindings = null,
+    IExpectedArtifactProfileSource? expectedProfiles = null, IModelWorkflowObserver? workflow = null,
+    IDecisionOutcomeRecorder? outcomes = null) : IPolicyAssetApprovalService
 {
+    public async Task<ApprovalResult> ReleaseHoldByModelAsync(Guid assetId, Guid findingId, CancellationToken cancellationToken)
+    {
+        if (modelSettings is null || modelEvidence is null || modelFindings is null || expectedProfiles is null)
+            return ApprovalResult.IdentityUnmatched();
+        MediaAsset? releasingAsset = null;
+        Guid? releaseUsageId = null;
+        ApprovalResult result;
+        try
+        {
+            result = await repository.ExecuteModelReleaseAsync(assetId, async () =>
+            {
+                var asset = await repository.FindAssetAsync(assetId, cancellationToken);
+                if (asset is null) return ApprovalResult.NotFound();
+                var settings = await modelSettings.FindAsync(cancellationToken);
+                var role = settings?.FindRole(ModelRole.ArtifactValidationDecision);
+                if (settings is not { IsEnabled: true, AllowModelHoldRelease: true } || role is not { IsEnabled: true })
+                    return ApprovalResult.IdentityUnmatched();
+                var rows = await ArtifactReleaseEvidence.ReadAsync(modelEvidence, asset, cancellationToken);
+                var facts = ArtifactReleaseEvidence.Facts(rows);
+                if (!ModelReleasePolicy.IsEligible(asset, facts)) return ApprovalResult.IdentityUnmatched();
+                var subject = asset.Id.ToString("N");
+                var findings = await modelFindings.FindLatestForSubjectsAsync(SemanticSubjectKind.ArtifactDecision, [subject], cancellationToken);
+                if (!findings.TryGetValue(subject, out var finding) || finding.Id != findingId || !finding.IsUsable ||
+                    finding.Role != ModelRole.ArtifactValidationDecision || finding.SchemaId != SemanticAssessmentParser.ArtifactDecisionSchema ||
+                    finding.IsCloud != (role.Placement == ModelPlacement.Cloud) || finding.Model != role.ActiveModel ||
+                    finding.IsCloud && !settings.AllowCloud ||
+                    clock.UtcNow - finding.CreatedAtUtc > CandidateSemanticAnalyzer.ReuseWindow) return ApprovalResult.IdentityUnmatched();
+                var expected = await expectedProfiles.FindAsync(asset, cancellationToken);
+                if (asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.CollectionMissingRequestedWork &&
+                    (expected?.AcceptedAsCollectionContaining != true || finding.IsCloud && !settings.AllowCloudExcerpts))
+                    return ApprovalResult.IdentityUnmatched();
+                var input = ArtifactReleaseEvidence.Render(asset, rows, expected, !finding.IsCloud || settings.AllowCloudExcerpts);
+                if (finding.EvidenceDigest != input.Digest ||
+                    SemanticAssessmentParser.ParseArtifactRelease(ArtifactReleaseEvidence.Reply(finding), asset, facts, input).Value?.Verdict is not ("release" or "contains_requested"))
+                    return ApprovalResult.IdentityUnmatched();
+                var evaluation = await repository.FindLatestEvaluationAsync(assetId, cancellationToken);
+                if (evaluation?.Status != SecurityEvaluationStatus.Passed) return ApprovalResult.IdentityUnmatched();
+                releasingAsset = asset;
+                releaseUsageId = finding.ModelUsageRecordId;
+                return await ApproveCoreAsync(assetId, ApprovalActorType.Policy, null, "model-hold-release-v1",
+                    "A grounded model review released the eligible identity hold.", cancellationToken, identityOverrideConfirmed: true, modelRelease: finding);
+            }, cancellationToken);
+        }
+        catch
+        {
+            // Database rollback cannot move bytes. Restore their held location if persistence or audit failed.
+            if (releasingAsset?.StorageState is MediaAssetStorageState.Processing or MediaAssetStorageState.Trusted)
+                await stagingStore.MoveAsync(releasingAsset.StorageState, MediaAssetStorageState.Unmatched,
+                    releasingAsset.StoredFilename, CancellationToken.None);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ApprovalResult.IdentityUnmatched();
+        }
+        if (result.Outcome == ApprovalOutcome.Success && workflow is not null)
+            await workflow.ObserveAsync(releaseUsageId, ModelWorkflowEffect.FileReleaseApplied, cancellationToken);
+        if (result.Outcome == ApprovalOutcome.Success && await repository.FindAssetAsync(assetId, cancellationToken) is { } approved)
+            await PublishApprovedAsync(approved, cancellationToken);
+        return result;
+    }
+
     public async Task<ApprovalResult> ApproveAsync(Guid assetId, string? reason, CancellationToken cancellationToken)
         => await ApproveCoreAsync(
             assetId,
@@ -49,11 +120,15 @@ public sealed class ApprovalService(
     /// required so the override -- not just the ordinary approval -- has a
     /// stated justification in the audit trail.
     /// </summary>
-    public Task<ApprovalResult> OverrideIdentityAndApproveAsync(
+    public async Task<ApprovalResult> OverrideIdentityAndApproveAsync(
         Guid assetId, string reason, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
-        return ApproveCoreAsync(
+        var target = await repository.FindAssetAsync(assetId, cancellationToken);
+        var sharedHoldCode = target is { BundleId: not null } && IsSetWideHold(target.IdentityHoldCode) ? target.IdentityHoldCode : null;
+        var bundleId = target?.BundleId;
+
+        var result = await ApproveCoreAsync(
             assetId,
             ApprovalActorType.Admin,
             currentUser.UserId,
@@ -61,7 +136,32 @@ public sealed class ApprovalService(
             reason,
             cancellationToken,
             identityOverrideConfirmed: true);
+        if (result.Outcome != ApprovalOutcome.Success || sharedHoldCode is null || bundleId is null)
+        {
+            return result;
+        }
+
+        // A multi-file set held because its format has no content check is held for one reason shared by every
+        // track, so one librarian decision covers the tracks held for exactly that reason. A track held for any
+        // other reason (its own content contradicts, its language conflicts, ...) is never released this way, and
+        // each track's override is audited on its own.
+        foreach (var sibling in await repository.FindAssetsByBundleIdAsync(bundleId.Value, cancellationToken))
+        {
+            if (sibling.Id != assetId && sibling.StorageState == MediaAssetStorageState.Unmatched &&
+                sibling.IdentityHoldCode == sharedHoldCode)
+            {
+                await ApproveCoreAsync(
+                    sibling.Id, ApprovalActorType.Admin, currentUser.UserId, policyName: null, reason, cancellationToken,
+                    identityOverrideConfirmed: true);
+            }
+        }
+
+        return result;
     }
+
+    private static bool IsSetWideHold(string? code) =>
+        code is Domain.Evidence.EvidenceReasonCodes.IdentityHold.AttestedOnlyExternal or
+            Domain.Evidence.EvidenceReasonCodes.IdentityHold.AttestedOnlyUnknownOrigin;
 
     /// <summary>
     /// Records the trusted clean-scan policy's decision. This path is intentionally unavailable for
@@ -90,7 +190,8 @@ public sealed class ApprovalService(
         string? policyName,
         string? reason,
         CancellationToken cancellationToken,
-        bool identityOverrideConfirmed = false)
+        bool identityOverrideConfirmed = false,
+        SemanticFinding? modelRelease = null)
     {
         var asset = await repository.FindAssetAsync(assetId, cancellationToken);
         if (asset is null)
@@ -117,8 +218,10 @@ public sealed class ApprovalService(
         }
 
         var now = clock.UtcNow;
+        string? overriddenHoldCode = null;
         if (identityOverrideConfirmed)
         {
+            overriddenHoldCode = asset.IdentityHoldCode;
             // The only allowed exit from Unmatched is back through Processing
             // (MediaAssetStorageTransitions) -- an override still passes
             // through it on the way to Trusted below, it just skips
@@ -127,6 +230,7 @@ public sealed class ApprovalService(
                 MediaAssetStorageState.Unmatched, MediaAssetStorageState.Processing, asset.StoredFilename, cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Processing, now);
             asset.SetIdentityMismatchReason(null);
+            asset.SetIdentityHoldCode(null);
         }
         else
         {
@@ -137,6 +241,8 @@ public sealed class ApprovalService(
             var identityResult = await identity.VerifyAsync(assetId, cancellationToken);
             if (!identityResult.IsMatch)
             {
+                if (identityResult.ModelReleaseFindingId is { } findingId)
+                    return await ReleaseHoldByModelAsync(assetId, findingId, cancellationToken);
                 return ApprovalResult.IdentityUnmatched();
             }
         }
@@ -156,7 +262,18 @@ public sealed class ApprovalService(
 
         await repository.SaveChangesAsync(cancellationToken);
 
-        if (identityOverrideConfirmed)
+        if (modelRelease is not null)
+        {
+            await audit.WriteSystemAsync(AuditActions.AssetIdentityReleasedByModel, AuditSubjectTypes.MediaAsset, assetId.ToString(),
+                new { AssetId = assetId, ActorUserId = (Guid?)null, Model = modelRelease.Model, FindingId = modelRelease.Id,
+                    HoldCode = overriddenHoldCode, PolicyName = policyName }, cancellationToken);
+            modelEvidence!.Add([new ArtifactEvidence(asset.Id, asset.Sha256, ArtifactEvidenceRecordKinds.IdentityOverride,
+                Guid.NewGuid(), "ev-model-release", EvidenceDimension.IdentityAttestation,
+                EvidenceReasonCodes.ArtifactIdentityAttestation.ModelRelease, EvidencePolarity.Weak, "model",
+                $"finding={modelRelease.Id};hold={overriddenHoldCode}", modelRelease.Model, now)]);
+            if (!await modelEvidence.TrySaveAsync(cancellationToken)) throw new InvalidOperationException("Model release evidence could not be saved.");
+        }
+        else if (identityOverrideConfirmed)
         {
             await audit.WriteAsync(
                 AuditActions.AssetIdentityOverridden,
@@ -164,14 +281,41 @@ public sealed class ApprovalService(
                 assetId.ToString(),
                 new { AssetId = assetId, ActorUserId = actorUserId, Reason = reason },
                 cancellationToken);
+
+            // Evidence only, after the override is saved and audited (M1-5c): the evidence view must not keep
+            // implying the hold still stands.
+            if (evidence is not null)
+            {
+                await evidence.RecordIdentityOverrideAsync(asset, actorUserId, overriddenHoldCode, reason ?? string.Empty, cancellationToken);
+            }
         }
 
-        await audit.WriteAsync(
+        if (modelRelease is null) await audit.WriteAsync(
             AuditActions.AssetApproved,
             AuditSubjectTypes.MediaAsset,
             assetId.ToString(),
             new { AssetId = assetId, ActorType = actorType, PolicyName = policyName, Reason = reason },
             cancellationToken);
+
+        if (modelRelease is not null)
+            await audit.WriteSystemAsync(AuditActions.AssetApproved, AuditSubjectTypes.MediaAsset, assetId.ToString(),
+                new { AssetId = assetId, ActorType = actorType, PolicyName = policyName, Reason = reason }, cancellationToken);
+
+        if (modelRelease is null) await PublishApprovedAsync(asset, cancellationToken);
+        // What happened to the file, reported only now that it is committed. An administrator's own decisions are strong facts;
+        // the automatic policy and the model's own release are weak (they are not independent of the model).
+        var administrator = actorType == ApprovalActorType.Admin;
+        await outcomes.ReportAsync(
+            modelRelease is not null ? DecisionOutcomeKind.ModelReleaseApplied
+                : identityOverrideConfirmed ? DecisionOutcomeKind.IdentityOverridden : DecisionOutcomeKind.FileApproved,
+            modelRelease is not null ? "model-release" : identityOverrideConfirmed ? "admin-override" : administrator ? "admin-approval" : "policy-approval",
+            administrator && modelRelease is null ? DecisionOutcomeStrength.Strong : DecisionOutcomeStrength.Weak,
+            DecisionOutcomeTarget.File(assetId), cancellationToken, administratorDecided: administrator && modelRelease is null);
+        return ApprovalResult.Success();
+    }
+
+    private async Task PublishApprovedAsync(MediaAsset asset, CancellationToken cancellationToken)
+    {
 
         // Best-effort: a publish failure must never undo or fail an approval
         // decision that has already been made and committed above. See
@@ -201,7 +345,6 @@ public sealed class ApprovalService(
             }
         }
 
-        return ApprovalResult.Success();
     }
 
     public async Task<ApprovalResult> RejectAsync(Guid assetId, string? reason, CancellationToken cancellationToken)
@@ -240,6 +383,8 @@ public sealed class ApprovalService(
             new { AssetId = assetId, Reason = reason },
             cancellationToken);
 
+        await outcomes.ReportAsync(DecisionOutcomeKind.FileRejected, "admin-rejection", DecisionOutcomeStrength.Strong,
+            DecisionOutcomeTarget.File(assetId), cancellationToken, administratorDecided: true);
         return ApprovalResult.Success();
     }
 }

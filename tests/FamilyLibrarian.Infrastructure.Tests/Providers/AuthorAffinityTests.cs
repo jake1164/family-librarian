@@ -67,4 +67,37 @@ public sealed class AuthorAffinityTests
         Assert.IsFalse(ExternalReleaseNameEvidence.Evaluate(
             "Fourth Wing - Rececca Yarros - Part 2 Extended", ["Fourth Wing"], "Rebecca Yarros").IsStrictWorkAssertion);
     }
+
+    // AUTOFIND 0b: one adjacent transposition is one edit; the one-edit limit stands.
+    [TestMethod]
+    [DataRow("Rebecca Yarros", "Rebeca Yaros", AuthorAffinityKind.Fuzzy)]
+    [DataRow("Rebecca Yarros", "Rebecca Yarors", AuthorAffinityKind.FirstExactLastFuzzy)]
+    [DataRow("Rebecca Yarros", "Rebceca Yarros", AuthorAffinityKind.LastExactFirstFuzzy)]
+    [DataRow("Rebecca Yarros", "Rebecca Yaross", AuthorAffinityKind.Conflict)]
+    [DataRow("Rebecca Yarros", "Rebecca Smith", AuthorAffinityKind.Conflict)]
+    [DataRow("Jack Carr", "Jack Car", AuthorAffinityKind.FirstExactLastFuzzy)]
+    [DataRow("Jack Carr", "Jack Carl", AuthorAffinityKind.FirstExactLastFuzzy)]
+    [DataRow("Jack Carr", "Jack Marr", AuthorAffinityKind.Conflict)]
+    [DataRow("Jack Carr", "Jack Carroll", AuthorAffinityKind.Conflict)]
+    [DataRow("Ann Lee", "Ana Lee", AuthorAffinityKind.Conflict)]
+    [DataRow("Ann Lee", "Anne Lee", AuthorAffinityKind.LastExactFirstFuzzy)]
+    public void FuzzyAuthorEvidenceIsBoundedToOneEdit(string wanted, string detected, AuthorAffinityKind kind) =>
+        Assert.AreEqual(kind, AuthorAffinity.Evaluate(wanted, detected).Kind);
+
+    [TestMethod]
+    public void ASingleWordRequestedNameSupportsAnExactObservedComponent()
+    {
+        Assert.AreEqual(AuthorAffinityKind.LastOnly, AuthorAffinity.Evaluate("Yarros", "Rebecca Yarros").Kind);
+        Assert.AreEqual(AuthorAffinityKind.Conflict, AuthorAffinity.Evaluate("Yarros", "Rebecca Ross").Kind);
+        Assert.AreEqual(AuthorAffinityKind.Exact, AuthorAffinity.Evaluate("Yarros", "Yarros").Kind);
+    }
+
+    [TestMethod]
+    public void ACatalogQualifierDoesNotCountAsAnAuthorToken()
+    {
+        Assert.AreEqual(AuthorAffinityKind.Exact,
+            AuthorAffinity.Evaluate("Carr, Jack (Joint pseudonym)", "Jack Carr").Kind);
+        Assert.AreEqual(AuthorAffinityKind.Conflict,
+            AuthorAffinity.Evaluate("Carr, Jack (Joint pseudonym)", "Jack Smith").Kind);
+    }
 }

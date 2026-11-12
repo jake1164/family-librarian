@@ -17,4 +17,9 @@ public sealed record MediaAssetAdminView(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     string? IdentityMismatchReason = null,
-    string? ScanFailureReason = null);
+    string? ScanFailureReason = null,
+    string? IdentityHoldCode = null,
+    AssetOrigin Origin = AssetOrigin.Legacy,
+    Guid? BundleId = null,
+    int? BundleTrackCount = null,
+    DateTimeOffset? RuledOutAtUtc = null);

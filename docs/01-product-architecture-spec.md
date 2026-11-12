@@ -667,10 +667,16 @@ invalidates that pass. An ingest-only CWA deployment is therefore rejected as a
 misconfiguration rather than silently reporting every ownership/verification
 lookup as not found.
 
-**Known gap:** there is currently no way to retrieve an existing artifact's
-bytes back out of CWA. `ICwaCatalogClient.FindBookIdAsync` resolves only a
-book ID (used for ownership display and post-ingest verification); nothing in
-the CWA integration can fetch the underlying EPUB. This blocks every flow that
+After handoff, a Trusted artifact whose canonical catalog lookup misses may be
+confirmed by downloading its offered format over OPDS and comparing its byte count
+and SHA-256. This supports approved byline variants without weakening ownership
+matching. The bounded verification stream is discarded and is not exposed as an
+artifact-retrieval or model-input API.
+
+**Known gap:** there is currently no general API to retrieve an existing artifact's
+bytes back out of CWA. `ICwaCatalogClient.FindBookIdAsync` resolves only a book ID
+for ownership display; the exact-file verification fallback does not return content
+to callers. This blocks every flow that
 needs to act on an already-owned book — direct-device transfer, browser
 download, or Send-to-Kindle from an existing copy — for both local and remote
 CWA. Local CWA read access to the Calibre library's files could serve as an
@@ -1115,6 +1121,181 @@ Structured metadata should remain authoritative for:
 - publication status.
 
 Local AI should be callable through a replaceable API layer such as an OpenAI-compatible endpoint.
+
+**Phase 8 implementation status (2026-10-20):** the scoped downloaded-file review,
+narrow hold-release permissions and bounded tier-C EPUB excerpt support are complete.
+Acceptance covers deterministic fallback, grounding, privacy and release safeguards, with
+the related lab regressions passing. It does not certify a configured model's accuracy or
+usefulness. A model can respond reliably while every reply is rejected by validation.
+Prompt/schema/evidence alignment, review frequency for audiobook tracks and shared-budget
+use remain explicit follow-up work. Tuning must preserve the existing safety gates and be
+assessed with representative inputs, independent call/result/impact metrics and affected
+regressions. Completion of this scope does not imply a completed release-hardening or
+comparative model evaluation program.
+
+Settings forms with explicit Save actions warn before internal navigation, browser back,
+reload or leaving the application while edits remain unsaved. Successful saves accept only
+their saved fields; failed saves and unrelated credential actions leave other edits protected.
+Instant-save controls do not create an unsaved draft by themselves.
+
+Administrators can view AI activity below source status on Tasks: per-role model calls,
+accepted replies, rejected replies, provider errors and pending calls over a period the administrator chooses (24 hours, 7, 30 or 90 days), alongside current enablement.
+Cancelled and unclassified calls have separate counts when present; there is no combined failure count.
+Accepted replies passed response validation, including valid hold, negative or uncertain assessments.
+Rejected replies include invalid JSON, unsupported evidence and repeated searches; provider errors
+include connection/credential errors, timeouts and unavailable models. These categories describe
+execution and response validation, independently of the book assessment and workflow impact.
+These use the durable gateway usage ledger, survive restarts, include historical calls to
+roles now off, and exclude cached decisions and attempts blocked before a provider call.
+Successful calls alone do not establish that a model changed an acquisition or file decision.
+Each feature also shows a plain status computed by fixed rules from those counts (failing when more than half of at
+least twenty evaluated calls were rejected or errored; too little data under twenty accepted calls; doing work when a
+workflow action was applied or advice was saved; otherwise safe but idle), each with its reason. The status says what the
+feature is doing, never whether it is right, and household volume is small, so it states when it has too little data.
+A speed-and-tokens table gives the median and 95th percentile of finished calls per feature and model. Alongside the
+observed effects, each triage, hold-review and search-guidance call records the situation it was made in (for example that a
+tie existed), written once and kept apart from what the model did, so "kept the choice" can be told from "never had a
+chance to move". Weekly per-feature counts (no people, books or text) are kept when the 90-day call history is pruned so a
+trend survives, and administrators can see, for calls that changed something, how many of those decisions later had a
+recorded good, bad or mixed result. These are counts of decisions, not accuracy: most decisions never get a result,
+and a result that an administrator reached after reading the model's note favors that model.
+Quality signals separate recorded provider replies from accepted replies: provider reliability is
+responses received / (responses received + provider errors), while reply acceptance rate is
+validated responses / responses received. Pending and explicitly cancelled calls are excluded;
+no responses means no quality data. Provider errors and response-rejection reasons accompany
+the rates independently; their counts are never collapsed into one failure statistic.
+An expandable breakdown groups by the actual model alias, role and local/cloud placement,
+with persisted validated recommendation counts. Accepted JSON/evidence is an operational proxy,
+not proof of model intelligence or accuracy; prompts, limits and evidence affect it too, and
+track-level/repeated calls are not independent evaluations.
+
+Workflow impact is recorded by consumers using exact invocation references, including cached
+findings. It distinguishes advisory findings saved, no-change/abstaining answers, intent used
+for response planning, cover catalog searches, completed extra searches (and whether they returned
+results), candidate veto/selection use, and applied file holds/releases. A proposal alone is not
+an applied effect. Holds are observed after saving/auditing; releases after the guarded transaction
+commits. Repeated observations accumulate idempotently per call; counts mean calls used at least
+once, not action totals. Effects on calls started in the selected window can include later reuse.
+Legacy or missing observations remain untracked, not zero impact. Tracking is best effort and
+cannot change a workflow outcome. Applied use does not establish correctness, successful delivery
+or net benefit. No extra model calls or automatic model changes are triggered by these metrics.
+A rejected-reply, provider-error, cancelled or unclassified count links to administrator-only
+AI response diagnostics, filtered to that feature and category before pagination. The page
+can change either filter independently and shows individual calls, time, configured model/placement,
+category, outcome, safe reason and duration, with paginated 24-hour/7-day/30-day/90-day history.
+New file calls also carry a trusted file reference; diagnostics can show the book link,
+format, bundle reference and track number/count without exposing filenames. Individual
+audiobook tracks are separate calls, so call counts do not equal book counts. Missing
+historical references remain explicitly unknown; calls are not guessed from timestamps.
+Usage history is retained for up to 90 days. Fixed reason codes distinguish provider problems,
+invalid responses and evidence-validation failures without storing arbitrary provider errors,
+prompts, replies or book excerpts. Older calls retain their recorded broad outcome; missing
+detailed reasons are shown explicitly. These are call outcomes, not book outcomes: a valid
+recommendation to hold a book is still an accepted reply. The page does not retry calls.
+
+Administrators can have Family Librarian keep a record of each real decision made by the six
+scored AI features, so that other models can later be compared on the household's own cases.
+Saving is on by default for book decisions and off for chat messages; both have switches on the
+Limits & usage tab. What is saved is an allow-listed copy of the facts the model was shown (never
+book excerpts, file names, hashes, storage references, provider data, download links or tokens),
+which model answered and how, and later facts about what happened. It can reveal reading
+interests and is included in database backups. Storage is capped per feature and by age within
+fixed ceilings, administrators can see counts and approximate sizes (never content), and
+everything can be deleted at any time, including while AI is off. There is no export. Replies
+are not saved. Saving is added one AI feature at a time, and the counts on that tab show which
+features have saved decisions. A saved decision records the exact request that was sent as a hash, so a
+later replay can show whether it reproduces the original; a decision that cannot (for example because
+the model was shown book text, or a release name that looks like a file name was withheld) is kept and
+marked as not exact rather than hidden or altered. When something later happens to what a model looked at (a file is approved, rejected, overridden or deleted by an
+administrator, a candidate copy downloads and verifies or fails its checks, a person says "keep looking", a
+model-suggested search finds the chosen copy or comes back empty), that fact is attached to the saved decision, once.
+Facts are not labels: they record what happened, never a conclusion, and silence is never recorded. A fact an
+administrator made after seeing the model's note is marked as such, because it favors that model. Saving stays within
+its limits without an administrator doing anything: after a save, an occasional cleanup (at most every ten minutes)
+removes expired and over-cap decisions, oldest first, beginning with decisions that have no known result, then weak
+ones, then strongly labeled ones (taken evenly across kinds so a rare kind survives), and keeping decisions with
+conflicting facts longest; it also trims old calls and removes AI findings past their retention. This is separate
+from, and does not change, the rule that the usage ledger and findings store no prompts, replies or excerpts.
+
+Chat interpretation keeps the title best-effort. It supplies an author only when
+stated in the message or applicable previous search; otherwise it uses a title-only
+catalog query, and the person still chooses a real catalog result.
+
+The optional `SearchGuidance` role is off by default. After scheduled external
+sources exhaust deterministic searches without an eligible download or product
+question, it may propose up to five bounded bibliographic searches. Proposed
+title, author and series strings are search hints; every result is evaluated
+against the requested catalog work and the source's effective confidence level.
+Evidence IDs and acquisition targets must come from supplied data. Guidance
+never authorizes a download or changes security, containment or content checks.
+Disabled or failed guidance preserves deterministic operation. Candidate and
+artifact semantic assessments remain advisory shadows; search guidance does
+not enable AI candidate triage or artifact release decisions.
+
+The separate `CandidateTriage` role is also off by default. When enabled, it
+can veto an automatic candidate, choose between equally ranked eligible
+candidates, or resolve an author-only conflict with independent bibliographic
+corroboration. For a tied current pick, the prompt says to keep it unless another
+tied candidate has clearly stronger supplied Positive evidence, then prefer that
+candidate; an equal tie alone does not justify moving. The server enforces each
+move against supplied candidates and evidence; Strict never gains an AI confidence upgrade. Every submission checks
+fresh source facts, and downloaded files still pass all security, identity and
+delivery checks. Candidate triage does not enable artifact release decisions.
+
+The separate `ArtifactValidationDecision` role is off by default. For otherwise
+matching provider EPUB/KEPUB/M4B/MP3/OGG files, it may add a grounded identity
+hold before approval and publishing. A hold requires a cited contradiction or
+a concern grounded in Negative, Weak or Condition evidence; Positive-only
+citations and uncertainty cannot hold. Its hold-call contract cannot release or
+accept collection contents. A separate default-off administrator setting,
+`AllowModelHoldRelease`, permits a release call only for deterministic eligible
+holds: attested-only external or inconclusive with no Negative observations;
+an author-only difference with Positive title, language and independent series
+or identifier agreement; or contents confirmation for an already accepted
+collection. Other Negative facts and model-concern holds cannot be released.
+Tier-B TOC/heading facts support the collection exception. Tier-C EPUB excerpts
+are available only to the hold review: bounded copyright, first-chapter and
+last-page text, framed as untrusted `BOOK_TEXT`. Audio has no excerpts. Excerpt
+IDs have Unknown polarity and need a corresponding deterministic fact to support
+a concern; they cannot ground a hold or release alone. Printed ISBN matches are
+Positive before the call. Excerpts never enter stored evidence, semantic claims,
+usage records, audit, logs, exceptions or API responses. Notes are at most 200
+characters; a note copying eight consecutive excerpt words is rejected. Administrators
+see cited excerpt IDs and safe notes only. Extraction is role-gated and shares the
+existing 45-second maximum review deadline. Cloud roles need `AllowCloudExcerpts`;
+without it they receive tier A/B with file values withheld and no text blocks.
+Eligibility is rechecked after the call and on persisted evidence by
+`ApprovalService`, the sole path to Trusted. Its model policy is
+`model-hold-release-v1`, with a system audit action and source=model release
+evidence. Model failures preserve the deterministic outcome. File
+metadata is bounded untrusted input, and cloud sharing requires explicit opt-in.
+Existing artifact assessment shadows remain advisory.
+
+Per-file review roles (`ArtifactValidationAssessment` and
+`ArtifactValidationDecision`) make one call per file or audiobook track, so
+together they may use at most half of the background installation allowance
+(requests and tokens) each day; the remainder is kept for candidate triage,
+candidate assessment and search guidance. A refused review leaves the
+deterministic outcome unchanged. For diagnosis only,
+`ModelGateway:Debug:CaptureRejectedReplies` (off by default) writes each reply
+that Family Librarian's own validation rejected to the application log as one
+bounded line with the evidence ids, polarities and reason codes the model could
+cite. It never logs prompts or a reply to an exchange that carried book text,
+and it is intended to be removed once reply quality is resolved.
+
+To keep that allowance for files that need it, the advisory assessment of a
+multi-track audiobook runs a few times per bundle (three, or six when a track
+has concern evidence) rather than once per track, and the hold review is not
+asked at all when none of its evidence could ground a hold. Advisory roles
+(file assessment, candidate assessment) leave one concurrent call slot free so a
+decision-bearing call is not turned away behind them. A model that refuses a
+role's setting three times in a row (for example the "no reasoning" request) is
+paused for that role and setting for fifteen minutes without using any of the
+allowance; changing the setting tries it again at once. Each role's reasoning
+setting is Provider default, Ask for no reasoning, or Ask for low reasoning
+(for models that cannot switch reasoning off). A search-guidance reply that
+mixes already-tried names with new ones keeps the new names; a reply with
+nothing new is still rejected.
 
 ---
 

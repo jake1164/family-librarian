@@ -23,7 +23,13 @@ public interface IAcquisitionRepository
 
     void AddJob(AcquisitionJob job);
 
+    /// <summary>Received acquisitions over retained history, counted once per job regardless of file count.</summary>
+    Task<IReadOnlyList<SourceDownloadStatistics>> ListSourceDownloadStatisticsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<SourceDownloadStatistics>>([]);
+
     void AddAsset(MediaAsset asset);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }
+
+public sealed record SourceDownloadStatistics(string ProviderId, long DownloadsReceived);

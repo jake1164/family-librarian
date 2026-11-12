@@ -50,10 +50,15 @@ public enum BookMatchBasis
 /// matched candidate for <see cref="BookMatchDecision.Match"/>. <see cref="Basis"/> is set only for
 /// a <see cref="BookMatchDecision.Match"/>, by <see cref="IBookMatchService"/>
 /// (the one place that knows which lookup tier produced <paramref name="Candidates"/>).
+/// <see cref="AdvisoryPick"/> is non-null only on an <see cref="BookMatchDecision.Ambiguous"/>
+/// result and only when an <see cref="IAmbiguityResolver"/> suggested one of
+/// <see cref="Candidates"/>. It is a hint for a reviewer or later semantic analysis,
+/// never an acceptance: <see cref="Decision"/>, <see cref="MatchedId"/> and
+/// <see cref="Basis"/> are unaffected by it.
 /// </remarks>
 public sealed record BookMatchResult(
     BookMatchDecision Decision, string? MatchedId, IReadOnlyList<CandidateBook> Candidates,
-    BookMatchBasis? Basis = null)
+    BookMatchBasis? Basis = null, CandidateBook? AdvisoryPick = null)
 {
     public static readonly BookMatchResult NoMatchResult = new(BookMatchDecision.NoMatch, null, []);
 

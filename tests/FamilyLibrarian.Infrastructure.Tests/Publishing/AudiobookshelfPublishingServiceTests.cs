@@ -203,6 +203,40 @@ public sealed class AudiobookshelfPublishingServiceTests
     }
 
     [TestMethod]
+    public async Task TwoTracksApprovedTogetherPublishTheBundleOnlyOnce()
+    {
+        // The last two tracks of a set can be approved at the same moment; each then sees every sibling Trusted and
+        // asks for the bundle to be published. Audiobookshelf only shows an uploaded item after a scan, so the
+        // "already there?" lookup cannot catch the second request. Only one of them may upload.
+        var context = ConfiguredContext();
+        var tracks = context.CreateBundleTracks(3);
+        context.ApiClient.ExistingItemId = null;
+        context.ApiClient.UploadResult = new AudiobookshelfUploadResult(true, null, null);
+        context.ApiClient.BundleUploadDelay = TimeSpan.FromMilliseconds(150);
+
+        await Task.WhenAll(
+            context.Service.PublishBundleAsync(tracks, CancellationToken.None),
+            context.Service.PublishBundleAsync(tracks, CancellationToken.None));
+
+        Assert.AreEqual(1, context.ApiClient.BundleUploadCount);
+    }
+
+    [TestMethod]
+    public async Task AFailedBundleDeliveryIsUploadedAgainWhenPublishedAgain()
+    {
+        var context = ConfiguredContext();
+        var tracks = context.CreateBundleTracks(3);
+        context.ApiClient.ExistingItemId = null;
+        context.ApiClient.UploadResult = new AudiobookshelfUploadResult(false, null, "boom");
+        await context.Service.PublishBundleAsync(tracks, CancellationToken.None);
+
+        context.ApiClient.UploadResult = new AudiobookshelfUploadResult(true, "li_bundle", null);
+        await context.Service.PublishBundleAsync(tracks, CancellationToken.None);
+
+        Assert.AreEqual(2, context.ApiClient.BundleUploadCount);
+    }
+
+    [TestMethod]
     public async Task AnAmbiguousExistingMatchDoesNotShortCircuitAndUploadsInstead()
     {
         // Guards against the naive-matcher bug: guessing one of several
@@ -449,7 +483,9 @@ public sealed class AudiobookshelfPublishingServiceTests
 
         public int UploadCount { get; private set; }
 
-        public int BundleUploadCount { get; private set; }
+        private int _bundleUploadCount;
+
+        public int BundleUploadCount => _bundleUploadCount;
 
         public int LastBundleTrackCount { get; private set; }
 
@@ -473,15 +509,22 @@ public sealed class AudiobookshelfPublishingServiceTests
             return Task.FromResult(UploadResult);
         }
 
-        public Task<AudiobookshelfUploadResult> UploadBundleAsync(
+        public TimeSpan BundleUploadDelay { get; set; }
+
+        public async Task<AudiobookshelfUploadResult> UploadBundleAsync(
             IReadOnlyList<(Stream Content, string Filename)> tracks,
             string title,
             string? author,
             CancellationToken cancellationToken)
         {
-            BundleUploadCount++;
+            Interlocked.Increment(ref _bundleUploadCount);
             LastBundleTrackCount = tracks.Count;
-            return Task.FromResult(UploadResult);
+            if (BundleUploadDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(BundleUploadDelay, cancellationToken);
+            }
+
+            return UploadResult;
         }
     }
 

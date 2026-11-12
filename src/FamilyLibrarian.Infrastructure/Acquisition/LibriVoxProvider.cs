@@ -23,7 +23,8 @@ public sealed class LibriVoxProvider(
     IWorkLookup workLookup,
     IBookMatcher matcher,
     ManualImportPolicy importPolicy,
-    LibriVoxDownloadWorkspace downloadWorkspace) : IAutomaticDirectAcquisitionProvider, IProgressReportingDirectAcquisitionProvider, IDisposable
+    LibriVoxDownloadWorkspace downloadWorkspace,
+    SourceSearchTracker? searchTracker = null) : IAutomaticDirectAcquisitionProvider, IProgressReportingDirectAcquisitionProvider, IDisposable
 {
     private const long MaximumZipBytes = 2L * 1024 * 1024 * 1024;
     private const long MaximumExpandedBytes = 2L * 1024 * 1024 * 1024;
@@ -51,6 +52,7 @@ public sealed class LibriVoxProvider(
         if (mediaType != RequestMediaType.Audiobook || string.IsNullOrWhiteSpace(identity.Title)) return [];
         if (!await IsReadyAsync(cancellationToken)) return [];
 
+        using var activity = searchTracker?.Begin(Id);
         // Deliberately title-only: some combined title+author queries return HTTP 500.
         var recordings = await api.SearchByTitleAsync(WorkTitleCore.Reduce(identity.Title, identity.Author), cancellationToken);
         var options = new List<FulfillmentOption>();

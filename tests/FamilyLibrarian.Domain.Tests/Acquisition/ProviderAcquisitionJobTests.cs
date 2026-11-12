@@ -7,6 +7,23 @@ public sealed class ProviderAcquisitionJobTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 24, 12, 0, 0, TimeSpan.Zero);
 
+    [TestMethod]
+    public void PeerEvidenceIsNullableAndOnlyAValidAutomaticSnapshotIsAccepted()
+    {
+        var manual = NewJob();
+        Assert.IsNull(manual.PeerMedianSizeBytes);
+        Assert.IsNull(manual.PeerCount);
+        Assert.ThrowsExactly<InvalidOperationException>(() => manual.SetPeerSizeEvidence(4_000_000, 3));
+        var automatic = new ProviderAcquisitionJob(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "example-source",
+            null, "idem", "candidate", null, null, Now, isAutomaticAcquisition: true);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => automatic.SetPeerSizeEvidence(4_000_000, 2));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => automatic.SetPeerSizeEvidence(0, 3));
+        automatic.SetPeerSizeEvidence(4_000_000, 3);
+        Assert.AreEqual(4_000_000L, automatic.PeerMedianSizeBytes);
+        Assert.AreEqual(3, automatic.PeerCount);
+        Assert.AreEqual(ProviderAcquisitionJobLifecycleState.Queued, automatic.LifecycleState);
+    }
+
     private static ProviderAcquisitionJob NewJob() =>
         new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "example-source", null, "idem-key", "candidate-ref", null, null, Now);
 

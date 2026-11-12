@@ -1,0 +1,298 @@
+@using FamilyLibrarian.Contracts.ModelGateway
+@using FamilyLibrarian.Web.Client.ModelGateway
+@inject ModelGatewayApiClient Api
+
+<MudPaper Outlined="true" Class="pa-4" id="decision-capture">
+    <MudStack Spacing="3">
+        <MudText Typo="Typo.h5">Saved decisions</MudText>
+        <MudText Typo="Typo.body2">
+            So that other models can later be tried on the household's real decisions, Family Librarian can save a record of each
+            decision the AI features make: the facts the model was shown, which model answered, and later what happened. Book
+            excerpts, file names, hashes and download links are never saved. Records do include titles and authors, which reveal
+            reading interests, and they are part of database backups. There is no export. Saving is being added one AI feature at a time; the counts
+            below show which features have saved decisions so far. These settings make no model call, so they work whether AI is on or off.
+        </MudText>
+
+        @if (!string.IsNullOrWhiteSpace(message))
+        {
+            <MudAlert Severity="@(messageIsError ? Severity.Error : Severity.Success)" role="status">@message</MudAlert>
+        }
+
+        @if (settings is null)
+        {
+            <MudText>Loading saved-decision settings…</MudText>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Info" Dense="true">
+                Saving decisions is on by default, including on installations upgraded to this release. Turn it off below at any time;
+                turning it off keeps what is already saved until you delete it.
+            </MudAlert>
+
+            <MudStack Spacing="1">
+                <MudSwitch T="bool" @bind-Value="form.DecisionCapture" Color="Color.Primary" Disabled="@busy" Label="Save the decisions AI features make"
+                           aria-label="Save AI decisions" />
+                <MudSwitch T="bool" @bind-Value="form.ChatCapture" Color="Color.Primary" Disabled="@busy" Label="Also save chat messages (more personal; off by default)"
+                           aria-label="Save chat messages" />
+            </MudStack>
+
+            <MudText Typo="Typo.subtitle2">How much is kept</MudText>
+            <MudText Typo="Typo.body2">
+                Storage is always capped. Each limit has a fixed ceiling. Lowering a limit takes effect at the next cleanup, and the page
+                tells you before you save how many records that cleanup would remove.
+            </MudText>
+            <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                <MudNumericField Immediate="true" T="int" @bind-Value="form.SnapshotsPerRole" Label="Decisions kept per feature"
+                                 Min="settings.Ranges.MinSnapshotsPerRole" Max="settings.Ranges.MaxSnapshotsPerRole" Variant="Variant.Outlined" Disabled="@busy" />
+                <MudNumericField Immediate="true" T="int" @bind-Value="form.UnlabeledSnapshotDays" Label="Days to keep decisions with no known result"
+                                 Min="settings.Ranges.MinUnlabeledSnapshotDays" Max="settings.Ranges.MaxUnlabeledSnapshotDays" Variant="Variant.Outlined" Disabled="@busy" />
+                <MudNumericField Immediate="true" T="int" @bind-Value="form.CallsPerSnapshot" Label="Calls kept per decision"
+                                 Min="settings.Ranges.MinCallsPerSnapshot" Max="settings.Ranges.MaxCallsPerSnapshot" Variant="Variant.Outlined" Disabled="@busy" />
+                <MudNumericField Immediate="true" T="int" @bind-Value="form.FindingsDays" Label="Days to keep AI findings"
+                                 Min="settings.Ranges.MinFindingsDays" Max="settings.Ranges.MaxFindingsDays" Variant="Variant.Outlined" Disabled="@busy" />
+            </MudStack>
+            <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center">
+                <MudSwitch T="bool" @bind-Value="form.LimitLabeled" Color="Color.Primary" Disabled="@busy"
+                           Label="Delete decisions with a known result after a set time (otherwise kept until the cap)"
+                           aria-label="Expire decisions with a known result" />
+                @if (form.LimitLabeled)
+                {
+                    <MudNumericField Immediate="true" T="int" @bind-Value="form.LabeledDays" Label="Days to keep decisions with a known result"
+                                     Min="settings.Ranges.MinLabeledSnapshotDays" Max="settings.Ranges.MaxLabeledSnapshotDays" Variant="Variant.Outlined" Disabled="@busy" />
+                }
+            </MudStack>
+            <MudText Typo="Typo.caption">
+                Each saved decision is also capped at @(settings.Ranges.SnapshotSizeGuardBytes / 1024) KB; a larger one is not saved. That limit is fixed.
+            </MudText>
+
+            @if (pendingRemoval is { } removal)
+            {
+                <MudAlert Severity="Severity.Warning" role="alert">
+                    The next cleanup would remove @DecisionCaptureText.Plural(removal.Snapshots, "saved decision"),
+                    @DecisionCaptureText.Plural(removal.Calls, "call") and @DecisionCaptureText.Plural(removal.Findings, "finding").
+                    Save these settings anyway?
+                    <MudStack Row="true" Spacing="2" Class="mt-2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Warning" Disabled="@busy" OnClick="ConfirmSaveAsync">Save anyway</MudButton>
+                        <MudButton Variant="Variant.Outlined" Disabled="@busy" OnClick="CancelPending">Keep editing</MudButton>
+                    </MudStack>
+                </MudAlert>
+            }
+            else
+            {
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@busy" OnClick="SaveAsync">Save saved-decision settings</MudButton>
+                    @if (HasChanges)
+                    {
+                        <MudText Typo="Typo.caption" role="status">You have unsaved changes here.</MudText>
+                    }
+                </MudStack>
+            }
+
+            <MudDivider />
+            <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                <MudText Typo="Typo.subtitle2">What is stored</MudText>
+                <MudSpacer />
+                <MudButton Variant="Variant.Text" Disabled="@busy" OnClick="LoadInsightAsync">Refresh</MudButton>
+            </MudStack>
+            @if (insight is null)
+            {
+                <MudText Typo="Typo.body2">@(insightFailed ? "What is stored could not be loaded. Refresh to try again." : "Loading what is stored…")</MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.body2">
+                    Counts and approximate sizes only: no titles, authors, messages or saved content are shown here.
+                    @(insight.SizesAvailable ? "Sizes include indexes and are approximate." : "The database did not report sizes, so only counts are shown.")
+                </MudText>
+                <MudTable Items="insight.Roles" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm" TableAttributes="RoleTableAttributes">
+                    <HeaderContent>
+                        <MudTh>Feature</MudTh><MudTh>Saved decisions</MudTh><MudTh>With a known result</MudTh><MudTh>Without</MudTh>
+                        <MudTh>Oldest</MudTh><MudTh>Newest</MudTh><MudTh>Approximate size</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Feature">@Title(context.Role)</MudTd>
+                        <MudTd DataLabel="Saved decisions">@context.Snapshots</MudTd>
+                        <MudTd DataLabel="With a known result">@context.WithOutcomes</MudTd>
+                        <MudTd DataLabel="Without">@context.WithoutOutcomes</MudTd>
+                        <MudTd DataLabel="Oldest">@DecisionCaptureText.When(context.Oldest)</MudTd>
+                        <MudTd DataLabel="Newest">@DecisionCaptureText.When(context.Newest)</MudTd>
+                        <MudTd DataLabel="Approximate size">@DecisionCaptureText.Size(context.ApproximateBytes)</MudTd>
+                    </RowTemplate>
+                </MudTable>
+                <MudTable Items="insight.Tables" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm" TableAttributes="TableTableAttributes">
+                    <HeaderContent>
+                        <MudTh>Stored data</MudTh><MudTh>Rows</MudTh><MudTh>Approximate size</MudTh><MudTh>Oldest</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Stored data">@context.Table</MudTd>
+                        <MudTd DataLabel="Rows">@context.Rows</MudTd>
+                        <MudTd DataLabel="Approximate size">@DecisionCaptureText.Size(context.ApproximateBytes)</MudTd>
+                        <MudTd DataLabel="Oldest">@DecisionCaptureText.When(context.Oldest)</MudTd>
+                    </RowTemplate>
+                    <FooterContent>
+                        <MudTd>Total</MudTd><MudTd></MudTd><MudTd>@DecisionCaptureText.Size(insight.TotalApproximateBytes)</MudTd><MudTd></MudTd>
+                    </FooterContent>
+                </MudTable>
+            }
+
+            <MudDivider />
+            <MudText Typo="Typo.subtitle2">Delete saved decisions</MudText>
+            <MudText Typo="Typo.body2">
+                Deletes the saved decisions, the calls recorded against them and any results linked to them. It does not touch books,
+                requests or the AI usage record. This works even while AI is off, and it cannot be undone.
+            </MudText>
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                <MudSelect T="string" @bind-Value="purgeScope" Label="Delete" Variant="Variant.Outlined" Style="min-width: 16rem;" Disabled="@(busy || confirmingPurge)">
+                    <MudSelectItem Value="@("All")">Everything</MudSelectItem>
+                    @foreach (var role in ScopedRoles)
+                    {
+                        <MudSelectItem Value="@role">@Title(role)</MudSelectItem>
+                    }
+                </MudSelect>
+                @if (!confirmingPurge)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="@busy" OnClick="StartPurge">Delete saved decisions…</MudButton>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" Disabled="@busy" OnClick="PurgeAsync">Yes, delete @(purgeScope == "All" ? "everything" : Title(purgeScope))</MudButton>
+                    <MudButton Variant="Variant.Outlined" Disabled="@busy" OnClick="CancelPurge">Cancel</MudButton>
+                }
+            </MudStack>
+        }
+    </MudStack>
+</MudPaper>
+
+@code {
+    private static readonly string[] ScopedRoles =
+    [
+        "ArtifactValidationAssessment", "ArtifactValidationDecision", "CandidateAmbiguityAssessment",
+        "CandidateTriage", "SearchGuidance", "IntentInterpretation"
+    ];
+
+    private static readonly Dictionary<string, object?> RoleTableAttributes = new() { ["aria-label"] = "Saved decisions by feature" };
+    private static readonly Dictionary<string, object?> TableTableAttributes = new() { ["aria-label"] = "Stored data by table" };
+
+    private readonly DecisionCaptureForm form = new();
+    private DecisionCaptureSettingsResponse? settings;
+    private DecisionCaptureInsightResponse? insight;
+    private DecisionCaptureRetentionPreviewResponse? pendingRemoval;
+    private string purgeScope = "All";
+    private bool confirmingPurge;
+    private bool insightFailed;
+    private bool busy;
+    private string? message;
+    private bool messageIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            Apply(await Api.GetCaptureAsync());
+        }
+        catch (HttpRequestException)
+        {
+            message = "Saved-decision settings could not be loaded.";
+            messageIsError = true;
+            return;
+        }
+
+        await LoadInsightAsync();
+    }
+
+    private bool HasChanges => settings is not null && form.DiffersFrom(settings);
+
+    private void Apply(DecisionCaptureSettingsResponse value)
+    {
+        settings = value;
+        form.Load(value);
+        pendingRemoval = null;
+    }
+
+    private async Task LoadInsightAsync()
+    {
+        try
+        {
+            insight = await Api.GetCaptureInsightAsync();
+            insightFailed = false;
+        }
+        catch (HttpRequestException)
+        {
+            insightFailed = true;
+        }
+    }
+
+    /// <summary>Asks the host what saving would remove; only when something would go does the administrator have to confirm.</summary>
+    private async Task SaveAsync()
+    {
+        busy = true;
+        try
+        {
+            var preview = await Api.PreviewCaptureAsync(form.ToLimits());
+            if (!preview.Succeeded)
+            {
+                message = preview.Error;
+                messageIsError = true;
+                return;
+            }
+
+            if (preview.Value is { Total: > 0 } removal)
+            {
+                pendingRemoval = removal;
+                message = null;
+                return;
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await ConfirmSaveAsync();
+    }
+
+    private async Task ConfirmSaveAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await Api.SaveCaptureAsync(form.ToRequest());
+            messageIsError = !result.Succeeded;
+            message = result.Succeeded ? "Saved-decision settings saved." : result.Error;
+            if (result.Value is { } value) Apply(value);
+            pendingRemoval = null;
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await LoadInsightAsync();
+    }
+
+    private void CancelPending() => pendingRemoval = null;
+
+    private void StartPurge() => confirmingPurge = true;
+
+    private void CancelPurge() => confirmingPurge = false;
+
+    private async Task PurgeAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await Api.PurgeCaptureAsync(purgeScope);
+            messageIsError = !result.Succeeded;
+            message = result.Succeeded && result.Value is { } purged ? DecisionCaptureText.Purged(purged) : result.Error;
+            confirmingPurge = false;
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await LoadInsightAsync();
+    }
+
+    private static string Title(string role) => ModelRoleLabels.Title(role);
+}

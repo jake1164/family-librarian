@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.Concurrency;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Notifications;
@@ -33,8 +34,11 @@ public sealed class AudiobookshelfPublishingService(
     IBookRequestFulfillmentStore requestFulfillment,
     IAuditWriter audit,
     IClock clock,
-    NotificationService notifications)
+    NotificationService notifications,
+    Acquisition.FulfilledFormatDownloadCancellation? remainingDownloads = null)
 {
+    private static readonly KeyedAsyncLock<Guid> BundlePublishLock = new();
+
     public async Task PublishAsync(MediaAsset asset, CancellationToken cancellationToken)
     {
         var settings = await settingsStore.FindAsync(cancellationToken);
@@ -153,6 +157,7 @@ public sealed class AudiobookshelfPublishingService(
                 await MarkRequestFormatAvailableAsync(asset.AssociatedRequestFormatId, title, cancellationToken);
                 ArchiveTrusted([asset]);
                 await repository.SaveChangesAsync(cancellationToken);
+                await CancelRemainingDownloadsAsync(asset.AssociatedRequestFormatId, [asset.Id], cancellationToken);
                 await AuditPublishedAsync(asset.Id, cancellationToken);
                 await DeleteTrustedBytesAsync([asset], cancellationToken);
                 return;
@@ -237,7 +242,19 @@ public sealed class AudiobookshelfPublishingService(
         }
 
         var bundleId = tracks[0].BundleId!.Value;
+
+        // The last two tracks of a set can be approved at the same moment, and each then asks for the whole bundle to
+        // be published (see ApprovalService). Audiobookshelf only lists an uploaded item after a scan, so the
+        // "already there?" lookup cannot tell the second request that the first has uploaded. Serialize per bundle and
+        // let the persisted delivery decide: once it is Verifying or Delivered the upload has already been sent.
+        using var bundleLock = await BundlePublishLock.AcquireAsync(bundleId, cancellationToken);
+
         var delivery = await repository.FindByBundleIdAsync(bundleId, cancellationToken);
+        if (delivery is { Status: AudiobookshelfDeliveryStatus.Verifying or AudiobookshelfDeliveryStatus.Delivered })
+        {
+            return;
+        }
+
         if (delivery is null)
         {
             delivery = AudiobookshelfDelivery.ForBundle(bundleId, clock.UtcNow);
@@ -265,6 +282,7 @@ public sealed class AudiobookshelfPublishingService(
                 await MarkRequestFormatAvailableAsync(tracks[0].AssociatedRequestFormatId, title, cancellationToken);
                 ArchiveTrusted(tracks);
                 await repository.SaveChangesAsync(cancellationToken);
+                await CancelRemainingDownloadsAsync(tracks[0].AssociatedRequestFormatId, [.. tracks.Select(track => track.Id)], cancellationToken);
                 await AuditBundlePublishedAsync(bundleId, cancellationToken);
                 await DeleteTrustedBytesAsync(tracks, cancellationToken);
                 return;
@@ -374,6 +392,7 @@ public sealed class AudiobookshelfPublishingService(
                 await MarkRequestFormatAvailableAsync(assets[0].AssociatedRequestFormatId, title, cancellationToken);
                 ArchiveTrusted(assets);
                 await repository.SaveChangesAsync(cancellationToken);
+                await CancelRemainingDownloadsAsync(assets[0].AssociatedRequestFormatId, [.. assets.Select(item => item.Id)], cancellationToken);
 
                 // Cleanup runs only after the Delivered/Archived state is
                 // durably saved -- see DeleteTrustedBytesAsync.
@@ -453,6 +472,25 @@ public sealed class AudiobookshelfPublishingService(
         foreach (var requesterId in request.SatisfiedRequesterIds.Except(previouslySatisfied))
             await notifications.RecordRequestStatusForUserAsync(
                 requesterId, request.Id, title, RequestStatus.Available, cancellationToken);
+    }
+
+    /// <summary>The format is in the library: stop any other provider still downloading it. Never fails the publish.</summary>
+    private async Task CancelRemainingDownloadsAsync(
+        Guid requestFormatId, IReadOnlyCollection<Guid> deliveredAssetIds, CancellationToken cancellationToken)
+    {
+        if (remainingDownloads is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await remainingDownloads.CancelRemainingAsync(requestFormatId, deliveredAssetIds, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Best effort: a copy that still arrives is caught by the pre-upload existing-item check.
+        }
     }
 
     private Task AuditPublishedAsync(Guid assetId, CancellationToken cancellationToken) =>

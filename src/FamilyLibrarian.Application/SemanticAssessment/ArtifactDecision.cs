@@ -1,0 +1,127 @@
+using System.Globalization;
+using System.Text.Json;
+using FamilyLibrarian.Application.ModelGateway;
+using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Application.Security;
+using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.ModelGateway;
+using static FamilyLibrarian.Application.SemanticAssessment.SemanticJson;
+
+namespace FamilyLibrarian.Application.SemanticAssessment;
+
+public sealed record ArtifactDecision(string Verdict, IReadOnlyList<SemanticClaim> Claims);
+/// <summary>The only action a validation model can propose. Approval and release are deliberately unrepresentable here.</summary>
+public sealed record ArtifactModelHold(string Note, Guid? UsageRecordId = null);
+
+public static partial class SemanticAssessmentParser
+{
+    public const string ArtifactDecisionSchema = "artifact-decision/1";
+
+    public static ModelParseResult<ArtifactDecision> ParseArtifactDecision(string? content, IReadOnlyList<EvidenceFinding> evidence,
+        IReadOnlyList<ArtifactExcerpt>? excerpts = null)
+    {
+        var parsed = ParseArtifactDecisionCore(content, evidence, false);
+        return parsed.IsValid && excerpts is { Count: > 0 } && parsed.Value!.Claims.Any(c => ArtifactExcerptEvidence.CopiesExcerpt(c.Note, excerpts))
+            ? ModelParse.SchemaRejected<ArtifactDecision>("Note reproduces book text.", ModelFailureReason.ExcerptCopied) : parsed;
+    }
+
+    public static ModelParseResult<ArtifactDecision> ParseArtifactRelease(string? content, MediaAsset asset,
+        IReadOnlyList<IdentityFact> facts, ArtifactDecisionInput input)
+    {
+        if (!ModelReleasePolicy.IsEligible(asset, facts))
+            return ModelParse.SchemaRejected<ArtifactDecision>("Hold is not eligible for model release.", ModelFailureReason.DisallowedAction);
+        var parsed = ParseArtifactDecisionCore(content, input.Findings, true);
+        if (!parsed.IsValid || parsed.Value!.Verdict == "uncertain") return parsed;
+        var decision = parsed.Value;
+        var collection = asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.CollectionMissingRequestedWork;
+        if (decision.Verdict != (collection ? "contains_requested" : "release"))
+            return ModelParse.SchemaRejected<ArtifactDecision>("Wrong release verdict for this hold.", ModelFailureReason.DisallowedAction);
+        var grounded = decision.Claims.Where(c => c.Kind == "supports_declared_identity").Any(claim =>
+        {
+            var cited = input.Findings.Where(f => claim.EvidenceIds.Contains(f.Id, StringComparer.Ordinal))
+                .SelectMany(f => facts.Where(actual => f.Id == "idv." + actual.FindingId && actual.Code == f.Code && actual.Polarity == f.Polarity)).ToArray();
+            if (collection) return cited.Any(ModelReleasePolicy.IsCollectionContentsFact);
+            if (asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.ContentContradicted)
+                return ModelReleasePolicy.HasAuthorAgreements(cited);
+            return cited.Any(ModelReleasePolicy.IsPositiveIdentityFact);
+        });
+        return grounded ? parsed : ModelParse.SchemaRejected<ArtifactDecision>("Release lacks the required cited identity evidence.", ModelFailureReason.NoSupportingEvidence);
+    }
+
+    /// <summary>
+    /// True only for exactly <c>{schema, verdict}</c> or <c>{schema, verdict, claims: []}</c> with the right schema and a verdict that
+    /// never holds. Duplicate or extra keys, a non-empty or non-array claims value and every other verdict fall through to the
+    /// strict parser, so the key set stays exact and a hold still needs a grounded claim.
+    /// </summary>
+    private static bool IsNonHoldingWithoutClaims(JsonElement root, out string verdict)
+    {
+        verdict = string.Empty;
+        if (root.ValueKind != JsonValueKind.Object) return false;
+        var names = root.EnumerateObject().Select(property => property.Name).ToArray();
+        if (names.Distinct(StringComparer.Ordinal).Count() != names.Length) return false;
+        var hasClaims = names.Contains("claims", StringComparer.Ordinal);
+        if (names.Length != (hasClaims ? 3 : 2) || !names.Contains("schema", StringComparer.Ordinal) ||
+            !names.Contains("verdict", StringComparer.Ordinal)) return false;
+        if (hasClaims && (root.GetProperty("claims") is not { ValueKind: JsonValueKind.Array } claims || claims.GetArrayLength() != 0)) return false;
+        if (!IsString(root.GetProperty("schema"), out var schema) || schema != ArtifactDecisionSchema ||
+            !IsString(root.GetProperty("verdict"), out var value) || value is not ("no_objection" or "uncertain")) return false;
+        verdict = value;
+        return true;
+    }
+
+    private static ModelParseResult<ArtifactDecision> ParseArtifactDecisionCore(string? content,
+        IReadOnlyList<EvidenceFinding> evidence, bool release)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return ModelParse.NotJson<ArtifactDecision>("empty response");
+        if (content.Length > MaxContentLength) return ModelParse.SchemaRejected<ArtifactDecision>("response is too long");
+        try
+        {
+            using var document = JsonDocument.Parse(content, new JsonDocumentOptions { MaxDepth = 6 });
+            var root = document.RootElement;
+            // A review with nothing to report may leave claims out or send none. Only a verdict that can never hold may do so,
+            // and a release reply always needs its cited identity evidence.
+            if (!release && IsNonHoldingWithoutClaims(root, out var quietVerdict))
+                return ModelParse.Ok(new ArtifactDecision(quietVerdict, []));
+            if (root.ValueKind != JsonValueKind.Object || !HasExactly(root, TopLevel) ||
+                !IsString(root.GetProperty("schema"), out var schema) || schema != ArtifactDecisionSchema ||
+                !IsString(root.GetProperty("verdict"), out var verdict) ||
+                (release ? verdict is not ("release" or "contains_requested" or "uncertain") : verdict is not ("hold" or "no_objection" or "uncertain")))
+                return ModelParse.SchemaRejected<ArtifactDecision>("expected artifact-decision/1 with hold, no_objection or uncertain");
+
+            // Reuse the artifact claim contract, including strict keys, citations and contradiction grounding.
+            // The decision schema adds concern grounding without changing the advisory parser's behavior.
+            var parsed = Parse(JsonSerializer.Serialize(new { schema = SemanticSchema.Artifact.Id, verdict = "uncertain",
+                claims = root.GetProperty("claims") }), release ? SemanticSchema.ArtifactRelease : SemanticSchema.Artifact, evidence);
+            if (!parsed.IsValid) return new(null, parsed.Failure, parsed.Detail, parsed.FailureReason);
+            var claims = release ? parsed.Value!.Claims.Select(c => c.Kind == "supports_declared_identity"
+                ? c with { Stance = ClaimStance.Supports } : c).ToArray() : parsed.Value!.Claims;
+            foreach (var claim in claims)
+            {
+                foreach (var id in claim.EvidenceIds)
+                {
+                    string[] required = id switch
+                    {
+                        "tc-copyright" => ["tc-abridged-marker", "tc-printed-isbn"],
+                        "tc-chapter1" => ["tc-prose-language"],
+                        "tc-last" => ["tc-sample-marker"],
+                        _ => []
+                    };
+                    if (required.Length > 0 && !claim.EvidenceIds.Any(required.Contains))
+                        return ModelParse.SchemaRejected<ArtifactDecision>("Excerpt citation requires its derived fact.", ModelFailureReason.MissingDerivedFact);
+                }
+                if (claim.Note.Any(c => char.GetUnicodeCategory(c) == UnicodeCategory.Format))
+                    return ModelParse.SchemaRejected<ArtifactDecision>("note contains invisible formatting");
+                if (claim.Stance == ClaimStance.Concern && !claim.EvidenceIds.Any(id => evidence.Any(f => f.Id == id &&
+                    f.Polarity is EvidencePolarity.Negative or EvidencePolarity.Weak or EvidencePolarity.Condition)))
+                    return ModelParse.SchemaRejected<ArtifactDecision>("concern cites no negative, weak or condition evidence", ModelFailureReason.UngroundedConcern);
+            }
+            if (verdict == "hold" && !claims.Any(c => c.Stance is ClaimStance.Contradicts or ClaimStance.Concern))
+                return ModelParse.SchemaRejected<ArtifactDecision>("hold needs a grounded negative claim", ModelFailureReason.UngroundedVerdict);
+            return ModelParse.Ok(new ArtifactDecision(verdict, claims));
+        }
+        catch (JsonException)
+        {
+            return ModelParse.NotJson<ArtifactDecision>("not valid JSON");
+        }
+    }
+}

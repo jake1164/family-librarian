@@ -50,6 +50,12 @@ public sealed class AdminRequestsApiClient(HttpClient httpClient, AntiforgeryTok
         await httpClient.GetFromJsonAsync<ProviderAttemptResponse[]>(
             $"api/v1/admin/requests/{requestId}/provider-attempts", cancellationToken) ?? [];
 
+    public async Task<IReadOnlyList<SearchVariantSummaryResponse>> GetSearchVariantsAsync(
+        Guid requestId,
+        CancellationToken cancellationToken = default) =>
+        await httpClient.GetFromJsonAsync<SearchVariantSummaryResponse[]>(
+            $"api/v1/admin/requests/{requestId}/search-variants", cancellationToken) ?? [];
+
     /// <summary>
     /// ADMIN-DEBUG-1: asks one external provider right now and returns its
     /// raw results, outside that provider's own recheck schedule. Never

@@ -1,7 +1,9 @@
 using System.Buffers.Binary;
 using System.Text;
 using FamilyLibrarian.Application.Matching;
+using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
+using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Requests;
@@ -12,7 +14,68 @@ namespace FamilyLibrarian.Infrastructure.Tests.Security;
 [TestClass]
 public sealed class M4bAssetIdentityVerifierTests
 {
+    [TestMethod]
+    [DataRow("Rebecca Yarros", true)]
+    [DataRow("Someone Else", false)]
+    public async Task AcceptingDramatizationSuppressesOnlyThatHold(string embeddedAuthor, bool matches)
+    {
+        var request = new FamilyLibrarian.Domain.Requests.BookRequest(Guid.NewGuid(), Guid.NewGuid(), [RequestMediaType.Audiobook], null, DateTimeOffset.UtcNow);
+        var format = request.Formats.Single();
+        var ask = request.GetType().GetMethod("AskQuestion");
+        Assert.IsNotNull(ask);
+        FamilyLibrarian.Domain.Requests.RequestReviewCandidateInput[] candidates = [new(format.Id, "reserved-asset", "asset", "Onyx Storm", "Rebecca Yarros", "en", null, null, null, false)];
+        ask.Invoke(request, [Enum.Parse(ask.GetParameters()[0].ParameterType, "DramatizedOnly"), format.Id, "Take it?", candidates, DateTimeOffset.UtcNow]);
+        request.AcceptReviewCandidate(request.ReviewCandidates.Single().Id, request.UserId, DateTimeOffset.UtcNow);
+        var asset = new MediaAsset(request.WorkId, null, RequestMediaType.Audiobook, ".m4b", "book.m4b", "stored.m4b", 1,
+            new string('a', 64), "audio/mp4", format.Id, null, DateTimeOffset.UtcNow);
+        var verifier = new M4bAssetIdentityVerifier(new StubWorkLookup("Onyx Storm", "Rebecca Yarros"), new DeterministicBookMatcher(), new VariantRequestStore(request));
+        using var content = BuildM4b(Tag("nam", "Onyx Storm [Dramatized Adaptation]"), Tag("ART", embeddedAuthor));
+        var result = await verifier.VerifyAsync(asset, content, CancellationToken.None);
+        Assert.AreEqual(matches, result.IsMatch);
+    }
+
+    private sealed class VariantRequestStore(FamilyLibrarian.Domain.Requests.BookRequest request) : IBookRequestFulfillmentStore
+    {
+        public Task<FamilyLibrarian.Domain.Requests.BookRequest?> FindByFormatIdAsync(Guid formatId, CancellationToken cancellationToken) => Task.FromResult<FamilyLibrarian.Domain.Requests.BookRequest?>(request);
+    }
+
     private const string Copyright = "©";
+
+    [TestMethod]
+    [DataRow("Iron Flame (Abridged)", false)]
+    [DataRow("Iron Flame (Unabridged)", true)]
+    [DataRow("Iron Flame - Ungekürzt", false)]
+    public async Task TheExpectedProfileDistinguishesAbridgedAndUnabridgedAlbums(string album, bool expectedMatch)
+    {
+        var asset = CreateAsset(".m4b");
+        var verified = await CreateVerifier("Iron Flame", "Rebecca Yarros").VerifyAsync(
+            asset, BuildM4b(Tag("alb", album), Tag("ART", "Rebecca Yarros")), CancellationToken.None);
+        var result = ArtifactHoldPolicy.Apply(asset, verified);
+
+        Assert.AreEqual(expectedMatch, result.IsMatch);
+        Assert.IsTrue(result.Facts.Any(f => f.Code == "artifact.identity_title.agrees"));
+        if (album.EndsWith("(Abridged)", StringComparison.Ordinal))
+            Assert.AreEqual("identity.hold.abridged_marker", result.HoldCode);
+        if (album.EndsWith("Ungekürzt", StringComparison.Ordinal))
+            Assert.IsTrue(result.Facts.Any(f => f.Code == "artifact.language.cue_conflicts" && f.Polarity == FamilyLibrarian.Domain.Evidence.EvidencePolarity.Negative));
+    }
+
+    // The lab's first Fourth Wing copy was a single "Fourth Wing by Rececca Yarros.m4a": the same MP4 container.
+    [TestMethod]
+    public async Task AnM4aAudiobookIsCheckedExactlyLikeAnM4b()
+    {
+        var verifier = CreateVerifier("Fourth Wing", "Rebecca Yarros");
+        Assert.IsTrue(verifier.Supports(CreateAsset(".m4a")));
+        Assert.IsTrue(verifier.Supports(CreateAsset(".M4A")));
+
+        var right = await verifier.VerifyAsync(
+            CreateAsset(".m4a"), BuildM4b(Tag("nam", "Fourth Wing"), Tag("ART", "Rebecca Yarros")), CancellationToken.None);
+        var wrong = await verifier.VerifyAsync(
+            CreateAsset(".m4a"), BuildM4b(Tag("nam", "Iron Flame"), Tag("ART", "Rebecca Yarros")), CancellationToken.None);
+
+        Assert.IsTrue(right.IsMatch);
+        Assert.IsFalse(wrong.IsMatch);
+    }
 
     [TestMethod]
     public async Task OnlyM4bFilesAreSupported()
@@ -230,8 +293,76 @@ public sealed class M4bAssetIdentityVerifierTests
         verifier.VerifyAsync(CreateAsset(".m4b"), content, CancellationToken.None);
 
     private static M4bAssetIdentityVerifier CreateVerifier(
-        string title, string author, IReadOnlyList<string>? alternateTitles = null) =>
-        new(new StubWorkLookup(title, author, alternateTitles), new DeterministicBookMatcher());
+        string title, string author, IReadOnlyList<string>? alternateTitles = null, IReadOnlyList<BookSeries>? series = null) =>
+        new(new StubWorkLookup(title, author, alternateTitles, series), new DeterministicBookMatcher());
+
+    // The lab case: the right Fourth Wing audiobook was held because its title tag carries a series designation.
+    [TestMethod]
+    [DataRow("Fourth Wing: Fourth Wing, Book 1", "1", true)]
+    [DataRow("Fourth Wing: Fourth Wing, Book 1", null, true)]
+    [DataRow("Fourth Wing (The Empyrean #1)", "1", true)]
+    [DataRow("Fourth Wing, Book 1 (Unabridged)", "1", true)]
+    [DataRow("Fourth Wing - Book 1", "1", true)]
+    [DataRow("Fourth Wing: Fourth Wing, Book 2", "1", false)]
+    [DataRow("Fourth Wing, Part 1", "1", false)]
+    [DataRow("Fourth Wing: Iron Flame", "1", false)]
+    public async Task ATrailingSeriesDesignationConsistentWithTheCatalogIsNotADifferentTitle(
+        string album, string? position, bool expectedMatch)
+    {
+        IReadOnlyList<BookSeries>? series = position is null ? null : [new BookSeries("The Empyrean", position)];
+        var result = await VerifyAsync(
+            CreateVerifier("Fourth Wing", "Rebecca Yarros", series: series),
+            BuildM4b(Tag("nam", album), Tag("ART", "Rebecca Yarros")));
+
+        Assert.AreEqual(expectedMatch, result.IsMatch, album);
+    }
+
+    // The lab: both parts of an Onyx Storm set were tagged "Onyx Storm (N of 2) [Dramatized Adaptation]" and held as
+    // "the wrong title". The part marker is packaging; the dramatization is a different production, held with that reason.
+    [TestMethod]
+    public async Task APartOfASetIsTheRightTitleAndADramatizationIsKeptInReserveWithItsOwnReason()
+    {
+        var verifier = CreateVerifier("Onyx Storm", "Rebecca Yarros");
+
+        var narrated = await verifier.VerifyAsync(
+            CreateSetPart(), BuildM4b(Tag("nam", "Onyx Storm (1 of 2)"), Tag("ART", "Rebecca Yarros")), CancellationToken.None);
+        Assert.IsTrue(narrated.IsMatch, narrated.Reason);
+
+        var dramatized = await verifier.VerifyAsync(
+            CreateSetPart(), BuildM4b(Tag("nam", "Onyx Storm (2 of 2) [Dramatized Adaptation]"), Tag("ART", "Rebecca Yarros")),
+            CancellationToken.None);
+        Assert.IsFalse(dramatized.IsMatch);
+        Assert.AreEqual("identity.hold.dramatized_adaptation", dramatized.HoldCode);
+        StringAssert.Contains(dramatized.Reason, "dramatized adaptation");
+        Assert.DoesNotContain("didn't match", dramatized.Reason!, "It is the right book; the reason must not say otherwise.");
+    }
+
+    [TestMethod]
+    public async Task ALoneFileSayingOneOfTwoIsStillAFragment()
+    {
+        var result = await VerifyAsync(
+            CreateVerifier("Onyx Storm", "Rebecca Yarros"),
+            BuildM4b(Tag("nam", "Onyx Storm (1 of 2)"), Tag("ART", "Rebecca Yarros")));
+
+        Assert.IsFalse(result.IsMatch, "Outside a two-part set, \"1 of 2\" is half a book.");
+    }
+
+    private static MediaAsset CreateSetPart() => new(
+        Guid.NewGuid(),
+        editionId: null,
+        RequestMediaType.Audiobook,
+        ".m4b",
+        "part.m4b",
+        "stored.m4b",
+        sizeBytes: 1,
+        new string('a', 64),
+        "audio/mp4",
+        Guid.NewGuid(),
+        sourceAcquisitionCandidateId: null,
+        DateTimeOffset.UtcNow,
+        bundleId: Guid.NewGuid(),
+        bundleSequence: 1,
+        bundleTrackCount: 2);
 
     private static MediaAsset CreateAsset(string format) => new(
         Guid.NewGuid(),
@@ -288,9 +419,9 @@ public sealed class M4bAssetIdentityVerifierTests
     private static byte[] Concat(params byte[][] parts) => parts.SelectMany(part => part).ToArray();
 
     private sealed class StubWorkLookup(
-        string title, string author, IReadOnlyList<string>? alternateTitles = null) : IWorkLookup
+        string title, string author, IReadOnlyList<string>? alternateTitles = null, IReadOnlyList<BookSeries>? series = null) : IWorkLookup
     {
         public Task<WorkSummary?> FindAsync(Guid workId, CancellationToken cancellationToken) =>
-            Task.FromResult<WorkSummary?>(new WorkSummary(workId, title, author, [], AlternateTitles: alternateTitles));
+            Task.FromResult<WorkSummary?>(new WorkSummary(workId, title, author, [], Series: series, AlternateTitles: alternateTitles));
     }
 }

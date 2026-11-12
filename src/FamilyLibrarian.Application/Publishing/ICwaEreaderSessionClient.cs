@@ -34,6 +34,14 @@ public interface ICwaEreaderSessionClient
     /// reach an authenticated page, without ever calling the send route.
     /// Used by "Test Kindle Delivery."
     /// </summary>
+    /// <summary>
+    /// Removes one book (and its files) through the web interface's own delete action, as the given account. Fails closed: anything but
+    /// an explicit success reply is a failure and nothing further is assumed.
+    /// </summary>
+    Task<CwaDeleteResult> DeleteBookAsync(
+        CwaSettings settings, string serviceAccountUsername, string serviceAccountPassword, string cwaBookId, CancellationToken cancellationToken) =>
+        Task.FromResult(new CwaDeleteResult(false, "This client cannot delete books."));
+
     Task<CwaEreaderLoginResult> TestLoginAsync(
         CwaSettings settings,
         string serviceAccountUsername,
@@ -70,3 +78,9 @@ public enum CwaEreaderSendStatus
 public sealed record CwaEreaderSendResult(CwaEreaderSendStatus Status, string? CwaMessage);
 
 public sealed record CwaEreaderLoginResult(bool Succeeded, string Message);
+
+/// <param name="AlreadyGone">
+/// The book was not there to delete. For a caller that only wants the book gone (an upgrade resuming after an interruption) that is the
+/// wanted outcome; <paramref name="Succeeded"/> stays false because nothing was deleted by this call.
+/// </param>
+public sealed record CwaDeleteResult(bool Succeeded, string? Message, bool AlreadyGone = false);

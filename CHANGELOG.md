@@ -4,6 +4,50 @@ All notable changes to Family Librarian are documented here. Newest release at t
 
 ---
 
+## [Unreleased]
+
+---
+
+## [v1.0.0-alpha.6] — 2026-11-12
+
+Family Librarian can now talk and think: a conversational assistant on the web and Matrix, optional AI help with searching and checking files, much stronger automatic book finding and validation, and an install that looks after its own disk and library without an administrator.
+
+### Conversation and requests
+
+- Ask for books in plain language on a new web chat page or over Matrix; both use the same conversation engine and the same permissions as the rest of the app. Matrix shows typing while the assistant works.
+- Requests ask the requester about product choices (such as which edition) and remember saved preferences.
+- Audiobooks are handled as one request per book rather than per file, and mixed ebook/audiobook requests proceed independently.
+
+### AI assistance (optional, off until configured)
+
+- Connect an OpenAI-compatible model with per-role settings, budgets, concurrency limits, and a test panel. Every AI call is recorded; nothing the AI says changes a book without deterministic checks agreeing.
+- AI helps with search guidance, choosing between close candidates, and reviewing downloaded files, including bounded EPUB excerpts used only during analysis and never stored.
+- AI activity page on Tasks: accepted and rejected replies, provider errors, speed, tokens, a plain status per feature, and what happened after the AI changed something. Saved AI decisions have their own switches, limits and delete button.
+- Cost and reliability controls: fewer calls per audiobook, skipped reviews when nothing could justify a hold, a pause for settings the model keeps refusing, and an "Ask for low reasoning" option.
+- Tuning tools to compare models on saved decisions.
+
+### Finding and validating books
+
+- Searches try deterministic variants, remember what was tried, and keep waiting requests searching with bounded extra attempts.
+- Per-source confidence levels, same-work collapsing, and corroborating the author from context make matching stricter about the wrong book and kinder to the right one.
+- Downloaded files are checked against what was asked for: MP3 and Ogg/Opus identity checks, catalog profile comparison, and incomplete-artifact holds.
+- Source status panel and clearer Sources page.
+
+### Storage and self-maintenance
+
+- Administrator Storage page: disk space, files by stage, and database size, with no book names. Compose log rotation keeps logs from filling the disk.
+- Unwanted files and old database rows are cleaned up automatically on documented schedules, configured from the Storage page; trusted files are never removed. Administrators are warned when disk space is low and new downloads wait below the threshold.
+- Parked requests keep looking for a better copy, and delivered books that look incomplete are upgraded safely (new Better copies page, with an automatic-replacement switch on by default). Anything unexpected keeps both copies and notifies administrators.
+
+### Security and operations
+
+- Settings forms warn about unsaved changes; the asset-origin default is hardened; Sources, dashboard and admin pages are tidier.
+- Fix: Audiobookshelf variant matching, CWA downloads without a user-agent, duplicate automatic/manual provider jobs importing twice, and storage clean-up failing when a zone folder was missing.
+
+Known limits: real-model accuracy tuning and broad model comparison are still future work; passing response validation does not establish that a model is accurate.
+
+---
+
 ## [v1.0.0-alpha.5] — 2026-10-10
 
 External acquisition providers grow up: a documented provider protocol (v2) with durable jobs, multi-file audiobook downloads, human-check handoff to an administrator, and much more honest evidence when a book needs a librarian's decision.

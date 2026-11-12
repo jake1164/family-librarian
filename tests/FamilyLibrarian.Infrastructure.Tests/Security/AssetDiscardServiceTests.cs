@@ -47,6 +47,77 @@ public sealed class AssetDiscardServiceTests
         Assert.IsTrue(staging.ContainsFile);
     }
 
+    // The lab's German set: twenty held tracks of one book took twenty separate deletions.
+    [TestMethod]
+    public async Task DeletingOneHeldTrackOfASetDeletesTheWholeSetButNeverATrustedTrack()
+    {
+        var bundleId = Guid.NewGuid();
+        var held = Enumerable.Range(1, 3).Select(track => CreateTrack(bundleId, track, MediaAssetStorageState.Unmatched)).ToArray();
+        var trusted = CreateTrack(bundleId, 4, MediaAssetStorageState.Trusted);
+        var repository = new SetRepository([.. held, trusted]);
+        var staging = new CountingStagingStore();
+        var service = new AssetDiscardService(
+            repository, staging, new RecordingAuditWriter(), new CurrentUser(), new FixedClock());
+
+        var result = await service.DiscardAsync(held[1].Id, CancellationToken.None);
+
+        Assert.AreEqual(AssetDiscardOutcome.Success, result.Outcome);
+        Assert.IsTrue(held.All(track => track.StorageState == MediaAssetStorageState.Destroyed));
+        Assert.AreEqual(MediaAssetStorageState.Trusted, trusted.StorageState, "A trusted track is never deleted.");
+        CollectionAssert.AreEquivalent(held.Select(track => track.StoredFilename).ToArray(), staging.Deleted);
+    }
+
+    private static MediaAsset CreateTrack(Guid bundleId, int track, MediaAssetStorageState state)
+    {
+        var asset = new MediaAsset(
+            Guid.NewGuid(), null, RequestMediaType.Audiobook, ".mp3", $"{track:00}.mp3", $"track-{track}.mp3", 12,
+            new string('a', 64), "audio/mpeg", Guid.NewGuid(), null, DateTimeOffset.UtcNow,
+            bundleId: bundleId, bundleSequence: track, bundleTrackCount: 4);
+        asset.TransitionStorageState(MediaAssetStorageState.Processing, DateTimeOffset.UtcNow);
+        asset.TransitionStorageState(state, DateTimeOffset.UtcNow);
+        return asset;
+    }
+
+    private sealed class SetRepository(IReadOnlyList<MediaAsset> assets) : ISecurityEvaluationRepository
+    {
+        public Task<MediaAsset?> FindAssetAsync(Guid assetId, CancellationToken cancellationToken) =>
+            Task.FromResult(assets.FirstOrDefault(asset => asset.Id == assetId));
+
+        public Task<IReadOnlyList<MediaAsset>> FindAssetsByBundleIdAsync(Guid bundleId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<MediaAsset>>([.. assets.Where(asset => asset.BundleId == bundleId)]);
+
+        public Task<SecurityEvaluation?> FindLatestEvaluationAsync(Guid assetId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public void AddEvaluation(SecurityEvaluation evaluation) => throw new NotSupportedException();
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class CountingStagingStore : IAssetStagingStore
+    {
+        public List<string> Deleted { get; } = [];
+
+        public Task<StagedFile> WriteToQuarantineAsync(
+            Stream content, string originalFilename, long maxSizeBytes, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<Stream> OpenAsync(
+            MediaAssetStorageState zone, string storedFilename, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task MoveAsync(
+            MediaAssetStorageState fromZone, MediaAssetStorageState toZone, string storedFilename,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task DeleteAsync(MediaAssetStorageState zone, string storedFilename, CancellationToken cancellationToken)
+        {
+            Deleted.Add(storedFilename);
+            return Task.CompletedTask;
+        }
+    }
+
     private static MediaAsset CreateRejectedAsset()
     {
         var asset = CreateProcessingAsset();

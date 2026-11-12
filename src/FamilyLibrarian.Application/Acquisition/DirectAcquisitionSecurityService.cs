@@ -20,7 +20,11 @@ public sealed class DirectAcquisitionSecurityService(
         CancellationToken cancellationToken,
         bool confirmLowConfidenceMatch = false,
         bool allowDownloadTimeDrmValidation = false,
-        bool isAutomaticAcquisition = false)
+        bool isAutomaticAcquisition = false,
+        SearchVariantRef? searchVariant = null,
+        PeerSizeEvidence? peerSizeEvidence = null,
+        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null,
+        bool allowAdditionalCopy = false)
     {
         var result = await acquisitions.AcquireAsync(
             requestId,
@@ -30,7 +34,9 @@ public sealed class DirectAcquisitionSecurityService(
             cancellationToken,
             confirmLowConfidenceMatch,
             allowDownloadTimeDrmValidation,
-            isAutomaticAcquisition);
+            isAutomaticAcquisition,
+            searchVariant: searchVariant, peerSizeEvidence: peerSizeEvidence, triageAuthorization: triageAuthorization,
+            allowAdditionalCopy: allowAdditionalCopy);
 
         if (result.Outcome == ManualImportOutcome.Success)
         {
@@ -73,11 +79,16 @@ public sealed class DirectAcquisitionSecurityService(
         CancellationToken cancellationToken,
         bool confirmLowConfidenceMatch = false,
         bool allowDownloadTimeDrmValidation = false,
-        bool isAutomaticAcquisition = false)
+        bool isAutomaticAcquisition = false,
+        SearchVariantRef? searchVariant = null,
+        PeerSizeEvidence? peerSizeEvidence = null,
+        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null,
+        bool allowAdditionalCopy = false)
     {
         var result = await AcquireAndEvaluateAsync(
             requestId, requestFormatId, providerId, providerResultId, cancellationToken,
-            confirmLowConfidenceMatch, allowDownloadTimeDrmValidation, isAutomaticAcquisition);
+            confirmLowConfidenceMatch, allowDownloadTimeDrmValidation, isAutomaticAcquisition, searchVariant, peerSizeEvidence, triageAuthorization,
+            allowAdditionalCopy);
 
         if (result.Outcome != ManualImportOutcome.Success || assets is null)
         {
@@ -98,8 +109,8 @@ public sealed class DirectAcquisitionSecurityService(
             // reported as a wrong book.
             if (asset.StorageState == MediaAssetStorageState.Unmatched)
             {
-                return (result, asset.IdentityMismatchReason ??
-                    "The acquired file could not be verified as the requested book.");
+                return (result, ArtifactHoldPolicy.AcquisitionFailureReason(asset,
+                    "The acquired file could not be verified as the requested book."));
             }
         }
 

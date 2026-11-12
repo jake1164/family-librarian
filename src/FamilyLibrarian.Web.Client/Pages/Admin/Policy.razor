@@ -7,6 +7,7 @@
 @inject ISnackbar Snackbar
 
 <PageTitle>Acquisition policy | Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@(defaultProfileId is not null && selectedProfileId != defaultProfileId)" />
 
 <MudText Typo="Typo.h4" GutterBottom="true">Acquisition policy</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">

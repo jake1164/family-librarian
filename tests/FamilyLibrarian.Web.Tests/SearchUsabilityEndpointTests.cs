@@ -45,6 +45,49 @@ public sealed class SearchUsabilityEndpointTests
         Assert.AreEqual(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/v1/catalog/search/runs", new CatalogSearchRequest("Moby Dick", 2, started))).StatusCode);
     }
 
+    [TestMethod]
+    public async Task SynchronousSearchAndAProgressiveRunReturnTheSameResultForTheSameQuery()
+    {
+        await using var fixture = await WebTestFixture.CreateAsync();
+        await using var factory = Factory(WebTestFixture.Require(fixture).ConnectionString);
+        using var client = factory.CreateClient();
+        Assert.AreEqual(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/api/auth/login", new LoginRequest { Email = WebTestFixture.UserEmail, Password = WebTestFixture.UserPassword })).StatusCode);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(client));
+
+        foreach (var (text, page) in new[] { ("Fahrenheit 451", 1), ("Fahrenheit 451", 2), ("Moby Dick", 1) })
+        {
+            var direct = await client.GetFromJsonAsync<CatalogSearchResponse>(
+                $"/api/v1/catalog/search?q={Uri.EscapeDataString(text)}&page={page}");
+            var runId = await StartAsync(client, new(text, page, null));
+            var run = await WaitAsync(client, runId);
+
+            Assert.AreEqual(
+                System.Text.Json.JsonSerializer.Serialize(direct),
+                System.Text.Json.JsonSerializer.Serialize(run.Search),
+                $"'{text}' page {page}: both entry points share one orchestration.");
+        }
+    }
+
+    [TestMethod]
+    [DataRow("q=a", "q")]
+    [DataRow("q=ab&page=0", "page")]
+    [DataRow("q=ab&page=101", "page")]
+    public async Task SearchValidationRejectsTheSameInputsAsBefore(string query, string field)
+    {
+        await using var fixture = await WebTestFixture.CreateAsync();
+        await using var factory = Factory(WebTestFixture.Require(fixture).ConnectionString);
+        using var client = factory.CreateClient();
+        Assert.AreEqual(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/api/auth/login", new LoginRequest { Email = WebTestFixture.UserEmail, Password = WebTestFixture.UserPassword })).StatusCode);
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, await WebTestFixture.GetAntiforgeryTokenAsync(client));
+
+        var response = await client.GetAsync($"/api/v1/catalog/search?{query}");
+
+        Assert.AreEqual(HttpStatusCode.BadRequest, response.StatusCode);
+        StringAssert.Contains(await response.Content.ReadAsStringAsync(), $"\"{field}\"");
+        Assert.AreEqual(HttpStatusCode.BadRequest,
+            (await client.PostAsJsonAsync("/api/v1/catalog/search/runs", new CatalogSearchRequest("a"))).StatusCode);
+    }
+
     private static async Task<Guid> StartAsync(HttpClient client, CatalogSearchRequest request)
     {
         var response = await client.PostAsJsonAsync("/api/v1/catalog/search/runs", request);

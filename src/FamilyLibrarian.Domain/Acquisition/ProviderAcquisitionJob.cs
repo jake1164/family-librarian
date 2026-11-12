@@ -127,6 +127,20 @@ public sealed class ProviderAcquisitionJob
     /// </summary>
     public bool IdentityPreConfirmed { get; private set; }
 
+    public long? PeerMedianSizeBytes { get; private set; }
+
+    public int? PeerCount { get; private set; }
+
+    /// <summary>Snapshots evidence from other reviewable releases; never an acquisition or hold decision.</summary>
+    public void SetPeerSizeEvidence(long medianSizeBytes, int peerCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(medianSizeBytes);
+        ArgumentOutOfRangeException.ThrowIfLessThan(peerCount, 3);
+        if (!IsAutomaticAcquisition) throw new InvalidOperationException("Peer evidence belongs to automatic acquisitions.");
+        PeerMedianSizeBytes = medianSizeBytes;
+        PeerCount = peerCount;
+    }
+
     /// <summary>
     /// When this job fetches one numbered part of a complete audiobook set,
     /// the set's id; every member job shares it. Null for an ordinary job.
@@ -345,11 +359,11 @@ public sealed class ProviderAcquisitionJob
     }
 
     /// <summary>
-    /// Stops tracking this job because the audiobook set it belongs to has been
-    /// abandoned (another part failed, or the set could not be fully started).
-    /// A job that already finished is left exactly as it is.
+    /// Stops tracking this job: by default because the audiobook set it belongs to has been abandoned (another part
+    /// failed, or the set could not be fully started), or with another code, such as a format another copy already
+    /// fulfilled. A job that already finished is left exactly as it is.
     /// </summary>
-    public void Cancel(string reason, DateTimeOffset atUtc)
+    public void Cancel(string reason, DateTimeOffset atUtc, string errorCode = "PART_SET_ABANDONED")
     {
         if (IsTerminal(LifecycleState))
         {
@@ -357,7 +371,7 @@ public sealed class ProviderAcquisitionJob
         }
 
         ApplyState(ProviderAcquisitionJobLifecycleState.Cancelled, phase: null, atUtc);
-        ErrorCode = "PART_SET_ABANDONED";
+        ErrorCode = errorCode;
         ErrorMessage = reason.Length <= 1_024 ? reason : reason[..1_024];
         NextPollAtUtc = null;
         UpdatedAtUtc = atUtc;

@@ -79,7 +79,12 @@ public sealed record KindleDeliveryResponse(
 public sealed record NeedsReviewResponse(
     string Category,
     IReadOnlyList<RequestReviewCandidateResponse> Candidates,
-    string? Reason = null);
+    string? Reason = null,
+    string? QuestionKind = null,
+    Guid? QuestionFormatId = null,
+    bool CanAnswer = true,
+    int WaitingForRequesterCount = 0,
+    bool CanSavePreference = false);
 
 /// <summary>
 /// A requester-safe candidate label. Details contains neutral edition/release
@@ -98,7 +103,7 @@ public sealed record RequestReviewCandidateResponse(
 /// against two participants on a shared request resolving the same review
 /// at once.
 /// </param>
-public sealed record ResolveNeedsReviewRequest(Guid? CandidateId, uint? ExpectedVersion = null);
+public sealed record ResolveNeedsReviewRequest(Guid? CandidateId, uint? ExpectedVersion = null, bool AlwaysAccept = false);
 
 public sealed record BookRequestFormatResponse(
     Guid FormatId,
@@ -218,10 +223,34 @@ public sealed record AdminProviderDebugCandidateResponse(
     bool RequiresReleaseConfirmation,
     string? ReleaseConcern,
     string? InspectionUri,
-    AdminCandidateIdentityEvidenceResponse? IdentityEvidence = null);
+    AdminCandidateIdentityEvidenceResponse? IdentityEvidence = null,
+    AdminSemanticFindingResponse? SemanticFinding = null);
+
+public sealed record AdminSemanticClaimResponse(string Kind, string Stance, IReadOnlyList<string> EvidenceIds, string Note);
+
+/// <summary>
+/// A model's advisory opinion on one unsettled candidate, kept beside (never inside) the deterministic result. It never
+/// changes the match, the ranking or any approval. <paramref name="Verdict"/> and the claims are present only when the
+/// model gave a valid answer; otherwise <paramref name="Outcome"/> and <paramref name="FailureDetail"/> say what happened.
+/// </summary>
+public sealed record AdminSemanticFindingResponse(
+    string Outcome,
+    string? Verdict,
+    IReadOnlyList<AdminSemanticClaimResponse> Claims,
+    string? FailureDetail,
+    string DeterministicDecision,
+    string Model,
+    bool IsCloud,
+    DateTimeOffset CreatedAtUtc);
 
 public sealed record AdminCandidateSeriesEvidenceResponse(
     string State, string Name, string? RequestedPosition, string? ReleasePosition);
+
+/// <summary>
+/// One stable, citable observation. <paramref name="Code"/> is the contract (a Domain-owned reason code);
+/// <paramref name="Text"/> is advisory prose.
+/// </summary>
+public sealed record AdminCandidateEvidenceFindingResponse(string Id, string Code, string Polarity, string Text);
 
 /// <summary>Safe bibliographic projection, available only in administrator diagnostics.</summary>
 public sealed record AdminCandidateIdentityEvidenceResponse(
@@ -230,7 +259,8 @@ public sealed record AdminCandidateIdentityEvidenceResponse(
     string LanguageEvidence, string? NormalizedRelease, IReadOnlyList<string> Tokens,
     IReadOnlyList<AdminCandidateSeriesEvidenceResponse> Series, IReadOnlyList<string> UnclassifiedTokens,
     IReadOnlyList<string> Contradictions, IReadOnlyList<string> Conditions, IReadOnlyList<string> Reasons,
-    int? PartNumber, int? PartTotal);
+    int? PartNumber, int? PartTotal,
+    IReadOnlyList<AdminCandidateEvidenceFindingResponse>? Findings = null);
 
 public sealed record RequestParticipantResponse(string DisplayName, string Email, string? Note, bool Withdrawn);
 

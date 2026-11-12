@@ -52,6 +52,7 @@ public sealed class LiveChangesCaptureTests
         var changes = LiveChanges.Capture(database);
 
         Assert.IsTrue(changes.RequestIds.Contains(job.RequestId));
-        Assert.AreEqual(LiveUpdateTopics.Requests, changes.AdminTopics);
+        // The request is refreshed, and so is the Sources panel, which shows whether a source is currently being used.
+        Assert.AreEqual(LiveUpdateTopics.Requests | LiveUpdateTopics.Sources, changes.AdminTopics);
     }
 }

@@ -23,6 +23,18 @@
             <dt>Contradictions</dt><dd>@(evidence.Contradictions.Count == 0 ? "None" : string.Join(" ", evidence.Contradictions))</dd>
             <dt>Conditions</dt><dd>@(evidence.Conditions.Count == 0 ? "None" : string.Join(" ", evidence.Conditions))</dd>
             <dt>Reasons</dt><dd>@string.Join(" ", evidence.Reasons)</dd>
+            @if (evidence.Findings is { Count: > 0 } findings)
+            {
+                <dt>Evidence codes</dt>
+                <dd>
+                    <ul class="mb-0">
+                        @foreach (var finding in findings)
+                        {
+                            <li><code>@finding.Code</code> (@finding.Polarity): @finding.Text</li>
+                        }
+                    </ul>
+                </dd>
+            }
             <dt>Normalized release</dt><dd>@(evidence.NormalizedRelease ?? "unknown")</dd>
         </dl>
     </details>

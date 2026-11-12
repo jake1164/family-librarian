@@ -1,4 +1,3 @@
-using System.Text.Json;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Integrations;
 
@@ -27,8 +26,9 @@ public sealed partial class CatalogSearchRunHostedService(
         {
             await using var scope = scopeFactory.CreateAsyncScope();
             var resolver = scope.ServiceProvider.GetRequiredService<IActiveMetadataProviderResolver>();
+            var search = scope.ServiceProvider.GetRequiredService<ICatalogSearchService>();
             var providers = await resolver.GetActiveProvidersAsync(linked.Token);
-            await Task.WhenAll(providers.Select(provider => SearchProviderAsync(provider, run, linked.Token)));
+            await Task.WhenAll(providers.Select(provider => SearchProviderAsync(provider, search, run, linked.Token)));
         }
         catch (OperationCanceledException) when (linked.IsCancellationRequested) { }
         catch (Exception exception) { LogRunFailed(exception, run.Id); }
@@ -40,28 +40,17 @@ public sealed partial class CatalogSearchRunHostedService(
         }
     }
 
-    private async Task SearchProviderAsync(IBookMetadataProvider provider, CatalogSearchRun run, CancellationToken token)
+    private async Task SearchProviderAsync(IBookMetadataProvider provider, ICatalogSearchService search, CatalogSearchRun run, CancellationToken token)
     {
+        if (run.HasPreviousPage && run.Snapshot().Any(result => result.ProviderId == provider.Id && result.Succeeded && !result.HasMore))
+            return;
         try
         {
-            if (run.HasPreviousPage && run.Snapshot().Any(result => result.ProviderId == provider.Id && result.Succeeded && !result.HasMore))
-                return;
-            var page = await provider.SearchAsync(run.Query, token);
-            run.Add(provider.Id, provider.DisplayName, true, page.Candidates, page.HasMore);
+            var result = await search.SearchProviderAsync(provider, run.Query, tolerateUnexpectedFailures: true, token);
+            if (result.Failure is { } failure) LogProviderFailed(failure.Exception, provider.Id);
+            run.Add(result.ProviderId, result.ProviderName, result.Succeeded, result.Candidates, result.HasMore);
         }
-        catch (HttpRequestException exception) { LogProviderFailed(exception, provider.Id); run.Add(provider.Id, provider.DisplayName, false, [], false); }
-        catch (JsonException exception) { LogProviderFailed(exception, provider.Id); run.Add(provider.Id, provider.DisplayName, false, [], false); }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (OperationCanceledException exception) when (!token.IsCancellationRequested)
-        {
-            LogProviderFailed(exception, provider.Id);
-            run.Add(provider.Id, provider.DisplayName, false, [], false);
-        }
-        catch (Exception exception)
-        {
-            LogProviderFailed(exception, provider.Id);
-            run.Add(provider.Id, provider.DisplayName, false, [], false);
-        }
     }
 
     [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "Catalog search run {CatalogSearchRunId} failed.")]

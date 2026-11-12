@@ -91,6 +91,59 @@ public sealed partial class CwaEreaderSessionClient(
         }
     }
 
+    public async Task<CwaDeleteResult> DeleteBookAsync(
+        CwaSettings settings, string serviceAccountUsername, string serviceAccountPassword, string cwaBookId, CancellationToken cancellationToken)
+    {
+        if (!cwaBookId.All(char.IsAsciiDigit) || cwaBookId.Length == 0)
+            return new CwaDeleteResult(false, "The book id is not a number.");
+        var baseUrl = settings.OpdsBaseUrl!.TrimEnd('/');
+        var client = httpClientFactory.CreateClient(HttpClientName);
+        try
+        {
+            var (loginSucceeded, cookies, csrfToken) = await SignInAsync(client, baseUrl, serviceAccountUsername, serviceAccountPassword, cancellationToken);
+            if (!loginSucceeded || csrfToken is null) return new CwaDeleteResult(false, "The service account could not sign in to CWA.");
+
+            // CWA answers "Book Successfully Deleted" even for an id that does not exist, so its reply alone proves nothing. The book
+            // must be there before and gone after, or this does not report success.
+            if (!await BookPageExistsAsync(client, baseUrl, cwaBookId, cookies, cancellationToken))
+                return new CwaDeleteResult(false, "CWA has no book with that id.", AlreadyGone: true);
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/ajax/delete/{cwaBookId}");
+            request.Headers.Add("X-CSRFToken", csrfToken);
+            ApplyCookies(request, cookies);
+            using var response = await client.SendAsync(request, cancellationToken);
+            if (response.StatusCode != HttpStatusCode.OK) return new CwaDeleteResult(false, $"CWA refused the delete (HTTP {(int)response.StatusCode}).");
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            // The reply is a JSON array; an entry of type "danger" (for example "missing permissions") or anything but "success" fails closed.
+            using var document = JsonDocument.Parse(body);
+            var reported = document.RootElement.ValueKind == JsonValueKind.Array && document.RootElement.EnumerateArray().Any(entry =>
+                entry.ValueKind == JsonValueKind.Object && entry.TryGetProperty("type", out var type) && type.GetString() == "success");
+            if (!reported) return new CwaDeleteResult(false, "CWA did not report the book deleted.");
+            return await BookPageExistsAsync(client, baseUrl, cwaBookId, cookies, cancellationToken)
+                ? new CwaDeleteResult(false, "CWA reported the book deleted but it is still there.")
+                : new CwaDeleteResult(true, null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogTransportFailure(exception.GetType().Name);
+            return new CwaDeleteResult(false, "CWA could not be reached or returned an unexpected reply.");
+        }
+    }
+
+    /// <summary>A book's own page answers 200 while the book exists and redirects once it is gone (or never was).</summary>
+    private static async Task<bool> BookPageExistsAsync(
+        HttpClient client, string baseUrl, string cwaBookId, Dictionary<string, string> cookies, CancellationToken cancellationToken)
+    {
+        using var page = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/book/{cwaBookId}");
+        ApplyCookies(page, cookies);
+        using var response = await client.SendAsync(page, cancellationToken);
+        return response.StatusCode == HttpStatusCode.OK;
+    }
+
     public async Task<CwaEreaderLoginResult> TestLoginAsync(
         CwaSettings settings,
         string serviceAccountUsername,

@@ -8,4 +8,18 @@ public sealed record ProviderAttemptResponse(
     string Outcome,
     string Summary,
     DateTimeOffset AttemptedAtUtc,
-    DateTimeOffset? NextEligibleCheckAtUtc);
+    DateTimeOffset? NextEligibleCheckAtUtc,
+    string? DisplayOutcome = null,
+    string? MediaType = null);
+
+/// <summary>
+/// Administrator summary of the search variants remembered for one requested format at one provider (AUTOFIND 2b): how many
+/// distinct ways it was searched, when it was last searched, and which way found the candidate that was chosen.
+/// </summary>
+public sealed record SearchVariantSummaryResponse(
+    Guid RequestFormatId,
+    string ProviderId,
+    int DistinctVariants,
+    DateTimeOffset LastTriedAtUtc,
+    string? FoundByKind,
+    string Summary);

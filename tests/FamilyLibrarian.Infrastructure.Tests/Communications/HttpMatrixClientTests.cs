@@ -8,6 +8,21 @@ namespace FamilyLibrarian.Infrastructure.Tests.Communications;
 [TestClass]
 public sealed class HttpMatrixClientTests
 {
+    [TestMethod]
+    [DataRow("{\"event_id\":\"$sent-question\"}", "$sent-question")]
+    [DataRow("{}", null)]
+    [DataRow("", null)]
+    [DataRow("{\"event_id\":12}", null)]
+    public async Task PlainMessageReturnsTheHomeserverEventWithoutChangingSendSuccess(string json, string? expectedId)
+    {
+        var result = await CreateClient(new RecordingHandler(HttpStatusCode.OK, json)).SendMessageAsync(
+            CreateSettings(), "token", "!room:example.test", "question", CancellationToken.None);
+        Assert.IsTrue(result.Succeeded);
+        var property = result.GetType().GetProperty("EventId");
+        Assert.IsNotNull(property, "Plain Matrix send results must carry the homeserver event id additively.");
+        Assert.AreEqual(expectedId, property.GetValue(result));
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 9, 24, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]

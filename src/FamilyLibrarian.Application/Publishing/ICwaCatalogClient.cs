@@ -11,8 +11,7 @@ namespace FamilyLibrarian.Application.Publishing;
 /// asynchronous — so this returns <see cref="BookMatchDecision.NoMatch"/>
 /// rather than throwing. An ambiguous result (more than one distinct catalog
 /// entry matches) comes back as <see cref="BookMatchDecision.Ambiguous"/>
-/// with the conflicting candidates attached — see
-/// <c>docs/family-librarian-book-matching-design-findings.md</c> for why
+/// with the conflicting candidates attached, because
 /// title/author matching alone must not guess between them.
 /// </remarks>
 public interface ICwaCatalogClient
@@ -32,4 +31,12 @@ public interface ICwaCatalogClient
         IReadOnlyCollection<string> isbn13Candidates,
         CancellationToken cancellationToken,
         string? acceptedLanguage = null);
+
+    /// <summary>
+    /// Confirms a completed handoff by downloading a candidate's offered format and checking the approved file's
+    /// byte count and SHA-256. For destination verification only; never a title-only ownership or approval decision.
+    /// </summary>
+    Task<BookMatchResult> FindImportedFileAsync(
+        string title, string format, long sizeBytes, string sha256, CancellationToken cancellationToken,
+        string? acceptedLanguage = null) => Task.FromResult(BookMatchResult.NoMatchResult);
 }

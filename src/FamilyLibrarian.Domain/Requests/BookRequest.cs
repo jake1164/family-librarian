@@ -121,6 +121,50 @@ public sealed class BookRequest
     /// <summary>Populated only for <see cref="RequestReviewCategory.PreferenceAmbiguity"/>.</summary>
     public IReadOnlyCollection<RequestReviewCandidate> ReviewCandidates => _reviewCandidates;
 
+    public AcquisitionQuestionKind? QuestionKind { get; private set; }
+    public Guid? QuestionFormatId { get; private set; }
+    public DateTimeOffset? QuestionAskedAtUtc { get; private set; }
+    public DateTimeOffset? QuestionRemindedAtUtc { get; private set; }
+
+    public void AskQuestion(AcquisitionQuestionKind kind, Guid formatId, string reason,
+        IReadOnlyList<RequestReviewCandidateInput> candidates, DateTimeOffset atUtc)
+    {
+        if (!Enum.IsDefined(kind)) throw new ArgumentOutOfRangeException(nameof(kind));
+        if (QuestionKind is not null || RequiresManualFulfillment ||
+            !_formats.Any(f => f.Id == formatId && f.Status == RequestFormatStatus.Requested) ||
+            candidates.Count != 1 || candidates[0].RequestFormatId != formatId)
+            throw new InvalidOperationException("A question must offer one copy of an outstanding format.");
+        if (Status == RequestStatus.PendingAcquisition)
+            MarkNeedsReview(RequestReviewCategory.PreferenceAmbiguity, reason, atUtc, candidates);
+        else if (Status == RequestStatus.NeedsReview && _reviewCandidates.Count == 0 &&
+                 ReviewCategory is null or RequestReviewCategory.SecurityOrIdentityFailure)
+        {
+            ReviewCategory = RequestReviewCategory.PreferenceAmbiguity;
+            RefreshPreferenceReview(reason, atUtc, candidates);
+        }
+        else throw new InvalidOperationException("Another review already needs an answer.");
+        QuestionKind = kind;
+        QuestionFormatId = formatId;
+        QuestionAskedAtUtc = atUtc;
+        QuestionRemindedAtUtc = null;
+    }
+
+    public bool MarkQuestionReminded(DateTimeOffset atUtc)
+    {
+        if (QuestionKind is null || QuestionAskedAtUtc is null || QuestionRemindedAtUtc is not null ||
+            atUtc - QuestionAskedAtUtc.Value < TimeSpan.FromDays(7)) return false;
+        QuestionRemindedAtUtc = atUtc;
+        return true;
+    }
+
+    private void ClearQuestion()
+    {
+        QuestionKind = null;
+        QuestionFormatId = null;
+        QuestionAskedAtUtc = null;
+        QuestionRemindedAtUtc = null;
+    }
+
     /// <summary>Provider results previously declined via "keep looking" -- see <see cref="DeclinedRequestCandidate"/>.</summary>
     public IReadOnlyCollection<DeclinedRequestCandidate> DeclinedCandidates => _declinedCandidates;
 
@@ -186,7 +230,7 @@ public sealed class BookRequest
                 _reviewCandidates.Add(new RequestReviewCandidate(
                     Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
                     candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
-                    candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc, candidate.AdminSourceSummary));
+                    candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc, candidate.AdminSourceSummary, candidate.SearchVariant));
             }
         }
 
@@ -221,14 +265,14 @@ public sealed class BookRequest
             _reviewCandidates.Add(new RequestReviewCandidate(
                 Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
                 candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
-                candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc, candidate.AdminSourceSummary));
+                candidate.ReleaseName, candidate.TitleIsRequestFallback, index, atUtc, candidate.AdminSourceSummary, candidate.SearchVariant));
         }
 
         StatusChangedAtUtc = atUtc;
         UpdatedAtUtc = atUtc;
         _statusHistory.Add(new RequestStatusHistory(
             Id, RequestStatus.NeedsReview, RequestStatus.NeedsReview, actorUserId: null,
-            CleanNote(reason, MaxReasonLength, nameof(reason)), atUtc));
+            SystemReason(reason), atUtc));
     }
 
     /// <summary>
@@ -290,13 +334,13 @@ public sealed class BookRequest
             _reviewCandidates.Add(new RequestReviewCandidate(
                 Id, candidate.RequestFormatId, candidate.ProviderId, candidate.ProviderResultId, candidate.Title,
                 candidate.Author, candidate.Language, candidate.Details, candidate.AdminInspectionUri,
-                candidate.ReleaseName, candidate.TitleIsRequestFallback, nextDisplayOrder + index, atUtc, candidate.AdminSourceSummary));
+                candidate.ReleaseName, candidate.TitleIsRequestFallback, nextDisplayOrder + index, atUtc, candidate.AdminSourceSummary, candidate.SearchVariant));
         }
 
         UpdatedAtUtc = atUtc;
         _statusHistory.Add(new RequestStatusHistory(
             Id, RequestStatus.NeedsReview, RequestStatus.NeedsReview, actorUserId: null,
-            CleanNote(reason, MaxReasonLength, nameof(reason)), atUtc));
+            SystemReason(reason), atUtc));
     }
 
     /// <summary>
@@ -307,7 +351,7 @@ public sealed class BookRequest
     /// acquisition of that specific provider result; this method only clears
     /// review state and reopens the request for automatic processing.
     /// </summary>
-    public RequestReviewCandidate AcceptReviewCandidate(Guid candidateId, Guid? actorUserId, DateTimeOffset atUtc)
+    public RequestReviewCandidate AcceptReviewCandidate(Guid candidateId, Guid? actorUserId, DateTimeOffset atUtc, string? acceptanceReason = null)
     {
         if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
         {
@@ -318,11 +362,16 @@ public sealed class BookRequest
             ?? throw new ArgumentException("That candidate does not belong to this request's review.", nameof(candidateId));
 
         var format = _formats.Single(candidateFormat => candidateFormat.Id == candidate.RequestFormatId);
+        if (QuestionKind is { } kind)
+        {
+            if (QuestionFormatId != format.Id) throw new InvalidOperationException("That copy is not the asked variant.");
+            format.AcceptVariant(kind, candidate.Title);
+        }
         format.AcceptLanguage(candidate.Language);
 
         ReviewCategory = null;
         _reviewCandidates.Clear();
-        TransitionTo(RequestStatus.PendingAcquisition, actorUserId, "The requester accepted a lower-confidence match.", atUtc);
+        TransitionTo(RequestStatus.PendingAcquisition, actorUserId, acceptanceReason ?? "The requester accepted a lower-confidence match.", atUtc);
         return candidate;
     }
 
@@ -354,6 +403,63 @@ public sealed class BookRequest
         TransitionTo(RequestStatus.PendingAcquisition, actorUserId, "The requester chose to keep looking for a better match.", atUtc);
     }
 
+
+    /// <summary>
+    /// A recheck found a copy that needs no answer (AUTOFIND 2c), so the question put to the requesters is withdrawn: the
+    /// stored candidates are dropped and the request returns to automatic acquisition. Only a preference review can be
+    /// withdrawn this way.
+    /// </summary>
+    public void WithdrawPreferenceReviewForAutomaticCandidate(string reason, DateTimeOffset atUtc)
+    {
+        if (Status != RequestStatus.NeedsReview || ReviewCategory != RequestReviewCategory.PreferenceAmbiguity)
+        {
+            throw new InvalidOperationException("Only a preference-ambiguity review can be withdrawn this way.");
+        }
+
+        // TransitionTo clears the category and candidates when it leaves NeedsReview.
+        TransitionTo(RequestStatus.PendingAcquisition, actorUserId: null, reason, atUtc);
+    }
+
+    /// <summary>
+    /// A new copy fetched after the attempt budget was spent passed its checks (AUTOFIND 2c), so the review that asked for a
+    /// librarian is no longer needed. A no-op unless the request is still in a security/identity (or uncategorised) review.
+    /// </summary>
+    public bool WithdrawReviewForSuccessfulAttempt(string reason, DateTimeOffset atUtc)
+    {
+        if (Status != RequestStatus.NeedsReview || RequiresManualFulfillment ||
+            ReviewCategory is not (null or RequestReviewCategory.SecurityOrIdentityFailure))
+        {
+            return false;
+        }
+
+        TransitionTo(RequestStatus.PendingAcquisition, actorUserId: null, reason, atUtc);
+        return true;
+    }
+
+    /// <summary>
+    /// Adds a plain note to the history in any status, without changing the status: how the system records something it did on its
+    /// own (for example removing an unused copy) so the trail explains it.
+    /// </summary>
+    public void AddNote(string note, DateTimeOffset atUtc)
+    {
+        UpdatedAtUtc = atUtc;
+        _statusHistory.Add(new RequestStatusHistory(
+            Id, Status, Status, actorUserId: null, CleanNote(note, MaxReasonLength, nameof(note)), atUtc));
+    }
+
+    /// <summary>Adds a note to the history of a review that stays open, without changing its status or candidates.</summary>
+    public void AddReviewNote(string note, DateTimeOffset atUtc)
+    {
+        if (Status != RequestStatus.NeedsReview)
+        {
+            throw new InvalidOperationException("Only a request under review has a review history to add to.");
+        }
+
+        UpdatedAtUtc = atUtc;
+        _statusHistory.Add(new RequestStatusHistory(
+            Id, RequestStatus.NeedsReview, RequestStatus.NeedsReview, actorUserId: null,
+            CleanNote(note, MaxReasonLength, nameof(note)), atUtc));
+    }
     /// <summary>
     /// Records that unattended acquisition fetched one candidate and it failed
     /// a post-download check, so the next automatic pass advances to the next
@@ -451,6 +557,9 @@ public sealed class BookRequest
             throw new InvalidRequestTransitionException(Status, to);
         }
 
+        // Validated before anything changes, so a rejected reason leaves the request exactly as it was. A person's
+        // reason must fit; a reason the system wrote is trimmed to fit instead (see SystemReason).
+        var note = actorUserId is null ? SystemReason(reason) : CleanNote(reason, MaxReasonLength, nameof(reason));
         var from = Status;
 
         // A NeedsReview review (and any offered candidates) is only ever
@@ -463,6 +572,7 @@ public sealed class BookRequest
         // longer applies.
         if (from == RequestStatus.NeedsReview && to != RequestStatus.NeedsReview)
         {
+            ClearQuestion();
             ReviewCategory = null;
             _reviewCandidates.Clear();
         }
@@ -497,7 +607,7 @@ public sealed class BookRequest
             from,
             to,
             actorUserId,
-            CleanNote(reason, MaxReasonLength, nameof(reason)),
+            note,
             atUtc));
     }
 
@@ -535,6 +645,22 @@ public sealed class BookRequest
     {
         AdminNote = CleanNote(adminNote, MaxAdminNoteLength, nameof(adminNote));
         UpdatedAtUtc = atUtc;
+    }
+
+    /// <summary>
+    /// A reason the system composed (provider failures, review summaries) is trimmed to fit rather than rejected. It
+    /// is often assembled from provider messages of unbounded length; rejecting it threw out of the background pass
+    /// and stopped every request on the lab from advancing.
+    /// </summary>
+    private static string? SystemReason(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= MaxReasonLength ? trimmed : trimmed[..(MaxReasonLength - 1)].TrimEnd() + "…";
     }
 
     private static string? CleanNote(string? value, int maxLength, string parameterName)

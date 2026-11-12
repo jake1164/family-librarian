@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": "synthetic-5",
+  "labelVersion": "owner-reviewed-4",
+  "roles": [
+    {
+      "role": "ArtifactValidationAssessment",
+      "status": "frozen",
+      "calibration": {
+        "identity": {
+          "corpusVersion": "synthetic-5",
+          "labelVersion": "owner-reviewed-4",
+          "schemaVersion": 1,
+          "promptParserRulesScorerIdentity": "c4684d6c4158b75e2735f9c163e791010c29cacc59a172a9b900b29df47ee5a1"
+        },
+        "threshold": {
+          "absoluteFloor": 0.8,
+          "baselineMargin": 0.2,
+          "noiseBand": 0.1
+        },
+        "isFrozen": true,
+        "minimumCases": 40,
+        "minimumValidity": 0.95,
+        "minimumAgreement": 0.9,
+        "noiseBasis": "prior",
+        "measuredRepeatRange": 0
+      },
+      "reason": null
+    },
+    {
+      "role": "ArtifactValidationDecision",
+      "status": "notAssessable",
+      "calibration": null,
+      "reason": "Not assessable under current prompts/contracts; uncalibrated pending production findings."
+    },
+    {
+      "role": "CandidateAmbiguityAssessment",
+      "status": "frozen",
+      "calibration": {
+        "identity": {
+          "corpusVersion": "synthetic-5",
+          "labelVersion": "owner-reviewed-4",
+          "schemaVersion": 1,
+          "promptParserRulesScorerIdentity": "db8f243805393d25fe8bbd20cc3b7ba1169024ef06d09850d209eb557cbb4b42"
+        },
+        "threshold": {
+          "absoluteFloor": 0.8,
+          "baselineMargin": 0.2,
+          "noiseBand": 0.1
+        },
+        "isFrozen": true,
+        "minimumCases": 40,
+        "minimumValidity": 0.95,
+        "minimumAgreement": 0.9,
+        "noiseBasis": "prior",
+        "measuredRepeatRange": 0
+      },
+      "reason": null
+    },
+    {
+      "role": "CandidateTriage",
+      "status": "notScorable",
+      "calibration": null,
+      "reason": "Not scorable; author-variant and tie instructions require a separate production decision."
+    },
+    {
+      "role": "SearchGuidance",
+      "status": "notAssessable",
+      "calibration": null,
+      "reason": "Not assessable under current prompts/contracts; uncalibrated pending production findings."
+    },
+    {
+      "role": "IntentInterpretation",
+      "status": "frozen",
+      "calibration": {
+        "identity": {
+          "corpusVersion": "synthetic-5",
+          "labelVersion": "owner-reviewed-4",
+          "schemaVersion": 1,
+          "promptParserRulesScorerIdentity": "f06486f01e9bd115198879ad4007c7dde75da7b4f7d5b74b25f639ce1a7a4d72"
+        },
+        "threshold": {
+          "absoluteFloor": 0.9,
+          "baselineMargin": 0.2,
+          "noiseBand": 0.1
+        },
+        "isFrozen": true,
+        "minimumCases": 40,
+        "minimumValidity": 0.95,
+        "minimumAgreement": 0.9,
+        "noiseBasis": "prior",
+        "measuredRepeatRange": 0
+      },
+      "reason": null
+    }
+  ]
+}

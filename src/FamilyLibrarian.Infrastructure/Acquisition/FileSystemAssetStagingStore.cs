@@ -100,6 +100,45 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
         }
     }
 
+    public StorageVolumeInfo GetVolumeInfo()
+    {
+        try
+        {
+            Directory.CreateDirectory(_options.RootPath);
+            var drive = new DriveInfo(Path.GetFullPath(_options.RootPath));
+            return new StorageVolumeInfo(drive.AvailableFreeSpace, drive.TotalSize);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return new StorageVolumeInfo(null, null);
+        }
+    }
+
+    /// <summary>
+    /// Lists the files directly in a zone folder. Subfolders are ignored (the store never creates any), a file that disappears while
+    /// listing is skipped, and nothing is opened. A missing zone folder is an empty zone.
+    /// </summary>
+    public IReadOnlyList<StoredFileInfo> ListStoredFiles(MediaAssetStorageState zone)
+    {
+        var directory = ZoneDirectory(zone);
+        if (!Directory.Exists(directory)) return [];
+        var files = new List<StoredFileInfo>();
+        foreach (var path in Directory.EnumerateFiles(directory))
+        {
+            try
+            {
+                var info = new FileInfo(path);
+                files.Add(new StoredFileInfo(info.Name, info.Length, new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero)));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Removed or locked while listing: not part of this snapshot.
+            }
+        }
+
+        return files;
+    }
+
     private static void TryDelete(string path)
     {
         try { File.Delete(path); }
@@ -164,7 +203,14 @@ public sealed class FileSystemAssetStagingStore(IOptions<StorageOptions> options
         // File.Delete is intentionally idempotent. A process crash after the
         // bytes are removed but before the record is saved must be recoverable
         // by repeating the same deletion operation.
-        File.Delete(Path.Combine(ZoneDirectory(zone), storedFilename));
+        // File.Delete ignores a missing file but throws when the folder itself is missing (nothing was ever stored in this zone, or it was
+        // wiped by a restore). Both mean the same thing here: there is nothing to delete.
+        var path = Path.Combine(ZoneDirectory(zone), storedFilename);
+        if (Directory.Exists(ZoneDirectory(zone)))
+        {
+            File.Delete(path);
+        }
+
         return Task.CompletedTask;
     }
 

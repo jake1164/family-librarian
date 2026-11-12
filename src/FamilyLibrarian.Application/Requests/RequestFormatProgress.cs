@@ -20,6 +20,7 @@ public sealed record RequestFormatProgressView(string Code, string Description);
 /// </summary>
 public static class RequestFormatProgress
 {
+    public static readonly RequestFormatProgressView QuestionOpen = new("AcquisitionQuestionOpen", "A question about this copy is waiting for an answer.");
     /// <param name="providerJobState">
     /// The active <see cref="ProviderAcquisitionJob"/>'s lifecycle
     /// state, when one exists for this format and <paramref name="assetState"/>
@@ -36,11 +37,23 @@ public static class RequestFormatProgress
         AudiobookshelfDeliveryStatus? deliveryStatus,
         ProviderAcquisitionJobLifecycleState? providerJobState = null,
         string? providerJobPhase = null,
-        bool providerJobAdvancingToNextCandidate = false)
+        bool providerJobAdvancingToNextCandidate = false,
+        bool assetRuledOut = false,
+        bool requestInReview = false)
     {
         if (assetState is null && providerJobState is not null)
         {
-            return DescribeProviderJob(providerJobState.Value, providerJobPhase, providerJobAdvancingToNextCandidate);
+            return DescribeProviderJob(providerJobState.Value, providerJobPhase, providerJobAdvancingToNextCandidate, requestInReview);
+        }
+
+        // A held copy the search has already ruled out needs no identification: either the search is still looking,
+        // or it ran out of copies and a librarian has to choose a source. On the lab a German copy ruled out for its
+        // language read "needs librarian identification", which sent the reader to the wrong task.
+        if (assetState == MediaAssetStorageState.Unmatched && assetRuledOut)
+        {
+            return requestInReview
+                ? Stage("NoAcceptableCopy", "No acceptable copy has been found yet; a librarian is choosing a source.")
+                : Retrying;
         }
 
         return assetState switch
@@ -84,7 +97,7 @@ public static class RequestFormatProgress
     /// ordinary in-progress work.
     /// </summary>
     private static RequestFormatProgressView DescribeProviderJob(
-        ProviderAcquisitionJobLifecycleState state, string? phase, bool advancingToNextCandidate) => state switch
+        ProviderAcquisitionJobLifecycleState state, string? phase, bool advancingToNextCandidate, bool requestInReview) => state switch
     {
         ProviderAcquisitionJobLifecycleState.Running or ProviderAcquisitionJobLifecycleState.Queued
             when ProviderJobPause.IsPaused(phase) => Stage(
@@ -95,9 +108,12 @@ public static class RequestFormatProgress
         // the librarian's attention" for the minutes between the failure and
         // the next attempt -- an alarm about a step that was working as
         // designed. Generic on purpose: this view is also read by requesters.
-        ProviderAcquisitionJobLifecycleState.Failed when advancingToNextCandidate => Stage(
-            "AcquisitionRetrying",
-            "That copy didn't pass its checks. Trying the next best copy; nothing needs doing."),
+        ProviderAcquisitionJobLifecycleState.Failed when advancingToNextCandidate => Retrying,
+        // The request has already been handed to a librarian to choose a source, so a red "failed, needs attention" on
+        // the copy that led there tells them nothing new (lab: an ebook whose first copy was refused showed it while the
+        // request already waited for a choice).
+        ProviderAcquisitionJobLifecycleState.Failed when requestInReview => Stage(
+            "NoAcceptableCopy", "No acceptable copy has been found yet; a librarian is choosing a source."),
         ProviderAcquisitionJobLifecycleState.Waiting => Stage(
             "AwaitingProviderAction",
             "A librarian is working with the provider to continue this request."),
@@ -108,6 +124,12 @@ public static class RequestFormatProgress
             "AcquisitionInProgress",
             "Fetching from the external provider.")
     };
+
+    // Accurate whether the next copy is being fetched now or the sources are asked again later: "trying the next best
+    // copy" read as a download in progress while the format was really waiting for tomorrow's check.
+    private static readonly RequestFormatProgressView Retrying = Stage(
+        "AcquisitionRetrying",
+        "That copy didn't pass its checks. Still looking for another copy; nothing needs doing.");
 
     private static RequestFormatProgressView DescribeProcessing(SecurityEvaluationStatus? securityStatus) =>
         securityStatus switch

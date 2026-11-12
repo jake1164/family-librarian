@@ -7,6 +7,7 @@
 @inject ISnackbar Snackbar
 
 <PageTitle>Authentication | Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@(draft.HasChanges("settings", SettingsFields) || !string.IsNullOrEmpty(clientSecretDraft))" />
 
 <MudText Typo="Typo.h4" GutterBottom="true">Authentication</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
@@ -44,18 +45,18 @@ else
         <MudDivider Class="my-3" />
 
         <MudStack Spacing="3">
-            <MudTextField T="string" Label="Button label" @bind-Value="displayName" Disabled="@busy"
+            <MudTextField Immediate="true" T="string" Label="Button label" @bind-Value="displayName" Disabled="@busy"
                           HelperText="Shown on the sign-in page (e.g. Sign in with Authentik)." />
-            <MudTextField T="string" Label="Issuer (Authority) URL" @bind-Value="authority" Disabled="@busy"
+            <MudTextField Immediate="true" T="string" Label="Issuer (Authority) URL" @bind-Value="authority" Disabled="@busy"
                           HelperText="Everything else — authorize, token, userinfo, JWKS — is resolved from here automatically." />
-            <MudTextField T="string" Label="Client ID" @bind-Value="clientId" Disabled="@busy" />
-            <MudTextField T="string" Label="Scopes" @bind-Value="scopes" Disabled="@busy" />
+            <MudTextField Immediate="true" T="string" Label="Client ID" @bind-Value="clientId" Disabled="@busy" />
+            <MudTextField Immediate="true" T="string" Label="Scopes" @bind-Value="scopes" Disabled="@busy" />
 
             <MudStack Row="true" Spacing="3">
-                <MudTextField T="string" Label="Match claim" @bind-Value="matchClaimName" Disabled="@busy"
+                <MudTextField Immediate="true" T="string" Label="Match claim" @bind-Value="matchClaimName" Disabled="@busy"
                               HelperText="Links a sign-in to an existing account by this claim." Class="flex-grow-1" />
-                <MudTextField T="string" Label="Admin claim name" @bind-Value="adminClaimName" Disabled="@busy" Class="flex-grow-1" />
-                <MudTextField T="string" Label="Admin claim values" @bind-Value="adminClaimValues" Disabled="@busy"
+                <MudTextField Immediate="true" T="string" Label="Admin claim name" @bind-Value="adminClaimName" Disabled="@busy" Class="flex-grow-1" />
+                <MudTextField Immediate="true" T="string" Label="Admin claim values" @bind-Value="adminClaimValues" Disabled="@busy"
                               HelperText="Comma-separated. Any match grants the Admin role." Class="flex-grow-1" />
             </MudStack>
         </MudStack>
@@ -68,7 +69,7 @@ else
                 : "No secret is stored yet.")
         </MudText>
         <MudStack Row="true" Spacing="2">
-            <MudTextField T="string" @bind-Value="clientSecretDraft" Label="Replace client secret"
+            <MudTextField Immediate="true" T="string" @bind-Value="clientSecretDraft" Label="Replace client secret"
                           InputType="InputType.Password" Disabled="@busy" Class="flex-grow-1" />
             <MudButton Variant="Variant.Filled"
                        Disabled="@(busy || string.IsNullOrWhiteSpace(clientSecretDraft))"
@@ -136,6 +137,8 @@ else
 }
 
 @code {
+    private readonly SettingsSnapshot draft = new();
+    private object SettingsFields => new { displayName, authority, clientId, scopes, matchClaimName, adminClaimName, adminClaimValues };
     private OidcSettingsResponse? settings;
     private bool loadFailed;
     private bool busy;
@@ -180,6 +183,7 @@ else
         matchClaimName = source.MatchClaimName;
         adminClaimName = source.AdminClaimName;
         adminClaimValues = source.AdminClaimValues;
+        draft.Accept("settings", SettingsFields);
     }
 
     private Task SetEnabledAsync(bool enabled) => RunAsync(() => OidcApi.SetEnabledAsync(enabled));

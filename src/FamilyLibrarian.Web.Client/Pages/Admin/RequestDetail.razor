@@ -128,8 +128,8 @@
         <MudPaper Outlined="true" Class="pa-4">
             <MudText Typo="Typo.h6" Class="mb-1">Provider activity</MudText>
             <MudText Typo="Typo.body2" Class="mb-2">
-                Every automatic lookup is recorded here. Scheduled external sources only report candidates for review;
-                they never download a file without a librarian action.
+                Every automatic lookup and download is recorded here, newest first, for each format. Earlier steps show
+                as finished once a later step replaces them.
             </MudText>
             @if (!string.IsNullOrWhiteSpace(providerActivityError))
             {
@@ -141,25 +141,43 @@
             }
             else
             {
-                <MudList T="string" Dense="true">
-                    @foreach (var attempt in providerAttempts)
-                    {
-                        <MudListItem T="string">
-                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.ProviderId</MudChip>
-                                <ProviderAttemptChip Outcome="@attempt.Outcome" />
-                            </MudStack>
-                            <MudText Typo="Typo.body2">@attempt.Summary</MudText>
-                            <MudText Typo="Typo.caption">
-                                @attempt.AttemptedAtUtc.ToLocalTime().ToString("g")
-                                @if (attempt.NextEligibleCheckAtUtc is not null)
-                                {
-                                    <span> · Next eligible @attempt.NextEligibleCheckAtUtc.Value.ToLocalTime().ToString("g")</span>
-                                }
-                            </MudText>
-                        </MudListItem>
-                    }
-                </MudList>
+                @foreach (var group in AttemptGroups())
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap" Class="mt-2">
+                        @if (group.Format is not null)
+                        {
+                            <MediaTypeChip MediaType="@group.Format.MediaType" />
+                            <MudText Typo="Typo.body2"><strong>@FormatSummary(group.Format, group.Attempts)</strong></MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body2"><strong>Other activity</strong></MudText>
+                        }
+                    </MudStack>
+                    <MudList T="string" Dense="true">
+                        @foreach (var attempt in group.Attempts)
+                        {
+                            <MudListItem T="string">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Wrap="Wrap.Wrap">
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@attempt.ProviderId</MudChip>
+                                    <ProviderAttemptChip Outcome="@(attempt.DisplayOutcome ?? attempt.Outcome)" />
+                                </MudStack>
+                                <MudText Typo="Typo.body2">@attempt.Summary</MudText>
+                                <MudText Typo="Typo.caption">
+                                    @attempt.AttemptedAtUtc.ToLocalTime().ToString("g")
+                                    @if (attempt.NextEligibleCheckAtUtc is not null)
+                                    {
+                                        <span> · Next eligible @attempt.NextEligibleCheckAtUtc.Value.ToLocalTime().ToString("g")</span>
+                                    }
+                                </MudText>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+                @foreach (var line in searchVariants)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block">@line.Summary</MudText>
+                }
             }
 
             @if (externalProviders.Count > 0)
@@ -223,6 +241,7 @@
                                     @DescribeDebugCandidate(candidate)
                                 </MudText>
                                 <AdminCandidateIdentityEvidence Evidence="candidate.IdentityEvidence" />
+                                <AdminSemanticFinding Finding="candidate.SemanticFinding" />
                                 @if (!string.IsNullOrWhiteSpace(candidate.ReleaseName))
                                 {
                                     <MudText Typo="Typo.caption" Style="font-family: var(--mud-typography-monospace-family, monospace); word-break: break-all;">
@@ -281,32 +300,11 @@
                     {
                         <MudPaper Outlined="true" Class="pa-3">
                             <MudStack Spacing="1">
-                                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
-                                    <MudText Typo="Typo.subtitle1">@AdminCandidateLabel(candidate)</MudText>
-                                    @if (candidate.TitleIsRequestFallback)
-                                    {
-                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
-                                            @(string.IsNullOrWhiteSpace(candidate.ReleaseName)
-                                                ? "Source named no title — showing the requested one"
-                                                : "Source supplied a release name; no separate work title")
-                                        </MudChip>
-                                    }
-                                    else if (!CandidateMatchesRequest(candidate))
-                                    {
-                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
-                                            Does not match "@request.Request.WorkTitle"
-                                        </MudChip>
-                                    }
-                                </MudStack>
+                                <AdminReviewCandidateIdentity Candidate="@candidate"
+                                                              IsProductQuestion="@(request.Request.NeedsReview?.QuestionKind is not null)" />
                                 @if (!string.IsNullOrWhiteSpace(candidate.Details))
                                 {
                                     <MudText Typo="Typo.body2">@candidate.Details</MudText>
-                                }
-                                @if (!string.IsNullOrWhiteSpace(candidate.ReleaseName))
-                                {
-                                    <MudText Typo="Typo.caption" Style="font-family: var(--mud-typography-monospace-family, monospace); word-break: break-all;">
-                                        Release: @candidate.ReleaseName
-                                    </MudText>
                                 }
                                 <AdminCandidateOrigin ProviderName="@AdminProviderName(candidate)"
                                                       ProviderResultId="@candidate.ProviderResultId"
@@ -442,9 +440,8 @@
     private IEnumerable<AdminActiveAcquisitionResponse> ActiveForRequest =>
         ActiveAcquisitions.Where(activity => activity.RequestId == RequestId);
 
-    private string? RequestLabel => request?.Request.Status == "PendingAcquisition"
-        ? ActiveForRequest.Any() ? "Working" : "Awaiting next check"
-        : null;
+    private string? RequestLabel =>
+        request is null ? null : RequestProgressLabels.For(request.Request, ActiveForRequest.Any());
 
     private bool HasReviewCandidates(Guid formatId) =>
         request?.Request.Status == "NeedsReview" &&
@@ -460,6 +457,51 @@
             : waitingInteraction?.RequestFormatId == format.FormatId ? "Provider action needed"
             : format.ProgressDescription ?? (format.Status == "Requested" ? "Awaiting next check" : null);
 
+    private sealed record AttemptGroup(BookRequestFormatResponse? Format, IReadOnlyList<ProviderAttemptResponse> Attempts);
+
+    /// <summary>The ledger split by requested format, newest first inside each; anything for an unknown format goes last.</summary>
+    private IEnumerable<AttemptGroup> AttemptGroups()
+    {
+        var formats = request?.Request.Formats ?? [];
+        foreach (var format in formats)
+        {
+            var rows = providerAttempts.Where(attempt => attempt.RequestFormatId == format.FormatId)
+                .OrderByDescending(attempt => attempt.AttemptedAtUtc).ToArray();
+            if (rows.Length > 0)
+            {
+                yield return new AttemptGroup(format, rows);
+            }
+        }
+
+        var known = formats.Select(format => format.FormatId).ToHashSet();
+        var other = providerAttempts.Where(attempt => !known.Contains(attempt.RequestFormatId))
+            .OrderByDescending(attempt => attempt.AttemptedAtUtc).ToArray();
+        if (other.Length > 0)
+        {
+            yield return new AttemptGroup(null, other);
+        }
+    }
+
+    /// <summary>
+    /// One plain line for a format: where it stands now and when it is next checked, from data the page already has.
+    /// </summary>
+    private string FormatSummary(BookRequestFormatResponse format, IReadOnlyList<ProviderAttemptResponse> rows)
+    {
+        if (format.Status == "Available")
+        {
+            return "In the library";
+        }
+
+        var now = FormatDescription(format) ?? format.Status;
+        var next = rows
+            .GroupBy(row => row.ProviderId)
+            .Select(group => group.First().NextEligibleCheckAtUtc)
+            .Where(time => time is not null && time > DateTimeOffset.UtcNow)
+            .OrderBy(time => time)
+            .FirstOrDefault();
+        return next is { } due ? $"{now}. Next check {due.ToLocalTime():g}" : now;
+    }
+
     private string FormatName(Guid formatId) =>
         request?.Request.Formats.FirstOrDefault(format => format.FormatId == formatId)?.MediaType ?? "format";
 
@@ -469,6 +511,7 @@
     private AdminBookRequestResponse? request;
     private WorkFulfillmentOptionsResponse? fulfillment;
     private IReadOnlyList<ProviderAttemptResponse> providerAttempts = [];
+    private IReadOnlyList<SearchVariantSummaryResponse> searchVariants = [];
     private ProviderInteractionResponse? waitingInteraction;
     private string? adminNote;
     private string? transitionReason;
@@ -513,6 +556,7 @@
         {
             fulfillment = null;
             providerAttempts = [];
+            searchVariants = [];
             waitingInteraction = null;
             request = null;
         }
@@ -543,6 +587,9 @@
             var attempts = await Requests.GetProviderAttemptsAsync(loadingRequestId);
             if (loadingRequestId != RequestId) return;
             providerAttempts = attempts;
+            // How each source was searched is a footnote to the activity list; losing it must not hide the list.
+            try { searchVariants = await Requests.GetSearchVariantsAsync(loadingRequestId); }
+            catch (HttpRequestException) { searchVariants = []; }
         }
         catch (HttpRequestException)
         {
@@ -854,16 +901,6 @@
             isBusy = false;
         }
     }
-
-    private static string AdminCandidateLabel(AdminRequestReviewCandidateResponse candidate) =>
-        (candidate.Author is { } author
-            ? string.IsNullOrWhiteSpace(candidate.Language)
-                ? $"{candidate.Title} by {author}"
-                : $"{candidate.Title} by {author} ({candidate.Language})"
-            : string.IsNullOrWhiteSpace(candidate.Language)
-                ? candidate.Title
-                : $"{candidate.Title} ({candidate.Language})") +
-        (string.IsNullOrWhiteSpace(candidate.Details) ? string.Empty : $" — {candidate.Details}");
 
     private static string AdminProviderName(AdminRequestReviewCandidateResponse candidate) =>
         candidate.ProviderId.Equals("gutendex", StringComparison.OrdinalIgnoreCase)

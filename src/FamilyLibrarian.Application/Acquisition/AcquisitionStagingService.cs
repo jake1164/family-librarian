@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Concurrency;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
@@ -34,6 +35,12 @@ public sealed class AcquisitionStagingService(
     IAuditWriter audit,
     IClock clock)
 {
+    // The same copy can arrive twice at once -- the hosted worker and an administrator's direct acquisition both
+    // fetching one book. The duplicate-content check below only sees assets already saved, so without this the two
+    // passes both succeed and the format gets two copies (and, for an audiobook, two bundles published). Staging is
+    // serialized per format so the second pass runs after the first has saved and is refused as a duplicate.
+    private static readonly KeyedAsyncLock<Guid> FormatStagingLock = new();
+
     public async Task<ManualImportResult> StageAsync(
         BookRequest request,
         RequestFormat format,
@@ -43,8 +50,10 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
+        AssetProvenance provenance,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(provenance);
         var extension = Path.GetExtension(originalFilename);
         if (string.IsNullOrEmpty(extension) || !policy.IsExtensionAllowed(format.MediaType, extension))
         {
@@ -61,6 +70,8 @@ public sealed class AcquisitionStagingService(
                 cancellationToken);
             return ManualImportResult.WaitingForSecurityScanner();
         }
+
+        using var formatLock = await FormatStagingLock.AcquireAsync(format.Id, cancellationToken);
 
         var (staged, error) = await WriteAndValidateContentAsync(
             format, content, originalFilename, extension, cancellationToken);
@@ -86,7 +97,10 @@ public sealed class AcquisitionStagingService(
             staged.DetectedMimeType,
             format.Id,
             candidate.Id,
-            now);
+            now,
+            identityPreConfirmed: provenance.IdentityPreConfirmed,
+            origin: provenance.Origin,
+            originUserId: provenance.UserId);
 
         acquisitions.AddJob(job);
         acquisitions.AddAsset(asset);
@@ -130,11 +144,13 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
+        AssetProvenance provenance,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(provenance);
         return await StageBundleCoreAsync(
             request, format, ToAsyncEnumerable(files), providerId, auditAction,
-            candidateTitle, candidateAuthor, providerJob: null, cancellationToken);
+            candidateTitle, candidateAuthor, provenance, providerJob: null, cancellationToken);
     }
 
     public Task<ManualImportResult> StageExternalBundleAsync(
@@ -148,7 +164,9 @@ public sealed class AcquisitionStagingService(
         AudiobookPartSetSlot? partSetSlot = null) =>
         StageBundleCoreAsync(
             request, format, files, providerId, auditAction,
-            candidateTitle: null, candidateAuthor: null, providerJob, cancellationToken, partSetSlot);
+            candidateTitle: null, candidateAuthor: null,
+            // The external job's own answer, never a silent default (M1-4b), and never a privileged origin (M1-5a).
+            provenance: AssetProvenance.ExternalProvider(providerJob.IdentityPreConfirmed), providerJob, cancellationToken, partSetSlot);
 
     private async Task<ManualImportResult> StageBundleCoreAsync(
         BookRequest request,
@@ -158,6 +176,7 @@ public sealed class AcquisitionStagingService(
         string auditAction,
         string? candidateTitle,
         string? candidateAuthor,
+        AssetProvenance provenance,
         ProviderAcquisitionJob? providerJob,
         CancellationToken cancellationToken,
         AudiobookPartSetSlot? partSetSlot = null)
@@ -172,6 +191,8 @@ public sealed class AcquisitionStagingService(
                 cancellationToken);
             return ManualImportResult.WaitingForSecurityScanner();
         }
+
+        using var formatLock = await FormatStagingLock.AcquireAsync(format.Id, cancellationToken);
 
         var quarantined = new List<StagedFile>();
         var staged = new List<StagedFile>();
@@ -255,11 +276,11 @@ public sealed class AcquisitionStagingService(
                 bundleId: bundleId,
                 bundleSequence: partSetSlot?.Number ?? (bundleId is null ? null : index + 1),
                 bundleTrackCount: partSetSlot?.Total ?? (bundleId is null ? null : staged.Count),
-                // Default true (manual import, and StageBundleAsync's other
-                // caller -- a built-in provider, which verifies title/author
-                // itself before ever offering a candidate) is correct as-is;
-                // only an external provider's job carries a real answer.
-                identityPreConfirmed: providerJob?.IdentityPreConfirmed ?? true);
+                // Explicit at every creation site (M1-4b): a built-in provider passes true, an
+                // external provider passes its job's value, and nothing defaults to attested.
+                identityPreConfirmed: provenance.IdentityPreConfirmed,
+                origin: provenance.Origin,
+                originUserId: provenance.UserId);
 
             acquisitions.AddAsset(asset);
             if (providerJob is not null && acceptedFiles[index].ExternalOutputId is { } outputId)

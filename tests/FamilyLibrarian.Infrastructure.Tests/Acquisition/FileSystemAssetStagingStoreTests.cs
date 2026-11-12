@@ -166,6 +166,17 @@ public sealed class FileSystemAssetStagingStoreTests
         Assert.IsFalse(File.Exists(Path.Combine(_root, "quarantine", staged.StoredFilename)));
     }
 
+    [TestMethod]
+    public async Task DeleteAsyncIsAlsoHarmlessWhenTheWholeZoneFolderIsMissing()
+    {
+        // Nothing was ever stored in this zone, or a restore wiped it: there is nothing to delete, and clean-up must not fail on it.
+        var store = CreateStore();
+
+        await store.DeleteAsync(MediaAssetStorageState.Rejected, "never-existed.epub", CancellationToken.None);
+
+        Assert.IsFalse(Directory.Exists(Path.Combine(_root, "rejected")));
+    }
+
     private FileSystemAssetStagingStore CreateStore() =>
         new(Options.Create(new StorageOptions { RootPath = _root }));
 

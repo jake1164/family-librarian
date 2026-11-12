@@ -158,8 +158,7 @@ public sealed class DeterministicBookMatcher : IBookMatcher
     /// Known, cheap textual markers of a different product than the one
     /// requested, even when the requested title appears in it as a
     /// substring — e.g. "Summary of Debt of Honor" or "Debt of Honor /
-    /// Executive Orders". Not exhaustive; see
-    /// docs/family-librarian-book-matching-design-findings.md §5/§6/§8 — a
+    /// Executive Orders". Not exhaustive. A
     /// title-substring match is grounds for further comparison, not
     /// automatic identity, and a derivative or combined-work title is
     /// negative evidence even when otherwise unambiguous.
@@ -234,6 +233,8 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         return trimmed;
     }
 
+    private static bool IsApostrophe(char character) => character is '\'' or '’' or '‘' or 'ʼ';
+
     internal static string NormalizeWords(string value)
     {
         var normalized = value.Normalize(NormalizationForm.FormKC);
@@ -241,7 +242,12 @@ public sealed class DeterministicBookMatcher : IBookMatcher
         var previousWasWhitespace = true;
         foreach (var character in normalized)
         {
-            if (char.IsLetterOrDigit(character))
+            if (IsApostrophe(character))
+            {
+                // "Traitor’s" and release-style "Traitors" are the same word; an apostrophe joins, it never splits.
+                // Checked first because U+02BC is a letter to char.IsLetterOrDigit.
+            }
+            else if (char.IsLetterOrDigit(character))
             {
                 builder.Append(character);
                 previousWasWhitespace = false;
@@ -260,7 +266,7 @@ public sealed class DeterministicBookMatcher : IBookMatcher
     {
         var tokens = new HashSet<string>(StringComparer.Ordinal);
         var token = new StringBuilder();
-        foreach (var character in value.Normalize(NormalizationForm.FormKC))
+        foreach (var character in AuthorNameForm.Canonical(value).Normalize(NormalizationForm.FormKC))
         {
             if (char.IsLetterOrDigit(character))
             {

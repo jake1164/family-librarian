@@ -1,5 +1,6 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Catalog;
+using FamilyLibrarian.Application.Concurrency;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
@@ -7,6 +8,7 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Providers;
 using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Application.Acquisition;
@@ -39,6 +41,8 @@ public sealed class DirectAcquisitionService(
     IClock clock,
     ActiveAcquisitionTracker activityTracker) : IAudiobookPartSetMemberAcquirer
 {
+    private static readonly KeyedAsyncLock<Guid> ExternalSubmissionLock = new();
+
     public Task<ManualImportResult> AcquireMemberAsync(
         Guid requestId,
         Guid requestFormatId,
@@ -59,6 +63,10 @@ public sealed class DirectAcquisitionService(
     /// (DI-registered) <see cref="IDirectAcquisitionProvider"/> such as
     /// Gutenberg -- those are FL-vetted, not arbitrary third-party code.
     /// </param>
+    /// <param name="searchVariant">
+    /// The search variant that found the candidate (recheck, or a review pick that stored it). Null re-derives by the base
+    /// search and then walks the planned variants, so a candidate stored without a key is still found.
+    /// </param>
     /// <param name="allowDownloadTimeDrmValidation">
     /// Internal scheduled-recheck path only. It permits a Safe, strict-match
     /// candidate whose *metadata* DRM state is unknown to submit one provider
@@ -75,7 +83,11 @@ public sealed class DirectAcquisitionService(
         bool confirmLowConfidenceMatch = false,
         bool allowDownloadTimeDrmValidation = false,
         bool isAutomaticAcquisition = false,
-        AudiobookPartSetMember? partSet = null)
+        AudiobookPartSetMember? partSet = null,
+        SearchVariantRef? searchVariant = null,
+        PeerSizeEvidence? peerSizeEvidence = null,
+        SemanticAssessment.CandidateTriageAuthorization? triageAuthorization = null,
+        bool allowAdditionalCopy = false)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
@@ -166,13 +178,17 @@ public sealed class DirectAcquisitionService(
                     await using var content = files[0].Content;
                     stagedResult = await staging.StageAsync(
                         request, format, content, files[0].Filename, providerId, AuditActions.DirectAcquisitionStaged,
-                        candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
+                        candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor,
+                        // Built-in source attestation: Gutenberg/LibriVox verify title/author with FL's own
+                        // matcher before offering a candidate. A statement about the source, not the file.
+                        provenance: AssetProvenance.BuiltInProvider(), cancellationToken);
                 }
                 else
                 {
                     stagedResult = await staging.StageBundleAsync(
                         request, format, files, providerId, AuditActions.DirectAcquisitionStaged,
-                        candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor, cancellationToken);
+                        candidateTitle: work?.Title, candidateAuthor: work?.PrimaryAuthor,
+                        provenance: AssetProvenance.BuiltInProvider(), cancellationToken);
                 }
             }
             finally
@@ -197,6 +213,12 @@ public sealed class DirectAcquisitionService(
             return ManualImportResult.Invalid("That provider is not available.");
         }
 
+        if (isAutomaticAcquisition && !confirmLowConfidenceMatch &&
+            externalProvider.EffectiveConfidence(format.MediaType) == ProviderConfidenceLevel.SuggestOnly)
+        {
+            return ManualImportResult.LowConfidenceMatchConfirmationRequired();
+        }
+
         if (ExternalCandidateAvailabilityChecker.IsKnownSearchUnavailable(externalProvider))
         {
             return ManualImportResult.Invalid(
@@ -218,23 +240,68 @@ public sealed class DirectAcquisitionService(
         // refusing a fetch the retry loop had already decided on.
         var exclusions = Providers.ExternalCandidateExclusions.From(
             request.DeclinedCandidates, providerId, format.Id, exceptResultId: providerResultId);
+        if (isAutomaticAcquisition && triageAuthorization is not null)
+            exclusions = triageAuthorization.ApplyExclusions(requestId, requestFormatId, providerId, providerResultId, exclusions);
 
+        // With the variant that found the candidate, re-run exactly that search. Without one (a review pick stored
+        // before the key existed) run the base search and then walk the planned variants in order until the candidate
+        // turns up. Either way the options are verified against the requested work, never the variant.
         IReadOnlyList<FulfillmentOption> externalOptions;
+        FulfillmentOption? externalOption;
         try
         {
+            var foundVariant = searchVariant ?? SearchVariantPlanner.BaseVariant(identity).Ref;
             externalOptions = await externalCandidateChecker.FindForProviderAsync(
-                externalProvider, identity, format.MediaType, cancellationToken, exclusions);
+                externalProvider, identity, format.MediaType, cancellationToken, exclusions, searchVariant);
+            externalOption = FindOption(externalOptions, providerResultId);
+            if (externalOption is null && searchVariant is null)
+            {
+                foreach (var planned in SearchVariantPlanner.Plan(identity, format.MediaType).Skip(1))
+                {
+                    externalOptions = await externalCandidateChecker.FindForProviderAsync(
+                        externalProvider, identity, format.MediaType, cancellationToken, exclusions, planned.Ref);
+                    externalOption = FindOption(externalOptions, providerResultId);
+                    if (externalOption is not null)
+                    {
+                        foundVariant = planned.Ref;
+                        break;
+                    }
+                }
+            }
+
+            if (isAutomaticAcquisition && partSet is null && externalOption is not null &&
+                !CandidateConfidence.Allows(externalProvider.EffectiveConfidence(format.MediaType), CandidateConfidence.Classify(externalOption)))
+            {
+                // A pool-level decision may depend on other variants. Rebuild that evidence
+                // with the same deduplication, rather than treating one repeated query as the pool.
+                var pool = new ExternalCandidatePool(format.MediaType);
+                if (foundVariant.Kind == SearchVariantKind.AiSuggestion) pool.Merge(externalOptions, foundVariant);
+                foreach (var planned in SearchVariantPlanner.Plan(identity, format.MediaType))
+                    pool.Merge(planned.Ref == foundVariant ? externalOptions :
+                        await externalCandidateChecker.SearchVariantAsync(
+                            externalProvider, identity, format.MediaType, planned, cancellationToken), planned.Ref);
+                externalOptions = ExternalCandidateAvailabilityChecker.SelectOneStrictCandidate(pool.Options, format.MediaType, exclusions);
+                externalOption = FindOption(externalOptions, providerResultId);
+            }
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
             return ManualImportResult.Invalid($"The provider could not be reached: {exception.Message}");
         }
 
-        var externalOption = externalOptions.FirstOrDefault(
-            candidateOption => string.Equals(candidateOption.ProviderResultId, providerResultId, StringComparison.Ordinal));
         if (externalOption is null)
         {
             return ManualImportResult.Invalid("That option is no longer available.");
+        }
+
+        if (confirmLowConfidenceMatch && format.AcceptedVariantKind is { } acceptedKind)
+        {
+            var freshTitle = string.IsNullOrWhiteSpace(externalOption.Title) ? work?.Title ?? string.Empty : externalOption.Title;
+            if (AcquisitionQuestionPolicy.KindOf(identity, externalOption, externalProvider.EffectiveConfidence(format.MediaType)) != acceptedKind ||
+                acceptedKind == AcquisitionQuestionKind.OtherLanguageOnly &&
+                    (string.IsNullOrWhiteSpace(externalOption.Language) || !LanguageAcceptance.IsAcceptedOrUnspecified(externalOption.Language, format.AcceptedLanguage)) ||
+                !string.Equals(format.AcceptedVariantDetail, freshTitle[..Math.Min(freshTitle.Length, 256)], StringComparison.Ordinal))
+                return ManualImportResult.Invalid("That copy no longer matches the variant you accepted. It needs a new review.");
         }
 
         // A part of an automatic set is only ever fetched as one member of a
@@ -245,7 +312,7 @@ public sealed class DirectAcquisitionService(
         if (partSet is not null)
         {
             var selection = format.MediaType == RequestMediaType.Audiobook
-                ? AudiobookPartSetSelector.TrySelect(externalOptions)
+                ? AudiobookPartSetSelector.TrySelect(externalOptions, externalProvider.EffectiveConfidence(format.MediaType))
                 : null;
             if (selection is null ||
                 selection.Total != partSet.Total ||
@@ -260,8 +327,30 @@ public sealed class DirectAcquisitionService(
 
         // (A validated set member is exempt: the selector above already required
         // each part to carry strict or strong-author support.)
+        var needsIdentityConfirmation = externalOption.MatchBasis is not
+            (BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle);
+        if (triageAuthorization is not null && (!isAutomaticAcquisition ||
+            !triageAuthorization.IsCurrentFor(requestId, requestFormatId, externalOption, externalProvider.EffectiveConfidence(format.MediaType))))
+            return ManualImportResult.LowConfidenceMatchConfirmationRequired();
+        if (isAutomaticAcquisition && partSet is null)
+        {
+            var level = externalProvider.EffectiveConfidence(format.MediaType);
+            var allowed = CandidateConfidence.Allows(level, CandidateConfidence.Classify(externalOption));
+            allowed |= triageAuthorization?.AllowsAuthorVariant(requestId, requestFormatId, externalOption, level) == true &&
+                SemanticAssessment.CandidateTriageRules.CanAuthorVariantLead(externalOption, externalOptions, level);
+            if (!allowed)
+            {
+                // Re-prove pool-level confidence from fresh source evidence. The caller's
+                // selected id alone cannot approve changed titles, authors or conditions.
+                var sameWork = SameWorkCandidateSelector.TrySelect(
+                    externalOptions.Where(option => !exclusions.Excludes(option)).ToArray(), identity, format.MediaType, level);
+                allowed = sameWork is not null && CandidateConfidence.Allows(level, sameWork.Tier) &&
+                    string.Equals(sameWork.Winner.ProviderResultId, providerResultId, StringComparison.Ordinal);
+            }
+            needsIdentityConfirmation = !allowed;
+        }
         if (partSet is null &&
-            externalOption.MatchBasis is not (BookMatchBasis.Identifier or BookMatchBasis.StrictTitleAuthor or BookMatchBasis.StrictTitle) &&
+            needsIdentityConfirmation &&
             !confirmLowConfidenceMatch)
         {
             return ManualImportResult.LowConfidenceMatchConfirmationRequired();
@@ -296,6 +385,33 @@ public sealed class DirectAcquisitionService(
                 "Re-test the provider in Admin → External Providers, or wait for its next scheduled recheck.");
         }
 
+        // Automatic fulfillment and an administrator can both pass the source
+        // checks before either has saved a job. Reserve this format across
+        // request scopes before creating a new idempotency key or submitting.
+        using var reservation = await ExternalSubmissionLock.AcquireAsync(format.Id, cancellationToken);
+        var activeJobs = await providerAcquisitionJobs.ListActiveForFormatAsync(format.Id, cancellationToken);
+        var fingerprint = ExternalReleaseFingerprint.Compute(externalOption.ReleaseName, externalOption.SizeBytes);
+        var existingJob = activeJobs.FirstOrDefault(active =>
+            active.ExternalProviderId == externalProvider.Id &&
+            active.CandidateReference == externalOption.ProviderResultId &&
+            active.CandidateRevision == externalOption.CandidateRevision &&
+            active.CandidateFingerprint == fingerprint &&
+            active.PartSetId == partSet?.SetId && active.PartNumber == partSet?.Number);
+        if (existingJob is not null)
+            return ManualImportResult.AcquisitionInProgress(existingJob.Id);
+
+        // An upgrade deliberately fetches a second copy of a format that is already delivered; nothing else may.
+        if (partSet is null && !allowAdditionalCopy && await requests.HasAcquiredArtifactAsync(format.Id, cancellationToken))
+            return ManualImportResult.Invalid("A copy for that format has already been received and is being checked or is available.");
+
+        // Different numbered members of this same validated set may run
+        // together. A competing copy or another set must wait for current work.
+        // A job waiting on a person must still allow another source to help.
+        if (activeJobs.Any(active => active.LifecycleState != ProviderAcquisitionJobLifecycleState.Waiting &&
+                (partSet is null || active.PartSetId != partSet.SetId ||
+                 active.ExternalProviderId != externalProvider.Id || active.PartNumber == partSet.Number)))
+            return ManualImportResult.Invalid("An acquisition is already in progress for that format. Wait for it to finish or cancel it before choosing another copy.");
+
         var idempotencyKey = Guid.NewGuid().ToString("N");
         var acquireRequestId = Guid.NewGuid();
         var acquireRequest = new ExternalAcquireRequest(
@@ -315,12 +431,12 @@ public sealed class DirectAcquisitionService(
             now,
             acquireRequestId,
             isAutomaticAcquisition,
-            Providers.ExternalReleaseFingerprint.Compute(externalOption.ReleaseName, externalOption.SizeBytes),
-            // The automatic path never reaches here without one of these two
-            // bases (see the gate above autoEligible in
-            // AutomaticRequestFulfillmentService); a manual acquisition with
-            // neither needed confirmLowConfidenceMatch to pass the check
-            // above, i.e. a librarian overriding an unconfirmed match.
+            fingerprint,
+            // Only these deterministic bases preconfirm source identity.
+            // A governed AI author variant can reach this point without one,
+            // so its downloaded author's identity must still be verified.
+            // A manual acquisition without one needed a librarian's explicit
+            // low-confidence confirmation above.
             // A part of a set is matched on its release name alone, so its
             // identity is never treated as already confirmed: the downloaded
             // file's own tags have to say it is the requested book.
@@ -330,6 +446,9 @@ public sealed class DirectAcquisitionService(
         {
             job.AssignToPartSet(partSet.SetId, partSet.Number, partSet.Total);
         }
+
+        if (isAutomaticAcquisition && partSet is null && peerSizeEvidence is { } peers)
+            job.SetPeerSizeEvidence(peers.MedianSizeBytes, peers.Count);
 
         providerAcquisitionJobs.Add(job);
         await providerAcquisitionJobs.SaveChangesAsync(cancellationToken);
@@ -388,4 +507,7 @@ public sealed class DirectAcquisitionService(
             option.ReleaseConcern,
             ExternalReleasePolicy.UnknownDrmConfirmationReason,
             StringComparison.Ordinal);
+
+    private static FulfillmentOption? FindOption(IReadOnlyList<FulfillmentOption> options, string providerResultId) =>
+        options.FirstOrDefault(option => string.Equals(option.ProviderResultId, providerResultId, StringComparison.Ordinal));
 }

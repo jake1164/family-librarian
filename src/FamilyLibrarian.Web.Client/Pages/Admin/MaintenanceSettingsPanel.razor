@@ -1,0 +1,211 @@
+@using FamilyLibrarian.Contracts.Storage
+@using FamilyLibrarian.Web.Client.Storage
+@inject StorageApiClient Api
+
+<MudPaper Outlined="true" Class="pa-4" id="cleanup-settings">
+    <MudStack Spacing="2">
+        <div>
+            <MudText Typo="Typo.h5">Clean-up</MudText>
+            <MudText Typo="Typo.body2">
+                Family Librarian removes files and records nobody needs so an installation that runs unattended does not fill its disk or database.
+                Change how long things are kept here. Every value has a fixed lower and upper limit, shown under its field: a value outside it is
+                refused, never quietly changed. A copy that is trusted, or part of a set with a trusted track, is never removed.
+            </MudText>
+        </div>
+
+        @if (message is not null)
+        {
+            <MudAlert Severity="@(messageIsError ? Severity.Warning : Severity.Success)" role="@(messageIsError ? "alert" : "status")" ShowCloseIcon="true" CloseIconClicked="() => message = null">@message</MudAlert>
+        }
+
+        @if (problems.Count > 0)
+        {
+            <MudAlert Severity="Severity.Warning" role="alert">
+                <MudText Typo="Typo.body2">Nothing was saved. Fix these and try again:</MudText>
+                <ul>
+                    @foreach (var problem in problems)
+                    {
+                        <li>@problem</li>
+                    }
+                </ul>
+            </MudAlert>
+        }
+
+        @if (settings is null && !failed)
+        {
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" aria-label="Loading clean-up settings" />
+        }
+        else if (failed)
+        {
+            <MudAlert Severity="Severity.Warning" role="alert">The clean-up settings could not be loaded. Refresh to try again.</MudAlert>
+        }
+        else if (settings is not null && form is not null)
+        {
+            <MudText Typo="Typo.body2" id="cleanup-runs">
+                <strong>Files:</strong> @StorageText.RunSummary(settings.Storage, now, "files removed")<br />
+                <strong>Database:</strong> @StorageText.RunSummary(settings.Database, now, "old rows removed")<br />
+                <strong>Better copies:</strong> @StorageText.RunSummary(settings.Upgrades, now, "better copies proposed")
+            </MudText>
+            <MudText Typo="Typo.caption">
+                @(settings.IsCustomized ? "These values are customised." : "These are the default values.")
+            </MudText>
+
+            @foreach (var group in Groups)
+            {
+                <MudText Typo="Typo.h6" Class="mt-2">@group.Title</MudText>
+                <MudText Typo="Typo.body2">@group.Help</MudText>
+                <MudGrid>
+                    @foreach (var field in group.Fields)
+                    {
+                        var limit = settings.Limits[field.Key];
+                        <MudItem xs="12" sm="6" md="4">
+                            <MudNumericField T="int" Value="field.Get(form)" ValueChanged="value => field.Set(form, value)" Label="@field.Label" Min="limit.Min" Max="limit.Max"
+                                             Disabled="busy" Variant="Variant.Outlined" Immediate="true"
+                                             HelperText="@($"{field.Unit}. Between {limit.Min} and {limit.Max}; default {field.Get(Defaults)}.")" />
+                        </MudItem>
+                    }
+                </MudGrid>
+            }
+
+            <MudStack Row="true" Spacing="2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="busy" OnClick="SaveAsync">Save clean-up settings</MudButton>
+                <MudButton Variant="Variant.Text" Disabled="busy || !settings.IsCustomized" OnClick="ResetAsync">Restore defaults</MudButton>
+            </MudStack>
+        }
+    </MudStack>
+</MudPaper>
+
+@code {
+    private sealed class Form
+    {
+        public int RejectedDays { get; set; }
+        public int RuledOutDays { get; set; }
+        public int WaitingEbookDays { get; set; }
+        public int WaitingAudiobookDays { get; set; }
+        public int StuckDays { get; set; }
+        public int HeldCapGb { get; set; }
+        public int OrphanGraceHours { get; set; }
+        public int PressureDays { get; set; }
+        public int EvidenceDays { get; set; }
+        public int SemanticFindingDays { get; set; }
+        public int AttemptDays { get; set; }
+        public int SearchMemoryDays { get; set; }
+        public int NotificationDays { get; set; }
+        public int AlertDays { get; set; }
+        public int CommunicationDays { get; set; }
+        public int AuditDays { get; set; }
+        public int UpgradeScanIntervalDays { get; set; }
+
+        public static Form From(MaintenanceValuesDto v) => new()
+        {
+            RejectedDays = v.RejectedDays, RuledOutDays = v.RuledOutDays, WaitingEbookDays = v.WaitingEbookDays, WaitingAudiobookDays = v.WaitingAudiobookDays,
+            StuckDays = v.StuckDays, HeldCapGb = v.HeldCapGb, OrphanGraceHours = v.OrphanGraceHours, PressureDays = v.PressureDays, EvidenceDays = v.EvidenceDays,
+            SemanticFindingDays = v.SemanticFindingDays, AttemptDays = v.AttemptDays, SearchMemoryDays = v.SearchMemoryDays, NotificationDays = v.NotificationDays,
+            AlertDays = v.AlertDays, CommunicationDays = v.CommunicationDays, AuditDays = v.AuditDays, UpgradeScanIntervalDays = v.UpgradeScanIntervalDays
+        };
+
+        public MaintenanceValuesDto ToDto() => new(RejectedDays, RuledOutDays, WaitingEbookDays, WaitingAudiobookDays, StuckDays, HeldCapGb, OrphanGraceHours,
+            PressureDays, EvidenceDays, SemanticFindingDays, AttemptDays, SearchMemoryDays, NotificationDays, AlertDays, CommunicationDays, AuditDays, UpgradeScanIntervalDays);
+    }
+
+    private sealed record Field(string Key, string Label, string Unit, Func<Form, int> Get, Action<Form, int> Set);
+
+    private sealed record Group(string Title, string Help, IReadOnlyList<Field> Fields);
+
+    private static readonly IReadOnlyList<Group> Groups =
+    [
+        new("Files", "How long unwanted files stay on disk. Held copies waiting for a person are removed only after their own limit, and the oldest go first if their total passes the size limit.",
+        [
+            new("rejectedDays", "Failed a security check", "Days", f => f.RejectedDays, (f, v) => f.RejectedDays = v),
+            new("ruledOutDays", "Copies the search moved past", "Days", f => f.RuledOutDays, (f, v) => f.RuledOutDays = v),
+            new("waitingEbookDays", "Held ebooks waiting for a person", "Days", f => f.WaitingEbookDays, (f, v) => f.WaitingEbookDays = v),
+            new("waitingAudiobookDays", "Held audiobooks waiting for a person", "Days", f => f.WaitingAudiobookDays, (f, v) => f.WaitingAudiobookDays = v),
+            new("stuckDays", "Received or being checked, never finished", "Days", f => f.StuckDays, (f, v) => f.StuckDays = v),
+            new("heldCapGb", "Held files size limit", "Gigabytes", f => f.HeldCapGb, (f, v) => f.HeldCapGb = v),
+            new("orphanGraceHours", "Files with no record, wait before removing", "Hours", f => f.OrphanGraceHours, (f, v) => f.OrphanGraceHours = v),
+            new("pressureDays", "Failed or moved-past copies when the disk is low", "Days", f => f.PressureDays, (f, v) => f.PressureDays = v)
+        ]),
+        new("Database", "How long old records are kept. Open requests, files that still exist, open reviews and identity overrides always keep their history.",
+        [
+            new("evidenceDays", "File-check evidence for deleted files", "Days", f => f.EvidenceDays, (f, v) => f.EvidenceDays = v),
+            new("semanticFindingDays", "AI findings", "Days", f => f.SemanticFindingDays, (f, v) => f.SemanticFindingDays = v),
+            new("attemptDays", "Source attempt history of finished requests", "Days", f => f.AttemptDays, (f, v) => f.AttemptDays = v),
+            new("searchMemoryDays", "Search wordings tried for finished requests", "Days", f => f.SearchMemoryDays, (f, v) => f.SearchMemoryDays = v),
+            new("notificationDays", "Notifications", "Days", f => f.NotificationDays, (f, v) => f.NotificationDays = v),
+            new("alertDays", "Closed source alerts", "Days", f => f.AlertDays, (f, v) => f.AlertDays = v),
+            new("communicationDays", "Messages already sent", "Days", f => f.CommunicationDays, (f, v) => f.CommunicationDays = v),
+            new("auditDays", "Audit log", "Days", f => f.AuditDays, (f, v) => f.AuditDays = v)
+        ]),
+        new("Better copies", "How often a delivered book that looks incomplete is searched again for a stronger copy. Turn automatic replacement on or off on the Better copies page.",
+        [
+            new("upgradeScanIntervalDays", "Search again after", "Days", f => f.UpgradeScanIntervalDays, (f, v) => f.UpgradeScanIntervalDays = v)
+        ])
+    ];
+
+    private MaintenanceSettingsResponse? settings;
+    private Form? form;
+    private Form Defaults => Form.From(settings!.Defaults);
+    private IReadOnlyList<string> problems = [];
+    private bool failed;
+    private bool busy;
+    private string? message;
+    private bool messageIsError;
+    private DateTimeOffset now = DateTimeOffset.UtcNow;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            Apply(await Api.GetSettingsAsync());
+            failed = false;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            failed = true;
+        }
+    }
+
+    private void Apply(MaintenanceSettingsResponse response)
+    {
+        settings = response;
+        form = Form.From(response.Values);
+        now = DateTimeOffset.UtcNow;
+    }
+
+    private async Task SaveAsync()
+    {
+        busy = true;
+        var result = await Api.SaveSettingsAsync(form!.ToDto());
+        busy = false;
+        problems = result.Problems;
+        if (result.Succeeded)
+        {
+            Apply(result.Settings!);
+            Say("Clean-up settings saved. The next pass uses them.", error: false);
+        }
+        else if (result.Problems.Count == 0) Say(result.Error ?? "The settings could not be saved.", error: true);
+        else message = null;
+    }
+
+    private async Task ResetAsync()
+    {
+        busy = true;
+        var result = await Api.ResetSettingsAsync();
+        busy = false;
+        problems = [];
+        if (result.Succeeded)
+        {
+            Apply(result.Settings!);
+            Say("Restored the default values.", error: false);
+        }
+        else Say(result.Error ?? "The defaults could not be restored.", error: true);
+    }
+
+    private void Say(string text, bool error)
+    {
+        message = text;
+        messageIsError = error;
+    }
+}

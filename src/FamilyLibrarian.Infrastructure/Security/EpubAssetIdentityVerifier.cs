@@ -6,6 +6,8 @@ using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.Requests;
 
 namespace FamilyLibrarian.Infrastructure.Security;
 
@@ -83,25 +85,66 @@ public sealed class EpubAssetIdentityVerifier(
                 .ToArray();
             var titleMatches = titles.Any(title => expectedTitles.Any(expectedTitle => bookMatcher.TitleMatches(expectedTitle, title)));
             var authorMatches = creators.Any(creator => bookMatcher.AuthorMatches(expected.PrimaryAuthor, creator));
+            // Observations only (recorded as evidence); they never feed the verdict below. Completeness
+            // cues are inspected best-effort and can never change the outcome (M1-3b).
+            var facts = new List<IdentityFact>(EpubCompletenessInspector.Inspect(archive, rootfilePath, expectedTitles))
+            {
+                IdentityFacts.Title(titles.Count > 0, titleMatches),
+                IdentityFacts.Author(creators.Count > 0, authorMatches)
+            };
+            // Package facts stay separate from identity; a spelling-only author exception needs their independent
+            // corroboration, and expected-profile comparisons are applied by the identity service before holds.
+            facts.AddRange(EpubProfileInspector.Inspect(archive, rootfilePath));
+            var request = await requestFulfillment.FindByFormatIdAsync(asset.AssociatedRequestFormatId, cancellationToken);
+            var format = request?.Formats.SingleOrDefault(f => f.Id == asset.AssociatedRequestFormatId);
+            // Observe language even when identity differs: an author exception must never conceal a language conflict.
+            var acceptedLanguage = format?.AcceptedLanguage;
+            var languageAccepted = languages.Count == 0 ||
+                languages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage));
+            facts.Add(IdentityFacts.Language(languages, languageAccepted));
+            if (format?.AcceptedVariantKind == AcquisitionQuestionKind.CollectionContaining && !titleMatches)
+            {
+                facts.Add(new("ev-accepted-collection", EvidenceDimension.IdentityAttestation,
+                    EvidenceReasonCodes.ArtifactIdentityAttestation.CollectionConsentRecorded, EvidencePolarity.Condition));
+                var contains = facts.Any(f => f.Code is EvidenceReasonCodes.ArtifactProfile.TocEntry or EvidenceReasonCodes.ArtifactProfile.Heading &&
+                    f.Value is not null && bookMatcher.TitleMatches(expected.Title, f.Value));
+                if (!contains)
+                    return AssetIdentityVerificationResult.Unmatched(Id, "The accepted collection does not identify the requested work in its contents or headings.", facts)
+                        with { HoldCode = EvidenceReasonCodes.IdentityHold.CollectionMissingRequestedWork };
+                titleMatches = true;
+                facts[facts.FindIndex(f => f.FindingId == "ev-title")] = new("ev-title", EvidenceDimension.IdentityCorroboration,
+                    EvidenceReasonCodes.ArtifactIdentityCorroboration.ContainsRequestedWork, EvidencePolarity.Positive);
+            }
+            var exactTitle = titles.Any(title => expectedTitles.Any(wanted =>
+                bookMatcher.StrictTitleAuthorMatches(wanted, expected.PrimaryAuthor, title, expected.PrimaryAuthor)));
+            if (!authorMatches && exactTitle &&
+                ArtifactProfileComparer.HasCorroboration(facts, expected.Series ?? [], expected.Isbn13s) &&
+                creators.Any(creator => AuthorSpelling.IsVariant(expected.PrimaryAuthor, creator)))
+            {
+                authorMatches = true;
+                facts[facts.FindIndex(f => f.FindingId == "ev-author")] = new IdentityFact("ev-author",
+                    FamilyLibrarian.Domain.Evidence.EvidenceDimension.IdentityCorroboration,
+                    FamilyLibrarian.Domain.Evidence.EvidenceReasonCodes.ArtifactIdentityCorroboration.AuthorSpellingVariant,
+                    FamilyLibrarian.Domain.Evidence.EvidencePolarity.Weak);
+            }
             if (!titleMatches || !authorMatches)
             {
                 return AssetIdentityVerificationResult.Unmatched(Id, DescribeTitleAuthorMismatch(
-                    expectedTitles, expected.PrimaryAuthor, titles, creators, titleMatches, authorMatches));
+                    expectedTitles, expected.PrimaryAuthor, titles, creators, titleMatches, authorMatches), facts);
             }
 
             // Consent is specific to the selected language, including English.
             // Missing metadata remains eligible; an explicit mismatch does not.
-            var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
-            if (languages.Count > 0 &&
-                !languages.Any(language => LanguageAcceptance.IsAcceptedOrUnspecified(language, acceptedLanguage)))
+            if (!languageAccepted)
             {
                 return AssetIdentityVerificationResult.Unmatched(
                     Id,
                     $"The file's embedded language ({string.Join(", ", languages)}) doesn't match the language " +
-                    $"accepted for this request{(string.IsNullOrWhiteSpace(acceptedLanguage) ? string.Empty : $" ({acceptedLanguage})")}.");
+                    $"accepted for this request{(string.IsNullOrWhiteSpace(acceptedLanguage) ? string.Empty : $" ({acceptedLanguage})")}.",
+                    facts);
             }
 
-            return AssetIdentityVerificationResult.Match(Id);
+            return AssetIdentityVerificationResult.Match(Id, facts);
         }
         catch (Exception exception) when (exception is InvalidDataException or ArgumentException or XmlException)
         {
@@ -174,16 +217,6 @@ public sealed class EpubAssetIdentityVerifier(
                 .Select(element => element.Value.Trim())
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .ToArray());
-    }
-
-    /// <summary>
-    /// The language the requester already explicitly accepted for this
-    /// specific format, if any.
-    /// </summary>
-    private async Task<string?> FindAcceptedLanguageAsync(Guid requestFormatId, CancellationToken cancellationToken)
-    {
-        var request = await requestFulfillment.FindByFormatIdAsync(requestFormatId, cancellationToken);
-        return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
     }
 
     private static async Task<XDocument> ReadXmlAsync(

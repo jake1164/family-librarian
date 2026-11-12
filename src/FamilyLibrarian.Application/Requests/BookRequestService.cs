@@ -1,4 +1,5 @@
 using FamilyLibrarian.Application.Abstractions;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
 using FamilyLibrarian.Application.Delivery;
@@ -27,7 +28,8 @@ public sealed class BookRequestService(
     OutboundCommunicationService outboundCommunications,
     IFormatReadinessService readiness,
     IWorkFulfillmentOptionsService fulfillmentOptions,
-    IDeliveryTargetRepository deliveryTargets)
+    IDeliveryTargetRepository deliveryTargets,
+    IAutomaticFulfillmentSignal? fulfillmentSignal = null)
 {
     /// <summary>
     /// The status changes a requester may make. Moving a request to
@@ -118,7 +120,7 @@ public sealed class BookRequestService(
             return CreateBookRequestResult.Invalid("To request another copy, specify a language, edition, narration, accessibility need, or replacement reason for librarian review.");
         }
 
-        return await repository.InCreateRequestScopeAsync(
+        var result = await repository.InCreateRequestScopeAsync(
             userId,
             workId,
             async token =>
@@ -174,6 +176,15 @@ public sealed class BookRequestService(
                 return CreateBookRequestResult.Created(created!);
             },
             cancellationToken);
+
+        // The scope has committed, so the worker will find the request. Without this a new request waited for the
+        // next two-minute sweep before anything was searched. Only a latency hint: the sweep remains the guarantee.
+        if (result.Outcome == CreateBookRequestOutcome.Created)
+        {
+            fulfillmentSignal?.Request();
+        }
+
+        return result;
     }
 
     public async Task<IReadOnlyList<BookRequestView>> ListMineAsync(
@@ -196,7 +207,7 @@ public sealed class BookRequestService(
         var initial = await repository.FindViewAsync(requestId, userId, cancellationToken);
         if (initial is null) return BookRequestCommandResult.NotFound();
 
-        return await repository.InCreateRequestScopeAsync(userId, initial.WorkId, async token =>
+        var result = await repository.InCreateRequestScopeAsync(userId, initial.WorkId, async token =>
         {
             var request = await repository.FindOwnedRequestAsync(requestId, userId, token);
             if (request is null) return BookRequestCommandResult.NotFound();
@@ -240,6 +251,14 @@ public sealed class BookRequestService(
             var view = await repository.FindViewAsync(requestId, userId, token);
             return BookRequestCommandResult.Success(view!);
         }, cancellationToken);
+
+        // Committed: a request asked for again is searched now, not at the next sweep.
+        if (to == RequestStatus.PendingAcquisition && result.Outcome == BookRequestCommandOutcome.Success)
+        {
+            fulfillmentSignal?.Request();
+        }
+
+        return result;
     }
 
     /// <summary>Lists requests for the administrative queue.</summary>
@@ -277,7 +296,7 @@ public sealed class BookRequestService(
 
         var initial = await repository.FindAdminViewAsync(requestId, cancellationToken);
         if (initial is null) return BookRequestCommandResult.NotFound();
-        return await repository.InCreateRequestScopeAsync(userId, initial.Request.WorkId, async token =>
+        var result = await repository.InCreateRequestScopeAsync(userId, initial.Request.WorkId, async token =>
         {
             var request = await repository.FindRequestForAdminAsync(requestId, token);
             if (request is null)
@@ -339,6 +358,13 @@ public sealed class BookRequestService(
 
             return BookRequestCommandResult.Success(view!.Request);
         }, cancellationToken);
+
+        if (to == RequestStatus.PendingAcquisition && result.Outcome == BookRequestCommandOutcome.Success)
+        {
+            fulfillmentSignal?.Request();
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -396,6 +422,11 @@ public sealed class BookRequestService(
         }
 
         await repository.SaveChangesAsync(cancellationToken);
+        if (candidates.Count > 0)
+        {
+            fulfillmentSignal?.Request();
+        }
+
         return BulkRecheckResult.Success(candidates.Count);
     }
 

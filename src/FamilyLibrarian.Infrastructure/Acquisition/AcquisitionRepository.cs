@@ -7,6 +7,13 @@ namespace FamilyLibrarian.Infrastructure.Acquisition;
 
 public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionRepository
 {
+    public async Task<IReadOnlyList<SourceDownloadStatistics>> ListSourceDownloadStatisticsAsync(CancellationToken cancellationToken) =>
+        await database.AcquisitionJobs.AsNoTracking()
+            .Where(job => job.Status == AcquisitionJobStatus.CandidateAcquired)
+            .GroupBy(job => job.ProviderId)
+            .Select(group => new SourceDownloadStatistics(group.Key, group.LongCount()))
+            .ToArrayAsync(cancellationToken);
+
     public Task<bool> ExistsAssetWithChecksumForFormatAsync(
         Guid requestFormatId,
         string sha256,
@@ -46,7 +53,12 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
                 asset.CreatedAtUtc,
                 asset.UpdatedAtUtc,
                 asset.IdentityMismatchReason,
-                asset.ScanFailureReason);
+                asset.ScanFailureReason,
+                asset.IdentityHoldCode,
+                asset.Origin,
+                asset.BundleId,
+                asset.BundleTrackCount,
+                asset.RuledOutAtUtc);
 
         return await query.ToArrayAsync(cancellationToken);
     }
@@ -75,7 +87,12 @@ public sealed class AcquisitionRepository(AppDbContext database) : IAcquisitionR
                 asset.CreatedAtUtc,
                 asset.UpdatedAtUtc,
                 asset.IdentityMismatchReason,
-                asset.ScanFailureReason);
+                asset.ScanFailureReason,
+                asset.IdentityHoldCode,
+                asset.Origin,
+                asset.BundleId,
+                asset.BundleTrackCount,
+                asset.RuledOutAtUtc);
 
         return await query.Take(maximumCount).ToArrayAsync(cancellationToken);
     }

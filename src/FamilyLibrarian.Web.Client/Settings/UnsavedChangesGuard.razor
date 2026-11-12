@@ -1,0 +1,23 @@
+@implements IDisposable
+@inject IJSRuntime JS
+
+<CascadingValue Value="state" IsFixed="true">
+    <NavigationLock ConfirmExternalNavigation="state.IsDirty" OnBeforeInternalNavigation="BeforeNavigationAsync" />
+    @ChildContent
+</CascadingValue>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    private readonly UnsavedChangesState state = new();
+
+    protected override void OnInitialized() => state.Changed += Refresh;
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    private async Task BeforeNavigationAsync(LocationChangingContext context)
+    {
+        if (state.IsDirty && !await JS.InvokeAsync<bool>("confirm", "You have unsaved settings changes. Leave this page and discard them?"))
+            context.PreventNavigation();
+    }
+
+    public void Dispose() => state.Changed -= Refresh;
+}

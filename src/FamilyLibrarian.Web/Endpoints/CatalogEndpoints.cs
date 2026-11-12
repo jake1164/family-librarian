@@ -43,12 +43,12 @@ internal static class CatalogEndpoints
     private static async Task<IResult> SearchCatalogAsync(
         string? q,
         int? page,
-        IActiveMetadataProviderResolver providerResolver,
+        ICatalogSearchService search,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
         var searchText = q?.Trim();
-        if (string.IsNullOrWhiteSpace(searchText) || searchText.Length is < 2 or > 200)
+        if (!CatalogSearchLimits.IsValidQueryText(searchText))
         {
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
@@ -57,7 +57,7 @@ internal static class CatalogEndpoints
         }
 
         var searchPage = page ?? 1;
-        if (searchPage is < 1 or > BookSearchQuery.MaximumPage)
+        if (!CatalogSearchLimits.IsValidPage(searchPage))
         {
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
@@ -65,28 +65,12 @@ internal static class CatalogEndpoints
             });
         }
 
-        var query = new BookSearchQuery(searchText, searchPage);
+        var query = new BookSearchQuery(searchText!, searchPage);
         var logger = loggerFactory.CreateLogger("FamilyLibrarian.MetadataSearch");
-        var providers = await providerResolver.GetActiveProvidersAsync(cancellationToken);
-        var searches = providers.Select(provider =>
-            SearchProviderAsync(provider, query, logger, cancellationToken));
-        var providerResults = await Task.WhenAll(searches);
+        var outcome = await search.SearchAsync(query, cancellationToken);
+        LogProviderFailures(logger, outcome.ProviderResults);
 
-        return Results.Ok(new CatalogSearchResponse(
-            BookCandidateGrouper.GroupMatchingCandidates(providerResults
-                .Where(result => result.Succeeded)
-                .SelectMany(result => result.Candidates)
-                .ToArray(), searchText)
-                .Select(candidate => ToResponse(candidate, searchText))
-                .ToArray(),
-            providerResults
-                .Select(result => new CatalogProviderSearchStatusResponse(
-                    result.ProviderId,
-                    result.ProviderName,
-                    result.Succeeded))
-                .ToArray(),
-            searchPage,
-            providerResults.Any(result => result.Succeeded && result.HasMore)));
+        return Results.Ok(ToResponse(outcome, searchText!));
     }
 
     private static async Task<IResult> GetCatalogCandidateAsync(
@@ -271,14 +255,14 @@ internal static class CatalogEndpoints
         CatalogSearchRunCoordinator coordinator)
     {
         var searchText = request.Query?.Trim();
-        if (string.IsNullOrWhiteSpace(searchText) || searchText.Length is < 2 or > 200 || request.Page is < 1 or > BookSearchQuery.MaximumPage)
+        if (!CatalogSearchLimits.IsValidQueryText(searchText) || !CatalogSearchLimits.IsValidPage(request.Page))
             return Results.ValidationProblem(new Dictionary<string, string[]> { ["query"] = ["Enter a query of 2–200 characters and a valid page number."] });
         if (currentUser.UserId is not { } userId) return Results.Unauthorized();
         if (request.PreviousRunId is { } previousId &&
             (!coordinator.TryGet(userId, previousId, out var previous) || previous is null || !previous.IsComplete ||
              previous.Query.Text != searchText || previous.Query.Page + 1 != request.Page))
             return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Search expired", detail: "Search again to load more results.");
-        var run = coordinator.Start(userId, new BookSearchQuery(searchText, request.Page), request.PreviousRunId);
+        var run = coordinator.Start(userId, new BookSearchQuery(searchText!, request.Page), request.PreviousRunId);
         return run is null ? Results.StatusCode(StatusCodes.Status503ServiceUnavailable) :
             Results.Accepted($"/api/v1/catalog/search/runs/{run.Id}", new CatalogSearchRunStartedResponse(run.Id));
     }
@@ -287,17 +271,15 @@ internal static class CatalogEndpoints
         Guid runId,
         string? q,
         ICurrentUser currentUser,
-        CatalogSearchRunCoordinator coordinator)
+        CatalogSearchRunCoordinator coordinator,
+        ICatalogSearchService search)
     {
         if (currentUser.UserId is not { } userId || !coordinator.TryGet(userId, runId, out var run) || run is null)
             return Results.NotFound();
-        var providerResults = run.Snapshot();
-        var candidates = BookCandidateGrouper.GroupMatchingCandidates(
-            providerResults.SelectMany(result => result.Candidates).ToArray(), run.Query.Text)
-            .Select(candidate => ToResponse(candidate, run.Query.Text)).ToArray();
-        var response = new CatalogSearchResponse(candidates,
-            providerResults.Select(result => new CatalogProviderSearchStatusResponse(result.ProviderId, result.ProviderName, result.Succeeded)).ToArray(),
-            run.Query.Page, providerResults.Any(result => result.Succeeded && result.HasMore));
+        var snapshot = run.Snapshot()
+            .Select(result => new ProviderSearchResult(result.ProviderId, result.ProviderName, result.Succeeded, result.Candidates, result.HasMore))
+            .ToArray();
+        var response = ToResponse(search.Compose(snapshot, run.Query), run.Query.Text);
         return Results.Ok(new CatalogSearchRunResponse(response, run.IsComplete));
     }
 
@@ -407,37 +389,33 @@ internal static class CatalogEndpoints
                 recommendation.ProfileId,
                 recommendation.Reason);
 
-    private static async Task<ProviderSearchResult> SearchProviderAsync(
-        IBookMetadataProvider provider,
-        BookSearchQuery query,
-        ILogger logger,
-        CancellationToken cancellationToken)
+    private static void LogProviderFailures(ILogger logger, IReadOnlyList<ProviderSearchResult> providerResults)
     {
-        try
+        foreach (var result in providerResults.Where(result => result.Failure is not null))
         {
-            var searchPage = await provider.SearchAsync(query, cancellationToken);
-            return new ProviderSearchResult(
-                provider.Id,
-                provider.DisplayName,
-                true,
-                searchPage.Candidates,
-                searchPage.HasMore);
+            var failure = result.Failure!;
+            switch (failure.Kind)
+            {
+                case ProviderSearchFailureKind.Unavailable:
+                    MetadataProviderLog.SearchUnavailable(logger, result.ProviderId, failure.Exception);
+                    break;
+                case ProviderSearchFailureKind.InvalidResponse:
+                    MetadataProviderLog.SearchReturnedInvalidJson(logger, result.ProviderId, failure.Exception);
+                    break;
+                case ProviderSearchFailureKind.TimedOut:
+                    MetadataProviderLog.SearchTimedOut(logger, result.ProviderId, failure.Exception);
+                    break;
+            }
         }
-        catch (HttpRequestException exception)
-        {
-            MetadataProviderLog.SearchUnavailable(logger, provider.Id, exception);
-        }
-        catch (JsonException exception)
-        {
-            MetadataProviderLog.SearchReturnedInvalidJson(logger, provider.Id, exception);
-        }
-        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            MetadataProviderLog.SearchTimedOut(logger, provider.Id, exception);
-        }
-
-        return new ProviderSearchResult(provider.Id, provider.DisplayName, false, [], false);
     }
+
+    private static CatalogSearchResponse ToResponse(CatalogSearchOutcome outcome, string searchText) => new(
+        outcome.Candidates.Select(candidate => ToResponse(candidate, searchText)).ToArray(),
+        outcome.Providers
+            .Select(provider => new CatalogProviderSearchStatusResponse(provider.ProviderId, provider.ProviderName, provider.Succeeded))
+            .ToArray(),
+        outcome.Page,
+        outcome.HasMore);
 
     private static void LogProviderFailure(
         ILoggerFactory loggerFactory,
@@ -527,10 +505,4 @@ internal static class CatalogEndpoints
                 source.ObservedAtUtc)).ToArray());
     }
 
-    private sealed record ProviderSearchResult(
-        string ProviderId,
-        string ProviderName,
-        bool Succeeded,
-        IReadOnlyList<BookCandidate> Candidates,
-        bool HasMore);
 }

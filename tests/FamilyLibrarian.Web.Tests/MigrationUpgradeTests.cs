@@ -1,4 +1,7 @@
+using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Catalog;
+using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.ModelGateway;
 using FamilyLibrarian.Domain.Requests;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -19,6 +22,205 @@ namespace FamilyLibrarian.Web.Tests;
 [TestClass]
 public sealed class MigrationUpgradeTests
 {
+    [TestMethod]
+    public async Task NewModelSettingsUse1024WhileStored512LimitsAndTheMigrationModelStayUnchanged()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var existing = new ModelGatewaySettings(now);
+        existing.ConfigureLimits(ModelExecutionLimits.Default with { MaxOutputTokens = 512 }, null, now);
+        var fresh = new ModelGatewaySettings(now);
+        Assert.AreEqual(1024, fresh.MaxOutputTokens);
+
+        database.ModelGatewaySettingsRows.AddRange(existing, fresh);
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+
+        Assert.AreEqual(512, (await database.ModelGatewaySettingsRows.SingleAsync(s => s.Id == existing.Id)).MaxOutputTokens);
+        Assert.AreEqual(1024, (await database.ModelGatewaySettingsRows.SingleAsync(s => s.Id == fresh.Id)).MaxOutputTokens);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task WorkflowObservationUpgradeLeavesHistoricalImpactUnknownAndPreservesUsageAndFindings()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddModelWorkflowObservations", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        var record = new FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord(
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.SearchGuidance, FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.BackgroundValidation,
+            null, "example", false, 100, DateTimeOffset.UtcNow);
+        record.Complete(FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.Succeeded, 100, null, null, null);
+        record.ObserveWorkflow(FamilyLibrarian.Domain.ModelGateway.ModelWorkflowEffect.ExtraSearchCompleted);
+        var finding = new SemanticFinding(SemanticSubjectKind.SearchGuidance, "sample", null, null, "search-guidance/1", "digest", "NoAllowedCandidate",
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.SearchGuidance, "example", false, FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.Succeeded,
+            "Search", "[]", null, DateTimeOffset.UtcNow, record.Id);
+        database.ModelUsageRecords.Add(record); database.SemanticFindings.Add(finding);
+        await database.SaveChangesAsync();
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync(); database.ChangeTracker.Clear();
+        var older = await database.ModelUsageRecords.SingleAsync(row => row.Id == record.Id);
+        Assert.IsNull(older.WorkflowEffects);
+        Assert.AreEqual(100, older.ChargedTokens);
+        var olderFinding = await database.SemanticFindings.SingleAsync(row => row.Id == finding.Id);
+        Assert.IsNull(olderFinding.ModelUsageRecordId);
+        Assert.AreEqual("Search", olderFinding.Verdict);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task ModelCallArtifactReferenceUpgradeLeavesHistoryUnlinkedAndPreservesReasonsAndBudgets()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddModelCallArtifactReference", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        var record = new FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord(
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.ArtifactValidationDecision,
+            FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.BackgroundValidation, null, "example-model", false, 100, DateTimeOffset.UtcNow, Guid.NewGuid());
+        record.Complete(FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.SchemaRejected, 123, null, null, null,
+            FamilyLibrarian.Domain.ModelGateway.ModelFailureReason.UngroundedConcern);
+        database.ModelUsageRecords.Add(record);
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+        Assert.AreEqual(record.MediaAssetId, (await database.ModelUsageRecords.SingleAsync(row => row.Id == record.Id)).MediaAssetId);
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var older = await database.ModelUsageRecords.SingleAsync(row => row.Id == record.Id);
+        Assert.IsNull(older.MediaAssetId);
+        Assert.AreEqual(100, older.ChargedTokens);
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelFailureReason.UngroundedConcern, older.FailureReason);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task ModelFailureDiagnosticsUpgradePreservesUsageAndLeavesOlderReasonsUnknown()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddModelFailureDiagnostics", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        var record = new FamilyLibrarian.Domain.ModelGateway.ModelUsageRecord(
+            FamilyLibrarian.Domain.ModelGateway.ModelRole.SearchGuidance,
+            FamilyLibrarian.Domain.ModelGateway.ModelBudgetClass.BackgroundValidation, null, "example-model", false, 100, DateTimeOffset.UtcNow);
+        record.Complete(FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.SchemaRejected, 123, null, null, null);
+        database.ModelUsageRecords.Add(record);
+        await database.SaveChangesAsync();
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var older = await database.ModelUsageRecords.SingleAsync(row => row.Id == record.Id);
+        Assert.IsNull(older.FailureReason);
+        Assert.AreEqual(100, older.ChargedTokens);
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelCallOutcome.SchemaRejected, older.Outcome);
+        older.Complete(older.Outcome, 123, null, null, null, FamilyLibrarian.Domain.ModelGateway.ModelFailureReason.RepeatedSearch);
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelFailureReason.RepeatedSearch,
+            (await database.ModelUsageRecords.SingleAsync(row => row.Id == record.Id)).FailureReason);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task DecisionCaptureUpgradeStartsExistingInstallationsOnWithTheDefaultLimitsAndKeepsEverythingElse()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddDecisionCapture", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        var original = new FamilyLibrarian.Domain.ModelGateway.ModelGatewaySettings(DateTimeOffset.UtcNow);
+        original.Configure("http://example.test", true, null, DateTimeOffset.UtcNow);
+        original.SetAllowModelHoldRelease(true, null, DateTimeOffset.UtcNow);
+        database.ModelGatewaySettingsRows.Add(original);
+        await database.SaveChangesAsync();
+
+        // Back to the model before capture existed (the row survives without the new columns), then forward again as an upgrade does.
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        Assert.IsFalse(await database.Database.SqlQuery<int>(
+            $"SELECT count(*)::int AS \"Value\" FROM information_schema.tables WHERE table_schema = 'tuning'").SingleAsync() > 0,
+            "The tuning schema's tables are gone after going down.");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var settings = await database.ModelGatewaySettingsRows.SingleAsync();
+        Assert.IsTrue(settings.DecisionCaptureEnabled, "Capture starts on after the upgrade (owner decision).");
+        Assert.IsFalse(settings.ChatCaptureEnabled);
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.DecisionCaptureLimits.Default, settings.CaptureLimits);
+        Assert.AreEqual("http://example.test", settings.EndpointUrl);
+        Assert.IsTrue(settings.AllowCloud);
+        Assert.AreEqual(0, await database.DecisionSnapshots.CountAsync());
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task ModelHoldReleaseUpgradeDefaultsExistingSettingsOffAndDownUpPreservesOtherSettings()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddModelHoldReleaseSwitch", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        var original = new FamilyLibrarian.Domain.ModelGateway.ModelGatewaySettings(DateTimeOffset.UtcNow);
+        original.Configure("http://example.test", false, null, DateTimeOffset.UtcNow);
+        database.ModelGatewaySettingsRows.Add(original);
+        await database.SaveChangesAsync();
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var settings = await database.ModelGatewaySettingsRows.SingleAsync();
+        Assert.IsFalse(settings.AllowModelHoldRelease);
+        settings.SetAllowModelHoldRelease(true, null, DateTimeOffset.UtcNow);
+        await database.SaveChangesAsync();
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        settings = await database.ModelGatewaySettingsRows.SingleAsync();
+        Assert.IsFalse(settings.AllowModelHoldRelease);
+        Assert.AreEqual("http://example.test", settings.EndpointUrl);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+    [TestMethod]
+    public async Task CatalogLengthUpgradeLeavesHistoricalLengthsUnknownAndRoundTripsNewMeasurements()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var work = new Work("Catalog length upgrade", null, null, null, PublicationStatus.Published, DateTimeOffset.UtcNow);
+        database.Works.Add(work);
+        await database.SaveChangesAsync();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(m => m.EndsWith("_AddCatalogLength", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var legacy = await database.Works.SingleAsync(w => w.Id == work.Id);
+        Assert.AreEqual("Catalog length upgrade", legacy.CanonicalTitle);
+        Assert.IsNull(legacy.CatalogPageCount);
+        Assert.IsNull(legacy.CatalogAudioDurationSeconds);
+        Assert.IsNull(legacy.CatalogLengthSource);
+        legacy.SetCatalogLength(320, 72000, "example-source", DateTimeOffset.UtcNow);
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+        var summary = await new FamilyLibrarian.Infrastructure.Publishing.WorkLookup(database).FindAsync(work.Id, CancellationToken.None);
+        Assert.IsNotNull(summary);
+        Assert.AreEqual(320, summary.CatalogPageCount);
+        Assert.AreEqual(72000, summary.CatalogAudioSeconds);
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
     // This is the schema after M5 and before the M5.5 account/invitation
     // migrations. It is a meaningful historical deployment state: requests
     // already exist and must remain upgradeable as the vertical slice grows.
@@ -45,6 +247,58 @@ public sealed class MigrationUpgradeTests
     // itself, already applied, so the partial unique index below was already
     // in place before the legacy-overlap row was inserted).
     private const string PreShareHouseholdRequestsMigration = "20260830231952_AddOutboundCommunications";
+
+    [TestMethod]
+    public async Task PeerSizeUpgradeKeepsHistoricalNullsAndResolvesTheExactStagedOutputAfterRestart()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var work = new Work("Peer upgrade", null, null, null, PublicationStatus.Published, now);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        var provider = new FamilyLibrarian.Domain.Providers.ExternalProvider("example-peer-source", "Peer Source", "http://example.test", now);
+        var formatId = request.Formats.Single().Id;
+        var job = new ProviderAcquisitionJob(request.Id, formatId, provider.Id, provider.ProviderId, null,
+            "peer-upgrade", "chosen", null, null, now, isAutomaticAcquisition: true);
+        database.Works.Add(work);
+        database.BookRequests.Add(request);
+        database.ExternalProviders.Add(provider);
+        database.ProviderAcquisitionJobs.Add(job);
+        await database.SaveChangesAsync();
+        await database.GetService<IMigrator>().MigrateAsync("20261013191530_AddSearchVariantAttempts");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+        var restored = await database.ProviderAcquisitionJobs.SingleAsync(row => row.Id == job.Id);
+        Assert.IsNull(restored.PeerMedianSizeBytes);
+        Assert.IsNull(restored.PeerCount);
+        restored.SetPeerSizeEvidence(4_000_000, 3);
+        var asset = new MediaAsset(work.Id, null, RequestMediaType.Ebook, ".epub", "book.epub", "peer-book.epub",
+            600_000, new string('a', 64), "application/epub+zip", formatId, null, now,
+            identityPreConfirmed: true, origin: AssetOrigin.ExternalProvider);
+        database.MediaAssets.Add(asset);
+        restored.AddOutput("book", ProviderOutputKind.File, "ebook", "book.epub", "application/epub+zip", 600_000,
+            null, null, null, null, now).LinkAsset(asset.Id);
+        await database.SaveChangesAsync();
+        await using var restarted = fixture.Services.CreateAsyncScope();
+        var restartedDb = restarted.ServiceProvider.GetRequiredService<AppDbContext>();
+        var persistedAsset = await restartedDb.MediaAssets.SingleAsync(row => row.Id == asset.Id);
+        var source = restarted.ServiceProvider.GetRequiredService<FamilyLibrarian.Application.Security.IExpectedArtifactProfileSource>();
+        var profile = await source.FindAsync(persistedAsset, CancellationToken.None);
+        Assert.IsNotNull(profile);
+        Assert.AreEqual(4_000_000L, profile.PeerMedianSizeBytes);
+        Assert.AreEqual(3, profile.PeerCount);
+        Assert.AreEqual(600_000L, profile.AssetSizeBytes);
+        var comparison = FamilyLibrarian.Application.Security.ArtifactProfileComparer.Compare([], profile);
+        Assert.HasCount(1, comparison);
+        Assert.AreEqual(EvidencePolarity.Weak, comparison[0].Polarity);
+        var unlinked = new MediaAsset(work.Id, null, RequestMediaType.Ebook, ".epub", "other.epub", "other.epub",
+            600_000, new string('b', 64), "application/epub+zip", formatId, null, now);
+        Assert.IsNull((await source.FindAsync(unlinked, CancellationToken.None))!.PeerMedianSizeBytes,
+            "A request-level latest job must never supply another asset's peers.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
 
     [TestMethod]
     public async Task SourceSummaryUpgradePreservesLegacyCandidatesAsNullAndRoundTripsNewEvidence()
@@ -75,6 +329,302 @@ public sealed class MigrationUpgradeTests
         Assert.AreEqual("Example indexer · usenet", updated.AdminSourceSummary);
         Assert.IsFalse(database.Database.HasPendingModelChanges());
     }
+
+    [TestMethod]
+    public async Task ArtifactEvidenceUpgradeKeepsExistingAssetsAndLeavesThemWithoutEvidence()
+    {
+        const string PreArtifactEvidenceMigration = "20261010141754_AddExternalProviderCachedVersion";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var now = DateTimeOffset.UtcNow;
+        var work = new Work("Evidence upgrade", null, null, null, PublicationStatus.Published, now);
+        database.Works.Add(work);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        database.BookRequests.Add(request);
+        var asset = new MediaAsset(
+            work.Id, editionId: null, RequestMediaType.Ebook, ".epub", "legacy.epub", "legacy-stored.epub", 10,
+            new string('c', 64), "application/epub+zip", request.Formats.Single().Id, sourceAcquisitionCandidateId: null, now,
+            identityPreConfirmed: true); // a pre-M1-4b row: historical value, set explicitly now that the code default is false
+        database.MediaAssets.Add(asset);
+        await database.SaveChangesAsync();
+
+        // Roll back to the schema before the evidence table, then upgrade again.
+        await database.GetService<IMigrator>().MigrateAsync(PreArtifactEvidenceMigration);
+        Assert.IsFalse(await TableExistsAsync(database, "security", "artifact_evidence"));
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        Assert.IsTrue(await TableExistsAsync(database, "security", "artifact_evidence"));
+        var preserved = await database.MediaAssets.SingleAsync(item => item.Id == asset.Id);
+        Assert.AreEqual(new string('c', 64), preserved.Sha256);
+        Assert.IsTrue(preserved.IdentityPreConfirmed, "Existing assets keep their historical attestation default.");
+        Assert.AreEqual(0, await database.ArtifactEvidenceItems.CountAsync(item => item.MediaAssetId == asset.Id),
+            "Pre-existing assets have no evidence: displayed as NotRecorded, never back-filled.");
+
+        database.ArtifactEvidenceItems.Add(new ArtifactEvidence(
+            asset.Id, asset.Sha256, "security-evaluation", Guid.NewGuid(), "ev-completeness", EvidenceDimension.Completeness,
+            "artifact.completeness.not_assessed", EvidencePolarity.Unknown, "pipeline", null, null, now));
+        await database.SaveChangesAsync();
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task ConversationStateUpgradeIsAdditiveAndKeepsExistingRequests()
+    {
+        const string PreConversationMigration = "20261011034107_AddAssetOriginAndHoldCode";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var now = DateTimeOffset.UtcNow;
+        var work = new Work("Conversation upgrade", null, null, null, PublicationStatus.Published, now);
+        database.Works.Add(work);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        database.BookRequests.Add(request);
+        await database.SaveChangesAsync();
+
+        await database.GetService<IMigrator>().MigrateAsync(PreConversationMigration);
+        Assert.IsFalse(await TableExistsAsync(database, "conversation", "processed_events"));
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        foreach (var table in new[] { "sessions", "processed_events", "request_keys" })
+        {
+            Assert.IsTrue(await TableExistsAsync(database, "conversation", table), table);
+        }
+
+        Assert.IsTrue(await database.BookRequests.AnyAsync(item => item.Id == request.Id), "Existing requests are untouched.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task ModelTestSettingsUpgradeIsAdditiveAndStartsEmptyAndDisabled()
+    {
+        const string PreModelTestMigration = "20261011105940_AddConversationState";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await database.GetService<IMigrator>().MigrateAsync(PreModelTestMigration);
+        Assert.IsFalse(await TableExistsAsync(database, "integrations", "model_test_settings"));
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        Assert.IsTrue(await TableExistsAsync(database, "integrations", "model_test_settings"));
+        Assert.AreEqual(0, await database.ModelTestSettingsRows.CountAsync(), "Nothing is configured, so testing stays off.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task ModelGatewaySettingsUpgradeIsAdditiveAndStartsEmptyAndDisabled()
+    {
+        const string PreGatewayMigration = "20261011115132_AddModelTestSettings";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await database.GetService<IMigrator>().MigrateAsync(PreGatewayMigration);
+        Assert.IsFalse(await TableExistsAsync(database, "integrations", "model_gateway_settings"));
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        Assert.IsTrue(await TableExistsAsync(database, "integrations", "model_gateway_settings"));
+        Assert.IsTrue(await TableExistsAsync(database, "integrations", "model_role_settings"));
+        Assert.AreEqual(0, await database.ModelGatewaySettingsRows.CountAsync(), "Nothing is configured, so every AI role stays off.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task ModelExecutionPolicyUpgradeGivesExistingGatewaySettingsSafeDefaultLimits()
+    {
+        const string PreExecutionPolicyMigration = "20261011132601_AddModelGatewaySettings";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await database.GetService<IMigrator>().MigrateAsync(PreExecutionPolicyMigration);
+        await database.Database.ExecuteSqlRawAsync(
+            "INSERT INTO integrations.model_gateway_settings (id, is_enabled, api_key_format_version, allow_cloud, created_at_utc, updated_at_utc) " +
+            "VALUES ('11111111-1111-1111-1111-111111111111', false, 0, true, now(), now())");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var settings = await database.ModelGatewaySettingsRows.AsNoTracking().SingleAsync();
+        Assert.AreEqual(30, settings.Limits.TimeoutSeconds);
+        Assert.AreEqual(30, settings.Limits.Interactive.UserDailyRequests);
+        Assert.AreEqual(0, settings.Limits.CloudDailyRequests, "An existing cloud opt-in gets no cloud allowance until one is granted.");
+        Assert.IsTrue(await TableExistsAsync(database, "integrations", "model_usage_ledger"));
+        Assert.AreEqual(0, await database.ModelUsageRecords.CountAsync());
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task SemanticFindingsUpgradeIsAdditiveAndStartsEmpty()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await database.Database.MigrateAsync();
+        var applied = (await database.Database.GetAppliedMigrationsAsync()).ToList();
+        Assert.IsTrue(applied.Any(name => name.EndsWith("_AddSemanticFindings", StringComparison.Ordinal)));
+        Assert.IsTrue(await TableExistsAsync(database, "evidence", "semantic_findings"));
+        Assert.AreEqual(0, await database.SemanticFindings.CountAsync(), "No finding exists until a model role is switched on.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task CloudExcerptOptInUpgradeLeavesExistingCloudSettingsWithNoDetailSharing()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(name => name.EndsWith("_AddArtifactSemanticSettings", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.ExecuteSqlRawAsync(
+            "INSERT INTO integrations.model_gateway_settings (id, is_enabled, api_key_format_version, allow_cloud, created_at_utc, updated_at_utc) " +
+            "VALUES ('22222222-2222-2222-2222-222222222222', true, 0, true, now(), now())");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var settings = await database.ModelGatewaySettingsRows.AsNoTracking().SingleAsync();
+        Assert.IsTrue(settings.AllowCloud);
+        Assert.IsFalse(settings.AllowCloudExcerpts, "An existing cloud opt-in must not silently start sharing file details.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task ReasoningModeUpgradeKeepsExistingRolesAndTestSettingsOnInherit()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrations = database.Database.GetMigrations().ToList();
+        var index = migrations.FindIndex(name => name.EndsWith("_AddModelReasoningMode", StringComparison.Ordinal));
+        Assert.IsTrue(index > 0);
+
+        await database.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
+        await database.Database.ExecuteSqlRawAsync(
+            "INSERT INTO integrations.model_gateway_settings (id, is_enabled, endpoint_url, api_key_format_version, allow_cloud, created_at_utc, updated_at_utc) " +
+            "VALUES ('33333333-3333-3333-3333-333333333333', true, 'http://litellm.example.test', 0, false, now(), now())");
+        await database.Database.ExecuteSqlRawAsync(
+            "INSERT INTO integrations.model_role_settings (settings_id, role, is_enabled, placement, local_model) " +
+            "VALUES ('33333333-3333-3333-3333-333333333333', 'CandidateAmbiguityAssessment', true, 'Local', 'local/alias')");
+        await database.Database.ExecuteSqlRawAsync(
+            "INSERT INTO integrations.model_test_settings (id, is_enabled, api_key_format_version, allow_cloud, timeout_seconds, max_output_tokens, created_at_utc, updated_at_utc) " +
+            "VALUES ('44444444-4444-4444-4444-444444444444', true, 0, false, 30, 384, now(), now())");
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var gateway = await database.ModelGatewaySettingsRows.AsNoTracking().Include(row => row.Roles).SingleAsync();
+        var role = gateway.FindRole(FamilyLibrarian.Domain.ModelGateway.ModelRole.CandidateAmbiguityAssessment)!;
+        Assert.IsTrue(role.IsEnabled);
+        Assert.AreEqual("local/alias", role.LocalModel);
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Inherit, role.Reasoning, "Existing installs keep sending no reasoning parameter.");
+        var test = await database.ModelTestSettingsRows.AsNoTracking().SingleAsync();
+        Assert.AreEqual(FamilyLibrarian.Domain.ModelGateway.ModelReasoningMode.Inherit, test.Reasoning);
+        Assert.AreEqual(384, test.MaxOutputTokens, "The administrator's stored limit is not silently changed.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    [TestMethod]
+    public async Task AssetOriginUpgradeMarksEveryExistingRowLegacyExplicitlyAndProtectsOrigin()
+    {
+        const string PreOriginMigration = "20261010202850_AddArtifactEvidence";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var now = DateTimeOffset.UtcNow;
+        var work = new Work("Origin upgrade", null, null, null, PublicationStatus.Published, now);
+        database.Works.Add(work);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        database.BookRequests.Add(request);
+        // Created under the CURRENT model, as a manual upload by a user. Rolling back drops the columns, so this
+        // row is exactly what a pre-M1-5a database holds: no origin at all.
+        var asset = new MediaAsset(
+            work.Id, editionId: null, RequestMediaType.Ebook, ".epub", "legacy.epub", "legacy-stored2.epub", 10,
+            new string('e', 64), "application/epub+zip", request.Formats.Single().Id, sourceAcquisitionCandidateId: null, now,
+            identityPreConfirmed: true, origin: AssetOrigin.ManualUpload, originUserId: userId);
+        database.MediaAssets.Add(asset);
+        await database.SaveChangesAsync();
+
+        await database.GetService<IMigrator>().MigrateAsync(PreOriginMigration);
+        Assert.IsFalse(await ColumnExistsAsync(database, "origin"));
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var preserved = await database.MediaAssets.AsNoTracking().SingleAsync(item => item.Id == asset.Id);
+        Assert.AreEqual(AssetOrigin.Legacy, preserved.Origin, "Explicit 'Legacy', not inferred from anything else.");
+        Assert.IsNull(preserved.OriginUserId);
+        Assert.IsNull(preserved.IdentityHoldCode);
+        Assert.IsTrue(preserved.IdentityPreConfirmed, "The historical attestation value is untouched.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+
+        var rejected = await Assert.ThrowsAsync<Exception>(() => database.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE acquisition.media_assets SET origin = {"ManualUpload"} WHERE id = {asset.Id}"));
+        StringAssert.Contains(rejected.ToString(), "immutable");
+    }
+
+    [TestMethod]
+    public async Task RemovingTheAssetOriginDefaultKeepsHistoricalLegacyRowsAndRejectsAnythingUndefined()
+    {
+        const string PreOriginMigration = "20261010202850_AddArtifactEvidence";
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await database.Users.Select(user => user.Id).FirstAsync();
+        var now = DateTimeOffset.UtcNow;
+        var work = new Work("Origin default removal", null, null, null, PublicationStatus.Published, now);
+        database.Works.Add(work);
+        var request = new BookRequest(userId, work.Id, [RequestMediaType.Ebook], null, now);
+        database.BookRequests.Add(request);
+        var asset = new MediaAsset(
+            work.Id, editionId: null, RequestMediaType.Ebook, ".epub", "history.epub", "history-stored.epub", 10,
+            new string('f', 64), "application/epub+zip", request.Formats.Single().Id, sourceAcquisitionCandidateId: null, now,
+            identityPreConfirmed: true, origin: AssetOrigin.ManualUpload, originUserId: userId);
+        database.MediaAssets.Add(asset);
+        await database.SaveChangesAsync();
+
+        // Back to a database that has no origin at all, then forward through the migration that marks history explicitly
+        // and the one that removes the silent default.
+        await database.GetService<IMigrator>().MigrateAsync(PreOriginMigration);
+        await database.Database.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var preserved = await database.MediaAssets.AsNoTracking().SingleAsync(item => item.Id == asset.Id);
+        Assert.AreEqual(AssetOrigin.Legacy, preserved.Origin, "Historical rows keep the explicit meaning they were given.");
+        Assert.IsNull(preserved.OriginUserId);
+        Assert.IsTrue(preserved.IdentityPreConfirmed, "The historical attestation is not reinterpreted.");
+        var defaultValue = await database.Database.SqlQuery<string?>(
+            $"SELECT column_default AS \"Value\" FROM information_schema.columns WHERE table_schema = 'acquisition' AND table_name = 'media_assets' AND column_name = 'origin'")
+            .SingleAsync();
+        Assert.IsNull(defaultValue, "An insert that does not state an origin fails; it can no longer become Legacy by omission.");
+
+        // Provenance spoofing at the database: a row claiming an undefined origin (what an unset enum would write) is refused.
+        var spoof = await Assert.ThrowsAsync<Exception>(() => database.Database.ExecuteSqlRawAsync(
+            "CREATE TEMP TABLE origin_copy AS SELECT * FROM acquisition.media_assets WHERE origin = 'Legacy' LIMIT 1; " +
+            "UPDATE origin_copy SET id = gen_random_uuid(), origin = '0'; " +
+            "INSERT INTO acquisition.media_assets SELECT * FROM origin_copy;"));
+        StringAssert.Contains(spoof.ToString(), "ck_media_assets_origin_defined");
+        Assert.AreEqual(1, await database.MediaAssets.CountAsync(), "The refused insert left nothing behind.");
+        Assert.IsFalse(database.Database.HasPendingModelChanges());
+    }
+
+    private static async Task<bool> ColumnExistsAsync(AppDbContext database, string column) =>
+        await database.Database.SqlQuery<bool>(
+            $"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'acquisition' AND table_name = 'media_assets' AND column_name = {column}) AS \"Value\"")
+            .SingleAsync();
+
+    private static async Task<bool> TableExistsAsync(AppDbContext database, string schema, string table) =>
+        await database.Database.SqlQuery<bool>(
+            $"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = {schema} AND table_name = {table}) AS \"Value\"")
+            .SingleAsync();
 
     [TestMethod]
     public async Task SharedRequestUpgradePreservesParticipantsAndHoldsHistoricalOverlaps()

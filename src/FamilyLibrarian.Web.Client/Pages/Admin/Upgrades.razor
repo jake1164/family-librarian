@@ -1,0 +1,173 @@
+@page "/admin/upgrades"
+@attribute [Authorize(Roles = "Admin")]
+@using FamilyLibrarian.Contracts.Upgrades
+@using FamilyLibrarian.Web.Client.Upgrades
+@inject UpgradesApiClient Api
+
+<PageTitle>Better copies · Family Librarian</PageTitle>
+
+<MudStack Spacing="3">
+    <div>
+        <MudText Typo="Typo.h3">Better copies</MudText>
+        <MudText Typo="Typo.body1">
+            Books that were delivered but whose checks showed signs of being incomplete are searched for again about every 30 days. When a stronger
+            copy is found it appears here. How often a book is searched again is set under Clean-up on the
+            <MudLink Href="admin/storage#cleanup-settings">Storage page</MudLink>.
+        </MudText>
+    </div>
+
+    @if (message is not null)
+    {
+        <MudAlert Severity="@(messageIsError ? Severity.Warning : Severity.Success)" role="@(messageIsError ? "alert" : "status")" ShowCloseIcon="true" CloseIconClicked="() => message = null">@message</MudAlert>
+    }
+
+    @if (failed)
+    {
+        <MudAlert Severity="Severity.Warning" role="alert">Better copies could not be loaded. Refresh to try again.</MudAlert>
+    }
+    else if (upgrades is null)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" aria-label="Loading better copies" />
+    }
+    else
+    {
+        <MudPaper Outlined="true" Class="pa-4" id="upgrade-settings">
+            <MudStack Spacing="1">
+                <MudSwitch T="bool" Value="autoReplace" ValueChanged="SetAutoReplaceAsync" Disabled="busy" Color="Color.Primary"
+                           Label="Replace incomplete books automatically" aria-describedby="upgrade-settings-help" />
+                <MudText Typo="Typo.body2" id="upgrade-settings-help">
+                    @if (autoReplace)
+                    {
+                        <text>On. When a better copy is found and the library can remove the old one (Audiobookshelf's account may delete items; CWA's e-reader
+                        account is set up), the better copy is fetched and checked, delivered next to the old one, confirmed in the library, and only then is the
+                        old one removed. If anything unexpected happens both copies are left and you are notified. A copy a person chose is never replaced.</text>
+                    }
+                    else
+                    {
+                        <text>Off. Better copies are only listed here; nothing changes until you start one.</text>
+                    }
+                </MudText>
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="pa-4" id="upgrade-list">
+            <MudStack Spacing="2">
+                <MudStack Row="true" AlignItems="AlignItems.Center">
+                    <MudText Typo="Typo.h5">Found so far</MudText>
+                    <MudSpacer />
+                    <MudButton Variant="Variant.Text" OnClick="LoadAsync" Disabled="busy">Refresh</MudButton>
+                </MudStack>
+                @if (upgrades.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No better copies have been found yet.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="upgrades" Dense="true" Outlined="true" Breakpoint="Breakpoint.Sm">
+                        <HeaderContent>
+                            <MudTh>Book</MudTh><MudTh>Status</MudTh><MudTh>Why it was searched</MudTh><MudTh>Found</MudTh><MudTh>Actions</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Book">
+                                <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                                    <MudTooltip Text="@context.MediaType">
+                                        <MudIcon Icon="@MediaTypeVisuals.Icon(context.MediaType)" Size="Size.Small" aria-label="@context.MediaType" />
+                                    </MudTooltip>
+                                    <MudLink Href="@($"admin/requests/{context.RequestId}")">@context.WorkTitle</MudLink>
+                                </MudStack>
+                            </MudTd>
+                            <MudTd DataLabel="Status">
+                                <RequestStatusChip Status="@context.State" Label="@UpgradeText.StatusLabel(context.State)" />
+                                <MudText Typo="Typo.caption" Class="d-block">@UpgradeText.WhatHappensNext(context.State)</MudText>
+                                @if (!string.IsNullOrWhiteSpace(context.FailureReason))
+                                {
+                                    <MudText Typo="Typo.caption" Class="d-block">@context.FailureReason</MudText>
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="Why it was searched">@string.Join("; ", context.Reasons.Select(UpgradeText.Reason))</MudTd>
+                            <MudTd DataLabel="Found">@context.CreatedAtUtc.ToLocalTime().ToString("d", System.Globalization.CultureInfo.CurrentCulture)</MudTd>
+                            <MudTd DataLabel="Actions">
+                                @if (UpgradeText.CanAct(context.State))
+                                {
+                                    <MudStack Row="true" Spacing="1">
+                                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="busy"
+                                                   OnClick="() => ApproveAsync(context)" aria-label="@($"Replace {context.WorkTitle} with the better copy")">Replace</MudButton>
+                                        <MudButton Variant="Variant.Text" Size="Size.Small" Disabled="busy"
+                                                   OnClick="() => DismissAsync(context)" aria-label="@($"Set aside the better copy of {context.WorkTitle}")">Set aside</MudButton>
+                                    </MudStack>
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+</MudStack>
+
+@code {
+    private IReadOnlyList<LibraryUpgradeResponse>? upgrades;
+    private bool autoReplace = true;
+    private bool failed;
+    private bool busy;
+    private string? message;
+    private bool messageIsError;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        busy = true;
+        try
+        {
+            failed = false;
+            upgrades = await Api.ListAsync();
+            autoReplace = (await Api.GetSettingsAsync()).AutoReplace;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            failed = true;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SetAutoReplaceAsync(bool value)
+    {
+        busy = true;
+        var result = await Api.SetAutoReplaceAsync(value);
+        busy = false;
+        if (result.Succeeded)
+        {
+            autoReplace = value;
+            Say(value ? "Automatic replacement is on." : "Automatic replacement is off.", error: false);
+        }
+        else Say(result.Error ?? "That could not be saved.", error: true);
+    }
+
+    private async Task ApproveAsync(LibraryUpgradeResponse upgrade)
+    {
+        busy = true;
+        var result = await Api.ApproveAsync(upgrade.Id);
+        busy = false;
+        Say(result.Succeeded ? $"Started: the better copy of {upgrade.WorkTitle} is being fetched." : result.Error ?? "That could not be started.", error: !result.Succeeded);
+        await LoadAsync();
+    }
+
+    private async Task DismissAsync(LibraryUpgradeResponse upgrade)
+    {
+        busy = true;
+        var result = await Api.DismissAsync(upgrade.Id);
+        busy = false;
+        Say(result.Succeeded ? $"Set aside the better copy of {upgrade.WorkTitle}." : result.Error ?? "That could not be set aside.", error: !result.Succeeded);
+        await LoadAsync();
+    }
+
+    private void Say(string text, bool error)
+    {
+        message = text;
+        messageIsError = error;
+    }
+}

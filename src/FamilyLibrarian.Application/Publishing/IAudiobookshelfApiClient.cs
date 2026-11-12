@@ -19,6 +19,24 @@ public interface IAudiobookshelfApiClient
     Task<BookMatchResult> FindExistingItemIdAsync(
         string title, string? author, CancellationToken cancellationToken, string? acceptedLanguage = null);
 
+    /// <summary>
+    /// Whether the configured token may remove items (the user's delete permission). False when unknown, unreachable or not allowed:
+    /// nothing may be retracted on a guess.
+    /// </summary>
+    Task<bool> CanDeleteAsync(CancellationToken cancellationToken) => Task.FromResult(false);
+
+    /// <summary>
+    /// The id of the one library item whose title, or whose upload folder, is exactly this, or null when none or more than one. The folder
+    /// counts because Audiobookshelf titles an item from the audio files' tags when they have any. Used to confirm an upgrade copy.
+    /// </summary>
+    Task<string?> FindItemIdByExactTitleAsync(string exactTitle, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+    /// <summary>Removes an item and its files (<c>hard=1</c>); without it the files stay and the next scan brings the item back.</summary>
+    Task<bool> DeleteItemHardAsync(string itemId, CancellationToken cancellationToken) => Task.FromResult(false);
+
+    /// <summary>Changes an item's title (and nothing else).</summary>
+    Task<bool> RenameItemAsync(string itemId, string title, CancellationToken cancellationToken) => Task.FromResult(false);
+
     Task<AudiobookshelfUploadResult> UploadAsync(
         Stream content,
         string filename,

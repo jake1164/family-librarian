@@ -39,7 +39,8 @@ public sealed class CwaPublishingService(
     IAuditWriter audit,
     IClock clock,
     NotificationService notifications,
-    DeliveryAttemptService deliveryAttempts)
+    DeliveryAttemptService deliveryAttempts,
+    Acquisition.FulfilledFormatDownloadCancellation? remainingDownloads = null)
 {
     public async Task PublishAsync(MediaAsset asset, CancellationToken cancellationToken)
     {
@@ -94,7 +95,8 @@ public sealed class CwaPublishingService(
         {
             var work = await workLookup.FindAsync(asset.WorkId, cancellationToken);
             var title = work?.Title ?? "Unknown title";
-            await TryVerifyAsync(import, asset, title, work?.PrimaryAuthor, work?.Isbn13s ?? [], cancellationToken);
+            var lookup = await ResolveCatalogLookupAsync(asset, work, cancellationToken);
+            await TryVerifyAsync(import, asset, title, lookup, cancellationToken);
 
             if (import.Status == LibraryImportStatus.AwaitingVerification)
             {
@@ -134,8 +136,24 @@ public sealed class CwaPublishingService(
     {
         var work = await workLookup.FindAsync(asset.WorkId, cancellationToken);
         var title = work?.Title ?? "Unknown title";
-        var author = work?.PrimaryAuthor;
-        var isbn13Candidates = work?.Isbn13s ?? [];
+        // What to look for in CWA. Usually the requested book; the book itself for everything shown to people.
+        var lookup = await ResolveCatalogLookupAsync(asset, work, cancellationToken);
+
+        // Duplicate guard: a book CWA already holds (an earlier copy for this request, or one added by hand) is not
+        // sent again. The existing entry stands in for this copy exactly as a verified import would: the format
+        // becomes available against it and this file's local bytes are removed. Two copies of one ebook from two
+        // sources reached the lab library before this.
+        if (await FindExistingBookIdAsync(asset, lookup, cancellationToken) is { } existingBookId)
+        {
+            await audit.WriteAsync(
+                AuditActions.AssetPublishSkippedDuplicate,
+                AuditSubjectTypes.MediaAsset,
+                asset.Id.ToString(),
+                new { asset.Id, Destination = "cwa", ExistingBookId = existingBookId },
+                cancellationToken);
+            await CompleteAsAvailableAsync(import, asset, existingBookId, title, cancellationToken);
+            return;
+        }
 
         try
         {
@@ -158,7 +176,7 @@ public sealed class CwaPublishingService(
 
             // One best-effort immediate check; CWA's ingest is asynchronous, so
             // "not found yet" is expected and left for a later manual recheck.
-            await TryVerifyAsync(import, asset, title, author, isbn13Candidates, cancellationToken);
+            await TryVerifyAsync(import, asset, title, lookup, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -174,29 +192,61 @@ public sealed class CwaPublishingService(
         }
     }
 
+    /// <summary>
+    /// The CWA book already matching this asset's Work, or null when there is none or the lookup failed. A failed
+    /// lookup never blocks publishing: at worst a duplicate is sent, which is what happened before this check.
+    /// </summary>
+    private async Task<string?> FindExistingBookIdAsync(
+        MediaAsset asset, CatalogLookup lookup, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
+            var result = await catalogClient.FindBookIdAsync(
+                lookup.Title, lookup.Author, lookup.Isbn13s, cancellationToken, acceptedLanguage);
+            return result.Decision == BookMatchDecision.Match ? result.MatchedId : null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The CWA entry is confirmed: the format is available against it and the local copy is archived.</summary>
+    private async Task CompleteAsAvailableAsync(
+        LibraryImport import, MediaAsset asset, string externalBookId, string title, CancellationToken cancellationToken)
+    {
+        import.MarkAvailable(externalBookId, clock.UtcNow);
+        await MarkRequestFormatAvailableAsync(asset, import, title, cancellationToken);
+        asset.TransitionStorageState(MediaAssetStorageState.Archived, clock.UtcNow);
+        await repository.SaveChangesAsync(cancellationToken);
+        await CancelRemainingDownloadsAsync(asset.AssociatedRequestFormatId, [asset.Id], cancellationToken);
+
+        // Cleanup runs only after the Available/Archived state is
+        // durably saved -- see DeleteTrustedBytesAsync.
+        await DeleteTrustedBytesAsync(asset, cancellationToken);
+    }
+
     private async Task TryVerifyAsync(
         LibraryImport import,
         MediaAsset asset,
         string title,
-        string? author,
-        IReadOnlyList<string> isbn13Candidates,
+        CatalogLookup lookup,
         CancellationToken cancellationToken)
     {
         try
         {
             var acceptedLanguage = await FindAcceptedLanguageAsync(asset.AssociatedRequestFormatId, cancellationToken);
             var result = await catalogClient.FindBookIdAsync(
-                title, author, isbn13Candidates, cancellationToken, acceptedLanguage);
+                lookup.Title, lookup.Author, lookup.Isbn13s, cancellationToken, acceptedLanguage);
+            if (result.Decision == BookMatchDecision.NoMatch && asset.StorageState == MediaAssetStorageState.Trusted)
+            {
+                result = await catalogClient.FindImportedFileAsync(
+                    lookup.Title, asset.Format, asset.SizeBytes, asset.Sha256, cancellationToken, acceptedLanguage);
+            }
             if (result.Decision == BookMatchDecision.Match)
             {
-                import.MarkAvailable(result.MatchedId!, clock.UtcNow);
-                await MarkRequestFormatAvailableAsync(asset, import, title, cancellationToken);
-                asset.TransitionStorageState(MediaAssetStorageState.Archived, clock.UtcNow);
-                await repository.SaveChangesAsync(cancellationToken);
-
-                // Cleanup runs only after the Available/Archived state is
-                // durably saved -- see DeleteTrustedBytesAsync.
-                await DeleteTrustedBytesAsync(asset, cancellationToken);
+                await CompleteAsAvailableAsync(import, asset, result.MatchedId!, title, cancellationToken);
             }
             else if (result.Decision is BookMatchDecision.Ambiguous or BookMatchDecision.LanguageExcluded)
             {
@@ -288,6 +338,27 @@ public sealed class CwaPublishingService(
         return request?.Formats.SingleOrDefault(format => format.Id == requestFormatId)?.AcceptedLanguage;
     }
 
+    /// <summary>The title, author and ISBNs used to find a delivered book in CWA's catalog.</summary>
+    private sealed record CatalogLookup(string Title, string? Author, IReadOnlyList<string> Isbn13s);
+
+    /// <summary>
+    /// What identifies this delivery in CWA. Normally the requested work. When the requester accepted a collection that
+    /// contains the work ("Take it"), CWA files the book under the collection's own title and it carries none of the work's
+    /// ISBNs, so looking for the work finds nothing and the delivery would wait for verification for ever. The format
+    /// records the accepted collection's title as its accepted variant; look for that, still requiring the author to
+    /// agree. Any other accepted variant (abridged, other language, parts) is the work itself and is looked up as before.
+    /// </summary>
+    private async Task<CatalogLookup> ResolveCatalogLookupAsync(
+        MediaAsset asset, WorkSummary? work, CancellationToken cancellationToken)
+    {
+        var lookup = new CatalogLookup(work?.Title ?? "Unknown title", work?.PrimaryAuthor, work?.Isbn13s ?? []);
+        var request = await requestFulfillment.FindByFormatIdAsync(asset.AssociatedRequestFormatId, cancellationToken);
+        var format = request?.Formats.SingleOrDefault(candidate => candidate.Id == asset.AssociatedRequestFormatId);
+        return format is { AcceptedVariantKind: AcquisitionQuestionKind.CollectionContaining, AcceptedVariantDetail: { Length: > 0 } collectionTitle }
+            ? lookup with { Title = collectionTitle, Isbn13s = [] }
+            : lookup;
+    }
+
     private async Task MarkRequestFormatAvailableAsync(
         MediaAsset asset, LibraryImport import, string title, CancellationToken cancellationToken)
     {
@@ -309,6 +380,25 @@ public sealed class CwaPublishingService(
         if (availableFormat?.MediaType == RequestMediaType.Ebook && import.ExternalBookId is { } externalBookId)
         {
             await TryReleaseDeliveryAsync(request, externalBookId, asset.Format, title, cancellationToken);
+        }
+    }
+
+    /// <summary>The format is in the library: stop any other provider still downloading it. Never fails the publish.</summary>
+    private async Task CancelRemainingDownloadsAsync(
+        Guid requestFormatId, IReadOnlyCollection<Guid> deliveredAssetIds, CancellationToken cancellationToken)
+    {
+        if (remainingDownloads is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await remainingDownloads.CancelRemainingAsync(requestFormatId, deliveredAssetIds, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Best effort: a copy that still arrives is caught by the duplicate check.
         }
     }
 

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Threading.RateLimiting;
 using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Acquisition;
@@ -28,6 +29,8 @@ builder.Services.AddSignalR();
 builder.Services.AddSingleton<LiveConnections>();
 builder.Services.AddSingleton<LiveUpdatesPublisher>();
 builder.Services.AddSingleton<ActiveAcquisitionTracker>();
+builder.Services.AddSingleton<SourceSearchTracker>();
+builder.Services.AddHostedService<SourceActivityUpdatesHostedService>();
 builder.Services.AddSingleton<RemoteViewSessionRegistry>();
 builder.Services.ConfigureDbContext<AppDbContext>((services, options) =>
 {
@@ -43,9 +46,20 @@ builder.Services.AddSingleton<CatalogSearchRunCoordinator>();
 builder.Services.AddHostedService<CatalogSearchRunHostedService>();
 builder.Services.AddSingleton<SecurityEvaluationScheduler>();
 builder.Services.AddHostedService<SecurityEvaluationHostedService>();
+builder.Services.AddHostedService<FamilyLibrarian.Web.Acquisition.CandidateSemanticShadowHostedService>();
+builder.Services.AddHostedService<FamilyLibrarian.Web.Acquisition.ArtifactSemanticShadowHostedService>();
 builder.Services.AddSingleton<AutomaticFulfillmentSignal>();
 builder.Services.AddSingleton<IAutomaticFulfillmentSignal>(
     services => services.GetRequiredService<AutomaticFulfillmentSignal>());
+
+// Retention, clean-up and upgrade settings are read by services as well as by the background workers, so they are always registered.
+// Defaults are the owner-agreed retention periods; any configured value is clamped to fixed ceilings (see StorageRetentionOptions).
+builder.Services.AddSingleton((builder.Configuration.GetSection("Storage:Retention").Get<FamilyLibrarian.Application.Storage.StorageRetentionOptions>()
+    ?? new FamilyLibrarian.Application.Storage.StorageRetentionOptions()).Clamped());
+builder.Services.AddSingleton((builder.Configuration.GetSection("Storage:DatabaseRetention").Get<FamilyLibrarian.Application.Storage.DatabaseRetentionOptions>()
+    ?? new FamilyLibrarian.Application.Storage.DatabaseRetentionOptions()).Clamped());
+builder.Services.AddSingleton((builder.Configuration.GetSection("Upgrades").Get<FamilyLibrarian.Application.Upgrades.LibraryUpgradeOptions>()
+    ?? new FamilyLibrarian.Application.Upgrades.LibraryUpgradeOptions()).Clamped());
 
 if (!builder.Environment.IsEnvironment("Testing"))
 {
@@ -57,6 +71,10 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<LibriVoxDownloadWorkspaceCleanupHostedService>();
     builder.Services.AddHostedService<OrphanedWorkRetirementHostedService>();
     builder.Services.AddHostedService<AutomaticRequestFulfillmentHostedService>();
+    builder.Services.AddHostedService<StorageMaintenanceHostedService>();
+    builder.Services.AddHostedService<DatabaseRetentionHostedService>();
+    builder.Services.AddHostedService<LibraryUpgradeHostedService>();
+    builder.Services.AddHostedService<LibraryUpgradeFinalizeHostedService>();
     builder.Services.AddHostedService<AcquisitionJobPollingHostedService>();
     builder.Services.AddHostedService<GutenbergCatalogHostedService>();
     builder.Services.AddHostedService<OutboundCommunicationDispatcherHostedService>();
@@ -142,6 +160,18 @@ builder.Services.AddRateLimiter(options =>
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = redemptionAttemptsPerMinute,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+    // Web chat (alpha.6 M3-3): a per-member ceiling in front of the engine's own limiter, so a script cannot make the
+    // host do per-message work faster than a person can type. Partitioned by the signed-in member, never by anything
+    // the client sends.
+    options.AddPolicy(ConversationEndpoints.RateLimitPolicy, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0
             }));
@@ -286,6 +316,11 @@ app.MapNotificationEndpoints();
 app.MapSmtpSettingsEndpoints();
 app.MapMatrixSettingsEndpoints();
 app.MapMatrixIdentityLinkEndpoints();
+app.MapConversationEndpoints();
+app.MapModelTestEndpoints();
+app.MapModelGatewayEndpoints();
+app.MapStorageEndpoints();
+app.MapUpgradeEndpoints();
 app.MapFeedbackEndpoints();
 app.MapFollowingEndpoints();
 app.MapDeliveryTargetEndpoints();
@@ -295,6 +330,7 @@ app.MapSecurityQueueEndpoints();
 app.MapLiveUpdatesEndpoints();
 app.MapInvitationEndpoints();
 app.MapAccountEndpoints();
+app.MapAcquisitionPreferenceEndpoints();
 app.MapMetadataIntegrationEndpoints();
 app.MapCwaSettingsEndpoints();
 app.MapAudiobookshelfSettingsEndpoints();

@@ -36,7 +36,9 @@ public sealed class MediaAsset
         Guid? bundleId = null,
         int? bundleSequence = null,
         int? bundleTrackCount = null,
-        bool identityPreConfirmed = true)
+        bool identityPreConfirmed = false,
+        AssetOrigin origin = AssetOrigin.Unknown,
+        Guid? originUserId = null)
     {
         if (workId == Guid.Empty)
         {
@@ -80,6 +82,21 @@ public sealed class MediaAsset
                 nameof(associatedRequestFormatId));
         }
 
+        if (!Enum.IsDefined(origin) || origin == AssetOrigin.Legacy)
+        {
+            throw new ArgumentOutOfRangeException(nameof(origin), origin, "A new asset needs a concrete origin (or Unknown); Legacy is reserved for rows that predate it.");
+        }
+
+        if (origin == AssetOrigin.ManualUpload && originUserId is null)
+        {
+            throw new ArgumentException("A manual upload records the authenticated user who made it.", nameof(originUserId));
+        }
+
+        if (origin != AssetOrigin.ManualUpload && originUserId is not null)
+        {
+            throw new ArgumentException("Only a manual upload carries a user; other origins must not claim one.", nameof(originUserId));
+        }
+
         Id = Guid.NewGuid();
         WorkId = workId;
         EditionId = editionId;
@@ -99,6 +116,8 @@ public sealed class MediaAsset
         BundleSequence = bundleSequence;
         BundleTrackCount = bundleTrackCount;
         IdentityPreConfirmed = identityPreConfirmed;
+        Origin = origin;
+        OriginUserId = originUserId;
     }
 
     public Guid Id { get; private set; } = Guid.NewGuid();
@@ -164,6 +183,13 @@ public sealed class MediaAsset
     /// all -- title/author alone, no stronger evidence.
     /// </summary>
     /// <remarks>
+    /// <b>Attestation is explicit (alpha.6 M1-4b).</b> The in-code default is <see langword="false"/>:
+    /// a creation path that does not say otherwise attests nothing, so a future path cannot
+    /// silently vouch for a file it never examined. Every creation site passes the value
+    /// itself. The database default for rows created before this change stays <c>true</c>
+    /// so existing history is untouched. This flag is a statement about the <em>source</em>;
+    /// it is never content verification (see <c>ArtifactEvidence</c>).
+    /// <para>
     /// The application layer's identity verifier only covers EPUB/KEPUB
     /// content today (a known, documented scope limit, not a secret gap).
     /// For every other format, "no verifier supports this file"
@@ -174,8 +200,33 @@ public sealed class MediaAsset
     /// verification dispatcher tell the two cases apart instead of treating
     /// "cannot check" as "checked and fine" for the one case where that
     /// mattered.
+    /// </para>
     /// </remarks>
-    public bool IdentityPreConfirmed { get; private set; } = true;
+    public bool IdentityPreConfirmed { get; private set; }
+
+    /// <summary>
+    /// Where this asset came from, set once at creation by the creating code path and never reassigned (there is
+    /// deliberately no method that changes it, and the database rejects an update). Rows that predate it were marked
+    /// <see cref="AssetOrigin.Legacy"/> once, explicitly, by the migration that introduced the column. The in-code default
+    /// is <see cref="AssetOrigin.Unknown"/> (fails closed): nothing that is merely unset can become trusted legacy
+    /// provenance, and the database has no default to fall back on either.
+    /// </summary>
+    public AssetOrigin Origin { get; private set; } = AssetOrigin.Unknown;
+
+    /// <summary>The authenticated administrator behind a <see cref="AssetOrigin.ManualUpload"/>; otherwise <see langword="null"/>.</summary>
+    public Guid? OriginUserId { get; private set; }
+
+    /// <summary>
+    /// A stable <c>identity.hold.*</c> reason code while the asset is held as <see cref="MediaAssetStorageState.Unmatched"/>,
+    /// cleared when the hold ends. Null for a hold recorded before codes existed.
+    /// </summary>
+    public string? IdentityHoldCode { get; private set; }
+
+    /// <summary>
+    /// When the automatic search judged this copy unusable and went on to another one, or null. Such a held copy no
+    /// longer needs a decision; it is kept, releasable, only until its request format is settled.
+    /// </summary>
+    public DateTimeOffset? RuledOutAtUtc { get; private set; }
 
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
@@ -203,6 +254,12 @@ public sealed class MediaAsset
     /// prior hold must never linger and be read as current).
     /// </summary>
     public void SetIdentityMismatchReason(string? reason) => IdentityMismatchReason = reason;
+
+    /// <summary>Records the stable code for the current identity hold, or clears it with the reason.</summary>
+    public void SetIdentityHoldCode(string? code) => IdentityHoldCode = string.IsNullOrWhiteSpace(code) ? null : code.Trim();
+
+    /// <summary>Records that the automatic search ruled this copy out; the first time stands.</summary>
+    public void MarkRuledOut(DateTimeOffset atUtc) => RuledOutAtUtc ??= atUtc;
 
     /// <summary>
     /// Why the most recent security evaluation was interrupted and the asset

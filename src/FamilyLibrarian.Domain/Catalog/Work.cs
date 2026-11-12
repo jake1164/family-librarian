@@ -36,6 +36,28 @@ public sealed class Work
 
     public DateOnly? FirstPublicationDate { get; private set; }
 
+    public int? CatalogPageCount { get; private set; }
+
+    public int? CatalogAudioDurationSeconds { get; private set; }
+
+    public string? CatalogLengthSource { get; private set; }
+
+    /// <summary>Fills previously unknown lengths only. A later source cannot overwrite an existing measurement.</summary>
+    public void SetCatalogLength(int? pages, int? audioSeconds, string source, DateTimeOffset at)
+    {
+        if (pages is <= 0) throw new ArgumentOutOfRangeException(nameof(pages));
+        if (audioSeconds is <= 0) throw new ArgumentOutOfRangeException(nameof(audioSeconds));
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        if (source.Trim().Length > 64) throw new ArgumentException("A length source is at most 64 characters.", nameof(source));
+        if (CatalogPageCount is null && pages is not null || CatalogAudioDurationSeconds is null && audioSeconds is not null)
+        {
+            CatalogPageCount ??= pages;
+            CatalogAudioDurationSeconds ??= audioSeconds;
+            CatalogLengthSource ??= source.Trim();
+            UpdatedAtUtc = at;
+        }
+    }
+
     public PublicationStatus PublicationStatus { get; private set; }
 
     public bool IsRetired { get; private set; }

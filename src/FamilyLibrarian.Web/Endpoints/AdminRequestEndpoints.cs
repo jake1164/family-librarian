@@ -5,10 +5,12 @@ using FamilyLibrarian.Application.Matching;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
+using FamilyLibrarian.Application.SemanticAssessment;
 using FamilyLibrarian.Application.Security;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Contracts.Requests;
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.Requests;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
@@ -39,6 +41,7 @@ internal static class AdminRequestEndpoints
         adminRequests.MapGet("/{requestId:guid}", GetAdminRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-interaction", GetProviderInteractionForRequestAsync);
         adminRequests.MapGet("/{requestId:guid}/provider-attempts", ListProviderAttemptsAsync);
+        adminRequests.MapGet("/{requestId:guid}/search-variants", ListSearchVariantsAsync);
         adminRequests.MapGet(
             "/{requestId:guid}/formats/{formatId:guid}/providers/{providerId}/debug-search",
             DebugSearchProviderAsync);
@@ -283,6 +286,8 @@ internal static class AdminRequestEndpoints
         BookRequestService requests,
         CancellationToken cancellationToken)
     {
+        if (request.AlwaysAccept)
+            return Results.BadRequest(new { message = "Save personal preferences from your own request's question card." });
         var outcome = request.CandidateId is { } candidateId
             ? await fulfillment.AdminResolvePreferenceAmbiguityAsync(requestId, candidateId, request.ExpectedVersion, cancellationToken)
             : await fulfillment.AdminDismissPreferenceAmbiguityAsync(requestId, request.ExpectedVersion, cancellationToken);
@@ -389,14 +394,24 @@ internal static class AdminRequestEndpoints
         Guid requestId,
         IRequestRepository requests,
         IProviderAttemptRepository attempts,
+        IProviderAcquisitionJobStore providerJobs,
         CancellationToken cancellationToken)
     {
-        if (await requests.FindRequestForAdminAsync(requestId, cancellationToken) is null)
+        var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
+        if (request is null)
         {
             return Results.NotFound();
         }
 
-        return Results.Ok((await attempts.ListForRequestAsync(requestId, cancellationToken))
+        var ledger = await attempts.ListForRequestAsync(requestId, cancellationToken);
+        var displayOutcomes = ProviderAttemptDisplay.Derive(
+            ledger,
+            await providerJobs.ListAttemptJobFactsAsync(
+                [.. ledger.Where(attempt => attempt.ProviderAcquisitionJobId != null).Select(attempt => attempt.ProviderAcquisitionJobId!.Value)],
+                cancellationToken));
+        var mediaTypes = request.Formats.ToDictionary(format => format.Id, format => format.MediaType.ToString());
+
+        return Results.Ok(ledger
             .Select(attempt => new ProviderAttemptResponse(
                 attempt.Id,
                 attempt.RequestFormatId,
@@ -404,10 +419,38 @@ internal static class AdminRequestEndpoints
                 attempt.Outcome.ToString(),
                 attempt.Summary,
                 attempt.AttemptedAtUtc,
-                attempt.NextEligibleCheckAtUtc))
+                attempt.NextEligibleCheckAtUtc,
+                displayOutcomes[attempt.Id],
+                mediaTypes.GetValueOrDefault(attempt.RequestFormatId)))
             .ToArray());
     }
 
+    /// <summary>AUTOFIND 2b: how each provider was searched for this request, one line per format and provider.</summary>
+    private static async Task<IResult> ListSearchVariantsAsync(
+        Guid requestId,
+        IRequestRepository requests,
+        IProviderAttemptRepository attempts,
+        CancellationToken cancellationToken)
+    {
+        if (await requests.FindRequestForAdminAsync(requestId, cancellationToken) is null)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Ok((await attempts.ListVariantAttemptsForRequestAsync(requestId, cancellationToken))
+            .GroupBy(row => (row.RequestFormatId, row.ProviderId))
+            .Select(group =>
+            {
+                var last = group.Max(row => row.LastTriedAtUtc);
+                var foundBy = group.Where(row => row.FoundSelectedAtUtc is not null)
+                    .OrderByDescending(row => row.FoundSelectedAtUtc).Select(row => row.VariantKind).FirstOrDefault();
+                var summary = $"Searched {group.Count()} way(s) at {group.Key.ProviderId}, last on {last:yyyy-MM-dd HH:mm} UTC" +
+                    (foundBy is null ? string.Empty : $"; found by {foundBy}");
+                return new SearchVariantSummaryResponse(
+                    group.Key.RequestFormatId, group.Key.ProviderId, group.Count(), last, foundBy, summary);
+            })
+            .ToArray());
+    }
     /// <summary>
     /// ADMIN-DEBUG-1: asks one admin-registered external provider right now,
     /// outside its recheck schedule, and returns its raw results plus the
@@ -427,6 +470,8 @@ internal static class AdminRequestEndpoints
         IExternalProviderStore externalProviders,
         IWorkLookup workLookup,
         ExternalCandidateAvailabilityChecker candidateChecker,
+        ISemanticFindingStore semanticFindings,
+        ICandidateSemanticShadow semanticShadow,
         CancellationToken cancellationToken)
     {
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
@@ -474,6 +519,14 @@ internal static class AdminRequestEndpoints
                 statusCode: StatusCodes.Status502BadGateway);
         }
 
+        // Shadow only: queue unsettled candidates for a background model review, and show any review already finished.
+        // Neither step can change what is listed below.
+        semanticShadow.Observe(requestId, options);
+        var findings = await semanticFindings.FindLatestAsync(
+            SemanticSubjectKind.Candidate,
+            [.. options.Where(option => option.IdentityAssessment is not null).Select(option => CandidateSemanticEvidence.Digest(option.IdentityAssessment!)).Distinct()],
+            cancellationToken);
+
         return Results.Ok(options.Select(option => new AdminProviderDebugCandidateResponse(
             option.ProviderResultId,
             option.Title ?? string.Empty,
@@ -489,8 +542,17 @@ internal static class AdminRequestEndpoints
             option.RequiresReleaseConfirmation,
             option.ReleaseConcern,
             option.AdminInspectionUri?.ToString(),
-            ToIdentityEvidenceResponse(option))).ToArray());
+            ToIdentityEvidenceResponse(option),
+            option.IdentityAssessment is { } assessment && findings.TryGetValue(CandidateSemanticEvidence.Digest(assessment), out var finding)
+                ? ToResponse(finding)
+                : null)).ToArray());
     }
+
+    private static AdminSemanticFindingResponse ToResponse(SemanticFinding finding) => new(
+        finding.Outcome.ToString(), finding.Verdict,
+        [.. CandidateSemanticAnalyzer.DeserializeClaims(finding.ClaimsJson)
+            .Select(claim => new AdminSemanticClaimResponse(claim.Kind, claim.Stance, claim.EvidenceIds, claim.Note))],
+        finding.FailureDetail, finding.DeterministicDecision, finding.Model, finding.IsCloud, finding.CreatedAtUtc);
 
     private static AdminCandidateIdentityEvidenceResponse? ToIdentityEvidenceResponse(FulfillmentOption option)
     {
@@ -505,7 +567,9 @@ internal static class AdminRequestEndpoints
                 series.State.ToString(), series.Name, series.ExpectedPosition, series.ObservedPosition)).ToArray(),
             evidence.ReleaseEvidence.UnexplainedTokens, evidence.Contradictions,
             evidence.Conditions.Select(condition => condition.Reason).ToArray(), evidence.Reasons,
-            evidence.ReleaseEvidence.Part?.Number, evidence.ReleaseEvidence.Part?.Total);
+            evidence.ReleaseEvidence.Part?.Number, evidence.ReleaseEvidence.Part?.Total,
+            evidence.Findings.Select(finding => new AdminCandidateEvidenceFindingResponse(
+                finding.Id, finding.Code, finding.Polarity.ToString(), finding.Text)).ToArray());
     }
 
     private static async Task<IResult> ChangeAdminRequestStatusAsync(
@@ -675,7 +739,8 @@ internal static class AdminRequestEndpoints
             clock.UtcNow,
             nextEligibleCheckAtUtc: result.Outcome == ManualImportOutcome.TransferInterrupted
                 ? clock.UtcNow.AddMinutes(2)
-                : null));
+                : null,
+            providerAcquisitionJobId: result.ProviderAcquisitionJobId));
         await providerAttempts.SaveChangesAsync(cancellationToken);
 
         return ToManualImportResult(result);
@@ -752,7 +817,9 @@ internal static class AdminRequestEndpoints
             candidate.ProviderId,
             candidate.ProviderResultId,
             candidate.Title,
-            candidate.Author,
+            // Legacy fallback rows may have inherited the catalog author. They contain
+            // no provenance that can establish this as a structured source claim.
+            candidate.TitleIsRequestFallback ? null : candidate.Author,
             candidate.Language,
             candidate.Details,
             ResolveInspectionUri(candidate),

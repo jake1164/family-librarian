@@ -7,7 +7,6 @@ public sealed record ExternalProviderResponse(
     string BaseUrl,
     bool IsEnabled,
     string RecheckSchedule,
-    bool AutoAcquireEnabled,
     int AutomaticAttemptLimit,
     bool HasApiKey,
     string? ApiKeyHint,
@@ -25,7 +24,11 @@ public sealed record ExternalProviderResponse(
     DateTimeOffset? LastTestedAtUtc,
     bool? LastTestSucceeded,
     string? LastTestMessage,
-    IReadOnlyList<ExternalProviderHealthIssueResponse> CachedHealthIssues);
+    IReadOnlyList<ExternalProviderHealthIssueResponse> CachedHealthIssues,
+    string ConfidenceLevel,
+    string? EbookConfidenceLevel,
+    string? AudiobookConfidenceLevel,
+    bool ConfidenceReviewed);
 
 /// <summary>
 /// A provider-reported reason behind a degraded/unavailable result. Untrusted,
@@ -41,17 +44,11 @@ public sealed record SetExternalProviderDetailsRequest(string DisplayName, strin
 
 public sealed record SetExternalProviderEnabledRequest(bool Enabled);
 
+/// <summary>What releasing every outstanding provider download did. See the admin route that returns it.</summary>
+public sealed record ProviderJobReleaseResponse(int Cancelled, int Released, int Failed);
+
 /// <summary>One of <c>Manual</c>, <c>Daily</c>, or <c>Weekly</c>.</summary>
 public sealed record SetExternalProviderRecheckScheduleRequest(string RecheckSchedule);
-
-/// <summary>
-/// A separate, explicit opt-in for unattended acquisition of a
-/// high-confidence candidate found on a scheduled recheck — independent of
-/// <see cref="SetExternalProviderRecheckScheduleRequest"/>, which only
-/// controls how often this provider is checked, never whether a match found
-/// that way may be fetched without review.
-/// </summary>
-public sealed record SetExternalProviderAutoAcquireEnabledRequest(bool Enabled);
 
 /// <summary>
 /// How many candidates unattended acquisition may download and fail to verify
@@ -59,6 +56,8 @@ public sealed record SetExternalProviderAutoAcquireEnabledRequest(bool Enabled);
 /// 1 for a source with a limited download allowance.
 /// </summary>
 public sealed record SetExternalProviderAutomaticAttemptLimitRequest(int Limit);
+
+public sealed record SetExternalProviderConfidenceLevelRequest(string Level, string? Ebook, string? Audiobook);
 
 public sealed record SetExternalProviderApiKeyRequest(string ApiKey);
 

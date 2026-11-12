@@ -1,0 +1,10 @@
+@using FamilyLibrarian.Contracts.Providers
+
+@if (Providers?.Any(provider => provider.IsEnabled && !provider.ConfidenceReviewed) == true)
+{
+    <MudAlert Severity="Severity.Info" Class="mb-4">Review the download confidence for each source</MudAlert>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<ExternalProviderResponse>? Providers { get; set; }
+}

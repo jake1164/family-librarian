@@ -1,5 +1,7 @@
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Security;
+using FamilyLibrarian.Application.SemanticAssessment;
+using FamilyLibrarian.Domain.Evidence;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Contracts.Acquisition;
 using FamilyLibrarian.Web.Acquisition;
@@ -31,6 +33,8 @@ internal static class SecurityQueueEndpoints
     private static async Task<IResult> ListRecentMediaAssetsAsync(
         int? limit,
         MediaAssetQueueService queue,
+        ISemanticFindingStore semanticFindings,
+        FamilyLibrarian.Application.Storage.MaintenanceSettingsService maintenance,
         CancellationToken cancellationToken)
     {
         var maximumCount = limit ?? 50;
@@ -43,18 +47,59 @@ internal static class SecurityQueueEndpoints
         }
 
         var entries = await queue.ListRecentAsync(maximumCount, cancellationToken);
-        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(ToMediaAssetAdminResponse).ToArray()));
+        var findings = await LoadFindingsAsync(semanticFindings, entries, cancellationToken);
+        var (retention, _, _) = await maintenance.EffectiveAsync(cancellationToken);
+        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(entry => ToMediaAssetAdminResponse(entry, findings, retention)).ToArray()));
     }
 
     private static async Task<IResult> ListMediaAssetsAsync(
         MediaAssetQueueService queue,
+        ISemanticFindingStore semanticFindings,
+        FamilyLibrarian.Application.Storage.MaintenanceSettingsService maintenance,
         CancellationToken cancellationToken)
     {
         var entries = await queue.ListAsync(cancellationToken);
-        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(ToMediaAssetAdminResponse).ToArray()));
+        var findings = await LoadFindingsAsync(semanticFindings, entries, cancellationToken);
+        var (retention, _, _) = await maintenance.EffectiveAsync(cancellationToken);
+        return Results.Ok(new MediaAssetAdminListResponse(entries.Select(entry => ToMediaAssetAdminResponse(entry, findings, retention)).ToArray()));
     }
 
-    internal static MediaAssetAdminResponse ToMediaAssetAdminResponse(MediaAssetQueueEntry entry) => new(
+    /// <summary>Show actionable hold/release decisions and their citations ahead of advisory shadow notes.</summary>
+    private static async Task<IReadOnlyDictionary<string, SemanticFinding>> LoadFindingsAsync(
+        ISemanticFindingStore store, IReadOnlyList<MediaAssetQueueEntry> entries, CancellationToken cancellationToken)
+    {
+        var subjects = entries.Select(entry => entry.Asset.AssetId.ToString("N")).ToArray();
+        var shadow = await store.FindLatestForSubjectsAsync(SemanticSubjectKind.Artifact, subjects, cancellationToken);
+        var decisions = await store.FindLatestForSubjectsAsync(SemanticSubjectKind.ArtifactDecision, subjects, cancellationToken);
+        var findings = shadow.ToDictionary(pair => pair.Key, pair => pair.Value);
+        foreach (var entry in entries)
+        {
+            var id = entry.Asset.AssetId.ToString("N");
+            if (decisions.TryGetValue(id, out var decision) &&
+                (entry.Asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.ModelConcern ||
+                 decision.Verdict is "release" or "contains_requested" || !findings.ContainsKey(id)))
+                findings[id] = decision;
+        }
+        return findings;
+    }
+
+    /// <summary>The same response plus the date the age rule will remove a held file (null for a file clean-up never touches).</summary>
+    private static MediaAssetAdminResponse ToMediaAssetAdminResponse(
+        MediaAssetQueueEntry entry, IReadOnlyDictionary<string, FamilyLibrarian.Domain.Evidence.SemanticFinding>? findings,
+        FamilyLibrarian.Application.Storage.StorageRetentionOptions retention) =>
+        ToMediaAssetAdminResponse(entry, findings) with
+        {
+            RemovalDateUtc = FamilyLibrarian.Application.Storage.StorageRetentionPlanner.RemovalDate(
+                entry.Asset.StorageState, entry.Asset.MediaType, entry.Asset.RuledOutAtUtc is not null,
+                FamilyLibrarian.Application.Storage.StorageRetentionPlanner.IsAwaitingDecision(entry.Asset.StorageState, entry.LatestEvaluation?.Status),
+                entry.Asset.UpdatedAtUtc, retention)
+        };
+
+    internal static MediaAssetAdminResponse ToMediaAssetAdminResponse(MediaAssetQueueEntry entry) =>
+        ToMediaAssetAdminResponse(entry, null);
+
+    internal static MediaAssetAdminResponse ToMediaAssetAdminResponse(
+        MediaAssetQueueEntry entry, IReadOnlyDictionary<string, SemanticFinding>? findings) => new(
         entry.Asset.AssetId,
         entry.Asset.RequestId,
         entry.Asset.WorkId,
@@ -81,7 +126,28 @@ internal static class SecurityQueueEndpoints
                 approval.Decision.ToString(), approval.ActorType.ToString(), approval.Reason, approval.DecidedAtUtc))
                 .ToArray()),
         entry.Asset.IdentityMismatchReason,
-        entry.Asset.ScanFailureReason);
+        entry.Asset.ScanFailureReason,
+        ToEvidenceResponse(entry.Evidence),
+        entry.Asset.IdentityHoldCode,
+        entry.Asset.Origin.ToString(),
+        findings is not null && findings.TryGetValue(entry.Asset.AssetId.ToString("N"), out var finding)
+            ? new AdminArtifactSemanticFindingResponse(
+                finding.Outcome.ToString(), finding.Verdict,
+                [.. CandidateSemanticAnalyzer.DeserializeClaims(finding.ClaimsJson)
+                    .Select(claim => new AdminArtifactSemanticClaimResponse(claim.Kind, claim.Stance, claim.EvidenceIds, claim.Note))],
+                finding.FailureDetail, finding.Model, finding.IsCloud, finding.CreatedAtUtc, finding.Kind == SemanticSubjectKind.ArtifactDecision)
+            : null,
+        entry.Asset.BundleId,
+        entry.Asset.BundleTrackCount,
+        entry.Asset.RuledOutAtUtc);
+
+    private static ArtifactEvidenceResponse ToEvidenceResponse(IReadOnlyList<FamilyLibrarian.Domain.Evidence.ArtifactEvidence> evidence) =>
+        evidence.Count == 0
+            ? new("NotRecorded", null, null, [])
+            : new("Recorded", evidence[0].Sha256, evidence.Max(item => item.EvidenceSchemaVersion),
+                evidence.Select(item => new ArtifactEvidenceItemResponse(
+                    item.RecordKind, item.RecordId, item.FindingId, item.Dimension.ToString(), item.Code,
+                    item.Polarity.ToString(), item.Source, item.Value, item.ToolVersion, item.RecordedAtUtc)).ToArray());
 
     /// <summary>
     /// Queues the scan and returns at once. A large file takes minutes to

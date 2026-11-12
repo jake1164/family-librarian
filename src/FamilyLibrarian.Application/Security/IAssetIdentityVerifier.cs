@@ -1,4 +1,5 @@
 using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Evidence;
 
 namespace FamilyLibrarian.Application.Security;
 
@@ -23,12 +24,32 @@ public interface IAssetIdentityVerifier
         CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// One observation a verifier already made while comparing a file with its Work, reported so it
+/// can be recorded as evidence. Facts never influence <see cref="AssetIdentityVerificationResult.IsMatch"/>.
+/// </summary>
+/// <param name="FindingId">Unique within one verification (for example <c>ev-title</c>).</param>
+/// <param name="Value">A bounded, non-content detail such as a language tag. Never book text.</param>
+public sealed record IdentityFact(
+    string FindingId, EvidenceDimension Dimension, string Code, EvidencePolarity Polarity, string? Value = null);
+
 public sealed record AssetIdentityVerificationResult(
     bool IsMatch,
     string VerifierId,
-    string? Reason = null)
+    string? Reason = null,
+    IReadOnlyList<IdentityFact>? Facts = null)
 {
-    public static AssetIdentityVerificationResult Match(string verifierId) => new(true, verifierId);
+    /// <summary>The stable <c>identity.hold.*</c> code when <see cref="ArtifactHoldPolicy"/> turned a match into a hold; otherwise null.</summary>
+    public string? HoldCode { get; init; }
+
+    /// <summary>A grounded proposal only. ApprovalService must recheck the persisted hold and permission before acting.</summary>
+    public Guid? ModelReleaseFindingId { get; init; }
+
+    /// <summary>What the verifier observed while deciding. Empty when it reported none.</summary>
+    public IReadOnlyList<IdentityFact> Facts { get; init; } = Facts ?? [];
+
+    public static AssetIdentityVerificationResult Match(string verifierId, IReadOnlyList<IdentityFact>? facts = null) =>
+        new(true, verifierId, null, facts);
 
     /// <param name="reason">
     /// What was compared and why it didn't match, in terms a librarian can
@@ -37,6 +58,7 @@ public sealed record AssetIdentityVerificationResult(
     /// when the verifier couldn't safely read enough of the file to compare
     /// anything at all.
     /// </param>
-    public static AssetIdentityVerificationResult Unmatched(string verifierId, string? reason = null) =>
-        new(false, verifierId, reason);
+    public static AssetIdentityVerificationResult Unmatched(
+        string verifierId, string? reason = null, IReadOnlyList<IdentityFact>? facts = null) =>
+        new(false, verifierId, reason, facts);
 }

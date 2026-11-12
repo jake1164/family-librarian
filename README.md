@@ -12,7 +12,6 @@ This repository contains the current design documents for **Family Librarian**, 
 4. [External Provider HTTP Protocol (v2)](docs/04-external-provider-http-protocol.md)
 5. [Deployment, Backup, and Recovery](docs/06-deployment-and-recovery.md)
 6. [UI Conventions](docs/07-ui-conventions.md)
-7. [Book Matching Design Findings](docs/family-librarian-book-matching-design-findings.md)
 
 Release history is in the [Changelog](CHANGELOG.md).
 
@@ -189,6 +188,15 @@ Administrators also get:
 - **Queue**, to review family requests and act on them (add a note, mark
   needs-review/unavailable, or cancel). A persistent in-app admin alert and the
   Queue navigation label show any requests that need review;
+- **Tasks**, with a compact summary strip whose metrics jump to their sections,
+  including **Source status**, which jumps to **Sources now** below Requests.
+  The panel shows every configured acquisition source, live work,
+  disabled or unavailable sources, and the last request action. Downloads received
+  count retained acquisition records once per acquisition, including multi-file
+  downloads; received files may still be undergoing checks. Actual search starts
+  include browsing and reset on app restart, with the counting start time shown.
+  Idle means no active work, not a successful connection test. Source activity
+  updates are administrator-only;
 - **Metadata providers**, for enabling book-information providers and storing a
   Google Books key;
 - **Sources**, for reviewing the built-in Project Gutenberg and LibriVox sources and configuring
@@ -225,9 +233,12 @@ including on shared requests; source/security/publishing diagnostics remain admi
 
 Each admin request detail page includes an append-only provider-activity
 timeline, including no-match, found-candidate, blocked, failed, and acquired
-outcomes. External sources default to **Manual**; an admin can opt a source into
-daily or weekly discovery rechecks. Those rechecks only surface candidates for
-librarian review — they never download an external file automatically.
+outcomes. New external sources default to **Daily** discovery rechecks; an admin
+can choose Manual or Weekly instead. Existing sources retain their saved schedule.
+Enabled sources download candidates permitted by the source's download confidence
+level, with optional ebook and audiobook overrides. **Suggest only** keeps a source
+available for discovery and review while a librarian chooses each download. Every downloaded copy passes
+the normal security and content checks; other candidates go to review.
 
 In VS Code, the Run and Debug selector provides three Compose-backed container
 modes:

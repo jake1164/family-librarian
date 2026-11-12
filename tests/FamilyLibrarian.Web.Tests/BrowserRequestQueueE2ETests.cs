@@ -1,3 +1,7 @@
+using System.Net;
+using System.Net.Http.Json;
+using FamilyLibrarian.Contracts.Authentication;
+using FamilyLibrarian.Contracts.Publishing;
 using Microsoft.Playwright;
 
 namespace FamilyLibrarian.Web.Tests;
@@ -19,6 +23,8 @@ public sealed class BrowserRequestQueueE2ETests
     private const string BaseUrlVariable = "FAMILY_LIBRARIAN_E2E_BASE_URL";
     private const string AdminEmailVariable = "FAMILY_LIBRARIAN_E2E_ADMIN_EMAIL";
     private const string AdminPasswordVariable = "FAMILY_LIBRARIAN_E2E_ADMIN_PASSWORD";
+    // The stub feed service from compose.release-e2e.yaml; reachable by this name from the application container.
+    private const string OpdsStubUrl = "http://opds-stub";
     private const string RequesterPassword = "Browser-E2E!2026";
 
     [TestMethod]
@@ -26,6 +32,7 @@ public sealed class BrowserRequestQueueE2ETests
     {
         var settings = ReadSettings();
         var requesterEmail = $"browser-e2e-{Guid.NewGuid():N}@family-librarian.example";
+        await EnableAnEbookDestinationAsync(settings);
 
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
@@ -61,7 +68,7 @@ public sealed class BrowserRequestQueueE2ETests
             .ToBeVisibleAsync();
         await page.Locator("a.search-result-title").First.ClickAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Request this book", Exact = true }).ClickAsync();
-        await Assertions.Expect(page.GetByText("Your request is in.", new() { Exact = false })).ToBeVisibleAsync();
+        await Assertions.Expect(page.GetByText("Your interest is saved.", new() { Exact = false })).ToBeVisibleAsync();
 
         await SignOutAsync(page);
         await SignInAsync(page, settings.BaseUri, settings.AdminEmail, settings.AdminPassword);
@@ -73,6 +80,30 @@ public sealed class BrowserRequestQueueE2ETests
         await page.GetByRole(AriaRole.Button, new() { Name = "Needs review", Exact = true }).ClickAsync();
         await Assertions.Expect(page.GetByText("PendingAcquisition → NeedsReview", new() { Exact = true }))
             .ToBeVisibleAsync();
+    }
+
+    /// <summary>
+    /// A fresh deployment has no delivery destination, and the request form keeps its button disabled until an ebook
+    /// destination passes its connection test. The administrator therefore configures the simplest one (a local ingest
+    /// folder plus the stub OPDS feed from compose.release-e2e.yaml) first, exactly as the settings page would.
+    /// </summary>
+    private static async Task EnableAnEbookDestinationAsync(BrowserE2eSettings settings)
+    {
+        using var handler = new HttpClientHandler { CookieContainer = new CookieContainer() };
+        using var client = new HttpClient(handler) { BaseAddress = settings.BaseUri };
+        var login = await client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = settings.AdminEmail, Password = settings.AdminPassword });
+        login.EnsureSuccessStatusCode();
+        var token = await client.GetFromJsonAsync<AntiforgeryTokenResponse>("/api/v1/antiforgery/token");
+        client.DefaultRequestHeaders.Add(AntiforgeryTokenEndpoint.HeaderName, token!.Token);
+
+        var saved = await client.PutAsJsonAsync("/api/v1/admin/publishing/cwa",
+            new SetCwaSettingsRequest("Local", "/tmp", null, null, null, null, "PrivateKey", OpdsStubUrl, null, null, null));
+        Assert.IsTrue(saved.IsSuccessStatusCode, "Saving the ingest folder: " + await saved.Content.ReadAsStringAsync());
+        var tested = await client.PostAsync("/api/v1/admin/publishing/cwa/test", content: null);
+        Assert.IsTrue(tested.IsSuccessStatusCode, "Testing the destination: " + await tested.Content.ReadAsStringAsync());
+        var enabled = await client.PutAsJsonAsync("/api/v1/admin/publishing/cwa/enabled", new SetPublishingEnabledRequest(true));
+        Assert.IsTrue(enabled.IsSuccessStatusCode, "Enabling the destination: " + await enabled.Content.ReadAsStringAsync());
     }
 
     private static async Task SignInAsync(IPage page, Uri baseUri, string email, string password)

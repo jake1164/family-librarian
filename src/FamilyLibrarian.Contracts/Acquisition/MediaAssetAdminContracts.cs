@@ -17,6 +17,39 @@ public sealed record MediaAssetAdminResponse(
     DateTimeOffset UpdatedAtUtc,
     SecurityEvaluationDetailResponse? LatestEvaluation,
     string? IdentityMismatchReason = null,
-    string? ScanFailureReason = null);
+    string? ScanFailureReason = null,
+    ArtifactEvidenceResponse? Evidence = null,
+    string? IdentityHoldCode = null,
+    string? Origin = null,
+    AdminArtifactSemanticFindingResponse? SemanticFinding = null,
+    Guid? BundleId = null,
+    int? BundleTrackCount = null,
+    DateTimeOffset? RuledOutAtUtc = null,
+    DateTimeOffset? RemovalDateUtc = null);
+
+public sealed record AdminArtifactSemanticClaimResponse(string Kind, string Stance, IReadOnlyList<string> EvidenceIds, string Note);
+
+/// <summary>
+/// An administrator-only model review. Decision reviews can add a hold; shadow reviews remain advisory.
+/// <paramref name="Verdict"/> and the claims are present only when the model gave a valid answer.
+/// </summary>
+public sealed record AdminArtifactSemanticFindingResponse(
+    string Outcome,
+    string? Verdict,
+    IReadOnlyList<AdminArtifactSemanticClaimResponse> Claims,
+    string? FailureDetail,
+    string Model,
+    bool IsCloud,
+    DateTimeOffset CreatedAtUtc,
+    bool IsDecision = false);
+
+/// <summary>One persisted artifact-evidence finding. <c>(RecordId, FindingId)</c> cites it.</summary>
+public sealed record ArtifactEvidenceItemResponse(
+    string RecordKind, Guid RecordId, string FindingId, string Dimension, string Code, string Polarity,
+    string Source, string? Value, string? ToolVersion, DateTimeOffset RecordedAtUtc);
+
+/// <param name="Status"><c>Recorded</c>, or <c>NotRecorded</c> for an asset processed before evidence recording existed.</param>
+public sealed record ArtifactEvidenceResponse(
+    string Status, string? Sha256, int? SchemaVersion, IReadOnlyList<ArtifactEvidenceItemResponse> Items);
 
 public sealed record MediaAssetAdminListResponse(IReadOnlyList<MediaAssetAdminResponse> Assets);

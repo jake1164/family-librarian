@@ -113,6 +113,43 @@ public sealed class AudiobookPartSetCompleteSetEndpointTests
 
 }
 
+/// <summary>
+/// A complete set whose parts are the wrong book is a held copy like any other: it is ruled out and the next copy is
+/// tried. On the lab both parts of an Onyx Storm set were held and the request waited for ever on a "Submitted" row,
+/// because the whole-set check ran and nothing read its verdict.
+/// </summary>
+[TestClass]
+public sealed class AudiobookPartSetHeldSetEndpointTests
+{
+    [TestMethod]
+    public async Task AHeldSetIsRuledOutAndTheNextCopyIsTried()
+    {
+        await using var ownFixture = await WebTestFixture.CreateAsync();
+        var provider = new PartSetExternalProviderClient { TaggedTitle = "The Silmarillion" };
+        await using var scenario = await PartSetScenario.StartAsync(WebTestFixture.Require(ownFixture), provider);
+
+        await scenario.RecheckAsync();
+        await scenario.PollAsync();
+
+        var attempts = await scenario.AttemptsAsync();
+        var retrying = attempts.SingleOrDefault(attempt => attempt.Outcome == "Retrying");
+        Assert.IsNotNull(retrying, "The held set must reach the retry loop: " +
+            string.Join(" | ", attempts.Select(attempt => attempt.Outcome + ": " + attempt.Summary)));
+        StringAssert.Contains(retrying.Summary, "Attempt 1 of 3");
+
+        await using var scope = scenario.Factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var assets = await database.MediaAssets.Where(asset => asset.AssociatedRequestFormatId == scenario.FormatId).ToArrayAsync();
+        Assert.HasCount(2, assets);
+        Assert.IsTrue(assets.All(asset => asset.StorageState == MediaAssetStorageState.Unmatched), "Held, not deleted: kept in reserve.");
+        Assert.IsTrue(assets.All(asset => asset.RuledOutAtUtc != null), "Both parts are shown as ruled out.");
+        Assert.IsGreaterThanOrEqualTo(1, await database.DeclinedRequestCandidates.CountAsync(candidate => candidate.RequestId == scenario.RequestId),
+            "The same set must not be fetched again.");
+        var request = await database.BookRequests.SingleAsync(bookRequest => bookRequest.Id == scenario.RequestId);
+        Assert.AreEqual(RequestStatus.PendingAcquisition, request.Status, "One held set with attempts left is not a reason to stop.");
+    }
+}
+
 /// <summary>One part failing abandons the whole set: nothing is kept or published.</summary>
 [TestClass]
 public sealed class AudiobookPartSetFailedPartEndpointTests
@@ -205,6 +242,33 @@ public sealed class AudiobookPartSetIncompleteSetEndpointTests
     }
 }
 
+[TestClass]
+public sealed class AudiobookPartSetSuggestOnlyEndpointTests
+{
+    [TestMethod]
+    public async Task SuggestOnlyReviewsACompleteSetWithoutSubmittingAnyPart()
+    {
+        await using var fixture = WebTestFixture.Require(await WebTestFixture.CreateAsync());
+        var provider = new PartSetExternalProviderClient();
+        await using var scenario = await PartSetScenario.StartAsync(fixture, provider, confidence: "SuggestOnly");
+        await using (var directScope = scenario.Factory.Services.CreateAsyncScope())
+        {
+            var result = await directScope.ServiceProvider.GetRequiredService<DirectAcquisitionService>().AcquireMemberAsync(
+                scenario.RequestId, scenario.FormatId, "part-set-external", "part-1",
+                new AudiobookPartSetMember(Guid.NewGuid(), 1, 2, ["part-1", "part-2"]), CancellationToken.None);
+            Assert.AreEqual(ManualImportOutcome.LowConfidenceMatchConfirmationRequired, result.Outcome,
+                "A multipart submission must recheck Suggest only even if discovery previously selected the set.");
+        }
+        await scenario.RecheckAsync();
+        Assert.AreEqual("CandidatesFound", (await scenario.AttemptsAsync()).Single().Outcome);
+        Assert.AreEqual(0, provider.Submissions);
+        await using var scope = scenario.Factory.Services.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.AreEqual(0, await database.ProviderAcquisitionJobs.CountAsync(job => job.RequestId == scenario.RequestId));
+        Assert.AreEqual(RequestStatus.NeedsReview, (await database.BookRequests.SingleAsync(row => row.Id == scenario.RequestId)).Status);
+    }
+}
+
 file sealed class PartSetScenario : IAsyncDisposable
 {
     private PartSetScenario(FamilyLibrarianAppFactory factory, HttpClient admin, Guid requestId, Guid formatId)
@@ -223,7 +287,7 @@ file sealed class PartSetScenario : IAsyncDisposable
 
     public Guid FormatId { get; }
 
-    public static async Task<PartSetScenario> StartAsync(WebTestFixture fixture, PartSetExternalProviderClient client)
+    public static async Task<PartSetScenario> StartAsync(WebTestFixture fixture, PartSetExternalProviderClient client, string confidence = "Strict")
     {
         var factory = new FamilyLibrarianAppFactory(
             fixture.ConnectionString,
@@ -249,15 +313,15 @@ file sealed class PartSetScenario : IAsyncDisposable
             new CreateExternalProviderRequest("part-set-external", "Part Set External", "http://fake-external.test"));
         var provider = await create.Content.ReadFromJsonAsync<ExternalProviderResponse>();
         Assert.IsNotNull(provider);
+        if (confidence != "Strict")
+            (await admin.PutAsJsonAsync($"/api/v1/admin/external-providers/{provider.Id}/confidence-level",
+                new { level = confidence })).EnsureSuccessStatusCode();
         (await admin.PutAsJsonAsync(
             $"/api/v1/admin/external-providers/{provider.Id}/enabled", new SetExternalProviderEnabledRequest(true)))
             .EnsureSuccessStatusCode();
         (await admin.PutAsJsonAsync(
             $"/api/v1/admin/external-providers/{provider.Id}/recheck-schedule",
             new SetExternalProviderRecheckScheduleRequest("Daily"))).EnsureSuccessStatusCode();
-        (await admin.PutAsJsonAsync(
-            $"/api/v1/admin/external-providers/{provider.Id}/auto-acquire",
-            new SetExternalProviderAutoAcquireEnabledRequest(true))).EnsureSuccessStatusCode();
 
         var resolve = await admin.PostAsync("/api/v1/catalog/candidates/demo/the-hobbit/resolve", content: null);
         var work = await resolve.Content.ReadFromJsonAsync<CatalogWorkResponse>();
@@ -307,6 +371,9 @@ file sealed class PartSetExternalProviderClient : IExternalProviderClient
     public HashSet<string> RunningRefs { get; } = [];
 
     public HashSet<string> FailingRefs { get; } = [];
+
+    /// <summary>The title tagged inside every part. Another book's title makes the whole set a held copy.</summary>
+    public string TaggedTitle { get; init; } = "The Hobbit";
 
     public int Submissions { get; private set; }
 
@@ -381,7 +448,7 @@ file sealed class PartSetExternalProviderClient : IExternalProviderClient
         string baseUrl, string? apiKey, string jobId, string outputId,
         CancellationToken cancellationToken) =>
         Task.FromResult(new ExternalProviderArtifact(
-            new MemoryStream(M4bFixture.Build("The Hobbit", "J. R. R. Tolkien", seed: jobId[^1])),
+            new MemoryStream(M4bFixture.Build(TaggedTitle, "J. R. R. Tolkien", seed: jobId[^1])),
             $"{jobId}.m4b"));
 
     public Task CancelAcquireAsync(

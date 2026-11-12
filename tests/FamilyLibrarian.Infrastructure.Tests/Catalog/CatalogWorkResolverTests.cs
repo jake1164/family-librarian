@@ -11,6 +11,41 @@ namespace FamilyLibrarian.Infrastructure.Tests.Catalog;
 [TestClass]
 public sealed class CatalogWorkResolverTests
 {
+    [TestMethod]
+    public async Task ResolveFillsCatalogPageCountOnCreateAndOnAnIsbnReuseWithoutOverwriting()
+    {
+        foreach (var prior in new int?[] { null, 200, 320 })
+        {
+            var repository = new InMemoryCatalogRepository();
+            var existing = prior is null ? null : new Work("Project Hail Mary", null, null, null, PublicationStatus.Unknown, Now);
+            if (existing is not null)
+            {
+                existing.AddEdition(new Edition(existing.Id, "Project Hail Mary", EditionFormat.Ebook, "9780593135204", null, Now));
+                if (prior == 320) existing.SetCatalogLength(320, null, "first-source", Now);
+                repository.AddWork(existing);
+            }
+            var provider = new StubProvider(CreateCandidate() with { PageCount = 200 });
+            var resolver = new CatalogWorkResolver([provider], repository, new EmptyFollowRepository(), CreateNotificationService(), new FixedClock());
+            var result = await resolver.ResolveAsync("stub", "work-1", CancellationToken.None);
+            Assert.AreEqual(prior == 320 ? 320 : 200, result.Work.CatalogPageCount);
+            Assert.AreEqual(prior == 320 ? "first-source" : "stub", result.Work.CatalogLengthSource);
+            Assert.IsNull(result.Work.CatalogAudioDurationSeconds);
+        }
+    }
+
+    [TestMethod]
+    public void CatalogLengthOnlyFillsUnknownValuesAndDoesNotChangeAnEmptyMeasurement()
+    {
+        var work = new Work("Test Work", null, null, null, PublicationStatus.Unknown, Now);
+        work.SetCatalogLength(null, null, "example-source", Now.AddDays(1));
+        Assert.IsNull(work.CatalogLengthSource);
+        Assert.AreEqual(Now, work.UpdatedAtUtc);
+        work.SetCatalogLength(320, null, "example-source", Now.AddDays(1));
+        work.SetCatalogLength(100, 72000, "example-library", Now.AddDays(2));
+        Assert.AreEqual(320, work.CatalogPageCount);
+        Assert.AreEqual(72000, work.CatalogAudioDurationSeconds);
+        Assert.AreEqual("example-source", work.CatalogLengthSource);
+    }
     private static readonly DateTimeOffset Now =
         new(2026, 8, 11, 12, 0, 0, TimeSpan.Zero);
 

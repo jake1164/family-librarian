@@ -7,6 +7,27 @@ namespace FamilyLibrarian.Infrastructure.Tests.Communications;
 [TestClass]
 public sealed class OutboundCommunicationDispatcherTests
 {
+    [TestMethod]
+    public async Task MatrixEventIsRecordedOnEachRecipientCommunicationWithoutRepeatingDispatch()
+    {
+        var store = new FakeOutboundCommunicationStore();
+        store.Enqueue(NewCommunication());
+        store.Enqueue(NewCommunication());
+        var result = SendResult.Success();
+        var property = result.GetType().GetProperty("EventId");
+        Assert.IsNotNull(property);
+        property.SetValue(result, "$question-event");
+        var matrix = new FakeOutboundCommunicationProvider("matrix", true, result,
+            communication => result with { EventId = "$" + communication.RecipientUserId });
+        var smtp = new FakeOutboundCommunicationProvider("smtp", true, SendResult.Success() with { EventId = "$smtp-metadata" });
+        var dispatcher = Create(store, matrix, smtp);
+        Assert.AreEqual(2, await dispatcher.DispatchPendingAsync(CancellationToken.None));
+        Assert.IsTrue(store.All.All(c => c.MatrixEventId == "$" + c.RecipientUserId && c.Deliveries.Count == 2));
+        Assert.AreEqual(2, store.All.Select(c => c.MatrixEventId).Distinct().Count());
+        Assert.AreEqual(0, await dispatcher.DispatchPendingAsync(CancellationToken.None));
+        Assert.AreEqual(2, matrix.SendCallCount);
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 8, 30, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
@@ -134,7 +155,8 @@ public sealed class OutboundCommunicationDispatcherTests
         }
     }
 
-    private sealed class FakeOutboundCommunicationProvider(string providerId, bool enabled, SendResult result)
+    private sealed class FakeOutboundCommunicationProvider(string providerId, bool enabled, SendResult result,
+        Func<OutboundCommunication, SendResult>? resultFor = null)
         : IOutboundCommunicationProvider
     {
         public int SendCallCount { get; private set; }
@@ -146,7 +168,7 @@ public sealed class OutboundCommunicationDispatcherTests
         public Task<SendResult> SendAsync(OutboundCommunication communication, CancellationToken cancellationToken)
         {
             SendCallCount++;
-            return Task.FromResult(result);
+            return Task.FromResult(resultFor?.Invoke(communication) ?? result);
         }
     }
 

@@ -56,6 +56,24 @@ public sealed class ManualImportServiceTests
     }
 
     [TestMethod]
+    public async Task TheSameFileArrivingTwiceAtOnceIsStagedOnce()
+    {
+        // The hosted worker and an administrator's direct acquisition can fetch the same book at the same moment.
+        // The duplicate check only sees saved assets, so without serializing per format both pass it.
+        var context = new TestContext();
+        context.StagingStore.WriteDelay = TimeSpan.FromMilliseconds(150);
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+
+        var results = await Task.WhenAll(
+            context.Service.ImportAsync(request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None),
+            context.Service.ImportAsync(request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None));
+
+        Assert.HasCount(1, context.Repository.Assets);
+        Assert.AreEqual(1, results.Count(result => result.Outcome == ManualImportOutcome.Success));
+        Assert.AreEqual(1, results.Count(result => result.Outcome == ManualImportOutcome.DuplicateDetected));
+    }
+
+    [TestMethod]
     public async Task ACleanImportStagesAJobAndAsset()
     {
         var context = new TestContext();
@@ -107,7 +125,85 @@ public sealed class ManualImportServiceTests
         Assert.AreEqual("manual_import.staged", context.Audit.Entries[0].Action);
     }
 
+    [TestMethod]
+    public async Task AnAdministratorsManualUploadIsAttestedAndKeepsItsExistingOutcome()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+
+        var result = await context.Service.ImportAsync(
+            request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Success, result.Outcome);
+        var asset = context.Repository.Assets.Single();
+        Assert.IsTrue(asset.IdentityPreConfirmed, "Existing behavior: an administrator-chosen file is attested.");
+        Assert.AreEqual(AssetOrigin.ManualUpload, asset.Origin);
+        Assert.AreEqual(TestContext.AdministratorUserId, asset.OriginUserId,
+            "The origin user is the authenticated administrator from the current-user context, not anything the caller supplied.");
+        Assert.AreEqual(MediaAssetStorageState.Quarantine, asset.StorageState);
+        Assert.AreEqual("manual", context.Repository.Jobs.Single().Candidates.Single().ProviderId);
+        Assert.AreEqual("manual_import.staged", context.Audit.Entries.Single().Action);
+    }
+
+    [TestMethod]
+    public async Task ANonAdministratorCannotUploadOrGainAttestationEvenWhenCallingTheServiceDirectly()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        context.Administrator.IsAdministrator = false;
+
+        var result = await context.Service.ImportAsync(
+            request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+        StringAssert.Contains(result.Error, "administrator");
+        Assert.AreEqual(0, context.StagingStore.WriteCount, "Nothing is written for a non-administrator.");
+        Assert.HasCount(0, context.Repository.Assets);
+        Assert.HasCount(0, context.Repository.Jobs);
+        Assert.HasCount(0, context.Audit.Entries);
+    }
+
+    [TestMethod]
+    public async Task AnAdministratorRoleWithoutAnAuthenticatedUserIdCannotCreateAManualUpload()
+    {
+        var context = new TestContext();
+        var (request, format) = context.SeedRequest(RequestMediaType.Ebook);
+        context.User.UserId = null;
+
+        var result = await context.Service.ImportAsync(
+            request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
+
+        Assert.AreEqual(ManualImportOutcome.Invalid, result.Outcome);
+        Assert.AreEqual(0, context.StagingStore.WriteCount);
+        Assert.HasCount(0, context.Repository.Assets);
+    }
+
+    [TestMethod]
+    public async Task TheOriginUserFollowsWhoIsActuallyAuthenticatedOnEachCall()
+    {
+        var first = new TestContext();
+        var (request, format) = first.SeedRequest(RequestMediaType.Ebook);
+        var otherAdministrator = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002");
+        first.User.UserId = otherAdministrator;
+
+        await first.Service.ImportAsync(request.Id, format.Id, Content("epub bytes"), "book.epub", CancellationToken.None);
+
+        Assert.AreEqual(otherAdministrator, first.Repository.Assets.Single().OriginUserId);
+    }
+
     private static MemoryStream Content(string text) => new(Encoding.UTF8.GetBytes(text));
+
+    private sealed class FakeCurrentUser(Guid? userId) : ICurrentUser
+    {
+        public Guid? UserId { get; set; } = userId;
+
+        public string? DisplayName => "admin";
+    }
+
+    private sealed class FakeAdministrator(bool isAdministrator) : ICurrentAdministrator
+    {
+        public bool IsAdministrator { get; set; } = isAdministrator;
+    }
 
     private sealed class TestContext
     {
@@ -126,8 +222,16 @@ public sealed class ManualImportServiceTests
                 Audit,
                 new FixedClock());
 
-            Service = new ManualImportService(RequestRepository, Staging);
+            Administrator = new FakeAdministrator(true);
+            User = new FakeCurrentUser(AdministratorUserId);
+            Service = new ManualImportService(RequestRepository, Staging, Administrator, User);
         }
+
+        public static readonly Guid AdministratorUserId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+
+        public FakeAdministrator Administrator { get; }
+
+        public FakeCurrentUser User { get; }
 
         public FakeAcquisitionRepository Repository { get; }
 
@@ -220,12 +324,26 @@ public sealed class ManualImportServiceTests
 
         public void AddAsset(MediaAsset asset) => Assets.Add(asset);
 
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task SaveChangesAsync(CancellationToken cancellationToken)
+        {
+            // What a database would now answer to the duplicate-content lookup.
+            lock (ExistingChecksums)
+            {
+                foreach (var asset in Assets)
+                {
+                    ExistingChecksums.Add((asset.AssociatedRequestFormatId, asset.Sha256));
+                }
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeStagingStore : IAssetStagingStore
     {
-        public int WriteCount { get; private set; }
+        private int _writeCount;
+
+        public int WriteCount => _writeCount;
 
         public int DeleteCount { get; private set; }
 
@@ -233,15 +351,22 @@ public sealed class ManualImportServiceTests
 
         public string NextDetectedMimeType { get; set; } = "application/epub+zip";
 
-        public Task<StagedFile> WriteToQuarantineAsync(
+        public TimeSpan WriteDelay { get; set; }
+
+        public async Task<StagedFile> WriteToQuarantineAsync(
             Stream content, string originalFilename, long maxSizeBytes, CancellationToken cancellationToken)
         {
-            WriteCount++;
-            return Task.FromResult(new StagedFile(
+            Interlocked.Increment(ref _writeCount);
+            if (WriteDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(WriteDelay, cancellationToken);
+            }
+
+            return new StagedFile(
                 $"{Guid.NewGuid():N}{Path.GetExtension(originalFilename)}",
                 SizeBytes: 1024,
                 NextSha256,
-                NextDetectedMimeType));
+                NextDetectedMimeType);
         }
 
         public Task<Stream> OpenAsync(

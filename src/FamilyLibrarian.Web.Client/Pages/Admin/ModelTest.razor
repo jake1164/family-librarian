@@ -1,0 +1,13 @@
+@page "/admin/model-test"
+@attribute [Authorize(Roles = "Admin")]
+@inject NavigationManager Navigation
+
+@* The model test now lives on the "Test models" tab of the AI models page. This keeps old bookmarks working. *@
+
+<PageTitle>Model test · Family Librarian</PageTitle>
+
+<MudText Typo="Typo.body1">The model test moved to the AI models page. Redirecting…</MudText>
+
+@code {
+    protected override void OnInitialized() => Navigation.NavigateTo("admin/model-gateway", replace: true);
+}

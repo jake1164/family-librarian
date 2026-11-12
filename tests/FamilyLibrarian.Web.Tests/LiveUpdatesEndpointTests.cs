@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Threading.Channels;
 using FamilyLibrarian.Contracts.Authentication;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Contracts.Catalog;
 using FamilyLibrarian.Contracts.Realtime;
 using FamilyLibrarian.Domain.Accounts;
@@ -205,7 +206,7 @@ public sealed class LiveUpdatesEndpointTests
             now.AddMinutes(10), true, null, null, null, null, null, now.AddSeconds(30), now.AddSeconds(1));
         await database.SaveChangesAsync();
         var received = await BarrierAsync(factory, admin, owner, unrelated);
-        Assert.AreEqual(LiveUpdateTopics.Requests, received[0]);
+        Assert.AreEqual(LiveUpdateTopics.Requests | LiveUpdateTopics.Sources, received[0]);
         Assert.AreEqual(LiveUpdateTopics.Requests, received[1]);
         Assert.AreEqual(LiveUpdateTopics.None, received[2]);
     }
@@ -313,6 +314,37 @@ public sealed class LiveUpdatesEndpointTests
     private static NotificationEvent Notification(Guid? userId) => new(
         userId is null ? NotificationAudience.AdminBroadcast : NotificationAudience.SingleUser,
         userId, "test", NotificationSeverity.Info, "Test update", null, null, null, DateTimeOffset.UtcNow);
+
+    [TestMethod]
+    public async Task TransientSourceActivityInvalidatesAdminsOnlyAndClearsOnCompletion()
+    {
+        await using var factory = new FamilyLibrarianAppFactory(WebTestFixture.Require(fixture).ConnectionString,
+            services => services.AddHostedService<SourceActivityUpdatesHostedService>());
+        await using var admin = await Viewer.ConnectAsync(factory, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        await using var reader = await Viewer.ConnectAsync(factory, WebTestFixture.UserEmail, WebTestFixture.UserPassword);
+        await BarrierAsync(factory, admin, reader);
+        var searches = factory.Services.GetRequiredService<SourceSearchTracker>();
+        using (searches.Begin("example-source"))
+        {
+            Assert.AreEqual(LiveUpdateTopics.Sources, await admin.NextAsync());
+            var received = await BarrierAsync(factory, admin, reader);
+            Assert.AreEqual(LiveUpdateTopics.None, received[1]);
+        }
+        Assert.AreEqual(LiveUpdateTopics.Sources, await admin.NextAsync());
+        var after = await BarrierAsync(factory, admin, reader);
+        Assert.AreEqual(LiveUpdateTopics.None, after[1]);
+
+        var transfers = factory.Services.GetRequiredService<ActiveAcquisitionTracker>();
+        using (var transfer = transfers.Begin(Guid.NewGuid(), Guid.NewGuid(), "example-source", "Checking provider"))
+        {
+            Assert.AreEqual(LiveUpdateTopics.Sources, await admin.NextAsync());
+            transfer.SetStage("Downloading");
+            Assert.AreEqual(LiveUpdateTopics.Sources, await admin.NextAsync());
+        }
+        Assert.AreEqual(LiveUpdateTopics.Sources, await admin.NextAsync());
+        after = await BarrierAsync(factory, admin, reader);
+        Assert.AreEqual(LiveUpdateTopics.None, after[1]);
+    }
 
     // A shared, ordered marker proves absence of private messages without sleeps.
     private static async Task<LiveUpdateTopics[]> BarrierAsync(FamilyLibrarianAppFactory factory, params Viewer[] viewers)

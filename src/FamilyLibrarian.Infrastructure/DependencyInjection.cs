@@ -3,14 +3,18 @@ using FamilyLibrarian.Application.Accounts;
 using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Application.Catalog;
 using FamilyLibrarian.Application.Communications;
+using FamilyLibrarian.Application.Conversation;
 using FamilyLibrarian.Application.Delivery;
 using FamilyLibrarian.Application.Feedback;
 using FamilyLibrarian.Application.Following;
 using FamilyLibrarian.Application.Integrations;
 using FamilyLibrarian.Application.Matching;
+using FamilyLibrarian.Application.ModelGateway;
+using FamilyLibrarian.Application.ModelTesting;
 using FamilyLibrarian.Application.Notifications;
 using FamilyLibrarian.Application.Policy;
 using FamilyLibrarian.Application.Providers;
+using FamilyLibrarian.Application.SemanticAssessment;
 using FamilyLibrarian.Application.Publishing;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Application.Security;
@@ -18,13 +22,17 @@ using FamilyLibrarian.Domain;
 using FamilyLibrarian.Infrastructure.Acquisition;
 using FamilyLibrarian.Infrastructure.Catalog;
 using FamilyLibrarian.Infrastructure.Communications;
+using FamilyLibrarian.Infrastructure.Conversation;
 using FamilyLibrarian.Infrastructure.Delivery;
 using FamilyLibrarian.Infrastructure.Gutenberg;
 using FamilyLibrarian.Infrastructure.LibriVox;
 using FamilyLibrarian.Infrastructure.Identity;
 using FamilyLibrarian.Infrastructure.Integrations;
 using FamilyLibrarian.Infrastructure.Metadata;
+using FamilyLibrarian.Infrastructure.ModelGateway;
+using FamilyLibrarian.Infrastructure.ModelTesting;
 using FamilyLibrarian.Infrastructure.Persistence;
+using FamilyLibrarian.Infrastructure.SemanticAssessment;
 using FamilyLibrarian.Infrastructure.Policy;
 using FamilyLibrarian.Infrastructure.Providers;
 using FamilyLibrarian.Infrastructure.Publishing;
@@ -204,6 +212,7 @@ public static class DependencyInjection
         services.AddScoped<ICatalogRepository, CatalogRepository>();
         services.AddScoped<OrphanedWorkRetirement>();
         services.AddScoped<CatalogWorkResolver>();
+        services.AddScoped<ICatalogSearchService, CatalogSearchService>();
         services.AddScoped<IWorkFulfillmentOptionsService, WorkFulfillmentOptionsService>();
 
         services.AddScoped<RequestRepository>();
@@ -230,6 +239,9 @@ public static class DependencyInjection
         // IOutboundCommunicationProvider registration, not a redesign here.
         services.AddScoped<OutboundCommunicationRepository>();
         services.AddScoped<IOutboundCommunicationStore>(provider => provider.GetRequiredService<OutboundCommunicationRepository>());
+        services.AddScoped<IAcquisitionQuestionCommunicationLookup>(provider => provider.GetRequiredService<OutboundCommunicationRepository>());
+        services.AddScoped<AcquisitionQuestionMatrixAnswerService>();
+        services.AddScoped<IAcquisitionQuestionMatrixAnswers, ScopedAcquisitionQuestionMatrixAnswers>();
         services.AddScoped<OutboundCommunicationService>();
         services.AddScoped<OutboundCommunicationDispatcher>();
         services.AddScoped<IUserEmailLookup, UserEmailLookup>();
@@ -247,6 +259,82 @@ public static class DependencyInjection
         services.AddScoped<IUserMatrixDestinationLookup>(provider => provider.GetRequiredService<UserMatrixDestinationRepository>());
         services.AddScoped<MatrixIdentityLinkService>();
         services.AddScoped<MatrixInboundRouter>();
+
+        // Model connectivity and capability test (alpha.6 M3-5): disabled by default, admin-only, manual.
+        services.AddHttpClient(OpenAiCompatibleModelClient.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        services.AddScoped<IModelClient, OpenAiCompatibleModelClient>();
+        services.AddScoped<IModelCatalogClient, OpenAiCompatibleModelClient>();
+        services.AddScoped<IModelTestSettingsStore, ModelTestSettingsStore>();
+        services.AddSingleton<ModelTestGate>();
+        services.AddScoped<ModelTestSettingsService>();
+        services.AddScoped<ModelCapabilityTestService>();
+
+        // Production model gateway (alpha.6 M4-0): every role is off until an administrator turns it on.
+        services.AddScoped<IModelGatewaySettingsStore, ModelGatewaySettingsStore>();
+        services.AddScoped<ModelGatewaySettingsService>();
+        services.AddScoped<IModelRoleResolver, ModelRoleResolver>();
+        services.AddScoped<ModelConnectionService>();
+        services.AddScoped<ModelCatalogService>();
+        services.AddScoped<IModelTestTargetSource>(provider => provider.GetRequiredService<ModelConnectionService>());
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, TimeProvider.System);
+        services.AddSingleton<IModelUsageLedger, ModelUsageLedger>();
+        services.AddScoped<IModelWorkflowObserver, ModelWorkflowObserver>();
+        services.AddSingleton<ModelExecutionGate>();
+        services.AddSingleton<ModelCircuitBreaker>();
+        services.AddSingleton<IRejectedModelReplySink, LoggingRejectedModelReplySink>();
+        services.AddScoped<IModelExecutionPolicy, ModelExecutionPolicy>();
+
+        // Shadow semantic analysis (alpha.6 M4-3): advisory findings stored beside, never inside, deterministic results.
+        services.AddScoped<ISemanticFindingStore, SemanticFindingStore>();
+        services.AddScoped<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureStore, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureStore>();
+        services.AddScoped<FamilyLibrarian.Application.DecisionCapture.DecisionCaptureService>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.IStorageInsightStore, FamilyLibrarian.Infrastructure.Storage.StorageInsightStore>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.StorageInsightService>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.IStorageMaintenanceStore, FamilyLibrarian.Infrastructure.Storage.StorageMaintenanceStore>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.StorageMaintenanceService>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.IMaintenanceSettingsStore, FamilyLibrarian.Infrastructure.Storage.MaintenanceSettingsStore>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.MaintenanceSettingsService>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.MaintenanceCycle>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.IDatabaseRetentionStore, FamilyLibrarian.Infrastructure.Storage.DatabaseRetentionStore>();
+        services.AddScoped<FamilyLibrarian.Application.Storage.DatabaseRetentionService>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.ILibraryUpgradeStore, FamilyLibrarian.Infrastructure.Upgrades.LibraryUpgradeStore>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeScanService>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeAdminService>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeLeftoverCleaner>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.LibraryUpgradeService>();
+        services.AddScoped<FamilyLibrarian.Application.Upgrades.IUpgradeCopyPublisher, FamilyLibrarian.Application.Upgrades.LibraryUpgradeCopyPublisher>();
+        services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureWriter, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureWriter>();
+        services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureLog, FamilyLibrarian.Infrastructure.DecisionCapture.LoggingDecisionCaptureLog>();
+        services.AddScoped<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureSink, FamilyLibrarian.Application.DecisionCapture.DecisionCaptureRecorder>();
+        services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionOutcomeWriter, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionOutcomeWriter>();
+        services.AddSingleton<FamilyLibrarian.Application.DecisionCapture.IDecisionCaptureMaintenance, FamilyLibrarian.Infrastructure.DecisionCapture.DecisionCaptureMaintenance>();
+        services.AddScoped<FamilyLibrarian.Application.DecisionCapture.IDecisionOutcomeRecorder, FamilyLibrarian.Application.DecisionCapture.DecisionOutcomeRecorder>();
+        services.AddScoped<CandidateSemanticAnalyzer>();
+        services.AddScoped<SearchGuidanceService>();
+        services.AddScoped<CandidateTriageService>();
+        services.AddSingleton<CandidateSemanticShadowBuffer>();
+        services.AddSingleton<ICandidateSemanticShadow>(provider => provider.GetRequiredService<CandidateSemanticShadowBuffer>());
+        services.AddScoped<ArtifactSemanticAnalyzer>();
+        services.AddScoped<ArtifactDecisionService>();
+        services.AddScoped<IArtifactExcerptExtractor, EpubExcerptExtractor>();
+        services.AddSingleton<ArtifactSemanticShadowBuffer>();
+        services.AddSingleton<IArtifactSemanticShadow>(provider => provider.GetRequiredService<ArtifactSemanticShadowBuffer>());
+
+        // Conversation (alpha.6 M2): everything is off until Conversation:Enabled (and a transport flag) is set.
+        services.AddSingleton(provider =>
+            provider.GetRequiredService<IConfiguration>().GetSection("Conversation").Get<ConversationOptions>() ?? new ConversationOptions());
+        services.AddSingleton<IConversationLimiter, ConversationLimiter>();
+        services.AddSingleton<IConversationDiagnostics, ConversationDiagnostics>();
+        services.AddScoped<IConversationSessionStore, EfConversationSessionStore>();
+        services.AddScoped<IConversationEventLog, EfConversationEventLog>();
+        services.AddScoped<IConversationTransaction, EfConversationTransaction>();
+        services.AddScoped<SeriesPositionService>();
+        services.AddScoped<IConversationTools, ConversationBookTools>();
+        services.AddScoped<IConversationService, ConversationService>();
+        services.AddScoped<IBookIntentInterpreter, ModelBookIntentInterpreter>();
+        services.AddScoped<CoverIdentificationService>();
+        services.AddScoped<IConversationTurnExecutor, ConversationTurnExecutor>();
         services.AddScoped<MatrixInboundSyncCoordinator>();
         services.AddScoped<IOutboundCommunicationProvider, MatrixOutboundCommunicationProvider>();
 
@@ -309,9 +397,15 @@ public static class DependencyInjection
         services.AddScoped<DirectAcquisitionSecurityService>();
         services.AddScoped<AutomaticRequestFulfillmentService>();
         services.AddScoped<ExternalProviderRecheckService>();
+        services.AddScoped<AcquisitionQuestionService>();
+        services.AddScoped<IAcquisitionPreferenceStore, AcquisitionPreferenceRepository>();
+        services.AddScoped<AcquisitionPreferenceService>();
+        services.AddScoped<ISavedAcquisitionQuestionAcceptor, ScopedSavedAcquisitionQuestionAcceptor>();
         services.AddScoped<ExternalProviderHealthPollService>();
         services.AddScoped<AcquisitionJobPollingService>();
         services.AddScoped<ProviderInteractionClaimService>();
+        services.AddScoped<FulfilledFormatDownloadCancellation>();
+        services.AddScoped<ProviderJobReleaseService>();
         services.AddScoped<ProviderInteractionService>();
         services.AddScoped<ProviderInteractionLinkService>();
         services.AddScoped<ProviderInteractionAlertService>();
@@ -339,14 +433,25 @@ public static class DependencyInjection
         services.AddSingleton<IAssetValidator, AudioValidator>();
         services.AddScoped<IAssetIdentityVerifier, EpubAssetIdentityVerifier>();
         services.AddScoped<IAssetIdentityVerifier, M4bAssetIdentityVerifier>();
+        services.AddScoped<IAssetIdentityVerifier, Mp3AssetIdentityVerifier>();
+        services.AddScoped<IAssetIdentityVerifier, OggAssetIdentityVerifier>();
+        services.AddSingleton<IAssetTechnicalInspector, M4bTechnicalInspector>();
+        services.AddSingleton<IAssetTechnicalInspector, Mp3TechnicalInspector>();
+        services.AddSingleton<IAssetProfileInspector, M4bProfileInspector>();
+        services.AddSingleton<IAssetProfileInspector, Mp3ProfileInspector>();
+        services.AddScoped<IAudioBundleProfile, AudioBundleProfile>();
 
         services.AddScoped<IAcquisitionBoundaryGuard, AcquisitionBoundaryGuard>();
         services.AddScoped<ISecurityEvaluationRepository, SecurityEvaluationRepository>();
+        services.AddScoped<IArtifactEvidenceStore, ArtifactEvidenceStore>();
+        services.AddScoped<IArtifactEvidenceRecorder, ArtifactEvidenceRecorder>();
         services.AddScoped<SecurityEvaluationService>();
         services.AddScoped<ISecurityEvaluationRunner>(provider => provider.GetRequiredService<SecurityEvaluationService>());
         services.AddScoped<ApprovalService>();
         services.AddScoped<IPolicyAssetApprovalService>(provider => provider.GetRequiredService<ApprovalService>());
         services.AddScoped<AssetDiscardService>();
+        services.AddScoped<IArtifactPeerProfileSource, ArtifactPeerProfileSource>();
+        services.AddScoped<IExpectedArtifactProfileSource, ExpectedArtifactProfileSource>();
         services.AddScoped<AssetIdentityVerificationService>();
         services.AddScoped<IAssetIdentityVerificationService>(provider =>
             provider.GetRequiredService<AssetIdentityVerificationService>());
@@ -380,7 +485,14 @@ public static class DependencyInjection
         services.AddScoped<QuietHoursPreferenceService>();
 
         services.AddHttpContextAccessor();
-        services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
+        services.AddScoped<HttpContextCurrentUser>();
+        services.AddScoped<HttpContextCurrentAdministrator>();
+        // One principal holder per scope: an authenticated non-HTTP operation (M2-1) sets it; HTTP scopes never do.
+        services.AddScoped<OperationPrincipalHolder>();
+        services.AddScoped<IOperationPrincipalAccessor>(provider => provider.GetRequiredService<OperationPrincipalHolder>());
+        services.AddScoped<ICurrentUser, OperationAwareCurrentUser>();
+        services.AddScoped<ICurrentAdministrator, OperationAwareCurrentAdministrator>();
+        services.AddScoped<MatrixPrincipalAuthenticator>();
 
         // Built-in provider settings wiring. The registry is the allowlist of installed
         // providers; enablement and credentials are runtime state, so every
@@ -453,6 +565,7 @@ public static class DependencyInjection
             .ValidateOnStart();
 
         services.AddTransient<GoogleBooksApiKeyHandler>();
+        services.AddTransient<GoogleBooksTransientRetryHandler>();
         // AddLogger<T> resolves T from DI, so it must be registered.
         services.AddSingleton<QueryRedactingHttpClientLogger>();
         services.AddHttpClient<GoogleBooksBookMetadataProvider>((serviceProvider, client) =>
@@ -469,6 +582,8 @@ public static class DependencyInjection
                     new ProductInfoHeaderValue("FamilyLibrarian", "0.1"));
             })
             .AddHttpMessageHandler<GoogleBooksApiKeyHandler>()
+            // After the key handler, so a retried copy carries the key. See GoogleBooksTransientRetryHandler.
+            .AddHttpMessageHandler<GoogleBooksTransientRetryHandler>()
             // By this point the request URI carries ?key=<api key>. The stock
             // loggers already redact query values, but this client is the one
             // holding a secret, so the guarantee is made explicit rather than

@@ -18,6 +18,63 @@ public sealed class CandidateIdentityAssessmentTests
     private static CandidateIdentityAssessment Assess(string name) => DeterministicCandidateIdentityResolver.Assess(Threshing, Release(name));
 
     [TestMethod]
+    [DataRow("series")]
+    [DataRow("isbn")]
+    [DataRow("publisher")]
+    public void ExactTitleAndIndependentAgreementCorroborateStructuredAuthorSpelling(string agreement)
+    {
+        var requested = new BookIdentity("Iron Flame", "Rebecca Yarros", ["9781649374172"],
+            Series: [new("The Empyrean", "2")], PublicationYear: 2023, Publisher: "Example Press");
+        var source = ExternalProviderCandidate.FromSimple("example-record", "Iron Flame", "Rebeca Yaross", "epub", 1000) with
+        {
+            Edition = new("en", agreement == "publisher" ? 2023 : null,
+                agreement == "publisher" ? "EXAMPLE   PRESS" : null,
+                agreement == "isbn" ? [new("isbn13", "9781649374172")] : [])
+        };
+        if (agreement == "series") source = source with { Work = source.Work with { Series = [new("The Empyrean", "2")] } };
+        var result = DeterministicCandidateIdentityResolver.Assess(requested, source);
+        Assert.AreEqual(WorkIdentityDecision.Match, result.Decision);
+        Assert.AreEqual("ContextCorroborated", result.AuthorEvidence.Kind.ToString());
+        Assert.AreEqual(55, result.AuthorEvidence.Score);
+        Assert.IsFalse(result.AuthorEvidence.HasStrongSupport);
+        Assert.IsTrue(result.Findings.Any(finding => finding.Code == "candidate.author.context_corroborated" &&
+            finding.Polarity == FamilyLibrarian.Domain.Evidence.EvidencePolarity.Weak));
+    }
+
+    [TestMethod]
+    [DataRow("title")]
+    [DataRow("none")]
+    [DataRow("position")]
+    [DataRow("language")]
+    [DataRow("release-credit")]
+    [DataRow("title-credit")]
+    [DataRow("different-author")]
+    [DataRow("work-isbn")]
+    public void CorroborationNeverRemovesOtherContradictionsOrUncorroboratedConflicts(string scenario)
+    {
+        var requested = new BookIdentity("Iron Flame", "Rebecca Yarros", ["9781649374172"], Series: [new("The Empyrean", "2")]);
+        var source = ExternalProviderCandidate.FromSimple("example-record", "Iron Flame", "Rebeca Yaross", "epub", 1000) with
+        {
+            Edition = new("en", null, null, [])
+        };
+        if (scenario != "none" && scenario != "work-isbn")
+            source = source with { Work = source.Work with { Series = [new("The Empyrean", scenario == "position" ? "3" : "2")] } };
+        if (scenario == "title")
+        {
+            requested = requested with { Title = "Threshing Day", Series = null };
+            source = source with { Work = source.Work with { Title = "The Threshing Floor", Authors = [new("Rebecca Yaross", "author")] } };
+        }
+        if (scenario == "language") source = source with { Edition = source.Edition! with { Language = "fr" } };
+        if (scenario == "release-credit") source = source with { Release = source.Release! with { Name = "Iron Flame by Rebeca Yaross" } };
+        if (scenario == "title-credit") source = source with { Work = source.Work with { Title = "Iron Flame by Rebeca Yaross" } };
+        if (scenario == "different-author") source = source with { Work = source.Work with { Authors = [new("David Yarros", "author")] } };
+        if (scenario == "work-isbn") source = source with { Work = source.Work with { Identifiers = [new("isbn13", "9781649374172")] } };
+        var result = DeterministicCandidateIdentityResolver.Assess(requested, source);
+        Assert.AreEqual(WorkIdentityDecision.Mismatch, result.Decision);
+        if (scenario is not "language") Assert.AreEqual(AuthorAffinityKind.Conflict, result.AuthorEvidence.Kind);
+    }
+
+    [TestMethod]
     [DataRow("Rebecca.Yarros-The.Empyrean.3.5-Threshing.Day")]
     [DataRow("Rebecca Yarros - Threshing Day - Fantasy Romance - M4B")]
     [DataRow("Threshing Day by Rebecca Yarros")]

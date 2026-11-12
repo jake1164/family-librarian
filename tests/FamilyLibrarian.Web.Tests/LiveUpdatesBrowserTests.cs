@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using FamilyLibrarian.Application.Acquisition;
 using FamilyLibrarian.Domain.Notifications;
 using FamilyLibrarian.Domain.Delivery;
 using FamilyLibrarian.Domain.Providers;
@@ -20,6 +21,107 @@ namespace FamilyLibrarian.Web.Tests;
 [TestCategory("Release")]
 public sealed class LiveUpdatesBrowserTests
 {
+    [TestMethod]
+    public async Task DashboardSourcesShowLiveConcurrentWorkAndReturnToIdle()
+    {
+        if (Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS") != "1")
+            Assert.Inconclusive("Set FAMILY_LIBRARIAN_LIVE_BROWSER_TESTS=1 to run the isolated Chromium source activity regression.");
+        await using var fixture = await WebTestFixture.CreateAsync();
+        var available = WebTestFixture.Require(fixture);
+        await using var original = new FamilyLibrarianAppFactory(available.ConnectionString,
+            services => services.AddHostedService<SourceActivityUpdatesHostedService>());
+        await using var factory = original.WithWebHostBuilder(builder => builder.UseStaticWebAssets());
+        factory.UseKestrel(0);
+        using var client = factory.CreateClient();
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var source = new ExternalProvider("live-activity", "Live activity source", "http://provider.test", DateTimeOffset.UtcNow);
+            source.SetEnabled(true, null, DateTimeOffset.UtcNow);
+            source.RecordHealthCheck(true, "Reachable", "Healthy", "Available", "Available", DateTimeOffset.UtcNow);
+            db.ExternalProviders.Add(source);
+            await db.SaveChangesAsync();
+        }
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new()
+        {
+            Headless = true,
+            ExecutablePath = Environment.GetEnvironmentVariable("FAMILY_LIBRARIAN_E2E_CHROMIUM_EXECUTABLE")
+        });
+        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = 1280, Height = 900 } });
+        var page = await context.NewPageAsync();
+        await LoginAsync(page, client.BaseAddress!, FamilyLibrarianAppFactory.AdminEmail, FamilyLibrarianAppFactory.AdminPassword);
+        await page.GotoAsync(new Uri(client.BaseAddress!, "/admin/tasks").ToString());
+        var panel = page.Locator("#tasks-sources-now");
+        var summary = page.GetByRole(AriaRole.Button, new() { Name = "Jump to Source status", Exact = true });
+        await Assertions.Expect(summary).ToBeVisibleAsync();
+        await Assertions.Expect(summary).ToContainTextAsync("0 active");
+        await AssertCompactSummaryAsync(page, columns: 6, maximumHeight: 112);
+        await page.SetViewportSizeAsync(900, 900);
+        await AssertCompactSummaryAsync(page, columns: 3, maximumHeight: 216);
+        await page.SetViewportSizeAsync(1280, 900);
+        Assert.IsTrue(await page.EvaluateAsync<bool>("Boolean(document.querySelector('#tasks-requests').compareDocumentPosition(document.querySelector('#tasks-sources-now')) & Node.DOCUMENT_POSITION_FOLLOWING)"));
+        (string Label, string Target)[] jumps =
+        [
+            ("Active requests", "tasks-requests"), ("Needs review", "tasks-requests"),
+            ("In security pipeline", "tasks-security"), ("Source attention", "tasks-source"),
+            ("Publishing attention", "tasks-publishing"), ("Source status", "tasks-sources-now")
+        ];
+        foreach (var (label, target) in jumps)
+        {
+            await page.GetByRole(AriaRole.Button, new() { Name = $"Jump to {label}", Exact = true }).ClickAsync();
+            await Assertions.Expect(page.Locator($"#{target}")).ToBeInViewportAsync();
+        }
+        await summary.ClickAsync();
+        await Assertions.Expect(panel).ToBeInViewportAsync();
+        await summary.FocusAsync();
+        await summary.PressAsync("Enter");
+        await Assertions.Expect(panel).ToBeInViewportAsync();
+        var row = panel.Locator(".mud-list-item").Filter(new() { HasText = "Live activity source" });
+        await Assertions.Expect(row.GetByText("Idle", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(row.GetByText("No request activity recorded yet", new() { Exact = false })).ToBeVisibleAsync();
+        await Assertions.Expect(row.GetByText("Downloads received: 0", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(row.GetByText("Searches since app start: 0", new() { Exact = true })).ToBeVisibleAsync();
+        var searches = factory.Services.GetRequiredService<SourceSearchTracker>();
+        using (searches.Begin("live-activity"))
+        {
+            await Assertions.Expect(row.GetByText("Searching · 1", new() { Exact = true })).ToBeVisibleAsync();
+            await Assertions.Expect(summary).ToContainTextAsync("1 active");
+            using (searches.Begin("live-activity"))
+            {
+                await Assertions.Expect(row.GetByText("Searching · 2", new() { Exact = true })).ToBeVisibleAsync();
+                await Assertions.Expect(row.GetByText("Searches since app start: 2", new() { Exact = true })).ToBeVisibleAsync();
+            }
+            await Assertions.Expect(row.GetByText("Searching · 1", new() { Exact = true })).ToBeVisibleAsync();
+            using (factory.Services.GetRequiredService<ActiveAcquisitionTracker>()
+                .Begin(Guid.NewGuid(), Guid.NewGuid(), "live-activity", "Downloading"))
+            {
+                await Assertions.Expect(row.GetByText("Downloading · 1", new() { Exact = true })).ToBeVisibleAsync();
+                await Assertions.Expect(row.GetByText("Searching · 1", new() { Exact = true })).ToBeVisibleAsync();
+                await page.SetViewportSizeAsync(390, 844);
+                await AssertCompactSummaryAsync(page, columns: 2, maximumHeight: 336);
+                await Assertions.Expect(row).ToBeVisibleAsync();
+                Assert.IsTrue(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= window.innerWidth"));
+            }
+        }
+        await Assertions.Expect(row.GetByText("Idle", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(row.GetByText("Downloading · 1", new() { Exact = true })).ToHaveCountAsync(0);
+        await Assertions.Expect(row.GetByText("Searching · 1", new() { Exact = true })).ToHaveCountAsync(0);
+        await Assertions.Expect(row.GetByText("Searches since app start: 2", new() { Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(summary).ToContainTextAsync("0 active");
+    }
+
+    private static async Task AssertCompactSummaryAsync(IPage page, int columns, int maximumHeight)
+    {
+        Assert.IsTrue(await page.Locator(".tasks-summary-strip .task-summary-metric").EvaluateAllAsync<bool>(
+            $$"""
+            cards => cards.length === 6 &&
+                cards.filter(card => Math.abs(card.getBoundingClientRect().top - cards[0].getBoundingClientRect().top) < 1).length === {{columns}} &&
+                cards.every(card => card.scrollHeight <= card.clientHeight + 1 && card.scrollWidth <= card.clientWidth + 1) &&
+                cards[0].closest('.tasks-summary-strip').getBoundingClientRect().height <= {{maximumHeight}}
+            """), $"Summary strip should have {columns} columns, fit within {maximumHeight}px, and show all content.");
+    }
+
     [TestMethod]
     public async Task KindleHistoryAndAdminReceiptUpdateAcrossTabsAndPublishingDraftSurvivesRefresh()
     {

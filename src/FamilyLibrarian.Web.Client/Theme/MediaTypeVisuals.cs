@@ -15,6 +15,37 @@ namespace FamilyLibrarian.Web.Client.Theme;
 /// </summary>
 public static class MediaTypeVisuals
 {
+    public static string SourceLastActionLabel(string outcome) => outcome switch
+    {
+        "Submitted" => "Download requested",
+        "Acquired" => "Copy received",
+        "CandidatesFound" => "Candidates found",
+        "NoMatch" => "Nothing found",
+        "Blocked" => "Lookup blocked",
+        "Failed" => "Attempt failed",
+        "Retrying" => "Another copy requested",
+        "Paused" => "Downloads paused",
+        "Resumed" => "Downloads resumed",
+        _ => "Activity recorded"
+    };
+
+    public static Color SourceStateColor(string state) => state switch
+    {
+        "Searching" or "Checking" or "Downloading" or "Processing" or "Working" or "Queued" or "Waiting" => Color.Info,
+        "WaitingForAction" or "NeedsSetup" or "Limited" => Color.Warning,
+        "Unavailable" => Color.Error,
+        _ => Color.Default
+    };
+
+    public static string SourceStateLabel(string state) => state switch
+    {
+        "WaitingForAction" => "Action needed",
+        "NeedsSetup" => "Needs setup",
+        "Limited" => "Limited operations",
+        "Unchecked" => "Not checked",
+        _ => state
+    };
+
     public static string KindleLabel(string status, string? confirmationStatus = null) => status switch
     {
         "Submitted" => confirmationStatus switch
@@ -61,6 +92,8 @@ public static class MediaTypeVisuals
         "Submitted" or "Retrying" or "CandidatesFound" or "Resumed" => Color.Info,
         "Blocked" or "Paused" => Color.Warning,
         "Failed" => Color.Error,
+        // Display-only: a step that is over. Grey, because nothing about it needs attention now.
+        "Finished" or "MovedOn" => Color.Default,
         _ => Color.Default
     };
 
@@ -75,6 +108,8 @@ public static class MediaTypeVisuals
         "Blocked" => "Blocked",
         "Paused" => "Paused",
         "Resumed" => "Resumed",
+        "Finished" => "Finished",
+        "MovedOn" => "Moved on",
         _ => outcome
     };
 
@@ -94,6 +129,8 @@ public static class MediaTypeVisuals
         "Blocked" => "A setting stopped this lookup. Check the source's configuration.",
         "Paused" => "Acquisition is paused. Check the provider's reported reason.",
         "Resumed" => "The provider's pause has cleared.",
+        "Finished" => "This download has ended; the row after it says how.",
+        "MovedOn" => "The next copy was tried after this step; the rows after it say what happened.",
         _ => outcome
     };
 
@@ -110,6 +147,8 @@ public static class MediaTypeVisuals
         "Blocked" => Icons.Material.Filled.Block,
         "Paused" => Icons.Material.Filled.Pause,
         "Resumed" => Icons.Material.Filled.PlayArrow,
+        "Finished" => Icons.Material.Filled.History,
+        "MovedOn" => Icons.Material.Filled.Redo,
         "CandidatesFound" => Icons.Material.Filled.Search,
         "NoMatch" => Icons.Material.Filled.SearchOff,
         _ => Icons.Material.Filled.Info
@@ -133,12 +172,19 @@ public static class MediaTypeVisuals
     public static Color StatusColor(string status, string? progressCode = null) => status switch
     {
         "Available" or "Trusted" or "Archived" or "Passed" => Color.Success,
+        // A better copy of a delivered book (library upgrades): found and waiting for a person (or about to start) needs attention;
+        // fetching, delivering and removing the old copy are the system working; replaced is done; set aside is settled.
+        "Proposed" => Color.Warning,
+        "Acquiring" or "Publishing" or "Verified" => Color.Info,
+        "Completed" => Color.Success,
+        "Dismissed" => Color.Default,
         "Quarantine" or "Processing" or "Scanning" or "AwaitingScan" => Color.Info,
         "Unmatched" or "ReviewRequired" or "ScanInterrupted" or "ScanIncomplete" or "ScanStalled" => Color.Warning,
         "Rejected" or "Destroyed" or "Failed" => Color.Error,
         "NeedsReview" => Color.Warning,
         "NotAvailable" => Color.Error,
-        "Cancelled" => Color.Default,
+        // A held copy the automatic search has already moved past: settled, nothing to decide.
+        "Cancelled" or "RuledOut" => Color.Default,
         "PendingAcquisition" or "Requested" => ProgressColor(progressCode),
         _ => Color.Default
     };
@@ -148,7 +194,7 @@ public static class MediaTypeVisuals
         "SecurityCheckFailed" or "PublishingNeedsAttention" or "AcquisitionFailed" => Color.Error,
         // Moving on to the next copy is the system working, not a failure.
         "AcquisitionRetrying" => Color.Info,
-        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" or "AwaitingProviderAction" or "AcquisitionPaused" => Color.Warning,
+        "AwaitingApproval" or "SecurityReviewRequired" or "IdentityReviewRequired" or "AwaitingProviderAction" or "AcquisitionPaused" or "NoAcceptableCopy" or "AcquisitionQuestionOpen" => Color.Warning,
         "Available" => Color.Success,
         _ => Color.Info
     };
@@ -169,6 +215,13 @@ public static class MediaTypeVisuals
         "Failed" => "Scan failed",
         "Destroyed" => "File deleted",
         "Unmatched" => "Identity review required",
+        "RuledOut" => "Ruled out",
+        "Proposed" => "Better copy found",
+        "Acquiring" => "Fetching",
+        "Publishing" => "Delivering",
+        "Verified" => "Removing old copy",
+        "Completed" => "Upgraded",
+        "Dismissed" => "Set aside",
         "PendingAcquisition" or "Requested" => "Waiting",
         "NeedsReview" => "Needs review",
         "NotAvailable" => "Not available",

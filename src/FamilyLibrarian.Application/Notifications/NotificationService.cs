@@ -14,6 +14,10 @@ public sealed class NotificationService(
     ICurrentUser currentUser,
     IClock clock)
 {
+    public Task RecordAcquisitionQuestionAsync(Guid userId, Guid requestId, string workTitle, string question, CancellationToken cancellationToken) =>
+        UpsertAsync(NotificationAudience.SingleUser, userId, NotificationCategories.AcquisitionQuestion, NotificationSeverity.Warning,
+            $"A choice about \"{workTitle}\"", question, NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+
     public Task RecordRequestNeedsReviewAsync(
         Guid requestId, string workTitle, string? reason, CancellationToken cancellationToken) =>
         UpsertAsync(
@@ -41,6 +45,23 @@ public sealed class NotificationService(
             NotificationCategories.RequestPreferenceAmbiguity,
             NotificationSeverity.Info,
             title: $"Pick an edition for \"{workTitle}\"",
+            detail: reason,
+            subjectType: NotificationSubjectTypes.BookRequest,
+            subjectId: requestId.ToString(),
+            cancellationToken);
+
+    /// <summary>
+    /// AUTOFIND 2c: a later search found a copy that needs no answer, so the question put to the requester is withdrawn
+    /// ("found a standalone copy; no answer needed").
+    /// </summary>
+    public Task RecordReviewWithdrawnAsync(
+        Guid userId, Guid requestId, string workTitle, string? reason, CancellationToken cancellationToken) =>
+        UpsertAsync(
+            NotificationAudience.SingleUser,
+            userId,
+            NotificationCategories.RequestReviewWithdrawn,
+            NotificationSeverity.Info,
+            title: $"A copy of \"{workTitle}\" was found; no answer needed",
             detail: reason,
             subjectType: NotificationSubjectTypes.BookRequest,
             subjectId: requestId.ToString(),
@@ -215,6 +236,64 @@ public sealed class NotificationService(
             subjectType: NotificationSubjectTypes.ExternalProvider,
             subjectId: providerId.ToString(),
             cancellationToken);
+
+    /// <summary>Tells administrators, once per request, that a better copy of a delivered book that looks incomplete was found.</summary>
+    public Task RecordBetterCopyAvailableAsync(Guid requestId, string workTitle, CancellationToken cancellationToken) =>
+        UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.BetterCopyAvailable, NotificationSeverity.Info,
+            $"A better copy of \"{workTitle}\" may be available",
+            "The copy in the library shows signs of being incomplete, and a stronger one was found. Nothing has been changed.",
+            NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+
+    /// <summary>Tells administrators that a delivered copy was replaced by a better one in the library.</summary>
+    public Task RecordLibraryUpgradedAsync(Guid requestId, string workTitle, CancellationToken cancellationToken) =>
+        UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.LibraryUpgraded, NotificationSeverity.Info,
+            $"\"{workTitle}\" was upgraded", "A better copy was delivered and confirmed in the library, and the incomplete one was removed.",
+            NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+
+    /// <summary>Tells administrators that an upgrade stopped and what state the library was left in.</summary>
+    public Task RecordUpgradeStoppedAsync(Guid requestId, string workTitle, string reason, CancellationToken cancellationToken) =>
+        UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.UpgradeStopped, NotificationSeverity.Warning,
+            $"The upgrade of \"{workTitle}\" stopped", reason, NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+
+    /// <summary>Tells administrators that a better copy replaced one that was waiting for a person, so the review needs no action.</summary>
+    public Task RecordBetterCopyFoundAsync(Guid requestId, string workTitle, CancellationToken cancellationToken) =>
+        UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.BetterCopyFound, NotificationSeverity.Info,
+            $"A better copy of \"{workTitle}\" was found",
+            "It passed its checks, so the review was withdrawn and the held copy it replaces will be removed.",
+            NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+
+    /// <summary>
+    /// Admin alert that the staging disk is under its safety floor. One alert per day at most: a persistent shortage must not
+    /// bring a dismissed notification back every maintenance pass.
+    /// </summary>
+    public async Task RecordStorageLowAsync(string detail, CancellationToken cancellationToken)
+    {
+        var existing = await repository.FindLatestAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.StorageLow,
+            NotificationSubjectTypes.Storage, "disk", cancellationToken);
+        if (existing is not null && clock.UtcNow - existing.LastOccurredAtUtc < TimeSpan.FromHours(24))
+        {
+            return;
+        }
+
+        await UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.StorageLow, NotificationSeverity.Warning,
+            "Disk space is low", detail, NotificationSubjectTypes.Storage, "disk", cancellationToken);
+    }
+
+    /// <summary>Tells administrators, once per request, that a held copy waiting for a person will be removed on a given date.</summary>
+    public async Task RecordHeldCopyExpiringAsync(Guid requestId, string workTitle, DateTimeOffset removalDateUtc, CancellationToken cancellationToken)
+    {
+        var existing = await repository.FindLatestAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.HeldCopyExpiring,
+            NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+        if (existing is not null)
+        {
+            return;
+        }
+
+        await UpsertAsync(NotificationAudience.AdminBroadcast, null, NotificationCategories.HeldCopyExpiring, NotificationSeverity.Info,
+            $"A held copy of \"{workTitle}\" will be removed",
+            $"It is waiting for a person and will be removed on {removalDateUtc:yyyy-MM-dd}. Release it before then to keep it; otherwise the request goes back to automatic search.",
+            NotificationSubjectTypes.BookRequest, requestId.ToString(), cancellationToken);
+    }
 
     public async Task<IReadOnlyList<NotificationView>> ListForViewerAsync(
         bool isAdmin, CancellationToken cancellationToken)

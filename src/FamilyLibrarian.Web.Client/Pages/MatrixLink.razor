@@ -13,6 +13,7 @@
 @inject ISnackbar Snackbar
 
 <PageTitle>Matrix chat · Family Librarian</PageTitle>
+<SettingsDraftGuard IsDirty="@(draft.HasChanges("quiet", QuietHoursFields))" />
 
 <MudText Typo="Typo.h4" GutterBottom="true">Matrix chat</MudText>
 <MudText Typo="Typo.body1" Class="mb-6">
@@ -53,7 +54,7 @@ else
             }
 
             <MudStack Spacing="3">
-                <MudTextField T="string" @bind-Value="matrixUserId" Label="Your Matrix ID" Disabled="@busy"
+                <MudTextField Immediate="true" T="string" @bind-Value="matrixUserId" Label="Your Matrix ID" Disabled="@busy"
                               Placeholder="@("@you:example.org")" />
 
                 @if (!string.IsNullOrWhiteSpace(errorMessage))
@@ -95,7 +96,7 @@ else
             @if (quietHoursEnabled)
             {
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
-                    <MudTextField T="string" @bind-Value="timeZoneId" Label="Time zone" Disabled="@busy"
+                    <MudTextField Immediate="true" T="string" @bind-Value="timeZoneId" Label="Time zone" Disabled="@busy"
                                   Placeholder="@("America/New_York")" Style="min-width:16rem;" />
                     <MudButton Variant="Variant.Text" Disabled="@busy" OnClick="UseBrowserTimeZoneAsync">
                         Use my browser's time zone
@@ -127,6 +128,8 @@ else
 }
 
 @code {
+    private readonly SettingsSnapshot draft = new();
+    private object QuietHoursFields => new { quietHoursEnabled, timeZoneId, startTime, endTime };
     private bool isLoading = true;
     private bool loadFailed;
     private bool busy;
@@ -180,6 +183,7 @@ else
         finally
         {
             isLoadingQuietHours = false;
+            if (!quietHoursLoadFailed) draft.Accept("quiet", QuietHoursFields);
         }
     }
 
@@ -237,6 +241,7 @@ else
             if (result.Succeeded)
             {
                 Snackbar.Add("Quiet hours saved.", Severity.Success);
+                draft.Accept("quiet", QuietHoursFields);
             }
             else
             {

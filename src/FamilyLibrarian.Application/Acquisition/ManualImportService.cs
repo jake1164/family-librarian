@@ -1,3 +1,4 @@
+using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Providers;
 using FamilyLibrarian.Application.Requests;
 using FamilyLibrarian.Domain.Audit;
@@ -15,7 +16,9 @@ namespace FamilyLibrarian.Application.Acquisition;
 /// </remarks>
 public sealed class ManualImportService(
     IRequestRepository requests,
-    AcquisitionStagingService staging)
+    AcquisitionStagingService staging,
+    ICurrentAdministrator administrator,
+    ICurrentUser currentUser)
 {
     private const string ManualProviderId = "manual";
 
@@ -26,6 +29,16 @@ public sealed class ManualImportService(
         string originalFilename,
         CancellationToken cancellationToken)
     {
+        // A manual upload carries administrator attestation of the file's identity, so the service
+        // enforces the role itself instead of relying only on the route that calls it. Fail closed:
+        // a non-administrator neither stages a file nor gains attestation authority.
+        // The administrator's identity comes from the authenticated context, never from the caller's input,
+        // and is recorded on the asset as the origin of this upload.
+        if (!administrator.IsAdministrator || currentUser.UserId is not { } administratorUserId)
+        {
+            return ManualImportResult.Invalid("Only an administrator can attach a file to a request manually.");
+        }
+
         var request = await requests.FindRequestForAdminAsync(requestId, cancellationToken);
         if (request is null)
         {
@@ -47,6 +60,8 @@ public sealed class ManualImportService(
             AuditActions.ManualImportStaged,
             candidateTitle: null,
             candidateAuthor: null,
+            // The caller is a confirmed, authenticated administrator (checked above), who chose this specific file.
+            provenance: AssetProvenance.ManualUpload(administratorUserId),
             cancellationToken);
     }
 }

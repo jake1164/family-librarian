@@ -6,6 +6,9 @@ namespace FamilyLibrarian.Web.Client.Operations;
 /// <summary>Typed read-only client for the administrator task dashboard.</summary>
 public sealed class AdminTasksApiClient(HttpClient httpClient)
 {
+    public Task<AdminSourcesResponse?> GetSourcesAsync(CancellationToken cancellationToken = default) =>
+        httpClient.GetFromJsonAsync<AdminSourcesResponse>("api/v1/admin/tasks/sources", cancellationToken);
+
     public Task<AdminTasksResponse?> GetAsync(CancellationToken cancellationToken = default) =>
         httpClient.GetFromJsonAsync<AdminTasksResponse>("api/v1/admin/tasks/", cancellationToken);
 }

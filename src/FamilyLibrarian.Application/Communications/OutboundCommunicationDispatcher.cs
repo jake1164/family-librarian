@@ -48,6 +48,7 @@ public sealed class OutboundCommunicationDispatcher(
                 {
                     var result = await provider.SendAsync(communication, cancellationToken);
                     communication.RecordDelivery(provider.ProviderId, result.Succeeded, result.Error, clock.UtcNow);
+                    if (result.Succeeded && provider.ProviderId == "matrix") communication.RecordMatrixEventId(result.EventId);
                 }
                 catch (Exception exception)
                 {

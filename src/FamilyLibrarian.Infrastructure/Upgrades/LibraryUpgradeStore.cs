@@ -1,0 +1,151 @@
+using FamilyLibrarian.Application.Upgrades;
+using FamilyLibrarian.Domain.Acquisition;
+using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Domain.Requests;
+using FamilyLibrarian.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+
+namespace FamilyLibrarian.Infrastructure.Upgrades;
+
+public sealed class LibraryUpgradeStore(AppDbContext database) : ILibraryUpgradeStore
+{
+    private static readonly LibraryUpgradeState[] OpenStates =
+        [LibraryUpgradeState.Proposed, LibraryUpgradeState.Acquiring, LibraryUpgradeState.Publishing, LibraryUpgradeState.Verified];
+
+    /// <summary>
+    /// The copies that count as "in the library": delivered (archived) ones, and trusted ones still waiting to be delivered. A trusted
+    /// copy that appeared after an upgrade of the same format failed is that upgrade's leftover, never delivered, so it is not the
+    /// library copy: judging it would hide the real one. Until the clean-up removes it (see LibraryUpgradeLeftoverCleaner) it is
+    /// simply not counted.
+    /// </summary>
+    private IQueryable<MediaAsset> DeliveredCopies() =>
+        database.MediaAssets.AsNoTracking().Where(asset => asset.StorageState == MediaAssetStorageState.Archived ||
+            (asset.StorageState == MediaAssetStorageState.Trusted &&
+                !database.LibraryUpgrades.Any(upgrade => upgrade.RequestFormatId == asset.AssociatedRequestFormatId &&
+                    upgrade.State == LibraryUpgradeState.Failed && upgrade.CreatedAtUtc <= asset.CreatedAtUtc)));
+
+    public async Task<IReadOnlyList<UpgradeSubject>> ListSubjectsAsync(DateTimeOffset notScannedSince, int maximumCount, CancellationToken cancellationToken)
+    {
+        var codes = DeficientCopyDetector.CodesThatMakeACopyDeficient.ToArray();
+        var candidates = await (
+            from format in database.RequestFormats.AsNoTracking()
+            where format.Status == RequestFormatStatus.Available &&
+                (format.UpgradeScannedAtUtc == null || format.UpgradeScannedAtUtc < notScannedSince) &&
+                !database.LibraryUpgrades.Any(upgrade => upgrade.RequestFormatId == format.Id && OpenStates.Contains(upgrade.State)) &&
+                DeliveredCopies().Any(asset => asset.AssociatedRequestFormatId == format.Id &&
+                    database.ArtifactEvidenceItems.Any(item => item.MediaAssetId == asset.Id && codes.Contains(item.Code) &&
+                        (item.Polarity == EvidencePolarity.Condition || item.Polarity == EvidencePolarity.Negative)))
+            orderby format.UpgradeScannedAtUtc
+            select new { format.Id, format.RequestId, format.MediaType })
+            .Take(maximumCount).ToListAsync(cancellationToken);
+
+        var subjects = new List<UpgradeSubject>(candidates.Count);
+        foreach (var candidate in candidates)
+        {
+            var workId = await database.BookRequests.AsNoTracking().Where(request => request.Id == candidate.RequestId).Select(request => request.WorkId).SingleAsync(cancellationToken);
+            var newest = await DeliveredCopies()
+                .Where(asset => asset.AssociatedRequestFormatId == candidate.Id)
+                .OrderByDescending(asset => asset.CreatedAtUtc).FirstAsync(cancellationToken);
+            // The newest delivery is the copy in the library now; an older one that an upgrade replaced is not judged again.
+            var deliveredIds = newest.BundleId is { } bundle
+                ? await database.MediaAssets.AsNoTracking().Where(asset => asset.BundleId == bundle).Select(asset => asset.Id).ToListAsync(cancellationToken)
+                : [newest.Id];
+            var evidence = await database.ArtifactEvidenceItems.AsNoTracking().Where(item => deliveredIds.Contains(item.MediaAssetId))
+                .Select(item => new { item.Dimension, item.Code, item.Polarity, item.RecordKind }).ToListAsync(cancellationToken);
+            var known = (await database.ProviderAcquisitionJobs.AsNoTracking().Where(job => job.RequestFormatId == candidate.Id)
+                    .Select(job => new KnownCandidate(job.ProviderId, job.CandidateReference, job.CandidateFingerprint)).ToListAsync(cancellationToken))
+                .Concat(await database.LibraryUpgrades.AsNoTracking().Where(upgrade => upgrade.RequestFormatId == candidate.Id)
+                    .Select(upgrade => new KnownCandidate(upgrade.ProviderId, upgrade.CandidateReference, upgrade.CandidateFingerprint)).ToListAsync(cancellationToken))
+                .ToArray();
+            subjects.Add(new UpgradeSubject(candidate.RequestId, candidate.Id, workId, candidate.MediaType, newest.Id,
+                new DeliveredCopyFacts(newest.Origin, evidence.Any(item => item.RecordKind == ArtifactEvidenceRecordKinds.IdentityOverride),
+                    [.. evidence.Select(item => new DeliveredEvidenceFact(item.Dimension, item.Code, item.Polarity))]), known));
+        }
+
+        return subjects;
+    }
+
+    public Task MarkScannedAsync(Guid requestFormatId, DateTimeOffset atUtc, CancellationToken cancellationToken) =>
+        database.RequestFormats.Where(format => format.Id == requestFormatId)
+            .ExecuteUpdateAsync(set => set.SetProperty(format => format.UpgradeScannedAtUtc, atUtc), cancellationToken);
+
+    public void Add(LibraryUpgrade upgrade) => database.LibraryUpgrades.Add(upgrade);
+
+    public Task<LibraryUpgrade?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+        database.LibraryUpgrades.FirstOrDefaultAsync(upgrade => upgrade.Id == id, cancellationToken);
+
+    public Task<LibraryUpgrade?> FindOpenForFormatAsync(Guid requestFormatId, CancellationToken cancellationToken) =>
+        database.LibraryUpgrades.FirstOrDefaultAsync(upgrade => upgrade.RequestFormatId == requestFormatId && OpenStates.Contains(upgrade.State), cancellationToken);
+
+    public async Task<IReadOnlyList<LibraryUpgrade>> ListByStateAsync(LibraryUpgradeState state, int maximumCount, CancellationToken cancellationToken) =>
+        await database.LibraryUpgrades.Where(upgrade => upgrade.State == state).OrderBy(upgrade => upgrade.UpdatedAtUtc).Take(maximumCount).ToListAsync(cancellationToken);
+
+    public async Task<bool> IsAcquisitionInFlightAsync(LibraryUpgrade upgrade, DateTimeOffset approvedSinceUtc, CancellationToken cancellationToken)
+    {
+        if (await database.ProviderAcquisitionJobs.AsNoTracking().AnyAsync(job => job.RequestFormatId == upgrade.RequestFormatId &&
+                (job.LifecycleState == ProviderAcquisitionJobLifecycleState.Queued || job.LifecycleState == ProviderAcquisitionJobLifecycleState.Running ||
+                    job.LifecycleState == ProviderAcquisitionJobLifecycleState.Waiting), cancellationToken))
+        {
+            return true;
+        }
+
+        // While the upgrade is fetching, its last change is the moment it started; only a copy that arrived since can be its copy.
+        return await database.MediaAssets.AsNoTracking().AnyAsync(asset => asset.AssociatedRequestFormatId == upgrade.RequestFormatId &&
+            asset.Id != upgrade.DeliveredAssetId && asset.CreatedAtUtc >= upgrade.UpdatedAtUtc &&
+            (asset.StorageState == MediaAssetStorageState.Quarantine || asset.StorageState == MediaAssetStorageState.Processing ||
+                asset.StorageState == MediaAssetStorageState.Unmatched ||
+                (asset.StorageState == MediaAssetStorageState.Trusted && asset.UpdatedAtUtc >= approvedSinceUtc)), cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<UpgradeLeftover>> ListLeftoverCopiesAsync(DateTimeOffset staleBeforeUtc, int maximumCount, CancellationToken cancellationToken) =>
+        await (
+            from asset in database.MediaAssets.AsNoTracking()
+            join format in database.RequestFormats.AsNoTracking() on asset.AssociatedRequestFormatId equals format.Id
+            where asset.StorageState == MediaAssetStorageState.Trusted && asset.UpdatedAtUtc < staleBeforeUtc &&
+                format.Status == RequestFormatStatus.Available &&
+                database.LibraryUpgrades.Any(upgrade => upgrade.RequestFormatId == format.Id && upgrade.State == LibraryUpgradeState.Failed &&
+                    upgrade.CreatedAtUtc <= asset.CreatedAtUtc) &&
+                // A newer upgrade of the same format may be delivering this very copy.
+                !database.LibraryUpgrades.Any(upgrade => upgrade.RequestFormatId == format.Id && OpenStates.Contains(upgrade.State))
+            orderby asset.UpdatedAtUtc
+            select new UpgradeLeftover(asset.Id, format.RequestId))
+            .Take(maximumCount).ToListAsync(cancellationToken);
+
+    public async Task NoteAsync(Guid requestId, string note, DateTimeOffset atUtc, CancellationToken cancellationToken)
+    {
+        var request = await database.BookRequests.Include(item => item.StatusHistory).FirstOrDefaultAsync(item => item.Id == requestId, cancellationToken);
+        if (request is null) return;
+        request.AddNote(note, atUtc);
+        await database.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LibraryUpgradeView>> ListRecentAsync(int maximumCount, CancellationToken cancellationToken)
+    {
+        var rows = await (
+            from upgrade in database.LibraryUpgrades.AsNoTracking()
+            join format in database.RequestFormats.AsNoTracking() on upgrade.RequestFormatId equals format.Id
+            join request in database.BookRequests.AsNoTracking() on format.RequestId equals request.Id
+            join work in database.Works.AsNoTracking() on request.WorkId equals work.Id
+            orderby upgrade.CreatedAtUtc descending
+            select new { upgrade, work.CanonicalTitle, format.MediaType }).Take(maximumCount).ToListAsync(cancellationToken);
+        return [.. rows.Select(row => new LibraryUpgradeView(row.upgrade, row.CanonicalTitle, row.MediaType))];
+    }
+
+    public async Task<bool?> GetAutoReplaceAsync(CancellationToken cancellationToken) =>
+        (await database.LibraryUpgradeSettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken))?.AutoReplace;
+
+    public async Task SetAutoReplaceAsync(bool autoReplace, Guid? actorUserId, DateTimeOffset atUtc, CancellationToken cancellationToken)
+    {
+        var settings = await database.LibraryUpgradeSettings.FirstOrDefaultAsync(cancellationToken);
+        if (settings is null)
+        {
+            settings = new LibraryUpgradeSettings(atUtc);
+            database.LibraryUpgradeSettings.Add(settings);
+        }
+
+        settings.SetAutoReplace(autoReplace, actorUserId, atUtc);
+        await database.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task SaveAsync(CancellationToken cancellationToken) => database.SaveChangesAsync(cancellationToken);
+}

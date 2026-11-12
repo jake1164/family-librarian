@@ -2,6 +2,17 @@ namespace FamilyLibrarian.Domain.Audit;
 
 public static class AuditActions
 {
+    public const string ModelTestSettingsChanged = "model_test.settings_changed";
+    public const string ModelTestSecretSet = "model_test.secret_set";
+    public const string ModelTestSecretCleared = "model_test.secret_cleared";
+    public const string ModelTestRun = "model_test.run";
+    public const string ModelGatewaySettingsChanged = "model_gateway.settings_changed";
+    public const string ModelGatewaySecretSet = "model_gateway.secret_set";
+    public const string ModelGatewaySecretCleared = "model_gateway.secret_cleared";
+    public const string DecisionCaptureSettingsChanged = "decision_capture.settings_changed";
+    public const string DecisionCapturePurged = "decision_capture.purged";
+    public const string ModelConnectionReconciled = "model_gateway.connection_reconciled";
+    public const string ModelConnectionResolved = "model_gateway.connection_resolved";
     public const string ProviderEnabled = "provider.enabled";
     public const string ProviderDisabled = "provider.disabled";
     public const string ProviderCredentialSet = "provider.credential_set";
@@ -34,13 +45,27 @@ public static class AuditActions
     public const string AssetIdentityVerified = "asset.identity_verified";
     public const string AssetIdentityUnmatched = "asset.identity_unmatched";
     public const string AssetIdentityOverridden = "asset.identity_overridden";
+    public const string AssetIdentityReleasedByModel = "asset.identity_released_by_model";
     public const string AssetApproved = "asset.approved";
     public const string AssetRejected = "asset.rejected";
     public const string AssetDestroyed = "asset.destroyed";
+    public const string StorageMaintenanceRun = "storage.maintenance_run";
+    public const string LibraryUpgradeProposed = "library_upgrade.proposed";
+    public const string LibraryUpgradeDismissed = "library_upgrade.dismissed";
+    public const string LibraryUpgradeStarted = "library_upgrade.started";
+    public const string MaintenanceSettingsChanged = "storage.settings_changed";
+    public const string MaintenanceSettingsReset = "storage.settings_reset";
+    public const string LibraryUpgradeSettingsChanged = "library_upgrade.settings_changed";
+    public const string LibraryUpgradeCompleted = "library_upgrade.completed";
+    public const string LibraryUpgradeFailed = "library_upgrade.failed";
+    public const string DatabaseRetentionRun = "storage.database_retention_run";
     public const string AssetMalwareDestroyed = "asset.malware_destroyed";
     public const string AssetMalwareDestructionFailed = "asset.malware_destruction_failed";
     public const string AssetPublished = "asset.published";
     public const string AssetPublishFailed = "asset.publish_failed";
+    public const string AssetPublishSkippedDuplicate = "asset.publish_skipped_duplicate";
+    public const string ProviderJobCancelledFormatFulfilled = "provider_job.cancelled_format_fulfilled";
+    public const string ProviderJobsReleasedByAdmin = "provider_jobs.released_by_admin";
     public const string AssetMatchAmbiguous = "asset.match_ambiguous";
     public const string AssetArchiveCleanupFailed = "asset.archive_cleanup_failed";
 
@@ -85,9 +110,8 @@ public static class AuditActions
     public const string ExternalProviderTested = "external_provider.tested";
     public const string ExternalProviderRemoved = "external_provider.removed";
     public const string ExternalProviderRecheckScheduleChanged = "external_provider.recheck_schedule_changed";
-    public const string ExternalProviderAutoAcquireEnabled = "external_provider.auto_acquire_enabled";
-    public const string ExternalProviderAutoAcquireDisabled = "external_provider.auto_acquire_disabled";
     public const string ExternalProviderAutomaticAttemptLimitChanged = "external_provider.automatic_attempt_limit_changed";
+    public const string ExternalProviderConfidenceLevelsChanged = "external_provider.confidence_levels_changed";
     public const string ExternalProviderAcquisitionStaged = "external_provider_acquisition.staged";
     public const string ProviderInteractionStarted = "provider_interaction.started";
     public const string ProviderInteractionFallbackSelected = "provider_interaction.fallback_selected";
@@ -118,6 +142,9 @@ public static class AuditActions
 
 public static class AuditSubjectTypes
 {
+    public const string ModelTest = "model_test";
+    public const string ModelGateway = "model_gateway";
+    public const string Storage = "storage";
     public const string Provider = "provider";
     public const string Invitation = "invitation";
     public const string Account = "account";

@@ -1,14 +1,20 @@
 using FamilyLibrarian.Application.Abstractions;
 using FamilyLibrarian.Application.Acquisition;
+using FamilyLibrarian.Application.DecisionCapture;
+using FamilyLibrarian.Domain.DecisionCapture;
 using FamilyLibrarian.Application.Integrations;
+using FamilyLibrarian.Application.SemanticAssessment;
 using FamilyLibrarian.Domain.Acquisition;
 using FamilyLibrarian.Domain.Audit;
+using FamilyLibrarian.Domain.Evidence;
+using FamilyLibrarian.Application.ModelGateway;
+using FamilyLibrarian.Domain.ModelGateway;
 
 namespace FamilyLibrarian.Application.Security;
 
 /// <summary>
 /// Holds a clean, valid file unless its embedded identity matches the requested
-/// Work. A held asset cannot reach policy approval or a publishing destination.
+/// Work. A held asset requires a separately guarded model release or administrator override before approval and publishing.
 /// </summary>
 public interface IAssetIdentityVerificationService
 {
@@ -22,7 +28,12 @@ public sealed class AssetIdentityVerificationService(
     IAssetStagingStore stagingStore,
     IEnumerable<IAssetIdentityVerifier> verifiers,
     IAuditWriter audit,
-    IClock clock) : IAssetIdentityVerificationService
+    IClock clock,
+    IArtifactEvidenceRecorder? evidence = null,
+    IExpectedArtifactProfileSource? expectedProfiles = null,
+    IArtifactEvidenceStore? profileEvidence = null,
+    ArtifactDecisionService? modelDecisions = null, IModelWorkflowObserver? workflow = null,
+    IDecisionOutcomeRecorder? outcomes = null) : IAssetIdentityVerificationService
 {
     public async Task<AssetIdentityVerificationResult> VerifyAsync(
         Guid assetId,
@@ -37,8 +48,19 @@ public sealed class AssetIdentityVerificationService(
 
         var verifier = verifiers.FirstOrDefault(verifier => verifier.Supports(asset));
         var result = verifier is null
-            ? NoVerifierResult(asset)
+            ? NoVerifierOutcome.For(asset)
             : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Processing, cancellationToken);
+        var expected = expectedProfiles is null ? null : await expectedProfiles.FindAsync(asset, cancellationToken);
+        result = ArtifactHoldPolicy.Apply(asset, await CompareProfileAsync(asset, result, expected, cancellationToken));
+
+        Guid? modelHoldUsageId = null;
+        if (result.IsMatch && modelDecisions is not null &&
+            await modelDecisions.GetHoldAsync(asset, result, expected, cancellationToken) is { } hold)
+        {
+            modelHoldUsageId = hold.UsageRecordId;
+            result = result with { IsMatch = false, HoldCode = EvidenceReasonCodes.IdentityHold.ModelConcern,
+                Reason = $"An automated reviewer raised a concern: {hold.Note}" };
+        }
 
         if (!result.IsMatch)
         {
@@ -49,6 +71,7 @@ public sealed class AssetIdentityVerificationService(
                 cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Unmatched, clock.UtcNow);
             asset.SetIdentityMismatchReason(result.Reason);
+            asset.SetIdentityHoldCode(result.HoldCode ?? ExistingHoldCodes.Classify(result));
             await repository.SaveChangesAsync(cancellationToken);
         }
 
@@ -58,6 +81,18 @@ public sealed class AssetIdentityVerificationService(
             assetId.ToString(),
             new { AssetId = assetId, result.VerifierId, result.IsMatch, result.Reason },
             cancellationToken);
+
+        // Evidence only: recorded after the verdict above is saved and audited.
+        if (modelHoldUsageId is not null && workflow is not null)
+            await workflow.ObserveAsync(modelHoldUsageId, ModelWorkflowEffect.FileHoldApplied, cancellationToken);
+        // The model's own hold was applied to this file. Weak: it is the model's action, not an independent verdict.
+        if (modelHoldUsageId is not null)
+            await outcomes.ReportAsync(DecisionOutcomeKind.ModelHoldApplied, "model-hold", DecisionOutcomeStrength.Weak,
+                DecisionOutcomeTarget.File(assetId), cancellationToken);
+        if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, ForRecording(result), cancellationToken);
+
+        if (!result.IsMatch && modelDecisions is not null)
+            result = result with { ModelReleaseFindingId = await modelDecisions.GetReleaseAsync(asset, result, expected, cancellationToken) };
 
         return result;
     }
@@ -73,10 +108,17 @@ public sealed class AssetIdentityVerificationService(
             throw new InvalidOperationException("Only an unmatched asset can have its identity verification retried.");
         }
 
+        // A recheck cannot release a model concern: only the administrator override may do that.
+        if (asset.IdentityHoldCode == EvidenceReasonCodes.IdentityHold.ModelConcern)
+            return AssetIdentityVerificationResult.Unmatched("model-concern", asset.IdentityMismatchReason)
+                with { HoldCode = EvidenceReasonCodes.IdentityHold.ModelConcern };
+
         var verifier = verifiers.FirstOrDefault(verifier => verifier.Supports(asset));
         var result = verifier is null
-            ? NoVerifierResult(asset)
+            ? NoVerifierOutcome.For(asset)
             : await VerifySafelyAsync(verifier, asset, MediaAssetStorageState.Unmatched, cancellationToken);
+        var expected = expectedProfiles is null ? null : await expectedProfiles.FindAsync(asset, cancellationToken);
+        result = ArtifactHoldPolicy.Apply(asset, await CompareProfileAsync(asset, result, expected, cancellationToken));
 
         if (result.IsMatch)
         {
@@ -87,6 +129,7 @@ public sealed class AssetIdentityVerificationService(
                 cancellationToken);
             asset.TransitionStorageState(MediaAssetStorageState.Processing, clock.UtcNow);
             asset.SetIdentityMismatchReason(null);
+            asset.SetIdentityHoldCode(null);
             await repository.SaveChangesAsync(cancellationToken);
         }
         else if (result.Reason != asset.IdentityMismatchReason)
@@ -96,6 +139,7 @@ public sealed class AssetIdentityVerificationService(
             // mismatch -- keep the displayed reason current rather than
             // stale from the original hold.
             asset.SetIdentityMismatchReason(result.Reason);
+            asset.SetIdentityHoldCode(result.HoldCode ?? ExistingHoldCodes.Classify(result));
             await repository.SaveChangesAsync(cancellationToken);
         }
 
@@ -105,6 +149,8 @@ public sealed class AssetIdentityVerificationService(
             assetId.ToString(),
             new { AssetId = assetId, result.VerifierId, result.IsMatch, result.Reason, Retried = true },
             cancellationToken);
+
+        if (evidence is not null) await evidence.RecordIdentityVerificationAsync(asset, ForRecording(result), cancellationToken);
 
         return result;
     }
@@ -121,6 +167,30 @@ public sealed class AssetIdentityVerificationService(
             cancellationToken);
         return await verifier.VerifyAsync(asset, content, cancellationToken);
     }
+
+    private async Task<AssetIdentityVerificationResult> CompareProfileAsync(
+        MediaAsset asset, AssetIdentityVerificationResult result, ExpectedArtifactProfile? expected, CancellationToken cancellationToken)
+    {
+        if (expected is null) return result;
+        var facts = result.Facts.ToList();
+        if (profileEvidence is not null)
+        {
+            // These measurements were recorded by the inspectors. Reuse them for comparison, never re-record them.
+            var stored = await profileEvidence.ListLatestAudioMeasurementsAsync(asset, cancellationToken);
+            facts.AddRange(stored.Where(f => !facts.Any(current => current.Code == f.Code && current.FindingId == f.FindingId))
+                .Select(f => new IdentityFact(f.FindingId, f.Dimension, f.Code, f.Polarity, f.Value)));
+        }
+        facts.AddRange(ArtifactProfileComparer.Compare(facts, expected));
+        if (expected.AcceptedVariantKind == FamilyLibrarian.Domain.Requests.AcquisitionQuestionKind.AbridgedOnly)
+            facts = facts.Select(f => f.Code == EvidenceReasonCodes.ProfileComparison.AbridgedMarker && f.Polarity == EvidencePolarity.Condition
+                ? f with { Polarity = EvidencePolarity.Weak } : f).ToList();
+        return result with { Facts = facts };
+    }
+
+    private AssetIdentityVerificationResult ForRecording(AssetIdentityVerificationResult result) => profileEvidence is null
+        ? result
+        : result with { Facts = result.Facts.Where(f => f.Code is not
+            (EvidenceReasonCodes.ArtifactProfile.AudioTotalDuration or EvidenceReasonCodes.ArtifactProfile.AudioChapterTitles)).ToArray() };
 
     private async Task<AssetIdentityVerificationResult> VerifySafelyAsync(
         IAssetIdentityVerifier verifier,
@@ -144,24 +214,4 @@ public sealed class AssetIdentityVerificationService(
             return AssetIdentityVerificationResult.Unmatched(verifier.Id);
         }
     }
-
-    /// <summary>
-    /// No format-specific verifier exists for this asset's file type. A
-    /// pre-confirmed match (every built-in-provider acquisition, a manual
-    /// upload, or an external-provider candidate strong enough to need no
-    /// override) has nothing left to prove, so this still passes. An
-    /// unconfirmed external-provider match has nothing confirming it at all
-    /// -- only EPUB/KEPUB and M4B have their own verifiers today, so a
-    /// MOBI/AZW3/MP3/etc. candidate that only cleared the pre-download gate via
-    /// <c>confirmLowConfidenceMatch</c> would otherwise reach a library
-    /// shelf, correctly labeled with someone else's book, with nothing
-    /// having actually checked it.
-    /// </summary>
-    private static AssetIdentityVerificationResult NoVerifierResult(MediaAsset asset) =>
-        asset.IdentityPreConfirmed
-            ? AssetIdentityVerificationResult.Match("not-applicable")
-            : AssetIdentityVerificationResult.Unmatched(
-                "not-applicable",
-                "No identity verifier exists for this file format, and the match was not independently " +
-                "confirmed before this file was fetched. A librarian must inspect it directly.");
 }

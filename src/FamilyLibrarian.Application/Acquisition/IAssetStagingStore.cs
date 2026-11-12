@@ -65,7 +65,21 @@ public interface IAssetStagingStore
         string storedFilename,
         CancellationToken cancellationToken) =>
         throw new NotSupportedException("This staging store does not support deletion.");
+
+    /// <summary>
+    /// The files physically present in one storage zone, with their sizes and last-write times. Used to see what the disk actually
+    /// holds (and to find files no record accounts for); it never opens or reads a file. Defaults to none for stores that cannot list.
+    /// </summary>
+    IReadOnlyList<StoredFileInfo> ListStoredFiles(MediaAssetStorageState zone) => [];
+
+    /// <summary>Free and total bytes of the volume holding the storage zones, or nulls when they cannot be determined.</summary>
+    StorageVolumeInfo GetVolumeInfo() => new(GetAvailableFreeBytes(), null);
 }
+
+/// <summary>A file in a storage zone. The name is the generated stored name, never the original filename.</summary>
+public sealed record StoredFileInfo(string StoredFilename, long SizeBytes, DateTimeOffset LastWriteUtc);
+
+public sealed record StorageVolumeInfo(long? FreeBytes, long? TotalBytes);
 
 public sealed record StagedFile(
     string StoredFilename,

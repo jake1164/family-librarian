@@ -1,0 +1,44 @@
+@using FamilyLibrarian.Contracts.ModelGateway
+@using FamilyLibrarian.Web.Client.ModelGateway
+
+<MudTable Items="Groups" Dense="true" Hover="true" TableAttributes="TableAttributes" RowsPerPage="10">
+    <HeaderContent><MudTh>Feature</MudTh><MudTh>Model used</MudTh><MudTh>Calls</MudTh><MudTh>Operational quality</MudTh><MudTh>Workflow impact</MudTh><MudTh>Recorded recommendations</MudTh></HeaderContent>
+    <RowTemplate>
+        @{ var metrics = AiQualityMetrics.From(context.Rows); }
+        <MudTd DataLabel="Feature">@ModelRoleLabels.Title(context.Role)</MudTd>
+        <MudTd DataLabel="Model used">@(string.IsNullOrEmpty(context.Model) ? "Not recorded" : context.Model) (@(context.IsCloud ? "Cloud" : "Local"))</MudTd>
+        <MudTd DataLabel="Calls">@metrics.Calls</MudTd>
+        <MudTd DataLabel="Operational quality"><AiQualitySignal Metrics="metrics" /></MudTd>
+        <MudTd DataLabel="Workflow impact"><AiWorkflowSignal Metrics="@AiWorkflowMetrics.From(context.Rows)" /></MudTd>
+        <MudTd DataLabel="Recorded recommendations">
+            @{ var findings = (Usage.Recommendations ?? []).Where(row => row.Role == context.Role && row.Model == context.Model && row.IsCloud == context.IsCloud)
+                .GroupBy(row => row.Verdict).OrderBy(group => group.Key, StringComparer.Ordinal).ToArray(); }
+            @if (findings.Length == 0)
+            {
+                <MudText Typo="Typo.body2">Not recorded</MudText>
+            }
+            else
+            {
+                @foreach (var finding in findings)
+                {
+                    <MudText Typo="Typo.body2">@AiQualityMetrics.Recommendation(finding.Key): @finding.Sum(row => row.Findings)</MudText>
+                }
+                @if (findings.All(group => group.Key == "Uncertain"))
+                {
+                    <MudText Typo="Typo.caption">All recorded recommendations were uncertain.</MudText>
+                }
+            }
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent><MudText>No model calls in this period.</MudText></NoRecordsContent>
+    <PagerContent><MudTablePager /></PagerContent>
+</MudTable>
+
+@code {
+    [Parameter, EditorRequired] public ModelUsageResponse Usage { get; set; } = new(DateTimeOffset.UtcNow, []);
+    private static readonly Dictionary<string, object?> TableAttributes = new() { ["aria-label"] = "AI operational quality by model" };
+    private IEnumerable<ModelGroup> Groups => Usage.Rows.GroupBy(row => (row.Role, row.Model, row.IsCloud))
+        .OrderBy(group => group.Key.Role, StringComparer.Ordinal).ThenBy(group => group.Key.Model, StringComparer.Ordinal).ThenBy(group => group.Key.IsCloud)
+        .Select(group => new ModelGroup(group.Key.Role, group.Key.Model, group.Key.IsCloud, group.ToArray()));
+    private sealed record ModelGroup(string Role, string Model, bool IsCloud, IReadOnlyList<ModelUsageRowResponse> Rows);
+}

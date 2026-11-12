@@ -2,6 +2,7 @@ namespace FamilyLibrarian.Domain.Notifications;
 
 public static class NotificationCategories
 {
+    public const string AcquisitionQuestion = "request.acquisition_question";
     public const string RequestNeedsReview = "request.needs_review";
     public const string RequestStatusChanged = "request.status_changed";
 
@@ -13,6 +14,9 @@ public static class NotificationCategories
     /// an admin, can make.
     /// </summary>
     public const string RequestPreferenceAmbiguity = "request.preference_ambiguity";
+
+    /// <summary>AUTOFIND 2c: tells a requester the question put to them is withdrawn because a copy that needs no answer was found.</summary>
+    public const string RequestReviewWithdrawn = "request.review_withdrawn";
 
     /// <summary>
     /// KINDLE-7: sent once a <c>DeliveryAttempt</c> reaches
@@ -55,6 +59,24 @@ public static class NotificationCategories
     /// un-dismisses a still-broken provider's notification every cycle.
     /// </summary>
     public const string ProviderHealthDegraded = "provider.health_degraded";
+
+    /// <summary>The disk holding staged files is below its safety floor; new downloads wait and safe clean-up runs sooner.</summary>
+    public const string StorageLow = "storage.low";
+
+    /// <summary>A better copy of an already delivered, apparently incomplete book was found; nothing has changed yet.</summary>
+    public const string BetterCopyAvailable = "request.better_copy_available";
+
+    /// <summary>A delivered copy was replaced by a better one, confirmed in the library before the old one was removed.</summary>
+    public const string LibraryUpgraded = "request.library_upgraded";
+
+    /// <summary>An automatic upgrade of a delivered copy stopped; the detail says what the library was left holding.</summary>
+    public const string UpgradeStopped = "request.upgrade_stopped";
+
+    /// <summary>A later search found a better copy that passed its checks and replaced one waiting for a person.</summary>
+    public const string BetterCopyFound = "request.better_copy_found";
+
+    /// <summary>A held copy waiting for a person is half way to its automatic removal date.</summary>
+    public const string HeldCopyExpiring = "storage.held_copy_expiring";
 }
 
 public static class NotificationSubjectTypes
@@ -63,4 +85,5 @@ public static class NotificationSubjectTypes
     public const string DeliveryAttempt = "delivery_attempt";
     public const string Work = "work";
     public const string ExternalProvider = "external_provider";
+    public const string Storage = "storage";
 }

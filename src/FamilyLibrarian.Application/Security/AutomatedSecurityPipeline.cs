@@ -14,7 +14,9 @@ public sealed class AutomatedSecurityPipeline(
     ISecurityEvaluationRunner evaluations,
     IPolicyAssetApprovalService approvals,
     IAssetIdentityVerificationService identity,
-    ISecurityEvaluationRepository? repository = null)
+    ISecurityEvaluationRepository? repository = null,
+    SemanticAssessment.IArtifactSemanticShadow? semanticShadow = null,
+    IAudioBundleProfile? audioBundleProfile = null)
 {
     private const string CleanScanPolicyName = "clean-security-evaluation-v1";
 
@@ -29,6 +31,8 @@ public sealed class AutomatedSecurityPipeline(
             if (approval.Outcome != ApprovalOutcome.Success && approval.Outcome != ApprovalOutcome.IdentityUnmatched)
                 throw new InvalidOperationException(approval.Error ?? "The clean security result could not be approved.");
         }
+        // Shadow only: tells a background reviewer the evidence changed. It cannot affect the result returned here.
+        semanticShadow?.Observe(assetId);
         return result;
     }
 
@@ -48,6 +52,19 @@ public sealed class AutomatedSecurityPipeline(
     /// cannot be scanned/identity-checked.
     /// </summary>
     public async Task<IReadOnlyList<SecurityEvaluationResult>> EvaluateBundleAsync(
+        IReadOnlyList<Guid> assetIds,
+        CancellationToken cancellationToken)
+    {
+        var results = await EvaluateBundleCoreAsync(assetIds, cancellationToken);
+        foreach (var assetId in assetIds)
+        {
+            semanticShadow?.Observe(assetId);
+        }
+
+        return results;
+    }
+
+    private async Task<IReadOnlyList<SecurityEvaluationResult>> EvaluateBundleCoreAsync(
         IReadOnlyList<Guid> assetIds,
         CancellationToken cancellationToken)
     {
@@ -93,13 +110,21 @@ public sealed class AutomatedSecurityPipeline(
                     "A sibling track did not pass every security check.")).ToArray();
         }
 
+        // Evidence only (AUTOFIND 3c): the set's total listening time, recorded on every track. Best effort.
+        if (audioBundleProfile is not null) await audioBundleProfile.RecordAsync(assets, cancellationToken);
+
+        // Every track is verified before the set is judged (M1-5b), so each held track carries its own hold and
+        // an administrator sees the whole set rather than one held track and untouched others.
+        var anyHeld = false;
         foreach (var asset in assets.Where(asset =>
                      asset.StorageState == MediaAssetStorageState.Processing))
         {
             var identityResult = await identity.VerifyAsync(asset.Id, cancellationToken);
-            if (!identityResult.IsMatch)
-                return assetIds.Select(id => results[id]).ToArray();
+            anyHeld |= !identityResult.IsMatch;
         }
+
+        if (anyHeld)
+            return assetIds.Select(id => results[id]).ToArray();
 
         // Verify identity for the whole set before approving any sibling.
         // ApprovalService repeats its own identity check as a defense-in-depth
@@ -129,8 +154,10 @@ public sealed class AutomatedSecurityPipeline(
         CancellationToken cancellationToken)
     {
         var result = await identity.RetryUnmatchedAsync(assetId, cancellationToken);
-        return result.IsMatch
+        var outcome = result.IsMatch
             ? await approvals.ApproveByPolicyAsync(assetId, CleanScanPolicyName, cancellationToken)
             : ApprovalResult.IdentityUnmatched();
+        semanticShadow?.Observe(assetId);
+        return outcome;
     }
 }
