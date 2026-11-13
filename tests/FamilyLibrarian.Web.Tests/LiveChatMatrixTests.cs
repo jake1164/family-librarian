@@ -108,7 +108,9 @@ public sealed class LiveChatMatrixTests
             new("E08", Single("What is the latest Tom Clancy book?")),
             new("E09", Single("Is there a new Fourth Wing book?")),
             new("E10", Single("book three of Murderbot")),
-            new("E11", Single("I want the audiobook of the second Wayfarers book")),
+            // A wish without a format: it asks "which format?" and stops. Adding a format ("...the audiobook of...") would complete a
+            // request on a one-book answer, so the matrix never does; NoMatrixMessageCanCreateARequest enforces that.
+            new("E11", Single("I want the second Wayfarers book")),
             new("E12",
                 new Turn("Find The Hobbit"),
                 new Turn("request it", WhenFirstOffered(2, (reply, _) => reply.Kind == "NotUnderstood" && reply.Text.Contains("number", StringComparison.OrdinalIgnoreCase) ? null : "with several choices \"it\" must ask for a number")),
@@ -133,9 +135,13 @@ public sealed class LiveChatMatrixTests
 
                 Assert.AreNotEqual(ConversationCommandKind.Format, parsed.Kind, $"{matrixCase.Id}: \"{turn.Text}\" would answer a format question.");
                 Assert.AreNotEqual(ConversationCommandKind.Request, parsed.Kind, $"{matrixCase.Id}: \"{turn.Text}\" would request a numbered book.");
-                if (parsed is { Kind: ConversationCommandKind.Reference, Action: ConversationActions.Request })
+
+                // A request is completed by a stated format together with request intent: when a series question names exactly one
+                // book, or the message refers to the book in focus, the request is created at once. This is how an earlier version of
+                // E11 ("I want the audiobook of the second ... book") created a real request on the lab.
+                if (parsed is { Kind: ConversationCommandKind.Series or ConversationCommandKind.Reference, RequestIntent: true, Formats.Count: > 0 })
                 {
-                    Assert.IsNull(parsed.Formats, $"{matrixCase.Id}: \"{turn.Text}\" would request a book with a format.");
+                    Assert.Fail($"{matrixCase.Id}: \"{turn.Text}\" states a format with request intent and could create a request.");
                 }
             }
         }
@@ -272,12 +278,12 @@ public sealed class LiveChatMatrixTests
         var started = Stopwatch.GetTimestamp();
         using var response = await client.PostAsJsonAsync(
             "/api/v1/conversation/messages", new ConversationMessageRequest(text, Guid.NewGuid().ToString("N")));
-        if (response.StatusCode != HttpStatusCode.TooManyRequests)
+        var body = await response.Content.ReadAsStringAsync();
+        if (response.StatusCode != HttpStatusCode.TooManyRequests && !response.IsSuccessStatusCode)
         {
-            response.EnsureSuccessStatusCode();
+            Assert.Fail($"HTTP {(int)response.StatusCode} for the message \"{text}\". Body: {(body.Length <= 400 ? body : body[..400])}");
         }
 
-        var body = await response.Content.ReadAsStringAsync();
         if (string.IsNullOrWhiteSpace(body))
         {
             Assert.Fail($"HTTP {(int)response.StatusCode} with an empty body for the message \"{text}\".");

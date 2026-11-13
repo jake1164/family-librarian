@@ -358,6 +358,35 @@ public sealed class ConversationAnswerTests
     }
 
     [TestMethod]
+    [DataRow("book three of Lantern Road")]
+    [DataRow("the third Lantern Road book")]
+    [DataRow("Lantern Road book 3")]
+    public async Task ASeriesQuestionThatIsNotAFullSentenceSearchesTheSeriesNameWhenItIsNotATitleEither(string text)
+    {
+        var harness = new ConversationHarness();
+        harness.Tools.Results["Lantern Road"] = new ConversationSearchResult([FakeTools.Choice("l1", "The Last Lantern")], false, []);
+
+        var reply = await harness.SayAsync(text);
+
+        CollectionAssert.Contains(harness.Tools.Calls, "search:Lantern Road");
+        StringAssert.Contains(reply.Reply.Text, "couldn't confirm");
+        Assert.AreEqual(ConversationReplyKind.Choices, reply.Reply.Kind);
+    }
+
+    [TestMethod]
+    public async Task ANumberedPhrasingThatIsReallyATitleIsStillShownAsTyped()
+    {
+        var harness = new ConversationHarness();
+        harness.Tools.Results["Book Three of the Gloaming"] = new ConversationSearchResult(
+            [FakeTools.Choice("g1", "Book Three of the Gloaming")], false, []);
+
+        var reply = await harness.SayAsync("Book Three of the Gloaming");
+
+        StringAssert.Contains(reply.Reply.Text, "I found these for “Book Three of the Gloaming”");
+        Assert.IsFalse(harness.Tools.Calls.Contains("search:Gloaming"), "An exact title is never replaced by a guessed series name.");
+    }
+
+    [TestMethod]
     public async Task AnUnansweredAfterQuestionSearchesTheTitleInsteadOfTheSentence()
     {
         var harness = new ConversationHarness();

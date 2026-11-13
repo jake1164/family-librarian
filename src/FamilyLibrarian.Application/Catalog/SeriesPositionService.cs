@@ -235,7 +235,15 @@ public sealed class SeriesPositionService(ICatalogSearchService search, ICatalog
 
         // A "next after" question searches the series name and the named title: the title is what tells us the series when none was said.
         var queries = new[] { name, title ?? string.Empty }.Where(query => query.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var outcomes = await Task.WhenAll(queries.Select(query => search.SearchAsync(new BookSearchQuery(query), cancellationToken)));
+        // One after the other, never together: each search reads the provider settings through this request's one scoped database
+        // context, and EF Core does not support two operations on a context at the same time (the lab answered HTTP 500 when these
+        // ran in parallel). Each search still queries its providers concurrently inside itself.
+        var outcomes = new List<CatalogSearchOutcome>(queries.Length);
+        foreach (var query in queries)
+        {
+            outcomes.Add(await search.SearchAsync(new BookSearchQuery(query), cancellationToken));
+        }
+
         var known = new List<SeriesBook>();
         foreach (var candidate in outcomes.SelectMany(outcome => outcome.Candidates))
         {

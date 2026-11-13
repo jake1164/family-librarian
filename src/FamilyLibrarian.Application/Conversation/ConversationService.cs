@@ -403,9 +403,21 @@ public sealed class ConversationService(
         }
 
         var text = parsed.Text ?? string.Empty;
-        if (!ConversationProse.LooksLikeProse(text) || string.IsNullOrWhiteSpace(parsed.SeriesName))
+        if (string.IsNullOrWhiteSpace(parsed.SeriesName))
         {
             return await SearchPlanAsync(text, text, parsed.Formats, parsed.RequestIntent, state, cancellationToken);
+        }
+
+        // A message that does not read as a sentence may still be a real title that merely looks like a series question ("The First
+        // Book of ..."): show it as typed only when the catalog has a book of exactly that title. Otherwise it is a question about a
+        // series we do not know, and the series name is the better search.
+        if (!ConversationProse.LooksLikeProse(text))
+        {
+            var asTyped = await tools.SearchBooksAsync(text, options.MaxChoices, cancellationToken);
+            if (ConversationProse.HasExactTitle(asTyped.Choices, text))
+            {
+                return await SearchPlanAsync(text, text, parsed.Formats, parsed.RequestIntent, state, cancellationToken);
+            }
         }
 
         var series = parsed.SeriesName;
